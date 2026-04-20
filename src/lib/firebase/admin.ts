@@ -24,17 +24,17 @@ function init(): App | undefined {
 
   try {
     if (projectId && clientEmail && privateKey) {
+      // Explicit service-account creds (typical local dev setup).
       _app = initializeApp({
         credential: cert({ projectId, clientEmail, privateKey }),
         projectId,
       });
-    } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      // Firebase App Hosting injects ADC automatically.
-      _app = initializeApp({ credential: applicationDefault() });
     } else {
-      // No admin creds yet (e.g. local dev before .env populated).
-      // Return undefined; callers should handle this gracefully.
-      return undefined;
+      // Fall back to Application Default Credentials. On Firebase App Hosting
+      // / Cloud Run this reaches the instance metadata server automatically;
+      // no env vars needed. Fails gracefully in local dev before `.env` is
+      // populated — the catch below keeps the app from crashing.
+      _app = initializeApp({ credential: applicationDefault() });
     }
   } catch (err) {
     console.error("[firebase-admin] initialization failed:", err);
