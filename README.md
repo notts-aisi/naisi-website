@@ -101,3 +101,23 @@ Light theme: change `data-theme="dark"` to `"light"` in [src/app/layout.tsx](src
 - 1-1 booking calendar (Firestore availability + transactions)
 - Admin dashboard (Approvals / Members / Projects tabs)
 - Course & homework viewer (BlueDot-style)
+
+## License
+
+MIT — see [LICENSE](./LICENSE). You're free to fork, modify, and adapt this
+code (including for your own commercial or non-commercial projects) as long
+as you keep the copyright notice.
+
+## Using this?
+
+If you're running a student society, non-profit, or other AI-safety group and
+this tooling is useful to you — we'd genuinely love to hear about it. There's
+no obligation, but:
+
+- Drop us a line at [ai-safety@uonsu.com](mailto:ai-safety@uonsu.com)
+- Or message [@notts.ai.safety](https://instagram.com/notts.ai.safety) on Instagram
+
+We're happy to share what we've learned building this out, trade notes on
+running events, or just say hi. The goal was always to make it easier for
+more groups to do AI safety outreach — knowing who's picked it up helps us
+keep making it better.
