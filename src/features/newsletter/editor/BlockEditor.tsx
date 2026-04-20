@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import Card from "@/components/ui/Card";
+import Select from "@/components/ui/Select";
 import {
   emptyBlock,
+  youtubeIdFromUrl,
   type Block,
   type BlockType,
 } from "@/lib/firestore/newsletterBlocks";
@@ -13,6 +15,8 @@ import styles from "./BlockEditor.module.css";
 
 type Props = {
   draftId: string;
+  /** Storage folder prefix for uploads. Defaults to newsletter-images. */
+  storagePrefix?: string;
   blocks: Block[];
   onChange: (next: Block[]) => void;
   disabled?: boolean;
@@ -22,10 +26,11 @@ const ADD_MENU: Array<{ type: BlockType; label: string; hint: string }> = [
   { type: "heading", label: "Heading", hint: "Big section title" },
   { type: "richText", label: "Rich text", hint: "Paragraphs, lists, links" },
   { type: "image", label: "Image", hint: "Uploaded photo with caption" },
+  { type: "video", label: "Video", hint: "Embed a YouTube URL" },
   { type: "divider", label: "Divider", hint: "Thin line between sections" },
 ];
 
-export default function BlockEditor({ draftId, blocks, onChange, disabled }: Props) {
+export default function BlockEditor({ draftId, storagePrefix, blocks, onChange, disabled }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAfterIndex, setMenuAfterIndex] = useState<number | null>(null);
 
@@ -111,6 +116,7 @@ export default function BlockEditor({ draftId, blocks, onChange, disabled }: Pro
             <BlockForm
               block={block}
               draftId={draftId}
+              storagePrefix={storagePrefix}
               disabled={disabled}
               onChange={(patch) => patchBlock(i, patch)}
             />
@@ -159,11 +165,13 @@ function labelFor(type: BlockType): string {
 function BlockForm({
   block,
   draftId,
+  storagePrefix,
   disabled,
   onChange,
 }: {
   block: Block;
   draftId: string;
+  storagePrefix?: string;
   disabled?: boolean;
   onChange: (patch: Partial<Block>) => void;
 }) {
@@ -184,15 +192,14 @@ function BlockForm({
           </label>
           <label className={styles.fieldLabel}>
             <span>Size</span>
-            <select
-              className={styles.fieldInput}
+            <Select
               value={String(block.level)}
               onChange={(e) => onChange({ level: Number(e.target.value) as 2 | 3 })}
               disabled={disabled}
             >
               <option value="2">Major (H2) — big</option>
               <option value="3">Minor (H3) — smaller</option>
-            </select>
+            </Select>
           </label>
         </div>
       );
@@ -208,6 +215,7 @@ function BlockForm({
       return (
         <ImageUpload
           draftId={draftId}
+          storagePrefix={storagePrefix}
           currentUrl={block.url}
           currentAlt={block.alt}
           currentCaption={block.caption}
@@ -228,6 +236,68 @@ function BlockForm({
           <hr />
         </div>
       );
+    case "video": {
+      const videoId = youtubeIdFromUrl(block.url);
+      return (
+        <div className={styles.fields}>
+          <label className={styles.fieldLabel}>
+            <span>YouTube URL</span>
+            <input
+              type="url"
+              className={styles.fieldInput}
+              value={block.url}
+              onChange={(e) => onChange({ url: e.target.value })}
+              disabled={disabled}
+              placeholder="https://www.youtube.com/watch?v=…"
+            />
+          </label>
+          <label className={styles.fieldLabel}>
+            <span>Caption (optional)</span>
+            <input
+              type="text"
+              className={styles.fieldInput}
+              value={block.caption ?? ""}
+              onChange={(e) => onChange({ caption: e.target.value })}
+              disabled={disabled}
+              placeholder="e.g. Last month's fellowship talk"
+            />
+          </label>
+          {block.url &&
+            (videoId ? (
+              <div
+                style={{
+                  position: "relative",
+                  paddingBottom: "56.25%",
+                  height: 0,
+                  borderRadius: "var(--radius-md)",
+                  overflow: "hidden",
+                  background: "#000",
+                }}
+              >
+                <iframe
+                  src={`https://www.youtube-nocookie.com/embed/${videoId}`}
+                  title={block.caption || "Video preview"}
+                  allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: "100%",
+                    border: 0,
+                  }}
+                />
+              </div>
+            ) : (
+              <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)", margin: 0 }}>
+                That doesn&apos;t look like a YouTube URL. Paste a link like
+                https://www.youtube.com/watch?v=… or https://youtu.be/…
+              </p>
+            ))}
+        </div>
+      );
+    }
   }
 }
 

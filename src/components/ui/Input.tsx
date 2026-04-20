@@ -1,4 +1,9 @@
-import type { InputHTMLAttributes, TextareaHTMLAttributes, ReactNode } from "react";
+import type {
+  InputHTMLAttributes,
+  SelectHTMLAttributes,
+  TextareaHTMLAttributes,
+  ReactNode,
+} from "react";
 import styles from "./Input.module.css";
 
 type FieldProps = {
@@ -41,6 +46,15 @@ export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
     <textarea
       {...props}
       className={`${styles.control} ${styles.textarea} ${props.className ?? ""}`}
+    />
+  );
+}
+
+export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select
+      {...props}
+      className={`${styles.control} ${styles.select} ${props.className ?? ""}`}
     />
   );
 }

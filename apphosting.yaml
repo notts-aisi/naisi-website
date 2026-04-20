@@ -26,5 +26,10 @@ env:
   - variable: NEXT_PUBLIC_FIREBASE_APP_ID
     secret: naisi-web-app-id
     availability: [BUILD, RUNTIME]
+  # HMAC secret used to sign RSVP self-cancel / change-request links in emails.
+  # Rotating the secret invalidates every outstanding email link.
+  - variable: EVENTS_TOKEN_SECRET
+    secret: EVENTS_TOKEN_SECRET
+    availability: [RUNTIME]
   # Admin credentials are injected automatically by App Hosting (ADC) —
   # no FIREBASE_ADMIN_* env vars needed in production.

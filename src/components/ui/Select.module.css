@@ -1,0 +1,28 @@
+.select {
+  padding: 0.55rem 2.25rem 0.55rem 0.7rem;
+  background: var(--color-bg-elevated)
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path fill='%238b94ac' d='M6 8.5 1.5 4h9z'/></svg>")
+    no-repeat calc(100% - 0.85rem) center;
+  background-size: 12px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--text-md, 1rem);
+  line-height: 1.4;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  width: 100%;
+  transition: border-color var(--transition-fast);
+}
+
+.select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

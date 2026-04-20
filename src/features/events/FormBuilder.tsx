@@ -1,0 +1,316 @@
+"use client";
+
+import { useState } from "react";
+import Card from "@/components/ui/Card";
+import Select from "@/components/ui/Select";
+import {
+  emptyQuestion,
+  DIETARY_ALLERGIES,
+  type FormQuestion,
+  type FormQuestionType,
+} from "@/lib/firestore/events";
+import { FORM_PRESETS } from "./formPresets";
+import styles from "./FormBuilder.module.css";
+
+type Props = {
+  questions: FormQuestion[];
+  onChange: (next: FormQuestion[]) => void;
+  disabled?: boolean;
+};
+
+const TYPE_LABEL: Record<FormQuestionType, string> = {
+  shortText: "Short text",
+  longText: "Long text",
+  singleSelect: "Single choice",
+  multiSelect: "Multiple choice",
+  yesNo: "Yes / No",
+  dietaryAllergies: "Allergies checklist",
+};
+
+const ADD_MENU: Array<{ type: FormQuestionType; hint: string }> = [
+  { type: "shortText", hint: "One-line answer" },
+  { type: "longText", hint: "Multi-line text" },
+  { type: "singleSelect", hint: "Pick one option" },
+  { type: "multiSelect", hint: "Pick any number" },
+  { type: "yesNo", hint: "Yes / No toggle" },
+  { type: "dietaryAllergies", hint: "Checkbox list of common allergies" },
+];
+
+export default function FormBuilder({ questions, onChange, disabled }: Props) {
+  const [adding, setAdding] = useState(false);
+  const [presetWarning, setPresetWarning] = useState<string | null>(null);
+
+  function patch(index: number, fields: Partial<FormQuestion>) {
+    const next = questions.slice();
+    next[index] = { ...next[index], ...fields } as FormQuestion;
+    onChange(next);
+  }
+
+  function addQuestion(type: FormQuestionType) {
+    onChange([...questions, emptyQuestion(type)]);
+    setAdding(false);
+  }
+
+  function removeQuestion(index: number) {
+    const next = questions.slice();
+    next.splice(index, 1);
+    onChange(next);
+  }
+
+  function moveQuestion(index: number, dir: -1 | 1) {
+    const target = index + dir;
+    if (target < 0 || target >= questions.length) return;
+    const next = questions.slice();
+    [next[index], next[target]] = [next[target], next[index]];
+    onChange(next);
+  }
+
+  function applyPreset(presetId: string) {
+    if (!presetId) return;
+    const preset = FORM_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    if (questions.length > 0) {
+      if (!window.confirm(`Replace the current form with the "${preset.label}" preset? Your existing questions will be lost.`)) {
+        return;
+      }
+    }
+    onChange(preset.build());
+    setPresetWarning(null);
+  }
+
+  return (
+    <div className={styles.wrap}>
+      <Card padding="md">
+        <div className={styles.presetRow}>
+          <label className={styles.presetLabel} htmlFor="form-preset">
+            <strong>Start from a preset</strong>
+            <span>Pick a template, then tweak the questions. You can always add or remove.</span>
+          </label>
+          <Select
+            id="form-preset"
+            defaultValue=""
+            disabled={disabled}
+            onChange={(e) => {
+              applyPreset(e.target.value);
+              e.target.value = "";
+            }}
+          >
+            <option value="" disabled>
+              Choose a preset…
+            </option>
+            {FORM_PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label} — {p.description}
+              </option>
+            ))}
+          </Select>
+        </div>
+        {presetWarning && <p className={styles.warn}>{presetWarning}</p>}
+      </Card>
+
+      {questions.length === 0 && (
+        <Card padding="md">
+          <p style={{ color: "var(--color-text-muted)", margin: 0 }}>
+            No signup questions yet. Pick a preset above or add a question below. Attendees
+            will always be asked their name and email — you only need questions for the
+            extras.
+          </p>
+        </Card>
+      )}
+
+      {questions.map((q, i) => (
+        <Card key={q.id} padding="md">
+          <div className={styles.qHeader}>
+            <span className={styles.qType}>{TYPE_LABEL[q.type]}</span>
+            <div className={styles.qControls}>
+              <button
+                type="button"
+                className={styles.iconBtn}
+                onClick={() => moveQuestion(i, -1)}
+                disabled={disabled || i === 0}
+                aria-label="Move up"
+                title="Move up"
+              >
+                ▲
+              </button>
+              <button
+                type="button"
+                className={styles.iconBtn}
+                onClick={() => moveQuestion(i, 1)}
+                disabled={disabled || i === questions.length - 1}
+                aria-label="Move down"
+                title="Move down"
+              >
+                ▼
+              </button>
+              <button
+                type="button"
+                className={styles.deleteBtn}
+                onClick={() => removeQuestion(i)}
+                disabled={disabled}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+
+          <div className={styles.qBody}>
+            <label className={styles.fieldLabel}>
+              <span>Question</span>
+              <input
+                type="text"
+                className={styles.fieldInput}
+                value={q.label}
+                onChange={(e) => patch(i, { label: e.target.value } as Partial<FormQuestion>)}
+                disabled={disabled}
+                placeholder="e.g. Any food allergies?"
+              />
+            </label>
+
+            {(q.type === "shortText" || q.type === "longText") && (
+              <label className={styles.fieldLabel}>
+                <span>Placeholder (optional)</span>
+                <input
+                  type="text"
+                  className={styles.fieldInput}
+                  value={q.placeholder ?? ""}
+                  onChange={(e) =>
+                    patch(i, { placeholder: e.target.value } as Partial<FormQuestion>)
+                  }
+                  disabled={disabled}
+                  placeholder="e.g. e.g. vegan, halal, nut allergy"
+                />
+              </label>
+            )}
+
+            {(q.type === "singleSelect" || q.type === "multiSelect") && (
+              <OptionsEditor
+                options={q.options}
+                onChange={(options) =>
+                  patch(i, { options } as Partial<FormQuestion>)
+                }
+                disabled={disabled}
+              />
+            )}
+
+            {q.type === "dietaryAllergies" && (
+              <p className={styles.helper}>
+                Attendees see a checklist of: {DIETARY_ALLERGIES.join(", ")}, plus a free-text
+                &quot;other&quot; box.
+              </p>
+            )}
+
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={q.required}
+                onChange={(e) =>
+                  patch(i, { required: e.target.checked } as Partial<FormQuestion>)
+                }
+                disabled={disabled}
+              />
+              Required
+            </label>
+          </div>
+        </Card>
+      ))}
+
+      {adding ? (
+        <Card padding="md">
+          <div className={styles.addMenuHeader}>
+            <strong>Add a question</strong>
+            <button
+              type="button"
+              onClick={() => setAdding(false)}
+              className={styles.ghostBtn}
+            >
+              Cancel
+            </button>
+          </div>
+          <div className={styles.addMenuGrid}>
+            {ADD_MENU.map((item) => (
+              <button
+                key={item.type}
+                type="button"
+                className={styles.addMenuItem}
+                onClick={() => addQuestion(item.type)}
+              >
+                <strong>{TYPE_LABEL[item.type]}</strong>
+                <span>{item.hint}</span>
+              </button>
+            ))}
+          </div>
+        </Card>
+      ) : (
+        <button
+          type="button"
+          className={styles.addBigBtn}
+          onClick={() => setAdding(true)}
+          disabled={disabled}
+        >
+          + Add question
+        </button>
+      )}
+    </div>
+  );
+}
+
+function OptionsEditor({
+  options,
+  onChange,
+  disabled,
+}: {
+  options: string[];
+  onChange: (next: string[]) => void;
+  disabled?: boolean;
+}) {
+  function patch(i: number, v: string) {
+    const next = options.slice();
+    next[i] = v;
+    onChange(next);
+  }
+  function add() {
+    onChange([...options, ""]);
+  }
+  function remove(i: number) {
+    const next = options.slice();
+    next.splice(i, 1);
+    onChange(next.length === 0 ? [""] : next);
+  }
+  return (
+    <div className={styles.optionsWrap}>
+      <span className={styles.fieldLabel}>
+        <span>Options</span>
+      </span>
+      {options.map((opt, i) => (
+        <div key={i} className={styles.optionRow}>
+          <input
+            type="text"
+            className={styles.fieldInput}
+            value={opt}
+            onChange={(e) => patch(i, e.target.value)}
+            disabled={disabled}
+            placeholder={`Option ${i + 1}`}
+          />
+          <button
+            type="button"
+            className={styles.ghostBtn}
+            onClick={() => remove(i)}
+            disabled={disabled || options.length <= 1}
+            aria-label={`Remove option ${i + 1}`}
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className={styles.ghostBtn}
+        onClick={add}
+        disabled={disabled}
+      >
+        + Add option
+      </button>
+    </div>
+  );
+}

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import { downloadCSV, toCSV } from "@/lib/csv";
 import { useNewsletterSubscribers, type Subscriber } from "./useNewsletterSubscribers";
 import styles from "./NewsletterTable.module.css";
 
@@ -22,40 +23,18 @@ function deliveryEmails(s: Subscriber, view: EmailView): string[] {
   return out;
 }
 
-function toCSV(rows: Subscriber[]): string {
-  const header = [
-    "displayName",
-    "role",
-    "gmailEmail",
-    "universityEmail",
-    "deliverToGmail",
-    "deliverToUniEmail",
-  ].join(",");
-  const escape = (v: unknown) => {
-    const s = v == null ? "" : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const body = rows.map((r) =>
-    [
-      escape(r.displayName),
-      escape(r.role),
-      escape(r.gmailEmail ?? ""),
-      escape(r.universityEmail ?? ""),
-      escape(r.deliverToGmail),
-      escape(r.deliverToUniEmail),
-    ].join(","),
+function subscribersToCSV(rows: Subscriber[]): string {
+  return toCSV(
+    ["displayName", "role", "gmailEmail", "universityEmail", "deliverToGmail", "deliverToUniEmail"],
+    rows.map((r) => [
+      r.displayName,
+      r.role,
+      r.gmailEmail ?? "",
+      r.universityEmail ?? "",
+      r.deliverToGmail,
+      r.deliverToUniEmail,
+    ]),
   );
-  return [header, ...body].join("\n");
-}
-
-function downloadCSV(filename: string, content: string) {
-  const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
 }
 
 export default function NewsletterTable() {
@@ -91,7 +70,7 @@ export default function NewsletterTable() {
 
   function onDownload() {
     const stamp = new Date().toISOString().slice(0, 10);
-    downloadCSV(`naisi-newsletter-${stamp}.csv`, toCSV(subs));
+    downloadCSV(`naisi-newsletter-${stamp}.csv`, subscribersToCSV(subs));
   }
 
   if (loading) {

@@ -1,13 +1,15 @@
 import { marked } from "marked";
 
 /**
- * A newsletter draft is an ordered list of typed blocks. Each block has its own
- * editor form in the admin UI and its own React Email component at render time.
+ * A draft (newsletter or event) is an ordered list of typed blocks. Each block
+ * has its own editor form in the UI and its own rendered output.
  *
- * Phase 1 types: heading, richText, image, divider. Phase 2 adds callout, button.
+ * Types: heading, richText, image, divider, video.
+ * Video blocks render as embedded YouTube on the web and as a thumbnail link
+ * in email (iframes are blocked by most clients).
  */
 
-export type BlockType = "heading" | "richText" | "image" | "divider";
+export type BlockType = "heading" | "richText" | "image" | "divider" | "video";
 
 type BaseBlock = {
   id: string;
@@ -42,7 +44,19 @@ export type DividerBlock = BaseBlock & {
   type: "divider";
 };
 
-export type Block = HeadingBlock | RichTextBlock | ImageBlock | DividerBlock;
+export type VideoBlock = BaseBlock & {
+  type: "video";
+  /** Full pasted URL. We parse the video ID on render. */
+  url: string;
+  caption?: string;
+};
+
+export type Block =
+  | HeadingBlock
+  | RichTextBlock
+  | ImageBlock
+  | DividerBlock
+  | VideoBlock;
 
 /** Short, collision-unlikely block id for the editor. */
 export function newBlockId(): string {
@@ -60,6 +74,8 @@ export function emptyBlock(type: BlockType): Block {
       return { id, type: "image", url: "", alt: "" };
     case "divider":
       return { id, type: "divider" };
+    case "video":
+      return { id, type: "video", url: "" };
   }
 }
 
@@ -80,6 +96,8 @@ export function isValidBlock(raw: unknown): raw is Block {
       return typeof b.url === "string" && typeof b.alt === "string";
     case "divider":
       return true;
+    case "video":
+      return typeof b.url === "string";
     default:
       return false;
   }
@@ -117,6 +135,38 @@ export function personaliseBlocks(blocks: Block[], preferredName: string): Block
         return { ...b, alt: sub(b.alt), caption: b.caption ? sub(b.caption) : b.caption };
       case "divider":
         return b;
+      case "video":
+        return { ...b, caption: b.caption ? sub(b.caption) : b.caption };
     }
   });
+}
+
+/**
+ * Extract the 11-char YouTube video ID from a typical URL. Supports watch URLs,
+ * short youtu.be links, /embed/, /shorts/, and bare IDs. Returns null when
+ * the input doesn't look like a YouTube reference.
+ */
+export function youtubeIdFromUrl(raw: string): string | null {
+  const input = raw.trim();
+  if (!input) return null;
+  // Bare 11-char id (what you get if the drafter pastes just the ID).
+  if (/^[a-zA-Z0-9_-]{11}$/.test(input)) return input;
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.replace(/^www\./, "");
+  if (host === "youtu.be") {
+    const id = url.pathname.slice(1);
+    return /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : null;
+  }
+  if (host === "youtube.com" || host === "m.youtube.com" || host === "youtube-nocookie.com") {
+    const v = url.searchParams.get("v");
+    if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+    const match = url.pathname.match(/\/(?:embed|shorts|v)\/([a-zA-Z0-9_-]{11})/);
+    if (match) return match[1];
+  }
+  return null;
 }

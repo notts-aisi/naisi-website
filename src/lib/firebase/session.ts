@@ -15,6 +15,8 @@ export type SessionUser = {
   permissions: {
     draftNewsletter: boolean;
     approveNewsletter: boolean;
+    draftEvent: boolean;
+    approveEvent: boolean;
   };
 };
 
@@ -65,6 +67,8 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
       permissions: {
         draftNewsletter: Boolean(perms.draftNewsletter),
         approveNewsletter: Boolean(perms.approveNewsletter),
+        draftEvent: Boolean(perms.draftEvent),
+        approveEvent: Boolean(perms.approveEvent),
       },
     };
   } catch {

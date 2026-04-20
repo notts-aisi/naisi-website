@@ -59,12 +59,14 @@ export async function setTracks(uid: string, tracks: Track[]) {
   await updateDoc(doc(db, "users", uid), { tracks });
 }
 
-/** Admin-only: grant/revoke orthogonal permissions (draft/approve newsletter, etc.). */
+/** Admin-only: grant/revoke orthogonal permissions (draft/approve newsletter, draft/approve event). */
 export async function setPermissions(uid: string, permissions: UserPermissions) {
   const db = getClientDb();
   const clean: Record<string, boolean> = {
     draftNewsletter: Boolean(permissions.draftNewsletter),
     approveNewsletter: Boolean(permissions.approveNewsletter),
+    draftEvent: Boolean(permissions.draftEvent),
+    approveEvent: Boolean(permissions.approveEvent),
   };
   await updateDoc(doc(db, "users", uid), { permissions: clean });
 }
