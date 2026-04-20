@@ -364,6 +364,35 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                 </div>
               </div>
 
+              <div className={styles.controlBlock}>
+                <span className={styles.controlLabel}>
+                  Event permissions
+                  {user.role === "admin" && (
+                    <span className={styles.hint}> (admins always have both)</span>
+                  )}
+                </span>
+                <div className={styles.trackRow}>
+                  <label className={styles.trackChoice}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(user.permissions?.draftEvent)}
+                      onChange={() => onTogglePermission("draftEvent")}
+                      disabled={busy}
+                    />
+                    <span>Can draft</span>
+                  </label>
+                  <label className={styles.trackChoice}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(user.permissions?.approveEvent)}
+                      onChange={() => onTogglePermission("approveEvent")}
+                      disabled={busy}
+                    />
+                    <span>Can approve + publish</span>
+                  </label>
+                </div>
+              </div>
+
               <label className={`${styles.controlBlock} ${styles.controlToggle}`}>
                 <input
                   type="checkbox"

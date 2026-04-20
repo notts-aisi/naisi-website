@@ -2,10 +2,11 @@ import {
   Heading as EmailHeading,
   Hr,
   Img,
+  Link as EmailLink,
   Section,
   Text,
 } from "@react-email/components";
-import type { Block } from "@/lib/firestore/newsletterBlocks";
+import { youtubeIdFromUrl, type Block } from "@/lib/firestore/newsletterBlocks";
 
 /**
  * Render a single block as email-safe React Email JSX. All styles are inline —
@@ -21,7 +22,35 @@ export default function BlockRenderer({ block }: { block: Block }) {
       return <ImageBlockView block={block} />;
     case "divider":
       return <Hr style={dividerStyle} />;
+    case "video":
+      return <VideoBlockView block={block} />;
   }
+}
+
+function VideoBlockView({ block }: { block: Extract<Block, { type: "video" }> }) {
+  const id = youtubeIdFromUrl(block.url);
+  if (!id) return null;
+  const href = `https://www.youtube.com/watch?v=${id}`;
+  // Email clients strip iframes, so fall back to a clickable thumbnail.
+  const thumb = `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+  return (
+    <Section style={sectionStyle}>
+      <EmailLink href={href} style={{ textDecoration: "none" }}>
+        <Img
+          src={thumb}
+          alt={block.caption || "Watch on YouTube"}
+          width="100%"
+          style={imageStyle}
+        />
+      </EmailLink>
+      <Text style={captionStyle}>
+        {block.caption ? `${block.caption} — ` : ""}
+        <EmailLink href={href} style={{ color: "#2563eb" }}>
+          Watch on YouTube
+        </EmailLink>
+      </Text>
+    </Section>
+  );
 }
 
 function HeadingBlockView({ block }: { block: Extract<Block, { type: "heading" }> }) {

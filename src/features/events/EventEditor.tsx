@@ -1,0 +1,743 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { doc, onSnapshot } from "firebase/firestore";
+import Badge from "@/components/ui/Badge";
+import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
+import DateTimePopover from "@/components/ui/DateTimePopover";
+import { Field, Input } from "@/components/ui/Input";
+import Link from "next/link";
+import Select from "@/components/ui/Select";
+import { useAuth } from "@/auth/AuthProvider";
+import { getClientDb } from "@/lib/firebase/client";
+import {
+  EVENT_STATUS_LABEL,
+  FOOD_PROVENANCE_LABEL,
+  LOCATION_MAX,
+  TITLE_MAX,
+  normalizeEvent,
+  type EventDoc,
+  type EventStatus,
+  type EventVisibility,
+  type FoodProvenance,
+  type FormQuestion,
+} from "@/lib/firestore/events";
+import type { Block } from "@/lib/firestore/newsletterBlocks";
+import { canApproveEvent, canDraftEvent } from "@/lib/firestore/users";
+import BlockEditor from "@/features/newsletter/editor/BlockEditor";
+import {
+  approveEvent,
+  cancelEvent,
+  deleteEvent,
+  rejectEvent,
+  revertEventToDraft,
+  submitEventForReview,
+  updateEvent,
+} from "./eventMutations";
+import FormBuilder from "./FormBuilder";
+import styles from "./EventEditor.module.css";
+
+type Props = { eventId: string };
+
+function statusTone(status: EventStatus): "neutral" | "accent" | "success" | "danger" | "warning" {
+  switch (status) {
+    case "draft":
+      return "neutral";
+    case "pending":
+      return "warning";
+    case "approved":
+      return "accent";
+    case "published":
+      return "success";
+    case "rejected":
+      return "danger";
+    case "cancelled":
+      return "danger";
+  }
+}
+
+export default function EventEditor({ eventId }: Props) {
+  const router = useRouter();
+  const { user, role, permissions } = useAuth();
+
+  const [event, setEvent] = useState<EventDoc | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
+
+  const [title, setTitle] = useState("");
+  const [blocks, setBlocks] = useState<Block[]>([]);
+  const [startAt, setStartAt] = useState<Date | null>(null);
+  const [endAt, setEndAt] = useState<Date | null>(null);
+  const [location, setLocation] = useState("");
+  const [locationHidden, setLocationHidden] = useState(false);
+  const [locationPublicText, setLocationPublicText] = useState("");
+  const [visibility, setVisibility] = useState<EventVisibility>("public");
+  const [capacity, setCapacity] = useState<number | null>(null);
+  const [waitlistEnabled, setWaitlistEnabled] = useState(true);
+  const [signupForm, setSignupForm] = useState<FormQuestion[]>([]);
+  const [foodProvenance, setFoodProvenance] = useState<FoodProvenance>("none");
+  const [foodProvenanceNote, setFoodProvenanceNote] = useState("");
+
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [rejectNote, setRejectNote] = useState("");
+  const [publishStatus, setPublishStatus] = useState<
+    | { kind: "idle" }
+    | { kind: "publishing" }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  useEffect(() => {
+    const db = getClientDb();
+    const unsub = onSnapshot(
+      doc(db, "events", eventId),
+      (snap) => {
+        if (!snap.exists()) {
+          setNotFound(true);
+          setLoading(false);
+          return;
+        }
+        const next = normalizeEvent(snap.id, snap.data());
+        setEvent(next);
+        setTitle((cur) => (dirty ? cur : next.title));
+        setBlocks((cur) => (dirty ? cur : next.blocks));
+        setStartAt((cur) => (dirty ? cur : next.startAt));
+        setEndAt((cur) => (dirty ? cur : next.endAt));
+        setLocation((cur) => (dirty ? cur : next.location));
+        setLocationHidden((cur) => (dirty ? cur : next.locationHidden));
+        setLocationPublicText((cur) => (dirty ? cur : next.locationPublicText ?? ""));
+        setVisibility((cur) => (dirty ? cur : next.visibility));
+        setCapacity((cur) => (dirty ? cur : next.capacity));
+        setWaitlistEnabled((cur) => (dirty ? cur : next.waitlistEnabled));
+        setSignupForm((cur) => (dirty ? cur : next.signupForm));
+        setFoodProvenance((cur) => (dirty ? cur : next.foodProvenance));
+        setFoodProvenanceNote((cur) => (dirty ? cur : next.foodProvenanceNote ?? ""));
+        setLoading(false);
+      },
+      (err) => {
+        console.error(err);
+        setError(err.message);
+        setLoading(false);
+      },
+    );
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventId]);
+
+  const viewer =
+    role && (role === "admin" || role === "committee" || role === "member")
+      ? { role, permissions }
+      : null;
+  const canDraft = viewer ? canDraftEvent(viewer) : false;
+  const canApprove = viewer ? canApproveEvent(viewer) : false;
+
+  const isAuthor = !!user && !!event && event.authorUid === user.uid;
+  const status = event?.status ?? "draft";
+  const editable = useMemo(() => {
+    if (!event) return false;
+    if (status === "published" || status === "cancelled") return false;
+    if (status === "pending") return canApprove;
+    if (status === "approved") return canApprove;
+    return isAuthor || canApprove;
+  }, [event, status, canApprove, isAuthor]);
+
+  function markDirty() {
+    setDirty(true);
+  }
+
+  async function flush() {
+    if (!event) return;
+    if (!dirty) return;
+    await updateEvent(event.id, {
+      title,
+      blocks,
+      startAt,
+      endAt,
+      location,
+      locationHidden,
+      locationPublicText: locationHidden ? locationPublicText : null,
+      visibility,
+      capacity,
+      waitlistEnabled: capacity === null ? false : waitlistEnabled,
+      signupForm,
+      foodProvenance,
+      foodProvenanceNote:
+        foodProvenance === "other" || foodProvenanceNote.trim()
+          ? foodProvenanceNote
+          : null,
+    });
+    setDirty(false);
+  }
+
+  async function onSave() {
+    if (!event) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await flush();
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function validateBeforeSubmit(): string | null {
+    if (!title.trim()) return "Give the event a title before submitting.";
+    if (blocks.length === 0) return "Add a description block before submitting.";
+    if (!startAt) return "Pick a start date/time.";
+    if (!location.trim()) return "Add a location (room, venue, or link).";
+    if (locationHidden && !locationPublicText.trim()) {
+      return "You've hidden the exact location — add a fuzzy label to show publicly (e.g. 'somewhere on campus').";
+    }
+    if (capacity !== null && capacity <= 0) return "Capacity must be at least 1 (or blank for unlimited).";
+    if (foodProvenance === "other" && !foodProvenanceNote.trim()) {
+      return 'Food provenance is set to "Other" — add a short note explaining.';
+    }
+    for (const q of signupForm) {
+      if (!q.label.trim()) return "Every signup question needs a label.";
+      if ((q.type === "singleSelect" || q.type === "multiSelect")) {
+        const cleaned = q.options.map((o) => o.trim()).filter(Boolean);
+        if (cleaned.length < 2) return `"${q.label}" needs at least two options.`;
+      }
+    }
+    return null;
+  }
+
+  async function onSubmitForReview() {
+    if (!event) return;
+    const invalid = validateBeforeSubmit();
+    if (invalid) {
+      setError(invalid);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await flush();
+      await submitEventForReview(event.id);
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Submit failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onApprove() {
+    if (!event) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await flush();
+      await approveEvent(event.id);
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Approve failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onReject() {
+    if (!event) return;
+    if (!rejectNote.trim()) {
+      setError("Leave a note so the author knows what to change.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await rejectEvent(event.id, rejectNote);
+      setRejectNote("");
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Reject failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onRevertToDraft() {
+    if (!event) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await revertEventToDraft(event.id);
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Could not revert");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onPublish() {
+    if (!event) return;
+    if (!window.confirm("Publish this event? It will be visible on the events page.")) return;
+    setPublishStatus({ kind: "publishing" });
+    setError(null);
+    try {
+      const res = await fetch(`/api/events/${event.id}/publish`, { method: "POST" });
+      const body = (await res.json().catch(() => null)) as { ok?: true; error?: string } | null;
+      if (!res.ok || !body?.ok) {
+        setPublishStatus({
+          kind: "error",
+          message: body?.error ?? `Publish failed (${res.status})`,
+        });
+        return;
+      }
+      setPublishStatus({ kind: "idle" });
+    } catch (err) {
+      setPublishStatus({
+        kind: "error",
+        message: err instanceof Error ? err.message : "Publish error",
+      });
+    }
+  }
+
+  async function onCancel() {
+    if (!event) return;
+    if (!window.confirm("Mark this event as cancelled? Attendees won't be notified automatically.")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await cancelEvent(event.id);
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Cancel failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onDelete() {
+    if (!event) return;
+    if (!window.confirm("Permanently delete this event? This can't be undone.")) return;
+    setBusy(true);
+    try {
+      await deleteEvent(event.id);
+      router.push("/events/manage");
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Delete failed");
+      setBusy(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <Card padding="md">
+        <p style={{ color: "var(--color-text-muted)" }}>Loading event…</p>
+      </Card>
+    );
+  }
+
+  if (notFound || !event) {
+    return (
+      <Card padding="md">
+        <p style={{ color: "var(--color-text-muted)" }}>Event not found. It may have been deleted.</p>
+      </Card>
+    );
+  }
+
+  return (
+    <div className={styles.editor}>
+      <div className={styles.statusBar}>
+        <div className={styles.statusMeta}>
+          <Badge tone={statusTone(status)}>{EVENT_STATUS_LABEL[status]}</Badge>
+          <span className={styles.muted}>by {event.authorDisplayName ?? "unknown"}</span>
+          {event.publishedAt && (
+            <span className={styles.muted}>
+              · published {event.publishedAt.toLocaleDateString()}
+            </span>
+          )}
+        </div>
+        <div className={styles.spacer} />
+        {dirty && editable && <span className={styles.muted}>Unsaved changes</span>}
+        <Link
+          href={`/events/manage/${event.id}/preview`}
+          target="_blank"
+          rel="noopener"
+        >
+          <Button variant="ghost">Preview ↗</Button>
+        </Link>
+        <Link href={`/events/manage/${event.id}/attendees`}>
+          <Button variant="ghost">
+            Attendees
+            {(event.rsvpCountPending ?? 0) > 0 && ` · ${event.rsvpCountPending} pending`}
+          </Button>
+        </Link>
+      </div>
+
+      {(status === "pending" || status === "approved") && (
+        <Card padding="md">
+          <strong>
+            {status === "pending"
+              ? "Submitted for review."
+              : "Approved — ready to publish."}
+          </strong>
+          <p style={{ marginTop: "var(--space-2)", color: "var(--color-text-muted)" }}>
+            Want to test the signup flow end-to-end?{" "}
+            <Link
+              href={`/events/manage/${event.id}/preview`}
+              target="_blank"
+              rel="noopener"
+              style={{ color: "var(--color-accent)" }}
+            >
+              Open the preview
+            </Link>{" "}
+            and submit a test RSVP — it&apos;ll land in Firestore so you can verify the
+            data shape. Cancel it before the event goes live.
+          </p>
+        </Card>
+      )}
+
+      {status === "published" && (
+        <Card padding="md">
+          <strong>Published.</strong>
+          <p style={{ marginTop: "var(--space-2)", color: "var(--color-text-muted)" }}>
+            Live at{" "}
+            <Link
+              href={`/events/${event.id}`}
+              target="_blank"
+              rel="noopener"
+              style={{ color: "var(--color-accent)" }}
+            >
+              /events/{event.id}
+            </Link>
+            . Share the link.
+          </p>
+        </Card>
+      )}
+
+      {status === "rejected" && event.reviewerNotes && (
+        <Card padding="md">
+          <strong style={{ color: "var(--color-danger)" }}>Returned for revisions</strong>
+          <p style={{ marginTop: "var(--space-2)", color: "var(--color-text)" }}>
+            {event.reviewerNotes}
+          </p>
+        </Card>
+      )}
+
+      <Card padding="lg">
+        <div className={styles.fields}>
+          <Field id="title" label="Event title" hint="Shown on the events list and booking page.">
+            <Input
+              id="title"
+              value={title}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                markDirty();
+              }}
+              maxLength={TITLE_MAX}
+              disabled={!editable || busy}
+              placeholder="e.g. April fellowship social"
+            />
+          </Field>
+
+          <div className={styles.twoCol}>
+            <Field id="start" label="Starts" hint="Local time. You can adjust after creation.">
+              <DateTimePopover
+                value={startAt}
+                onChange={(next) => {
+                  setStartAt(next);
+                  markDirty();
+                }}
+                disabled={!editable || busy}
+                placeholder="Pick a start date & time…"
+              />
+            </Field>
+            <Field id="end" label="Ends (optional)" hint="Leave blank if you're not sure yet.">
+              <DateTimePopover
+                value={endAt}
+                onChange={(next) => {
+                  setEndAt(next);
+                  markDirty();
+                }}
+                disabled={!editable || busy}
+                placeholder="Pick an end date & time…"
+              />
+            </Field>
+          </div>
+
+          <Field
+            id="location"
+            label="Location (exact)"
+            hint="Room, venue, or Zoom URL. Only shared publicly unless you hide it below."
+          >
+            <Input
+              id="location"
+              value={location}
+              onChange={(e) => {
+                setLocation(e.target.value);
+                markDirty();
+              }}
+              maxLength={LOCATION_MAX}
+              disabled={!editable || busy}
+              placeholder="e.g. Pope A17, Jubilee Campus"
+            />
+          </Field>
+
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={locationHidden}
+              onChange={(e) => {
+                setLocationHidden(e.target.checked);
+                markDirty();
+              }}
+              disabled={!editable || busy}
+            />
+            Hide the exact location publicly until an RSVP is approved
+          </label>
+
+          {locationHidden && (
+            <Field
+              id="location-public-text"
+              label="Public placeholder"
+              hint="What visitors see until they're approved. Day and time still show."
+            >
+              <Input
+                id="location-public-text"
+                value={locationPublicText}
+                onChange={(e) => {
+                  setLocationPublicText(e.target.value);
+                  markDirty();
+                }}
+                maxLength={LOCATION_MAX}
+                disabled={!editable || busy}
+                placeholder="e.g. somewhere on University Park campus"
+              />
+            </Field>
+          )}
+
+          <div className={styles.twoCol}>
+            <Field id="visibility" label="Who can RSVP?">
+              <Select
+                id="visibility"
+                value={visibility}
+                onChange={(e) => {
+                  setVisibility(e.target.value as EventVisibility);
+                  markDirty();
+                }}
+                disabled={!editable || busy}
+              >
+                <option value="public">Public — anyone with the link (email only)</option>
+                <option value="members">Members only — must sign in</option>
+              </Select>
+            </Field>
+
+            <Field id="capacity" label="Capacity (optional)" hint="Leave blank for unlimited.">
+              <input
+                id="capacity"
+                type="number"
+                min={1}
+                className={styles.fieldInput}
+                value={capacity ?? ""}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  setCapacity(e.target.value === "" || Number.isNaN(n) ? null : Math.floor(n));
+                  markDirty();
+                }}
+                disabled={!editable || busy}
+                placeholder="e.g. 30"
+              />
+            </Field>
+          </div>
+
+          {capacity !== null && (
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={waitlistEnabled}
+                onChange={(e) => {
+                  setWaitlistEnabled(e.target.checked);
+                  markDirty();
+                }}
+                disabled={!editable || busy}
+              />
+              Once full, let people join a waitlist (auto-promoted on cancellations)
+            </label>
+          )}
+        </div>
+      </Card>
+
+      <section>
+        <h2 className={styles.sectionTitle}>Description</h2>
+        <BlockEditor
+          draftId={event.id}
+          storagePrefix="event-images"
+          blocks={blocks}
+          onChange={(next) => {
+            setBlocks(next);
+            markDirty();
+          }}
+          disabled={!editable || busy}
+        />
+      </section>
+
+      <section>
+        <h2 className={styles.sectionTitle}>Food & dietary</h2>
+        <p className={styles.sectionHint}>
+          Tell attendees up front if the food comes from a restaurant with a specific
+          religious or dietary standard — saves them having to ask.
+        </p>
+        <Card padding="lg">
+          <div className={styles.fields}>
+            <Field id="food-provenance" label="Food provenance">
+              <Select
+                id="food-provenance"
+                value={foodProvenance}
+                onChange={(e) => {
+                  setFoodProvenance(e.target.value as FoodProvenance);
+                  markDirty();
+                }}
+                disabled={!editable || busy}
+              >
+                {(
+                  [
+                    "none",
+                    "halal",
+                    "kosher",
+                    "vegetarian",
+                    "vegan",
+                    "other",
+                  ] as FoodProvenance[]
+                ).map((fp) => (
+                  <option key={fp} value={fp}>
+                    {FOOD_PROVENANCE_LABEL[fp]}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            {foodProvenance !== "none" && (
+              <Field
+                id="food-provenance-note"
+                label={
+                  foodProvenance === "other"
+                    ? "Describe the kitchen / restaurant"
+                    : "Extra note (optional)"
+                }
+                hint={
+                  foodProvenance === "other"
+                    ? 'Required when set to "Other".'
+                    : "e.g. the restaurant's name, or anything attendees should know."
+                }
+              >
+                <Input
+                  id="food-provenance-note"
+                  value={foodProvenanceNote}
+                  onChange={(e) => {
+                    setFoodProvenanceNote(e.target.value);
+                    markDirty();
+                  }}
+                  disabled={!editable || busy}
+                  maxLength={200}
+                  placeholder={
+                    foodProvenance === "other"
+                      ? "e.g. fully plant-based kitchen"
+                      : "e.g. from Alif Halal Kitchen on Derby Rd"
+                  }
+                />
+              </Field>
+            )}
+          </div>
+        </Card>
+      </section>
+
+      <section>
+        <h2 className={styles.sectionTitle}>Signup questions</h2>
+        <p className={styles.sectionHint}>
+          Build the booking form for this event. Attendees are always asked their name and
+          email — add questions below for everything else (dietary, t-shirt size, etc.).
+        </p>
+        <FormBuilder
+          questions={signupForm}
+          onChange={(next) => {
+            setSignupForm(next);
+            markDirty();
+          }}
+          disabled={!editable || busy}
+        />
+      </section>
+
+      {error && <p className={styles.danger}>{error}</p>}
+      {publishStatus.kind === "error" && (
+        <Card padding="md">
+          <p className={styles.danger}>Publish failed: {publishStatus.message}</p>
+        </Card>
+      )}
+
+      <div className={styles.editorActions}>
+        {editable && (
+          <Button onClick={onSave} disabled={busy || !dirty}>
+            {busy ? "Saving…" : "Save"}
+          </Button>
+        )}
+
+        {canDraft && (status === "draft" || status === "rejected") && isAuthor && (
+          <Button variant="ghost" onClick={onSubmitForReview} disabled={busy}>
+            Submit for review
+          </Button>
+        )}
+
+        {canApprove && status === "pending" && (
+          <>
+            <Button onClick={onApprove} disabled={busy}>
+              Approve
+            </Button>
+            <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
+              <Input
+                id="rejectNote"
+                placeholder="Reason to send back for revisions…"
+                value={rejectNote}
+                onChange={(e) => setRejectNote(e.target.value)}
+                style={{ minWidth: "16rem" }}
+              />
+              <Button variant="ghost" onClick={onReject} disabled={busy}>
+                Send back
+              </Button>
+            </div>
+          </>
+        )}
+
+        {canApprove && status === "approved" && (
+          <Button onClick={onPublish} disabled={publishStatus.kind === "publishing"}>
+            {publishStatus.kind === "publishing" ? "Publishing…" : "Publish"}
+          </Button>
+        )}
+
+        {canApprove && (status === "pending" || status === "approved") && (
+          <Button variant="ghost" onClick={onRevertToDraft} disabled={busy}>
+            Move back to draft
+          </Button>
+        )}
+
+        {canApprove && status === "published" && (
+          <Button variant="ghost" onClick={onCancel} disabled={busy}>
+            Mark cancelled
+          </Button>
+        )}
+
+        <div className={styles.spacer} />
+
+        {(isAuthor || role === "admin") && status !== "published" && (
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={busy}
+            className={styles.deleteBtn}
+          >
+            Delete event
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}

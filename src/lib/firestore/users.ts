@@ -106,6 +106,8 @@ export const TRACK_LABELS: Record<Track, string> = {
 export type UserPermissions = {
   draftNewsletter?: boolean;
   approveNewsletter?: boolean;
+  draftEvent?: boolean;
+  approveEvent?: boolean;
 };
 
 export function canDraftNewsletter(user: Pick<UserDoc, "role" | "permissions">): boolean {
@@ -116,6 +118,16 @@ export function canApproveNewsletter(
   user: Pick<UserDoc, "role" | "permissions">,
 ): boolean {
   return user.role === "admin" || Boolean(user.permissions?.approveNewsletter);
+}
+
+export function canDraftEvent(user: Pick<UserDoc, "role" | "permissions">): boolean {
+  return user.role === "admin" || Boolean(user.permissions?.draftEvent);
+}
+
+export function canApproveEvent(
+  user: Pick<UserDoc, "role" | "permissions">,
+): boolean {
+  return user.role === "admin" || Boolean(user.permissions?.approveEvent);
 }
 
 export type UserDoc = {
@@ -155,6 +167,8 @@ export function normalizeUser(id: string, data: Raw): UserDoc {
   const permissions: UserPermissions = {
     draftNewsletter: Boolean(rawPermissions.draftNewsletter),
     approveNewsletter: Boolean(rawPermissions.approveNewsletter),
+    draftEvent: Boolean(rawPermissions.draftEvent),
+    approveEvent: Boolean(rawPermissions.approveEvent),
   };
   return {
     uid: id,

@@ -9,6 +9,8 @@ import styles from "./ImageUpload.module.css";
 
 type Props = {
   draftId: string;
+  /** Storage folder prefix. Defaults to newsletter-images for backwards compat. */
+  storagePrefix?: string;
   currentUrl?: string;
   currentAlt?: string;
   currentCaption?: string;
@@ -35,6 +37,7 @@ function safeFileName(name: string): string {
 
 export default function ImageUpload({
   draftId,
+  storagePrefix = "newsletter-images",
   currentUrl,
   currentAlt = "",
   currentCaption = "",
@@ -66,7 +69,7 @@ export default function ImageUpload({
       });
 
       setState({ kind: "uploading", progress: 0 });
-      const path = `newsletter-images/${draftId}/${Date.now()}-${safeFileName(compressed.name)}`;
+      const path = `${storagePrefix}/${draftId}/${Date.now()}-${safeFileName(compressed.name)}`;
       const storageRef = ref(getClientStorage(), path);
       await uploadBytes(storageRef, compressed, {
         contentType: compressed.type,

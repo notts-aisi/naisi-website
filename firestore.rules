@@ -47,12 +47,136 @@ service cloud.firestore {
     }
 
     // === tasks ===
+    //
+    // Visibility model:
+    // - 'committee' visibility: every committee/admin sees the task on the board.
+    // - 'assignees-only': only the listed assignees + admins see it. Admins-only
+    //   toggle (committee cannot create OR flip a task to assignees-only).
+    // - Members can create tasks ONLY for themselves with source='personal'
+    //   and visibility='assignees-only' (powers the "quick add" on My Work).
     match /tasks/{taskId} {
-      allow read: if hasRole(['member', 'committee', 'admin']);
-      allow create: if hasRole(['committee', 'admin']);
-      allow update: if isAdmin()
-        || (isSignedIn() && request.auth.uid in resource.data.assigneeUids);
-      allow delete: if isAdmin();
+      function taskData()    { return resource.data; }
+      function isTaskAssignee() {
+        return isSignedIn() && request.auth.uid in taskData().assigneeUids;
+      }
+      function isTaskCreator() {
+        return isSignedIn() && request.auth.uid == taskData().creatorUid;
+      }
+      function isCommittee() { return hasRole(['committee', 'admin']); }
+      function visibleToMe() {
+        return isAdmin()
+          || (isCommittee() && taskData().visibility == 'committee')
+          || isTaskAssignee();
+      }
+
+      allow read: if visibleToMe();
+
+      allow create: if isSignedIn()
+        && request.resource.data.creatorUid == request.auth.uid
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.subtasks.size() <= 50
+        && request.resource.data.assigneeUids.size() <= 10
+        && (
+          isCommittee()
+          || (
+            request.resource.data.source == 'personal'
+            && request.resource.data.visibility == 'assignees-only'
+            && request.resource.data.assigneeUids.hasOnly([request.auth.uid])
+            && request.resource.data.assigneeUids.size() == 1
+          )
+        );
+
+      // Admin = full control (incl. flipping visibility).
+      // Committee = full control on committee-visibility tasks but CANNOT flip
+      // visibility to 'assignees-only' (admin-only).
+      // Assignees = may toggle a narrow set of fields only (status/subtasks/counters).
+      allow update: if
+        isAdmin()
+        || (
+          isCommittee()
+          && taskData().visibility == 'committee'
+          && request.resource.data.visibility == 'committee'
+          && request.resource.data.subtasks.size() <= 50
+          && request.resource.data.assigneeUids.size() <= 10
+        )
+        || (
+          isTaskAssignee()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'subtasks', 'subtaskStats', 'updatedAt',
+            'completedAt', 'attachmentCount', 'commentCount'
+          ])
+          && request.resource.data.subtasks.size() <= 50
+        )
+        // Creator of a personal task can edit it freely.
+        || (
+          taskData().source == 'personal'
+          && isTaskCreator()
+          && request.resource.data.visibility == 'assignees-only'
+          && request.resource.data.source == 'personal'
+          && request.resource.data.assigneeUids.hasOnly([request.auth.uid])
+        );
+
+      allow delete: if isAdmin()
+        || (isCommittee() && taskData().visibility == 'committee' && isTaskCreator())
+        || (taskData().source == 'personal' && isTaskCreator());
+
+      // --- comments ---
+      match /comments/{commentId} {
+        function parent() {
+          return get(/databases/$(database)/documents/tasks/$(taskId)).data;
+        }
+        function canAccessParent() {
+          return isAdmin()
+            || (hasRole(['committee', 'admin']) && parent().visibility == 'committee')
+            || request.auth.uid in parent().assigneeUids;
+        }
+        allow read: if canAccessParent();
+        allow create: if canAccessParent()
+          && request.resource.data.authorUid == request.auth.uid
+          && request.resource.data.bodyMarkdown.size() <= 2000;
+        allow update: if isSignedIn()
+          && resource.data.authorUid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'bodyMarkdown', 'editedAt', 'deleted', 'mentions'
+          ])
+          && request.resource.data.bodyMarkdown.size() <= 2000;
+        allow delete: if isAdmin();
+      }
+
+      // --- activity log (append-only; no client updates/deletes) ---
+      match /activity/{entryId} {
+        function parent() {
+          return get(/databases/$(database)/documents/tasks/$(taskId)).data;
+        }
+        function canAccessParent() {
+          return isAdmin()
+            || (hasRole(['committee', 'admin']) && parent().visibility == 'committee')
+            || request.auth.uid in parent().assigneeUids;
+        }
+        allow read: if canAccessParent();
+        allow create: if isSignedIn()
+          && request.resource.data.actorUid == request.auth.uid;
+        allow update, delete: if false;
+      }
+
+      // --- attachments metadata ---
+      match /attachments/{attachmentId} {
+        function parent() {
+          return get(/databases/$(database)/documents/tasks/$(taskId)).data;
+        }
+        function canAccessParent() {
+          return isAdmin()
+            || (hasRole(['committee', 'admin']) && parent().visibility == 'committee')
+            || request.auth.uid in parent().assigneeUids;
+        }
+        allow read: if canAccessParent();
+        allow create: if canAccessParent()
+          && request.resource.data.uploadedByUid == request.auth.uid;
+        allow delete: if isAdmin()
+          || (isSignedIn() && resource.data.uploadedByUid == request.auth.uid);
+        allow update: if false;
+      }
     }
 
     // === credentials (committee only, client-side encrypted) ===
@@ -107,6 +231,65 @@ service cloud.firestore {
         && request.resource.data.status != 'sent';
       allow delete: if isAdmin()
         || (canDraft() && resource.data.authorUid == request.auth.uid);
+    }
+
+    // === events ===
+    // Parallel to newsletterDrafts — orthogonal permissions.
+    // Drafters can create/read/update; approvers can read/update; admins always in.
+    // Published events are readable by any signed-in user (members see them on
+    // the authed events list). Public visibility for unauthenticated readers is
+    // served via a server route using the admin SDK, so rules stay tight.
+    // 'published' transitions only happen via the admin SDK.
+    match /events/{eventId} {
+      function me() {
+        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      }
+      function hasPerm(key) {
+        return isSignedIn()
+          && (me().role == 'admin' || me().get(['permissions', key], false) == true);
+      }
+      function canDraft()   { return hasPerm('draftEvent');   }
+      function canApprove() { return hasPerm('approveEvent'); }
+
+      allow read: if canDraft() || canApprove()
+        || (isSignedIn() && resource.data.status == 'published');
+      allow create: if canDraft()
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.status == 'draft';
+      allow update: if (canDraft() || canApprove())
+        && request.resource.data.status != 'published';
+      allow delete: if isAdmin()
+        || (canDraft() && resource.data.authorUid == request.auth.uid
+            && resource.data.status != 'published');
+    }
+
+    // === eventRsvps ===
+    // RSVPs are PII — never public read. All writes go through the server route
+    // `/api/events/[id]/rsvp` (admin SDK) so rules are a safety net, not the
+    // main gate. Reads: approvers + admins see all; drafters see RSVPs only for
+    // events they authored (we get() the parent event to check).
+    match /eventRsvps/{rsvpId} {
+      function me() {
+        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      }
+      function isEventApprover() {
+        return isSignedIn()
+          && (me().role == 'admin'
+              || me().get(['permissions', 'approveEvent'], false) == true);
+      }
+      function isEventDrafter() {
+        return isSignedIn()
+          && (me().role == 'admin'
+              || me().get(['permissions', 'draftEvent'], false) == true);
+      }
+      function parentEvent() {
+        return get(/databases/$(database)/documents/events/$(resource.data.eventId)).data;
+      }
+
+      allow read: if isEventApprover()
+        || (isEventDrafter() && parentEvent().authorUid == request.auth.uid);
+      // No direct client writes; the API route uses the admin SDK.
+      allow create, update, delete: if false;
     }
   }
 }

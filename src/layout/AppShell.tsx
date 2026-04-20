@@ -16,6 +16,10 @@ type NavItem = {
   href: string;
   visible: (v: Viewer) => boolean;
 };
+type NavGroup = {
+  label: string | null;
+  items: NavItem[];
+};
 
 const MEMBER_AND_UP = (v: Viewer) =>
   v.role === "member" || v.role === "committee" || v.role === "admin";
@@ -25,15 +29,34 @@ const NEWSLETTER_ACCESS = (v: Viewer) =>
   v.role === "admin" ||
   Boolean(v.permissions.draftNewsletter) ||
   Boolean(v.permissions.approveNewsletter);
+const EVENTS_ACCESS = (v: Viewer) =>
+  v.role === "admin" ||
+  Boolean(v.permissions.draftEvent) ||
+  Boolean(v.permissions.approveEvent);
 
-const NAV: NavItem[] = [
-  { label: "Dashboard", href: "/dashboard", visible: MEMBER_AND_UP },
-  { label: "Tasks", href: "/tasks", visible: MEMBER_AND_UP },
-  { label: "Calendar", href: "/calendar", visible: MEMBER_AND_UP },
-  { label: "Profile", href: "/profile", visible: MEMBER_AND_UP },
-  { label: "Newsletter", href: "/newsletter", visible: NEWSLETTER_ACCESS },
-  { label: "Credentials", href: "/credentials", visible: COMMITTEE_AND_UP },
-  { label: "Admin", href: "/admin", visible: ADMIN_ONLY },
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: null,
+    items: [
+      { label: "Dashboard", href: "/dashboard", visible: MEMBER_AND_UP },
+      { label: "My work", href: "/tasks", visible: MEMBER_AND_UP },
+      { label: "Calendar", href: "/calendar", visible: MEMBER_AND_UP },
+      { label: "Profile", href: "/profile", visible: MEMBER_AND_UP },
+    ],
+  },
+  {
+    label: "Committee",
+    items: [
+      { label: "Task board", href: "/committee/tasks", visible: COMMITTEE_AND_UP },
+      { label: "Credentials", href: "/credentials", visible: COMMITTEE_AND_UP },
+      { label: "Newsletter", href: "/newsletter", visible: NEWSLETTER_ACCESS },
+      { label: "Events", href: "/events/manage", visible: EVENTS_ACCESS },
+    ],
+  },
+  {
+    label: "Admin",
+    items: [{ label: "Admin", href: "/admin", visible: ADMIN_ONLY }],
+  },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -42,9 +65,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const { user, role, permissions, loading } = useAuth();
   const pendingCount = usePendingCount();
 
-  const visible =
+  const visibleGroups =
     role === "admin" || role === "committee" || role === "member"
-      ? NAV.filter((item) => item.visible({ role, permissions }))
+      ? NAV_GROUPS.map((g) => ({
+          ...g,
+          items: g.items.filter((item) => item.visible({ role, permissions })),
+        })).filter((g) => g.items.length > 0)
       : [];
 
   async function handleSignOut() {
@@ -90,20 +116,41 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </Link>
         </div>
         <nav className={styles.nav}>
-          {visible.map((item) => {
-            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-            const showBadge = item.href === "/admin" && pendingCount > 0;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`${styles.navLink} ${active ? styles.active : ""}`}
-              >
-                <span>{item.label}</span>
-                {showBadge && <span className={styles.navBadge}>{pendingCount}</span>}
-              </Link>
-            );
-          })}
+          {visibleGroups.map((group, gi) => (
+            <div
+              key={group.label ?? `group-${gi}`}
+              style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)", marginTop: gi === 0 ? 0 : "var(--space-3)" }}
+            >
+              {group.label && (
+                <div
+                  style={{
+                    fontSize: "var(--text-xs)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.05em",
+                    color: "var(--color-text-subtle)",
+                    padding: "0 var(--space-3)",
+                    marginBottom: "var(--space-1)",
+                  }}
+                >
+                  {group.label}
+                </div>
+              )}
+              {group.items.map((item) => {
+                const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                const showBadge = item.href === "/admin" && pendingCount > 0;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`${styles.navLink} ${active ? styles.active : ""}`}
+                  >
+                    <span>{item.label}</span>
+                    {showBadge && <span className={styles.navBadge}>{pendingCount}</span>}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
         <div className={styles.userBlock}>
           <div style={{ fontSize: "var(--text-sm)", fontWeight: 500 }}>
