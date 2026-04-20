@@ -11,6 +11,7 @@ import {
 } from "firebase/firestore";
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import type { Role } from "@/lib/firebase/session";
+import type { Track, UserPermissions } from "@/lib/firestore/users";
 
 function actingAdminUid(): string {
   const uid = getClientAuth().currentUser?.uid;
@@ -50,6 +51,22 @@ export async function unrejectUser(uid: string) {
 export async function setRole(uid: string, role: Role) {
   const db = getClientDb();
   await updateDoc(doc(db, "users", uid), { role });
+}
+
+/** Admin-only: assign technical/governance tracks (both/either/none). */
+export async function setTracks(uid: string, tracks: Track[]) {
+  const db = getClientDb();
+  await updateDoc(doc(db, "users", uid), { tracks });
+}
+
+/** Admin-only: grant/revoke orthogonal permissions (draft/approve newsletter, etc.). */
+export async function setPermissions(uid: string, permissions: UserPermissions) {
+  const db = getClientDb();
+  const clean: Record<string, boolean> = {
+    draftNewsletter: Boolean(permissions.draftNewsletter),
+    approveNewsletter: Boolean(permissions.approveNewsletter),
+  };
+  await updateDoc(doc(db, "users", uid), { permissions: clean });
 }
 
 type MemberFields = {

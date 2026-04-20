@@ -1,6 +1,6 @@
 # NAISI — Nottingham AI Safety Initiative
 
-The NAISI website. Public marketing site + authed committee tooling (tasks, password vault, 1-1 booking calendar, admin approvals).
+The NAISI website. Public marketing site + authed committee tooling (tasks, credentials store, 1-1 booking calendar, admin approvals).
 
 ## Stack
 
@@ -13,7 +13,7 @@ The NAISI website. Public marketing site + authed committee tooling (tasks, pass
 
 - Public: Landing, Members, Resources, News digest
 - Auth: `/login`, `/register` (Google + profile form), `/pending-approval`
-- Authed: Dashboard shell (tasks/vault/calendar/admin pages coming next session)
+- Authed: Dashboard shell (tasks/credentials/calendar/admin pages coming next session)
 - Admin approval flow via `users/{uid}.role` transitions
 
 ## Getting started (local dev)
@@ -97,7 +97,7 @@ Light theme: change `data-theme="dark"` to `"light"` in [src/app/layout.tsx](src
 ## What's next (not in v1)
 
 - Task manager (board view, progress bars)
-- Password vault (client-side AES-GCM, PBKDF2-derived key)
+- Credentials store (client-side AES-GCM, PBKDF2-derived key)
 - 1-1 booking calendar (Firestore availability + transactions)
 - Admin dashboard (Approvals / Members / Projects tabs)
 - Course & homework viewer (BlueDot-style)

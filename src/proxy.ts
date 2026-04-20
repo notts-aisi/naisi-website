@@ -11,7 +11,7 @@ import { SESSION_COOKIE } from "@/lib/firebase/session";
   the Edge runtime.
 */
 
-const PROTECTED_PREFIXES = ["/dashboard", "/tasks", "/vault", "/calendar", "/admin"];
+const PROTECTED_PREFIXES = ["/dashboard", "/tasks", "/credentials", "/calendar", "/profile", "/newsletter", "/admin"];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -31,5 +31,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/tasks/:path*", "/vault/:path*", "/calendar/:path*", "/admin/:path*"],
+  matcher: ["/dashboard/:path*", "/tasks/:path*", "/credentials/:path*", "/calendar/:path*", "/profile/:path*", "/newsletter/:path*", "/admin/:path*"],
 };

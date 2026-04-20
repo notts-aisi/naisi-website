@@ -12,6 +12,10 @@ export type SessionUser = {
   email: string | null;
   role: Role;
   displayName?: string;
+  permissions: {
+    draftNewsletter: boolean;
+    approveNewsletter: boolean;
+  };
 };
 
 /** Exchange a Firebase ID token for a long-lived session cookie, written httpOnly. */
@@ -52,11 +56,16 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
     const decoded = await auth.verifySessionCookie(cookie.value, true);
     const userDoc = await db.collection("users").doc(decoded.uid).get();
     const data = userDoc.data() ?? {};
+    const perms = (data.permissions as Record<string, unknown> | undefined) ?? {};
     return {
       uid: decoded.uid,
       email: decoded.email ?? null,
       role: (data.role as Role) ?? "pending",
       displayName: data.displayName ?? data.profile?.preferredName,
+      permissions: {
+        draftNewsletter: Boolean(perms.draftNewsletter),
+        approveNewsletter: Boolean(perms.approveNewsletter),
+      },
     };
   } catch {
     return null;

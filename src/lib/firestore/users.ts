@@ -87,6 +87,37 @@ export type UserProfile = {
   newsletter?: NewsletterPrefs;
 };
 
+/**
+ * Private admin-assigned tags indicating which side(s) of our course programme a
+ * user is aligned with. Admin-only in Firestore rules; not shown on public pages.
+ */
+export type Track = "technical" | "governance";
+export const ALL_TRACKS: Track[] = ["technical", "governance"];
+export const TRACK_LABELS: Record<Track, string> = {
+  technical: "Technical",
+  governance: "Governance",
+};
+
+/**
+ * Orthogonal-to-role permissions an admin can grant. Admins always have all
+ * permissions implicitly (see `canDraftNewsletter` / `canApproveNewsletter`);
+ * the `permissions` field only matters for non-admin roles.
+ */
+export type UserPermissions = {
+  draftNewsletter?: boolean;
+  approveNewsletter?: boolean;
+};
+
+export function canDraftNewsletter(user: Pick<UserDoc, "role" | "permissions">): boolean {
+  return user.role === "admin" || Boolean(user.permissions?.draftNewsletter);
+}
+
+export function canApproveNewsletter(
+  user: Pick<UserDoc, "role" | "permissions">,
+): boolean {
+  return user.role === "admin" || Boolean(user.permissions?.approveNewsletter);
+}
+
 export type UserDoc = {
   uid: string;
   email: string | null;
@@ -97,6 +128,8 @@ export type UserDoc = {
   title?: string | null;
   bio?: string | null;
   showOnMembers?: boolean;
+  tracks?: Track[];
+  permissions?: UserPermissions;
   approvedAt?: Date | null;
   approvedBy?: string | null;
   rejectedAt?: Date | null;
@@ -114,6 +147,15 @@ function tsToDate(v: unknown): Date | null {
 }
 
 export function normalizeUser(id: string, data: Raw): UserDoc {
+  const rawTracks = Array.isArray(data.tracks) ? (data.tracks as unknown[]) : [];
+  const tracks = rawTracks.filter(
+    (t): t is Track => t === "technical" || t === "governance",
+  );
+  const rawPermissions = (data.permissions ?? {}) as Record<string, unknown>;
+  const permissions: UserPermissions = {
+    draftNewsletter: Boolean(rawPermissions.draftNewsletter),
+    approveNewsletter: Boolean(rawPermissions.approveNewsletter),
+  };
   return {
     uid: id,
     email: (data.email as string) ?? null,
@@ -124,6 +166,8 @@ export function normalizeUser(id: string, data: Raw): UserDoc {
     title: (data.title as string | null | undefined) ?? null,
     bio: (data.bio as string | null | undefined) ?? null,
     showOnMembers: Boolean(data.showOnMembers),
+    tracks,
+    permissions,
     approvedAt: tsToDate(data.approvedAt),
     approvedBy: (data.approvedBy as string) ?? null,
     rejectedAt: tsToDate(data.rejectedAt),

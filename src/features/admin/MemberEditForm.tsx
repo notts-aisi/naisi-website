@@ -41,6 +41,7 @@ export default function MemberEditForm({ user, onDone }: Props) {
 
   const showGraduation = status !== "" && STATUSES_WITH_GRADUATION.includes(status);
   const showStatusOther = status === "other";
+  const showCommitteeTitle = user.role === "committee" || user.role === "admin";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -59,7 +60,7 @@ export default function MemberEditForm({ user, onDone }: Props) {
           interests: interests.trim(),
         }),
         updateMember(user.uid, {
-          title: title.trim() || null,
+          ...(showCommitteeTitle ? { title: title.trim() || null } : {}),
           bio: bio.trim() || null,
         }),
       ]);
@@ -133,18 +134,20 @@ export default function MemberEditForm({ user, onDone }: Props) {
             </Field>
           </div>
         )}
-        <Field
-          id={`title-${user.uid}`}
-          label="Committee title"
-          hint="Shown on the public Members page (e.g. President, Treasurer)."
-        >
-          <Input
+        {showCommitteeTitle && (
+          <Field
             id={`title-${user.uid}`}
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            maxLength={FIELD_LIMITS.title}
-          />
-        </Field>
+            label="Committee title"
+            hint="Shown on the public Members page (e.g. President, Treasurer)."
+          >
+            <Input
+              id={`title-${user.uid}`}
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              maxLength={FIELD_LIMITS.title}
+            />
+          </Field>
+        )}
         <div style={{ gridColumn: "1 / -1" }}>
           <Field id={`motivation-${user.uid}`} label="Motivation">
             <CountedTextarea

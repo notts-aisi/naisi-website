@@ -33,7 +33,12 @@ export default async function MembersPage() {
         {members.length === 0 ? (
           <Card padding="lg">
             <p style={{ color: "var(--color-text-muted)" }}>
-              The members directory is being set up. Check back soon — or ping us in the meantime.
+              We&apos;re not publishing the committee directory yet. If you want to reach us, the
+              best way is through the{" "}
+              <a style={{ color: "var(--color-accent)", textDecoration: "underline" }} href="/register">
+                registration form
+              </a>
+              .
             </p>
           </Card>
         ) : (

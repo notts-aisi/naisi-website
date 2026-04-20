@@ -26,10 +26,15 @@ service cloud.firestore {
         && request.resource.data.role == 'pending'
         && smallEnough();
 
-      // Self-update: role unchanged. Admins can do anything (including role changes).
+      // Self-update: role, tracks, and permissions all unchanged.
+      // (These are admin-only; a user editing their own profile must not be able
+      //  to flip or clear any of them.)
+      // Admins can do anything.
       allow update: if (isAdmin()
         || (isSignedIn() && request.auth.uid == uid
-            && request.resource.data.role == resource.data.role))
+            && request.resource.data.role == resource.data.role
+            && request.resource.data.get('tracks', []) == resource.data.get('tracks', [])
+            && request.resource.data.get('permissions', {}) == resource.data.get('permissions', {})))
         && smallEnough();
 
       allow delete: if isAdmin();
@@ -50,11 +55,11 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // === vault (committee only, client-side encrypted) ===
-    match /vault/{entryId} {
+    // === credentials (committee only, client-side encrypted) ===
+    match /credentials/{entryId} {
       allow read, write: if hasRole(['committee', 'admin']);
     }
-    match /vaultMeta/{id} {
+    match /credentialsMeta/{id} {
       allow read:  if hasRole(['committee', 'admin']);
       allow write: if isAdmin();
     }
@@ -76,6 +81,32 @@ service cloud.firestore {
     match /news/{slug} {
       allow read:  if true;
       allow write: if isAdmin();
+    }
+
+    // === newsletterDrafts ===
+    // Drafters (permissions.draftNewsletter) and approvers (permissions.approveNewsletter)
+    // get access; admin is always in. Final send happens server-side via a
+    // privileged API route — clients never set status == 'sent' directly.
+    match /newsletterDrafts/{draftId} {
+      function me() {
+        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      }
+      function hasPerm(key) {
+        return isSignedIn()
+          && (me().role == 'admin' || me().get(['permissions', key], false) == true);
+      }
+      function canDraft()   { return hasPerm('draftNewsletter');   }
+      function canApprove() { return hasPerm('approveNewsletter'); }
+
+      allow read:   if canDraft() || canApprove();
+      allow create: if canDraft()
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.status == 'draft';
+      allow update: if (canDraft() || canApprove())
+        // 'sent' transitions only happen via admin SDK on the server.
+        && request.resource.data.status != 'sent';
+      allow delete: if isAdmin()
+        || (canDraft() && resource.data.authorUid == request.auth.uid);
     }
   }
 }

@@ -83,6 +83,46 @@
   width: 100%;
 }
 
+.navSkeleton {
+  height: 2.1rem;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-hover);
+  opacity: 0.6;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.loadingPane {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  min-height: 60vh;
+  color: var(--color-text-muted);
+}
+
+.spinner {
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.loadingText {
+  font-size: var(--text-sm);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 @media (max-width: 60rem) {
   .shell { grid-template-columns: 1fr; }
   .sidebar {

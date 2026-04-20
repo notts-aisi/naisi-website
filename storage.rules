@@ -1,0 +1,26 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function userData() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Newsletter images: public read (emails render without auth),
+    // writes gated to admins + newsletter drafters + newsletter approvers
+    // via a cross-service Firestore lookup on users/{uid}. Belt-and-braces:
+    // 5MB size cap + image MIME check.
+    match /newsletter-images/{draftId}/{image=**} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && (
+          userData().role == 'admin'
+          || userData().get(['permissions', 'draftNewsletter'], false) == true
+          || userData().get(['permissions', 'approveNewsletter'], false) == true
+        )
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+  }
+}

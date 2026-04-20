@@ -11,7 +11,14 @@ export type PublicMember = {
   bookingEnabled?: boolean;
 };
 
+// Hard gate for the public Members directory. Flip to true once the committee
+// has reviewed who's displayed and everyone's `showOnMembers` + `title` + `bio`
+// are deliberately set. Until then the public page shows a neutral placeholder
+// and NO Firestore read happens — so nobody can be exposed by a stray toggle.
+const DIRECTORY_ENABLED = false;
+
 export async function getPublicMembers(): Promise<PublicMember[]> {
+  if (!DIRECTORY_ENABLED) return [];
   const db = getAdminDb();
   if (!db) return [];
 

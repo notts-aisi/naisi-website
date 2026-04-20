@@ -12,18 +12,26 @@ import { onAuthStateChanged, type User } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import type { Role } from "@/lib/firebase/session";
+import type { UserPermissions } from "@/lib/firestore/users";
 
 type AuthState = {
   user: User | null;
   role: Role | null;
+  permissions: UserPermissions;
   loading: boolean;
 };
 
-const AuthContext = createContext<AuthState>({ user: null, role: null, loading: true });
+const AuthContext = createContext<AuthState>({
+  user: null,
+  role: null,
+  permissions: {},
+  loading: true,
+});
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<Role | null>(null);
+  const [permissions, setPermissions] = useState<UserPermissions>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -32,6 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(u);
       if (!u) {
         setRole(null);
+        setPermissions({});
         setLoading(false);
       }
     });
@@ -49,6 +58,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // from "registered and pending approval".
         const data = snap.exists() ? snap.data() : null;
         setRole(data ? ((data.role as Role) ?? "pending") : null);
+        const raw = (data?.permissions as Record<string, unknown> | undefined) ?? {};
+        setPermissions({
+          draftNewsletter: Boolean(raw.draftNewsletter),
+          approveNewsletter: Boolean(raw.approveNewsletter),
+        });
         setLoading(false);
       },
       () => setLoading(false),
@@ -56,7 +70,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return unsub;
   }, [user]);
 
-  const value = useMemo(() => ({ user, role, loading }), [user, role, loading]);
+  const value = useMemo(
+    () => ({ user, role, permissions, loading }),
+    [user, role, permissions, loading],
+  );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

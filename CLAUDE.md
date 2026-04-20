@@ -64,7 +64,7 @@ users/{uid}        { email, displayName, photoURL, role, profile, showOnMembers,
   .newsletter      { subscribed, deliverToGmail, deliverToUniEmail }
 projects/{id}      { name, leadUid, memberUids[], archived, createdAt, updatedAt }
 tasks/{id}         (not yet built)
-vault/{id}         (not yet built — will be client-side AES-GCM encrypted)
+credentials/{id}   (not yet built — will be client-side AES-GCM encrypted; was "vault")
 bookings/{id}      (not yet built — 1-1 booking calendar)
 news/{slug}        { title, tldr, bodyMarkdown, publishedAt, authorName, coverImageUrl? }
 ```
@@ -114,7 +114,7 @@ This shapes the task manager + calendar + future features. Keep this mental mode
 ## What's not built yet
 
 1. **Committee task manager** — lives on a **Committee-only tab** (hide from `member` role in sidebar). Scoped to projects/reading groups, progress bars, real-time. Track leads can manage tasks for their track; committee members see all committee tasks; admins see everything.
-2. **Password vault** — committee-only; client-side AES-GCM with PBKDF2-derived key from a shared master password
+2. **Credentials store** (was "vault") — committee-only; client-side AES-GCM with PBKDF2-derived key from a shared master password
 3. **1-1 booking calendar + meeting calendar** — implement the tiered visibility model:
    - Per-committee-member availability → bookings (already sketched out)
    - Group meetings created by track leads / committee (visible to committee greyed-out unless they're on the invite)
@@ -126,7 +126,7 @@ This shapes the task manager + calendar + future features. Keep this mental mode
 
 ### Sidebar implication when task manager ships
 
-Current `src/layout/AppShell.tsx` has `Tasks` visible to `[member, committee, admin]`. When the committee task manager ships, change that entry to `[committee, admin]` only, and rename the sidebar label to **"Committee"** (or group tasks, vault, calendar-host views under one "Committee" section). A member-facing "My work" area — showing their enrolled courses, homework, and upcoming sessions — is a separate concept.
+Current `src/layout/AppShell.tsx` has `Tasks` visible to `[member, committee, admin]`. When the committee task manager ships, change that entry to `[committee, admin]` only, and rename the sidebar label to **"Committee"** (or group tasks, credentials, calendar-host views under one "Committee" section). A member-facing "My work" area — showing their enrolled courses, homework, and upcoming sessions — is a separate concept.
 
 ## Known gotchas
 

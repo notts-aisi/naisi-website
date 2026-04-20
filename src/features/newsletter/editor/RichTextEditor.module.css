@@ -1,0 +1,161 @@
+.wrap {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  overflow: hidden;
+}
+
+.wrap[data-disabled] {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+.btn {
+  padding: 0.3rem 0.55rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border);
+}
+
+.btnActive,
+.btnActive:hover {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.btn:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.divider {
+  width: 1px;
+  height: 20px;
+  background: var(--color-border);
+  margin: 0 var(--space-1);
+}
+
+.linkRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: var(--space-2);
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--color-border);
+}
+
+.linkInput {
+  padding: 0.3rem 0.55rem;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  min-width: 16rem;
+}
+
+.linkInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.linkApply,
+.linkRemove,
+.linkCancel {
+  padding: 0.3rem 0.55rem;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.linkApply {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.linkRemove {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.editor {
+  padding: var(--space-4);
+  min-height: 8rem;
+  font-size: var(--text-md, 1rem);
+  line-height: 1.6;
+  color: var(--color-text);
+  outline: none;
+}
+
+.editor:focus {
+  outline: none;
+}
+
+.editor p {
+  margin: 0 0 0.75em;
+}
+
+.editor p:last-child {
+  margin-bottom: 0;
+}
+
+.editor ul,
+.editor ol {
+  padding-left: 1.5em;
+  margin: 0 0 0.75em;
+}
+
+.editor li {
+  margin-bottom: 0.25em;
+}
+
+.editor a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.editor strong {
+  font-weight: 700;
+}
+
+.editor em {
+  font-style: italic;
+}
+
+.editor u {
+  text-decoration: underline;
+}
+
+/* TipTap placeholder-like empty state (rendered by the browser for empty contenteditable). */
+.editor:empty::before {
+  content: "Write something…";
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
