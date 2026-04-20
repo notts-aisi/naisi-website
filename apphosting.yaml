@@ -31,5 +31,31 @@ env:
   - variable: EVENTS_TOKEN_SECRET
     secret: EVENTS_TOKEN_SECRET
     availability: [RUNTIME]
+  # Gmail Workspace SMTP for transactional + newsletter mail. App password set
+  # via `firebase apphosting:secrets:set SMTP_PASSWORD`; host/user/from are
+  # public enough to live here directly.
+  - variable: SMTP_HOST
+    value: smtp.gmail.com
+    availability: [RUNTIME]
+  - variable: SMTP_PORT
+    value: "587"
+    availability: [RUNTIME]
+  - variable: SMTP_USER
+    value: ai-safety@uonsu.com
+    availability: [RUNTIME]
+  - variable: SMTP_PASSWORD
+    secret: SMTP_PASSWORD
+    availability: [RUNTIME]
+  - variable: SMTP_FROM_NAME
+    value: NAISI
+    availability: [RUNTIME]
+  - variable: SMTP_FROM_EMAIL
+    value: ai-safety@uonsu.com
+    availability: [RUNTIME]
+  # Absolute base URL baked into outbound email links (unsubscribe, RSVP
+  # self-serve). Must match the live origin or links break.
+  - variable: NEXT_PUBLIC_APP_URL
+    value: https://naisi.uk
+    availability: [BUILD, RUNTIME]
   # Admin credentials are injected automatically by App Hosting (ADC) —
   # no FIREBASE_ADMIN_* env vars needed in production.

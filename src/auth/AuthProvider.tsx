@@ -62,6 +62,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setPermissions({
           draftNewsletter: Boolean(raw.draftNewsletter),
           approveNewsletter: Boolean(raw.approveNewsletter),
+          draftEvent: Boolean(raw.draftEvent),
+          approveEvent: Boolean(raw.approveEvent),
         });
         setLoading(false);
       },
