@@ -1,0 +1,108 @@
+/*
+  NAISI theme tokens.
+  Every colour, radius, spacing, and shadow in the app should read from a var here.
+  Swapping the brand palette = editing this one file.
+*/
+
+:root,
+[data-theme="dark"] {
+  /* surfaces */
+  --color-bg: #0a0e16;
+  --color-bg-elevated: #111726;
+  --color-surface: #1a2238;
+  --color-surface-hover: #222b44;
+  --color-border: #2a344d;
+  --color-border-strong: #3a4868;
+
+  /* text */
+  --color-text: #e6eaf2;
+  --color-text-muted: #8b94ac;
+  --color-text-subtle: #5b6785;
+
+  /* brand */
+  --color-accent: #6a82ff;
+  --color-accent-hover: #7d92ff;
+  --color-accent-soft: rgba(106, 130, 255, 0.12);
+  --color-accent-ring: rgba(106, 130, 255, 0.4);
+
+  /* status */
+  --color-danger: #e5484d;
+  --color-danger-soft: rgba(229, 72, 77, 0.12);
+  --color-success: #46a758;
+  --color-success-soft: rgba(70, 167, 88, 0.12);
+  --color-warning: #f5a524;
+  --color-warning-soft: rgba(245, 165, 36, 0.12);
+
+  /* focus */
+  --focus-ring: 0 0 0 3px var(--color-accent-ring);
+}
+
+[data-theme="light"] {
+  --color-bg: #fafbfc;
+  --color-bg-elevated: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-hover: #f4f6fa;
+  --color-border: #e4e7ed;
+  --color-border-strong: #c5cbd6;
+
+  --color-text: #1a2032;
+  --color-text-muted: #5b6785;
+  --color-text-subtle: #8b94ac;
+
+  --color-accent: #3b55e3;
+  --color-accent-hover: #2b44c9;
+  --color-accent-soft: rgba(59, 85, 227, 0.08);
+  --color-accent-ring: rgba(59, 85, 227, 0.35);
+
+  --color-danger: #cd3d41;
+  --color-danger-soft: rgba(205, 61, 65, 0.08);
+  --color-success: #2f7a3c;
+  --color-success-soft: rgba(47, 122, 60, 0.08);
+  --color-warning: #c47c0c;
+  --color-warning-soft: rgba(196, 124, 12, 0.08);
+}
+
+:root {
+  /* spacing scale (4px base) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+
+  /* radii */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 24px;
+  --radius-pill: 999px;
+
+  /* shadows (dark-theme tuned; [data-theme="light"] overrides below) */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.45);
+
+  /* layout */
+  --content-max-width: 72rem;      /* 1152px */
+  --prose-max-width: 44rem;        /* 704px */
+  --header-height: 4rem;
+  --sidebar-width: 16rem;
+
+  /* transitions */
+  --transition-fast: 120ms ease;
+  --transition-base: 180ms ease;
+}
+
+[data-theme="light"] {
+  --shadow-sm: 0 1px 2px rgba(17, 23, 38, 0.06);
+  --shadow-md: 0 4px 12px rgba(17, 23, 38, 0.08);
+  --shadow-lg: 0 12px 32px rgba(17, 23, 38, 0.12);
+}

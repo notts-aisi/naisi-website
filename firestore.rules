@@ -1,0 +1,81 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn()   { return request.auth != null; }
+    function userRole()     { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role; }
+    function hasRole(roles) { return isSignedIn() && userRole() in roles; }
+    function isAdmin()      { return hasRole(['admin']); }
+
+    // Keep the user doc under a reasonable size cap as a DoS guard;
+    // detailed shape validation happens in the React forms.
+    function smallEnough() {
+      return request.resource.data.size() <= 30
+        && (!('profile' in request.resource.data)
+            || request.resource.data.profile.size() <= 30);
+    }
+
+    // === users ===
+    match /users/{uid} {
+      allow read: if isSignedIn();
+
+      // Self-create: must use own uid and start as 'pending'.
+      allow create: if isSignedIn()
+        && request.auth.uid == uid
+        && request.resource.data.role == 'pending'
+        && smallEnough();
+
+      // Self-update: role unchanged. Admins can do anything (including role changes).
+      allow update: if (isAdmin()
+        || (isSignedIn() && request.auth.uid == uid
+            && request.resource.data.role == resource.data.role))
+        && smallEnough();
+
+      allow delete: if isAdmin();
+    }
+
+    // === projects ===
+    match /projects/{projectId} {
+      allow read:   if hasRole(['member', 'committee', 'admin']);
+      allow write:  if isAdmin();
+    }
+
+    // === tasks ===
+    match /tasks/{taskId} {
+      allow read: if hasRole(['member', 'committee', 'admin']);
+      allow create: if hasRole(['committee', 'admin']);
+      allow update: if isAdmin()
+        || (isSignedIn() && request.auth.uid in resource.data.assigneeUids);
+      allow delete: if isAdmin();
+    }
+
+    // === vault (committee only, client-side encrypted) ===
+    match /vault/{entryId} {
+      allow read, write: if hasRole(['committee', 'admin']);
+    }
+    match /vaultMeta/{id} {
+      allow read:  if hasRole(['committee', 'admin']);
+      allow write: if isAdmin();
+    }
+
+    // === bookings ===
+    match /bookings/{bookingId} {
+      allow read: if isAdmin()
+        || (isSignedIn() && (request.auth.uid == resource.data.hostUid
+                          || request.auth.uid == resource.data.guestUid));
+      allow create: if isSignedIn();
+      allow update: if isSignedIn()
+        && (request.auth.uid == resource.data.hostUid
+            || request.auth.uid == resource.data.guestUid
+            || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // === news (public read, admin write) ===
+    match /news/{slug} {
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+  }
+}

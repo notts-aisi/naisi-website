@@ -1,0 +1,110 @@
+.hero {
+  position: relative;
+  padding-block: var(--space-24) var(--space-20);
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 20% -20%, var(--color-accent-soft) 0%, transparent 55%),
+    radial-gradient(ellipse at 100% 0%, rgba(106, 130, 255, 0.06) 0%, transparent 50%),
+    var(--color-bg);
+}
+
+.heroInner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  max-width: 56rem;
+}
+
+.title {
+  font-size: clamp(2.5rem, 5vw, 4rem);
+  letter-spacing: -0.025em;
+  line-height: 1.05;
+  font-weight: 700;
+}
+
+.titleAccent {
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.lede {
+  color: var(--color-text-muted);
+  font-size: var(--text-lg);
+  max-width: 38rem;
+  line-height: var(--leading-relaxed);
+}
+
+.ctas {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.primaryCta {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.85rem 1.4rem;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: white;
+  font-weight: 500;
+  transition: background var(--transition-fast);
+}
+.primaryCta:hover { background: var(--color-accent-hover); }
+
+.secondaryCta {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.85rem 1.4rem;
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-weight: 500;
+  transition: background var(--transition-fast);
+}
+.secondaryCta:hover { background: var(--color-surface-hover); }
+
+.heroArt {
+  position: absolute;
+  right: var(--space-6);
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.35;
+  filter: blur(0.5px);
+}
+
+@media (max-width: 60rem) {
+  .heroArt { display: none; }
+}
+
+.section { padding-block: var(--space-20); }
+.sectionAlt {
+  padding-block: var(--space-16);
+  background: var(--color-bg-elevated);
+  border-block: 1px solid var(--color-border);
+}
+
+.sectionHead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-10);
+  max-width: 40rem;
+}
+
+.grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+}
+
+.cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+}

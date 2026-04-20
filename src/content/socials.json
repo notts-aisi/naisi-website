@@ -1,0 +1,9 @@
+{
+  "socials": [
+    { "label": "Substack", "href": "https://substack.com", "placeholder": true },
+    { "label": "Instagram", "href": "https://instagram.com", "placeholder": true },
+    { "label": "LinkedIn", "href": "https://linkedin.com", "placeholder": true },
+    { "label": "Discord", "href": "https://discord.com", "placeholder": true }
+  ],
+  "contactEmail": "contact@naisi.org.uk"
+}
