@@ -71,11 +71,26 @@ news/{slug}        { title, tldr, bodyMarkdown, publishedAt, authorName, coverIm
 
 ## Roles
 
-`pending | member | committee | admin | rejected`. Role-change rules:
+Governance role (mutually exclusive): `pending | member | committee | admin | rejected`. Role-change rules:
 - New users always start at `pending` (enforced in Firestore rules on create)
 - Self-update must keep role unchanged (rule enforces)
-- Only admins can change roles
+- Only admins can change roles — can promote member→committee→admin and demote the other way
 - First admin is seeded manually via Firestore console (documented in README)
+
+**Track-lead sub-role (planned, orthogonal to governance role):** admins can also designate a member OR committee member as **head of a specific reading group / fellowship track / project**. Being a track lead does NOT require committee status — a regular member can lead a track. This will live on `users/{uid}.trackLeadOf: [projectId, ...]` (or similar) and be managed from the admin dashboard alongside role promotion.
+
+## Visibility tiers (what each role sees)
+
+This shapes the task manager + calendar + future features. Keep this mental model when building:
+
+- **Member** (approved, not committee): sees *only* their own data — their tasks/bookings in their calendar, their enrolled courses, etc. No visibility into committee work.
+- **Committee** (promoted by admin): member visibility **plus** the Committee tab with:
+  - Committee-only task manager (a separate board from any member-facing tasks)
+  - Calendar shows their own bookings *plus* other committee/group meetings as **greyed-out** slots (can see *that* something is happening, not the details, unless they're on the invite)
+- **Admin**: committee visibility **plus**:
+  - Approvals, full role/project management (already built)
+  - Can schedule **private admin meetings** that are *invisible to committee by default* (don't even appear greyed-out)
+- **Track leads** (sub-role, orthogonal): gain ownership of a specific project/reading group/fellowship track — can schedule that group's meetings, manage its roster, etc. The track's activities are visible to committee; the track lead interacts with them from either their Committee tab (if they're committee) or a dedicated "My tracks" area (if they're just a member).
 
 ## Field-limit + validation conventions
 
@@ -98,11 +113,20 @@ news/{slug}        { title, tldr, bodyMarkdown, publishedAt, authorName, coverIm
 
 ## What's not built yet
 
-1. Task manager (scoped to projects; progress bars; real-time)
-2. Password vault (committee-only; client-side AES-GCM with PBKDF2-derived key from a shared master password)
-3. 1-1 booking calendar (availability per committee member, Firestore transaction for conflict prevention, ICS export)
-4. Course/homework viewer (BlueDot-style)
-5. Newsletter sending pipeline (the register form collects prefs; no send infra yet — Trigger Email extension is the plan)
+1. **Committee task manager** — lives on a **Committee-only tab** (hide from `member` role in sidebar). Scoped to projects/reading groups, progress bars, real-time. Track leads can manage tasks for their track; committee members see all committee tasks; admins see everything.
+2. **Password vault** — committee-only; client-side AES-GCM with PBKDF2-derived key from a shared master password
+3. **1-1 booking calendar + meeting calendar** — implement the tiered visibility model:
+   - Per-committee-member availability → bookings (already sketched out)
+   - Group meetings created by track leads / committee (visible to committee greyed-out unless they're on the invite)
+   - Private admin meetings (hidden from committee by default)
+   - ICS export; Firestore transaction for conflict prevention
+4. **Track-lead sub-role** — data model (`users/{uid}.trackLeadOf: string[]`), admin UI on the Projects tab to assign/unassign, enforcement in Firestore rules so track leads can manage their track's tasks/meetings
+5. **Course/homework viewer** (BlueDot-style) — only what a member is enrolled in shows on their dashboard
+6. **Newsletter sending pipeline** — the register form already collects prefs; no send infra yet — Trigger Email extension is the plan
+
+### Sidebar implication when task manager ships
+
+Current `src/layout/AppShell.tsx` has `Tasks` visible to `[member, committee, admin]`. When the committee task manager ships, change that entry to `[committee, admin]` only, and rename the sidebar label to **"Committee"** (or group tasks, vault, calendar-host views under one "Committee" section). A member-facing "My work" area — showing their enrolled courses, homework, and upcoming sessions — is a separate concept.
 
 ## Known gotchas
 
