@@ -5,6 +5,15 @@ import type { UserDoc } from "@/lib/firestore/users";
 
 export type PickerRole = "completer" | "reviewer";
 
+type RoleFilter = "all" | "admin" | "committee" | "member";
+const ROLE_FILTERS: RoleFilter[] = ["all", "admin", "committee", "member"];
+const ROLE_FILTER_LABELS: Record<RoleFilter, string> = {
+  all: "All",
+  admin: "Admins",
+  committee: "Committee",
+  member: "Members",
+};
+
 type Props = {
   users: UserDoc[];
   selected: string[];
@@ -12,6 +21,8 @@ type Props = {
   label?: string;
   max?: number;
   role?: PickerRole;
+  /** When true, show a role-filter chip strip above the search input. */
+  showRoleFilter?: boolean;
 };
 
 const ROLE_COPY: Record<PickerRole, { verb: string; countLabel: string }> = {
@@ -26,21 +37,28 @@ export default function AssigneePicker({
   label,
   max = 10,
   role = "completer",
+  showRoleFilter = false,
 }: Props) {
   const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
 
   const sorted = useMemo(() => {
     const term = search.trim().toLowerCase();
-    const withName = users.map((u) => ({
-      user: u,
-      name: (u.displayName ?? u.email ?? u.uid).toLowerCase(),
-    }));
-    const filtered = term
-      ? withName.filter((x) => x.name.includes(term))
-      : withName;
-    filtered.sort((a, b) => a.name.localeCompare(b.name));
-    return filtered.map((x) => x.user);
-  }, [users, search]);
+    const matches = users.filter((u) => {
+      if (roleFilter !== "all" && u.role !== roleFilter) return false;
+      if (term) {
+        const hay = (u.displayName ?? u.email ?? u.uid).toLowerCase();
+        if (!hay.includes(term)) return false;
+      }
+      return true;
+    });
+    matches.sort((a, b) => {
+      const na = (a.displayName ?? a.email ?? a.uid).toLowerCase();
+      const nb = (b.displayName ?? b.email ?? b.uid).toLowerCase();
+      return na.localeCompare(nb);
+    });
+    return matches;
+  }, [users, search, roleFilter]);
 
   function toggle(uid: string) {
     if (selected.includes(uid)) {
@@ -91,6 +109,33 @@ export default function AssigneePicker({
               <span aria-hidden>✕</span>
             </button>
           ))}
+        </div>
+      )}
+
+      {showRoleFilter && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-1)" }}>
+          {ROLE_FILTERS.map((rf) => {
+            const active = roleFilter === rf;
+            return (
+              <button
+                key={rf}
+                type="button"
+                onClick={() => setRoleFilter(rf)}
+                style={{
+                  padding: "0.2rem 0.6rem",
+                  borderRadius: "var(--radius-pill)",
+                  border: "1px solid var(--color-border)",
+                  background: active ? "var(--color-accent-soft)" : "transparent",
+                  color: active ? "var(--color-accent)" : "var(--color-text-muted)",
+                  fontSize: "var(--text-xs)",
+                  cursor: "pointer",
+                  fontWeight: active ? 600 : 400,
+                }}
+              >
+                {ROLE_FILTER_LABELS[rf]}
+              </button>
+            );
+          })}
         </div>
       )}
 
