@@ -183,8 +183,9 @@ export default function SubtaskRow({ task, subtask, users, canEdit, dragHandle }
         <p
           style={{
             margin: 0,
-            fontSize: "var(--text-xs)",
-            color: "var(--color-text-subtle)",
+            fontSize: "var(--text-sm)",
+            fontWeight: 500,
+            color: "var(--color-warning, var(--color-text))",
           }}
         >
           Waiting on: {blockers.map((b) => b.title).join(" • ")}

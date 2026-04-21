@@ -74,8 +74,9 @@ export default function TaskCard({
       onClick={() => onOpen(task.id)}
       style={{
         cursor: "pointer",
-        opacity: isDragging ? 0.4 : 1,
+        opacity: isDragging ? 0.4 : task.archived ? 0.65 : 1,
         borderLeft: `3px solid ${PRIORITY_COLORS[task.priority] ?? "transparent"}`,
+        borderStyle: task.archived ? "dashed" : undefined,
       }}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
@@ -99,7 +100,10 @@ export default function TaskCard({
           >
             {task.title}
           </div>
-          {task.priority === "urgent" && <Badge tone="danger">Urgent</Badge>}
+          <div style={{ display: "flex", gap: "var(--space-1)", alignItems: "center" }}>
+            {task.archived && <Badge tone="neutral">Archived</Badge>}
+            {task.priority === "urgent" && <Badge tone="danger">Urgent</Badge>}
+          </div>
         </div>
 
         {!dense && task.description && (
