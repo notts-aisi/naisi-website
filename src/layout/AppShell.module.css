@@ -83,9 +83,6 @@
   width: 100%;
 }
 
-/* Opt-in wide layout for data-dense pages (kanban, tables, calendars). */
-.mainWide { max-width: 100rem; }
-
 .navSkeleton {
   height: 2.1rem;
   border-radius: var(--radius-md);

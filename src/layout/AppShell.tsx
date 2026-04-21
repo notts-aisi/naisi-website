@@ -34,15 +34,6 @@ const EVENTS_ACCESS = (v: Viewer) =>
   Boolean(v.permissions.draftEvent) ||
   Boolean(v.permissions.approveEvent);
 
-// Routes that opt into the wider main-area cap. Kanban boards, wide tables,
-// and future calendars benefit from filling the screen; prose-heavy pages
-// (profile, admin forms) stay capped at the narrower default for readability.
-const WIDE_ROUTES = ["/committee/tasks"];
-
-function isWideRoute(pathname: string) {
-  return WIDE_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`));
-}
-
 const NAV_GROUPS: NavGroup[] = [
   {
     label: null,
@@ -72,7 +63,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { user, role, permissions, loading } = useAuth();
   const pendingCount = usePendingCount();
-  const mainClass = `${styles.main}${isWideRoute(pathname) ? ` ${styles.mainWide}` : ""}`;
 
   const visibleGroups =
     role === "admin" || role === "committee" || role === "member"
@@ -106,7 +96,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             ))}
           </nav>
         </aside>
-        <main className={mainClass}>
+        <main className={styles.main}>
           <div className={styles.loadingPane} role="status" aria-live="polite">
             <span className={styles.spinner} aria-hidden />
             <span className={styles.loadingText}>Loading your workspace…</span>
@@ -175,7 +165,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </button>
         </div>
       </aside>
-      <main className={mainClass}>{children}</main>
+      <main className={styles.main}>{children}</main>
     </div>
   );
 }
