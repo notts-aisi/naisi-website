@@ -120,11 +120,28 @@ export function bodyMarkdownToBlocks(bodyMarkdown: string): Block[] {
 }
 
 /**
- * Replace {preferredName} tokens in any text content of the block list.
- * Used at send time, never at edit time.
+ * Map of token keys → substitution values. Missing/undefined values leave the
+ * {token} literal in place so admins notice typos.
  */
-export function personaliseBlocks(blocks: Block[], preferredName: string): Block[] {
-  const sub = (s: string) => s.replace(/\{preferredName\}/g, preferredName);
+export type TokenValues = Record<string, string | undefined>;
+
+/**
+ * Substitute `{key}` patterns in a string against a token map. Unknown keys
+ * are left untouched. Used at send time for both subject lines and block text.
+ */
+export function personaliseString(input: string, tokens: TokenValues): string {
+  return input.replace(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g, (match, key: string) => {
+    const value = tokens[key];
+    return typeof value === "string" ? value : match;
+  });
+}
+
+/**
+ * Replace tokens in any text content of the block list. Used at send time,
+ * never at edit time.
+ */
+export function personaliseBlocks(blocks: Block[], tokens: TokenValues): Block[] {
+  const sub = (s: string) => personaliseString(s, tokens);
   return blocks.map((b) => {
     switch (b.type) {
       case "heading":

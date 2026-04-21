@@ -80,7 +80,7 @@ export async function POST(_req: Request, ctx: Ctx) {
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
   const unsubscribeUrl = `${appUrl}/profile`;
-  const personalisedBlocks = personaliseBlocks(blocks, preferredName);
+  const personalisedBlocks = personaliseBlocks(blocks, { preferredName });
   const testSubject = `[TEST] ${subject}`;
 
   const sentTo: string[] = [];
