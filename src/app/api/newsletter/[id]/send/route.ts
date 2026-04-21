@@ -121,7 +121,9 @@ export async function POST(_req: Request, ctx: Ctx) {
   const failures: Array<{ uid: string; address: string; error: string }> = [];
 
   for (const sub of subscribers) {
-    const personalisedBlocks = personaliseBlocks(blocks, sub.preferredName);
+    const personalisedBlocks = personaliseBlocks(blocks, {
+      preferredName: sub.preferredName,
+    });
 
     for (const address of fallbackAddresses(sub)) {
       try {

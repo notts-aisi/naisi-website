@@ -263,6 +263,19 @@ service cloud.firestore {
             && resource.data.status != 'published');
     }
 
+    // === applicationEmailTemplates ===
+    // Admin-edited boilerplates for lifecycle emails (submitted/approved/rejected).
+    // Server send routes use the admin SDK and bypass these rules; the rules
+    // below are for the admin editor client.
+    match /applicationEmailTemplates/{templateId} {
+      allow read:  if isAdmin();
+      allow write: if isAdmin()
+        && request.resource.data.recipients in ['both', 'google', 'university']
+        && request.resource.data.subject is string
+        && request.resource.data.subject.size() > 0
+        && request.resource.data.subject.size() <= 200;
+    }
+
     // === eventRsvps ===
     // RSVPs are PII — never public read. All writes go through the server route
     // `/api/events/[id]/rsvp` (admin SDK) so rules are a safety net, not the

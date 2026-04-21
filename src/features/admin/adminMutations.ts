@@ -30,13 +30,15 @@ export async function approveUser(uid: string) {
   });
 }
 
-export async function rejectUser(uid: string) {
+export async function rejectUser(uid: string, rejectionReason?: string) {
   const db = getClientDb();
-  await updateDoc(doc(db, "users", uid), {
+  const patch: Record<string, unknown> = {
     role: "rejected" satisfies Role,
     rejectedAt: serverTimestamp(),
     rejectedBy: actingAdminUid(),
-  });
+  };
+  if (rejectionReason) patch.rejectionReason = rejectionReason;
+  await updateDoc(doc(db, "users", uid), patch);
 }
 
 export async function unrejectUser(uid: string) {

@@ -8,32 +8,43 @@ type Props = {
   subject: string;
   blocks: Block[];
   previewName?: string;
+  /** Override the preview endpoint. Defaults to the newsletter preview. */
+  endpoint?: string;
+  /** Extra fields merged into the POST body (e.g. token map for app emails). */
+  extraPayload?: Record<string, unknown>;
+  /** Hint text under the "Live email preview" header. */
+  hint?: string;
 };
 
 const DEBOUNCE_MS = 400;
 
 /**
- * Fetches rendered HTML from the server (`/api/newsletter/preview`) and
- * displays it inside an iframe. Rendering is deliberately server-side —
+ * Fetches rendered HTML from the server (`/api/newsletter/preview` by default)
+ * and displays it inside an iframe. Rendering is deliberately server-side —
  * putting @react-email/render in the client bundle made dev HMR unstable.
  */
 export default function EmailPreview({
   subject,
   blocks,
   previewName = "Alex",
+  endpoint = "/api/newsletter/preview",
+  extraPayload,
+  hint,
 }: Props) {
   const [html, setHtml] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+
+  const extraKey = extraPayload ? JSON.stringify(extraPayload) : "";
 
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch("/api/newsletter/preview", {
+        const res = await fetch(endpoint, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ subject, blocks, previewName }),
+          body: JSON.stringify({ subject, blocks, previewName, ...extraPayload }),
           signal: controller.signal,
         });
         if (!res.ok) {
@@ -57,7 +68,7 @@ export default function EmailPreview({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [subject, blocks, previewName]);
+  }, [subject, blocks, previewName, endpoint, extraKey, extraPayload]);
 
   return (
     <div className={styles.wrap}>
@@ -65,9 +76,8 @@ export default function EmailPreview({
         <div>
           <strong>Live email preview</strong>
           <p className={styles.hint}>
-            This is what a recipient sees. Personalisation tokens like
-            {" `{preferredName}`"} show as the literal token here — they&apos;re replaced at
-            send time with each recipient&apos;s name.
+            {hint ??
+              "This is what a recipient sees. Personalisation tokens like `{preferredName}` show as the literal token here — they're replaced at send time with each recipient's name."}
           </p>
         </div>
       </div>
