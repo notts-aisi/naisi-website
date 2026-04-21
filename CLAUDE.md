@@ -16,7 +16,7 @@ University of Nottingham AI Safety Initiative — public marketing site + authed
 - Route params are Promises: `{ params }: { params: Promise<{ slug: string }> }`, must `await` them.
 - Route handlers can use typed `RouteContext<"/api/foo/[id]">` helper.
 - `generateMetadata` is streamed but paused for bot user-agents (great for social previews).
-- Firebase App Hosting, not classic Firebase Hosting — `apphosting.yaml` is prod, `apphosting.dev.yaml` overrides for the `dev` environment.
+- Firebase App Hosting, not classic Firebase Hosting — see `apphosting.yaml` (base config). Per-environment overrides live on each backend as UI env vars in the Firebase console, not in separate yaml files (that mechanism doesn't exist in current App Hosting).
 
 ## Project layout
 
@@ -100,16 +100,28 @@ This shapes the task manager + calendar + future features. Keep this mental mode
 
 ## Deploy
 
-Two environments, both on Firebase App Hosting:
+Two separate Firebase projects, each with its own App Hosting backend (both backends happen to be named `naisi-website` — not a bug, disambiguated by project):
 
-- **Production** — push to `main` → deploys to the `naisi-website` project → `https://naisi.uk`. Config: `apphosting.yaml`.
-- **Dev / staging** — push to `dev` → deploys to the `naisi-website-dev` project → App Hosting URL. Config: `apphosting.yaml` + `apphosting.dev.yaml` overrides. Separate Firestore / Auth / Storage — fully isolated from prod data. Same real SMTP sender tagged `NAISI (dev)` so test emails are unmistakable.
-- **Firestore rules/indexes**: `npx firebase deploy --only firestore:rules,firestore:indexes --project <default|dev>` (default = prod, dev = dev project).
-- **Local dev**: `npm run dev`, needs `.env.local` with `NEXT_PUBLIC_FIREBASE_*` + `FIREBASE_ADMIN_*` values (see `.env.example`). Point at prod or dev project depending on what you're debugging.
+- **Production** — push to `main` → project `naisi-website` → `https://naisi.uk`
+- **Dev / staging** — push to `dev` → project `naisi-website-dev` → `https://naisi-website--naisi-website-dev.europe-west4.hosted.app`. Separate Firestore / Auth / Storage / Secret Manager — fully isolated from prod data.
 
-**Dev-env discipline**: the dev project uses the same Gmail SMTP as prod, so any user doc you create in dev Firestore can receive real mail on the next test send. Only seed dev with email addresses you personally own.
+**How env vars resolve:**
 
-**Typical workflow**: feature branch → PR into `dev` → merge → auto-deploy to dev → click around the real build → PR from `dev` into `main` → merge → auto-deploy to prod. Tiny changes can PR directly into `main`.
+- `apphosting.yaml` in this repo is the base (prod-shaped values). Both backends read it.
+- The dev backend overrides the handful of values that differ via Firebase console → App Hosting → `naisi-website` (dev project) → Settings → Environment variables. Current overrides: `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`, `SMTP_FROM_NAME`, `NEXT_PUBLIC_APP_URL`. UI env vars override yaml.
+- Secrets are resolved by *name* from each project's own Secret Manager — so `naisi-web-api-key` on the prod backend pulls the prod value, same name on the dev backend pulls the dev value. No yaml difference required.
+- Don't reintroduce `apphosting.<env>.yaml` override files — that mechanism doesn't exist in current Firebase App Hosting.
+
+**CLI cheatsheet:**
+
+- **Firestore rules/indexes**: `npx firebase deploy --only firestore:rules,firestore:indexes --project <default|dev>`
+- **App Hosting secrets**: `firebase apphosting:secrets:set <NAME> --project <default|dev>` creates the secret; `firebase apphosting:secrets:grantaccess <NAME> --backend naisi-website --project <default|dev>` grants the backend access once it exists.
+- **Trigger a rollout from current branch tip**: `firebase apphosting:rollouts:create naisi-website --project <default|dev> --git-branch <branch>` (or just push a commit — deploys happen on push).
+- **Local dev**: `npm run dev`, needs `.env.local` with `NEXT_PUBLIC_FIREBASE_*` + `FIREBASE_ADMIN_*` + `EVENTS_TOKEN_SECRET` values (see `.env.example`). Point at prod or dev project depending on what you're debugging.
+
+**Dev-env discipline**: dev uses the same Gmail SMTP as prod (same sender, display name tagged `NAISI (dev)`). Any user doc in dev Firestore can receive real mail on the next test send. Only seed dev with email addresses you personally own.
+
+**Typical workflow**: feature branch off `main` → PR into `dev` → merge → auto-deploy to dev → click around the real build → PR from `dev` into `main` → merge → auto-deploy to prod. Tiny / docs-only changes can PR directly into `main`. When a hotfix lands on `main`, merge `main` → `dev` so dev doesn't drift behind on fixes.
 
 ## What's shipped (v1)
 
