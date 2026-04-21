@@ -14,7 +14,7 @@ import DueDateBadge from "./DueDateBadge";
 
 export default function MyWorkSummary() {
   const { user, role } = useAuth();
-  const { tasks } = useTasks(user ? { assigneeUid: user.uid } : {});
+  const { tasks } = useTasks(user ? { completerUid: user.uid } : {});
   const { projects } = useProjects();
   const { users } = useMembers();
   const [openId, setOpenId] = useState<string | null>(null);

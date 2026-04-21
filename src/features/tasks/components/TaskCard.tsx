@@ -46,13 +46,14 @@ export default function TaskCard({
     [task.projectId, projects],
   );
 
-  const assignees = useMemo(
+  const completers = useMemo(
     () =>
-      task.assigneeUids
+      task.completerUids
         .map((uid) => users.find((u) => u.uid === uid))
         .filter((u): u is UserDoc => Boolean(u)),
-    [task.assigneeUids, users],
+    [task.completerUids, users],
   );
+  const reviewerCount = task.reviewerUids.length;
 
   const subtasksComplete = task.subtaskStats.total > 0 && task.subtaskStats.done === task.subtaskStats.total;
 
@@ -148,7 +149,7 @@ export default function TaskCard({
           }}
         >
           <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
-            {assignees.slice(0, 3).map((u) => {
+            {completers.slice(0, 3).map((u) => {
               const initial = (u.displayName ?? u.email ?? "?").charAt(0).toUpperCase();
               return (
                 <span
@@ -171,8 +172,16 @@ export default function TaskCard({
                 </span>
               );
             })}
-            {assignees.length > 3 && <span>+{assignees.length - 3}</span>}
-            {assignees.length === 0 && <span>Unassigned</span>}
+            {completers.length > 3 && <span>+{completers.length - 3}</span>}
+            {completers.length === 0 && <span>Unassigned</span>}
+            {reviewerCount > 0 && (
+              <span
+                title={`${reviewerCount} reviewer${reviewerCount === 1 ? "" : "s"}`}
+                style={{ color: "var(--color-text-muted)" }}
+              >
+                👁 {reviewerCount}
+              </span>
+            )}
           </div>
           {(task.commentCount > 0 || task.attachmentCount > 0) && (
             <div style={{ display: "flex", gap: "var(--space-2)" }}>

@@ -50,14 +50,21 @@ service cloud.firestore {
     //
     // Visibility model:
     // - 'committee' visibility: every committee/admin sees the task on the board.
-    // - 'assignees-only': only the listed assignees + admins see it. Admins-only
-    //   toggle (committee cannot create OR flip a task to assignees-only).
+    // - 'assignees-only': only the listed completers/reviewers + admins see it.
+    //   Admins-only toggle (committee cannot create OR flip to assignees-only).
     // - Members can create tasks ONLY for themselves with source='personal'
     //   and visibility='assignees-only' (powers the "quick add" on My Work).
+    //
+    // Sequential subtask gating (blockedBy) is enforced client-side, not here —
+    // evaluating it would mean scanning two arrays on every write. Inside a
+    // committee-visibility task, everyone in the thread is trusted.
     match /tasks/{taskId} {
       function taskData()    { return resource.data; }
-      function isTaskAssignee() {
-        return isSignedIn() && request.auth.uid in taskData().assigneeUids;
+      function isCompleter() {
+        return isSignedIn() && request.auth.uid in taskData().completerUids;
+      }
+      function isReviewer() {
+        return isSignedIn() && request.auth.uid in taskData().reviewerUids;
       }
       function isTaskCreator() {
         return isSignedIn() && request.auth.uid == taskData().creatorUid;
@@ -66,7 +73,8 @@ service cloud.firestore {
       function visibleToMe() {
         return isAdmin()
           || (isCommittee() && taskData().visibility == 'committee')
-          || isTaskAssignee();
+          || isCompleter()
+          || isReviewer();
       }
 
       allow read: if visibleToMe();
@@ -76,21 +84,25 @@ service cloud.firestore {
         && request.resource.data.title.size() > 0
         && request.resource.data.title.size() <= 120
         && request.resource.data.subtasks.size() <= 50
-        && request.resource.data.assigneeUids.size() <= 10
+        && request.resource.data.completerUids.size() <= 10
+        && request.resource.data.reviewerUids.size() <= 5
         && (
           isCommittee()
           || (
             request.resource.data.source == 'personal'
             && request.resource.data.visibility == 'assignees-only'
-            && request.resource.data.assigneeUids.hasOnly([request.auth.uid])
-            && request.resource.data.assigneeUids.size() == 1
+            && request.resource.data.completerUids.hasOnly([request.auth.uid])
+            && request.resource.data.completerUids.size() == 1
+            && request.resource.data.reviewerUids.size() == 0
           )
         );
 
       // Admin = full control (incl. flipping visibility).
       // Committee = full control on committee-visibility tasks but CANNOT flip
       // visibility to 'assignees-only' (admin-only).
-      // Assignees = may toggle a narrow set of fields only (status/subtasks/counters).
+      // Completers + reviewers = narrow field-level writes (status/subtasks/
+      // counters). Including reviewers here lets a reviewer tick their review
+      // subtask even if they're not on the completer list.
       allow update: if
         isAdmin()
         || (
@@ -98,10 +110,11 @@ service cloud.firestore {
           && taskData().visibility == 'committee'
           && request.resource.data.visibility == 'committee'
           && request.resource.data.subtasks.size() <= 50
-          && request.resource.data.assigneeUids.size() <= 10
+          && request.resource.data.completerUids.size() <= 10
+          && request.resource.data.reviewerUids.size() <= 5
         )
         || (
-          isTaskAssignee()
+          (isCompleter() || isReviewer())
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'status', 'subtasks', 'subtaskStats', 'updatedAt',
             'completedAt', 'attachmentCount', 'commentCount'
@@ -114,7 +127,7 @@ service cloud.firestore {
           && isTaskCreator()
           && request.resource.data.visibility == 'assignees-only'
           && request.resource.data.source == 'personal'
-          && request.resource.data.assigneeUids.hasOnly([request.auth.uid])
+          && request.resource.data.completerUids.hasOnly([request.auth.uid])
         );
 
       allow delete: if isAdmin()
@@ -129,7 +142,8 @@ service cloud.firestore {
         function canAccessParent() {
           return isAdmin()
             || (hasRole(['committee', 'admin']) && parent().visibility == 'committee')
-            || request.auth.uid in parent().assigneeUids;
+            || request.auth.uid in parent().completerUids
+            || request.auth.uid in parent().reviewerUids;
         }
         allow read: if canAccessParent();
         allow create: if canAccessParent()
@@ -152,7 +166,8 @@ service cloud.firestore {
         function canAccessParent() {
           return isAdmin()
             || (hasRole(['committee', 'admin']) && parent().visibility == 'committee')
-            || request.auth.uid in parent().assigneeUids;
+            || request.auth.uid in parent().completerUids
+            || request.auth.uid in parent().reviewerUids;
         }
         allow read: if canAccessParent();
         allow create: if isSignedIn()
@@ -168,7 +183,8 @@ service cloud.firestore {
         function canAccessParent() {
           return isAdmin()
             || (hasRole(['committee', 'admin']) && parent().visibility == 'committee')
-            || request.auth.uid in parent().assigneeUids;
+            || request.auth.uid in parent().completerUids
+            || request.auth.uid in parent().reviewerUids;
         }
         allow read: if canAccessParent();
         allow create: if canAccessParent()
@@ -177,6 +193,21 @@ service cloud.firestore {
           || (isSignedIn() && resource.data.uploadedByUid == request.auth.uid);
         allow update: if false;
       }
+    }
+
+    // === taskTemplates ===
+    // Person-agnostic task-structure templates (subtask titles, blockedBy graph,
+    // role hints). Admins CRUD; committee + admin can read + instantiate into
+    // new tasks. Templates never store user UIDs — the creator picks completers
+    // and reviewers at task-creation time.
+    match /taskTemplates/{templateId} {
+      allow read: if hasRole(['committee', 'admin']);
+      allow create, update: if isAdmin()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 80
+        && request.resource.data.subtasks.size() <= 50;
+      allow delete: if isAdmin();
     }
 
     // === credentials (committee only, client-side encrypted) ===

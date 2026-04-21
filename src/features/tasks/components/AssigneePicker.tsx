@@ -3,15 +3,30 @@
 import { useMemo, useState } from "react";
 import type { UserDoc } from "@/lib/firestore/users";
 
+export type PickerRole = "completer" | "reviewer";
+
 type Props = {
   users: UserDoc[];
   selected: string[];
   onChange: (uids: string[]) => void;
   label?: string;
   max?: number;
+  role?: PickerRole;
 };
 
-export default function AssigneePicker({ users, selected, onChange, label, max = 10 }: Props) {
+const ROLE_COPY: Record<PickerRole, { verb: string; countLabel: string }> = {
+  completer: { verb: "assigned", countLabel: "completer" },
+  reviewer: { verb: "reviewing", countLabel: "reviewer" },
+};
+
+export default function AssigneePicker({
+  users,
+  selected,
+  onChange,
+  label,
+  max = 10,
+  role = "completer",
+}: Props) {
   const [search, setSearch] = useState("");
 
   const sorted = useMemo(() => {
@@ -59,8 +74,14 @@ export default function AssigneePicker({ users, selected, onChange, label, max =
                 gap: "var(--space-1)",
                 padding: "0.25rem 0.55rem",
                 borderRadius: "var(--radius-pill)",
-                background: "var(--color-accent-soft)",
-                color: "var(--color-accent)",
+                background:
+                  role === "reviewer"
+                    ? "var(--color-warning-soft, var(--color-surface-hover))"
+                    : "var(--color-accent-soft)",
+                color:
+                  role === "reviewer"
+                    ? "var(--color-warning, var(--color-text))"
+                    : "var(--color-accent)",
                 fontSize: "var(--text-xs)",
                 border: "none",
                 cursor: "pointer",
@@ -144,7 +165,7 @@ export default function AssigneePicker({ users, selected, onChange, label, max =
         })}
       </div>
       <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-subtle)" }}>
-        {selected.length}/{max} assigned
+        {selected.length}/{max} {ROLE_COPY[role].verb}
       </span>
     </div>
   );
