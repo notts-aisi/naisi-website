@@ -7,7 +7,8 @@ import { TASK_KINDS, TASK_KIND_LABELS, type TaskKind } from "@/lib/firestore/tas
 
 export type TaskFilterState = {
   projectId: string | "all";
-  assigneeUid: string | "all";
+  /** Matches tasks where this uid is a completer OR a reviewer. */
+  personUid: string | "all";
   source: "all" | "committee" | "fellowship-reminder" | "personal";
   kind: "all" | TaskKind;
 };
@@ -42,11 +43,11 @@ export default function TaskFilters({ value, onChange, projects, users }: Props)
         ))}
       </Select>
       <Select
-        value={value.assigneeUid}
-        onChange={(e) => onChange({ ...value, assigneeUid: e.target.value as TaskFilterState["assigneeUid"] })}
-        aria-label="Filter by assignee"
+        value={value.personUid}
+        onChange={(e) => onChange({ ...value, personUid: e.target.value as TaskFilterState["personUid"] })}
+        aria-label="Filter by person (completer or reviewer)"
       >
-        <option value="all">All assignees</option>
+        <option value="all">All people</option>
         {users.map((u) => (
           <option key={u.uid} value={u.uid}>
             {u.displayName ?? u.email ?? u.uid}

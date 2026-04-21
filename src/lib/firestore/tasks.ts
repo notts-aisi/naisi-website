@@ -55,65 +55,22 @@ export const TASK_KIND_LABELS: Record<TaskKind, string> = {
   "fellowship-weekly": "Fellowship weekly",
 };
 
-/**
- * Subtask templates applied automatically at task creation for kinds that have
- * a well-defined checklist. Empty array = no template (just the tasks-manager
- * subtasks users add manually). Future: attendee RSVP + capacity live on the
- * task itself, not in subtasks — tracked separately when the booking feature
- * lands.
- */
-export const TASK_KIND_SUBTASK_TEMPLATES: Record<TaskKind, string[]> = {
-  generic: [],
-  "project-work": [],
-  "fellowship-weekly": [],
-  social: [
-    "Pick date + time",
-    "Book venue / pick location",
-    "Create poster or graphic",
-    "Announce on Instagram",
-    "Announce in Slack / Discord",
-    "Confirm rough numbers",
-    "Run the social",
-    "Post short debrief / photo",
-  ],
-  event: [
-    "Confirm date + speaker(s)",
-    "Book venue",
-    "Create poster + any materials",
-    "Open sign-ups / RSVP (when available)",
-    "Announce on Instagram",
-    "Announce in Slack / Discord",
-    "Send reminder day-before",
-    "Run event",
-    "Share recording / resources afterwards",
-  ],
-  "instagram-post": [
-    "Draft caption",
-    "Create visual / carousel",
-    "Copy approved",
-    "Visual approved",
-    "Scheduled in planner",
-    "Posted",
-    "Engagement check next day",
-  ],
-  "instagram-story": [
-    "Create visual",
-    "Draft caption / stickers",
-    "Post story",
-    "Check replies + engagement",
-  ],
-};
-
 export const TASK_FIELD_LIMITS = {
   title: 120,
   description: 4000,
   subtaskTitle: 160,
   tag: 40,
   maxSubtasks: 50,
-  maxAssignees: 10,
+  maxCompleters: 10,
+  maxReviewers: 5,
+  maxAssigneesPerSubtask: 10,
+  maxReviewersPerSubtask: 5,
+  maxBlockedBy: 10,
   maxTags: 8,
   commentBody: 2000,
 } as const;
+
+export type SubtaskRoleHint = "completer" | "reviewer" | null;
 
 export type Subtask = {
   id: string;
@@ -121,6 +78,10 @@ export type Subtask = {
   done: boolean;
   doneAt: Date | null;
   doneByUid: string | null;
+  assigneeUids: string[];
+  reviewerUids: string[];
+  blockedBy: string[];
+  roleHint: SubtaskRoleHint;
 };
 
 export type SubtaskStats = {
@@ -141,7 +102,8 @@ export type TaskDoc = {
   kind: TaskKind;
   projectId: string | null;
   creatorUid: string;
-  assigneeUids: string[];
+  completerUids: string[];
+  reviewerUids: string[];
   status: TaskStatus;
   priority: TaskPriority;
   dueDate: Date | null;
@@ -153,6 +115,7 @@ export type TaskDoc = {
   commentCount: number;
   tags: string[];
   sourceRef: SourceRef;
+  sourceTemplateId: string | null;
   createdAt: Date | null;
   updatedAt: Date | null;
   completedAt: Date | null;
@@ -167,18 +130,30 @@ function tsToDate(v: unknown): Date | null {
   return typeof obj?.toDate === "function" ? obj.toDate() : null;
 }
 
+function stringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return (v as unknown[]).filter((s): s is string => typeof s === "string");
+}
+
 function normalizeSubtask(raw: unknown): Subtask | null {
   if (!raw || typeof raw !== "object") return null;
   const s = raw as Raw;
   const id = typeof s.id === "string" ? s.id : null;
   const title = typeof s.title === "string" ? s.title : null;
   if (!id || !title) return null;
+  const rawHint = typeof s.roleHint === "string" ? s.roleHint : null;
+  const roleHint: SubtaskRoleHint =
+    rawHint === "completer" || rawHint === "reviewer" ? rawHint : null;
   return {
     id,
     title,
     done: Boolean(s.done),
     doneAt: tsToDate(s.doneAt),
     doneByUid: typeof s.doneByUid === "string" ? s.doneByUid : null,
+    assigneeUids: stringArray(s.assigneeUids),
+    reviewerUids: stringArray(s.reviewerUids),
+    blockedBy: stringArray(s.blockedBy),
+    roleHint,
   };
 }
 
@@ -205,9 +180,8 @@ export function normalizeTask(id: string, data: Raw): TaskDoc {
     kind: (data.kind as TaskKind) ?? "generic",
     projectId: (data.projectId as string | null | undefined) ?? null,
     creatorUid: (data.creatorUid as string) ?? "",
-    assigneeUids: Array.isArray(data.assigneeUids)
-      ? (data.assigneeUids as unknown[]).filter((u): u is string => typeof u === "string")
-      : [],
+    completerUids: stringArray(data.completerUids),
+    reviewerUids: stringArray(data.reviewerUids),
     status: (data.status as TaskStatus) ?? "todo",
     priority: (data.priority as TaskPriority) ?? "normal",
     dueDate: tsToDate(data.dueDate),
@@ -220,10 +194,10 @@ export function normalizeTask(id: string, data: Raw): TaskDoc {
     },
     attachmentCount: typeof data.attachmentCount === "number" ? data.attachmentCount : 0,
     commentCount: typeof data.commentCount === "number" ? data.commentCount : 0,
-    tags: Array.isArray(data.tags)
-      ? (data.tags as unknown[]).filter((t): t is string => typeof t === "string")
-      : [],
+    tags: stringArray(data.tags),
     sourceRef: normalizeSourceRef(data.sourceRef),
+    sourceTemplateId:
+      typeof data.sourceTemplateId === "string" ? data.sourceTemplateId : null,
     createdAt: tsToDate(data.createdAt),
     updatedAt: tsToDate(data.updatedAt),
     completedAt: tsToDate(data.completedAt),
@@ -247,4 +221,16 @@ export function isDueSoon(task: TaskDoc, now: Date = new Date()): boolean {
   if (task.status === "done" || task.archived) return false;
   const diff = task.dueDate.getTime() - now.getTime();
   return diff > 0 && diff < 48 * 60 * 60 * 1000;
+}
+
+/**
+ * A subtask is tickable only when every id in its `blockedBy` resolves to a
+ * sibling subtask with `done: true`. Unknown blocker ids are treated as blocked
+ * (fail-safe: if someone edits templates or reorders and leaves a stale ref,
+ * the row stays locked rather than silently unlocking).
+ */
+export function isSubtaskBlocked(subtask: Subtask, siblings: Subtask[]): boolean {
+  if (subtask.blockedBy.length === 0) return false;
+  const doneIds = new Set(siblings.filter((s) => s.done).map((s) => s.id));
+  return subtask.blockedBy.some((id) => !doneIds.has(id));
 }

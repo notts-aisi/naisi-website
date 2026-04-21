@@ -55,14 +55,18 @@ export default function TaskDetailModal({
   const { task, loading } = useTask(taskId);
   const isAdmin = viewerRole === "admin";
   const isCommittee = viewerRole === "committee" || viewerRole === "admin";
-  const isAssignee = task ? task.assigneeUids.includes(viewerUid) : false;
+  const isCompleter = task ? task.completerUids.includes(viewerUid) : false;
+  const isReviewer = task ? task.reviewerUids.includes(viewerUid) : false;
   const isCreator = task ? task.creatorUid === viewerUid : false;
   const canEditAll =
     !!task &&
     (isAdmin ||
       (isCommittee && task.visibility === "committee") ||
       (task.source === "personal" && isCreator));
-  const canEditAssigneeFields = canEditAll || isAssignee;
+  // Completers and reviewers both can tick subtasks and change status.
+  // Reviewers in this band is what lets them tick their review step even if
+  // they're not on the completer list.
+  const canEditProgressFields = canEditAll || isCompleter || isReviewer;
 
   const [titleDraft, setTitleDraft] = useState("");
   const [descDraft, setDescDraft] = useState("");
@@ -162,9 +166,17 @@ export default function TaskDetailModal({
     }
   }
 
-  async function onAssigneesChange(uids: string[]) {
+  async function onCompletersChange(uids: string[]) {
     try {
-      await updateTask(task!.id, { assigneeUids: uids });
+      await updateTask(task!.id, { completerUids: uids });
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function onReviewersChange(uids: string[]) {
+    try {
+      await updateTask(task!.id, { reviewerUids: uids });
     } catch (err) {
       console.error(err);
     }
@@ -270,7 +282,7 @@ export default function TaskDetailModal({
               <Select
                 value={task.status}
                 onChange={(e) => onStatusChange(e.target.value as TaskStatus)}
-                disabled={!canEditAssigneeFields}
+                disabled={!canEditProgressFields}
                 aria-label="Status"
               >
                 {TASK_STATUSES.map((s) => (
@@ -388,7 +400,7 @@ export default function TaskDetailModal({
                 />
               </div>
             )}
-            <SubtaskList task={task} canEdit={canEditAssigneeFields} />
+            <SubtaskList task={task} users={users} canEdit={canEditProgressFields} />
           </section>
 
           <section>
@@ -443,22 +455,52 @@ export default function TaskDetailModal({
           )}
 
           <div>
-            <h4 style={sectionLabel}>Assignees</h4>
+            <h4 style={sectionLabel}>Completers</h4>
             {canEditAll ? (
               <AssigneePicker
                 users={users}
-                selected={task.assigneeUids}
-                onChange={onAssigneesChange}
-                max={TASK_FIELD_LIMITS.maxAssignees}
+                selected={task.completerUids}
+                onChange={onCompletersChange}
+                max={TASK_FIELD_LIMITS.maxCompleters}
+                role="completer"
               />
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
-                {task.assigneeUids.length === 0 && (
+                {task.completerUids.length === 0 && (
                   <span style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
                     Unassigned
                   </span>
                 )}
-                {task.assigneeUids.map((uid) => {
+                {task.completerUids.map((uid) => {
+                  const u = users.find((x) => x.uid === uid);
+                  return (
+                    <span key={uid} style={{ fontSize: "var(--text-sm)" }}>
+                      {u?.displayName ?? u?.email ?? uid}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <h4 style={sectionLabel}>Reviewers</h4>
+            {canEditAll ? (
+              <AssigneePicker
+                users={users}
+                selected={task.reviewerUids}
+                onChange={onReviewersChange}
+                max={TASK_FIELD_LIMITS.maxReviewers}
+                role="reviewer"
+              />
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+                {task.reviewerUids.length === 0 && (
+                  <span style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
+                    No reviewer set
+                  </span>
+                )}
+                {task.reviewerUids.map((uid) => {
                   const u = users.find((x) => x.uid === uid);
                   return (
                     <span key={uid} style={{ fontSize: "var(--text-sm)" }}>

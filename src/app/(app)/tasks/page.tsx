@@ -23,7 +23,7 @@ export default function MyWorkPage() {
   const openTaskId = searchParams.get("task");
 
   const { user, role } = useAuth();
-  const { tasks, loading } = useTasks(user ? { assigneeUid: user.uid, includeArchived: false } : {});
+  const { tasks, loading } = useTasks(user ? { completerUid: user.uid, includeArchived: false } : {});
   const { projects } = useProjects();
   const { users } = useMembers();
 
@@ -69,7 +69,7 @@ export default function MyWorkPage() {
       await createTask({
         title: quickTitle.trim(),
         source: "personal",
-        assigneeUids: [user.uid],
+        completerUids: [user.uid],
         visibility: "assignees-only",
       });
       setQuickTitle("");

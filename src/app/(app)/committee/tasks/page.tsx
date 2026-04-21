@@ -28,7 +28,7 @@ export default function CommitteeTasksPage() {
   const [creating, setCreating] = useState(false);
   const [filters, setFilters] = useState<TaskFilterState>({
     projectId: "all",
-    assigneeUid: "all",
+    personUid: "all",
     source: "all",
     kind: "all",
   });
@@ -36,8 +36,11 @@ export default function CommitteeTasksPage() {
   const filtered = useMemo(() => {
     return tasks.filter((t) => {
       if (filters.projectId !== "all" && t.projectId !== filters.projectId) return false;
-      if (filters.assigneeUid !== "all" && !t.assigneeUids.includes(filters.assigneeUid)) {
-        return false;
+      if (filters.personUid !== "all") {
+        const onTask =
+          t.completerUids.includes(filters.personUid) ||
+          t.reviewerUids.includes(filters.personUid);
+        if (!onTask) return false;
       }
       if (filters.source !== "all" && t.source !== filters.source) return false;
       if (filters.kind !== "all" && t.kind !== filters.kind) return false;

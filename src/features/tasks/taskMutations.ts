@@ -14,7 +14,9 @@ import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import {
   TASK_FIELD_LIMITS,
   computeSubtaskStats,
+  isSubtaskBlocked,
   type Subtask,
+  type SubtaskRoleHint,
   type TaskDoc,
   type TaskKind,
   type TaskPriority,
@@ -36,18 +38,48 @@ function genId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/**
+ * Firestore shape for an embedded subtask — keep this and the `Subtask` type in
+ * src/lib/firestore/tasks.ts aligned. Every writer below funnels through this
+ * so new fields don't get dropped accidentally.
+ */
+function serializeSubtask(s: Subtask) {
+  return {
+    id: s.id,
+    title: s.title,
+    done: s.done,
+    doneAt: s.doneAt ? Timestamp.fromDate(s.doneAt) : null,
+    doneByUid: s.doneByUid,
+    assigneeUids: s.assigneeUids,
+    reviewerUids: s.reviewerUids,
+    blockedBy: s.blockedBy,
+    roleHint: s.roleHint,
+  };
+}
+
+function clampUids(uids: string[] | undefined, max: number): string[] {
+  if (!uids) return [];
+  const unique = Array.from(new Set(uids.filter((u) => typeof u === "string" && u.length > 0)));
+  return unique.slice(0, max);
+}
+
+export type CreateSubtaskInput = Pick<Subtask, "title"> &
+  Partial<Pick<Subtask, "id" | "assigneeUids" | "reviewerUids" | "blockedBy" | "roleHint">>;
+
 export type CreateTaskInput = {
   title: string;
   description?: string;
   source: TaskSource;
   kind?: TaskKind;
   projectId?: string | null;
-  assigneeUids: string[];
+  completerUids: string[];
+  reviewerUids?: string[];
   priority?: TaskPriority;
   dueDate?: Date | null;
   visibility?: TaskVisibility;
-  subtasks?: Pick<Subtask, "title">[];
+  subtasks?: CreateSubtaskInput[];
   tags?: string[];
+  sourceTemplateId?: string | null;
 };
 
 export async function createTask(input: CreateTaskInput): Promise<string> {
@@ -60,17 +92,29 @@ export async function createTask(input: CreateTaskInput): Promise<string> {
     throw new Error(`Title must be ${TASK_FIELD_LIMITS.title} characters or fewer`);
   }
 
-  const assigneeUids = (input.assigneeUids ?? []).slice(0, TASK_FIELD_LIMITS.maxAssignees);
+  const completerUids = clampUids(input.completerUids, TASK_FIELD_LIMITS.maxCompleters);
+  const reviewerUids = clampUids(input.reviewerUids, TASK_FIELD_LIMITS.maxReviewers);
   const tags = (input.tags ?? []).slice(0, TASK_FIELD_LIMITS.maxTags);
-  const subtasks: Subtask[] = (input.subtasks ?? [])
-    .slice(0, TASK_FIELD_LIMITS.maxSubtasks)
-    .map((s) => ({
-      id: genId(),
-      title: s.title.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
-      done: false,
-      doneAt: null,
-      doneByUid: null,
-    }));
+
+  // When subtasks come from materialiseTemplate, ids are pre-populated and
+  // blockedBy references those exact ids — preserve them. When subtasks come
+  // from a freeform caller without ids, generate fresh ones.
+  const rawSubtasks = (input.subtasks ?? []).slice(0, TASK_FIELD_LIMITS.maxSubtasks);
+  const subtasks: Subtask[] = rawSubtasks.map((s) => ({
+    id: s.id ?? genId(),
+    title: s.title.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
+    done: false,
+    doneAt: null,
+    doneByUid: null,
+    assigneeUids: clampUids(s.assigneeUids, TASK_FIELD_LIMITS.maxAssigneesPerSubtask),
+    reviewerUids: clampUids(s.reviewerUids, TASK_FIELD_LIMITS.maxReviewersPerSubtask),
+    blockedBy: (s.blockedBy ?? []).slice(0, TASK_FIELD_LIMITS.maxBlockedBy),
+    roleHint: s.roleHint ?? null,
+  }));
+  const validSubtaskIds = new Set(subtasks.map((s) => s.id));
+  for (const s of subtasks) {
+    s.blockedBy = s.blockedBy.filter((id) => validSubtaskIds.has(id) && id !== s.id);
+  }
 
   const visibility: TaskVisibility =
     input.visibility ?? (input.source === "personal" ? "assignees-only" : "committee");
@@ -82,24 +126,20 @@ export async function createTask(input: CreateTaskInput): Promise<string> {
     kind: input.kind ?? "generic",
     projectId: input.projectId ?? null,
     creatorUid: uid,
-    assigneeUids,
+    completerUids,
+    reviewerUids,
     status: "todo" as TaskStatus,
     priority: input.priority ?? "normal",
     dueDate: input.dueDate ? Timestamp.fromDate(input.dueDate) : null,
     archived: false,
     visibility,
-    subtasks: subtasks.map((s) => ({
-      id: s.id,
-      title: s.title,
-      done: false,
-      doneAt: null,
-      doneByUid: null,
-    })),
+    subtasks: subtasks.map(serializeSubtask),
     subtaskStats: { done: 0, total: subtasks.length },
     attachmentCount: 0,
     commentCount: 0,
     tags,
     sourceRef: null,
+    sourceTemplateId: input.sourceTemplateId ?? null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     completedAt: null,
@@ -124,35 +164,36 @@ export async function setTaskStatus(task: TaskDoc, status: TaskStatus) {
 export async function toggleSubtask(task: TaskDoc, subtaskId: string) {
   const db = getClientDb();
   const uid = actingUid();
-  const now = Timestamp.now();
+  const target = task.subtasks.find((s) => s.id === subtaskId);
+  if (!target) throw new Error("Subtask not found");
+  if (!target.done && isSubtaskBlocked(target, task.subtasks)) {
+    throw new Error("Subtask is blocked by an unfinished prerequisite");
+  }
   const subtasks = task.subtasks.map<Subtask>((s) => {
     if (s.id !== subtaskId) return s;
     const nextDone = !s.done;
     return {
       ...s,
       done: nextDone,
-      doneAt: nextDone ? now.toDate() : null,
+      doneAt: nextDone ? new Date() : null,
       doneByUid: nextDone ? uid : null,
     };
   });
   const stats = computeSubtaskStats(subtasks);
   await updateDoc(doc(db, "tasks", task.id), {
-    subtasks: subtasks.map((s) => ({
-      id: s.id,
-      title: s.title,
-      done: s.done,
-      doneAt: s.doneAt ? Timestamp.fromDate(s.doneAt) : null,
-      doneByUid: s.doneByUid,
-    })),
+    subtasks: subtasks.map(serializeSubtask),
     subtaskStats: stats,
     updatedAt: serverTimestamp(),
   });
 }
 
-export async function addSubtask(task: TaskDoc, title: string) {
+export async function addSubtask(
+  task: TaskDoc,
+  init: CreateSubtaskInput,
+): Promise<string> {
   const db = getClientDb();
-  const trimmed = title.trim();
-  if (!trimmed) return;
+  const trimmed = init.title.trim();
+  if (!trimmed) throw new Error("Subtask title required");
   if (task.subtasks.length >= TASK_FIELD_LIMITS.maxSubtasks) {
     throw new Error(`Max ${TASK_FIELD_LIMITS.maxSubtasks} subtasks per task`);
   }
@@ -162,42 +203,96 @@ export async function addSubtask(task: TaskDoc, title: string) {
     done: false,
     doneAt: null,
     doneByUid: null,
+    assigneeUids: clampUids(init.assigneeUids, TASK_FIELD_LIMITS.maxAssigneesPerSubtask),
+    reviewerUids: clampUids(init.reviewerUids, TASK_FIELD_LIMITS.maxReviewersPerSubtask),
+    blockedBy: (init.blockedBy ?? []).slice(0, TASK_FIELD_LIMITS.maxBlockedBy),
+    roleHint: init.roleHint ?? null,
   };
   const subtasks = [...task.subtasks, next];
   await updateDoc(doc(db, "tasks", task.id), {
-    subtasks: subtasks.map((s) => ({
-      id: s.id,
-      title: s.title,
-      done: s.done,
-      doneAt: s.doneAt ? Timestamp.fromDate(s.doneAt) : null,
-      doneByUid: s.doneByUid,
-    })),
+    subtasks: subtasks.map(serializeSubtask),
+    subtaskStats: computeSubtaskStats(subtasks),
+    updatedAt: serverTimestamp(),
+  });
+  return next.id;
+}
+
+export async function removeSubtask(task: TaskDoc, subtaskId: string) {
+  const db = getClientDb();
+  // Drop references to this subtask from any sibling's blockedBy so the graph
+  // doesn't end up with dangling refs that permanently block a row.
+  const subtasks = task.subtasks
+    .filter((s) => s.id !== subtaskId)
+    .map((s) => ({ ...s, blockedBy: s.blockedBy.filter((id) => id !== subtaskId) }));
+  await updateDoc(doc(db, "tasks", task.id), {
+    subtasks: subtasks.map(serializeSubtask),
     subtaskStats: computeSubtaskStats(subtasks),
     updatedAt: serverTimestamp(),
   });
 }
 
-export async function removeSubtask(task: TaskDoc, subtaskId: string) {
+async function patchSubtask(
+  task: TaskDoc,
+  subtaskId: string,
+  patch: (s: Subtask) => Subtask,
+) {
   const db = getClientDb();
-  const subtasks = task.subtasks.filter((s) => s.id !== subtaskId);
+  const subtasks = task.subtasks.map((s) => (s.id === subtaskId ? patch(s) : s));
   await updateDoc(doc(db, "tasks", task.id), {
-    subtasks: subtasks.map((s) => ({
-      id: s.id,
-      title: s.title,
-      done: s.done,
-      doneAt: s.doneAt ? Timestamp.fromDate(s.doneAt) : null,
-      doneByUid: s.doneByUid,
-    })),
-    subtaskStats: computeSubtaskStats(subtasks),
+    subtasks: subtasks.map(serializeSubtask),
     updatedAt: serverTimestamp(),
   });
+}
+
+export async function setSubtaskAssignees(task: TaskDoc, subtaskId: string, uids: string[]) {
+  await patchSubtask(task, subtaskId, (s) => ({
+    ...s,
+    assigneeUids: clampUids(uids, TASK_FIELD_LIMITS.maxAssigneesPerSubtask),
+  }));
+}
+
+export async function setSubtaskReviewers(task: TaskDoc, subtaskId: string, uids: string[]) {
+  await patchSubtask(task, subtaskId, (s) => ({
+    ...s,
+    reviewerUids: clampUids(uids, TASK_FIELD_LIMITS.maxReviewersPerSubtask),
+  }));
+}
+
+export async function setSubtaskBlockedBy(
+  task: TaskDoc,
+  subtaskId: string,
+  blockedBy: string[],
+) {
+  const validIds = new Set(task.subtasks.map((s) => s.id).filter((id) => id !== subtaskId));
+  const filtered = blockedBy
+    .filter((id) => validIds.has(id))
+    .slice(0, TASK_FIELD_LIMITS.maxBlockedBy);
+  await patchSubtask(task, subtaskId, (s) => ({ ...s, blockedBy: filtered }));
+}
+
+export async function setSubtaskRoleHint(
+  task: TaskDoc,
+  subtaskId: string,
+  roleHint: SubtaskRoleHint,
+) {
+  await patchSubtask(task, subtaskId, (s) => ({ ...s, roleHint }));
+}
+
+export async function renameSubtask(task: TaskDoc, subtaskId: string, title: string) {
+  const trimmed = title.trim();
+  if (!trimmed) throw new Error("Subtask title required");
+  await patchSubtask(task, subtaskId, (s) => ({
+    ...s,
+    title: trimmed.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
+  }));
 }
 
 export type UpdateTaskInput = {
   title?: string;
   description?: string;
   projectId?: string | null;
-  assigneeUids?: string[];
+  completerUids?: string[];
+  reviewerUids?: string[];
   priority?: TaskPriority;
   dueDate?: Date | null;
   kind?: TaskKind;
@@ -216,8 +311,11 @@ export async function updateTask(taskId: string, fields: UpdateTaskInput) {
     patch.description = fields.description.slice(0, TASK_FIELD_LIMITS.description);
   }
   if (fields.projectId !== undefined) patch.projectId = fields.projectId ?? null;
-  if (fields.assigneeUids !== undefined) {
-    patch.assigneeUids = fields.assigneeUids.slice(0, TASK_FIELD_LIMITS.maxAssignees);
+  if (fields.completerUids !== undefined) {
+    patch.completerUids = clampUids(fields.completerUids, TASK_FIELD_LIMITS.maxCompleters);
+  }
+  if (fields.reviewerUids !== undefined) {
+    patch.reviewerUids = clampUids(fields.reviewerUids, TASK_FIELD_LIMITS.maxReviewers);
   }
   if (fields.priority !== undefined) patch.priority = fields.priority;
   if (fields.dueDate !== undefined) {
@@ -230,8 +328,12 @@ export async function updateTask(taskId: string, fields: UpdateTaskInput) {
   await updateDoc(doc(db, "tasks", taskId), patch);
 }
 
-export async function assignTask(taskId: string, assigneeUids: string[]) {
-  await updateTask(taskId, { assigneeUids });
+export async function setTaskCompleters(taskId: string, completerUids: string[]) {
+  await updateTask(taskId, { completerUids });
+}
+
+export async function setTaskReviewers(taskId: string, reviewerUids: string[]) {
+  await updateTask(taskId, { reviewerUids });
 }
 
 export async function setTaskVisibility(taskId: string, visibility: TaskVisibility) {

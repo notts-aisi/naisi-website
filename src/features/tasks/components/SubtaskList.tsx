@@ -2,14 +2,17 @@
 
 import { useState } from "react";
 import { TASK_FIELD_LIMITS, type TaskDoc } from "@/lib/firestore/tasks";
-import { addSubtask, removeSubtask, toggleSubtask } from "../taskMutations";
+import type { UserDoc } from "@/lib/firestore/users";
+import { addSubtask } from "../taskMutations";
+import SubtaskRow from "./SubtaskRow";
 
 type Props = {
   task: TaskDoc;
+  users: UserDoc[];
   canEdit: boolean;
 };
 
-export default function SubtaskList({ task, canEdit }: Props) {
+export default function SubtaskList({ task, users, canEdit }: Props) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -19,7 +22,7 @@ export default function SubtaskList({ task, canEdit }: Props) {
     if (!trimmed || busy) return;
     setBusy(true);
     try {
-      await addSubtask(task, trimmed);
+      await addSubtask(task, { title: trimmed });
       setDraft("");
     } catch (err) {
       console.error(err);
@@ -36,51 +39,7 @@ export default function SubtaskList({ task, canEdit }: Props) {
         </p>
       )}
       {task.subtasks.map((s) => (
-        <div
-          key={s.id}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--space-3)",
-            padding: "0.5rem 0.75rem",
-            background: "var(--color-bg-elevated)",
-            border: "1px solid var(--color-border)",
-            borderRadius: "var(--radius-md)",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={s.done}
-            onChange={() => toggleSubtask(task, s.id).catch(console.error)}
-            aria-label={`Mark "${s.title}" ${s.done ? "incomplete" : "complete"}`}
-          />
-          <span
-            style={{
-              flex: 1,
-              fontSize: "var(--text-sm)",
-              textDecoration: s.done ? "line-through" : "none",
-              color: s.done ? "var(--color-text-muted)" : "var(--color-text)",
-            }}
-          >
-            {s.title}
-          </span>
-          {canEdit && (
-            <button
-              type="button"
-              onClick={() => removeSubtask(task, s.id).catch(console.error)}
-              aria-label="Remove subtask"
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "var(--color-text-subtle)",
-                cursor: "pointer",
-                fontSize: "var(--text-xs)",
-              }}
-            >
-              ✕
-            </button>
-          )}
-        </div>
+        <SubtaskRow key={s.id} task={task} subtask={s} users={users} canEdit={canEdit} />
       ))}
 
       {canEdit && task.subtasks.length < TASK_FIELD_LIMITS.maxSubtasks && (
