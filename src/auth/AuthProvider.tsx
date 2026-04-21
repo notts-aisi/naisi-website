@@ -41,8 +41,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!u) {
         setRole(null);
         setPermissions({});
-        setLoading(false);
       }
+      // Auth state is resolved — UI can render regardless of whether the
+      // Firestore user-doc snapshot has arrived yet. Previously we waited
+      // for onSnapshot to fire, which left the header stuck on "loading"
+      // forever when a cached Firebase Auth user couldn't reach Firestore
+      // (stale token, rules change, etc).
+      setLoading(false);
     });
   }, []);
 
@@ -65,9 +70,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           draftEvent: Boolean(raw.draftEvent),
           approveEvent: Boolean(raw.approveEvent),
         });
-        setLoading(false);
       },
-      () => setLoading(false),
+      () => {
+        // Snapshot errored (permission-denied, offline, etc). Clear role so
+        // gated UI bails out to the sign-in path rather than trusting stale
+        // state, and let AuthProvider's server-session-aware callers re-auth.
+        setRole(null);
+        setPermissions({});
+      },
     );
     return unsub;
   }, [user]);
