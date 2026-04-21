@@ -68,6 +68,18 @@ npx firebase deploy --only firestore:rules,firestore:indexes
 
 Admin SDK credentials are provided automatically via Application Default Credentials in App Hosting — no `FIREBASE_ADMIN_*` vars needed in production.
 
+## Dev / staging environment
+
+Separate from prod so test data, test emails, and test sign-ins never touch real members.
+
+- **Firebase project**: `naisi-website-dev` (Blaze plan). Its own Firestore, Auth, Storage.
+- **Branch**: push to `dev` → App Hosting auto-deploys to the dev backend.
+- **Config**: [`apphosting.dev.yaml`](./apphosting.dev.yaml) overrides only the values that differ (project id, auth domain, storage bucket, `NAISI (dev)` sender name). Secrets inherit names from `apphosting.yaml` and resolve in the dev project's Secret Manager.
+- **SMTP**: same `ai-safety@uonsu.com` sender as prod, with the display name set to `NAISI (dev)` so recipients can tell real mail from test.
+- **Only ever seed dev with email addresses you personally own** — any user doc in dev Firestore can get real mail on the next newsletter/RSVP test send.
+
+One-time setup is in the Firebase console + CLI: create the project, enable services, deploy `firestore:rules,firestore:indexes,storage --project dev`, set the secrets with `firebase apphosting:secrets:set … --project dev`, then create an App Hosting backend in the dev project with `dev` as both the live branch and the environment.
+
 ## Project layout
 
 The key folders:

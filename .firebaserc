@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "naisi-website"
+    "default": "naisi-website",
+    "dev": "naisi-website-dev"
   }
 }
