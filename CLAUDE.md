@@ -98,6 +98,31 @@ This shapes the task manager + calendar + future features. Keep this mental mode
 - `validateUniversityEmail()` there enforces `@nottingham.ac.uk` (subdomains allowed)
 - Long textareas use `CountedTextarea` which shows live char-remaining counter
 
+## Git workflow
+
+`main` is **protected** — direct pushes, force pushes, and deletions are all blocked. Every change reaches `main` via a PR (even from the repo owner).
+
+When making changes:
+
+1. **Never commit or push directly to `main`.** Always branch first. Also never force-push a branch that others might have pulled.
+2. **Branch name**: `feat/<slug>`, `fix/<slug>`, `chore/<slug>`, `docs/<slug>`. Short but descriptive.
+3. **Base branch and PR target**:
+   - Tiny, obviously-safe changes (docs, tooling, one-line fixes) → branch off `main`, PR into `main`.
+   - Anything that benefits from testing in a prod-like environment first → branch off `main`, PR into `dev`, verify on the dev App Hosting URL, then PR from `dev` into `main`.
+4. **Flow per change**:
+   ```sh
+   git checkout -b feat/my-change   # from main
+   # edit + commit
+   git push -u origin feat/my-change
+   # open PR on GitHub; self-merge (0 approvals required but PR is mandatory)
+   # locally after merge:
+   git checkout main && git pull && git branch -d feat/my-change
+   ```
+5. **PR titles/descriptions are employer-visible** (repo is public). Conventional Commits style (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`). Body explains the *why*, not a re-narration of the diff.
+6. **The `dev` branch** auto-deploys to the `naisi-website-dev` App Hosting backend on every push — see Deploy. When a hotfix lands on `main`, merge `main` → `dev` so dev doesn't drift behind on fixes.
+
+If asked to "commit and push" a change, default to creating a branch + PR unless the user explicitly says "push straight to main" (which will fail anyway). When in doubt, ask which base branch (main or dev).
+
 ## Deploy
 
 Two separate Firebase projects, each with its own App Hosting backend (both backends happen to be named `naisi-website` — not a bug, disambiguated by project):
