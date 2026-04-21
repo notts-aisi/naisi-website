@@ -4,7 +4,6 @@ import { useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
-import { useAuth } from "@/auth/AuthProvider";
 import { useTaskTemplates } from "@/features/tasks/hooks/useTaskTemplates";
 import TemplateEditor from "@/features/tasks/components/TemplateEditor";
 import { TASK_KIND_LABELS } from "@/lib/firestore/tasks";
@@ -16,27 +15,15 @@ type Mode =
   | { kind: "edit"; template: TaskTemplate };
 
 export default function TaskTemplatesPage() {
-  const { role } = useAuth();
   const { templates, loading } = useTaskTemplates();
   const [mode, setMode] = useState<Mode>({ kind: "list" });
-
-  if (role && role !== "admin") {
-    return (
-      <Card padding="md">
-        <p>Task templates are managed by admins only.</p>
-      </Card>
-    );
-  }
 
   if (mode.kind !== "list") {
     return (
       <div>
-        <div style={{ marginBottom: "var(--space-4)" }}>
-          <Badge tone="accent">Admin</Badge>
-          <h1 style={{ marginTop: "var(--space-2)" }}>
-            {mode.kind === "create" ? "New task template" : `Edit "${mode.template.name}"`}
-          </h1>
-        </div>
+        <h2 style={{ fontSize: "var(--text-xl)", marginBottom: "var(--space-4)" }}>
+          {mode.kind === "create" ? "New task template" : `Edit "${mode.template.name}"`}
+        </h2>
         <TemplateEditor
           template={mode.kind === "edit" ? mode.template : null}
           onDone={() => setMode({ kind: "list" })}
@@ -58,14 +45,10 @@ export default function TaskTemplatesPage() {
           marginBottom: "var(--space-5)",
         }}
       >
-        <div>
-          <Badge tone="accent">Admin</Badge>
-          <h1 style={{ marginTop: "var(--space-2)" }}>Task templates</h1>
-          <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-1)" }}>
-            Reusable task structures — subtask checklists, role hints, and gating. Committee
-            members pick from these when creating a task.
-          </p>
-        </div>
+        <p style={{ color: "var(--color-text-muted)", margin: 0, maxWidth: "40rem" }}>
+          Reusable task structures — subtask checklists, role hints, and gating. Committee
+          members pick from these when creating a task.
+        </p>
         <Button onClick={() => setMode({ kind: "create" })}>New template</Button>
       </div>
 

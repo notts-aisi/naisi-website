@@ -217,6 +217,36 @@ export async function addSubtask(
   return next.id;
 }
 
+/**
+ * Reorder subtasks. Accepts the desired id order; rebuilds the array by id so
+ * all per-subtask fields survive (title, role arrays, blockedBy refs, done
+ * state). Any ids missing from `orderedIds` are appended at the end rather
+ * than dropped — defensive against a caller passing a partial list.
+ *
+ * `blockedBy` references IDs, not positions, so dependency edges stay correct
+ * after reorder.
+ */
+export async function reorderSubtasks(task: TaskDoc, orderedIds: string[]) {
+  const db = getClientDb();
+  const byId = new Map(task.subtasks.map((s) => [s.id, s]));
+  const next: Subtask[] = [];
+  const seen = new Set<string>();
+  for (const id of orderedIds) {
+    const s = byId.get(id);
+    if (s && !seen.has(id)) {
+      next.push(s);
+      seen.add(id);
+    }
+  }
+  for (const s of task.subtasks) {
+    if (!seen.has(s.id)) next.push(s);
+  }
+  await updateDoc(doc(db, "tasks", task.id), {
+    subtasks: next.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function removeSubtask(task: TaskDoc, subtaskId: string) {
   const db = getClientDb();
   // Drop references to this subtask from any sibling's blockedBy so the graph

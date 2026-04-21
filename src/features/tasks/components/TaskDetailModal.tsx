@@ -216,9 +216,12 @@ export default function TaskDetailModal({
         style={{
           display: "grid",
           gridTemplateColumns: "minmax(0, 2fr) minmax(16rem, 1fr)",
+          // Fixed row so children with overflow can bound their content. Using
+          // maxHeight without an explicit row height lets the grid grow with
+          // content and breaks internal scroll (the main column never knows
+          // it's constrained).
+          gridTemplateRows: "85vh",
           gap: 0,
-          maxHeight: "85vh",
-          overflow: "hidden",
         }}
       >
         {/* Main column */}
@@ -226,6 +229,10 @@ export default function TaskDetailModal({
           style={{
             padding: "var(--space-6)",
             overflowY: "auto",
+            // min-height: 0 is the classic grid/flex scroll fix — without it a
+            // scrollable child inherits its intrinsic height instead of the
+            // grid row's bounded height.
+            minHeight: 0,
             display: "flex",
             flexDirection: "column",
             gap: "var(--space-5)",
@@ -425,6 +432,7 @@ export default function TaskDetailModal({
             background: "var(--color-bg-elevated)",
             borderLeft: "1px solid var(--color-border)",
             overflowY: "auto",
+            minHeight: 0,
             display: "flex",
             flexDirection: "column",
             gap: "var(--space-5)",
@@ -543,9 +551,13 @@ export default function TaskDetailModal({
               <Button size="sm" variant="secondary" onClick={handleArchiveToggle}>
                 {task.archived ? "Unarchive" : "Archive"}
               </Button>
-              <Button size="sm" variant="danger" onClick={handleDelete}>
-                Delete task
-              </Button>
+              {/* Delete is creator/admin only — matches the Firestore rules,
+                  which reject delete from non-creator committee members. */}
+              {(isAdmin || isCreator) && (
+                <Button size="sm" variant="danger" onClick={handleDelete}>
+                  Delete task
+                </Button>
+              )}
             </div>
           )}
         </div>

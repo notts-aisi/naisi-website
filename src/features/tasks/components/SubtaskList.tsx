@@ -1,9 +1,23 @@
 "use client";
 
 import { useState } from "react";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { TASK_FIELD_LIMITS, type TaskDoc } from "@/lib/firestore/tasks";
 import type { UserDoc } from "@/lib/firestore/users";
-import { addSubtask } from "../taskMutations";
+import { addSubtask, reorderSubtasks } from "../taskMutations";
 import SubtaskRow from "./SubtaskRow";
 
 type Props = {
@@ -15,6 +29,12 @@ type Props = {
 export default function SubtaskList({ task, users, canEdit }: Props) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // `activationConstraint` prevents accidental drags when the user is just
+  // clicking checkboxes or text inputs inside a row.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -31,18 +51,58 @@ export default function SubtaskList({ task, users, canEdit }: Props) {
     }
   }
 
+  async function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = task.subtasks.map((s) => s.id);
+    const oldIndex = ids.indexOf(String(active.id));
+    const newIndex = ids.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    const next = [...ids];
+    next.splice(oldIndex, 1);
+    next.splice(newIndex, 0, String(active.id));
+    try {
+      await reorderSubtasks(task, next);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  const rows = task.subtasks;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-      {task.subtasks.length === 0 && !canEdit && (
+      {rows.length === 0 && !canEdit && (
         <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
           No subtasks.
         </p>
       )}
-      {task.subtasks.map((s) => (
-        <SubtaskRow key={s.id} task={task} subtask={s} users={users} canEdit={canEdit} />
-      ))}
 
-      {canEdit && task.subtasks.length < TASK_FIELD_LIMITS.maxSubtasks && (
+      {canEdit ? (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={rows.map((s) => s.id)} strategy={verticalListSortingStrategy}>
+            {rows.map((s) => (
+              <SortableSubtaskRow key={s.id} id={s.id}>
+                {(handle) => (
+                  <SubtaskRow
+                    task={task}
+                    subtask={s}
+                    users={users}
+                    canEdit={canEdit}
+                    dragHandle={handle}
+                  />
+                )}
+              </SortableSubtaskRow>
+            ))}
+          </SortableContext>
+        </DndContext>
+      ) : (
+        rows.map((s) => (
+          <SubtaskRow key={s.id} task={task} subtask={s} users={users} canEdit={false} />
+        ))
+      )}
+
+      {canEdit && rows.length < TASK_FIELD_LIMITS.maxSubtasks && (
         <form onSubmit={handleAdd} style={{ display: "flex", gap: "var(--space-2)" }}>
           <input
             type="text"
@@ -77,6 +137,51 @@ export default function SubtaskList({ task, users, canEdit }: Props) {
           </button>
         </form>
       )}
+    </div>
+  );
+}
+
+function SortableSubtaskRow({
+  id,
+  children,
+}: {
+  id: string;
+  children: (handle: React.ReactNode) => React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+  });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+  };
+
+  const handle = (
+    <button
+      type="button"
+      aria-label="Drag to reorder"
+      title="Drag to reorder"
+      {...attributes}
+      {...listeners}
+      style={{
+        background: "transparent",
+        border: "none",
+        color: "var(--color-text-subtle)",
+        cursor: "grab",
+        padding: "0.25rem 0.35rem",
+        fontSize: "var(--text-md)",
+        lineHeight: 1,
+        touchAction: "none",
+      }}
+    >
+      ≡
+    </button>
+  );
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      {children(handle)}
     </div>
   );
 }
