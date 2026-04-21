@@ -88,7 +88,6 @@ export default function SubtaskRow({ task, subtask, users, canEdit, dragHandle }
         background: "var(--color-bg-elevated)",
         border: "1px solid var(--color-border)",
         borderRadius: "var(--radius-md)",
-        opacity: blocked ? 0.55 : 1,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", minHeight: "2rem" }}>
