@@ -1,0 +1,32 @@
+# Firebase App Hosting overrides for the `dev` environment.
+# Merged on top of apphosting.yaml when the backend is launched with
+# `--environment dev`. Only list values that actually differ from prod.
+#
+# Secrets (naisi-web-api-key, SMTP_PASSWORD, EVENTS_TOKEN_SECRET, …) are NOT
+# re-listed here — they inherit the names from apphosting.yaml and resolve
+# against THIS project's Secret Manager (the dev project) because App Hosting
+# looks up secrets in the project where the backend lives.
+
+env:
+  - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    value: naisi-website-dev.firebaseapp.com
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    value: naisi-website-dev
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+    value: naisi-website-dev.firebasestorage.app
+    availability: [BUILD, RUNTIME]
+  # SMTP host / port / user / from-email inherit from apphosting.yaml
+  # (same ai-safety@uonsu.com sender). Only the display name is overridden so
+  # dev sends show up as "NAISI (dev)" in recipient inboxes and never get
+  # mistaken for real mail.
+  - variable: SMTP_FROM_NAME
+    value: NAISI (dev)
+    availability: [RUNTIME]
+  # NEXT_PUBLIC_APP_URL: fill in AFTER the dev App Hosting backend is created
+  # (the URL looks like https://naisi-dev--<hash>.<region>.hosted.app).
+  # Email links break if this doesn't match the live origin.
+  # - variable: NEXT_PUBLIC_APP_URL
+  #   value: https://naisi-dev--XXXX.europe-west1.hosted.app
+  #   availability: [BUILD, RUNTIME]

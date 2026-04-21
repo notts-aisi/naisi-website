@@ -16,7 +16,7 @@ University of Nottingham AI Safety Initiative — public marketing site + authed
 - Route params are Promises: `{ params }: { params: Promise<{ slug: string }> }`, must `await` them.
 - Route handlers can use typed `RouteContext<"/api/foo/[id]">` helper.
 - `generateMetadata` is streamed but paused for bot user-agents (great for social previews).
-- Firebase App Hosting, not classic Firebase Hosting — see `apphosting.yaml`.
+- Firebase App Hosting, not classic Firebase Hosting — `apphosting.yaml` is prod, `apphosting.dev.yaml` overrides for the `dev` environment.
 
 ## Project layout
 
@@ -100,9 +100,16 @@ This shapes the task manager + calendar + future features. Keep this mental mode
 
 ## Deploy
 
-- **Site**: push to `main` → Firebase App Hosting GitHub integration rebuilds + deploys
-- **Firestore rules/indexes**: `npx firebase deploy --only firestore:rules,firestore:indexes`
-- **Local dev**: `npm run dev`, needs `.env.local` with `NEXT_PUBLIC_FIREBASE_*` + `FIREBASE_ADMIN_*` values (see `.env.example`)
+Two environments, both on Firebase App Hosting:
+
+- **Production** — push to `main` → deploys to the `naisi-website` project → `https://naisi.uk`. Config: `apphosting.yaml`.
+- **Dev / staging** — push to `dev` → deploys to the `naisi-website-dev` project → App Hosting URL. Config: `apphosting.yaml` + `apphosting.dev.yaml` overrides. Separate Firestore / Auth / Storage — fully isolated from prod data. Same real SMTP sender tagged `NAISI (dev)` so test emails are unmistakable.
+- **Firestore rules/indexes**: `npx firebase deploy --only firestore:rules,firestore:indexes --project <default|dev>` (default = prod, dev = dev project).
+- **Local dev**: `npm run dev`, needs `.env.local` with `NEXT_PUBLIC_FIREBASE_*` + `FIREBASE_ADMIN_*` values (see `.env.example`). Point at prod or dev project depending on what you're debugging.
+
+**Dev-env discipline**: the dev project uses the same Gmail SMTP as prod, so any user doc you create in dev Firestore can receive real mail on the next test send. Only seed dev with email addresses you personally own.
+
+**Typical workflow**: feature branch → PR into `dev` → merge → auto-deploy to dev → click around the real build → PR from `dev` into `main` → merge → auto-deploy to prod. Tiny changes can PR directly into `main`.
 
 ## What's shipped (v1)
 
