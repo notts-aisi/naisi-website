@@ -11,6 +11,7 @@ const TABS = [
   { label: "Projects", href: "/admin/projects", match: (p: string) => p.startsWith("/admin/projects") },
   { label: "Newsletter", href: "/admin/newsletter", match: (p: string) => p.startsWith("/admin/newsletter") },
   { label: "Email designs", href: "/admin/email-designs", match: (p: string) => p.startsWith("/admin/email-designs") },
+  { label: "Task templates", href: "/admin/task-templates", match: (p: string) => p.startsWith("/admin/task-templates") },
 ];
 
 export default function AdminTabs() {

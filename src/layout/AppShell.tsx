@@ -54,10 +54,7 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Admin",
-    items: [
-      { label: "Admin", href: "/admin", visible: ADMIN_ONLY },
-      { label: "Task templates", href: "/admin/task-templates", visible: ADMIN_ONLY },
-    ],
+    items: [{ label: "Admin", href: "/admin", visible: ADMIN_ONLY }],
   },
 ];
 

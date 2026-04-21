@@ -25,13 +25,27 @@ type Props = {
   subtask: Subtask;
   users: UserDoc[];
   canEdit: boolean;
+  /** Optional drag handle rendered on the left when the row is sortable. */
+  dragHandle?: React.ReactNode;
 };
 
-export default function SubtaskRow({ task, subtask, users, canEdit }: Props) {
+export default function SubtaskRow({ task, subtask, users, canEdit, dragHandle }: Props) {
   const [editing, setEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState(subtask.title);
 
   const blocked = !subtask.done && isSubtaskBlocked(subtask, task.subtasks);
+
+  async function handleDelete() {
+    const ok = window.confirm(
+      `Delete subtask "${subtask.title}"? This also clears any other subtask's dependency on it.`,
+    );
+    if (!ok) return;
+    try {
+      await removeSubtask(task, subtask.id);
+    } catch (err) {
+      console.error(err);
+    }
+  }
   const blockers = useMemo(
     () =>
       subtask.blockedBy
@@ -70,14 +84,15 @@ export default function SubtaskRow({ task, subtask, users, canEdit }: Props) {
         display: "flex",
         flexDirection: "column",
         gap: "var(--space-2)",
-        padding: "0.5rem 0.75rem",
+        padding: "0.85rem 1rem",
         background: "var(--color-bg-elevated)",
         border: "1px solid var(--color-border)",
         borderRadius: "var(--radius-md)",
         opacity: blocked ? 0.55 : 1,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", minHeight: "2rem" }}>
+        {dragHandle}
         <input
           type="checkbox"
           checked={subtask.done}
@@ -124,36 +139,44 @@ export default function SubtaskRow({ task, subtask, users, canEdit }: Props) {
         <InlineAvatars users={reviewers} tone="warning" title="Reviewers" />
 
         {canEdit && (
-          <>
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", marginLeft: "var(--space-2)" }}>
             <button
               type="button"
               onClick={() => setEditing((v) => !v)}
-              aria-label="Edit subtask"
+              aria-label={editing ? "Close subtask editor" : "Edit subtask"}
               style={{
                 background: "transparent",
                 border: "none",
-                color: "var(--color-text-subtle)",
+                color: editing ? "var(--color-accent)" : "var(--color-text-muted)",
                 cursor: "pointer",
                 fontSize: "var(--text-xs)",
+                fontWeight: 500,
+                padding: "0.25rem 0.5rem",
+                borderRadius: "var(--radius-sm, 4px)",
               }}
             >
               {editing ? "Done" : "Edit"}
             </button>
             <button
               type="button"
-              onClick={() => removeSubtask(task, subtask.id).catch(console.error)}
-              aria-label="Remove subtask"
+              onClick={handleDelete}
+              aria-label={`Delete subtask "${subtask.title}"`}
+              title="Delete subtask"
               style={{
                 background: "transparent",
                 border: "none",
-                color: "var(--color-text-subtle)",
+                color: "var(--color-danger)",
                 cursor: "pointer",
-                fontSize: "var(--text-xs)",
+                fontSize: "var(--text-sm)",
+                fontWeight: 600,
+                padding: "0.25rem 0.5rem",
+                borderRadius: "var(--radius-sm, 4px)",
+                lineHeight: 1,
               }}
             >
               ✕
             </button>
-          </>
+          </div>
         )}
       </div>
 
