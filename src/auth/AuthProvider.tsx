@@ -35,8 +35,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Hard ceiling on the loading state. Firebase Auth's init reads from
+    // IndexedDB; a wedged IDB (lock contention, private-mode quirks,
+    // corrupted db) can leave onAuthStateChanged unfired indefinitely,
+    // which used to leave the header stuck on the loading branch forever.
+    // 3s covers the happy path on cold cache; beyond that we assume the
+    // SDK is wedged and render as signed-out.
+    const failsafe = setTimeout(() => setLoading(false), 3000);
+
     const auth = getClientAuth();
-    return onAuthStateChanged(auth, (u) => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      clearTimeout(failsafe);
       setUser(u);
       if (!u) {
         setRole(null);
@@ -49,6 +58,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // (stale token, rules change, etc).
       setLoading(false);
     });
+
+    return () => {
+      clearTimeout(failsafe);
+      unsub();
+    };
   }, []);
 
   useEffect(() => {
