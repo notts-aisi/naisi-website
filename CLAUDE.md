@@ -52,6 +52,7 @@ src/
 - **Two-layer auth gate**: `src/proxy.ts` does a fast session-cookie presence check on protected routes. Real role enforcement happens in `(app)/layout.tsx` via `getCurrentUser()` (Admin SDK, reliable).
 - **No `orderBy` on sparse fields**: Firestore drops docs missing the ordered field. Query without orderBy, sort client-side, or only orderBy on fields that are *always* present.
 - **No `undefined` in `setDoc`**: Firestore refuses it. Use the `compact()` helper in `src/auth/signInWithGoogle.ts` before writing.
+- **Main-area width (decide per new page)**: `AppShell`'s `<main>` defaults to `max-width: 64rem` (1024px) — comfortable for prose, forms, and single-column admin views. Data-dense pages opt into `max-width: 100rem` (1600px — fits MBA fullscreen, bounded on ultra-wide) by adding their route prefix to `WIDE_ROUTES` in `src/layout/AppShell.tsx`. When scaffolding a new authed page, ask: does it have a kanban, multi-column grid, wide table, or timeline/calendar? If yes, opt in. `/committee/tasks` is wide today; the courses/homework viewer and the future booking calendar will almost certainly want wide too. Don't make it global — prose/forms look bad stretched to 1600px.
 
 ## Data model (Firestore)
 
