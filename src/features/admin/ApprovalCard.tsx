@@ -10,7 +10,26 @@ import {
   type NewsletterPrefs,
   type UserDoc,
 } from "@/lib/firestore/users";
+import {
+  REJECTION_REASONS,
+  type RejectionReasonKey,
+} from "@/lib/firestore/applicationEmails";
 import { approveUser, deleteUser, rejectUser } from "./adminMutations";
+import RejectReasonPicker from "./emailDesigns/RejectReasonPicker";
+
+function sendApplicationEmail(body: {
+  templateId: string;
+  uid: string;
+  customReason?: string;
+}) {
+  fetch("/api/admin/application-emails/send", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }).catch((err) => {
+    console.warn("[application email] fire-and-forget failed", err);
+  });
+}
 
 function formatGraduation(isoMonth: string): string {
   const [y, m] = isoMonth.split("-");
@@ -30,12 +49,14 @@ function formatNewsletter(prefs: NewsletterPrefs): string {
 export default function ApprovalCard({ user }: { user: UserDoc }) {
   const [busy, setBusy] = useState<"approve" | "reject" | "delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showRejectPicker, setShowRejectPicker] = useState(false);
 
   async function handleApprove() {
     setBusy("approve");
     setError(null);
     try {
       await approveUser(user.uid);
+      sendApplicationEmail({ templateId: "application-approved", uid: user.uid });
     } catch (err) {
       console.error(err);
       setError("Failed to approve — try again.");
@@ -43,14 +64,20 @@ export default function ApprovalCard({ user }: { user: UserDoc }) {
     }
   }
 
-  async function handleReject() {
-    if (!window.confirm(`Reject ${user.displayName ?? user.email}? They won't be able to re-apply without admin action.`)) {
-      return;
-    }
+  async function handleConfirmReject(
+    reasonKey: RejectionReasonKey,
+    customReason?: string,
+  ) {
     setBusy("reject");
     setError(null);
     try {
-      await rejectUser(user.uid);
+      await rejectUser(user.uid, reasonKey);
+      sendApplicationEmail({
+        templateId: REJECTION_REASONS[reasonKey].templateId,
+        uid: user.uid,
+        customReason,
+      });
+      setShowRejectPicker(false);
     } catch (err) {
       console.error(err);
       setError("Failed to reject — try again.");
@@ -178,8 +205,13 @@ export default function ApprovalCard({ user }: { user: UserDoc }) {
             <Button onClick={handleApprove} disabled={busy !== null} size="sm">
               {busy === "approve" ? "Approving…" : "Approve"}
             </Button>
-            <Button onClick={handleReject} disabled={busy !== null} variant="ghost" size="sm">
-              {busy === "reject" ? "Rejecting…" : "Reject"}
+            <Button
+              onClick={() => setShowRejectPicker((v) => !v)}
+              disabled={busy !== null}
+              variant="ghost"
+              size="sm"
+            >
+              {showRejectPicker ? "Cancel reject" : "Reject…"}
             </Button>
             <Button
               onClick={handleDelete}
@@ -191,6 +223,13 @@ export default function ApprovalCard({ user }: { user: UserDoc }) {
               {busy === "delete" ? "Deleting…" : "Delete"}
             </Button>
           </div>
+          {showRejectPicker && (
+            <RejectReasonPicker
+              onCancel={() => setShowRejectPicker(false)}
+              onConfirm={handleConfirmReject}
+              busy={busy === "reject"}
+            />
+          )}
           {error && (
             <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)", marginTop: "var(--space-3)" }}>
               {error}

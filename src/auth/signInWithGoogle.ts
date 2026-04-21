@@ -82,6 +82,15 @@ export async function completeRegistration(profile: {
     showOnMembers: false,
     createdAt: serverTimestamp(),
   });
+
+  // Fire-and-forget submission confirmation. User flow proceeds regardless.
+  fetch("/api/admin/application-emails/send", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ templateId: "application-submitted", uid: user.uid }),
+  }).catch((err) => {
+    console.warn("[submission email] fire-and-forget failed", err);
+  });
 }
 
 export async function signOut() {
