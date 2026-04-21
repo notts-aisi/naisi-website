@@ -98,6 +98,31 @@ This shapes the task manager + calendar + future features. Keep this mental mode
 - `validateUniversityEmail()` there enforces `@nottingham.ac.uk` (subdomains allowed)
 - Long textareas use `CountedTextarea` which shows live char-remaining counter
 
+## Git workflow
+
+`main` is **protected** — direct pushes, force pushes, and deletions are all blocked. Every change reaches `main` via a PR (even from the repo owner).
+
+When making changes:
+
+1. **Never commit or push directly to `main`.** Always branch first. Also never force-push a branch that others might have pulled.
+2. **Branch name**: `feat/<slug>`, `fix/<slug>`, `chore/<slug>`, `docs/<slug>`. Short but descriptive.
+3. **Base branch and PR target**:
+   - Tiny, obviously-safe changes (docs, tooling, one-line fixes) → branch off `main`, PR into `main`.
+   - Anything that benefits from testing in a prod-like environment first → branch off `main`, PR into `dev`, verify on the dev App Hosting URL, then PR from `dev` into `main`.
+4. **Flow per change**:
+   ```sh
+   git checkout -b feat/my-change   # from main
+   # edit + commit
+   git push -u origin feat/my-change
+   # open PR on GitHub; self-merge (0 approvals required but PR is mandatory)
+   # locally after merge:
+   git checkout main && git pull && git branch -d feat/my-change
+   ```
+5. **PR titles/descriptions are employer-visible** (repo is public). Conventional Commits style (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`). Body explains the *why*, not a re-narration of the diff.
+6. **The `dev` branch** auto-deploys to the `naisi-website-dev` App Hosting backend on every push — see Deploy. When a hotfix lands on `main`, merge `main` → `dev` to keep dev from drifting behind on fixes.
+
+If asked to "commit and push" a change, default to creating a branch + PR unless the user explicitly says "push straight to main" (which will fail anyway). When in doubt, ask which base branch (main or dev).
+
 ## Deploy
 
 Two environments, both on Firebase App Hosting:
@@ -105,7 +130,8 @@ Two environments, both on Firebase App Hosting:
 - **Production** — push to `main` → deploys to the `naisi-website` project → `https://naisi.uk`. Config: `apphosting.yaml`.
 - **Dev / staging** — push to `dev` → deploys to the `naisi-website-dev` project → App Hosting URL. Config: `apphosting.yaml` + `apphosting.dev.yaml` overrides. Separate Firestore / Auth / Storage — fully isolated from prod data. Same real SMTP sender tagged `NAISI (dev)` so test emails are unmistakable.
 - **Firestore rules/indexes**: `npx firebase deploy --only firestore:rules,firestore:indexes --project <default|dev>` (default = prod, dev = dev project).
-- **Local dev**: `npm run dev`, needs `.env.local` with `NEXT_PUBLIC_FIREBASE_*` + `FIREBASE_ADMIN_*` values (see `.env.example`). Point at prod or dev project depending on what you're debugging.
+- **App Hosting secrets**: `firebase apphosting:secrets:set <NAME> --project <default|dev>` stores the value; reference it in `apphosting.yaml` (or `apphosting.dev.yaml` for dev-only overrides); `firebase apphosting:secrets:grantaccess <NAME> --backend <id>` after the backend exists.
+- **Local dev**: `npm run dev`, needs `.env.local` with `NEXT_PUBLIC_FIREBASE_*` + `FIREBASE_ADMIN_*` + `EVENTS_TOKEN_SECRET` values (see `.env.example`). Point at prod or dev project depending on what you're debugging.
 
 **Dev-env discipline**: the dev project uses the same Gmail SMTP as prod, so any user doc you create in dev Firestore can receive real mail on the next test send. Only seed dev with email addresses you personally own.
 
