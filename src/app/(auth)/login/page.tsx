@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
-import { signInWithGoogle } from "@/auth/signInWithGoogle";
+import { consumeRedirectSignIn, signInWithGoogle } from "@/auth/signInWithGoogle";
 import { useAuth } from "@/auth/AuthProvider";
 
 export default function LoginPage() {
@@ -30,7 +30,9 @@ function LoginInner() {
   const next = params.get("next") ?? "/dashboard";
   const { user, role, loading: authLoading } = useAuth();
 
-  // Already signed in? Bounce away based on role.
+  // Already signed in? Bounce away based on role. Null role + a Firebase user
+  // means the user authed via Google but has no Firestore doc yet — send
+  // them to /register so they can complete the profile form.
   useEffect(() => {
     if (authLoading || !user) return;
     if (role === "member" || role === "committee" || role === "admin") {
@@ -39,27 +41,48 @@ function LoginInner() {
       router.replace("/pending-approval");
     } else if (role === "rejected") {
       router.replace("/");
+    } else if (role === null) {
+      router.replace("/register");
     }
   }, [authLoading, user, role, next, router]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Redirect sign-in return leg. Fires once per mount; no-ops unless Firebase
+  // finds a pending redirect from a previous `signInWithRedirect` call. On
+  // success, mints the session cookie and routes based on whether the user
+  // already has a Firestore doc (isNew == !exists).
+  useEffect(() => {
+    let cancelled = false;
+    consumeRedirectSignIn()
+      .then((result) => {
+        if (cancelled || !result) return;
+        if (result.isNew) {
+          router.replace("/register");
+        } else {
+          router.replace(next);
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("[login] redirect consume failed:", err);
+        setError("Sign-in failed. Please try again.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [router, next]);
+
   async function handleSignIn() {
     setError(null);
     setLoading(true);
     try {
-      const result = await signInWithGoogle();
-      if (result.isNew) {
-        router.push("/register");
-        return;
-      }
-      // Server-side (app)/layout.tsx routes pending/rejected users onward
-      // based on the freshly-minted session cookie.
-      router.push(next);
+      // Navigates away. Loading state stays true until the browser leaves;
+      // if it throws before navigation, we clear it below.
+      await signInWithGoogle();
     } catch (err) {
       console.error(err);
       setError("Sign-in failed. Please try again.");
-    } finally {
       setLoading(false);
     }
   }

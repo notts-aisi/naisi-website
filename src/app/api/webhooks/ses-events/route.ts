@@ -1,8 +1,52 @@
 import { NextResponse } from "next/server";
+import type { Firestore } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { markSendStatus } from "@/lib/firestore/emailSends";
 import { addSuppression } from "@/lib/firestore/suppression";
 import { verifySnsMessage, type SnsMessage } from "@/lib/sns/verify";
+
+/**
+ * Look up users whose primary Google email OR self-declared university email
+ * matches an affected address, then patch them. Returns the per-user patch
+ * shape controlled by `withdrawConsent`:
+ *   - `true` (Complaint): flip `profile.newsletter.subscribed = false` (legal
+ *     consent withdrawal under GDPR/PECR) plus the uni-email-was-suppressed
+ *     flag if matched on uni email
+ *   - `false` (Bounce): just stamp the uni-email-was-suppressed flag so the
+ *     user's next uni-email change triggers the 24h rate-limit lock. Bounces
+ *     don't imply withdrawn consent, so subscription stays as-is.
+ */
+async function applyUserSuppressionEffects(
+  db: Firestore,
+  email: string,
+  withdrawConsent: boolean,
+): Promise<void> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return;
+  const [byPrimary, byUni] = await Promise.all([
+    db.collection("users").where("email", "==", normalized).get(),
+    db.collection("users").where("profile.universityEmail", "==", normalized).get(),
+  ]);
+  const seen = new Set<string>();
+  const patches: Array<Promise<unknown>> = [];
+  for (const snap of [...byPrimary.docs, ...byUni.docs]) {
+    if (seen.has(snap.id)) continue;
+    seen.add(snap.id);
+    const data = snap.data();
+    const uniMatches =
+      (data.profile?.universityEmail as string | undefined)?.toLowerCase() === normalized;
+    const patch: Record<string, unknown> = {};
+    if (withdrawConsent) {
+      patch["profile.newsletter.subscribed"] = false;
+    }
+    if (uniMatches) {
+      patch["profile.universityEmailWasSuppressed"] = true;
+    }
+    if (Object.keys(patch).length === 0) continue;
+    patches.push(snap.ref.update(patch));
+  }
+  await Promise.all(patches);
+}
 
 /**
  * SNS webhook for SES bounce + complaint + delivery-delay events.
@@ -104,6 +148,8 @@ export async function POST(req: Request) {
             bounce.bounceSubType,
           );
         }
+        // Bounce = stamp the "was suppressed" flag but don't withdraw consent.
+        await applyUserSuppressionEffects(db, r.emailAddress, false);
         console.log("[ses-events] suppressed (bounce):", r.emailAddress);
       }
     } else {
@@ -132,6 +178,9 @@ export async function POST(req: Request) {
           complaint?.complaintFeedbackType,
         );
       }
+      // Complaint = withdrawal of consent: flip subscribed=false AND flag
+      // post-suppression for rate-limiting.
+      await applyUserSuppressionEffects(db, r.emailAddress, true);
       console.log("[ses-events] suppressed (complaint):", r.emailAddress);
     }
   } else if (kind === "DeliveryDelay") {
