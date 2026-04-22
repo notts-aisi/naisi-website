@@ -15,16 +15,25 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { TASK_FIELD_LIMITS, type TaskDoc } from "@/lib/firestore/tasks";
+import {
+  TASK_FIELD_LIMITS,
+  groupSubtasksByBlock,
+  type TaskBlock,
+  type TaskDoc,
+} from "@/lib/firestore/tasks";
 import type { UserDoc } from "@/lib/firestore/users";
-import { addSubtask, reorderSubtasks } from "../taskMutations";
+import type { Role } from "@/lib/firebase/session";
+import { addSubtask, createBlock, reorderSubtasks } from "../taskMutations";
+import BlockHeader from "./BlockHeader";
 import SubtaskRow from "./SubtaskRow";
 
 type Props = {
   task: TaskDoc;
   users: UserDoc[];
   viewerUid: string;
+  viewerRole: Role;
   canEdit: boolean;
+  canEditStructure: boolean;
   /** Whether the viewer sees the per-reviewer approval columns. */
   showMatrix: boolean;
   /** Set of subtask IDs that have an in-flight sent_for_review (derived from
@@ -37,12 +46,14 @@ export default function SubtaskList({
   task,
   users,
   viewerUid,
+  viewerRole,
   canEdit,
+  canEditStructure,
   showMatrix,
   pendingReviewSubtaskIds,
 }: Props) {
-  const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
+  const isAdmin = viewerRole === "admin";
+  const isCreator = task.creatorUid === viewerUid;
 
   // `activationConstraint` prevents accidental drags when the user is just
   // clicking checkboxes or text inputs inside a row.
@@ -50,13 +61,154 @@ export default function SubtaskList({
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
 
+  const groups = groupSubtasksByBlock(task);
+  const hasBlocks = task.blocks.length > 0;
+
+  /**
+   * Per-group drag reorder. We rebuild the full subtask order by keeping
+   * every other group's subtasks in their current relative order and
+   * splicing the dragged group's new order in place. `reorderSubtasks`
+   * then rewrites the flat subtasks array — blockId is carried on each
+   * subtask so block membership is preserved. Cross-block drag is not
+   * supported here; use the "Move to block" control in the subtask Edit
+   * panel instead.
+   */
+  function makeDragEndHandler(groupSubtaskIds: string[]) {
+    return async (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const oldIndex = groupSubtaskIds.indexOf(String(active.id));
+      const newIndex = groupSubtaskIds.indexOf(String(over.id));
+      if (oldIndex < 0 || newIndex < 0) return;
+      const nextGroup = [...groupSubtaskIds];
+      nextGroup.splice(oldIndex, 1);
+      nextGroup.splice(newIndex, 0, String(active.id));
+      const nextGroupSet = new Set(nextGroup);
+      const fullOrder: string[] = [];
+      for (const g of groups) {
+        if (g.subtasks.some((s) => nextGroupSet.has(s.id))) {
+          fullOrder.push(...nextGroup);
+        } else {
+          for (const s of g.subtasks) fullOrder.push(s.id);
+        }
+      }
+      try {
+        await reorderSubtasks(task, fullOrder);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+      {task.subtasks.length === 0 && !canEdit && (
+        <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
+          No subtasks.
+        </p>
+      )}
+
+      {groups.map((group) => (
+        <div
+          key={group.block ? group.block.id : "__ungrouped__"}
+          style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}
+        >
+          {group.block && (
+            <BlockHeader
+              task={task}
+              block={group.block}
+              viewerUid={viewerUid}
+              isAdmin={isAdmin}
+              isCreator={isCreator}
+              canEditStructure={canEditStructure}
+            />
+          )}
+          {group.subtasks.length === 0 && group.block && canEdit && (
+            <p
+              style={{
+                color: "var(--color-text-muted)",
+                fontSize: "var(--text-xs)",
+                fontStyle: "italic",
+                padding: "0 var(--space-2)",
+              }}
+            >
+              No subtasks in this block yet.
+            </p>
+          )}
+          {canEdit && group.subtasks.length > 0 ? (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={makeDragEndHandler(group.subtasks.map((s) => s.id))}
+            >
+              <SortableContext
+                items={group.subtasks.map((s) => s.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {group.subtasks.map((s) => (
+                  <SortableSubtaskRow key={s.id} id={s.id}>
+                    {(handle) => (
+                      <SubtaskRow
+                        task={task}
+                        subtask={s}
+                        users={users}
+                        viewerUid={viewerUid}
+                        isAdmin={isAdmin}
+                        canEdit={canEdit}
+                        showMatrix={showMatrix}
+                        isReviewPending={pendingReviewSubtaskIds.has(s.id)}
+                        dragHandle={handle}
+                      />
+                    )}
+                  </SortableSubtaskRow>
+                ))}
+              </SortableContext>
+            </DndContext>
+          ) : (
+            group.subtasks.map((s) => (
+              <SubtaskRow
+                key={s.id}
+                task={task}
+                subtask={s}
+                users={users}
+                viewerUid={viewerUid}
+                isAdmin={isAdmin}
+                canEdit={canEdit}
+                showMatrix={showMatrix}
+                isReviewPending={pendingReviewSubtaskIds.has(s.id)}
+              />
+            ))
+          )}
+          {canEdit && task.subtasks.length < TASK_FIELD_LIMITS.maxSubtasks && (
+            <InlineAddSubtask task={task} blockId={group.block?.id ?? null} />
+          )}
+        </div>
+      ))}
+
+      {canEditStructure && task.blocks.length < TASK_FIELD_LIMITS.maxBlocks && (
+        <InlineAddBlock task={task} hasBlocks={hasBlocks} />
+      )}
+    </div>
+  );
+}
+
+function InlineAddSubtask({
+  task,
+  blockId,
+}: {
+  task: TaskDoc;
+  blockId: string | null;
+}) {
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = draft.trim();
     if (!trimmed || busy) return;
     setBusy(true);
     try {
-      await addSubtask(task, { title: trimmed });
+      await addSubtask(task, { title: trimmed, blockId });
       setDraft("");
     } catch (err) {
       console.error(err);
@@ -65,105 +217,152 @@ export default function SubtaskList({
     }
   }
 
-  async function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const ids = task.subtasks.map((s) => s.id);
-    const oldIndex = ids.indexOf(String(active.id));
-    const newIndex = ids.indexOf(String(over.id));
-    if (oldIndex < 0 || newIndex < 0) return;
-    const next = [...ids];
-    next.splice(oldIndex, 1);
-    next.splice(newIndex, 0, String(active.id));
+  return (
+    <form onSubmit={handleAdd} style={{ display: "flex", gap: "var(--space-2)" }}>
+      <input
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder={blockId ? "Add subtask to this block…" : "Add subtask…"}
+        maxLength={TASK_FIELD_LIMITS.subtaskTitle}
+        style={{
+          flex: 1,
+          padding: "0.5rem 0.75rem",
+          background: "var(--color-bg-elevated)",
+          border: "1px dashed var(--color-border)",
+          borderRadius: "var(--radius-md)",
+          color: "var(--color-text)",
+          fontSize: "var(--text-sm)",
+        }}
+      />
+      <button
+        type="submit"
+        disabled={busy || !draft.trim()}
+        style={{
+          padding: "0.5rem 0.85rem",
+          background: "var(--color-accent-soft)",
+          color: "var(--color-accent)",
+          border: "none",
+          borderRadius: "var(--radius-md)",
+          fontSize: "var(--text-sm)",
+          cursor: "pointer",
+        }}
+      >
+        Add
+      </button>
+    </form>
+  );
+}
+
+function InlineAddBlock({ task, hasBlocks }: { task: TaskDoc; hasBlocks: boolean }) {
+  const [draft, setDraft] = useState("");
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        style={{
+          alignSelf: "flex-start",
+          padding: "0.4rem 0.75rem",
+          background: "transparent",
+          border: "1px dashed var(--color-border)",
+          borderRadius: "var(--radius-md)",
+          color: "var(--color-text-muted)",
+          fontSize: "var(--text-xs)",
+          fontWeight: 500,
+          cursor: "pointer",
+        }}
+      >
+        {hasBlocks ? "+ Add another block" : "+ Group subtasks into a block"}
+      </button>
+    );
+  }
+
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = draft.trim();
+    if (!trimmed || busy) return;
+    setBusy(true);
     try {
-      await reorderSubtasks(task, next);
+      await createBlock(task, trimmed);
+      setDraft("");
+      setOpen(false);
     } catch (err) {
       console.error(err);
+    } finally {
+      setBusy(false);
     }
   }
 
-  const rows = task.subtasks;
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-      {rows.length === 0 && !canEdit && (
-        <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
-          No subtasks.
-        </p>
-      )}
-
-      {canEdit ? (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={rows.map((s) => s.id)} strategy={verticalListSortingStrategy}>
-            {rows.map((s) => (
-              <SortableSubtaskRow key={s.id} id={s.id}>
-                {(handle) => (
-                  <SubtaskRow
-                    task={task}
-                    subtask={s}
-                    users={users}
-                    viewerUid={viewerUid}
-                    canEdit={canEdit}
-                    showMatrix={showMatrix}
-                    isReviewPending={pendingReviewSubtaskIds.has(s.id)}
-                    dragHandle={handle}
-                  />
-                )}
-              </SortableSubtaskRow>
-            ))}
-          </SortableContext>
-        </DndContext>
-      ) : (
-        rows.map((s) => (
-          <SubtaskRow
-            key={s.id}
-            task={task}
-            subtask={s}
-            users={users}
-            viewerUid={viewerUid}
-            canEdit={false}
-            showMatrix={showMatrix}
-            isReviewPending={pendingReviewSubtaskIds.has(s.id)}
-          />
-        ))
-      )}
-
-      {canEdit && rows.length < TASK_FIELD_LIMITS.maxSubtasks && (
-        <form onSubmit={handleAdd} style={{ display: "flex", gap: "var(--space-2)" }}>
-          <input
-            type="text"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="Add subtask…"
-            maxLength={TASK_FIELD_LIMITS.subtaskTitle}
-            style={{
-              flex: 1,
-              padding: "0.5rem 0.75rem",
-              background: "var(--color-bg-elevated)",
-              border: "1px dashed var(--color-border)",
-              borderRadius: "var(--radius-md)",
-              color: "var(--color-text)",
-              fontSize: "var(--text-sm)",
-            }}
-          />
-          <button
-            type="submit"
-            disabled={busy || !draft.trim()}
-            style={{
-              padding: "0.5rem 0.85rem",
-              background: "var(--color-accent-soft)",
-              color: "var(--color-accent)",
-              border: "none",
-              borderRadius: "var(--radius-md)",
-              fontSize: "var(--text-sm)",
-              cursor: "pointer",
-            }}
-          >
-            Add
-          </button>
-        </form>
-      )}
-    </div>
+    <form
+      onSubmit={handleAdd}
+      style={{
+        display: "flex",
+        gap: "var(--space-2)",
+        alignItems: "center",
+      }}
+    >
+      <input
+        autoFocus
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            setDraft("");
+            setOpen(false);
+          }
+        }}
+        placeholder="Block name (e.g. Drafting, Review, Publish)"
+        maxLength={TASK_FIELD_LIMITS.blockName}
+        style={{
+          flex: 1,
+          padding: "0.4rem 0.65rem",
+          background: "var(--color-bg-elevated)",
+          border: "1px solid var(--color-border)",
+          borderRadius: "var(--radius-md)",
+          color: "var(--color-text)",
+          fontSize: "var(--text-sm)",
+        }}
+      />
+      <button
+        type="submit"
+        disabled={busy || !draft.trim()}
+        style={{
+          padding: "0.4rem 0.75rem",
+          background: "var(--color-accent-soft)",
+          color: "var(--color-accent)",
+          border: "none",
+          borderRadius: "var(--radius-md)",
+          fontSize: "var(--text-sm)",
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        Add block
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setDraft("");
+          setOpen(false);
+        }}
+        style={{
+          padding: "0.4rem 0.5rem",
+          background: "transparent",
+          border: "none",
+          color: "var(--color-text-muted)",
+          fontSize: "var(--text-sm)",
+          cursor: "pointer",
+        }}
+      >
+        Cancel
+      </button>
+    </form>
   );
 }
 
@@ -211,3 +410,6 @@ function SortableSubtaskRow({
     </div>
   );
 }
+
+// TaskBlock import is used implicitly via groupSubtasksByBlock's return type.
+export type { TaskBlock };
