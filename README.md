@@ -115,6 +115,13 @@ Light theme: change `data-theme="dark"` to `"light"` in [src/app/layout.tsx](src
 - Admin dashboard (Approvals / Members / Projects tabs)
 - Course & homework viewer (BlueDot-style)
 
+## Upcoming housekeeping
+
+- **2026-05-06 — legacy-URL cleanup** (two weeks after the Safari auth fix / custom-domain migration landed 2026-04-22). By this date, confirm the new domains (`naisi.uk` + `auth.naisi.uk` on prod, `dev.naisi.uk` + `auth-dev.naisi.uk` on dev) have been stable. Then:
+  - Add a 301 redirect in `src/proxy.ts` that bounces `Host: naisi-website--naisi-website-dev.europe-west4.hosted.app` → `https://dev.naisi.uk` (same path)
+  - Remove `naisi-website--naisi-website-dev.europe-west4.hosted.app` from Firebase Auth → Authorized domains on the dev project
+  - Remove any committee bookmarks / internal docs still referencing the old hosted.app URL
+
 ## License
 
 MIT — see [LICENSE](./LICENSE). You're free to fork, modify, and adapt this
