@@ -9,6 +9,7 @@ import type { UserDoc } from "@/lib/firestore/users";
 import type { TaskDoc } from "@/lib/firestore/tasks";
 import type { ActivityDoc } from "@/lib/firestore/taskActivity";
 import { COMMENT_FIELD_LIMITS } from "@/lib/firestore/comments";
+import { isSubtaskBlocked } from "@/lib/firestore/tasks";
 import {
   extractMentionUids,
   serializeTipTapDoc,
@@ -158,7 +159,9 @@ export default function CommentComposer(props: Props) {
   const reviewTarget = useMemo(() => {
     const reviewSub = task.subtasks.find(
       (s) =>
-        s.reviewerUids.length > 0 && !s.done && !isSubtaskBlocked(s, task.subtasks),
+        s.reviewerUids.length > 0 &&
+        !s.done &&
+        !isSubtaskBlocked(s, task.subtasks, task.reviewerUids),
     );
     if (reviewSub) {
       return {
@@ -178,7 +181,13 @@ export default function CommentComposer(props: Props) {
     return null;
   }, [task]);
 
-  async function postComment(forceSendForReview: boolean) {
+  const [reviewerPickerOpen, setReviewerPickerOpen] = useState(false);
+  const [selectedReviewerUids, setSelectedReviewerUids] = useState<string[]>([]);
+
+  async function postComment(
+    forceSendForReview: boolean,
+    reviewerUidsFilter: string[] | null = null,
+  ) {
     if (!editor) return;
     const { body, mentions } = serializeTipTapDoc(editor.getJSON());
     if (!body.trim()) {
@@ -233,6 +242,7 @@ export default function CommentComposer(props: Props) {
         fireSendForReview(task.id, {
           commentId,
           subtaskId: reviewTarget.kind === "subtask" ? reviewTarget.subtaskId : null,
+          reviewerUids: reviewerUidsFilter,
         });
       }
       return;
@@ -321,20 +331,47 @@ export default function CommentComposer(props: Props) {
               </Button>
             );
           }
+          // Single reviewer: fire immediately, no picker needed.
+          if (reviewTarget.reviewerUids.length <= 1) {
+            return (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => postComment(true)}
+                disabled={busy}
+              >
+                {reviewTarget.label}
+              </Button>
+            );
+          }
+          // 2+ reviewers: open a small inline picker, default all checked.
           return (
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => postComment(true)}
-              disabled={busy}
-              title={
-                reviewTarget.kind === "subtask"
-                  ? `Emails the ${reviewTarget.reviewerUids.length} reviewer(s) of this subtask and logs a 'sent for review' entry.`
-                  : `Emails the ${reviewTarget.reviewerUids.length} task-level reviewer(s).`
-              }
-            >
-              {reviewTarget.label}
-            </Button>
+            <span style={{ position: "relative" }}>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => {
+                  setSelectedReviewerUids(reviewTarget.reviewerUids);
+                  setReviewerPickerOpen((v) => !v);
+                }}
+              >
+                {reviewTarget.label}
+              </Button>
+              {reviewerPickerOpen && (
+                <ReviewerSelector
+                  reviewerUids={reviewTarget.reviewerUids}
+                  selected={selectedReviewerUids}
+                  users={users}
+                  onChange={setSelectedReviewerUids}
+                  onCancel={() => setReviewerPickerOpen(false)}
+                  onSubmit={() => {
+                    setReviewerPickerOpen(false);
+                    postComment(true, selectedReviewerUids).catch(console.error);
+                  }}
+                />
+              )}
+            </span>
           );
         })()}
         {mode === "edit" && (
@@ -347,19 +384,6 @@ export default function CommentComposer(props: Props) {
   );
 }
 
-/**
- * Local mirror of the tasks.ts helper so this component doesn't need the
- * whole TaskDoc shape just to import a helper. Keep in sync.
- */
-function isSubtaskBlocked(
-  subtask: { blockedBy: string[] },
-  siblings: Array<{ id: string; done: boolean }>,
-): boolean {
-  if (subtask.blockedBy.length === 0) return false;
-  const doneIds = new Set(siblings.filter((s) => s.done).map((s) => s.id));
-  return subtask.blockedBy.some((id) => !doneIds.has(id));
-}
-
 function formatSentAgo(date: Date): string {
   const diffMs = Date.now() - date.getTime();
   const diffS = Math.round(diffMs / 1000);
@@ -370,6 +394,100 @@ function formatSentAgo(date: Date): string {
   if (diffH < 24) return `${diffH}h ago`;
   const diffD = Math.round(diffH / 24);
   return `${diffD}d ago`;
+}
+
+/**
+ * Inline popover for picking which reviewers to email when 2+ reviewers exist.
+ * Defaults all checked (most common case is "ping everyone"); unchecking is
+ * the escape hatch for flows like "review chain: Alice → Bob", where Bob
+ * sends the next leg without re-emailing Alice.
+ */
+function ReviewerSelector({
+  reviewerUids,
+  selected,
+  users,
+  onChange,
+  onCancel,
+  onSubmit,
+}: {
+  reviewerUids: string[];
+  selected: string[];
+  users: UserDoc[];
+  onChange: (uids: string[]) => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+}) {
+  const chosen = new Set(selected);
+  return (
+    <div
+      role="dialog"
+      style={{
+        position: "absolute",
+        top: "calc(100% + 4px)",
+        right: 0,
+        zIndex: 5,
+        minWidth: "14rem",
+        padding: "var(--space-3)",
+        background: "var(--color-bg)",
+        border: "1px solid var(--color-border)",
+        borderRadius: "var(--radius-md)",
+        boxShadow: "var(--shadow-lg)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--space-2)",
+      }}
+    >
+      <div
+        style={{
+          fontSize: "var(--text-xs)",
+          color: "var(--color-text-muted)",
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+        }}
+      >
+        Send to
+      </div>
+      {reviewerUids.map((uid) => {
+        const u = users.find((x) => x.uid === uid);
+        const name = u?.displayName ?? u?.email ?? uid;
+        return (
+          <label
+            key={uid}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              fontSize: "var(--text-sm)",
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={chosen.has(uid)}
+              onChange={(e) => {
+                if (e.target.checked) onChange([...selected, uid]);
+                else onChange(selected.filter((u) => u !== uid));
+              }}
+            />
+            <span>{name}</span>
+          </label>
+        );
+      })}
+      <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-1)" }}>
+        <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          onClick={onSubmit}
+          disabled={selected.length === 0}
+        >
+          Send
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 /**

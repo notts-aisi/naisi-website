@@ -16,7 +16,6 @@ import {
   computeSubtaskStats,
   isSubtaskBlocked,
   type Subtask,
-  type SubtaskRoleHint,
   type TaskDoc,
   type TaskKind,
   type TaskPriority,
@@ -53,7 +52,8 @@ function serializeSubtask(s: Subtask) {
     assigneeUids: s.assigneeUids,
     reviewerUids: s.reviewerUids,
     blockedBy: s.blockedBy,
-    roleHint: s.roleHint,
+    approvedByReviewerUids: s.approvedByReviewerUids,
+    questionedByReviewerUids: s.questionedByReviewerUids,
   };
 }
 
@@ -64,7 +64,7 @@ function clampUids(uids: string[] | undefined, max: number): string[] {
 }
 
 export type CreateSubtaskInput = Pick<Subtask, "title"> &
-  Partial<Pick<Subtask, "id" | "assigneeUids" | "reviewerUids" | "blockedBy" | "roleHint">>;
+  Partial<Pick<Subtask, "id" | "assigneeUids" | "reviewerUids" | "blockedBy">>;
 
 export type CreateTaskInput = {
   title: string;
@@ -109,7 +109,8 @@ export async function createTask(input: CreateTaskInput): Promise<string> {
     assigneeUids: clampUids(s.assigneeUids, TASK_FIELD_LIMITS.maxAssigneesPerSubtask),
     reviewerUids: clampUids(s.reviewerUids, TASK_FIELD_LIMITS.maxReviewersPerSubtask),
     blockedBy: (s.blockedBy ?? []).slice(0, TASK_FIELD_LIMITS.maxBlockedBy),
-    roleHint: s.roleHint ?? null,
+    approvedByReviewerUids: [],
+    questionedByReviewerUids: [],
   }));
   const validSubtaskIds = new Set(subtasks.map((s) => s.id));
   for (const s of subtasks) {
@@ -166,7 +167,7 @@ export async function toggleSubtask(task: TaskDoc, subtaskId: string) {
   const uid = actingUid();
   const target = task.subtasks.find((s) => s.id === subtaskId);
   if (!target) throw new Error("Subtask not found");
-  if (!target.done && isSubtaskBlocked(target, task.subtasks)) {
+  if (!target.done && isSubtaskBlocked(target, task.subtasks, task.reviewerUids)) {
     throw new Error("Subtask is blocked by an unfinished prerequisite");
   }
   const subtasks = task.subtasks.map<Subtask>((s) => {
@@ -206,7 +207,8 @@ export async function addSubtask(
     assigneeUids: clampUids(init.assigneeUids, TASK_FIELD_LIMITS.maxAssigneesPerSubtask),
     reviewerUids: clampUids(init.reviewerUids, TASK_FIELD_LIMITS.maxReviewersPerSubtask),
     blockedBy: (init.blockedBy ?? []).slice(0, TASK_FIELD_LIMITS.maxBlockedBy),
-    roleHint: init.roleHint ?? null,
+    approvedByReviewerUids: [],
+    questionedByReviewerUids: [],
   };
   const subtasks = [...task.subtasks, next];
   await updateDoc(doc(db, "tasks", task.id), {
@@ -300,12 +302,46 @@ export async function setSubtaskBlockedBy(
   await patchSubtask(task, subtaskId, (s) => ({ ...s, blockedBy: filtered }));
 }
 
-export async function setSubtaskRoleHint(
+export type ReviewState = "approve" | "question" | "clear";
+
+/**
+ * Reviewer marks their cell in the review matrix for a specific subtask.
+ * Enforcement: caller must be one of the subtask's effective reviewers
+ * (subtask.reviewerUids if non-empty, otherwise task.reviewerUids). A
+ * reviewer can only ever move their OWN uid between the three cell states
+ * — approve / question / clear — never touch another reviewer's entry.
+ *
+ * Rules can't enforce the own-uid-only constraint (array element checks on
+ * a subtask inside a subtasks array are too expensive in Firestore rules),
+ * but we rely on the narrow-write band as the broader gate and trust the
+ * committee + this client guard. Phase 3 will add rejectedByReviewerUids.
+ */
+export async function setSubtaskApproval(
   task: TaskDoc,
   subtaskId: string,
-  roleHint: SubtaskRoleHint,
+  state: ReviewState,
 ) {
-  await patchSubtask(task, subtaskId, (s) => ({ ...s, roleHint }));
+  const uid = actingUid();
+  const target = task.subtasks.find((s) => s.id === subtaskId);
+  if (!target) throw new Error("Subtask not found");
+  const effectiveReviewers =
+    target.reviewerUids.length > 0 ? target.reviewerUids : task.reviewerUids;
+  if (!effectiveReviewers.includes(uid)) {
+    throw new Error("You're not listed as a reviewer for this subtask.");
+  }
+  await patchSubtask(task, subtaskId, (s) => {
+    // Mutually exclusive: remove uid from both arrays first, then add to
+    // the appropriate one (or to neither, for "clear").
+    const approved = s.approvedByReviewerUids.filter((u) => u !== uid);
+    const questioned = s.questionedByReviewerUids.filter((u) => u !== uid);
+    if (state === "approve") approved.push(uid);
+    if (state === "question") questioned.push(uid);
+    return {
+      ...s,
+      approvedByReviewerUids: approved,
+      questionedByReviewerUids: questioned,
+    };
+  });
 }
 
 export async function renameSubtask(task: TaskDoc, subtaskId: string, title: string) {

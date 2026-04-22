@@ -8,6 +8,10 @@ import { getCurrentUser } from "@/lib/firebase/session";
 type Payload = {
   commentId?: unknown;
   subtaskId?: unknown;
+  /** Optional filter: send only to this subset of the reviewer set. Each uid
+   *  must be present in the computed reviewer list (subtask's own
+   *  reviewerUids, or task-level fallback) — others are rejected silently. */
+  reviewerUids?: unknown;
 };
 
 const PREVIEW_MAX = 280;
@@ -77,6 +81,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const commentId =
     typeof payload.commentId === "string" && payload.commentId ? payload.commentId : null;
   const subtaskId = typeof payload.subtaskId === "string" ? payload.subtaskId : null;
+  const requestedReviewerUids: string[] | null = Array.isArray(payload.reviewerUids)
+    ? (payload.reviewerUids as unknown[]).filter((u): u is string => typeof u === "string")
+    : null;
 
   const taskSnap = await db.collection("tasks").doc(taskId).get();
   if (!taskSnap.exists) return NextResponse.json({ error: "Task not found" }, { status: 404 });
@@ -105,6 +112,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     reviewerUids = Array.isArray(task.reviewerUids)
       ? (task.reviewerUids as unknown[]).filter((u): u is string => typeof u === "string")
       : [];
+  }
+
+  // Apply caller's reviewerUids filter (if provided) — only keep uids that
+  // are actually in the computed reviewer set. This stops a malicious (or
+  // buggy) caller from emailing someone who isn't on the task at all.
+  if (requestedReviewerUids !== null) {
+    const allowed = new Set(reviewerUids);
+    reviewerUids = requestedReviewerUids.filter((u) => allowed.has(u));
   }
 
   // Don't email the requester if they're a reviewer themselves.

@@ -11,6 +11,9 @@ import {
   TASK_PRIORITY_LABELS,
   TASK_STATUSES,
   TASK_STATUS_LABELS,
+  canMarkTaskDone,
+  getSubtaskApprovalStatus,
+  type TaskDoc,
   type TaskPriority,
   type TaskStatus,
   type TaskVisibility,
@@ -32,7 +35,9 @@ import AttachmentUpload from "./AttachmentUpload";
 import CommentThread from "./CommentThread";
 import DueDateBadge from "./DueDateBadge";
 import SubtaskList from "./SubtaskList";
+import { useCommentsAndActivity } from "../hooks/useCommentsAndActivity";
 import { useTaskAttachments } from "../hooks/useTaskAttachments";
+import type { ActivityDoc } from "@/lib/firestore/taskActivity";
 
 type Props = {
   taskId: string;
@@ -57,10 +62,16 @@ export default function TaskDetailModal({
   onClose,
 }: Props) {
   const { task, loading } = useTask(taskId);
+  const { feed, activity, loading: feedLoading } = useCommentsAndActivity(taskId);
   const isAdmin = viewerRole === "admin";
   const isCommittee = viewerRole === "committee" || viewerRole === "admin";
   const isCompleter = task ? task.completerUids.includes(viewerUid) : false;
-  const isReviewer = task ? task.reviewerUids.includes(viewerUid) : false;
+  const isTaskReviewer = task ? task.reviewerUids.includes(viewerUid) : false;
+  // A viewer is a reviewer if they're on task-level reviewerUids OR on any
+  // subtask's per-row reviewerUids. This governs matrix visibility.
+  const isAnyReviewer =
+    isTaskReviewer ||
+    (task?.subtasks.some((s) => s.reviewerUids.includes(viewerUid)) ?? false);
   const isCreator = task ? task.creatorUid === viewerUid : false;
   const canEditAll =
     !!task &&
@@ -70,7 +81,30 @@ export default function TaskDetailModal({
   // Completers and reviewers both can tick subtasks and change status.
   // Reviewers in this band is what lets them tick their review step even if
   // they're not on the completer list.
-  const canEditProgressFields = canEditAll || isCompleter || isReviewer;
+  const canEditProgressFields = canEditAll || isCompleter || isAnyReviewer;
+  // Matrix + reviewer section visibility: admin + creator + any reviewer.
+  // Completers who aren't also reviewers see the row state colours only, not
+  // the per-reviewer columns or the reviewer picker.
+  const canSeeReviewerSection = isAdmin || isCreator || isAnyReviewer;
+
+  // Pending sent_for_review — derive from activity so SubtaskRow can tint
+  // pending rows orange and the composer can gate its own button. Task-level
+  // pending is used for the Done-status disable logic; subtask-level is per-row.
+  // pendingTaskReview is computed here too (the helper returns both halves),
+  // but right now only pendingSubtaskIds is consumed — for row tinting. The
+  // task-level pending is surfaced in the CommentComposer via its own local
+  // derivation. Leaving the helper returning both so Phase 3 (which will
+  // also disable the Done option while a task-level review is outstanding)
+  // doesn't have to refactor.
+  const { pendingSubtaskIds } = computePendingReview(activity, task);
+  const doneGate = task ? canMarkTaskDone(task) : { ok: false, reason: null };
+  // Status = "done" is reviewer/admin/creator-only on tasks with reviewers.
+  // Reviewer-less tasks fall back to admin + creator.
+  const canMarkDone = task
+    ? task.reviewerUids.length > 0
+      ? isAdmin || isTaskReviewer || isCreator
+      : isAdmin || isCreator
+    : false;
 
   const [titleDraft, setTitleDraft] = useState("");
   const [descDraft, setDescDraft] = useState("");
@@ -295,9 +329,28 @@ export default function TaskDetailModal({
                 onChange={(e) => onStatusChange(e.target.value as TaskStatus)}
                 disabled={!canEditProgressFields}
                 aria-label="Status"
+                title={
+                  !canMarkDone && task.status !== "done"
+                    ? "Only a reviewer, admin, or creator (on reviewer-less tasks) can mark Done"
+                    : !doneGate.ok
+                      ? (doneGate.reason ?? undefined)
+                      : undefined
+                }
               >
                 {TASK_STATUSES.map((s) => (
-                  <option key={s} value={s}>
+                  <option
+                    key={s}
+                    value={s}
+                    // Block "done" when (a) viewer isn't eligible, or
+                    // (b) the per-subtask + global coverage gates aren't met.
+                    // Always allow the current value to render so the select
+                    // doesn't show a phantom option when already "done".
+                    disabled={
+                      s === "done" &&
+                      task.status !== "done" &&
+                      (!canMarkDone || !doneGate.ok)
+                    }
+                  >
                     {TASK_STATUS_LABELS[s]}
                   </option>
                 ))}
@@ -411,7 +464,17 @@ export default function TaskDetailModal({
                 />
               </div>
             )}
-            <SubtaskList task={task} users={users} canEdit={canEditProgressFields} />
+            {canSeeReviewerSection && task.reviewerUids.length > 0 && (
+              <ReviewerProgressSummary task={task} users={users} />
+            )}
+            <SubtaskList
+              task={task}
+              users={users}
+              viewerUid={viewerUid}
+              canEdit={canEditProgressFields}
+              showMatrix={canSeeReviewerSection}
+              pendingReviewSubtaskIds={pendingSubtaskIds}
+            />
           </section>
 
           <section>
@@ -433,6 +496,9 @@ export default function TaskDetailModal({
               viewerUid={viewerUid}
               viewerIsAdmin={isAdmin}
               canParticipate={canEditProgressFields}
+              feed={feed}
+              activity={activity}
+              feedLoading={feedLoading}
             />
           </section>
         </div>
@@ -503,6 +569,10 @@ export default function TaskDetailModal({
             )}
           </div>
 
+          {/* Reviewer picker + read-only list are hidden from completers
+              and non-involved committee. Admin, creator, and anyone who's
+              actually a reviewer on this task see it. */}
+          {canSeeReviewerSection && (
           <div>
             <h4 style={sectionLabel}>Reviewers</h4>
             {canEditAll ? (
@@ -531,6 +601,7 @@ export default function TaskDetailModal({
               </div>
             )}
           </div>
+          )}
 
           {isAdmin && (
             <div>
@@ -615,6 +686,105 @@ function AttachmentsSection({
       {canParticipate && <AttachmentUpload taskId={taskId} />}
     </div>
   );
+}
+
+/**
+ * Summary strip above the subtask list: "Alice 3/4 ✓ · Bob 2/4 ✓ (1 ?)".
+ * Only rendered when the viewer can see the matrix (admin / creator / reviewer).
+ */
+function ReviewerProgressSummary({
+  task,
+  users,
+}: {
+  task: TaskDoc;
+  users: UserDoc[];
+}) {
+  const stats = task.reviewerUids.map((uid) => {
+    let approvedCount = 0;
+    let questionCount = 0;
+    let totalRequired = 0;
+    for (const s of task.subtasks) {
+      const status = getSubtaskApprovalStatus(s, task.reviewerUids);
+      if (!status.required.includes(uid)) continue;
+      totalRequired += 1;
+      if (status.approved.includes(uid)) approvedCount += 1;
+      else if (status.questioned.includes(uid)) questionCount += 1;
+    }
+    const user = users.find((u) => u.uid === uid);
+    const name = user?.displayName ?? user?.email ?? uid;
+    return { uid, name, approvedCount, questionCount, totalRequired };
+  });
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "var(--space-3)",
+        padding: "0.5rem 0.75rem",
+        marginBottom: "var(--space-2)",
+        background: "var(--color-bg-elevated)",
+        border: "1px solid var(--color-border)",
+        borderRadius: "var(--radius-md)",
+        fontSize: "var(--text-xs)",
+      }}
+    >
+      {stats.map((s) => {
+        const done = s.totalRequired > 0 && s.approvedCount === s.totalRequired;
+        return (
+          <span
+            key={s.uid}
+            style={{
+              color: done
+                ? "var(--color-success, #16a34a)"
+                : s.questionCount > 0
+                  ? "var(--color-warning, var(--color-text))"
+                  : "var(--color-text-muted)",
+            }}
+          >
+            <strong style={{ color: "var(--color-text)" }}>{s.name}</strong>{" "}
+            {s.approvedCount}/{s.totalRequired} ✓
+            {s.questionCount > 0 && ` (${s.questionCount} ?)`}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Walk the activity stream to find the latest `sent_for_review` per target
+ * (subtask id, or null for task-level). A target is considered "pending"
+ * until its resolution event — subtask done, or task status = done.
+ */
+function computePendingReview(
+  activity: ActivityDoc[],
+  task: TaskDoc | null,
+): { pendingTaskReview: boolean; pendingSubtaskIds: Set<string> } {
+  if (!task) return { pendingTaskReview: false, pendingSubtaskIds: new Set() };
+  let latestTask: ActivityDoc | null = null;
+  const latestBySubtask = new Map<string, ActivityDoc>();
+  for (const a of activity) {
+    if (a.kind !== "sent_for_review") continue;
+    const subId =
+      typeof a.payload?.subtaskId === "string" ? (a.payload.subtaskId as string) : null;
+    if (subId === null) {
+      if (!latestTask || (a.createdAt?.getTime() ?? 0) > (latestTask.createdAt?.getTime() ?? 0)) {
+        latestTask = a;
+      }
+    } else {
+      const prev = latestBySubtask.get(subId);
+      if (!prev || (a.createdAt?.getTime() ?? 0) > (prev.createdAt?.getTime() ?? 0)) {
+        latestBySubtask.set(subId, a);
+      }
+    }
+  }
+  const pendingTaskReview = Boolean(latestTask && task.status !== "done");
+  const pendingSubtaskIds = new Set<string>();
+  for (const [subId] of latestBySubtask) {
+    const sub = task.subtasks.find((s) => s.id === subId);
+    if (sub && !sub.done) pendingSubtaskIds.add(subId);
+  }
+  return { pendingTaskReview, pendingSubtaskIds };
 }
 
 const sectionLabel: React.CSSProperties = {

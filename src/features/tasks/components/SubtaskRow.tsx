@@ -3,20 +3,24 @@
 import { useMemo, useState } from "react";
 import {
   TASK_FIELD_LIMITS,
+  effectiveReviewerUids,
+  getSubtaskApprovalStatus,
   isSubtaskBlocked,
+  subtaskRowState,
+  type RowState,
   type Subtask,
-  type SubtaskRoleHint,
   type TaskDoc,
 } from "@/lib/firestore/tasks";
 import type { UserDoc } from "@/lib/firestore/users";
 import {
   removeSubtask,
   renameSubtask,
+  setSubtaskApproval,
   setSubtaskAssignees,
   setSubtaskBlockedBy,
   setSubtaskReviewers,
-  setSubtaskRoleHint,
   toggleSubtask,
+  type ReviewState,
 } from "../taskMutations";
 import AssigneePicker from "./AssigneePicker";
 
@@ -24,16 +28,78 @@ type Props = {
   task: TaskDoc;
   subtask: Subtask;
   users: UserDoc[];
+  viewerUid: string;
   canEdit: boolean;
+  /** Whether the viewer can see the reviewer columns. Completers + non-
+   *  involved committee members get this `false` — they see the row's
+   *  aggregate colour state but not the per-reviewer grid. */
+  showMatrix: boolean;
+  /** True when a sent_for_review is pending resolution for this specific
+   *  subtask (derived in the parent from the activity feed). Drives the
+   *  orange row tint while approvals are incoming. */
+  isReviewPending: boolean;
   /** Optional drag handle rendered on the left when the row is sortable. */
   dragHandle?: React.ReactNode;
 };
 
-export default function SubtaskRow({ task, subtask, users, canEdit, dragHandle }: Props) {
+const ROW_COLOURS: Record<RowState, { border: string; bg: string | null }> = {
+  neutral: { border: "var(--color-border)", bg: null },
+  blue: { border: "var(--color-accent)", bg: "var(--color-accent-soft)" },
+  orange: {
+    border: "var(--color-warning, var(--color-accent))",
+    bg: "var(--color-warning-soft, var(--color-surface-hover))",
+  },
+  green: {
+    border: "var(--color-success, #16a34a)",
+    bg: "var(--color-success-soft, rgba(22, 163, 74, 0.08))",
+  },
+};
+
+export default function SubtaskRow({
+  task,
+  subtask,
+  users,
+  viewerUid,
+  canEdit,
+  showMatrix,
+  isReviewPending,
+  dragHandle,
+}: Props) {
   const [editing, setEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState(subtask.title);
 
-  const blocked = !subtask.done && isSubtaskBlocked(subtask, task.subtasks);
+  const blocked = !subtask.done && isSubtaskBlocked(subtask, task.subtasks, task.reviewerUids);
+  const blockers = useMemo(
+    () =>
+      subtask.blockedBy
+        .map((id) => task.subtasks.find((s) => s.id === id))
+        .filter((s): s is Subtask => Boolean(s)),
+    [subtask.blockedBy, task.subtasks],
+  );
+  const siblings = task.subtasks.filter((s) => s.id !== subtask.id);
+
+  const assignees = useMemo(
+    () =>
+      subtask.assigneeUids
+        .map((uid) => users.find((u) => u.uid === uid))
+        .filter((u): u is UserDoc => Boolean(u)),
+    [subtask.assigneeUids, users],
+  );
+
+  const reviewers = useMemo(() => {
+    const uids = effectiveReviewerUids(subtask, task.reviewerUids);
+    return uids
+      .map((uid) => users.find((u) => u.uid === uid) ?? { uid, displayName: null, email: null, role: "member" } as UserDoc)
+      .filter(Boolean) as UserDoc[];
+  }, [subtask, task.reviewerUids, users]);
+
+  const approvalStatus = useMemo(
+    () => getSubtaskApprovalStatus(subtask, task.reviewerUids),
+    [subtask, task.reviewerUids],
+  );
+
+  const rowState = subtaskRowState(subtask, task.reviewerUids, isReviewPending);
+  const rowPalette = ROW_COLOURS[rowState];
 
   async function handleDelete() {
     const ok = window.confirm(
@@ -46,23 +112,6 @@ export default function SubtaskRow({ task, subtask, users, canEdit, dragHandle }
       console.error(err);
     }
   }
-  const blockers = useMemo(
-    () =>
-      subtask.blockedBy
-        .map((id) => task.subtasks.find((s) => s.id === id))
-        .filter((s): s is Subtask => Boolean(s)),
-    [subtask.blockedBy, task.subtasks],
-  );
-  const siblings = task.subtasks.filter((s) => s.id !== subtask.id);
-
-  const assignees = useMemo(
-    () => subtask.assigneeUids.map((uid) => users.find((u) => u.uid === uid)).filter(Boolean) as UserDoc[],
-    [subtask.assigneeUids, users],
-  );
-  const reviewers = useMemo(
-    () => subtask.reviewerUids.map((uid) => users.find((u) => u.uid === uid)).filter(Boolean) as UserDoc[],
-    [subtask.reviewerUids, users],
-  );
 
   async function handleTitleBlur() {
     const trimmed = titleDraft.trim();
@@ -85,8 +134,9 @@ export default function SubtaskRow({ task, subtask, users, canEdit, dragHandle }
         flexDirection: "column",
         gap: "var(--space-2)",
         padding: "0.85rem 1rem",
-        background: "var(--color-bg-elevated)",
-        border: "1px solid var(--color-border)",
+        background: rowPalette.bg ?? "var(--color-bg-elevated)",
+        border: `1px solid ${rowPalette.border}`,
+        borderLeftWidth: "3px",
         borderRadius: "var(--radius-md)",
       }}
     >
@@ -119,23 +169,19 @@ export default function SubtaskRow({ task, subtask, users, canEdit, dragHandle }
           {subtask.title}
         </span>
 
-        {subtask.roleHint === "reviewer" && (
-          <span
-            title="Peer-review step"
-            style={{
-              fontSize: "var(--text-xs)",
-              padding: "0.1rem 0.5rem",
-              borderRadius: "var(--radius-pill)",
-              background: "var(--color-warning-soft, var(--color-surface-hover))",
-              color: "var(--color-warning, var(--color-text-muted))",
-            }}
-          >
-            review
-          </span>
-        )}
-
         <InlineAvatars users={assignees} tone="accent" title="Assignees" />
-        <InlineAvatars users={reviewers} tone="warning" title="Reviewers" />
+
+        {showMatrix && reviewers.length > 0 && (
+          <ApprovalMatrixRow
+            reviewers={reviewers}
+            approvedUids={subtask.approvedByReviewerUids}
+            questionedUids={subtask.questionedByReviewerUids}
+            viewerUid={viewerUid}
+            onSet={(state) =>
+              setSubtaskApproval(task, subtask.id, state).catch(console.error)
+            }
+          />
+        )}
 
         {canEdit && (
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", marginLeft: "var(--space-2)" }}>
@@ -192,6 +238,20 @@ export default function SubtaskRow({ task, subtask, users, canEdit, dragHandle }
         </p>
       )}
 
+      {showMatrix && approvalStatus.required.length > 0 && (
+        <p
+          style={{
+            margin: 0,
+            fontSize: "var(--text-xs)",
+            color: "var(--color-text-muted)",
+          }}
+        >
+          {approvalStatus.approved.length} / {approvalStatus.required.length} approved
+          {approvalStatus.questioned.length > 0 &&
+            ` · ${approvalStatus.questioned.length} open question${approvalStatus.questioned.length === 1 ? "" : "s"}`}
+        </p>
+      )}
+
       {editing && canEdit && (
         <div
           style={{
@@ -224,34 +284,6 @@ export default function SubtaskRow({ task, subtask, users, canEdit, dragHandle }
             />
           </label>
 
-          <label style={{ gridColumn: "span 2", display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-            <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-muted)" }}>
-              Role hint
-            </span>
-            <select
-              value={subtask.roleHint ?? ""}
-              onChange={(e) =>
-                setSubtaskRoleHint(
-                  task,
-                  subtask.id,
-                  (e.target.value || null) as SubtaskRoleHint,
-                ).catch(console.error)
-              }
-              style={{
-                padding: "0.3rem 0.5rem",
-                background: "var(--color-bg)",
-                border: "1px solid var(--color-border)",
-                borderRadius: "var(--radius-md)",
-                color: "var(--color-text)",
-                fontSize: "var(--text-xs)",
-              }}
-            >
-              <option value="">None</option>
-              <option value="completer">Completer step</option>
-              <option value="reviewer">Reviewer step</option>
-            </select>
-          </label>
-
           <div>
             <AssigneePicker
               users={users}
@@ -267,7 +299,7 @@ export default function SubtaskRow({ task, subtask, users, canEdit, dragHandle }
               users={users}
               selected={subtask.reviewerUids}
               onChange={(uids) => setSubtaskReviewers(task, subtask.id, uids).catch(console.error)}
-              label="Reviewers on this step"
+              label="Reviewers (leave empty to inherit from task)"
               max={TASK_FIELD_LIMITS.maxReviewersPerSubtask}
               role="reviewer"
             />
@@ -276,7 +308,7 @@ export default function SubtaskRow({ task, subtask, users, canEdit, dragHandle }
           {siblings.length > 0 && (
             <div style={{ gridColumn: "span 2", display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
               <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-muted)" }}>
-                Blocked by (must be done first)
+                Blocked by (must be done + approved first)
               </span>
               <div
                 style={{
@@ -369,5 +401,222 @@ function InlineAvatars({
         <span style={{ fontSize: "10px", color: "var(--color-text-subtle)" }}>+{users.length - 3}</span>
       )}
     </span>
+  );
+}
+
+/**
+ * Per-reviewer approval cells on a subtask row. Each cell shows the
+ * current state (empty / ❓ / ✓) for one reviewer. Only the viewer's own
+ * cell is clickable; others render as read-only status icons.
+ */
+function ApprovalMatrixRow({
+  reviewers,
+  approvedUids,
+  questionedUids,
+  viewerUid,
+  onSet,
+}: {
+  reviewers: UserDoc[];
+  approvedUids: string[];
+  questionedUids: string[];
+  viewerUid: string;
+  onSet: (state: ReviewState) => void;
+}) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        gap: "var(--space-1)",
+        padding: "2px 4px",
+        border: "1px solid var(--color-border)",
+        borderRadius: "var(--radius-sm, 4px)",
+        background: "var(--color-bg)",
+      }}
+    >
+      {reviewers.map((r) => {
+        const state: "approved" | "question" | "empty" = approvedUids.includes(r.uid)
+          ? "approved"
+          : questionedUids.includes(r.uid)
+            ? "question"
+            : "empty";
+        const isMine = r.uid === viewerUid;
+        return (
+          <ApprovalCell
+            key={r.uid}
+            reviewer={r}
+            state={state}
+            isMine={isMine}
+            onSet={onSet}
+          />
+        );
+      })}
+    </span>
+  );
+}
+
+function ApprovalCell({
+  reviewer,
+  state,
+  isMine,
+  onSet,
+}: {
+  reviewer: UserDoc;
+  state: "approved" | "question" | "empty";
+  isMine: boolean;
+  onSet: (state: ReviewState) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = reviewer.displayName ?? reviewer.email ?? reviewer.uid;
+  const initial = label.charAt(0).toUpperCase();
+
+  const icon =
+    state === "approved" ? "✓" : state === "question" ? "❓" : initial;
+  const color =
+    state === "approved"
+      ? "var(--color-success, #16a34a)"
+      : state === "question"
+        ? "var(--color-warning, var(--color-accent))"
+        : "var(--color-text-subtle)";
+  const bg =
+    state === "approved"
+      ? "var(--color-success-soft, rgba(22, 163, 74, 0.12))"
+      : state === "question"
+        ? "var(--color-warning-soft, var(--color-surface-hover))"
+        : "transparent";
+
+  if (!isMine) {
+    return (
+      <span
+        title={`${label}: ${state === "empty" ? "not yet reviewed" : state === "approved" ? "approved" : "has a question"}`}
+        aria-label={`${label} ${state}`}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: "1.5rem",
+          height: "1.5rem",
+          borderRadius: "var(--radius-sm, 4px)",
+          background: bg,
+          color,
+          fontSize: "10px",
+          fontWeight: 700,
+          cursor: "default",
+        }}
+      >
+        {icon}
+      </span>
+    );
+  }
+
+  return (
+    <span style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title={`Your review of this subtask — ${state === "empty" ? "click to set" : `currently ${state}`}`}
+        aria-label={`Set your review state (currently ${state})`}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: "1.5rem",
+          height: "1.5rem",
+          borderRadius: "var(--radius-sm, 4px)",
+          background: bg,
+          color,
+          fontSize: "10px",
+          fontWeight: 700,
+          border: "1px solid var(--color-border)",
+          cursor: "pointer",
+        }}
+      >
+        {icon}
+      </button>
+      {open && (
+        <div
+          role="menu"
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            right: 0,
+            zIndex: 5,
+            minWidth: "9rem",
+            padding: "0.25rem",
+            background: "var(--color-bg)",
+            border: "1px solid var(--color-border)",
+            borderRadius: "var(--radius-md)",
+            boxShadow: "var(--shadow-lg)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "2px",
+          }}
+        >
+          <ApprovalMenuItem
+            icon="✓"
+            label="Approve"
+            onClick={() => {
+              onSet("approve");
+              setOpen(false);
+            }}
+            active={state === "approved"}
+          />
+          <ApprovalMenuItem
+            icon="❓"
+            label="Have question"
+            onClick={() => {
+              onSet("question");
+              setOpen(false);
+            }}
+            active={state === "question"}
+          />
+          <ApprovalMenuItem
+            icon="⬜"
+            label="Clear"
+            onClick={() => {
+              onSet("clear");
+              setOpen(false);
+            }}
+            active={state === "empty"}
+          />
+        </div>
+      )}
+    </span>
+  );
+}
+
+function ApprovalMenuItem({
+  icon,
+  label,
+  onClick,
+  active,
+}: {
+  icon: string;
+  label: string;
+  onClick: () => void;
+  active: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "var(--space-2)",
+        padding: "0.3rem 0.55rem",
+        background: active ? "var(--color-surface-hover)" : "transparent",
+        color: "var(--color-text)",
+        border: "none",
+        fontSize: "var(--text-sm)",
+        cursor: "pointer",
+        textAlign: "left",
+        borderRadius: "var(--radius-sm, 4px)",
+      }}
+    >
+      <span style={{ width: "1rem", textAlign: "center" }}>{icon}</span>
+      <span>{label}</span>
+    </button>
   );
 }

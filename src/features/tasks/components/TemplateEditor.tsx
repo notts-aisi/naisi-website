@@ -7,7 +7,6 @@ import { Field, Input, Select, Textarea } from "@/components/ui/Input";
 import {
   TASK_KINDS,
   TASK_KIND_LABELS,
-  type SubtaskRoleHint,
   type TaskKind,
 } from "@/lib/firestore/tasks";
 import {
@@ -60,7 +59,6 @@ export default function TemplateEditor({ template, onDone, onDelete }: Props) {
         {
           id: newTemplateSubtaskId(),
           title: "",
-          roleHint: null,
           blockedBy: [],
         },
       ],
@@ -235,20 +233,6 @@ export default function TemplateEditor({ template, onDone, onDelete }: Props) {
                       maxLength={TASK_TEMPLATE_FIELD_LIMITS.subtaskTitle}
                       style={{ flex: 1 }}
                     />
-                    <Select
-                      value={s.roleHint ?? ""}
-                      onChange={(e) =>
-                        updateSubtask(s.id, {
-                          roleHint: (e.target.value || null) as SubtaskRoleHint,
-                        })
-                      }
-                      aria-label="Role hint"
-                      style={{ minWidth: "9rem" }}
-                    >
-                      <option value="">No role hint</option>
-                      <option value="completer">Completer step</option>
-                      <option value="reviewer">Reviewer step</option>
-                    </Select>
                     <button
                       type="button"
                       onClick={() => removeSubtask(s.id)}

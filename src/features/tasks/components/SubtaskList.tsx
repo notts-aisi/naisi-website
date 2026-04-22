@@ -23,10 +23,24 @@ import SubtaskRow from "./SubtaskRow";
 type Props = {
   task: TaskDoc;
   users: UserDoc[];
+  viewerUid: string;
   canEdit: boolean;
+  /** Whether the viewer sees the per-reviewer approval columns. */
+  showMatrix: boolean;
+  /** Set of subtask IDs that have an in-flight sent_for_review (derived from
+   *  the activity feed in the parent). Empty set means "no review pending
+   *  anywhere". */
+  pendingReviewSubtaskIds: Set<string>;
 };
 
-export default function SubtaskList({ task, users, canEdit }: Props) {
+export default function SubtaskList({
+  task,
+  users,
+  viewerUid,
+  canEdit,
+  showMatrix,
+  pendingReviewSubtaskIds,
+}: Props) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -88,7 +102,10 @@ export default function SubtaskList({ task, users, canEdit }: Props) {
                     task={task}
                     subtask={s}
                     users={users}
+                    viewerUid={viewerUid}
                     canEdit={canEdit}
+                    showMatrix={showMatrix}
+                    isReviewPending={pendingReviewSubtaskIds.has(s.id)}
                     dragHandle={handle}
                   />
                 )}
@@ -98,7 +115,16 @@ export default function SubtaskList({ task, users, canEdit }: Props) {
         </DndContext>
       ) : (
         rows.map((s) => (
-          <SubtaskRow key={s.id} task={task} subtask={s} users={users} canEdit={false} />
+          <SubtaskRow
+            key={s.id}
+            task={task}
+            subtask={s}
+            users={users}
+            viewerUid={viewerUid}
+            canEdit={false}
+            showMatrix={showMatrix}
+            isReviewPending={pendingReviewSubtaskIds.has(s.id)}
+          />
         ))
       )}
 

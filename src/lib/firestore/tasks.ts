@@ -70,8 +70,6 @@ export const TASK_FIELD_LIMITS = {
   commentBody: 2000,
 } as const;
 
-export type SubtaskRoleHint = "completer" | "reviewer" | null;
-
 export type Subtask = {
   id: string;
   title: string;
@@ -79,9 +77,20 @@ export type Subtask = {
   doneAt: Date | null;
   doneByUid: string | null;
   assigneeUids: string[];
+  /** Reviewers opted into approving this specific subtask. Empty → falls
+   *  back to the task-level reviewerUids at render/gate time. */
   reviewerUids: string[];
   blockedBy: string[];
-  roleHint: SubtaskRoleHint;
+  /** Reviewer UIDs who have ticked ✓ on this subtask. Per review-matrix
+   *  design: each reviewer's uid can appear in AT MOST ONE of
+   *  approvedByReviewerUids / questionedByReviewerUids — they're mutually
+   *  exclusive states. Phase 3 will add a third array, `rejectedByReviewerUids`,
+   *  following the same pattern. */
+  approvedByReviewerUids: string[];
+  /** Reviewer UIDs who have flagged ❓ on this subtask — "I have a question,
+   *  partially reviewed". Blocks their overall signoff (all-my-columns-✓)
+   *  but not individual ticks on other subtasks. */
+  questionedByReviewerUids: string[];
 };
 
 export type SubtaskStats = {
@@ -141,9 +150,8 @@ function normalizeSubtask(raw: unknown): Subtask | null {
   const id = typeof s.id === "string" ? s.id : null;
   const title = typeof s.title === "string" ? s.title : null;
   if (!id || !title) return null;
-  const rawHint = typeof s.roleHint === "string" ? s.roleHint : null;
-  const roleHint: SubtaskRoleHint =
-    rawHint === "completer" || rawHint === "reviewer" ? rawHint : null;
+  // Legacy docs may carry a `roleHint` field — we ignore it; the review
+  // matrix replaced that signal.
   return {
     id,
     title,
@@ -153,7 +161,8 @@ function normalizeSubtask(raw: unknown): Subtask | null {
     assigneeUids: stringArray(s.assigneeUids),
     reviewerUids: stringArray(s.reviewerUids),
     blockedBy: stringArray(s.blockedBy),
-    roleHint,
+    approvedByReviewerUids: stringArray(s.approvedByReviewerUids),
+    questionedByReviewerUids: stringArray(s.questionedByReviewerUids),
   };
 }
 
@@ -224,13 +233,135 @@ export function isDueSoon(task: TaskDoc, now: Date = new Date()): boolean {
 }
 
 /**
- * A subtask is tickable only when every id in its `blockedBy` resolves to a
- * sibling subtask with `done: true`. Unknown blocker ids are treated as blocked
- * (fail-safe: if someone edits templates or reorders and leaves a stale ref,
- * the row stays locked rather than silently unlocking).
+ * Effective reviewer set for a given subtask: the subtask's own
+ * reviewerUids if non-empty, otherwise the task-level reviewerUids as a
+ * fallback. An empty effective set means "no reviewer gate on this
+ * subtask" — blue ticks resolve immediately.
  */
-export function isSubtaskBlocked(subtask: Subtask, siblings: Subtask[]): boolean {
+export function effectiveReviewerUids(
+  subtask: Subtask,
+  taskReviewerUids: string[],
+): string[] {
+  return subtask.reviewerUids.length > 0 ? subtask.reviewerUids : taskReviewerUids;
+}
+
+export type SubtaskApprovalStatus = {
+  /** Reviewers expected to weigh in on this subtask. */
+  required: string[];
+  approved: string[];
+  questioned: string[];
+  /** Every required reviewer has placed ✓ — used by the per-reviewer
+   *  overall-signoff derivation. */
+  fullyApproved: boolean;
+  /** At least one required reviewer has placed ✓ — the per-subtask
+   *  threshold for blockedBy resolution. */
+  hasAnyApproval: boolean;
+  /** At least one reviewer has an outstanding ❓. Drives the orange row
+   *  state regardless of whether others approved. */
+  hasOutstandingQuestion: boolean;
+};
+
+export function getSubtaskApprovalStatus(
+  subtask: Subtask,
+  taskReviewerUids: string[],
+): SubtaskApprovalStatus {
+  const required = effectiveReviewerUids(subtask, taskReviewerUids);
+  const requiredSet = new Set(required);
+  const approved = subtask.approvedByReviewerUids.filter((u) => requiredSet.has(u));
+  const questioned = subtask.questionedByReviewerUids.filter((u) => requiredSet.has(u));
+  return {
+    required,
+    approved,
+    questioned,
+    fullyApproved: required.length > 0 && approved.length === required.length,
+    hasAnyApproval: approved.length > 0,
+    hasOutstandingQuestion: questioned.length > 0,
+  };
+}
+
+/**
+ * A subtask is tickable only when every blockedBy-reference resolves to a
+ * sibling that is (a) `done: true` AND (b) meets its per-subtask approval
+ * threshold (≥1 required reviewer has placed ✓, OR the blocker has no
+ * required reviewers). Unknown blocker ids are fail-safe blocked — better
+ * to lock a row than silently unlock on a dangling ref.
+ */
+export function isSubtaskBlocked(
+  subtask: Subtask,
+  siblings: Subtask[],
+  taskReviewerUids: string[] = [],
+): boolean {
   if (subtask.blockedBy.length === 0) return false;
-  const doneIds = new Set(siblings.filter((s) => s.done).map((s) => s.id));
-  return subtask.blockedBy.some((id) => !doneIds.has(id));
+  const byId = new Map(siblings.map((s) => [s.id, s]));
+  return subtask.blockedBy.some((id) => {
+    const blocker = byId.get(id);
+    if (!blocker) return true; // unknown id = stay blocked
+    if (!blocker.done) return true;
+    const status = getSubtaskApprovalStatus(blocker, taskReviewerUids);
+    // Blocker has required reviewers → they must have at least one ✓.
+    if (status.required.length > 0 && !status.hasAnyApproval) return true;
+    return false;
+  });
+}
+
+export type RowState = "neutral" | "blue" | "orange" | "green";
+
+/**
+ * Derives the colour band for a subtask row given its current state + whether
+ * a sent_for_review has already fired targeting it. Rules:
+ *   - neutral: not done yet
+ *   - orange: any outstanding ❓, OR sent-for-review is pending with approvals incomplete
+ *   - green: fully approved (every required reviewer has ✓) OR done-with-no-reviewers
+ *   - blue: done but approvals outstanding and no ❓ yet (the "waiting for review" resting state)
+ */
+export function subtaskRowState(
+  subtask: Subtask,
+  taskReviewerUids: string[],
+  sentForReviewPending: boolean,
+): RowState {
+  if (!subtask.done) return "neutral";
+  const status = getSubtaskApprovalStatus(subtask, taskReviewerUids);
+  if (status.hasOutstandingQuestion) return "orange";
+  if (status.required.length === 0) return "green"; // no review gate
+  if (status.fullyApproved) return "green";
+  if (sentForReviewPending) return "orange";
+  return "blue";
+}
+
+/**
+ * Task-level "done" gate: every subtask must be done, every subtask with
+ * required reviewers must have at least one approval, and every task-level
+ * reviewer must have ticked at least one ✓ somewhere (global coverage —
+ * catches a reviewer who was listed but never engaged).
+ */
+export function canMarkTaskDone(task: TaskDoc): {
+  ok: boolean;
+  reason: string | null;
+} {
+  if (task.subtasks.length === 0) return { ok: true, reason: null };
+  for (const s of task.subtasks) {
+    if (!s.done) {
+      return { ok: false, reason: `Subtask "${s.title}" is not marked done yet.` };
+    }
+    const status = getSubtaskApprovalStatus(s, task.reviewerUids);
+    if (status.required.length > 0 && !status.hasAnyApproval) {
+      return {
+        ok: false,
+        reason: `Subtask "${s.title}" is waiting on at least one reviewer approval.`,
+      };
+    }
+  }
+  // Global coverage — every task-level reviewer ticked ≥1 subtask somewhere.
+  for (const reviewerUid of task.reviewerUids) {
+    const ticked = task.subtasks.some((s) =>
+      s.approvedByReviewerUids.includes(reviewerUid),
+    );
+    if (!ticked) {
+      return {
+        ok: false,
+        reason: "A listed reviewer hasn't signed off on anything yet.",
+      };
+    }
+  }
+  return { ok: true, reason: null };
 }

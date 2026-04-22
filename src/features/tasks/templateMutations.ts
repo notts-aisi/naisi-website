@@ -48,8 +48,6 @@ function sanitizeSubtasks(
   return withIds.map<TemplateSubtask>((s) => ({
     id: s.id,
     title: s.title.slice(0, TASK_TEMPLATE_FIELD_LIMITS.subtaskTitle),
-    roleHint:
-      s.roleHint === "completer" || s.roleHint === "reviewer" ? s.roleHint : null,
     blockedBy: (s.blockedBy ?? [])
       .map((id) => idMap.get(id) ?? null)
       .filter((id): id is string => Boolean(id))
@@ -106,8 +104,6 @@ export async function updateTemplate(id: string, input: UpdateTemplateInput) {
     patch.subtasks = limited.map((s) => ({
       id: s.id,
       title: s.title.slice(0, TASK_TEMPLATE_FIELD_LIMITS.subtaskTitle),
-      roleHint:
-        s.roleHint === "completer" || s.roleHint === "reviewer" ? s.roleHint : null,
       blockedBy: s.blockedBy
         .filter((bid) => bid !== s.id && validIds.has(bid))
         .slice(0, TASK_TEMPLATE_FIELD_LIMITS.maxBlockedBy),
@@ -132,7 +128,6 @@ export function materialiseTemplate(template: TaskTemplate) {
   });
   return fresh.map((s) => ({
     title: s.title,
-    roleHint: s.roleHint,
     assigneeUids: [] as string[],
     reviewerUids: [] as string[],
     blockedBy: s.blockedBy
