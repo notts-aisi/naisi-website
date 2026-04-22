@@ -86,6 +86,7 @@ service cloud.firestore {
         && request.resource.data.subtasks.size() <= 50
         && request.resource.data.completerUids.size() <= 10
         && request.resource.data.reviewerUids.size() <= 5
+        && request.resource.data.get('blocks', []).size() <= 10
         && (
           isCommittee()
           || (
@@ -101,8 +102,13 @@ service cloud.firestore {
       // Committee = full control on committee-visibility tasks but CANNOT flip
       // visibility to 'assignees-only' (admin-only).
       // Completers + reviewers = narrow field-level writes (status/subtasks/
-      // counters). Including reviewers here lets a reviewer tick their review
-      // subtask even if they're not on the completer list.
+      // counters/blocks/blockConsents). Including reviewers here lets a
+      // reviewer tick their review subtask even if they're not on the
+      // completer list. `blocks` + `blockConsents` are in the narrow band
+      // because completers drive the lock-in ritual (and that ritual may
+      // atomically flip `block.sealState` to 'sealed' on the Nth consent).
+      // Fine-grained "only-own-uid" consent-edit enforcement is client-side
+      // — arrays-inside-maps diffing is too costly in rules.
       allow update: if
         isAdmin()
         || (
@@ -112,14 +118,17 @@ service cloud.firestore {
           && request.resource.data.subtasks.size() <= 50
           && request.resource.data.completerUids.size() <= 10
           && request.resource.data.reviewerUids.size() <= 5
+          && request.resource.data.get('blocks', []).size() <= 10
         )
         || (
           (isCompleter() || isReviewer())
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'status', 'subtasks', 'subtaskStats', 'updatedAt',
-            'completedAt', 'attachmentCount', 'commentCount'
+            'completedAt', 'attachmentCount', 'commentCount',
+            'blocks', 'blockConsents'
           ])
           && request.resource.data.subtasks.size() <= 50
+          && request.resource.data.get('blocks', []).size() <= 10
         )
         // Creator of a personal task can edit it freely.
         || (

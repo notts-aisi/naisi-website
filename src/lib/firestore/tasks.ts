@@ -59,8 +59,10 @@ export const TASK_FIELD_LIMITS = {
   title: 120,
   description: 4000,
   subtaskTitle: 160,
+  blockName: 60,
   tag: 40,
   maxSubtasks: 50,
+  maxBlocks: 10,
   maxCompleters: 10,
   maxReviewers: 5,
   maxAssigneesPerSubtask: 10,
@@ -69,6 +71,27 @@ export const TASK_FIELD_LIMITS = {
   maxTags: 8,
   commentBody: 2000,
 } as const;
+
+/**
+ * Completion-phase container. A task's `subtasks` array stays flat; block
+ * membership is carried on each subtask via `blockId`. `sealState` gates
+ * the completer lock-in — pre-seal the completers can freely self-add or
+ * -remove from subtasks in this block; post-seal they can only self-ADD
+ * (cover-for-sick-teammate path). Auto-spawned review subtasks land on
+ * `sealState === "sealed"`.
+ */
+export type TaskBlock = {
+  id: string;
+  name: string;
+  order: number;
+  sealState: "open" | "sealed";
+  sealedAt: Date | null;
+  /** Admin UID who force-sealed this block, or null if it sealed via
+   *  consensus. Purely informational — doesn't affect gating. */
+  forceSealedByUid: string | null;
+};
+
+export type BlockConsentMap = Record<string, { consentingCompleterUids: string[] }>;
 
 export type Subtask = {
   id: string;
@@ -83,14 +106,31 @@ export type Subtask = {
   blockedBy: string[];
   /** Reviewer UIDs who have ticked ✓ on this subtask. Per review-matrix
    *  design: each reviewer's uid can appear in AT MOST ONE of
-   *  approvedByReviewerUids / questionedByReviewerUids — they're mutually
-   *  exclusive states. Phase 3 will add a third array, `rejectedByReviewerUids`,
-   *  following the same pattern. */
+   *  approvedByReviewerUids / questionedByReviewerUids / rejectedByReviewerUids
+   *  — they're mutually exclusive states. */
   approvedByReviewerUids: string[];
   /** Reviewer UIDs who have flagged ❓ on this subtask — "I have a question,
    *  partially reviewed". Blocks their overall signoff (all-my-columns-✓)
    *  but not individual ticks on other subtasks. */
   questionedByReviewerUids: string[];
+  /** Reviewer UIDs who have flagged ❌ on this subtask. Holds the row in a
+   *  red "rejected" state until the completer re-does the work and the
+   *  reviewer re-reviews. Wired into the 4-state approval popover in Phase 3
+   *  PR 2; field lands here now so the data model only migrates once. */
+  rejectedByReviewerUids: string[];
+  /** Phase 3 block membership. `null` = ungrouped (task has no blocks, or
+   *  subtask sits at the task root). Migration wraps every pre-Phase-3
+   *  subtask into a single default block. */
+  blockId: string | null;
+  /** Subtask-level lock — admin-only toggle. Independent of block-level
+   *  seal, so an admin can freeze an individual subtask's assignee list
+   *  while the rest of the block stays open. */
+  sealState: "open" | "sealed";
+  sealedAt: Date | null;
+  /** Auto-spawned review subtasks carry `roleHint: "reviewer"` so the UI
+   *  can style them distinctly (pill / divider). `"completer"` is for
+   *  template-level hints; `null` for regular user-added subtasks. */
+  roleHint: "completer" | "reviewer" | null;
 };
 
 export type SubtaskStats = {
@@ -119,6 +159,15 @@ export type TaskDoc = {
   archived: boolean;
   visibility: TaskVisibility;
   subtasks: Subtask[];
+  /** Phase 3. Ordered completion phases. Empty array = legacy task with no
+   *  blocks (all subtasks carry `blockId: null`). Migration inserts a single
+   *  default block onto pre-Phase-3 tasks. */
+  blocks: TaskBlock[];
+  /** Per-block running tally of completers who've ticked "Lock in" on the
+   *  current allocation. Cleared to `[]` on any roster change to a subtask
+   *  in that block while the block is still open. On reaching N/N, the
+   *  block seals and this record's usefulness ends (kept for audit). */
+  blockConsents: BlockConsentMap;
   subtaskStats: SubtaskStats;
   attachmentCount: number;
   commentCount: number;
@@ -150,8 +199,12 @@ function normalizeSubtask(raw: unknown): Subtask | null {
   const id = typeof s.id === "string" ? s.id : null;
   const title = typeof s.title === "string" ? s.title : null;
   if (!id || !title) return null;
-  // Legacy docs may carry a `roleHint` field — we ignore it; the review
-  // matrix replaced that signal.
+  const rawRoleHint = s.roleHint;
+  const roleHint: Subtask["roleHint"] =
+    rawRoleHint === "completer" || rawRoleHint === "reviewer" ? rawRoleHint : null;
+  const rawSealState = s.sealState;
+  const sealState: Subtask["sealState"] =
+    rawSealState === "sealed" ? "sealed" : "open";
   return {
     id,
     title,
@@ -163,7 +216,45 @@ function normalizeSubtask(raw: unknown): Subtask | null {
     blockedBy: stringArray(s.blockedBy),
     approvedByReviewerUids: stringArray(s.approvedByReviewerUids),
     questionedByReviewerUids: stringArray(s.questionedByReviewerUids),
+    rejectedByReviewerUids: stringArray(s.rejectedByReviewerUids),
+    blockId: typeof s.blockId === "string" ? s.blockId : null,
+    sealState,
+    sealedAt: tsToDate(s.sealedAt),
+    roleHint,
   };
+}
+
+function normalizeBlock(raw: unknown): TaskBlock | null {
+  if (!raw || typeof raw !== "object") return null;
+  const b = raw as Raw;
+  const id = typeof b.id === "string" ? b.id : null;
+  const name = typeof b.name === "string" ? b.name : null;
+  if (!id || !name) return null;
+  const sealState: TaskBlock["sealState"] =
+    b.sealState === "sealed" ? "sealed" : "open";
+  const order = typeof b.order === "number" ? b.order : 0;
+  return {
+    id,
+    name,
+    order,
+    sealState,
+    sealedAt: tsToDate(b.sealedAt),
+    forceSealedByUid:
+      typeof b.forceSealedByUid === "string" ? b.forceSealedByUid : null,
+  };
+}
+
+function normalizeBlockConsents(raw: unknown): BlockConsentMap {
+  if (!raw || typeof raw !== "object") return {};
+  const out: BlockConsentMap = {};
+  for (const [blockId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const cb = value as Raw;
+    out[blockId] = {
+      consentingCompleterUids: stringArray(cb.consentingCompleterUids),
+    };
+  }
+  return out;
 }
 
 function normalizeSourceRef(raw: unknown): SourceRef {
@@ -180,6 +271,11 @@ export function normalizeTask(id: string, data: Raw): TaskDoc {
   const subtasks = rawSubtasks
     .map(normalizeSubtask)
     .filter((s): s is Subtask => s !== null);
+  const rawBlocks = Array.isArray(data.blocks) ? (data.blocks as unknown[]) : [];
+  const blocks = rawBlocks
+    .map(normalizeBlock)
+    .filter((b): b is TaskBlock => b !== null)
+    .sort((a, b) => a.order - b.order);
   const stats = (data.subtaskStats as Raw | undefined) ?? {};
   return {
     id,
@@ -197,6 +293,8 @@ export function normalizeTask(id: string, data: Raw): TaskDoc {
     archived: Boolean(data.archived),
     visibility: (data.visibility as TaskVisibility) ?? "committee",
     subtasks,
+    blocks,
+    blockConsents: normalizeBlockConsents(data.blockConsents),
     subtaskStats: {
       done: typeof stats.done === "number" ? stats.done : subtasks.filter((s) => s.done).length,
       total: typeof stats.total === "number" ? stats.total : subtasks.length,
@@ -326,6 +424,77 @@ export function subtaskRowState(
   if (status.fullyApproved) return "green";
   if (sentForReviewPending) return "orange";
   return "blue";
+}
+
+/**
+ * Subtasks rendered in block order, preserving relative order within each
+ * block's member list. Blocks are iterated by `.order`; ungrouped subtasks
+ * (`blockId === null`) land at the end in their existing order.
+ */
+export function groupSubtasksByBlock(
+  task: TaskDoc,
+): Array<{ block: TaskBlock | null; subtasks: Subtask[] }> {
+  const byBlock = new Map<string | null, Subtask[]>();
+  for (const s of task.subtasks) {
+    const key = s.blockId ?? null;
+    const list = byBlock.get(key) ?? [];
+    list.push(s);
+    byBlock.set(key, list);
+  }
+  const out: Array<{ block: TaskBlock | null; subtasks: Subtask[] }> = [];
+  for (const block of task.blocks) {
+    const subs = byBlock.get(block.id) ?? [];
+    out.push({ block, subtasks: subs });
+  }
+  const ungrouped = byBlock.get(null) ?? [];
+  if (ungrouped.length > 0) out.push({ block: null, subtasks: ungrouped });
+  return out;
+}
+
+export type BlockConsensusState = {
+  /** Completers whose consent is required for this block to seal — mirrors
+   *  `task.completerUids` at the moment of evaluation. Zero-length means
+   *  "no completers on task" → vacuously sealed. */
+  required: string[];
+  consenting: string[];
+  /** `required.length === 0 || consenting ⊇ required`. Consumers use this
+   *  to drive the "Lock in" button → seal transition. */
+  allConsented: boolean;
+};
+
+export function getBlockConsensusState(
+  task: TaskDoc,
+  blockId: string,
+): BlockConsensusState {
+  const required = task.completerUids;
+  const record = task.blockConsents[blockId];
+  const consenting = (record?.consentingCompleterUids ?? []).filter((u) =>
+    required.includes(u),
+  );
+  const allConsented = required.length === 0
+    ? true
+    : required.every((u) => consenting.includes(u));
+  return { required, consenting, allConsented };
+}
+
+/**
+ * Effective reviewer set for a block: union of every subtask.reviewerUids on
+ * non-review-hint subtasks inside this block. Falls back to task-level
+ * reviewerUids if the union is empty. Used by the auto-spawn logic (PR 2)
+ * and by the block-gate button enablement.
+ */
+export function getBlockEffectiveReviewerUids(
+  task: TaskDoc,
+  blockId: string,
+): string[] {
+  const out = new Set<string>();
+  for (const s of task.subtasks) {
+    if (s.blockId !== blockId) continue;
+    if (s.roleHint === "reviewer") continue;
+    for (const u of s.reviewerUids) out.add(u);
+  }
+  if (out.size > 0) return Array.from(out);
+  return [...task.reviewerUids];
 }
 
 /**

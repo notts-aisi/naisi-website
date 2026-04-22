@@ -75,6 +75,27 @@ function renderActivityCopy(a: ActivityDoc, users: UserDoc[], task: TaskDoc): st
       return `${actor} commented`;
     case "sent_for_review":
       return `${actor} sent ${subtaskTitle(pickStr("subtaskId") ?? null)} for review`;
+    case "block_created":
+      return `${actor} added block "${pickStr("name") ?? "Untitled"}"`;
+    case "block_renamed": {
+      const previous = pickStr("previousName");
+      const name = pickStr("name") ?? "Untitled";
+      return previous
+        ? `${actor} renamed block "${previous}" → "${name}"`
+        : `${actor} renamed a block to "${name}"`;
+    }
+    case "block_deleted":
+      return `${actor} deleted block "${pickStr("name") ?? "a block"}"`;
+    case "block_sealed":
+      return `${actor}'s lock-in sealed block "${pickStr("name") ?? "a block"}"`;
+    case "block_force_sealed":
+      return `${actor} force-sealed block "${pickStr("name") ?? "a block"}"`;
+    case "block_unsealed":
+      return `${actor} re-opened block "${pickStr("name") ?? "a block"}"`;
+    case "subtask_force_sealed":
+      return `${actor} sealed subtask ${subtaskTitle(pickStr("subtaskId"))}`;
+    case "subtask_unsealed":
+      return `${actor} unsealed subtask ${subtaskTitle(pickStr("subtaskId"))}`;
     default:
       return `${actor} updated the task`;
   }

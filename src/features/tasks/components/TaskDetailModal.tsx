@@ -471,7 +471,9 @@ export default function TaskDetailModal({
               task={task}
               users={users}
               viewerUid={viewerUid}
+              viewerRole={viewerRole}
               canEdit={canEditProgressFields}
+              canEditStructure={canEditAll}
               showMatrix={canSeeReviewerSection}
               pendingReviewSubtaskIds={pendingSubtaskIds}
             />

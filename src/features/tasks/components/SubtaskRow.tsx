@@ -13,13 +13,18 @@ import {
 } from "@/lib/firestore/tasks";
 import type { UserDoc } from "@/lib/firestore/users";
 import {
+  forceSealSubtask,
   removeSubtask,
   renameSubtask,
+  selfAddToSubtask,
+  selfRemoveFromSubtask,
   setSubtaskApproval,
   setSubtaskAssignees,
+  setSubtaskBlock,
   setSubtaskBlockedBy,
   setSubtaskReviewers,
   toggleSubtask,
+  unsealSubtask,
   type ReviewState,
 } from "../taskMutations";
 import AssigneePicker from "./AssigneePicker";
@@ -29,6 +34,9 @@ type Props = {
   subtask: Subtask;
   users: UserDoc[];
   viewerUid: string;
+  /** Controls visibility of the subtask-level seal/unseal escape hatch.
+   *  Admin-only in PR 1; might widen to creator later. */
+  isAdmin: boolean;
   canEdit: boolean;
   /** Whether the viewer can see the reviewer columns. Completers + non-
    *  involved committee members get this `false` — they see the row's
@@ -40,6 +48,29 @@ type Props = {
   isReviewPending: boolean;
   /** Optional drag handle rendered on the left when the row is sortable. */
   dragHandle?: React.ReactNode;
+};
+
+const selfBtn: React.CSSProperties = {
+  padding: "2px 8px",
+  background: "var(--color-accent-soft)",
+  color: "var(--color-accent)",
+  border: "none",
+  borderRadius: "999px",
+  fontSize: "10px",
+  fontWeight: 600,
+  cursor: "pointer",
+  letterSpacing: "0.02em",
+};
+
+const adminBtn: React.CSSProperties = {
+  padding: "0.3rem 0.65rem",
+  background: "var(--color-bg-elevated)",
+  border: "1px solid var(--color-border)",
+  color: "var(--color-text)",
+  borderRadius: "var(--radius-sm, 4px)",
+  fontSize: "var(--text-xs)",
+  fontWeight: 500,
+  cursor: "pointer",
 };
 
 const ROW_COLOURS: Record<RowState, { border: string; bg: string | null }> = {
@@ -60,6 +91,7 @@ export default function SubtaskRow({
   subtask,
   users,
   viewerUid,
+  isAdmin,
   canEdit,
   showMatrix,
   isReviewPending,
@@ -69,6 +101,19 @@ export default function SubtaskRow({
   const [titleDraft, setTitleDraft] = useState(subtask.title);
 
   const blocked = !subtask.done && isSubtaskBlocked(subtask, task.subtasks, task.reviewerUids);
+  const parentBlock = subtask.blockId
+    ? task.blocks.find((b) => b.id === subtask.blockId) ?? null
+    : null;
+  const parentSealed = parentBlock?.sealState === "sealed";
+  const subtaskSealed = subtask.sealState === "sealed";
+  const rosterLocked = subtaskSealed || parentSealed;
+  const isCompleter = task.completerUids.includes(viewerUid);
+  const isSelfAssigned = subtask.assigneeUids.includes(viewerUid);
+  // Self-remove is allowed only when nothing is sealed. Self-add remains
+  // allowed post-block-seal (cover-for-sick path) but is gated by subtask-
+  // level seal — a subtask admin-sealed is frozen both ways.
+  const canSelfRemove = isCompleter && isSelfAssigned && !rosterLocked;
+  const canSelfAdd = isCompleter && !isSelfAssigned && !subtaskSealed;
   const blockers = useMemo(
     () =>
       subtask.blockedBy
@@ -170,6 +215,55 @@ export default function SubtaskRow({
         </span>
 
         <InlineAvatars users={assignees} tone="accent" title="Assignees" />
+
+        {/* Completer self-service: quick add/remove me, without opening
+            the Edit panel. Hidden when the viewer isn't a completer or
+            when roster lock (subtask-seal or block-seal with existing
+            membership) forbids the direction they'd move in. */}
+        {canSelfAdd && (
+          <button
+            type="button"
+            onClick={() => selfAddToSubtask(task, subtask.id).catch(console.error)}
+            style={selfBtn}
+            title={
+              parentSealed
+                ? "Block is sealed, but self-add is still allowed (cover-for-sick path)."
+                : "Add me to this subtask"
+            }
+          >
+            + Me
+          </button>
+        )}
+        {canSelfRemove && (
+          <button
+            type="button"
+            onClick={() => selfRemoveFromSubtask(task, subtask.id).catch(console.error)}
+            style={selfBtn}
+            title="Remove me from this subtask"
+          >
+            − Me
+          </button>
+        )}
+        {subtaskSealed && (
+          <span
+            title="Admin-sealed — roster frozen"
+            aria-label="Subtask is sealed"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "2px 6px",
+              background: "var(--color-bg-elevated)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "999px",
+              fontSize: "10px",
+              color: "var(--color-text-muted)",
+              fontWeight: 600,
+            }}
+          >
+            🔒
+          </span>
+        )}
 
         {showMatrix && reviewers.length > 0 && (
           <ApprovalMatrixRow
@@ -288,8 +382,17 @@ export default function SubtaskRow({
             <AssigneePicker
               users={users}
               selected={subtask.assigneeUids}
-              onChange={(uids) => setSubtaskAssignees(task, subtask.id, uids).catch(console.error)}
-              label="Assignees on this step"
+              onChange={(uids) =>
+                setSubtaskAssignees(task, subtask.id, uids).catch((err) => {
+                  console.error(err);
+                  window.alert(err instanceof Error ? err.message : "Update failed");
+                })
+              }
+              label={
+                subtaskSealed
+                  ? "Assignees (subtask sealed — admin must unseal)"
+                  : "Assignees on this step"
+              }
               max={TASK_FIELD_LIMITS.maxAssigneesPerSubtask}
               role="completer"
             />
@@ -304,6 +407,97 @@ export default function SubtaskRow({
               role="reviewer"
             />
           </div>
+
+          {task.blocks.length > 0 && (
+            <label
+              style={{
+                gridColumn: "span 2",
+                display: "flex",
+                flexDirection: "column",
+                gap: "var(--space-1)",
+              }}
+            >
+              <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-muted)" }}>
+                Block
+              </span>
+              <select
+                value={subtask.blockId ?? ""}
+                onChange={(e) => {
+                  const next = e.target.value || null;
+                  setSubtaskBlock(task, subtask.id, next).catch(console.error);
+                }}
+                style={{
+                  padding: "0.4rem 0.6rem",
+                  background: "var(--color-bg)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "var(--radius-md)",
+                  color: "var(--color-text)",
+                  fontSize: "var(--text-sm)",
+                }}
+              >
+                <option value="">— Ungrouped —</option>
+                {task.blocks.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                    {b.sealState === "sealed" ? " (sealed)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          {isAdmin && (
+            <div
+              style={{
+                gridColumn: "span 2",
+                display: "flex",
+                gap: "var(--space-2)",
+                alignItems: "center",
+                padding: "var(--space-2)",
+                background: "var(--color-bg)",
+                border: "1px dashed var(--color-border)",
+                borderRadius: "var(--radius-md)",
+              }}
+            >
+              <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-muted)", flex: 1 }}>
+                Admin:{" "}
+                {subtaskSealed
+                  ? "subtask is sealed — roster is frozen independently of its block."
+                  : "subtask roster follows its block's seal state (or stays editable if no block)."}
+              </span>
+              {subtaskSealed ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    unsealSubtask(task, subtask.id).catch((err) => {
+                      console.error(err);
+                      window.alert(err instanceof Error ? err.message : "Unseal failed");
+                    })
+                  }
+                  style={adminBtn}
+                >
+                  Unseal subtask
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ok = window.confirm(
+                      `Freeze the assignee list on "${subtask.title}"? Independent of its block — useful when one row is firmly decided.`,
+                    );
+                    if (!ok) return;
+                    forceSealSubtask(task, subtask.id).catch((err) => {
+                      console.error(err);
+                      window.alert(err instanceof Error ? err.message : "Seal failed");
+                    });
+                  }}
+                  style={adminBtn}
+                >
+                  Seal subtask
+                </button>
+              )}
+            </div>
+          )}
 
           {siblings.length > 0 && (
             <div style={{ gridColumn: "span 2", display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>

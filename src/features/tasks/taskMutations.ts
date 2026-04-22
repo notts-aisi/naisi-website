@@ -9,13 +9,17 @@ import {
   serverTimestamp,
   Timestamp,
   updateDoc,
+  writeBatch,
 } from "firebase/firestore";
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import {
   TASK_FIELD_LIMITS,
   computeSubtaskStats,
+  getBlockConsensusState,
   isSubtaskBlocked,
+  type BlockConsentMap,
   type Subtask,
+  type TaskBlock,
   type TaskDoc,
   type TaskKind,
   type TaskPriority,
@@ -23,6 +27,7 @@ import {
   type TaskStatus,
   type TaskVisibility,
 } from "@/lib/firestore/tasks";
+import { queueActivity } from "./activityLog";
 
 function actingUid(): string {
   const uid = getClientAuth().currentUser?.uid;
@@ -54,6 +59,22 @@ function serializeSubtask(s: Subtask) {
     blockedBy: s.blockedBy,
     approvedByReviewerUids: s.approvedByReviewerUids,
     questionedByReviewerUids: s.questionedByReviewerUids,
+    rejectedByReviewerUids: s.rejectedByReviewerUids,
+    blockId: s.blockId,
+    sealState: s.sealState,
+    sealedAt: s.sealedAt ? Timestamp.fromDate(s.sealedAt) : null,
+    roleHint: s.roleHint,
+  };
+}
+
+function serializeBlock(b: TaskBlock) {
+  return {
+    id: b.id,
+    name: b.name,
+    order: b.order,
+    sealState: b.sealState,
+    sealedAt: b.sealedAt ? Timestamp.fromDate(b.sealedAt) : null,
+    forceSealedByUid: b.forceSealedByUid,
   };
 }
 
@@ -64,7 +85,7 @@ function clampUids(uids: string[] | undefined, max: number): string[] {
 }
 
 export type CreateSubtaskInput = Pick<Subtask, "title"> &
-  Partial<Pick<Subtask, "id" | "assigneeUids" | "reviewerUids" | "blockedBy">>;
+  Partial<Pick<Subtask, "id" | "assigneeUids" | "reviewerUids" | "blockedBy" | "blockId" | "roleHint">>;
 
 export type CreateTaskInput = {
   title: string;
@@ -111,6 +132,11 @@ export async function createTask(input: CreateTaskInput): Promise<string> {
     blockedBy: (s.blockedBy ?? []).slice(0, TASK_FIELD_LIMITS.maxBlockedBy),
     approvedByReviewerUids: [],
     questionedByReviewerUids: [],
+    rejectedByReviewerUids: [],
+    blockId: s.blockId ?? null,
+    sealState: "open",
+    sealedAt: null,
+    roleHint: s.roleHint ?? null,
   }));
   const validSubtaskIds = new Set(subtasks.map((s) => s.id));
   for (const s of subtasks) {
@@ -135,6 +161,8 @@ export async function createTask(input: CreateTaskInput): Promise<string> {
     archived: false,
     visibility,
     subtasks: subtasks.map(serializeSubtask),
+    blocks: [],
+    blockConsents: {},
     subtaskStats: { done: 0, total: subtasks.length },
     attachmentCount: 0,
     commentCount: 0,
@@ -198,6 +226,7 @@ export async function addSubtask(
   if (task.subtasks.length >= TASK_FIELD_LIMITS.maxSubtasks) {
     throw new Error(`Max ${TASK_FIELD_LIMITS.maxSubtasks} subtasks per task`);
   }
+  const blockId = resolveBlockId(task, init.blockId ?? null);
   const next: Subtask = {
     id: genId(),
     title: trimmed.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
@@ -209,14 +238,57 @@ export async function addSubtask(
     blockedBy: (init.blockedBy ?? []).slice(0, TASK_FIELD_LIMITS.maxBlockedBy),
     approvedByReviewerUids: [],
     questionedByReviewerUids: [],
+    rejectedByReviewerUids: [],
+    blockId,
+    sealState: "open",
+    sealedAt: null,
+    roleHint: init.roleHint ?? null,
   };
   const subtasks = [...task.subtasks, next];
-  await updateDoc(doc(db, "tasks", task.id), {
+  // Adding a subtask into an open block invalidates existing lock-in —
+  // the new row changes the allocation picture, so consent resets to 0.
+  const patch: Record<string, unknown> = {
     subtasks: subtasks.map(serializeSubtask),
     subtaskStats: computeSubtaskStats(subtasks),
     updatedAt: serverTimestamp(),
-  });
+  };
+  const consentsPatch = clearConsentIfOpen(task, blockId);
+  if (consentsPatch) patch.blockConsents = consentsPatch;
+  await updateDoc(doc(db, "tasks", task.id), patch);
   return next.id;
+}
+
+/**
+ * Resolve the blockId a new subtask should land in. If the caller passed an
+ * explicit id that matches an existing block, honour it. If they passed null
+ * and the task has blocks but no ungrouped rows yet, default to the last
+ * block (matches the UX of "Add subtask" buttons rendered inside a block
+ * footer). Otherwise leave as null.
+ */
+function resolveBlockId(task: TaskDoc, requested: string | null): string | null {
+  if (requested && task.blocks.some((b) => b.id === requested)) return requested;
+  return null;
+}
+
+/**
+ * If `blockId` refers to an open block, return a new `blockConsents` map with
+ * that block's consent list cleared to []. Returns null when there's nothing
+ * to change — callers use that as "skip the write". Sealed blocks (and the
+ * ungrouped null block) are no-ops.
+ */
+function clearConsentIfOpen(
+  task: TaskDoc,
+  blockId: string | null,
+): BlockConsentMap | null {
+  if (!blockId) return null;
+  const block = task.blocks.find((b) => b.id === blockId);
+  if (!block || block.sealState !== "open") return null;
+  const existing = task.blockConsents[blockId];
+  if (!existing || existing.consentingCompleterUids.length === 0) return null;
+  return {
+    ...task.blockConsents,
+    [blockId]: { consentingCompleterUids: [] },
+  };
 }
 
 /**
@@ -251,16 +323,20 @@ export async function reorderSubtasks(task: TaskDoc, orderedIds: string[]) {
 
 export async function removeSubtask(task: TaskDoc, subtaskId: string) {
   const db = getClientDb();
+  const target = task.subtasks.find((s) => s.id === subtaskId);
   // Drop references to this subtask from any sibling's blockedBy so the graph
   // doesn't end up with dangling refs that permanently block a row.
   const subtasks = task.subtasks
     .filter((s) => s.id !== subtaskId)
     .map((s) => ({ ...s, blockedBy: s.blockedBy.filter((id) => id !== subtaskId) }));
-  await updateDoc(doc(db, "tasks", task.id), {
+  const patch: Record<string, unknown> = {
     subtasks: subtasks.map(serializeSubtask),
     subtaskStats: computeSubtaskStats(subtasks),
     updatedAt: serverTimestamp(),
-  });
+  };
+  const consentsPatch = clearConsentIfOpen(task, target?.blockId ?? null);
+  if (consentsPatch) patch.blockConsents = consentsPatch;
+  await updateDoc(doc(db, "tasks", task.id), patch);
 }
 
 async function patchSubtask(
@@ -277,10 +353,23 @@ async function patchSubtask(
 }
 
 export async function setSubtaskAssignees(task: TaskDoc, subtaskId: string, uids: string[]) {
-  await patchSubtask(task, subtaskId, (s) => ({
-    ...s,
-    assigneeUids: clampUids(uids, TASK_FIELD_LIMITS.maxAssigneesPerSubtask),
-  }));
+  const db = getClientDb();
+  const target = task.subtasks.find((s) => s.id === subtaskId);
+  if (!target) throw new Error("Subtask not found");
+  if (target.sealState === "sealed") {
+    throw new Error("Subtask is sealed — an admin must unseal before roster changes.");
+  }
+  const next = clampUids(uids, TASK_FIELD_LIMITS.maxAssigneesPerSubtask);
+  const subtasks = task.subtasks.map((s) =>
+    s.id === subtaskId ? { ...s, assigneeUids: next } : s,
+  );
+  const patch: Record<string, unknown> = {
+    subtasks: subtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  };
+  const consentsPatch = clearConsentIfOpen(task, target.blockId);
+  if (consentsPatch) patch.blockConsents = consentsPatch;
+  await updateDoc(doc(db, "tasks", task.id), patch);
 }
 
 export async function setSubtaskReviewers(task: TaskDoc, subtaskId: string, uids: string[]) {
@@ -422,3 +511,412 @@ export async function deleteTask(taskId: string) {
   const db = getClientDb();
   await deleteDoc(doc(db, "tasks", taskId));
 }
+
+// ============================================================================
+// Phase 3 — blocks, consensus lock-in, and seal/unseal.
+// ============================================================================
+
+/**
+ * Append a new block to the end of `task.blocks`. Returns the new block id so
+ * callers can assign freshly-created subtasks into it.
+ */
+export async function createBlock(task: TaskDoc, name: string): Promise<string> {
+  const db = getClientDb();
+  const uid = actingUid();
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Block name required");
+  if (task.blocks.length >= TASK_FIELD_LIMITS.maxBlocks) {
+    throw new Error(`Max ${TASK_FIELD_LIMITS.maxBlocks} blocks per task`);
+  }
+  const block: TaskBlock = {
+    id: genId(),
+    name: trimmed.slice(0, TASK_FIELD_LIMITS.blockName),
+    order: task.blocks.length,
+    sealState: "open",
+    sealedAt: null,
+    forceSealedByUid: null,
+  };
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    blocks: [...task.blocks, block].map(serializeBlock),
+    blockConsents: {
+      ...task.blockConsents,
+      [block.id]: { consentingCompleterUids: [] },
+    },
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "block_created", uid, {
+    blockId: block.id,
+    name: block.name,
+  });
+  await batch.commit();
+  return block.id;
+}
+
+export async function renameBlock(task: TaskDoc, blockId: string, name: string) {
+  const db = getClientDb();
+  const uid = actingUid();
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Block name required");
+  const existing = task.blocks.find((b) => b.id === blockId);
+  if (!existing) throw new Error("Block not found");
+  if (existing.name === trimmed) return;
+  const nextName = trimmed.slice(0, TASK_FIELD_LIMITS.blockName);
+  const blocks = task.blocks.map((b) =>
+    b.id === blockId ? { ...b, name: nextName } : b,
+  );
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    blocks: blocks.map(serializeBlock),
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "block_renamed", uid, {
+    blockId,
+    name: nextName,
+    previousName: existing.name,
+  });
+  await batch.commit();
+}
+
+export async function reorderBlocks(task: TaskDoc, orderedIds: string[]) {
+  const db = getClientDb();
+  const byId = new Map(task.blocks.map((b) => [b.id, b]));
+  const next: TaskBlock[] = [];
+  const seen = new Set<string>();
+  for (const id of orderedIds) {
+    const b = byId.get(id);
+    if (b && !seen.has(id)) {
+      next.push({ ...b, order: next.length });
+      seen.add(id);
+    }
+  }
+  // Preserve any blocks the caller left out (defensive — mirror reorderSubtasks).
+  for (const b of task.blocks) {
+    if (!seen.has(b.id)) next.push({ ...b, order: next.length });
+  }
+  await updateDoc(doc(db, "tasks", task.id), {
+    blocks: next.map(serializeBlock),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Remove a block and rehome its subtasks to the ungrouped null block. Keeps
+ * all subtask state (assignees, approvals, blockedBy refs) intact — a deleted
+ * block is just the grouping being dropped, not the work. Also purges the
+ * block's consent record.
+ */
+export async function deleteBlock(task: TaskDoc, blockId: string) {
+  const db = getClientDb();
+  const uid = actingUid();
+  const existing = task.blocks.find((b) => b.id === blockId);
+  if (!existing) throw new Error("Block not found");
+  const subtasks = task.subtasks.map((s) =>
+    s.blockId === blockId ? { ...s, blockId: null } : s,
+  );
+  const blocks = task.blocks
+    .filter((b) => b.id !== blockId)
+    .map((b, i) => ({ ...b, order: i }));
+  const restConsents: BlockConsentMap = {};
+  for (const [k, v] of Object.entries(task.blockConsents)) {
+    if (k !== blockId) restConsents[k] = v;
+  }
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    subtasks: subtasks.map(serializeSubtask),
+    blocks: blocks.map(serializeBlock),
+    blockConsents: restConsents,
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "block_deleted", uid, {
+    blockId,
+    name: existing.name,
+  });
+  await batch.commit();
+}
+
+/**
+ * Move a subtask between blocks (or to ungrouped). Clears lock-in consent on
+ * both source and destination when they're open — the allocation picture has
+ * changed on both sides.
+ */
+export async function setSubtaskBlock(
+  task: TaskDoc,
+  subtaskId: string,
+  nextBlockId: string | null,
+) {
+  const db = getClientDb();
+  const target = task.subtasks.find((s) => s.id === subtaskId);
+  if (!target) throw new Error("Subtask not found");
+  if (nextBlockId && !task.blocks.some((b) => b.id === nextBlockId)) {
+    throw new Error("Block not found");
+  }
+  if (target.blockId === nextBlockId) return;
+  const subtasks = task.subtasks.map((s) =>
+    s.id === subtaskId ? { ...s, blockId: nextBlockId } : s,
+  );
+  let consents = task.blockConsents;
+  const afterSource = clearConsentIfOpen(task, target.blockId);
+  if (afterSource) consents = afterSource;
+  const intermediate: TaskDoc = { ...task, blockConsents: consents };
+  const afterDest = clearConsentIfOpen(intermediate, nextBlockId);
+  if (afterDest) consents = afterDest;
+  const patch: Record<string, unknown> = {
+    subtasks: subtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  };
+  if (consents !== task.blockConsents) patch.blockConsents = consents;
+  await updateDoc(doc(db, "tasks", task.id), patch);
+}
+
+/**
+ * Add or remove the current user from a block's consent list. If the addition
+ * brings consent to N/N of `task.completerUids`, the block seals atomically
+ * (sealState = sealed, sealedAt = serverTimestamp, activity entry). Caller
+ * must be a listed completer on the task — client-enforced, rules-backed.
+ */
+export async function toggleBlockConsent(task: TaskDoc, blockId: string) {
+  const db = getClientDb();
+  const uid = actingUid();
+  if (!task.completerUids.includes(uid)) {
+    throw new Error("Only listed completers can lock in a block.");
+  }
+  const block = task.blocks.find((b) => b.id === blockId);
+  if (!block) throw new Error("Block not found");
+  if (block.sealState === "sealed") {
+    throw new Error("Block is already sealed.");
+  }
+  const current = task.blockConsents[blockId]?.consentingCompleterUids ?? [];
+  const already = current.includes(uid);
+  const nextConsenting = already
+    ? current.filter((u) => u !== uid)
+    : [...current, uid];
+  const nextConsents: BlockConsentMap = {
+    ...task.blockConsents,
+    [blockId]: { consentingCompleterUids: nextConsenting },
+  };
+
+  const requiredSet = new Set(task.completerUids);
+  const allConsented =
+    !already &&
+    task.completerUids.length > 0 &&
+    task.completerUids.every((u) => nextConsenting.includes(u)) &&
+    nextConsenting.every((u) => requiredSet.has(u));
+
+  const batch = writeBatch(db);
+  const patch: Record<string, unknown> = {
+    blockConsents: nextConsents,
+    updatedAt: serverTimestamp(),
+  };
+  if (allConsented) {
+    const blocks = task.blocks.map((b) =>
+      b.id === blockId
+        ? { ...b, sealState: "sealed" as const, sealedAt: new Date() }
+        : b,
+    );
+    patch.blocks = blocks.map(serializeBlock);
+    queueActivity(batch, task.id, "block_sealed", uid, {
+      blockId,
+      name: block.name,
+    });
+  }
+  batch.update(doc(db, "tasks", task.id), patch);
+  await batch.commit();
+}
+
+/**
+ * Admin escape hatch — seal a block without waiting for unanimous consent.
+ * Logged distinctly from the natural-consensus seal so the audit trail
+ * preserves the "we moved despite missing sign-off" provenance.
+ */
+export async function forceSealBlock(task: TaskDoc, blockId: string) {
+  const db = getClientDb();
+  const uid = actingUid();
+  const block = task.blocks.find((b) => b.id === blockId);
+  if (!block) throw new Error("Block not found");
+  if (block.sealState === "sealed") return;
+  const blocks = task.blocks.map((b) =>
+    b.id === blockId
+      ? {
+          ...b,
+          sealState: "sealed" as const,
+          sealedAt: new Date(),
+          forceSealedByUid: uid,
+        }
+      : b,
+  );
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    blocks: blocks.map(serializeBlock),
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "block_force_sealed", uid, {
+    blockId,
+    name: block.name,
+  });
+  await batch.commit();
+}
+
+/**
+ * Admin escape hatch — re-open a sealed block. Clears sealedAt +
+ * forceSealedByUid and resets the consent tally so the lock-in ritual can
+ * run again. Auto-spawned review subtasks (PR 2) are deliberately kept —
+ * they may carry partial approvals that shouldn't be thrown away.
+ */
+export async function unsealBlock(task: TaskDoc, blockId: string) {
+  const db = getClientDb();
+  const uid = actingUid();
+  const block = task.blocks.find((b) => b.id === blockId);
+  if (!block) throw new Error("Block not found");
+  if (block.sealState === "open") return;
+  const blocks = task.blocks.map((b) =>
+    b.id === blockId
+      ? { ...b, sealState: "open" as const, sealedAt: null, forceSealedByUid: null }
+      : b,
+  );
+  const nextConsents: BlockConsentMap = {
+    ...task.blockConsents,
+    [blockId]: { consentingCompleterUids: [] },
+  };
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    blocks: blocks.map(serializeBlock),
+    blockConsents: nextConsents,
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "block_unsealed", uid, {
+    blockId,
+    name: block.name,
+  });
+  await batch.commit();
+}
+
+/**
+ * Completer self-service: add own uid to a subtask's assigneeUids. Valid both
+ * pre-seal AND post-seal — "my teammate is sick, I'm covering" is the
+ * explicit post-seal path. Clears block lock-in consent when the block is
+ * still open (the allocation picture moved).
+ */
+export async function selfAddToSubtask(task: TaskDoc, subtaskId: string) {
+  const db = getClientDb();
+  const uid = actingUid();
+  if (!task.completerUids.includes(uid)) {
+    throw new Error("Only listed completers can self-assign.");
+  }
+  const target = task.subtasks.find((s) => s.id === subtaskId);
+  if (!target) throw new Error("Subtask not found");
+  if (target.sealState === "sealed") {
+    throw new Error("Subtask is sealed — an admin must unseal before roster changes.");
+  }
+  if (target.assigneeUids.includes(uid)) return;
+  if (target.assigneeUids.length >= TASK_FIELD_LIMITS.maxAssigneesPerSubtask) {
+    throw new Error(
+      `Max ${TASK_FIELD_LIMITS.maxAssigneesPerSubtask} assignees per subtask`,
+    );
+  }
+  const subtasks = task.subtasks.map((s) =>
+    s.id === subtaskId ? { ...s, assigneeUids: [...s.assigneeUids, uid] } : s,
+  );
+  const patch: Record<string, unknown> = {
+    subtasks: subtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  };
+  const consentsPatch = clearConsentIfOpen(task, target.blockId);
+  if (consentsPatch) patch.blockConsents = consentsPatch;
+  await updateDoc(doc(db, "tasks", task.id), patch);
+}
+
+/**
+ * Completer self-service: remove own uid from a subtask's assigneeUids. Only
+ * valid when the block is OPEN (pre-seal free-for-all). Post-seal the
+ * completer must ask an admin to unseal, or a teammate to cover via
+ * `selfAddToSubtask` — silent drops after lock-in would be the exact
+ * regression the block system exists to prevent.
+ */
+export async function selfRemoveFromSubtask(task: TaskDoc, subtaskId: string) {
+  const db = getClientDb();
+  const uid = actingUid();
+  const target = task.subtasks.find((s) => s.id === subtaskId);
+  if (!target) throw new Error("Subtask not found");
+  if (target.sealState === "sealed") {
+    throw new Error("Subtask is sealed — ask an admin to unseal before removing yourself.");
+  }
+  if (target.blockId) {
+    const block = task.blocks.find((b) => b.id === target.blockId);
+    if (block && block.sealState === "sealed") {
+      throw new Error(
+        "Block is sealed — ask an admin to unseal before removing yourself.",
+      );
+    }
+  }
+  if (!target.assigneeUids.includes(uid)) return;
+  const subtasks = task.subtasks.map((s) =>
+    s.id === subtaskId
+      ? { ...s, assigneeUids: s.assigneeUids.filter((u) => u !== uid) }
+      : s,
+  );
+  const patch: Record<string, unknown> = {
+    subtasks: subtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  };
+  const consentsPatch = clearConsentIfOpen(task, target.blockId);
+  if (consentsPatch) patch.blockConsents = consentsPatch;
+  await updateDoc(doc(db, "tasks", task.id), patch);
+}
+
+/**
+ * Admin subtask-level force-seal: freeze a single subtask's assignee list
+ * without sealing the whole block. Useful when one row is firmly decided
+ * while others are still in flux. Independent of the block's sealState.
+ */
+export async function forceSealSubtask(task: TaskDoc, subtaskId: string) {
+  const db = getClientDb();
+  const uid = actingUid();
+  const target = task.subtasks.find((s) => s.id === subtaskId);
+  if (!target) throw new Error("Subtask not found");
+  if (target.sealState === "sealed") return;
+  const subtasks = task.subtasks.map((s) =>
+    s.id === subtaskId
+      ? { ...s, sealState: "sealed" as const, sealedAt: new Date() }
+      : s,
+  );
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    subtasks: subtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "subtask_force_sealed", uid, {
+    subtaskId,
+    title: target.title,
+  });
+  await batch.commit();
+}
+
+export async function unsealSubtask(task: TaskDoc, subtaskId: string) {
+  const db = getClientDb();
+  const uid = actingUid();
+  const target = task.subtasks.find((s) => s.id === subtaskId);
+  if (!target) throw new Error("Subtask not found");
+  if (target.sealState === "open") return;
+  const subtasks = task.subtasks.map((s) =>
+    s.id === subtaskId
+      ? { ...s, sealState: "open" as const, sealedAt: null }
+      : s,
+  );
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    subtasks: subtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "subtask_unsealed", uid, {
+    subtaskId,
+    title: target.title,
+  });
+  await batch.commit();
+}
+
+/**
+ * Consumer convenience — re-export so call sites don't have to dip into
+ * the firestore layer for this derivation.
+ */
+export { getBlockConsensusState };
