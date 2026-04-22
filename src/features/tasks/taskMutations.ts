@@ -16,6 +16,10 @@ import {
   TASK_FIELD_LIMITS,
   computeSubtaskStats,
   getBlockConsensusState,
+  getBlockEffectiveReviewerUids,
+  getBlockReviewSubtaskIds,
+  getNextBlock,
+  isBlockGateApplied,
   isSubtaskBlocked,
   type BlockConsentMap,
   type Subtask,
@@ -65,6 +69,45 @@ function serializeSubtask(s: Subtask) {
     sealedAt: s.sealedAt ? Timestamp.fromDate(s.sealedAt) : null,
     roleHint: s.roleHint,
   };
+}
+
+/**
+ * Build the review subtasks that should exist in a block once it's sealed —
+ * one row per effective reviewer, skipping reviewers who already have a
+ * review subtask in this block (idempotent under re-seal after admin
+ * un-seal). Caller is responsible for appending the returned rows to
+ * `task.subtasks` in the same write.
+ */
+function planReviewSpawn(task: TaskDoc, blockId: string): Subtask[] {
+  const reviewers = getBlockEffectiveReviewerUids(task, blockId);
+  if (reviewers.length === 0) return [];
+  const existingByReviewer = new Set<string>();
+  for (const s of task.subtasks) {
+    if (s.blockId !== blockId || s.roleHint !== "reviewer") continue;
+    for (const u of s.reviewerUids) existingByReviewer.add(u);
+  }
+  const out: Subtask[] = [];
+  for (const reviewerUid of reviewers) {
+    if (existingByReviewer.has(reviewerUid)) continue;
+    out.push({
+      id: genId(),
+      title: "Reviewer signoff",
+      done: false,
+      doneAt: null,
+      doneByUid: null,
+      assigneeUids: [],
+      reviewerUids: [reviewerUid],
+      blockedBy: [],
+      approvedByReviewerUids: [],
+      questionedByReviewerUids: [],
+      rejectedByReviewerUids: [],
+      blockId,
+      sealState: "open",
+      sealedAt: null,
+      roleHint: "reviewer",
+    });
+  }
+  return out;
 }
 
 function serializeBlock(b: TaskBlock) {
@@ -201,11 +244,20 @@ export async function toggleSubtask(task: TaskDoc, subtaskId: string) {
   const subtasks = task.subtasks.map<Subtask>((s) => {
     if (s.id !== subtaskId) return s;
     const nextDone = !s.done;
+    // Re-review cycle: completer un-ticking (nextDone=false) OR re-ticking
+    // after a prior rejection wipes reviewer state so reviewers are asked
+    // fresh. This is the resend-after-fix path — prior ✓ / ❓ / ❌ become
+    // stale the moment the work is un-done or re-submitted.
+    const wipeReviewState =
+      !nextDone || s.rejectedByReviewerUids.length > 0;
     return {
       ...s,
       done: nextDone,
       doneAt: nextDone ? new Date() : null,
       doneByUid: nextDone ? uid : null,
+      approvedByReviewerUids: wipeReviewState ? [] : s.approvedByReviewerUids,
+      questionedByReviewerUids: wipeReviewState ? [] : s.questionedByReviewerUids,
+      rejectedByReviewerUids: wipeReviewState ? [] : s.rejectedByReviewerUids,
     };
   });
   const stats = computeSubtaskStats(subtasks);
@@ -391,7 +443,7 @@ export async function setSubtaskBlockedBy(
   await patchSubtask(task, subtaskId, (s) => ({ ...s, blockedBy: filtered }));
 }
 
-export type ReviewState = "approve" | "question" | "clear";
+export type ReviewState = "approve" | "question" | "reject" | "clear";
 
 /**
  * Reviewer marks their cell in the review matrix for a specific subtask.
@@ -419,16 +471,19 @@ export async function setSubtaskApproval(
     throw new Error("You're not listed as a reviewer for this subtask.");
   }
   await patchSubtask(task, subtaskId, (s) => {
-    // Mutually exclusive: remove uid from both arrays first, then add to
-    // the appropriate one (or to neither, for "clear").
+    // Mutually exclusive across the three arrays — remove uid from all,
+    // then add to the chosen one (or to none, for "clear").
     const approved = s.approvedByReviewerUids.filter((u) => u !== uid);
     const questioned = s.questionedByReviewerUids.filter((u) => u !== uid);
+    const rejected = s.rejectedByReviewerUids.filter((u) => u !== uid);
     if (state === "approve") approved.push(uid);
     if (state === "question") questioned.push(uid);
+    if (state === "reject") rejected.push(uid);
     return {
       ...s,
       approvedByReviewerUids: approved,
       questionedByReviewerUids: questioned,
+      rejectedByReviewerUids: rejected,
     };
   });
 }
@@ -719,6 +774,18 @@ export async function toggleBlockConsent(task: TaskDoc, blockId: string) {
       blockId,
       name: block.name,
     });
+    const spawned = planReviewSpawn(task, blockId);
+    if (spawned.length > 0) {
+      const nextSubtasks = [...task.subtasks, ...spawned];
+      patch.subtasks = nextSubtasks.map(serializeSubtask);
+      patch.subtaskStats = computeSubtaskStats(nextSubtasks);
+      queueActivity(batch, task.id, "review_subtasks_spawned", uid, {
+        blockId,
+        name: block.name,
+        count: spawned.length,
+        reviewerUids: spawned.flatMap((s) => s.reviewerUids),
+      });
+    }
   }
   batch.update(doc(db, "tasks", task.id), patch);
   await batch.commit();
@@ -746,14 +813,29 @@ export async function forceSealBlock(task: TaskDoc, blockId: string) {
       : b,
   );
   const batch = writeBatch(db);
-  batch.update(doc(db, "tasks", task.id), {
+  const patch: Record<string, unknown> = {
     blocks: blocks.map(serializeBlock),
     updatedAt: serverTimestamp(),
-  });
+  };
+  const spawned = planReviewSpawn(task, blockId);
+  if (spawned.length > 0) {
+    const nextSubtasks = [...task.subtasks, ...spawned];
+    patch.subtasks = nextSubtasks.map(serializeSubtask);
+    patch.subtaskStats = computeSubtaskStats(nextSubtasks);
+  }
+  batch.update(doc(db, "tasks", task.id), patch);
   queueActivity(batch, task.id, "block_force_sealed", uid, {
     blockId,
     name: block.name,
   });
+  if (spawned.length > 0) {
+    queueActivity(batch, task.id, "review_subtasks_spawned", uid, {
+      blockId,
+      name: block.name,
+      count: spawned.length,
+      reviewerUids: spawned.flatMap((s) => s.reviewerUids),
+    });
+  }
   await batch.commit();
 }
 
@@ -805,6 +887,11 @@ export async function selfAddToSubtask(task: TaskDoc, subtaskId: string) {
   }
   const target = task.subtasks.find((s) => s.id === subtaskId);
   if (!target) throw new Error("Subtask not found");
+  if (target.roleHint === "reviewer") {
+    throw new Error(
+      "This is a reviewer-signoff subtask — only the listed reviewer can complete it.",
+    );
+  }
   if (target.sealState === "sealed") {
     throw new Error("Subtask is sealed — an admin must unseal before roster changes.");
   }
@@ -916,7 +1003,92 @@ export async function unsealSubtask(task: TaskDoc, subtaskId: string) {
 }
 
 /**
+ * Block-gate Apply: add every review-subtask id from this block to the
+ * blockedBy of every subtask in the NEXT block. Scope is Option B per the
+ * design call — gates the whole next block, not just its first subtask.
+ * Idempotent — re-applying on already-gated rows is a no-op. Fails silently
+ * if there's no next block or no review subtasks yet (UI disables the
+ * button in those cases).
+ */
+export async function applyBlockGate(task: TaskDoc, blockId: string) {
+  const db = getClientDb();
+  const uid = actingUid();
+  const nextBlock = getNextBlock(task, blockId);
+  if (!nextBlock) throw new Error("No block downstream to gate.");
+  const reviewIds = getBlockReviewSubtaskIds(task, blockId);
+  if (reviewIds.length === 0) {
+    throw new Error("This block has no review subtasks to gate on yet.");
+  }
+  const reviewIdSet = new Set(reviewIds);
+  const subtasks = task.subtasks.map((s) => {
+    if (s.blockId !== nextBlock.id) return s;
+    // Skip review subtasks inside the next block — reviewer signoffs
+    // shouldn't be gated on upstream reviewers, only completion rows.
+    if (s.roleHint === "reviewer") return s;
+    const existing = new Set(s.blockedBy);
+    let changed = false;
+    for (const rid of reviewIdSet) {
+      if (!existing.has(rid)) {
+        existing.add(rid);
+        changed = true;
+      }
+    }
+    if (!changed) return s;
+    const nextBlockedBy = Array.from(existing).slice(
+      0,
+      TASK_FIELD_LIMITS.maxBlockedBy,
+    );
+    return { ...s, blockedBy: nextBlockedBy };
+  });
+  const block = task.blocks.find((b) => b.id === blockId);
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    subtasks: subtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "block_gate_applied", uid, {
+    blockId,
+    name: block?.name ?? "",
+    nextBlockId: nextBlock.id,
+    nextBlockName: nextBlock.name,
+  });
+  await batch.commit();
+}
+
+/**
+ * Block-gate Clear: inverse of applyBlockGate. Strips this block's review
+ * subtask ids from every next-block subtask's `blockedBy`. Leaves any
+ * non-review blockedBy edges intact.
+ */
+export async function clearBlockGate(task: TaskDoc, blockId: string) {
+  const db = getClientDb();
+  const uid = actingUid();
+  const nextBlock = getNextBlock(task, blockId);
+  if (!nextBlock) return;
+  const reviewIds = new Set(getBlockReviewSubtaskIds(task, blockId));
+  if (reviewIds.size === 0) return;
+  const subtasks = task.subtasks.map((s) => {
+    if (s.blockId !== nextBlock.id) return s;
+    if (!s.blockedBy.some((id) => reviewIds.has(id))) return s;
+    return { ...s, blockedBy: s.blockedBy.filter((id) => !reviewIds.has(id)) };
+  });
+  const block = task.blocks.find((b) => b.id === blockId);
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    subtasks: subtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "block_gate_cleared", uid, {
+    blockId,
+    name: block?.name ?? "",
+    nextBlockId: nextBlock.id,
+    nextBlockName: nextBlock.name,
+  });
+  await batch.commit();
+}
+
+/**
  * Consumer convenience — re-export so call sites don't have to dip into
  * the firestore layer for this derivation.
  */
-export { getBlockConsensusState };
+export { getBlockConsensusState, getNextBlock, isBlockGateApplied };

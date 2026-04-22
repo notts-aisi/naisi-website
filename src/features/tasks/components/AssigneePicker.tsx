@@ -23,6 +23,15 @@ type Props = {
   role?: PickerRole;
   /** When true, show a role-filter chip strip above the search input. */
   showRoleFilter?: boolean;
+  /** Restrict the picker to a specific set of uids. Used on subtask-level
+   *  pickers so assignees can only come from `task.completerUids` and
+   *  reviewers only from `task.reviewerUids` — you can't accidentally drag
+   *  a non-roster person onto a single subtask. When the set is empty,
+   *  the picker renders an inert hint instead of an empty list. */
+  limitToUids?: string[];
+  /** Copy shown when `limitToUids` is an empty array (so the UI explains
+   *  why the picker is empty rather than just being bare). */
+  emptyLimitHint?: string;
 };
 
 const ROLE_COPY: Record<PickerRole, { verb: string; countLabel: string }> = {
@@ -38,13 +47,21 @@ export default function AssigneePicker({
   max = 10,
   role = "completer",
   showRoleFilter = false,
+  limitToUids,
+  emptyLimitHint,
 }: Props) {
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
 
+  const limitSet = useMemo(
+    () => (limitToUids ? new Set(limitToUids) : null),
+    [limitToUids],
+  );
+
   const sorted = useMemo(() => {
     const term = search.trim().toLowerCase();
     const matches = users.filter((u) => {
+      if (limitSet && !limitSet.has(u.uid)) return false;
       if (roleFilter !== "all" && u.role !== roleFilter) return false;
       if (term) {
         const hay = (u.displayName ?? u.email ?? u.uid).toLowerCase();
@@ -58,7 +75,7 @@ export default function AssigneePicker({
       return na.localeCompare(nb);
     });
     return matches;
-  }, [users, search, roleFilter]);
+  }, [users, search, roleFilter, limitSet]);
 
   function toggle(uid: string) {
     if (selected.includes(uid)) {
@@ -171,7 +188,9 @@ export default function AssigneePicker({
               fontSize: "var(--text-sm)",
             }}
           >
-            No matches.
+            {limitSet && limitSet.size === 0 && emptyLimitHint
+              ? emptyLimitHint
+              : "No matches."}
           </p>
         )}
         {sorted.map((u) => {

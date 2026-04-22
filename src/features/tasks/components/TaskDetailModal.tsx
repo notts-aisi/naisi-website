@@ -45,6 +45,11 @@ type Props = {
   viewerRole: Role;
   projects: ProjectDoc[];
   users: UserDoc[];
+  /** Optional seed from the parent's `useTasks` cache so the modal renders
+   *  the already-known task instantly instead of flashing "Loading task…"
+   *  while the first Firestore snapshot arrives. Live edits still stream
+   *  through `useTask`'s onSnapshot after mount. */
+  initialTask?: TaskDoc | null;
   onClose: () => void;
 };
 
@@ -59,9 +64,10 @@ export default function TaskDetailModal({
   viewerRole,
   projects,
   users,
+  initialTask,
   onClose,
 }: Props) {
-  const { task, loading } = useTask(taskId);
+  const { task, loading } = useTask(taskId, initialTask);
   const { feed, activity, loading: feedLoading } = useCommentsAndActivity(taskId);
   const isAdmin = viewerRole === "admin";
   const isCommittee = viewerRole === "committee" || viewerRole === "admin";

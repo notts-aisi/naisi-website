@@ -151,6 +151,7 @@ export default function MyWorkPage() {
           viewerRole={role}
           projects={projects}
           users={users}
+          initialTask={visible.find((t) => t.id === openTaskId) ?? null}
           onClose={closeTask}
         />
       )}

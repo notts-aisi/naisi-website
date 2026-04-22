@@ -348,15 +348,19 @@ export type SubtaskApprovalStatus = {
   required: string[];
   approved: string[];
   questioned: string[];
-  /** Every required reviewer has placed ✓ — used by the per-reviewer
-   *  overall-signoff derivation. */
+  /** Reviewers who've placed ❌ — outranks ? and ✓ for row state. Re-review
+   *  clears this (completer re-ticks → reviewer slate resets). */
+  rejected: string[];
+  /** Every required reviewer has placed ✓ AND nobody has rejected. */
   fullyApproved: boolean;
   /** At least one required reviewer has placed ✓ — the per-subtask
-   *  threshold for blockedBy resolution. */
+   *  threshold for blockedBy resolution. Still false if any reviewer has
+   *  rejected, because a rejection holds the row until re-review. */
   hasAnyApproval: boolean;
-  /** At least one reviewer has an outstanding ❓. Drives the orange row
-   *  state regardless of whether others approved. */
+  /** At least one reviewer has an outstanding ❓. */
   hasOutstandingQuestion: boolean;
+  /** At least one reviewer has placed ❌. */
+  hasRejection: boolean;
 };
 
 export function getSubtaskApprovalStatus(
@@ -367,13 +371,18 @@ export function getSubtaskApprovalStatus(
   const requiredSet = new Set(required);
   const approved = subtask.approvedByReviewerUids.filter((u) => requiredSet.has(u));
   const questioned = subtask.questionedByReviewerUids.filter((u) => requiredSet.has(u));
+  const rejected = subtask.rejectedByReviewerUids.filter((u) => requiredSet.has(u));
+  const hasRejection = rejected.length > 0;
   return {
     required,
     approved,
     questioned,
-    fullyApproved: required.length > 0 && approved.length === required.length,
-    hasAnyApproval: approved.length > 0,
+    rejected,
+    fullyApproved:
+      required.length > 0 && approved.length === required.length && !hasRejection,
+    hasAnyApproval: approved.length > 0 && !hasRejection,
     hasOutstandingQuestion: questioned.length > 0,
+    hasRejection,
   };
 }
 
@@ -402,23 +411,29 @@ export function isSubtaskBlocked(
   });
 }
 
-export type RowState = "neutral" | "blue" | "orange" | "green";
+export type RowState = "neutral" | "blue" | "orange" | "green" | "red";
 
 /**
  * Derives the colour band for a subtask row given its current state + whether
- * a sent_for_review has already fired targeting it. Rules:
+ * a sent_for_review has already fired targeting it. Rules (first match wins):
+ *   - red: any required reviewer has placed ❌ (rejection — outranks everything)
  *   - neutral: not done yet
- *   - orange: any outstanding ❓, OR sent-for-review is pending with approvals incomplete
- *   - green: fully approved (every required reviewer has ✓) OR done-with-no-reviewers
- *   - blue: done but approvals outstanding and no ❓ yet (the "waiting for review" resting state)
+ *   - orange: any outstanding ❓, OR sent-for-review pending with approvals incomplete
+ *   - green: fully approved, OR done-with-no-reviewers
+ *   - blue: done but approvals outstanding and no ❓ yet (resting state)
+ *
+ * Rejection outranks the "not done" check because a rejected completer may
+ * still be looking at their ticked row deciding whether to un-tick and re-do
+ * — the red signal is what tells them they need to act.
  */
 export function subtaskRowState(
   subtask: Subtask,
   taskReviewerUids: string[],
   sentForReviewPending: boolean,
 ): RowState {
-  if (!subtask.done) return "neutral";
   const status = getSubtaskApprovalStatus(subtask, taskReviewerUids);
+  if (status.hasRejection) return "red";
+  if (!subtask.done) return "neutral";
   if (status.hasOutstandingQuestion) return "orange";
   if (status.required.length === 0) return "green"; // no review gate
   if (status.fullyApproved) return "green";
@@ -449,6 +464,51 @@ export function groupSubtasksByBlock(
   const ungrouped = byBlock.get(null) ?? [];
   if (ungrouped.length > 0) out.push({ block: null, subtasks: ungrouped });
   return out;
+}
+
+/**
+ * Successor lookup: the block with the smallest `order` strictly greater than
+ * the given block's. Returns null when the given block is the last one, when
+ * no block with that id exists, or when the task has fewer than two blocks.
+ * Used by the block-gate button to know what to gate on.
+ */
+export function getNextBlock(task: TaskDoc, blockId: string): TaskBlock | null {
+  const current = task.blocks.find((b) => b.id === blockId);
+  if (!current) return null;
+  let next: TaskBlock | null = null;
+  for (const b of task.blocks) {
+    if (b.order <= current.order) continue;
+    if (!next || b.order < next.order) next = b;
+  }
+  return next;
+}
+
+/**
+ * The review subtasks auto-spawned inside a block on seal. Identified by
+ * `roleHint === "reviewer"` + matching blockId. Used by block-gate apply
+ * to know what to add to downstream subtasks' blockedBy.
+ */
+export function getBlockReviewSubtaskIds(task: TaskDoc, blockId: string): string[] {
+  return task.subtasks
+    .filter((s) => s.blockId === blockId && s.roleHint === "reviewer")
+    .map((s) => s.id);
+}
+
+/**
+ * Gate state for the "Gate next block on reviews" button: true when every
+ * subtask in the next block contains every review-subtask id from this
+ * block in its `blockedBy`. Used to drive the Apply/Clear toggle.
+ */
+export function isBlockGateApplied(task: TaskDoc, blockId: string): boolean {
+  const nextBlock = getNextBlock(task, blockId);
+  if (!nextBlock) return false;
+  const reviewIds = getBlockReviewSubtaskIds(task, blockId);
+  if (reviewIds.length === 0) return false;
+  const nextSubtasks = task.subtasks.filter((s) => s.blockId === nextBlock.id);
+  if (nextSubtasks.length === 0) return false;
+  return nextSubtasks.every((s) =>
+    reviewIds.every((rid) => s.blockedBy.includes(rid)),
+  );
 }
 
 export type BlockConsensusState = {
@@ -498,6 +558,35 @@ export function getBlockEffectiveReviewerUids(
 }
 
 /**
+ * Per-reviewer global coverage across the whole task: how many of the
+ * subtasks this reviewer is required on they've approved. Used by the
+ * final-signoff confirmation popup — when `approved === required - 1` and
+ * the reviewer is about to place their last ✓, we pop a confirm to make
+ * "completely signed off" feel intentional rather than accidental.
+ */
+export function getReviewerGlobalCoverage(
+  task: TaskDoc,
+  reviewerUid: string,
+): { approved: number; required: number } {
+  let approved = 0;
+  let required = 0;
+  for (const s of task.subtasks) {
+    const effective = effectiveReviewerUids(s, task.reviewerUids);
+    if (!effective.includes(reviewerUid)) continue;
+    required += 1;
+    // Reviewer-signoff rows (auto-spawned on block seal): ticking `done`
+    // IS the approval — no separate matrix cell. Count the tick as an
+    // approval so global coverage is consistent with the matrix-based rows.
+    if (s.roleHint === "reviewer" && s.done) {
+      approved += 1;
+      continue;
+    }
+    if (s.approvedByReviewerUids.includes(reviewerUid)) approved += 1;
+  }
+  return { approved, required };
+}
+
+/**
  * Task-level "done" gate: every subtask must be done, every subtask with
  * required reviewers must have at least one approval, and every task-level
  * reviewer must have ticked at least one ✓ somewhere (global coverage —
@@ -509,10 +598,16 @@ export function canMarkTaskDone(task: TaskDoc): {
 } {
   if (task.subtasks.length === 0) return { ok: true, reason: null };
   for (const s of task.subtasks) {
+    const status = getSubtaskApprovalStatus(s, task.reviewerUids);
+    if (status.hasRejection) {
+      return {
+        ok: false,
+        reason: `Subtask "${s.title}" has an outstanding rejection — re-do and re-review before closing.`,
+      };
+    }
     if (!s.done) {
       return { ok: false, reason: `Subtask "${s.title}" is not marked done yet.` };
     }
-    const status = getSubtaskApprovalStatus(s, task.reviewerUids);
     if (status.required.length > 0 && !status.hasAnyApproval) {
       return {
         ok: false,
@@ -520,11 +615,21 @@ export function canMarkTaskDone(task: TaskDoc): {
       };
     }
   }
-  // Global coverage — every task-level reviewer ticked ≥1 subtask somewhere.
+  // Global coverage — every task-level reviewer has signed off ≥1
+  // subtask somewhere. Counts either a ✓ in the matrix OR a ticked-done
+  // reviewer-signoff row (auto-spawned on block seal).
   for (const reviewerUid of task.reviewerUids) {
-    const ticked = task.subtasks.some((s) =>
-      s.approvedByReviewerUids.includes(reviewerUid),
-    );
+    const ticked = task.subtasks.some((s) => {
+      if (s.approvedByReviewerUids.includes(reviewerUid)) return true;
+      if (
+        s.roleHint === "reviewer" &&
+        s.done &&
+        s.reviewerUids.includes(reviewerUid)
+      ) {
+        return true;
+      }
+      return false;
+    });
     if (!ticked) {
       return {
         ok: false,

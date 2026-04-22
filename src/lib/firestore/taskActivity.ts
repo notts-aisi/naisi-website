@@ -27,7 +27,10 @@ export type ActivityKind =
   | "block_force_sealed"
   | "block_unsealed"
   | "subtask_force_sealed"
-  | "subtask_unsealed";
+  | "subtask_unsealed"
+  | "review_subtasks_spawned"
+  | "block_gate_applied"
+  | "block_gate_cleared";
 
 export type ActivityPayload = Record<string, unknown>;
 
@@ -69,6 +72,9 @@ const KNOWN_KINDS: ActivityKind[] = [
   "block_unsealed",
   "subtask_force_sealed",
   "subtask_unsealed",
+  "review_subtasks_spawned",
+  "block_gate_applied",
+  "block_gate_cleared",
 ];
 
 export function normalizeActivity(id: string, data: Raw): ActivityDoc {

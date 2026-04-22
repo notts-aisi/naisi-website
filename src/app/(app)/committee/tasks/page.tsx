@@ -148,6 +148,7 @@ export default function CommitteeTasksPage() {
           viewerRole={role}
           projects={projects}
           users={users}
+          initialTask={filtered.find((t) => t.id === openTaskId) ?? null}
           onClose={closeTask}
         />
       )}

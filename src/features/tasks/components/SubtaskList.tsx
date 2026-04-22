@@ -23,7 +23,15 @@ import {
 } from "@/lib/firestore/tasks";
 import type { UserDoc } from "@/lib/firestore/users";
 import type { Role } from "@/lib/firebase/session";
-import { addSubtask, createBlock, reorderSubtasks } from "../taskMutations";
+import {
+  addSubtask,
+  applyBlockGate,
+  clearBlockGate,
+  createBlock,
+  getNextBlock,
+  isBlockGateApplied,
+  reorderSubtasks,
+} from "../taskMutations";
 import BlockHeader from "./BlockHeader";
 import SubtaskRow from "./SubtaskRow";
 
@@ -108,86 +116,199 @@ export default function SubtaskList({
         </p>
       )}
 
-      {groups.map((group) => (
-        <div
-          key={group.block ? group.block.id : "__ungrouped__"}
-          style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}
-        >
-          {group.block && (
-            <BlockHeader
-              task={task}
-              block={group.block}
-              viewerUid={viewerUid}
-              isAdmin={isAdmin}
-              isCreator={isCreator}
-              canEditStructure={canEditStructure}
-            />
-          )}
-          {group.subtasks.length === 0 && group.block && canEdit && (
-            <p
-              style={{
-                color: "var(--color-text-muted)",
-                fontSize: "var(--text-xs)",
-                fontStyle: "italic",
-                padding: "0 var(--space-2)",
-              }}
-            >
-              No subtasks in this block yet.
-            </p>
-          )}
-          {canEdit && group.subtasks.length > 0 ? (
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={makeDragEndHandler(group.subtasks.map((s) => s.id))}
-            >
-              <SortableContext
-                items={group.subtasks.map((s) => s.id)}
-                strategy={verticalListSortingStrategy}
-              >
-                {group.subtasks.map((s) => (
-                  <SortableSubtaskRow key={s.id} id={s.id}>
-                    {(handle) => (
-                      <SubtaskRow
-                        task={task}
-                        subtask={s}
-                        users={users}
-                        viewerUid={viewerUid}
-                        isAdmin={isAdmin}
-                        canEdit={canEdit}
-                        showMatrix={showMatrix}
-                        isReviewPending={pendingReviewSubtaskIds.has(s.id)}
-                        dragHandle={handle}
-                      />
-                    )}
-                  </SortableSubtaskRow>
-                ))}
-              </SortableContext>
-            </DndContext>
-          ) : (
-            group.subtasks.map((s) => (
-              <SubtaskRow
-                key={s.id}
+      {groups.map((group) => {
+        const isSealed = group.block?.sealState === "sealed";
+        const containerStyle: React.CSSProperties = group.block
+          ? {
+              display: "flex",
+              flexDirection: "column",
+              gap: "var(--space-2)",
+              padding: "var(--space-3)",
+              background: isSealed
+                ? "var(--color-success-soft, rgba(22, 163, 74, 0.04))"
+                : "var(--color-bg-elevated)",
+              border: `1px solid ${
+                isSealed
+                  ? "var(--color-success, #16a34a)"
+                  : "var(--color-border)"
+              }`,
+              borderLeftWidth: "3px",
+              borderRadius: "var(--radius-md)",
+            }
+          : {
+              display: "flex",
+              flexDirection: "column",
+              gap: "var(--space-2)",
+            };
+        return (
+          <div
+            key={group.block ? group.block.id : "__ungrouped__"}
+            style={containerStyle}
+          >
+            {group.block && (
+              <BlockHeader
                 task={task}
-                subtask={s}
-                users={users}
+                block={group.block}
                 viewerUid={viewerUid}
                 isAdmin={isAdmin}
-                canEdit={canEdit}
-                showMatrix={showMatrix}
-                isReviewPending={pendingReviewSubtaskIds.has(s.id)}
+                isCreator={isCreator}
+                canEditStructure={canEditStructure}
               />
-            ))
-          )}
-          {canEdit && task.subtasks.length < TASK_FIELD_LIMITS.maxSubtasks && (
-            <InlineAddSubtask task={task} blockId={group.block?.id ?? null} />
-          )}
-        </div>
-      ))}
+            )}
+            {group.subtasks.length === 0 && group.block && canEdit && (
+              <p
+                style={{
+                  color: "var(--color-text-muted)",
+                  fontSize: "var(--text-xs)",
+                  fontStyle: "italic",
+                  padding: "0 var(--space-2)",
+                }}
+              >
+                No subtasks in this block yet.
+              </p>
+            )}
+            {canEdit && group.subtasks.length > 0 ? (
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={makeDragEndHandler(group.subtasks.map((s) => s.id))}
+              >
+                <SortableContext
+                  items={group.subtasks.map((s) => s.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  {group.subtasks.map((s) => (
+                    <SortableSubtaskRow key={s.id} id={s.id}>
+                      {(handle) => (
+                        <SubtaskRow
+                          task={task}
+                          subtask={s}
+                          users={users}
+                          viewerUid={viewerUid}
+                          isAdmin={isAdmin}
+                          canEdit={canEdit}
+                          showMatrix={showMatrix}
+                          isReviewPending={pendingReviewSubtaskIds.has(s.id)}
+                          dragHandle={handle}
+                        />
+                      )}
+                    </SortableSubtaskRow>
+                  ))}
+                </SortableContext>
+              </DndContext>
+            ) : (
+              group.subtasks.map((s) => (
+                <SubtaskRow
+                  key={s.id}
+                  task={task}
+                  subtask={s}
+                  users={users}
+                  viewerUid={viewerUid}
+                  isAdmin={isAdmin}
+                  canEdit={canEdit}
+                  showMatrix={showMatrix}
+                  isReviewPending={pendingReviewSubtaskIds.has(s.id)}
+                />
+              ))
+            )}
+            {canEdit && task.subtasks.length < TASK_FIELD_LIMITS.maxSubtasks && (
+              <InlineAddSubtask task={task} blockId={group.block?.id ?? null} />
+            )}
+            {group.block && canEditStructure && (
+              <BlockGateControls task={task} blockId={group.block.id} />
+            )}
+          </div>
+        );
+      })}
 
       {canEditStructure && task.blocks.length < TASK_FIELD_LIMITS.maxBlocks && (
         <InlineAddBlock task={task} hasBlocks={hasBlocks} />
       )}
+    </div>
+  );
+}
+
+/**
+ * Post-seal gate control. Only renders when the block is sealed and has a
+ * downstream block to gate. If review subtasks haven't spawned (no effective
+ * reviewers), button is disabled with an explanatory tooltip. Otherwise it
+ * toggles applied/cleared — pressing Apply sets every non-reviewer subtask
+ * in the next block to `blockedBy` including all of this block's review
+ * subtask ids.
+ */
+function BlockGateControls({ task, blockId }: { task: TaskDoc; blockId: string }) {
+  const block = task.blocks.find((b) => b.id === blockId);
+  if (!block || block.sealState !== "sealed") return null;
+  const nextBlock = getNextBlock(task, blockId);
+  if (!nextBlock) return null;
+  const hasReviewSubtasks = task.subtasks.some(
+    (s) => s.blockId === blockId && s.roleHint === "reviewer",
+  );
+  const applied = isBlockGateApplied(task, blockId);
+
+  async function handleToggle() {
+    try {
+      if (applied) {
+        await clearBlockGate(task, blockId);
+      } else {
+        await applyBlockGate(task, blockId);
+      }
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Update failed");
+    }
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "var(--space-2)",
+        paddingTop: "var(--space-2)",
+        borderTop: "1px dashed var(--color-border)",
+      }}
+    >
+      <span
+        style={{
+          fontSize: "var(--text-xs)",
+          color: "var(--color-text-muted)",
+          flex: 1,
+        }}
+      >
+        {hasReviewSubtasks
+          ? `Gate "${nextBlock.name}" on this block's reviews?`
+          : `"${nextBlock.name}" gates on reviewer signoffs — waiting for them to spawn.`}
+      </span>
+      <button
+        type="button"
+        disabled={!hasReviewSubtasks}
+        onClick={handleToggle}
+        style={{
+          padding: "0.3rem 0.75rem",
+          background: applied
+            ? "var(--color-warning-soft, var(--color-surface-hover))"
+            : "var(--color-accent-soft)",
+          color: applied
+            ? "var(--color-warning, var(--color-text))"
+            : "var(--color-accent)",
+          border: "none",
+          borderRadius: "var(--radius-sm, 4px)",
+          fontSize: "var(--text-xs)",
+          fontWeight: 600,
+          cursor: hasReviewSubtasks ? "pointer" : "not-allowed",
+          opacity: hasReviewSubtasks ? 1 : 0.5,
+        }}
+        title={
+          hasReviewSubtasks
+            ? applied
+              ? `Stop gating "${nextBlock.name}" on this block's reviews`
+              : `Require this block's reviewer signoffs before "${nextBlock.name}" unlocks`
+            : "This block has no review subtasks — add task reviewers or seal it first."
+        }
+      >
+        {applied ? "Gate applied — clear" : "Gate next block"}
+      </button>
     </div>
   );
 }
