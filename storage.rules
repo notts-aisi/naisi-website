@@ -37,5 +37,43 @@ service firebase.storage {
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
+
+    // Task attachments: mirror the Firestore task access gate — anyone who
+    // can read the parent task can read/upload, and delete is author-or-admin.
+    // 10MB cap; MIME allowlist covers images, PDFs, common office docs, zips.
+    // Path is tasks/{taskId}/{attachmentId}/{filename} so each attachment
+    // gets its own folder keyed by the metadata doc id — clean delete.
+    match /tasks/{taskId}/{attachmentId}/{filename} {
+      function parentTask() {
+        return firestore.get(/databases/(default)/documents/tasks/$(taskId)).data;
+      }
+      function canAccessTask() {
+        return request.auth != null && (
+          userData().role == 'admin'
+          || (userData().role in ['committee', 'admin']
+              && parentTask().visibility == 'committee')
+          || request.auth.uid in parentTask().completerUids
+          || request.auth.uid in parentTask().reviewerUids
+        );
+      }
+      function isAttachmentUploader() {
+        return firestore.get(
+          /databases/(default)/documents/tasks/$(taskId)/attachments/$(attachmentId)
+        ).data.uploadedByUid == request.auth.uid;
+      }
+      allow read: if canAccessTask();
+      allow write: if canAccessTask()
+        && request.resource.size < 10 * 1024 * 1024
+        && (
+          request.resource.contentType.matches('image/.*')
+          || request.resource.contentType == 'application/pdf'
+          || request.resource.contentType.matches('text/.*')
+          || request.resource.contentType.matches('application/vnd\\.openxmlformats.*')
+          || request.resource.contentType == 'application/msword'
+          || request.resource.contentType == 'application/zip'
+        );
+      allow delete: if canAccessTask()
+        && (userData().role == 'admin' || isAttachmentUploader());
+    }
   }
 }
