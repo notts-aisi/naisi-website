@@ -103,6 +103,9 @@ export async function POST(_req: Request, ctx: Ctx) {
           preheader: subject,
         }),
         fromName: template.fromName,
+        kind: "application-test",
+        actorUid: actor.uid,
+        referenceId: templateId,
       });
       sentTo.push(address);
       await new Promise((r) => setTimeout(r, 200));
@@ -112,6 +115,16 @@ export async function POST(_req: Request, ctx: Ctx) {
         error: err instanceof Error ? err.message : "unknown",
       });
     }
+  }
+
+  // Treat "all sends failed" as a hard error — otherwise the UI shows a green
+  // "Test sent to ." (empty-array join) when actually nothing landed.
+  if (sentTo.length === 0) {
+    const reasons = failures.map((f) => `${f.address}: ${f.error}`).join("; ");
+    return NextResponse.json(
+      { error: `No emails delivered. ${reasons || "Unknown failure."}`, failures },
+      { status: 500 },
+    );
   }
 
   return NextResponse.json({ sentTo, failures });

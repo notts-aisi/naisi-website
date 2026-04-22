@@ -155,6 +155,9 @@ export async function POST(_req: Request, ctx: Ctx) {
             recipientName: sub.preferredName,
             unsubscribeUrl,
           }),
+          kind: "newsletter",
+          actorUid: actor.uid,
+          referenceId: id,
         });
         sentCount += 1;
         reachedUids.add(sub.uid);

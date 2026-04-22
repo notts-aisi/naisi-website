@@ -172,6 +172,9 @@ export async function POST(
           instagramHandle,
           contactEmail,
         }),
+        kind: "broadcast",
+        actorUid: viewer.uid,
+        referenceId: eventId,
       });
       sent += 1;
     } catch (err) {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { markSendStatus } from "@/lib/firestore/emailSends";
 import { addSuppression } from "@/lib/firestore/suppression";
 import { verifySnsMessage, type SnsMessage } from "@/lib/sns/verify";
 
@@ -70,6 +71,12 @@ export async function POST(req: Request) {
   // (legacy feedback notifications). Support both.
   const kind = (event.eventType ?? event.notificationType) as string | undefined;
 
+  // `mail.messageId` on the bounce/complaint envelope is the same SES id we
+  // stash on emailSends rows at send time — use it to mark the specific
+  // originating send, not every past send to the same address.
+  const mail = event.mail as { messageId?: string } | undefined;
+  const sesMessageId = mail?.messageId;
+
   if (kind === "Bounce") {
     const bounce = event.bounce as
       | {
@@ -89,6 +96,14 @@ export async function POST(req: Request) {
           subReason: bounce.bounceSubType,
           source: "ses-sns",
         });
+        if (sesMessageId) {
+          await markSendStatus(
+            db,
+            { sesMessageId, recipient: r.emailAddress },
+            "bounced",
+            bounce.bounceSubType,
+          );
+        }
         console.log("[ses-events] suppressed (bounce):", r.emailAddress);
       }
     } else {
@@ -109,6 +124,14 @@ export async function POST(req: Request) {
         subReason: complaint?.complaintFeedbackType,
         source: "ses-sns",
       });
+      if (sesMessageId) {
+        await markSendStatus(
+          db,
+          { sesMessageId, recipient: r.emailAddress },
+          "complained",
+          complaint?.complaintFeedbackType,
+        );
+      }
       console.log("[ses-events] suppressed (complaint):", r.emailAddress);
     }
   } else if (kind === "DeliveryDelay") {

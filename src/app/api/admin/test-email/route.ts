@@ -24,6 +24,8 @@ export async function POST() {
       to: actor.email,
       subject: "NAISI email pipeline test",
       react: TestEmail({ name: actor.displayName ?? actor.email.split("@")[0] }),
+      kind: "admin-test",
+      actorUid: actor.uid,
     });
     return NextResponse.json({ ok: true, sentTo: actor.email, messageId: result.messageId });
   } catch (err) {
