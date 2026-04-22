@@ -405,9 +405,26 @@ function InlineAvatars({
 }
 
 /**
- * Per-reviewer approval cells on a subtask row. Each cell shows the
- * current state (empty / ❓ / ✓) for one reviewer. Only the viewer's own
- * cell is clickable; others render as read-only status icons.
+ * Derive first+last initials from a user. "John Smith" → "JS".
+ * Single-word handles fall back to first two chars — "jsmith" → "JS".
+ * Unknowns fall back to "?".
+ */
+function getInitials(u: UserDoc): string {
+  const src = u.displayName ?? u.email ?? u.uid;
+  if (!src) return "?";
+  const parts = src.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+  }
+  return src.slice(0, 2).toUpperCase();
+}
+
+/**
+ * Per-reviewer approval cells on a subtask row. Leading "Review" label gives
+ * the grid a recognisable anchor so the columns aren't floating mystery
+ * glyphs. All cells share the same box-sizing / border-width so the row
+ * doesn't jitter when the viewer's own cell renders as a button (1px border)
+ * while others render as static spans.
  */
 function ApprovalMatrixRow({
   reviewers,
@@ -426,13 +443,25 @@ function ApprovalMatrixRow({
     <span
       style={{
         display: "inline-flex",
+        alignItems: "center",
         gap: "var(--space-1)",
-        padding: "2px 4px",
+        padding: "2px 6px",
         border: "1px solid var(--color-border)",
         borderRadius: "var(--radius-sm, 4px)",
         background: "var(--color-bg)",
       }}
     >
+      <span
+        style={{
+          fontSize: "10px",
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+          color: "var(--color-text-subtle)",
+          marginRight: "2px",
+        }}
+      >
+        Review
+      </span>
       {reviewers.map((r) => {
         const state: "approved" | "question" | "empty" = approvedUids.includes(r.uid)
           ? "approved"
@@ -467,10 +496,10 @@ function ApprovalCell({
 }) {
   const [open, setOpen] = useState(false);
   const label = reviewer.displayName ?? reviewer.email ?? reviewer.uid;
-  const initial = label.charAt(0).toUpperCase();
+  const initials = getInitials(reviewer);
 
   const icon =
-    state === "approved" ? "✓" : state === "question" ? "❓" : initial;
+    state === "approved" ? "✓" : state === "question" ? "❓" : initials;
   const color =
     state === "approved"
       ? "var(--color-success, #16a34a)"
@@ -484,24 +513,32 @@ function ApprovalCell({
         ? "var(--color-warning-soft, var(--color-surface-hover))"
         : "transparent";
 
+  // Both variants share the exact same box model so cells don't jitter when
+  // the viewer's own cell gets a visible border while others don't. We apply
+  // a `transparent` border to the read-only span of the same width as the
+  // button's border + box-sizing:border-box on both.
+  const sharedCellStyle: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "1.75rem",
+    height: "1.5rem",
+    borderRadius: "var(--radius-sm, 4px)",
+    background: bg,
+    color,
+    fontSize: "10px",
+    fontWeight: 700,
+    boxSizing: "border-box",
+    border: "1px solid transparent",
+    lineHeight: 1,
+  };
+
   if (!isMine) {
     return (
       <span
         title={`${label}: ${state === "empty" ? "not yet reviewed" : state === "approved" ? "approved" : "has a question"}`}
         aria-label={`${label} ${state}`}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: "1.5rem",
-          height: "1.5rem",
-          borderRadius: "var(--radius-sm, 4px)",
-          background: bg,
-          color,
-          fontSize: "10px",
-          fontWeight: 700,
-          cursor: "default",
-        }}
+        style={{ ...sharedCellStyle, cursor: "default" }}
       >
         {icon}
       </span>
@@ -509,25 +546,17 @@ function ApprovalCell({
   }
 
   return (
-    <span style={{ position: "relative" }}>
+    <span style={{ position: "relative", display: "inline-flex" }}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title={`Your review of this subtask — ${state === "empty" ? "click to set" : `currently ${state}`}`}
+        title={`Your review — ${state === "empty" ? "click to set" : `currently ${state}`}`}
         aria-label={`Set your review state (currently ${state})`}
         style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: "1.5rem",
-          height: "1.5rem",
-          borderRadius: "var(--radius-sm, 4px)",
-          background: bg,
-          color,
-          fontSize: "10px",
-          fontWeight: 700,
-          border: "1px solid var(--color-border)",
+          ...sharedCellStyle,
+          borderColor: "var(--color-border)",
           cursor: "pointer",
+          padding: 0,
         }}
       >
         {icon}
