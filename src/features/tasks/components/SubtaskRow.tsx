@@ -7,6 +7,7 @@ import {
   getReviewerGlobalCoverage,
   getReviewerSignoffBlockers,
   getSubtaskApprovalStatus,
+  hasReviewerSignedOffBlock,
   isSubtaskBlocked,
   subtaskRowState,
   type RowState,
@@ -135,6 +136,15 @@ export default function SubtaskRow({
   // Drives checkbox disable + the "only an admin can retract" hint below.
   const signoffRetractLocked =
     subtask.roleHint === "reviewer" && subtask.done && !isAdmin;
+  // Once the viewer has ticked their signoff row for this block, their
+  // per-subtask review cells are frozen. Admin can still act (they can
+  // force-untick a signoff to unlock). Non-signoff rows on other blocks
+  // unaffected.
+  const viewerFrozenOnBlock =
+    subtask.roleHint !== "reviewer" &&
+    subtask.blockId !== null &&
+    !isAdmin &&
+    hasReviewerSignedOffBlock(task, subtask.blockId, viewerUid);
   const parentBlock = subtask.blockId
     ? task.blocks.find((b) => b.id === subtask.blockId) ?? null
     : null;
@@ -401,8 +411,13 @@ export default function SubtaskRow({
             rejectedUids={subtask.rejectedByReviewerUids}
             viewerUid={viewerUid}
             approveWillFinalise={approveWillFinalise}
+            awaitingCompleterSubmit={!subtask.done}
+            viewerFrozenOnBlock={viewerFrozenOnBlock}
             onSet={(state) =>
-              setSubtaskApproval(task, subtask.id, state).catch(console.error)
+              setSubtaskApproval(task, subtask.id, state).catch((err) => {
+                console.error(err);
+                window.alert(err instanceof Error ? err.message : "Review failed");
+              })
             }
           />
         )}
@@ -878,6 +893,8 @@ function ApprovalMatrixRow({
   rejectedUids,
   viewerUid,
   approveWillFinalise,
+  awaitingCompleterSubmit,
+  viewerFrozenOnBlock,
   onSet,
 }: {
   reviewers: UserDoc[];
@@ -886,6 +903,13 @@ function ApprovalMatrixRow({
   rejectedUids: string[];
   viewerUid: string;
   approveWillFinalise: boolean;
+  /** True until a completer marks the subtask `done`. Reviewers can't
+   *  place approve/question/reject in this state; only `clear` is
+   *  allowed (for retracting a stale mark from a previous cycle). */
+  awaitingCompleterSubmit: boolean;
+  /** The viewer has already ticked their signoff row for this block —
+   *  their approvals here are frozen. Other reviewers still act freely. */
+  viewerFrozenOnBlock: boolean;
   onSet: (state: ReviewState) => void;
 }) {
   return (
@@ -927,6 +951,8 @@ function ApprovalMatrixRow({
             state={state}
             isMine={isMine}
             approveWillFinalise={isMine && approveWillFinalise}
+            awaitingCompleterSubmit={awaitingCompleterSubmit}
+            viewerFrozenOnBlock={isMine && viewerFrozenOnBlock}
             onSet={onSet}
           />
         );
@@ -940,12 +966,16 @@ function ApprovalCell({
   state,
   isMine,
   approveWillFinalise,
+  awaitingCompleterSubmit,
+  viewerFrozenOnBlock,
   onSet,
 }: {
   reviewer: UserDoc;
   state: CellState;
   isMine: boolean;
   approveWillFinalise: boolean;
+  awaitingCompleterSubmit: boolean;
+  viewerFrozenOnBlock: boolean;
   onSet: (state: ReviewState) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -1015,18 +1045,29 @@ function ApprovalCell({
     );
   }
 
+  const actionsDisabled = awaitingCompleterSubmit || viewerFrozenOnBlock;
+  const hintText = viewerFrozenOnBlock
+    ? "You've signed off this block — reviews locked. Admin can retract your signoff to unlock."
+    : awaitingCompleterSubmit
+      ? "Waiting on completer to submit."
+      : null;
+
   return (
     <span style={{ position: "relative", display: "inline-flex" }}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title={`Your review — ${state === "empty" ? "click to set" : `currently ${state}`}`}
+        title={
+          hintText ??
+          `Your review — ${state === "empty" ? "click to set" : `currently ${state}`}`
+        }
         aria-label={`Set your review state (currently ${state})`}
         style={{
           ...sharedCellStyle,
           borderColor: "var(--color-border)",
           cursor: "pointer",
           padding: 0,
+          opacity: actionsDisabled ? 0.55 : 1,
         }}
       >
         {icon}
@@ -1051,9 +1092,24 @@ function ApprovalCell({
             gap: "2px",
           }}
         >
+          {hintText && (
+            <p
+              style={{
+                margin: 0,
+                padding: "0.3rem 0.55rem 0.4rem",
+                fontSize: "var(--text-xs)",
+                color: "var(--color-text-muted)",
+                borderBottom: "1px dashed var(--color-border)",
+                marginBottom: "2px",
+              }}
+            >
+              {hintText}
+            </p>
+          )}
           <ApprovalMenuItem
             icon="✓"
             label={approveWillFinalise ? "Approve (final signoff)" : "Approve"}
+            disabled={actionsDisabled}
             onClick={() => {
               if (approveWillFinalise) {
                 const ok = window.confirm(
@@ -1072,6 +1128,7 @@ function ApprovalCell({
           <ApprovalMenuItem
             icon="❓"
             label="Have question"
+            disabled={actionsDisabled}
             onClick={() => {
               onSet("question");
               setOpen(false);
@@ -1081,6 +1138,7 @@ function ApprovalCell({
           <ApprovalMenuItem
             icon="✕"
             label="Reject"
+            disabled={actionsDisabled}
             onClick={() => {
               onSet("reject");
               setOpen(false);
@@ -1090,6 +1148,7 @@ function ApprovalCell({
           <ApprovalMenuItem
             icon="⬜"
             label="Clear"
+            disabled={viewerFrozenOnBlock}
             onClick={() => {
               onSet("clear");
               setOpen(false);
@@ -1107,27 +1166,31 @@ function ApprovalMenuItem({
   label,
   onClick,
   active,
+  disabled,
 }: {
   icon: string;
   label: string;
   onClick: () => void;
   active: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       role="menuitem"
       onClick={onClick}
+      disabled={disabled}
       style={{
         display: "flex",
         alignItems: "center",
         gap: "var(--space-2)",
         padding: "0.3rem 0.55rem",
         background: active ? "var(--color-surface-hover)" : "transparent",
-        color: "var(--color-text)",
+        color: disabled ? "var(--color-text-subtle)" : "var(--color-text)",
         border: "none",
         fontSize: "var(--text-sm)",
-        cursor: "pointer",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.55 : 1,
         textAlign: "left",
         borderRadius: "var(--radius-sm, 4px)",
       }}

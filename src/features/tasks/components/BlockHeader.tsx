@@ -47,6 +47,24 @@ export default function BlockHeader({
   const isSealed = block.sealState === "sealed";
   const requiredCount = consensus.required.length;
   const consentCount = consensus.consenting.length;
+  // Lock-in gate: every completion subtask the viewer is assigned to in
+  // this block must be ticked done before they can lock in. Retracting
+  // a prior lock-in stays unrestricted (you realise you weren't actually
+  // finished — let them back out). Mirrored in `toggleBlockConsent`.
+  const myOutstanding = task.subtasks.filter(
+    (s) =>
+      s.blockId === block.id &&
+      s.roleHint !== "reviewer" &&
+      s.assigneeUids.includes(viewerUid) &&
+      !s.done,
+  );
+  const lockInGated = !hasConsented && myOutstanding.length > 0;
+  const lockInGateTooltip = lockInGated
+    ? `Finish your assigned subtasks first: ${myOutstanding
+        .slice(0, 3)
+        .map((s) => `"${s.title}"`)
+        .join(", ")}${myOutstanding.length > 3 ? ` (+${myOutstanding.length - 3} more)` : ""}`
+    : null;
   // Missing-reviewer detection for the admin catch-up button. Compares
   // every effective reviewer for the block against existing reviewer-hint
   // rows in that block. Non-zero when the block was sealed before PR 2's
@@ -161,10 +179,12 @@ export default function BlockHeader({
         gap: "var(--space-2)",
         padding: "0.65rem 0.85rem",
         background: isSealed
-          ? "var(--color-success-soft, rgba(22, 163, 74, 0.08))"
-          : "var(--color-surface-hover)",
+          ? "var(--color-warning-soft, var(--color-surface-hover))"
+          : "var(--color-success-soft, rgba(22, 163, 74, 0.08))",
         border: `1px solid ${
-          isSealed ? "var(--color-success, #16a34a)" : "var(--color-border)"
+          isSealed
+            ? "var(--color-warning, var(--color-accent))"
+            : "var(--color-success, #16a34a)"
         }`,
         borderRadius: "var(--radius-md)",
       }}
@@ -216,21 +236,21 @@ export default function BlockHeader({
             padding: "2px 8px",
             borderRadius: "999px",
             background: isSealed
-              ? "var(--color-success, #16a34a)"
-              : "var(--color-bg-elevated)",
-            color: isSealed ? "white" : "var(--color-text-muted)",
-            border: isSealed ? "none" : "1px solid var(--color-border)",
+              ? "var(--color-warning, var(--color-accent))"
+              : "var(--color-success, #16a34a)",
+            color: "white",
+            border: "none",
             fontWeight: 700,
           }}
           title={
             isSealed
               ? block.forceSealedByUid
-                ? "Sealed by admin (force-seal)"
-                : "Sealed by unanimous lock-in"
-              : "Open — completers can edit allocation"
+                ? "Sealed — attention moves to reviewers. (admin force-seal)"
+                : "Sealed — attention moves to reviewers."
+              : "Active — completers at work on this block."
           }
         >
-          {isSealed ? "Sealed" : "Open"}
+          {isSealed ? "Sealed" : "Active"}
         </span>
 
         {!isSealed && requiredCount > 0 && (
@@ -263,7 +283,7 @@ export default function BlockHeader({
             <button
               type="button"
               onClick={handleLockInToggle}
-              disabled={busy}
+              disabled={busy || lockInGated}
               style={{
                 padding: "0.3rem 0.75rem",
                 background: hasConsented
@@ -276,12 +296,14 @@ export default function BlockHeader({
                 borderRadius: "var(--radius-sm, 4px)",
                 fontSize: "var(--text-xs)",
                 fontWeight: 600,
-                cursor: busy ? "not-allowed" : "pointer",
+                cursor: busy || lockInGated ? "not-allowed" : "pointer",
+                opacity: lockInGated ? 0.55 : 1,
               }}
               title={
-                hasConsented
+                lockInGateTooltip ??
+                (hasConsented
                   ? "You've locked in. Click to unlock and edit allocation."
-                  : "Click to lock in the current allocation for this block."
+                  : "Click to lock in — submits your assigned work for review.")
               }
             >
               {hasConsented ? "✓ Locked in" : "Lock in"}

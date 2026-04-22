@@ -624,6 +624,26 @@ export function getReviewerSignoffBlockers(
 }
 
 /**
+ * True when the given reviewer has already ticked their signoff row for
+ * the given block. Used to lock their per-subtask review cells in that
+ * block — once a reviewer has signed off, their approvals / rejections /
+ * questions on the block are frozen. Other reviewers stay independent.
+ */
+export function hasReviewerSignedOffBlock(
+  task: TaskDoc,
+  blockId: string,
+  reviewerUid: string,
+): boolean {
+  return task.subtasks.some(
+    (s) =>
+      s.blockId === blockId &&
+      s.roleHint === "reviewer" &&
+      s.reviewerUids.includes(reviewerUid) &&
+      s.done,
+  );
+}
+
+/**
  * Per-reviewer global coverage across the whole task: how many of the
  * subtasks this reviewer is required on they've approved. Used by the
  * final-signoff confirmation popup — when `approved === required - 1` and
