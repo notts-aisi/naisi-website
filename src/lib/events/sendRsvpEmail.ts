@@ -215,6 +215,8 @@ export async function sendRsvpEmail({
           process.env.SMTP_FROM_EMAIL ||
           "ai-safety@uonsu.com",
       }),
+      kind: "rsvp",
+      referenceId: rsvpId ?? event.id ?? undefined,
     });
   } catch (err) {
     console.error(`[rsvp email:${variant}] send failed`, err);

@@ -2,6 +2,12 @@ import "server-only";
 import nodemailer, { type Transporter } from "nodemailer";
 import { render } from "@react-email/render";
 import type { ReactElement } from "react";
+import { getAdminDb } from "@/lib/firebase/admin";
+import {
+  logEmailSend,
+  type EmailSendKind,
+} from "@/lib/firestore/emailSends";
+import { parseSesMessageId } from "./sesMessageId";
 
 type SendArgs = {
   to: string | string[];
@@ -10,6 +16,12 @@ type SendArgs = {
   replyTo?: string;
   /** Override the display name in the From header (e.g. "NAISI Events"). */
   fromName?: string;
+  /** Category for the deliverability dashboard. Defaults to 'unknown'. */
+  kind?: EmailSendKind;
+  /** Uid of the admin / committee member who triggered this send, if any. */
+  actorUid?: string;
+  /** Related entity id (draft id, event id, RSVP id) for cross-referencing. */
+  referenceId?: string;
 };
 
 let cached: Transporter | null = null;
@@ -35,7 +47,16 @@ function transporter(): Transporter {
   return cached;
 }
 
-export async function sendEmail({ to, subject, react, replyTo, fromName }: SendArgs) {
+export async function sendEmail({
+  to,
+  subject,
+  react,
+  replyTo,
+  fromName,
+  kind,
+  actorUid,
+  referenceId,
+}: SendArgs) {
   const [html, text] = await Promise.all([render(react), render(react, { plainText: true })]);
   const displayName = fromName ?? process.env.SMTP_FROM_NAME ?? "NAISI";
   const fromEmail = process.env.SMTP_FROM_EMAIL ?? process.env.SMTP_USER;
@@ -55,5 +76,34 @@ export async function sendEmail({ to, subject, react, replyTo, fromName }: SendA
     text,
   });
 
-  return { messageId: info.messageId };
+  // Pull SES's own message-id out of the 250 response so later bounce events
+  // from SNS can link back to this exact row. Missing is fine — the row still
+  // lands, just without the cross-link.
+  const sesMessageId = parseSesMessageId(info.response);
+
+  // Log the send to Firestore. Swallow failures: a missing dashboard entry
+  // is never worth failing the caller's API request over.
+  const recipients = Array.isArray(to) ? to : [to];
+  const db = getAdminDb();
+  if (db) {
+    await Promise.all(
+      recipients.map((addr) =>
+        logEmailSend(db, {
+          messageId: info.messageId,
+          sesMessageId,
+          to: addr,
+          subject,
+          fromEmail,
+          fromName: displayName,
+          kind: kind ?? "unknown",
+          actorUid,
+          referenceId,
+        }).catch((err) => {
+          console.warn("[sendEmail] failed to log to emailSends", err);
+        }),
+      ),
+    );
+  }
+
+  return { messageId: info.messageId, sesMessageId };
 }

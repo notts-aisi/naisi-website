@@ -324,6 +324,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // === emailSends ===
+    // Append-only send log populated by sendEmail() on success and updated
+    // by the SES→SNS webhook on bounce/complaint. Admin SDK only — the admin
+    // deliverability dashboard reads it through a server route.
+    match /emailSends/{docId} {
+      allow read, write: if false;
+    }
+
     // === eventRsvps ===
     // RSVPs are PII — never public read. All writes go through the server route
     // `/api/events/[id]/rsvp` (admin SDK) so rules are a safety net, not the

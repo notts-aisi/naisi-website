@@ -136,6 +136,9 @@ export async function POST(req: Request) {
           preheader: subject,
         }),
         fromName: template.fromName,
+        kind: "application",
+        actorUid: actor.uid,
+        referenceId: uid,
       });
       sentTo.push(address);
       await new Promise((r) => setTimeout(r, 200));
