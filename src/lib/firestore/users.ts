@@ -66,7 +66,7 @@ export function validateUniversityEmail(email: string): string | null {
   if (!trimmed) return "University email is required.";
   if (trimmed.length > FIELD_LIMITS.universityEmail) return "That email is too long.";
   if (!UNI_EMAIL_PATTERN.test(trimmed)) {
-    return "Please use your University of Nottingham email (ends in @nottingham.ac.uk).";
+    return "That doesn't look like a Nottingham email. If your affiliation uses a different address format, contact ai-safety@uonsu.com and we'll review it.";
   }
   return null;
 }
@@ -85,6 +85,18 @@ export type UserProfile = {
   motivation: string;
   interests?: string;
   newsletter?: NewsletterPrefs;
+  /**
+   * Set to true by the SES webhook when a Bounce or Complaint event names
+   * this user's universityEmail. Cleared on the next uni-email change, which
+   * also stamps universityEmailLockUntil — abuse-cycle break.
+   */
+  universityEmailWasSuppressed?: boolean;
+  /**
+   * ISO timestamp until which further uni-email changes are blocked on the
+   * self-serve profile form. Stamped `now + 24h` when the user changes their
+   * email while universityEmailWasSuppressed was true. Admin edits bypass.
+   */
+  universityEmailLockUntil?: Date;
 };
 
 /**

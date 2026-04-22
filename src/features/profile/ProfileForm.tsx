@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { doc, onSnapshot, updateDoc } from "firebase/firestore";
+import { deleteField, doc, onSnapshot, Timestamp, updateDoc } from "firebase/firestore";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
@@ -15,6 +15,25 @@ import {
   type UserDoc,
 } from "@/lib/firestore/users";
 import styles from "./ProfileForm.module.css";
+
+const UNI_EMAIL_LOCK_MS = 24 * 60 * 60 * 1000;
+
+const LOCK_MESSAGE =
+  "To prevent abuse, we've temporarily locked email changes on this account. If you need to update your university email before it unlocks, email ai-safety@uonsu.com from the address you'd like us to use and we'll verify and make the change manually.";
+
+function asDate(v: unknown): Date | null {
+  if (!v) return null;
+  if (v instanceof Date) return v;
+  if (v instanceof Timestamp) return v.toDate();
+  if (typeof v === "object" && v !== null && "toDate" in v) {
+    try {
+      return (v as { toDate: () => Date }).toDate();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
 
 type NewsletterPrefs = {
   subscribed: boolean;
@@ -76,6 +95,21 @@ export default function ProfileForm() {
       return;
     }
 
+    const previousUniEmail = me?.profile?.universityEmail ?? "";
+    const uniEmailChanging = uniEmailTrimmed !== previousUniEmail;
+    // Client-side lock check. Firestore rule is the real enforcement — this
+    // is for UX so the user sees the friendly message, not a cryptic rule error.
+    if (uniEmailChanging) {
+      const lockUntil = asDate(
+        (me?.profile as { universityEmailLockUntil?: unknown } | undefined)
+          ?.universityEmailLockUntil,
+      );
+      if (lockUntil && lockUntil > new Date()) {
+        setError(LOCK_MESSAGE);
+        return;
+      }
+    }
+
     setBusy(true);
     try {
       if (!user) throw new Error("Not signed in");
@@ -85,11 +119,28 @@ export default function ProfileForm() {
         deliverToGmail: subscribed ? deliverToGmail : false,
         deliverToUniEmail: subscribed ? deliverToUniEmail : false,
       };
-      await updateDoc(doc(db, "users", user.uid), {
+      const patch: Record<string, unknown> = {
         "profile.preferredName": preferredName.trim(),
         "profile.universityEmail": uniEmailTrimmed,
         "profile.newsletter": newsletter,
-      });
+      };
+      // If the current uni email was suppressed (flag stamped by the SES
+      // webhook), and the user is changing to a new address, lock further
+      // changes for 24h and clear the flag. Legitimate typo recovery gets
+      // through; rapid cycling after a bounce/complaint gets gated.
+      const wasSuppressed = Boolean(
+        (me?.profile as { universityEmailWasSuppressed?: boolean } | undefined)
+          ?.universityEmailWasSuppressed,
+      );
+      if (uniEmailChanging && wasSuppressed) {
+        patch["profile.universityEmailLockUntil"] = new Date(Date.now() + UNI_EMAIL_LOCK_MS);
+        patch["profile.universityEmailWasSuppressed"] = deleteField();
+      } else if (uniEmailChanging) {
+        // Clear any expired lock on a successful change so the field doesn't
+        // stay stamped forever.
+        patch["profile.universityEmailLockUntil"] = deleteField();
+      }
+      await updateDoc(doc(db, "users", user.uid), patch);
       setSaved(true);
     } catch (err) {
       console.error(err);
@@ -137,7 +188,7 @@ export default function ProfileForm() {
           <Field
             id="uni-email"
             label="University email"
-            hint="Ends in @nottingham.ac.uk — optional here, required for newsletter delivery to your uni inbox."
+            hint="Any @nottingham.ac.uk address (subdomains like exmail.nottingham.ac.uk included). Optional here, required for newsletter delivery to your uni inbox. If your address is a different format, email ai-safety@uonsu.com."
           >
             <Input
               id="uni-email"
