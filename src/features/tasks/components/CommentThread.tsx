@@ -6,6 +6,13 @@ import { useCommentsAndActivity } from "../hooks/useCommentsAndActivity";
 import ActivityFeed from "./ActivityFeed";
 import CommentComposer from "./CommentComposer";
 
+/**
+ * Wires the live comments + activity feed into the ActivityFeed renderer and
+ * the CommentComposer. The composer needs the activity stream to decide
+ * whether a send-for-review is already pending (button disables while a
+ * review is in flight).
+ */
+
 type Props = {
   task: TaskDoc;
   users: UserDoc[];
@@ -23,7 +30,7 @@ export default function CommentThread({
   viewerIsAdmin,
   canParticipate,
 }: Props) {
-  const { feed, loading } = useCommentsAndActivity(task.id);
+  const { feed, activity, loading } = useCommentsAndActivity(task.id);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
@@ -36,7 +43,7 @@ export default function CommentThread({
         loading={loading}
       />
       {canParticipate && (
-        <CommentComposer mode="create" task={task} users={users} />
+        <CommentComposer mode="create" task={task} users={users} activity={activity} />
       )}
     </div>
   );
