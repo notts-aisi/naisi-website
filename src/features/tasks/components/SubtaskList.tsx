@@ -43,6 +43,13 @@ type Props = {
   viewerRole: Role;
   canEdit: boolean;
   canEditStructure: boolean;
+  /** Admin + task-creator only. Gates rewrites of subtask `assigneeUids` /
+   *  `reviewerUids` rosters via the pickers. Stricter than
+   *  `canEditStructure` — a non-creator committee member can rename/delete
+   *  blocks and manage block structure, but cannot edit who's assigned
+   *  to individual subtasks. Completers manage their own subtask
+   *  membership via the +Me / −Me buttons. */
+  canEditRoster: boolean;
   /** Whether the viewer sees the per-reviewer approval columns. */
   showMatrix: boolean;
   /** Set of subtask IDs that have an in-flight sent_for_review (derived from
@@ -58,6 +65,7 @@ export default function SubtaskList({
   viewerRole,
   canEdit,
   canEditStructure,
+  canEditRoster,
   showMatrix,
   pendingReviewSubtaskIds,
 }: Props) {
@@ -194,6 +202,7 @@ export default function SubtaskList({
                             users={users}
                             viewerUid={viewerUid}
                             isAdmin={isAdmin}
+                            canEditRoster={canEditRoster}
                             canEdit={canEdit}
                             showMatrix={showMatrix}
                             isReviewPending={pendingReviewSubtaskIds.has(s.id)}
@@ -213,6 +222,7 @@ export default function SubtaskList({
                     users={users}
                     viewerUid={viewerUid}
                     isAdmin={isAdmin}
+                    canEditRoster={canEditRoster}
                     canEdit={canEdit}
                     showMatrix={showMatrix}
                     isReviewPending={pendingReviewSubtaskIds.has(s.id)}
@@ -235,6 +245,7 @@ export default function SubtaskList({
                 showMatrix={showMatrix}
                 pendingReviewSubtaskIds={pendingReviewSubtaskIds}
                 canEditStructure={canEditStructure}
+                canEditRoster={canEditRoster}
               />
             )}
           </div>
@@ -268,6 +279,7 @@ function SignoffPhase({
   showMatrix,
   pendingReviewSubtaskIds,
   canEditStructure,
+  canEditRoster,
 }: {
   task: TaskDoc;
   block: TaskBlock;
@@ -279,6 +291,7 @@ function SignoffPhase({
   showMatrix: boolean;
   pendingReviewSubtaskIds: Set<string>;
   canEditStructure: boolean;
+  canEditRoster: boolean;
 }) {
   return (
     <div
@@ -287,7 +300,6 @@ function SignoffPhase({
         flexDirection: "column",
         gap: "var(--space-2)",
         padding: "var(--space-3)",
-        marginLeft: "var(--space-4)",
         background: "var(--color-warning-soft, var(--color-surface-hover))",
         border: "1px solid var(--color-warning, var(--color-accent))",
         borderLeftWidth: "3px",
@@ -327,6 +339,7 @@ function SignoffPhase({
           users={users}
           viewerUid={viewerUid}
           isAdmin={isAdmin}
+          canEditRoster={canEditRoster}
           canEdit={canEdit}
           showMatrix={showMatrix}
           isReviewPending={pendingReviewSubtaskIds.has(s.id)}
