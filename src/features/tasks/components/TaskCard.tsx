@@ -85,10 +85,6 @@ export default function TaskCard({
         >
           <div
             {...(dragHandleProps ?? {})}
-            onClick={(e) => {
-              // Don't open the modal when starting a drag.
-              if (dragHandleProps) e.stopPropagation();
-            }}
             style={{
               flex: 1,
               fontSize: "var(--text-sm)",
