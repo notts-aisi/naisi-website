@@ -8,6 +8,10 @@ type NotifyPayload = {
   commentId?: unknown;
   forceEmailCompleters?: unknown;
   forceEmailReviewers?: unknown;
+  /** UIDs that were already mentioned in the previous version of this comment.
+   *  Used on edit to avoid re-emailing people who were pinged on the original
+   *  post. Omit / pass [] for a fresh create. */
+  priorMentions?: unknown;
 };
 
 type Reason = "mention" | "completer" | "reviewer";
@@ -66,6 +70,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
   const forceEmailCompleters = payload.forceEmailCompleters === true;
   const forceEmailReviewers = payload.forceEmailReviewers === true;
+  const priorMentionSet = new Set<string>(
+    Array.isArray(payload.priorMentions)
+      ? (payload.priorMentions as unknown[]).filter((u): u is string => typeof u === "string")
+      : [],
+  );
 
   const taskSnap = await db.collection("tasks").doc(taskId).get();
   if (!taskSnap.exists) {
@@ -105,9 +114,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     : [];
 
   // Build the recipient map with reasons. Mention takes priority if a user is
-  // in multiple sets (mention email is the most direct).
+  // in multiple sets (mention email is the most direct). Exclude mentions that
+  // were already present in the previous revision of the comment so edits
+  // only ping the *newly* added names.
   const reasonByUid = new Map<string, Reason>();
-  for (const uid of mentions) reasonByUid.set(uid, "mention");
+  for (const uid of mentions) {
+    if (priorMentionSet.has(uid)) continue;
+    reasonByUid.set(uid, "mention");
+  }
   if (forceEmailCompleters && Array.isArray(task.completerUids)) {
     for (const uid of task.completerUids as unknown[]) {
       if (typeof uid === "string" && !reasonByUid.has(uid)) {

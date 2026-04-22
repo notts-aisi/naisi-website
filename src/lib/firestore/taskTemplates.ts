@@ -1,4 +1,4 @@
-import type { TaskKind, SubtaskRoleHint } from "./tasks";
+import type { TaskKind } from "./tasks";
 
 export const TASK_TEMPLATE_FIELD_LIMITS = {
   name: 80,
@@ -11,7 +11,6 @@ export const TASK_TEMPLATE_FIELD_LIMITS = {
 export type TemplateSubtask = {
   id: string;
   title: string;
-  roleHint: SubtaskRoleHint;
   blockedBy: string[];
 };
 
@@ -47,13 +46,11 @@ function normalizeTemplateSubtask(raw: unknown): TemplateSubtask | null {
   const id = typeof s.id === "string" ? s.id : null;
   const title = typeof s.title === "string" ? s.title : null;
   if (!id || !title) return null;
-  const rawHint = typeof s.roleHint === "string" ? s.roleHint : null;
-  const roleHint: SubtaskRoleHint =
-    rawHint === "completer" || rawHint === "reviewer" ? rawHint : null;
+  // Legacy `roleHint` on template docs is ignored — the review matrix
+  // replaced it at task-creation time.
   return {
     id,
     title,
-    roleHint,
     blockedBy: stringArray(s.blockedBy),
   };
 }

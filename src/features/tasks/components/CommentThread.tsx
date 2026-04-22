@@ -2,18 +2,26 @@
 
 import type { TaskDoc } from "@/lib/firestore/tasks";
 import type { UserDoc } from "@/lib/firestore/users";
-import { useCommentsAndActivity } from "../hooks/useCommentsAndActivity";
+import type { ActivityDoc } from "@/lib/firestore/taskActivity";
+import type { FeedEntry } from "../hooks/useCommentsAndActivity";
 import ActivityFeed from "./ActivityFeed";
 import CommentComposer from "./CommentComposer";
 
+/**
+ * Thread wrapper — renders the live feed + composer. Accepts feed/activity
+ * as props (rather than fetching them here) so the parent can share the
+ * single useCommentsAndActivity subscription between the discussion view
+ * and the subtask pending-review derivation.
+ */
 type Props = {
   task: TaskDoc;
   users: UserDoc[];
   viewerUid: string;
   viewerIsAdmin: boolean;
-  /** True when viewer can participate (completer, reviewer, admin, or
-   *  committee-on-committee-task). False → read-only. */
   canParticipate: boolean;
+  feed: FeedEntry[];
+  activity: ActivityDoc[];
+  feedLoading: boolean;
 };
 
 export default function CommentThread({
@@ -22,9 +30,10 @@ export default function CommentThread({
   viewerUid,
   viewerIsAdmin,
   canParticipate,
+  feed,
+  activity,
+  feedLoading,
 }: Props) {
-  const { feed, loading } = useCommentsAndActivity(task.id);
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
       <ActivityFeed
@@ -33,10 +42,10 @@ export default function CommentThread({
         viewerUid={viewerUid}
         viewerIsAdmin={viewerIsAdmin}
         feed={feed}
-        loading={loading}
+        loading={feedLoading}
       />
       {canParticipate && (
-        <CommentComposer mode="create" task={task} users={users} />
+        <CommentComposer mode="create" task={task} users={users} activity={activity} />
       )}
     </div>
   );

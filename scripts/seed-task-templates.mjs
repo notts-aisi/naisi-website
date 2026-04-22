@@ -54,15 +54,14 @@ const SEEDS = [
     id: "seed_instagram_post",
     kind: "instagram-post",
     name: "Instagram post",
-    description: "Draft → review → publish flow for a grid post.",
+    description:
+      "Draft → review (via matrix) → schedule → post → check flow. Reviewer approval on the draft + visual is what unblocks 'Scheduled'.",
     subtasks: [
-      { title: "Draft caption", roleHint: "completer" },
-      { title: "Create visual / carousel", roleHint: "completer" },
-      { title: "Copy approved", roleHint: "reviewer", blockedByIdx: [0, 1] },
-      { title: "Visual approved", roleHint: "reviewer", blockedByIdx: [0, 1] },
-      { title: "Scheduled in planner", blockedByIdx: [2, 3] },
-      { title: "Posted", blockedByIdx: [4] },
-      { title: "Engagement check next day", blockedByIdx: [5] },
+      "Draft caption",                                                  // 0
+      "Create visual / carousel",                                       // 1
+      { title: "Scheduled in planner", blockedByIdx: [0, 1] },          // 2
+      { title: "Posted", blockedByIdx: [2] },                           // 3
+      { title: "Engagement check next day", blockedByIdx: [3] },        // 4
     ],
   },
   {
@@ -110,16 +109,12 @@ function makeSubtasks(list) {
     return {
       id: `st_${String(i).padStart(2, "0")}`,
       title: base.title,
-      roleHint: base.roleHint === "completer" || base.roleHint === "reviewer"
-        ? base.roleHint
-        : null,
       blockedByIdx: Array.isArray(base.blockedByIdx) ? base.blockedByIdx : [],
     };
   });
   return withIds.map((s) => ({
     id: s.id,
     title: s.title,
-    roleHint: s.roleHint,
     blockedBy: s.blockedByIdx.map((i) => withIds[i]?.id).filter(Boolean),
   }));
 }

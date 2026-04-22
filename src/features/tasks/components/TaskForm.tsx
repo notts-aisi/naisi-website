@@ -230,11 +230,6 @@ export default function TaskForm({
               {templateSubtasks.map((s, i) => (
                 <li key={i}>
                   {s.title}
-                  {s.roleHint === "reviewer" && (
-                    <span style={{ color: "var(--color-warning, inherit)", marginLeft: 6 }}>
-                      (review)
-                    </span>
-                  )}
                   {(s.blockedBy?.length ?? 0) > 0 && (
                     <span style={{ color: "var(--color-text-subtle)", marginLeft: 6 }}>
                       — blocked by {s.blockedBy!.length}
