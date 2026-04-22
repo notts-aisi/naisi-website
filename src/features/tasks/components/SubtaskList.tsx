@@ -132,6 +132,12 @@ export default function SubtaskList({
 
       {groups.map((group) => {
         const isSealed = group.block?.sealState === "sealed";
+        // Colour semantics:
+        //   Green = Active (where the work/attention is right now).
+        //   Orange = Passive (done its turn, waiting on a downstream
+        //   phase). So an OPEN block is green (completers are active),
+        //   a SEALED block flips to orange (completion work is done,
+        //   attention moves to the review phase below it).
         const blockContainerStyle: React.CSSProperties = group.block
           ? {
               display: "flex",
@@ -139,12 +145,12 @@ export default function SubtaskList({
               gap: "var(--space-2)",
               padding: "var(--space-3)",
               background: isSealed
-                ? "var(--color-success-soft, rgba(22, 163, 74, 0.04))"
-                : "var(--color-bg-elevated)",
+                ? "var(--color-warning-soft, var(--color-surface-hover))"
+                : "var(--color-success-soft, rgba(22, 163, 74, 0.04))",
               border: `1px solid ${
                 isSealed
-                  ? "var(--color-success, #16a34a)"
-                  : "var(--color-border)"
+                  ? "var(--color-warning, var(--color-accent))"
+                  : "var(--color-success, #16a34a)"
               }`,
               borderLeftWidth: "3px",
               borderRadius: "var(--radius-md)",
@@ -293,6 +299,19 @@ function SignoffPhase({
   canEditStructure: boolean;
   canEditRoster: boolean;
 }) {
+  const allSignedOff = signoffs.length > 0 && signoffs.every((s) => s.done);
+  // Signoff container mirrors the same green=Active / orange=Passive
+  // convention as blocks: reviews-in-progress = green (active phase);
+  // every reviewer has signed = orange (done, waiting on downstream).
+  const signoffBg = allSignedOff
+    ? "var(--color-warning-soft, var(--color-surface-hover))"
+    : "var(--color-success-soft, rgba(22, 163, 74, 0.08))";
+  const signoffBorder = allSignedOff
+    ? "var(--color-warning, var(--color-accent))"
+    : "var(--color-success, #16a34a)";
+  const signoffLabel = allSignedOff
+    ? "var(--color-warning, var(--color-text))"
+    : "var(--color-success, #16a34a)";
   return (
     <div
       style={{
@@ -300,8 +319,8 @@ function SignoffPhase({
         flexDirection: "column",
         gap: "var(--space-2)",
         padding: "var(--space-3)",
-        background: "var(--color-warning-soft, var(--color-surface-hover))",
-        border: "1px solid var(--color-warning, var(--color-accent))",
+        background: signoffBg,
+        border: `1px solid ${signoffBorder}`,
         borderLeftWidth: "3px",
         borderRadius: "var(--radius-md)",
       }}
@@ -315,7 +334,7 @@ function SignoffPhase({
           textTransform: "uppercase",
           letterSpacing: "0.05em",
           fontWeight: 700,
-          color: "var(--color-warning, var(--color-text))",
+          color: signoffLabel,
         }}
       >
         <span>Reviews for &ldquo;{block.name}&rdquo;</span>

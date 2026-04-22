@@ -20,6 +20,7 @@ import {
   getBlockReviewSubtaskIds,
   getNextBlock,
   getReviewerSignoffBlockers,
+  hasReviewerSignedOffBlock,
   isBlockGateApplied,
   isSubtaskBlocked,
   type BlockConsentMap,
@@ -546,6 +547,25 @@ export async function setSubtaskApproval(
   if (!effectiveReviewers.includes(uid)) {
     throw new Error("You're not listed as a reviewer for this subtask.");
   }
+  // Gate: reviewers can't approve/question/reject until a completer has
+  // marked the work done. Clearing a prior state is still allowed — the
+  // reviewer might want to retract a ✓ they set before the row got
+  // un-ticked in a re-review cycle.
+  if (state !== "clear" && !target.done) {
+    throw new Error(
+      "Can't review this subtask yet — a completer hasn't marked it done.",
+    );
+  }
+  // Gate: once a reviewer has signed off on this block (ticked their
+  // signoff row done), their review cells for the block are frozen.
+  // Retraction happens via admin unticking the signoff — not by editing
+  // the underlying approvals. Other reviewers remain free to work at
+  // their own pace.
+  if (target.blockId && hasReviewerSignedOffBlock(task, target.blockId, uid)) {
+    throw new Error(
+      "You've already signed off on this block — approvals are locked. Ask an admin to retract your signoff first.",
+    );
+  }
   await patchSubtask(task, subtaskId, (s) => {
     // Mutually exclusive across the three arrays — remove uid from all,
     // then add to the chosen one (or to none, for "clear").
@@ -819,6 +839,27 @@ export async function toggleBlockConsent(task: TaskDoc, blockId: string) {
   }
   const current = task.blockConsents[blockId]?.consentingCompleterUids ?? [];
   const already = current.includes(uid);
+  // When ADDING consent (the "I'm done, send me to review" signal), every
+  // completion-row the acting user is assigned to in this block must be
+  // ticked done. Un-locking (retracting consent) is unrestricted — lets
+  // someone back out if they realise their work isn't actually finished.
+  if (!already) {
+    const myOutstanding = task.subtasks.filter(
+      (s) =>
+        s.blockId === blockId &&
+        s.roleHint !== "reviewer" &&
+        s.assigneeUids.includes(uid) &&
+        !s.done,
+    );
+    if (myOutstanding.length > 0) {
+      const first = myOutstanding[0];
+      const more =
+        myOutstanding.length > 1 ? ` (+${myOutstanding.length - 1} more)` : "";
+      throw new Error(
+        `Finish your assigned subtasks first — "${first.title}" isn't marked done yet${more}.`,
+      );
+    }
+  }
   const nextConsenting = already
     ? current.filter((u) => u !== uid)
     : [...current, uid];
