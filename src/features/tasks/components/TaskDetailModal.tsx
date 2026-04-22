@@ -542,6 +542,13 @@ export default function TaskDetailModal({
 
           <div>
             <h4 style={sectionLabel}>Completers</h4>
+            {/* Completer-list permissions are deliberately wider than
+                archive/delete — the block system (Phase 3) needs completers
+                to be able to self-add to a task/subtask in the "I'm sick,
+                please cover for me" emergency path. Lock-down of
+                self-REMOVE happens post block-seal, not here. Leaving
+                canEditAll as the gate for now keeps behaviour close to
+                what Phase 3 will formalise. */}
             {canEditAll ? (
               <AssigneePicker
                 users={users}
@@ -629,18 +636,21 @@ export default function TaskDetailModal({
             <div style={{ textTransform: "capitalize" }}>Kind: {task.kind.replace("-", " ")}</div>
           </div>
 
-          {canEditAll && (
+          {/* Archive + delete are both creator/admin only. Archive is
+              reversible (there's an unarchive button) but it removes the
+              task from everyone else's default view, so a completer
+              archiving a task they're assigned to would feel like it
+              disappeared out from under the rest of the team. Matches the
+              delete gate for consistency — "big visibility-altering
+              actions require elevated privilege". */}
+          {(isAdmin || isCreator) && (
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
               <Button size="sm" variant="secondary" onClick={handleArchiveToggle}>
                 {task.archived ? "Unarchive" : "Archive"}
               </Button>
-              {/* Delete is creator/admin only — matches the Firestore rules,
-                  which reject delete from non-creator committee members. */}
-              {(isAdmin || isCreator) && (
-                <Button size="sm" variant="danger" onClick={handleDelete}>
-                  Delete task
-                </Button>
-              )}
+              <Button size="sm" variant="danger" onClick={handleDelete}>
+                Delete task
+              </Button>
             </div>
           )}
         </div>
