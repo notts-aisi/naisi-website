@@ -9,6 +9,7 @@ import {
   sanitizeBlocks,
   type Block,
 } from "@/lib/firestore/newsletterBlocks";
+import { filterSuppressed } from "@/lib/firestore/suppression";
 
 type Ctx = RouteContext<"/api/newsletter/[id]/send">;
 
@@ -25,10 +26,15 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function fallbackAddresses(s: SubscriberRow): string[] {
+function fallbackAddresses(s: SubscriberRow, gmailOnly: boolean): string[] {
   const out: string[] = [];
   if (s.deliverToGmail && s.gmailEmail) out.push(s.gmailEmail);
-  if (s.deliverToUniEmail && s.universityEmail) out.push(s.universityEmail);
+  // Gmail-only mode ignores self-declared university addresses so early sends
+  // only hit Google-authenticated inboxes. Toggle off via env once the
+  // bounce/complaint pipeline has built trust on the sending domain.
+  if (!gmailOnly && s.deliverToUniEmail && s.universityEmail) {
+    out.push(s.universityEmail);
+  }
   // Edge case: subscribed but no delivery box set — default to gmail.
   if (out.length === 0 && s.gmailEmail) out.push(s.gmailEmail);
   return out;
@@ -112,11 +118,19 @@ export async function POST(_req: Request, ctx: Ctx) {
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
   const unsubscribeUrl = `${appUrl}/profile`;
+  const gmailOnly = process.env.EMAIL_GMAIL_ONLY_MODE === "true";
+
+  // Batch-check the suppression list once up-front — cheaper than a per-send
+  // lookup when lists grow, and gives us a single place to surface counts.
+  const planned = subscribers.flatMap((s) => fallbackAddresses(s, gmailOnly));
+  const { suppressed: suppressedList } = await filterSuppressed(db, planned);
+  const suppressedSet = new Set(suppressedList.map((a) => a.toLowerCase()));
 
   // Send one email per (subscriber, opted-in address). Gmail Workspace rate limits
   // at roughly 150/min — a 200ms delay between sends is well under that even
   // if the subscriber list grows.
   let sentCount = 0; // total emails actually sent (addresses)
+  let suppressedCount = 0; // addresses skipped due to bounce/complaint history
   const reachedUids = new Set<string>(); // distinct subscribers who got ≥1 email
   const failures: Array<{ uid: string; address: string; error: string }> = [];
 
@@ -125,7 +139,12 @@ export async function POST(_req: Request, ctx: Ctx) {
       preferredName: sub.preferredName,
     });
 
-    for (const address of fallbackAddresses(sub)) {
+    for (const address of fallbackAddresses(sub, gmailOnly)) {
+      if (suppressedSet.has(address.toLowerCase())) {
+        suppressedCount += 1;
+        console.log("[newsletter send] suppressed:", sub.uid, address);
+        continue;
+      }
       try {
         await sendEmail({
           to: address,
@@ -136,6 +155,9 @@ export async function POST(_req: Request, ctx: Ctx) {
             recipientName: sub.preferredName,
             unsubscribeUrl,
           }),
+          kind: "newsletter",
+          actorUid: actor.uid,
+          referenceId: id,
         });
         sentCount += 1;
         reachedUids.add(sub.uid);
@@ -160,6 +182,8 @@ export async function POST(_req: Request, ctx: Ctx) {
     sentCount,
     subscribersReached,
     failedCount: failures.length,
+    suppressedCount,
+    gmailOnlyMode: gmailOnly,
     updatedAt: new Date(),
   });
 
@@ -168,6 +192,8 @@ export async function POST(_req: Request, ctx: Ctx) {
     sentCount,
     subscribersReached,
     failedCount: failures.length,
+    suppressedCount,
+    gmailOnlyMode: gmailOnly,
     failures: failures.slice(0, 10),
   });
 }

@@ -177,7 +177,7 @@ export default function RegisterPage() {
           <Field
             id="universityEmail"
             label="University email"
-            hint="Must end in @nottingham.ac.uk (subdomains like students.nottingham.ac.uk are fine)."
+            hint="We accept @nottingham.ac.uk (including subdomains like exmail.nottingham.ac.uk). Staff welcome. If your address is a different format, email ai-safety@uonsu.com and we'll add you manually."
           >
             <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "stretch" }}>
               <Input

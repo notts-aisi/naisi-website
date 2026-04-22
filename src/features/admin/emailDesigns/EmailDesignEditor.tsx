@@ -263,9 +263,14 @@ export default function EmailDesignEditor({ templateId }: Props) {
               </span>
             )}
             {error && <span className={`${styles.statusLine} ${styles.statusError}`}>{error}</span>}
-            {testStatus.kind === "sent" && (
+            {testStatus.kind === "sent" && testStatus.addresses.length > 0 && (
               <span className={`${styles.statusLine} ${styles.statusSuccess}`}>
                 Test sent to {testStatus.addresses.join(", ")}.
+              </span>
+            )}
+            {testStatus.kind === "sent" && testStatus.addresses.length === 0 && (
+              <span className={`${styles.statusLine} ${styles.statusError}`}>
+                Test reported as sent but no addresses came back — check server logs.
               </span>
             )}
             {testStatus.kind === "error" && (

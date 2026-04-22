@@ -11,8 +11,13 @@ env:
   - variable: NEXT_PUBLIC_FIREBASE_API_KEY
     secret: naisi-web-api-key
     availability: [BUILD, RUNTIME]
+  # Firebase Hosting custom domain serving the OAuth handler at
+  # /__/auth/handler/*. Serving from auth.naisi.uk (same eTLD+1 as naisi.uk)
+  # keeps Firebase auth cookies first-party → Safari ITP doesn't block them →
+  # popup sign-in works reliably. Dev overrides this to auth-dev.naisi.uk via
+  # the App Hosting console UI.
   - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-    value: naisi-website.firebaseapp.com
+    value: auth.naisi.uk
     availability: [BUILD, RUNTIME]
   - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
     value: naisi-website
@@ -31,17 +36,19 @@ env:
   - variable: EVENTS_TOKEN_SECRET
     secret: EVENTS_TOKEN_SECRET
     availability: [RUNTIME]
-  # Gmail Workspace SMTP for transactional + newsletter mail. App password set
-  # via `firebase apphosting:secrets:set SMTP_PASSWORD`; host/user/from are
-  # public enough to live here directly.
+  # AWS SES SMTP (eu-west-2). The password is an SES-generated token stored
+  # via `firebase apphosting:secrets:set SMTP_PASSWORD`. SMTP_USER is the IAM
+  # access key ID paired with that password — it can't send mail on its own, so
+  # a plain value here is fine. SMTP_FROM_EMAIL must sit on the verified
+  # domain (naisi.uk) to satisfy DKIM/DMARC alignment.
   - variable: SMTP_HOST
-    value: smtp.gmail.com
+    value: email-smtp.eu-west-2.amazonaws.com
     availability: [RUNTIME]
   - variable: SMTP_PORT
     value: "587"
     availability: [RUNTIME]
   - variable: SMTP_USER
-    value: ai-safety@uonsu.com
+    value: AKIA3WX4NEOX4GGTWGXX
     availability: [RUNTIME]
   - variable: SMTP_PASSWORD
     secret: SMTP_PASSWORD
@@ -50,12 +57,25 @@ env:
     value: NAISI
     availability: [RUNTIME]
   - variable: SMTP_FROM_EMAIL
-    value: ai-safety@uonsu.com
+    value: newsletter@naisi.uk
     availability: [RUNTIME]
   # Absolute base URL baked into outbound email links (unsubscribe, RSVP
   # self-serve). Must match the live origin or links break.
   - variable: NEXT_PUBLIC_APP_URL
     value: https://naisi.uk
     availability: [BUILD, RUNTIME]
+  # Default Reply-To header for outbound mail. Set so recipients who hit
+  # "Reply" without noticing Reply-To land in a monitored inbox, since the
+  # From domain (naisi.uk) has no receiving MX during the SES trust-build phase.
+  - variable: EMAIL_DEFAULT_REPLY_TO
+    value: ai-safety@uonsu.com
+    availability: [RUNTIME]
+  # When "true", newsletter sends ignore self-declared university addresses
+  # and deliver only to Google-authenticated primary addresses. First-phase
+  # reputation-build flag — flip to "false" once suppression pipeline has
+  # accumulated enough history to tolerate uni-email bounces.
+  - variable: EMAIL_GMAIL_ONLY_MODE
+    value: "true"
+    availability: [RUNTIME]
   # Admin credentials are injected automatically by App Hosting (ADC) —
   # no FIREBASE_ADMIN_* env vars needed in production.

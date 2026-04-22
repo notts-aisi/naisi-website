@@ -29,12 +29,21 @@ service cloud.firestore {
       // Self-update: role, tracks, and permissions all unchanged.
       // (These are admin-only; a user editing their own profile must not be able
       //  to flip or clear any of them.)
-      // Admins can do anything.
+      // Also: self-changes to `profile.universityEmail` are rate-limited if
+      // the address was previously suppressed — the webhook stamps a lock
+      // timestamp on the user doc, and this rule rejects further changes
+      // until that time has passed. Admins bypass via the `isAdmin()` branch.
       allow update: if (isAdmin()
         || (isSignedIn() && request.auth.uid == uid
             && request.resource.data.role == resource.data.role
             && request.resource.data.get('tracks', []) == resource.data.get('tracks', [])
-            && request.resource.data.get('permissions', {}) == resource.data.get('permissions', {})))
+            && request.resource.data.get('permissions', {}) == resource.data.get('permissions', {})
+            && (
+              request.resource.data.get(['profile', 'universityEmail'], '')
+                == resource.data.get(['profile', 'universityEmail'], '')
+              || resource.data.get(['profile', 'universityEmailLockUntil'], request.time)
+                <= request.time
+            )))
         && smallEnough();
 
       allow delete: if isAdmin();
@@ -314,6 +323,22 @@ service cloud.firestore {
         && request.resource.data.subject is string
         && request.resource.data.subject.size() > 0
         && request.resource.data.subject.size() <= 200;
+    }
+
+    // === suppressedEmails ===
+    // Populated by the SES→SNS bounce/complaint webhook via the admin SDK.
+    // No client access — the send routes that consult this list also use the
+    // admin SDK, so rules below stay fully locked.
+    match /suppressedEmails/{docId} {
+      allow read, write: if false;
+    }
+
+    // === emailSends ===
+    // Append-only send log populated by sendEmail() on success and updated
+    // by the SES→SNS webhook on bounce/complaint. Admin SDK only — the admin
+    // deliverability dashboard reads it through a server route.
+    match /emailSends/{docId} {
+      allow read, write: if false;
     }
 
     // === eventRsvps ===
