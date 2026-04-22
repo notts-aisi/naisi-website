@@ -234,38 +234,59 @@ export async function setTaskStatus(task: TaskDoc, status: TaskStatus) {
   await updateDoc(doc(db, "tasks", task.id), patch);
 }
 
-export async function toggleSubtask(task: TaskDoc, subtaskId: string) {
+/**
+ * `opts.asAdmin` lets the caller bypass the reviewer-hint signoff
+ * restrictions — admins need to be able to untick a retracted reviewer
+ * signoff, tick on a reviewer's behalf in emergencies, etc. Callers pass
+ * `{ asAdmin: isAdmin }` using their own role check; admin status isn't
+ * verified here (consistent with the rest of Phase 3's client-enforced
+ * permission model).
+ */
+export async function toggleSubtask(
+  task: TaskDoc,
+  subtaskId: string,
+  opts: { asAdmin?: boolean } = {},
+) {
   const db = getClientDb();
   const uid = actingUid();
   const target = task.subtasks.find((s) => s.id === subtaskId);
   if (!target) throw new Error("Subtask not found");
   const nextDone = !target.done;
+  const asAdmin = opts.asAdmin === true;
   if (nextDone && isSubtaskBlocked(target, task.subtasks, task.reviewerUids)) {
     throw new Error("Subtask is blocked by an unfinished prerequisite");
   }
-  // Reviewer-signoff rows: (a) only the listed reviewer can toggle in
-  // EITHER direction — a non-reviewer unticking someone else's signoff
-  // would silently retract their approval, (b) ticking additionally
-  // requires they've already approved every completion row in the block
-  // they're required to review.
+  // Reviewer-signoff rows:
+  //   - Ticking: only the listed reviewer (or admin), with approve-first gate.
+  //   - Unticking (retracting signoff): admin only. Once a reviewer has
+  //     signed off, they can't silently retract — the audit value of a
+  //     signoff depends on it being sticky.
   if (target.roleHint === "reviewer") {
-    if (!target.reviewerUids.includes(uid)) {
-      throw new Error("Only the listed reviewer can toggle this signoff row.");
-    }
     if (nextDone) {
-      const outstanding = getReviewerSignoffBlockers(task, target, uid);
-      if (outstanding.length > 0) {
-        const first = outstanding[0];
-        const reason =
-          first.reason === "not-done"
-            ? "isn't ticked done yet"
-            : first.reason === "rejected-by-me"
-              ? "is still marked rejected — resolve before signing off"
-              : "hasn't been approved by you yet";
-        const more =
-          outstanding.length > 1 ? ` (+${outstanding.length - 1} more)` : "";
+      if (!asAdmin && !target.reviewerUids.includes(uid)) {
+        throw new Error("Only the listed reviewer can sign off this row.");
+      }
+      if (!asAdmin) {
+        const outstanding = getReviewerSignoffBlockers(task, target, uid);
+        if (outstanding.length > 0) {
+          const first = outstanding[0];
+          const reason =
+            first.reason === "not-done"
+              ? "isn't ticked done yet"
+              : first.reason === "rejected-by-me"
+                ? "is still marked rejected — resolve before signing off"
+                : "hasn't been approved by you yet";
+          const more =
+            outstanding.length > 1 ? ` (+${outstanding.length - 1} more)` : "";
+          throw new Error(
+            `Can't sign off — "${first.title}" ${reason}${more}.`,
+          );
+        }
+      }
+    } else {
+      if (!asAdmin) {
         throw new Error(
-          `Can't sign off — "${first.title}" ${reason}${more}.`,
+          "Reviewer signoff can only be retracted by an admin once ticked.",
         );
       }
     }

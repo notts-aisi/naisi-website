@@ -84,6 +84,13 @@ export default function TaskDetailModal({
     (isAdmin ||
       (isCommittee && task.visibility === "committee") ||
       (task.source === "personal" && isCreator));
+  // Task-level completer / reviewer rosters are stricter than the broader
+  // `canEditAll` — per Phase 3 policy, once a task is created, only admins
+  // can reshape its top-level rosters. Committee creators set the roster
+  // at creation via TaskForm; post-creation it's locked to admin. Personal
+  // tasks stay editable by their creator (who is their only completer).
+  const canEditTaskRoster =
+    !!task && (isAdmin || (task.source === "personal" && isCreator));
   // Completers and reviewers both can tick subtasks and change status.
   // Reviewers in this band is what lets them tick their review step even if
   // they're not on the completer list.
@@ -551,14 +558,13 @@ export default function TaskDetailModal({
 
           <div>
             <h4 style={sectionLabel}>Completers</h4>
-            {/* Completer-list permissions are deliberately wider than
-                archive/delete — the block system (Phase 3) needs completers
-                to be able to self-add to a task/subtask in the "I'm sick,
-                please cover for me" emergency path. Lock-down of
-                self-REMOVE happens post block-seal, not here. Leaving
-                canEditAll as the gate for now keeps behaviour close to
-                what Phase 3 will formalise. */}
-            {canEditAll ? (
+            {/* Task-level roster edits are admin-only post-creation.
+                Committee creators set rosters via TaskForm at creation;
+                they can't rewrite them afterwards. Personal-task creators
+                retain edit rights on their own tasks. Completer self-
+                service for SUBTASK-level membership still works via the
+                +Me / −Me buttons on each row. */}
+            {canEditTaskRoster ? (
               <AssigneePicker
                 users={users}
                 selected={task.completerUids}
@@ -591,7 +597,7 @@ export default function TaskDetailModal({
           {canSeeReviewerSection && (
           <div>
             <h4 style={sectionLabel}>Reviewers</h4>
-            {canEditAll ? (
+            {canEditTaskRoster ? (
               <AssigneePicker
                 users={users}
                 selected={task.reviewerUids}

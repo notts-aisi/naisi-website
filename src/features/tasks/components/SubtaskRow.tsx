@@ -131,6 +131,10 @@ export default function SubtaskRow({
         .map((b) => `"${b.title}"`)
         .join(", ")}${signoffBlockers.length > 3 ? ` (+${signoffBlockers.length - 3} more)` : ""}`
     : null;
+  // Reviewer signoffs are sticky once ticked — only an admin can untick.
+  // Drives checkbox disable + the "only an admin can retract" hint below.
+  const signoffRetractLocked =
+    subtask.roleHint === "reviewer" && subtask.done && !isAdmin;
   const parentBlock = subtask.blockId
     ? task.blocks.find((b) => b.id === subtask.blockId) ?? null
     : null;
@@ -221,11 +225,13 @@ export default function SubtaskRow({
    * tick IS the reviewer's approval, so if this tick would transition them
    * from N-1/N to N/N coverage globally across the task, pop the
    * final-signoff confirmation before writing. Non-reviewer rows short-
-   * circuit straight through to toggleSubtask.
+   * circuit straight through to toggleSubtask. Admins bypass the
+   * reviewer-only gating via `asAdmin` — necessary for retracting a
+   * signoff (which only admins may do).
    */
   async function handleCheckboxToggle() {
     const willTurnOn = !subtask.done;
-    if (willTurnOn && subtask.roleHint === "reviewer") {
+    if (willTurnOn && subtask.roleHint === "reviewer" && !isAdmin) {
       const isRequiredHere = effectiveReviewerUids(subtask, task.reviewerUids).includes(
         viewerUid,
       );
@@ -240,9 +246,10 @@ export default function SubtaskRow({
       }
     }
     try {
-      await toggleSubtask(task, subtask.id);
+      await toggleSubtask(task, subtask.id, { asAdmin: isAdmin });
     } catch (err) {
       console.error(err);
+      window.alert(err instanceof Error ? err.message : "Could not toggle");
     }
   }
 
@@ -278,22 +285,28 @@ export default function SubtaskRow({
         <input
           type="checkbox"
           checked={subtask.done}
-          disabled={blocked || signoffBlocked || !canToggleRow}
+          disabled={blocked || signoffBlocked || signoffRetractLocked || !canToggleRow}
           onChange={() => handleCheckboxToggle().catch(console.error)}
           aria-label={
             blocked
               ? `Blocked — waiting on ${blockers.map((b) => b.title).join(", ") || "earlier subtask"}`
               : signoffBlocked
                 ? signoffTooltip ?? "Signoff gated on outstanding approvals"
-                : !canToggleRow
-                  ? notPermittedTooltip(subtask)
-                  : `Mark "${subtask.title}" ${subtask.done ? "incomplete" : "complete"}`
+                : signoffRetractLocked
+                  ? "Signoff already placed — only an admin can retract."
+                  : !canToggleRow
+                    ? notPermittedTooltip(subtask)
+                    : `Mark "${subtask.title}" ${subtask.done ? "incomplete" : "complete"}`
           }
           title={
             blocked
               ? `Waiting on: ${blockers.map((b) => b.title).join(", ") || "earlier subtask"}`
               : signoffTooltip ??
-                (!canToggleRow ? notPermittedTooltip(subtask) : undefined)
+                (signoffRetractLocked
+                  ? "Your signoff is final — only an admin can retract it."
+                  : !canToggleRow
+                    ? notPermittedTooltip(subtask)
+                    : undefined)
           }
         />
         <span
