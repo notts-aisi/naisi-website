@@ -9,11 +9,7 @@ import CountedTextarea from "@/components/ui/CountedTextarea";
 import GraduationSelect from "@/components/ui/GraduationSelect";
 import StatusSelect from "@/components/ui/StatusSelect";
 import { Field, Input } from "@/components/ui/Input";
-import {
-  completeRegistration,
-  consumeRedirectSignIn,
-  signInWithGoogle,
-} from "@/auth/signInWithGoogle";
+import { completeRegistration, signInWithGoogle } from "@/auth/signInWithGoogle";
 import { useAuth } from "@/auth/AuthProvider";
 import {
   FIELD_LIMITS,
@@ -41,44 +37,10 @@ export default function RegisterPage() {
   }, [authLoading, user, role, router]);
 
   // Only show the profile form once a user is signed in but has no role yet
-  // (i.e. brand-new signups that haven't submitted the profile). With the
-  // redirect sign-in flow, user/role can flip from null→set after mount, so
-  // we transition via effect rather than only deriving at mount time.
+  // (i.e. brand-new signups that haven't submitted the profile).
   const [step, setStep] = useState<"sign-in" | "profile">(user && !role ? "profile" : "sign-in");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  // Transition sign-in → profile once auth resolves with a Google user who
-  // doesn't yet have a Firestore user doc. authLoading must be false so we
-  // don't flash the profile form for the brief moment before AuthProvider
-  // finishes its first subscription.
-  useEffect(() => {
-    if (authLoading) return;
-    if (user && !role && step === "sign-in") setStep("profile");
-  }, [authLoading, user, role, step]);
-
-  // Redirect sign-in return leg. Same pattern as the login page — no-ops
-  // unless Firebase has a pending redirect. Existing users get pushed to
-  // /dashboard; new users stay here and the step-transition effect above
-  // flips them into the profile form.
-  useEffect(() => {
-    let cancelled = false;
-    consumeRedirectSignIn()
-      .then((result) => {
-        if (cancelled || !result) return;
-        if (!result.isNew) {
-          router.replace("/dashboard");
-        }
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error("[register] redirect consume failed:", err);
-        setError("Sign-in failed. Please try again.");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
 
   // Profile form state
   const [preferredName, setPreferredName] = useState("");
@@ -100,12 +62,17 @@ export default function RegisterPage() {
     setError(null);
     setLoading(true);
     try {
-      // Navigates away. The step transition + router.replace happen on the
-      // return leg via the effects above.
-      await signInWithGoogle();
+      const result = await signInWithGoogle();
+      if (!result.isNew) {
+        // Existing user — server-side (app)/layout.tsx handles role-based routing.
+        router.push("/dashboard");
+        return;
+      }
+      setStep("profile");
     } catch (err) {
       console.error(err);
       setError("Sign-in failed. Please try again.");
+    } finally {
       setLoading(false);
     }
   }

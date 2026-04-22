@@ -15,7 +15,7 @@ const NAV = [
 
 export default function PublicHeader() {
   const router = useRouter();
-  const { user, role, loading } = useAuth();
+  const { user, role } = useAuth();
 
   const isApproved = role === "member" || role === "committee" || role === "admin";
   const isPending = role === "pending";
@@ -40,7 +40,16 @@ export default function PublicHeader() {
           ))}
         </nav>
         <div className={styles.actions}>
-          {loading ? null : user && isApproved ? (
+          {/*
+            Default to the signed-out Sign in / Join us buttons while auth is
+            still resolving — an empty actions area for 2-3 seconds was the
+            common complaint. If the user turns out to be signed in, clicking
+            Sign in bounces through /login's effect which redirects to the
+            correct destination based on role. One-click overhead vs. an
+            empty-header UI hole, and the overhead only affects refreshes
+            and cold cache.
+          */}
+          {user && isApproved ? (
             <>
               <Link href="/dashboard" className={styles.joinBtn}>
                 Dashboard
