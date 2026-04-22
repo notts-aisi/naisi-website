@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  getRedirectResult,
-  signInWithRedirect,
-  signOut as fbSignOut,
-} from "firebase/auth";
+import { signInWithPopup, signOut as fbSignOut } from "firebase/auth";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import {
   getClientAuth,
@@ -19,38 +15,17 @@ export type SignInResult = {
 };
 
 /**
- * Kick off Google sign-in via full-page redirect. Unlike `signInWithPopup`
- * this sidesteps Safari Intelligent Tracking Prevention and third-party
- * popup blockers that silently broke the previous popup flow.
- *
- * The browser navigates away to Google's auth screen, so this function
- * never resolves normally — the result is picked up on the return leg via
- * `consumeRedirectSignIn()` in the page that lands. Callers should still
- * await the call so their button shows a loading state during the brief
- * pre-navigation window, but must not expect a return value.
+ * Google sign-in + session cookie provisioning.
+ * The server (via /api/auth/session) tells us whether a user doc exists —
+ * relying on a server-side check avoids the client-SDK race where Firestore
+ * reads fire before the fresh auth token is attached.
+ * Role-based routing happens in (app)/layout.tsx, not here.
  */
-export async function signInWithGoogle(): Promise<void> {
+export async function signInWithGoogle(): Promise<SignInResult> {
   const auth = getClientAuth();
-  await signInWithRedirect(auth, getGoogleProvider());
-}
-
-/**
- * Handle the return leg of a redirect sign-in. Pages that expect to be
- * the redirect landing spot (login, register) call this on mount; pages
- * where there's no pending redirect get a null and no-op.
- *
- * On a real return, exchanges the Firebase ID token for a session cookie
- * (same /api/auth/session endpoint the old popup flow used) so server-side
- * route guards in (app)/layout.tsx pick up the signed-in state. The
- * `isNew` flag comes from the server checking whether a Firestore user
- * doc already exists — lets callers route new users to /register.
- */
-export async function consumeRedirectSignIn(): Promise<SignInResult | null> {
-  const auth = getClientAuth();
-  const cred = await getRedirectResult(auth);
-  if (!cred) return null;
-
+  const cred = await signInWithPopup(auth, getGoogleProvider());
   const user = cred.user;
+
   const idToken = await user.getIdToken();
   const res = await fetch("/api/auth/session", {
     method: "POST",
