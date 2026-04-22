@@ -15,7 +15,7 @@ type Props = {
   users: UserDoc[];
   onOpen: (taskId: string) => void;
   dense?: boolean;
-  dragHandleProps?: React.HTMLAttributes<HTMLDivElement>;
+  dragHandleProps?: React.HTMLAttributes<HTMLElement>;
   isDragging?: boolean;
 };
 
@@ -84,14 +84,11 @@ export default function TaskCard({
           style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-2)", alignItems: "flex-start" }}
         >
           <div
-            {...(dragHandleProps ?? {})}
             style={{
               flex: 1,
               fontSize: "var(--text-sm)",
               fontWeight: 500,
               color: "var(--color-text)",
-              cursor: dragHandleProps ? "grab" : "inherit",
-              userSelect: "none",
             }}
           >
             {task.title}
@@ -99,6 +96,36 @@ export default function TaskCard({
           <div style={{ display: "flex", gap: "var(--space-1)", alignItems: "center" }}>
             {task.archived && <Badge tone="neutral">Archived</Badge>}
             {task.priority === "urgent" && <Badge tone="danger">Urgent</Badge>}
+            {dragHandleProps && (
+              <button
+                type="button"
+                aria-label="Drag to reorder or move between columns"
+                title="Drag to reorder or move between columns"
+                {...dragHandleProps}
+                onClick={(e) => {
+                  // Purely a drag handle — don't let a click on it open the modal.
+                  e.stopPropagation();
+                }}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: "1.4rem",
+                  height: "1.4rem",
+                  padding: 0,
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--color-text-subtle)",
+                  cursor: "grab",
+                  fontSize: "var(--text-md)",
+                  lineHeight: 1,
+                  touchAction: "none",
+                  userSelect: "none",
+                }}
+              >
+                ≡
+              </button>
+            )}
           </div>
         </div>
 
