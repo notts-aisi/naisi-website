@@ -316,6 +316,14 @@ service cloud.firestore {
         && request.resource.data.subject.size() <= 200;
     }
 
+    // === suppressedEmails ===
+    // Populated by the SES→SNS bounce/complaint webhook via the admin SDK.
+    // No client access — the send routes that consult this list also use the
+    // admin SDK, so rules below stay fully locked.
+    match /suppressedEmails/{docId} {
+      allow read, write: if false;
+    }
+
     // === eventRsvps ===
     // RSVPs are PII — never public read. All writes go through the server route
     // `/api/events/[id]/rsvp` (admin SDK) so rules are a safety net, not the

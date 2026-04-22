@@ -12,6 +12,8 @@ import {
   type FormQuestion,
   type RsvpAnswer,
 } from "@/lib/firestore/events";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { isSuppressed } from "@/lib/firestore/suppression";
 import {
   cancelUrl as buildCancelUrl,
   changeUrl as buildChangeUrl,
@@ -163,6 +165,11 @@ export async function sendRsvpEmail({
   answers,
 }: Args): Promise<void> {
   try {
+    const db = getAdminDb();
+    if (db && (await isSuppressed(db, to))) {
+      console.log(`[rsvp email:${variant}] skipped — suppressed:`, to);
+      return;
+    }
     const title = (event.title ?? "").trim() || "NAISI event";
     const whenLine = formatWhen(event.startAt ?? null, event.endAt ?? null);
     const { line: locationLine, disclosure } = locationFor(variant, event);
