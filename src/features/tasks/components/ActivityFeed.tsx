@@ -120,18 +120,17 @@ export default function ActivityFeed({
 }: Props) {
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
 
-  if (loading) {
-    return (
-      <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
-        Loading discussion…
-      </p>
-    );
-  }
-
+  // Deliberately don't surface a big "Loading discussion…" — the modal
+  // already rendered the task body instantly from the parent's seed; a
+  // loud loading banner here makes the whole modal feel slow even though
+  // the subcollection fetch is ≤200ms in the common case. Render empty
+  // and let content pop in when the snapshot arrives. For tasks with no
+  // history (the majority), the empty-state text appears immediately and
+  // stays — no flicker.
   if (feed.length === 0) {
     return (
       <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
-        Nothing here yet — be the first to comment.
+        {loading ? "\u00A0" : "Nothing here yet — be the first to comment."}
       </p>
     );
   }

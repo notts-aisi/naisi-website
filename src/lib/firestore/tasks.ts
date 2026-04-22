@@ -442,27 +442,45 @@ export function subtaskRowState(
 }
 
 /**
- * Subtasks rendered in block order, preserving relative order within each
- * block's member list. Blocks are iterated by `.order`; ungrouped subtasks
- * (`blockId === null`) land at the end in their existing order.
+ * Subtasks grouped for render. Each block gets:
+ *   - `completion`: the work subtasks (non-reviewer-hint)
+ *   - `signoffs`: the auto-spawned reviewer rows (roleHint === "reviewer")
+ *
+ * Rendered as two visually-distinct containers so the review phase reads
+ * as its own thing, not as trailing rows inside the completion block.
+ * Ungrouped subtasks (`blockId === null`) land at the end with `block: null`
+ * and any reviewer-hint ones sit with them in `completion` (shouldn't
+ * happen in practice — review rows are always spawned into a block).
  */
 export function groupSubtasksByBlock(
   task: TaskDoc,
-): Array<{ block: TaskBlock | null; subtasks: Subtask[] }> {
-  const byBlock = new Map<string | null, Subtask[]>();
+): Array<{ block: TaskBlock | null; completion: Subtask[]; signoffs: Subtask[] }> {
+  const completionByBlock = new Map<string | null, Subtask[]>();
+  const signoffByBlock = new Map<string, Subtask[]>();
   for (const s of task.subtasks) {
     const key = s.blockId ?? null;
-    const list = byBlock.get(key) ?? [];
-    list.push(s);
-    byBlock.set(key, list);
+    if (s.roleHint === "reviewer" && key !== null) {
+      const list = signoffByBlock.get(key) ?? [];
+      list.push(s);
+      signoffByBlock.set(key, list);
+    } else {
+      const list = completionByBlock.get(key) ?? [];
+      list.push(s);
+      completionByBlock.set(key, list);
+    }
   }
-  const out: Array<{ block: TaskBlock | null; subtasks: Subtask[] }> = [];
+  const out: Array<{ block: TaskBlock | null; completion: Subtask[]; signoffs: Subtask[] }> = [];
   for (const block of task.blocks) {
-    const subs = byBlock.get(block.id) ?? [];
-    out.push({ block, subtasks: subs });
+    out.push({
+      block,
+      completion: completionByBlock.get(block.id) ?? [],
+      signoffs: signoffByBlock.get(block.id) ?? [],
+    });
   }
-  const ungrouped = byBlock.get(null) ?? [];
-  if (ungrouped.length > 0) out.push({ block: null, subtasks: ungrouped });
+  const ungrouped = completionByBlock.get(null) ?? [];
+  if (ungrouped.length > 0) {
+    out.push({ block: null, completion: ungrouped, signoffs: [] });
+  }
   return out;
 }
 
@@ -555,6 +573,54 @@ export function getBlockEffectiveReviewerUids(
   }
   if (out.size > 0) return Array.from(out);
   return [...task.reviewerUids];
+}
+
+/**
+ * Gating for a reviewer-signoff subtask (`roleHint: "reviewer"`). The
+ * reviewer can only tick their signoff once they've approved every
+ * completion row in the same block that they're required to review.
+ *
+ * Returns the specific block-mates that are holding the signoff back —
+ * each entry explains why (`not-done`, `not-approved-by-me`, or
+ * `rejected-by-me` for sanity). Empty array means the signoff is
+ * unlocked for this reviewer.
+ *
+ * Ignores other reviewer-hint rows in the same block — those are peer
+ * signoffs, not work to approve.
+ */
+export type ReviewerSignoffBlocker = {
+  id: string;
+  title: string;
+  reason: "not-done" | "not-approved-by-me" | "rejected-by-me";
+};
+
+export function getReviewerSignoffBlockers(
+  task: TaskDoc,
+  signoffSubtask: Subtask,
+  reviewerUid: string,
+): ReviewerSignoffBlocker[] {
+  if (signoffSubtask.roleHint !== "reviewer") return [];
+  if (signoffSubtask.blockId === null) return [];
+  const out: ReviewerSignoffBlocker[] = [];
+  for (const s of task.subtasks) {
+    if (s.id === signoffSubtask.id) continue;
+    if (s.blockId !== signoffSubtask.blockId) continue;
+    if (s.roleHint === "reviewer") continue;
+    const effective = effectiveReviewerUids(s, task.reviewerUids);
+    if (!effective.includes(reviewerUid)) continue;
+    if (s.rejectedByReviewerUids.includes(reviewerUid)) {
+      out.push({ id: s.id, title: s.title, reason: "rejected-by-me" });
+      continue;
+    }
+    if (!s.done) {
+      out.push({ id: s.id, title: s.title, reason: "not-done" });
+      continue;
+    }
+    if (!s.approvedByReviewerUids.includes(reviewerUid)) {
+      out.push({ id: s.id, title: s.title, reason: "not-approved-by-me" });
+    }
+  }
+  return out;
 }
 
 /**

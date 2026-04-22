@@ -19,6 +19,7 @@ import {
   getBlockEffectiveReviewerUids,
   getBlockReviewSubtaskIds,
   getNextBlock,
+  getReviewerSignoffBlockers,
   isBlockGateApplied,
   isSubtaskBlocked,
   type BlockConsentMap,
@@ -238,8 +239,55 @@ export async function toggleSubtask(task: TaskDoc, subtaskId: string) {
   const uid = actingUid();
   const target = task.subtasks.find((s) => s.id === subtaskId);
   if (!target) throw new Error("Subtask not found");
-  if (!target.done && isSubtaskBlocked(target, task.subtasks, task.reviewerUids)) {
+  const nextDone = !target.done;
+  if (nextDone && isSubtaskBlocked(target, task.subtasks, task.reviewerUids)) {
     throw new Error("Subtask is blocked by an unfinished prerequisite");
+  }
+  // Reviewer-signoff rows: (a) only the listed reviewer can toggle in
+  // EITHER direction — a non-reviewer unticking someone else's signoff
+  // would silently retract their approval, (b) ticking additionally
+  // requires they've already approved every completion row in the block
+  // they're required to review.
+  if (target.roleHint === "reviewer") {
+    if (!target.reviewerUids.includes(uid)) {
+      throw new Error("Only the listed reviewer can toggle this signoff row.");
+    }
+    if (nextDone) {
+      const outstanding = getReviewerSignoffBlockers(task, target, uid);
+      if (outstanding.length > 0) {
+        const first = outstanding[0];
+        const reason =
+          first.reason === "not-done"
+            ? "isn't ticked done yet"
+            : first.reason === "rejected-by-me"
+              ? "is still marked rejected — resolve before signing off"
+              : "hasn't been approved by you yet";
+        const more =
+          outstanding.length > 1 ? ` (+${outstanding.length - 1} more)` : "";
+        throw new Error(
+          `Can't sign off — "${first.title}" ${reason}${more}.`,
+        );
+      }
+    }
+  } else {
+    // Regular completion rows: only listed assignees (or the task creator)
+    // can tick. Empty `assigneeUids` = open to any completer on the task.
+    // Creator is an escape hatch so the person who set the task up can
+    // always move it forward; admins who want to force-tick can self-add
+    // to the subtask first via the `+ Me` affordance (or self-add on
+    // behalf via the Edit panel).
+    const isCreator = task.creatorUid === uid;
+    const isAssigned = target.assigneeUids.includes(uid);
+    const isCompleterOnTask = task.completerUids.includes(uid);
+    const anyoneWhoCan =
+      target.assigneeUids.length === 0 && isCompleterOnTask;
+    if (!isCreator && !isAssigned && !anyoneWhoCan) {
+      throw new Error(
+        target.assigneeUids.length === 0
+          ? "Only task completers can tick subtasks on this task."
+          : "This subtask is assigned to specific people — add yourself or ask an assignee to tick.",
+      );
+    }
   }
   const subtasks = task.subtasks.map<Subtask>((s) => {
     if (s.id !== subtaskId) return s;
@@ -1000,6 +1048,44 @@ export async function unsealSubtask(task: TaskDoc, subtaskId: string) {
     title: target.title,
   });
   await batch.commit();
+}
+
+/**
+ * Idempotent catch-up for review rows on already-sealed blocks. Used by:
+ *   1. The admin "Spawn missing reviewers" button for blocks sealed before
+ *      the auto-spawn logic landed (PR 2 retrofits onto PR 1 data).
+ *   2. Cases where a task's reviewer set grew after seal — new reviewers
+ *      don't have a signoff row yet, this mutation fills them in.
+ * No-op when every effective reviewer already has a signoff row in this
+ * block. Safe to call on open blocks too (though only interesting on
+ * sealed ones — on open blocks the normal seal will spawn them anyway).
+ */
+export async function ensureBlockReviewSubtasks(
+  task: TaskDoc,
+  blockId: string,
+): Promise<number> {
+  const db = getClientDb();
+  const uid = actingUid();
+  const block = task.blocks.find((b) => b.id === blockId);
+  if (!block) throw new Error("Block not found");
+  const spawned = planReviewSpawn(task, blockId);
+  if (spawned.length === 0) return 0;
+  const nextSubtasks = [...task.subtasks, ...spawned];
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    subtasks: nextSubtasks.map(serializeSubtask),
+    subtaskStats: computeSubtaskStats(nextSubtasks),
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "review_subtasks_spawned", uid, {
+    blockId,
+    name: block.name,
+    count: spawned.length,
+    reviewerUids: spawned.flatMap((s) => s.reviewerUids),
+    catchUp: true,
+  });
+  await batch.commit();
+  return spawned.length;
 }
 
 /**

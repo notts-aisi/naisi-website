@@ -143,6 +143,7 @@ export default function CommitteeTasksPage() {
 
       {openTaskId && (
         <TaskDetailModal
+          key={openTaskId}
           taskId={openTaskId}
           viewerUid={user.uid}
           viewerRole={role}

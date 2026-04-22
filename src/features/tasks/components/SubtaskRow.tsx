@@ -5,6 +5,7 @@ import {
   TASK_FIELD_LIMITS,
   effectiveReviewerUids,
   getReviewerGlobalCoverage,
+  getReviewerSignoffBlockers,
   getSubtaskApprovalStatus,
   isSubtaskBlocked,
   subtaskRowState,
@@ -106,6 +107,23 @@ export default function SubtaskRow({
   const [titleDraft, setTitleDraft] = useState(subtask.title);
 
   const blocked = !subtask.done && isSubtaskBlocked(subtask, task.subtasks, task.reviewerUids);
+  // Reviewer-signoff gate: the viewer can only tick their own signoff once
+  // every block-mate they're required to review is done + approved by them.
+  // Computed here for checkbox disable/tooltip; `toggleSubtask` enforces it
+  // server-side-adjacent as well.
+  const signoffBlockers =
+    subtask.roleHint === "reviewer" &&
+    !subtask.done &&
+    subtask.reviewerUids.includes(viewerUid)
+      ? getReviewerSignoffBlockers(task, subtask, viewerUid)
+      : [];
+  const signoffBlocked = signoffBlockers.length > 0;
+  const signoffTooltip = signoffBlocked
+    ? `Approve every completion row in this block first — waiting on: ${signoffBlockers
+        .slice(0, 3)
+        .map((b) => `"${b.title}"`)
+        .join(", ")}${signoffBlockers.length > 3 ? ` (+${signoffBlockers.length - 3} more)` : ""}`
+    : null;
   const parentBlock = subtask.blockId
     ? task.blocks.find((b) => b.id === subtask.blockId) ?? null
     : null;
@@ -114,6 +132,18 @@ export default function SubtaskRow({
   const rosterLocked = subtaskSealed || parentSealed;
   const isCompleter = task.completerUids.includes(viewerUid);
   const isSelfAssigned = subtask.assigneeUids.includes(viewerUid);
+  const isTaskCreator = task.creatorUid === viewerUid;
+  // Permission to toggle the checkbox. Mirrors the guard in `toggleSubtask`:
+  //   - Reviewer-signoff row: only the listed reviewer.
+  //   - Regular completion row: only a listed assignee (or task creator as
+  //     an always-available escape hatch). Empty `assigneeUids` = any
+  //     completer on the task may tick.
+  const canToggleRow =
+    subtask.roleHint === "reviewer"
+      ? subtask.reviewerUids.includes(viewerUid)
+      : isTaskCreator ||
+        isSelfAssigned ||
+        (subtask.assigneeUids.length === 0 && isCompleter);
   // Self-remove is allowed only when nothing is sealed. Self-add remains
   // allowed post-block-seal (cover-for-sick path) but is gated by subtask-
   // level seal — a subtask admin-sealed is frozen both ways.
@@ -241,17 +271,22 @@ export default function SubtaskRow({
         <input
           type="checkbox"
           checked={subtask.done}
-          disabled={blocked}
+          disabled={blocked || signoffBlocked || !canToggleRow}
           onChange={() => handleCheckboxToggle().catch(console.error)}
           aria-label={
             blocked
               ? `Blocked — waiting on ${blockers.map((b) => b.title).join(", ") || "earlier subtask"}`
-              : `Mark "${subtask.title}" ${subtask.done ? "incomplete" : "complete"}`
+              : signoffBlocked
+                ? signoffTooltip ?? "Signoff gated on outstanding approvals"
+                : !canToggleRow
+                  ? notPermittedTooltip(subtask)
+                  : `Mark "${subtask.title}" ${subtask.done ? "incomplete" : "complete"}`
           }
           title={
             blocked
               ? `Waiting on: ${blockers.map((b) => b.title).join(", ") || "earlier subtask"}`
-              : undefined
+              : signoffTooltip ??
+                (!canToggleRow ? notPermittedTooltip(subtask) : undefined)
           }
         />
         <span
@@ -404,6 +439,18 @@ export default function SubtaskRow({
           }}
         >
           Waiting on: {blockers.map((b) => b.title).join(" • ")}
+        </p>
+      )}
+
+      {signoffBlocked && (
+        <p
+          style={{
+            margin: 0,
+            fontSize: "var(--text-xs)",
+            color: "var(--color-warning, var(--color-text))",
+          }}
+        >
+          Approve first: {signoffBlockers.map((b) => b.title).join(" • ")}
         </p>
       )}
 
@@ -628,6 +675,16 @@ export default function SubtaskRow({
       )}
     </div>
   );
+}
+
+function notPermittedTooltip(s: Subtask): string {
+  if (s.roleHint === "reviewer") {
+    return "Only the listed reviewer can toggle this signoff row.";
+  }
+  if (s.assigneeUids.length === 0) {
+    return "Only task completers can tick this subtask.";
+  }
+  return "This subtask is assigned to specific people — only they can tick it.";
 }
 
 function InlineAvatars({

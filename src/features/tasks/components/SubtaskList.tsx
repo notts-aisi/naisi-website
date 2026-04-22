@@ -18,6 +18,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   TASK_FIELD_LIMITS,
   groupSubtasksByBlock,
+  type Subtask,
   type TaskBlock,
   type TaskDoc,
 } from "@/lib/firestore/tasks";
@@ -94,11 +95,16 @@ export default function SubtaskList({
       const nextGroupSet = new Set(nextGroup);
       const fullOrder: string[] = [];
       for (const g of groups) {
-        if (g.subtasks.some((s) => nextGroupSet.has(s.id))) {
+        // Only completion rows are sortable — if the drag is targeting this
+        // group's completion list, splice in the new order; otherwise keep
+        // the existing relative order. Signoff rows always append after
+        // their block's completion rows in the flat array.
+        if (g.completion.some((s) => nextGroupSet.has(s.id))) {
           fullOrder.push(...nextGroup);
         } else {
-          for (const s of g.subtasks) fullOrder.push(s.id);
+          for (const s of g.completion) fullOrder.push(s.id);
         }
+        for (const s of g.signoffs) fullOrder.push(s.id);
       }
       try {
         await reorderSubtasks(task, fullOrder);
@@ -118,7 +124,7 @@ export default function SubtaskList({
 
       {groups.map((group) => {
         const isSealed = group.block?.sealState === "sealed";
-        const containerStyle: React.CSSProperties = group.block
+        const blockContainerStyle: React.CSSProperties = group.block
           ? {
               display: "flex",
               flexDirection: "column",
@@ -140,82 +146,96 @@ export default function SubtaskList({
               flexDirection: "column",
               gap: "var(--space-2)",
             };
+        const signoffRows = group.signoffs;
         return (
           <div
             key={group.block ? group.block.id : "__ungrouped__"}
-            style={containerStyle}
+            style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}
           >
-            {group.block && (
-              <BlockHeader
-                task={task}
-                block={group.block}
-                viewerUid={viewerUid}
-                isAdmin={isAdmin}
-                isCreator={isCreator}
-                canEditStructure={canEditStructure}
-              />
-            )}
-            {group.subtasks.length === 0 && group.block && canEdit && (
-              <p
-                style={{
-                  color: "var(--color-text-muted)",
-                  fontSize: "var(--text-xs)",
-                  fontStyle: "italic",
-                  padding: "0 var(--space-2)",
-                }}
-              >
-                No subtasks in this block yet.
-              </p>
-            )}
-            {canEdit && group.subtasks.length > 0 ? (
-              <DndContext
-                sensors={sensors}
-                collisionDetection={closestCenter}
-                onDragEnd={makeDragEndHandler(group.subtasks.map((s) => s.id))}
-              >
-                <SortableContext
-                  items={group.subtasks.map((s) => s.id)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  {group.subtasks.map((s) => (
-                    <SortableSubtaskRow key={s.id} id={s.id}>
-                      {(handle) => (
-                        <SubtaskRow
-                          task={task}
-                          subtask={s}
-                          users={users}
-                          viewerUid={viewerUid}
-                          isAdmin={isAdmin}
-                          canEdit={canEdit}
-                          showMatrix={showMatrix}
-                          isReviewPending={pendingReviewSubtaskIds.has(s.id)}
-                          dragHandle={handle}
-                        />
-                      )}
-                    </SortableSubtaskRow>
-                  ))}
-                </SortableContext>
-              </DndContext>
-            ) : (
-              group.subtasks.map((s) => (
-                <SubtaskRow
-                  key={s.id}
+            <div style={blockContainerStyle}>
+              {group.block && (
+                <BlockHeader
                   task={task}
-                  subtask={s}
-                  users={users}
+                  block={group.block}
                   viewerUid={viewerUid}
                   isAdmin={isAdmin}
-                  canEdit={canEdit}
-                  showMatrix={showMatrix}
-                  isReviewPending={pendingReviewSubtaskIds.has(s.id)}
+                  isCreator={isCreator}
+                  canEditStructure={canEditStructure}
                 />
-              ))
-            )}
-            {canEdit && task.subtasks.length < TASK_FIELD_LIMITS.maxSubtasks && (
-              <InlineAddSubtask task={task} blockId={group.block?.id ?? null} />
-            )}
-            {group.block && canEditStructure && (
-              <BlockGateControls task={task} blockId={group.block.id} />
+              )}
+              {group.completion.length === 0 && group.block && canEdit && (
+                <p
+                  style={{
+                    color: "var(--color-text-muted)",
+                    fontSize: "var(--text-xs)",
+                    fontStyle: "italic",
+                    padding: "0 var(--space-2)",
+                  }}
+                >
+                  No subtasks in this block yet.
+                </p>
+              )}
+              {canEdit && group.completion.length > 0 ? (
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={makeDragEndHandler(group.completion.map((s) => s.id))}
+                >
+                  <SortableContext
+                    items={group.completion.map((s) => s.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {group.completion.map((s) => (
+                      <SortableSubtaskRow key={s.id} id={s.id}>
+                        {(handle) => (
+                          <SubtaskRow
+                            task={task}
+                            subtask={s}
+                            users={users}
+                            viewerUid={viewerUid}
+                            isAdmin={isAdmin}
+                            canEdit={canEdit}
+                            showMatrix={showMatrix}
+                            isReviewPending={pendingReviewSubtaskIds.has(s.id)}
+                            dragHandle={handle}
+                          />
+                        )}
+                      </SortableSubtaskRow>
+                    ))}
+                  </SortableContext>
+                </DndContext>
+              ) : (
+                group.completion.map((s) => (
+                  <SubtaskRow
+                    key={s.id}
+                    task={task}
+                    subtask={s}
+                    users={users}
+                    viewerUid={viewerUid}
+                    isAdmin={isAdmin}
+                    canEdit={canEdit}
+                    showMatrix={showMatrix}
+                    isReviewPending={pendingReviewSubtaskIds.has(s.id)}
+                  />
+                ))
+              )}
+              {canEdit && task.subtasks.length < TASK_FIELD_LIMITS.maxSubtasks && (
+                <InlineAddSubtask task={task} blockId={group.block?.id ?? null} />
+              )}
+            </div>
+            {group.block && signoffRows.length > 0 && (
+              <SignoffPhase
+                task={task}
+                block={group.block}
+                signoffs={signoffRows}
+                users={users}
+                viewerUid={viewerUid}
+                isAdmin={isAdmin}
+                canEdit={canEdit}
+                showMatrix={showMatrix}
+                pendingReviewSubtaskIds={pendingReviewSubtaskIds}
+                canEditStructure={canEditStructure}
+              />
             )}
           </div>
         );
@@ -224,6 +244,95 @@ export default function SubtaskList({
       {canEditStructure && task.blocks.length < TASK_FIELD_LIMITS.maxBlocks && (
         <InlineAddBlock task={task} hasBlocks={hasBlocks} />
       )}
+    </div>
+  );
+}
+
+/**
+ * "Reviews for {block}" container — visually distinct from the completion
+ * block above it. Warm-toned to match the reviewer pill palette. Contains
+ * the auto-spawned reviewer-signoff rows plus the block-gate toggle.
+ *
+ * Sits below its parent block and stays pinned there regardless of how
+ * many completion rows get added upstream, because completion and signoff
+ * rows are partitioned by `groupSubtasksByBlock` now.
+ */
+function SignoffPhase({
+  task,
+  block,
+  signoffs,
+  users,
+  viewerUid,
+  isAdmin,
+  canEdit,
+  showMatrix,
+  pendingReviewSubtaskIds,
+  canEditStructure,
+}: {
+  task: TaskDoc;
+  block: TaskBlock;
+  signoffs: Subtask[];
+  users: UserDoc[];
+  viewerUid: string;
+  isAdmin: boolean;
+  canEdit: boolean;
+  showMatrix: boolean;
+  pendingReviewSubtaskIds: Set<string>;
+  canEditStructure: boolean;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--space-2)",
+        padding: "var(--space-3)",
+        marginLeft: "var(--space-4)",
+        background: "var(--color-warning-soft, var(--color-surface-hover))",
+        border: "1px solid var(--color-warning, var(--color-accent))",
+        borderLeftWidth: "3px",
+        borderRadius: "var(--radius-md)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "var(--space-2)",
+          fontSize: "10px",
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+          fontWeight: 700,
+          color: "var(--color-warning, var(--color-text))",
+        }}
+      >
+        <span>Reviews for &ldquo;{block.name}&rdquo;</span>
+        <span
+          style={{
+            fontSize: "var(--text-xs)",
+            textTransform: "none",
+            letterSpacing: "normal",
+            fontWeight: 500,
+            color: "var(--color-text-muted)",
+          }}
+        >
+          ({signoffs.filter((s) => s.done).length}/{signoffs.length} signed off)
+        </span>
+      </div>
+      {signoffs.map((s) => (
+        <SubtaskRow
+          key={s.id}
+          task={task}
+          subtask={s}
+          users={users}
+          viewerUid={viewerUid}
+          isAdmin={isAdmin}
+          canEdit={canEdit}
+          showMatrix={showMatrix}
+          isReviewPending={pendingReviewSubtaskIds.has(s.id)}
+        />
+      ))}
+      {canEditStructure && <BlockGateControls task={task} blockId={block.id} />}
     </div>
   );
 }
