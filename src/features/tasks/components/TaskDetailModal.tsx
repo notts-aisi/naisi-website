@@ -27,8 +27,12 @@ import {
   updateTask,
 } from "../taskMutations";
 import AssigneePicker from "./AssigneePicker";
+import AttachmentList from "./AttachmentList";
+import AttachmentUpload from "./AttachmentUpload";
+import CommentThread from "./CommentThread";
 import DueDateBadge from "./DueDateBadge";
 import SubtaskList from "./SubtaskList";
+import { useTaskAttachments } from "../hooks/useTaskAttachments";
 
 type Props = {
   taskId: string;
@@ -412,16 +416,24 @@ export default function TaskDetailModal({
 
           <section>
             <h3 style={sectionLabel}>Attachments</h3>
-            <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
-              File attachments ship in Phase 3.
-            </p>
+            <AttachmentsSection
+              taskId={task.id}
+              users={users}
+              viewerUid={viewerUid}
+              viewerIsAdmin={isAdmin}
+              canParticipate={canEditProgressFields}
+            />
           </section>
 
           <section>
-            <h3 style={sectionLabel}>Comments</h3>
-            <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
-              Discussion thread ships in Phase 2.
-            </p>
+            <h3 style={sectionLabel}>Discussion</h3>
+            <CommentThread
+              task={task}
+              users={users}
+              viewerUid={viewerUid}
+              viewerIsAdmin={isAdmin}
+              canParticipate={canEditProgressFields}
+            />
           </section>
         </div>
 
@@ -563,6 +575,45 @@ export default function TaskDetailModal({
         </div>
       </div>
     </Overlay>
+  );
+}
+
+/**
+ * Small local wrapper so the AttachmentList/Upload hook call (useTaskAttachments)
+ * is colocated with the section that uses it — keeps the main modal body
+ * uncluttered and avoids lifting attachment state higher than needed.
+ */
+function AttachmentsSection({
+  taskId,
+  users,
+  viewerUid,
+  viewerIsAdmin,
+  canParticipate,
+}: {
+  taskId: string;
+  users: UserDoc[];
+  viewerUid: string;
+  viewerIsAdmin: boolean;
+  canParticipate: boolean;
+}) {
+  const { attachments, loading } = useTaskAttachments(taskId);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+      {loading ? (
+        <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
+          Loading attachments…
+        </p>
+      ) : (
+        <AttachmentList
+          taskId={taskId}
+          attachments={attachments}
+          users={users}
+          viewerUid={viewerUid}
+          viewerIsAdmin={viewerIsAdmin}
+        />
+      )}
+      {canParticipate && <AttachmentUpload taskId={taskId} />}
+    </div>
   );
 }
 
