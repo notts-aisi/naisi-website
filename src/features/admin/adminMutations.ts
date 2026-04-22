@@ -115,6 +115,20 @@ export async function updateUserProfile(uid: string, fields: FullProfileUpdate) 
   await updateDoc(doc(db, "users", uid), patch);
 }
 
+/**
+ * Admin-only manual unsubscribe / re-subscribe. The newsletter preference is
+ * a profile subfield, so we use dot-path update to avoid clobbering sibling
+ * prefs (deliverToGmail, deliverToUniEmail). Re-subscribing is allowed for
+ * when an earlier opt-out was mistaken — GDPR only requires honouring an
+ * unsubscribe request promptly, not forbidding reversal on user-facing ask.
+ */
+export async function setNewsletterSubscribed(uid: string, subscribed: boolean) {
+  const db = getClientDb();
+  await updateDoc(doc(db, "users", uid), {
+    "profile.newsletter.subscribed": subscribed,
+  });
+}
+
 // === Projects ===
 
 export async function createProject(params: {
