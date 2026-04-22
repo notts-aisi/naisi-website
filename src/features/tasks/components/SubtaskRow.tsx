@@ -39,6 +39,12 @@ type Props = {
   /** Controls visibility of the subtask-level seal/unseal escape hatch.
    *  Admin-only in PR 1; might widen to creator later. */
   isAdmin: boolean;
+  /** True when the viewer can freely rewrite the subtask's assignee /
+   *  reviewer rosters — admin or task creator only per the Phase 3
+   *  permission matrix. Completers modify their own membership via the
+   *  `+ Me` / `− Me` affordances instead; reviewers and non-involved
+   *  users see a read-only list. */
+  canEditRoster: boolean;
   canEdit: boolean;
   /** Whether the viewer can see the reviewer columns. Completers + non-
    *  involved committee members get this `false` — they see the row's
@@ -98,6 +104,7 @@ export default function SubtaskRow({
   users,
   viewerUid,
   isAdmin,
+  canEditRoster,
   canEdit,
   showMatrix,
   isReviewPending,
@@ -501,37 +508,61 @@ export default function SubtaskRow({
           </label>
 
           <div>
-            <AssigneePicker
-              users={users}
-              selected={subtask.assigneeUids}
-              onChange={(uids) =>
-                setSubtaskAssignees(task, subtask.id, uids).catch((err) => {
-                  console.error(err);
-                  window.alert(err instanceof Error ? err.message : "Update failed");
-                })
-              }
-              label={
-                subtaskSealed
-                  ? "Assignees (subtask sealed — admin must unseal)"
-                  : "Assignees on this step (must be task completers)"
-              }
-              max={TASK_FIELD_LIMITS.maxAssigneesPerSubtask}
-              role="completer"
-              limitToUids={task.completerUids}
-              emptyLimitHint="Add completers to the task first — subtask assignees must already be on the task."
-            />
+            {canEditRoster ? (
+              <AssigneePicker
+                users={users}
+                selected={subtask.assigneeUids}
+                onChange={(uids) =>
+                  setSubtaskAssignees(task, subtask.id, uids).catch((err) => {
+                    console.error(err);
+                    window.alert(err instanceof Error ? err.message : "Update failed");
+                  })
+                }
+                label={
+                  subtaskSealed
+                    ? "Assignees (subtask sealed — admin must unseal)"
+                    : "Assignees on this step (must be task completers)"
+                }
+                max={TASK_FIELD_LIMITS.maxAssigneesPerSubtask}
+                role="completer"
+                limitToUids={task.completerUids}
+                emptyLimitHint="Add completers to the task first — subtask assignees must already be on the task."
+              />
+            ) : (
+              <ReadOnlyRoster
+                users={users}
+                uids={subtask.assigneeUids}
+                label="Assignees on this step"
+                emptyText="No one assigned — use + Me to self-assign."
+                tone="accent"
+              />
+            )}
           </div>
           <div>
-            <AssigneePicker
-              users={users}
-              selected={subtask.reviewerUids}
-              onChange={(uids) => setSubtaskReviewers(task, subtask.id, uids).catch(console.error)}
-              label="Reviewers (leave empty to inherit from task)"
-              max={TASK_FIELD_LIMITS.maxReviewersPerSubtask}
-              role="reviewer"
-              limitToUids={task.reviewerUids}
-              emptyLimitHint="Add reviewers to the task first — subtask reviewers must already be on the task."
-            />
+            {canEditRoster ? (
+              <AssigneePicker
+                users={users}
+                selected={subtask.reviewerUids}
+                onChange={(uids) => setSubtaskReviewers(task, subtask.id, uids).catch(console.error)}
+                label="Reviewers (leave empty to inherit from task)"
+                max={TASK_FIELD_LIMITS.maxReviewersPerSubtask}
+                role="reviewer"
+                limitToUids={task.reviewerUids}
+                emptyLimitHint="Add reviewers to the task first — subtask reviewers must already be on the task."
+              />
+            ) : (
+              <ReadOnlyRoster
+                users={users}
+                uids={subtask.reviewerUids}
+                label="Reviewers (inherited from task if empty)"
+                emptyText={
+                  task.reviewerUids.length > 0
+                    ? "Inheriting task-level reviewers."
+                    : "No reviewers set."
+                }
+                tone="warning"
+              />
+            )}
           </div>
 
           {task.blocks.length > 0 && (
@@ -671,6 +702,75 @@ export default function SubtaskRow({
               </div>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Read-only roster list shown in the subtask Edit panel for viewers who
+ * aren't allowed to rewrite roster arrays wholesale. Completers and
+ * reviewers who just need to view the assignments (and use +Me/−Me for
+ * their own self-service edits) see this instead of the editable picker.
+ */
+function ReadOnlyRoster({
+  users,
+  uids,
+  label,
+  emptyText,
+  tone,
+}: {
+  users: UserDoc[];
+  uids: string[];
+  label: string;
+  emptyText: string;
+  tone: "accent" | "warning";
+}) {
+  const resolved = uids
+    .map((uid) => users.find((u) => u.uid === uid))
+    .filter((u): u is UserDoc => Boolean(u));
+  const chipBg =
+    tone === "warning"
+      ? "var(--color-warning-soft, var(--color-surface-hover))"
+      : "var(--color-accent-soft)";
+  const chipFg =
+    tone === "warning"
+      ? "var(--color-warning, var(--color-text))"
+      : "var(--color-accent)";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+      <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-muted)" }}>
+        {label}
+      </span>
+      {resolved.length === 0 ? (
+        <span
+          style={{
+            fontSize: "var(--text-xs)",
+            color: "var(--color-text-subtle)",
+            fontStyle: "italic",
+          }}
+        >
+          {emptyText}
+        </span>
+      ) : (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-1)" }}>
+          {resolved.map((u) => (
+            <span
+              key={u.uid}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                padding: "0.25rem 0.55rem",
+                borderRadius: "var(--radius-pill)",
+                background: chipBg,
+                color: chipFg,
+                fontSize: "var(--text-xs)",
+              }}
+            >
+              {u.displayName ?? u.email ?? u.uid}
+            </span>
+          ))}
         </div>
       )}
     </div>

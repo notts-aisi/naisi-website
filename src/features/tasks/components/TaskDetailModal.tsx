@@ -480,6 +480,7 @@ export default function TaskDetailModal({
               viewerRole={viewerRole}
               canEdit={canEditProgressFields}
               canEditStructure={canEditAll}
+              canEditRoster={isAdmin || isCreator}
               showMatrix={canSeeReviewerSection}
               pendingReviewSubtaskIds={pendingSubtaskIds}
             />

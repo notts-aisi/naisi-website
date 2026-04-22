@@ -459,6 +459,10 @@ export async function setSubtaskAssignees(task: TaskDoc, subtaskId: string, uids
   if (target.sealState === "sealed") {
     throw new Error("Subtask is sealed — an admin must unseal before roster changes.");
   }
+  // Caller permission (admin / creator) is gated in the UI — the picker
+  // isn't rendered for anyone else. Phase 3 is client-enforced because
+  // Firestore rules can't affordably diff nested arrays to check
+  // "only-self-changes" semantics.
   const next = clampUids(uids, TASK_FIELD_LIMITS.maxAssigneesPerSubtask);
   const subtasks = task.subtasks.map((s) =>
     s.id === subtaskId ? { ...s, assigneeUids: next } : s,
@@ -473,6 +477,9 @@ export async function setSubtaskAssignees(task: TaskDoc, subtaskId: string, uids
 }
 
 export async function setSubtaskReviewers(task: TaskDoc, subtaskId: string, uids: string[]) {
+  // Caller permission (admin / creator) is gated by the UI not rendering
+  // the picker for anyone else. Phase 3 is client-enforced — see
+  // setSubtaskAssignees.
   await patchSubtask(task, subtaskId, (s) => ({
     ...s,
     reviewerUids: clampUids(uids, TASK_FIELD_LIMITS.maxReviewersPerSubtask),
