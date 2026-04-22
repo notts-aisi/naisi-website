@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
   TASK_FIELD_LIMITS,
   effectiveReviewerUids,
+  getReviewerGlobalCoverage,
   getSubtaskApprovalStatus,
   isSubtaskBlocked,
   subtaskRowState,
@@ -84,6 +85,10 @@ const ROW_COLOURS: Record<RowState, { border: string; bg: string | null }> = {
     border: "var(--color-success, #16a34a)",
     bg: "var(--color-success-soft, rgba(22, 163, 74, 0.08))",
   },
+  red: {
+    border: "var(--color-danger, #dc2626)",
+    bg: "var(--color-danger-soft, rgba(220, 38, 38, 0.08))",
+  },
 };
 
 export default function SubtaskRow({
@@ -146,6 +151,22 @@ export default function SubtaskRow({
   const rowState = subtaskRowState(subtask, task.reviewerUids, isReviewPending);
   const rowPalette = ROW_COLOURS[rowState];
 
+  // Final-signoff detection — clicking Approve in this row's matrix would
+  // push the viewer's global approval coverage from N-1/N to N/N. Passed
+  // down so the ApprovalCell's approve handler can pop a confirm. Only
+  // meaningful when the viewer is an effective reviewer on this row and
+  // hasn't already approved it.
+  const viewerIsReviewerHere = approvalStatus.required.includes(viewerUid);
+  const viewerAlreadyApprovedHere = subtask.approvedByReviewerUids.includes(viewerUid);
+  const coverage = viewerIsReviewerHere
+    ? getReviewerGlobalCoverage(task, viewerUid)
+    : { approved: 0, required: 0 };
+  const approveWillFinalise =
+    viewerIsReviewerHere &&
+    !viewerAlreadyApprovedHere &&
+    coverage.required > 0 &&
+    coverage.approved + 1 === coverage.required;
+
   async function handleDelete() {
     const ok = window.confirm(
       `Delete subtask "${subtask.title}"? This also clears any other subtask's dependency on it.`,
@@ -153,6 +174,36 @@ export default function SubtaskRow({
     if (!ok) return;
     try {
       await removeSubtask(task, subtask.id);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  /**
+   * Checkbox wrapper. On reviewer-signoff rows (`roleHint: "reviewer"`) the
+   * tick IS the reviewer's approval, so if this tick would transition them
+   * from N-1/N to N/N coverage globally across the task, pop the
+   * final-signoff confirmation before writing. Non-reviewer rows short-
+   * circuit straight through to toggleSubtask.
+   */
+  async function handleCheckboxToggle() {
+    const willTurnOn = !subtask.done;
+    if (willTurnOn && subtask.roleHint === "reviewer") {
+      const isRequiredHere = effectiveReviewerUids(subtask, task.reviewerUids).includes(
+        viewerUid,
+      );
+      if (isRequiredHere) {
+        const coverage = getReviewerGlobalCoverage(task, viewerUid);
+        if (coverage.required > 0 && coverage.approved === coverage.required - 1) {
+          const ok = window.confirm(
+            "This is your final signoff on this task — confirm?",
+          );
+          if (!ok) return;
+        }
+      }
+    }
+    try {
+      await toggleSubtask(task, subtask.id);
     } catch (err) {
       console.error(err);
     }
@@ -191,7 +242,7 @@ export default function SubtaskRow({
           type="checkbox"
           checked={subtask.done}
           disabled={blocked}
-          onChange={() => toggleSubtask(task, subtask.id).catch(console.error)}
+          onChange={() => handleCheckboxToggle().catch(console.error)}
           aria-label={
             blocked
               ? `Blocked — waiting on ${blockers.map((b) => b.title).join(", ") || "earlier subtask"}`
@@ -213,6 +264,26 @@ export default function SubtaskRow({
         >
           {subtask.title}
         </span>
+
+        {subtask.roleHint === "reviewer" && (
+          <span
+            title="Auto-spawned on block seal — ticking this is the reviewer's signoff."
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              padding: "2px 8px",
+              borderRadius: "999px",
+              background: "var(--color-warning-soft, var(--color-surface-hover))",
+              color: "var(--color-warning, var(--color-text))",
+              fontSize: "10px",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+            }}
+          >
+            Reviewer signoff
+          </span>
+        )}
 
         <InlineAvatars users={assignees} tone="accent" title="Assignees" />
 
@@ -265,12 +336,16 @@ export default function SubtaskRow({
           </span>
         )}
 
-        {showMatrix && reviewers.length > 0 && (
+        {/* Hide the per-reviewer matrix on reviewer-signoff rows — the
+            checkbox IS the approval there, no grid needed. */}
+        {showMatrix && reviewers.length > 0 && subtask.roleHint !== "reviewer" && (
           <ApprovalMatrixRow
             reviewers={reviewers}
             approvedUids={subtask.approvedByReviewerUids}
             questionedUids={subtask.questionedByReviewerUids}
+            rejectedUids={subtask.rejectedByReviewerUids}
             viewerUid={viewerUid}
+            approveWillFinalise={approveWillFinalise}
             onSet={(state) =>
               setSubtaskApproval(task, subtask.id, state).catch(console.error)
             }
@@ -391,10 +466,12 @@ export default function SubtaskRow({
               label={
                 subtaskSealed
                   ? "Assignees (subtask sealed — admin must unseal)"
-                  : "Assignees on this step"
+                  : "Assignees on this step (must be task completers)"
               }
               max={TASK_FIELD_LIMITS.maxAssigneesPerSubtask}
               role="completer"
+              limitToUids={task.completerUids}
+              emptyLimitHint="Add completers to the task first — subtask assignees must already be on the task."
             />
           </div>
           <div>
@@ -405,6 +482,8 @@ export default function SubtaskRow({
               label="Reviewers (leave empty to inherit from task)"
               max={TASK_FIELD_LIMITS.maxReviewersPerSubtask}
               role="reviewer"
+              limitToUids={task.reviewerUids}
+              emptyLimitHint="Add reviewers to the task first — subtask reviewers must already be on the task."
             />
           </div>
 
@@ -620,17 +699,23 @@ function getInitials(u: UserDoc): string {
  * doesn't jitter when the viewer's own cell renders as a button (1px border)
  * while others render as static spans.
  */
+type CellState = "approved" | "question" | "rejected" | "empty";
+
 function ApprovalMatrixRow({
   reviewers,
   approvedUids,
   questionedUids,
+  rejectedUids,
   viewerUid,
+  approveWillFinalise,
   onSet,
 }: {
   reviewers: UserDoc[];
   approvedUids: string[];
   questionedUids: string[];
+  rejectedUids: string[];
   viewerUid: string;
+  approveWillFinalise: boolean;
   onSet: (state: ReviewState) => void;
 }) {
   return (
@@ -657,11 +742,13 @@ function ApprovalMatrixRow({
         Review
       </span>
       {reviewers.map((r) => {
-        const state: "approved" | "question" | "empty" = approvedUids.includes(r.uid)
+        const state: CellState = approvedUids.includes(r.uid)
           ? "approved"
-          : questionedUids.includes(r.uid)
-            ? "question"
-            : "empty";
+          : rejectedUids.includes(r.uid)
+            ? "rejected"
+            : questionedUids.includes(r.uid)
+              ? "question"
+              : "empty";
         const isMine = r.uid === viewerUid;
         return (
           <ApprovalCell
@@ -669,6 +756,7 @@ function ApprovalMatrixRow({
             reviewer={r}
             state={state}
             isMine={isMine}
+            approveWillFinalise={isMine && approveWillFinalise}
             onSet={onSet}
           />
         );
@@ -681,11 +769,13 @@ function ApprovalCell({
   reviewer,
   state,
   isMine,
+  approveWillFinalise,
   onSet,
 }: {
   reviewer: UserDoc;
-  state: "approved" | "question" | "empty";
+  state: CellState;
   isMine: boolean;
+  approveWillFinalise: boolean;
   onSet: (state: ReviewState) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -693,19 +783,29 @@ function ApprovalCell({
   const initials = getInitials(reviewer);
 
   const icon =
-    state === "approved" ? "✓" : state === "question" ? "❓" : initials;
+    state === "approved"
+      ? "✓"
+      : state === "question"
+        ? "❓"
+        : state === "rejected"
+          ? "✕"
+          : initials;
   const color =
     state === "approved"
       ? "var(--color-success, #16a34a)"
       : state === "question"
         ? "var(--color-warning, var(--color-accent))"
-        : "var(--color-text-subtle)";
+        : state === "rejected"
+          ? "var(--color-danger, #dc2626)"
+          : "var(--color-text-subtle)";
   const bg =
     state === "approved"
       ? "var(--color-success-soft, rgba(22, 163, 74, 0.12))"
       : state === "question"
         ? "var(--color-warning-soft, var(--color-surface-hover))"
-        : "transparent";
+        : state === "rejected"
+          ? "var(--color-danger-soft, rgba(220, 38, 38, 0.12))"
+          : "transparent";
 
   // Both variants share the exact same box model so cells don't jitter when
   // the viewer's own cell gets a visible border while others don't. We apply
@@ -727,10 +827,16 @@ function ApprovalCell({
     lineHeight: 1,
   };
 
+  const stateCopy: Record<CellState, string> = {
+    empty: "not yet reviewed",
+    approved: "approved",
+    question: "has a question",
+    rejected: "rejected",
+  };
   if (!isMine) {
     return (
       <span
-        title={`${label}: ${state === "empty" ? "not yet reviewed" : state === "approved" ? "approved" : "has a question"}`}
+        title={`${label}: ${stateCopy[state]}`}
         aria-label={`${label} ${state}`}
         style={{ ...sharedCellStyle, cursor: "default" }}
       >
@@ -777,8 +883,17 @@ function ApprovalCell({
         >
           <ApprovalMenuItem
             icon="✓"
-            label="Approve"
+            label={approveWillFinalise ? "Approve (final signoff)" : "Approve"}
             onClick={() => {
+              if (approveWillFinalise) {
+                const ok = window.confirm(
+                  "This ✓ is your final approval on this task — confirm signoff?",
+                );
+                if (!ok) {
+                  setOpen(false);
+                  return;
+                }
+              }
               onSet("approve");
               setOpen(false);
             }}
@@ -792,6 +907,15 @@ function ApprovalCell({
               setOpen(false);
             }}
             active={state === "question"}
+          />
+          <ApprovalMenuItem
+            icon="✕"
+            label="Reject"
+            onClick={() => {
+              onSet("reject");
+              setOpen(false);
+            }}
+            active={state === "rejected"}
           />
           <ApprovalMenuItem
             icon="⬜"

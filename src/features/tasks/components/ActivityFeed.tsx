@@ -96,6 +96,15 @@ function renderActivityCopy(a: ActivityDoc, users: UserDoc[], task: TaskDoc): st
       return `${actor} sealed subtask ${subtaskTitle(pickStr("subtaskId"))}`;
     case "subtask_unsealed":
       return `${actor} unsealed subtask ${subtaskTitle(pickStr("subtaskId"))}`;
+    case "review_subtasks_spawned": {
+      const count = typeof p.count === "number" ? (p.count as number) : 0;
+      const name = pickStr("name") ?? "a block";
+      return `${count} reviewer signoff row${count === 1 ? "" : "s"} auto-spawned on "${name}"`;
+    }
+    case "block_gate_applied":
+      return `${actor} gated "${pickStr("nextBlockName") ?? "next block"}" on "${pickStr("name") ?? "this block"}"'s reviews`;
+    case "block_gate_cleared":
+      return `${actor} cleared the gate from "${pickStr("nextBlockName") ?? "next block"}"`;
     default:
       return `${actor} updated the task`;
   }

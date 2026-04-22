@@ -99,6 +99,7 @@ export default function MyWorkSummary() {
           viewerRole={role}
           projects={projects}
           users={users}
+          initialTask={tasks.find((t) => t.id === openId) ?? null}
           onClose={() => setOpenId(null)}
         />
       )}
