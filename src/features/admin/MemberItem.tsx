@@ -16,6 +16,7 @@ import {
 import MemberEditForm from "./MemberEditForm";
 import {
   deleteUser,
+  setNewsletterSubscribed,
   setPermissions,
   setRole,
   setTracks,
@@ -127,6 +128,19 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
     } catch (err) {
       console.error(err);
       alert("Failed to update visibility");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onToggleNewsletter() {
+    const currentlySubscribed = Boolean(user.profile?.newsletter?.subscribed);
+    setBusy(true);
+    try {
+      await setNewsletterSubscribed(user.uid, !currentlySubscribed);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update newsletter subscription");
     } finally {
       setBusy(false);
     }
@@ -401,6 +415,16 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                   disabled={busy}
                 />
                 <span className={styles.controlLabel}>Show on public /members page</span>
+              </label>
+
+              <label className={`${styles.controlBlock} ${styles.controlToggle}`}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(user.profile?.newsletter?.subscribed)}
+                  onChange={onToggleNewsletter}
+                  disabled={busy}
+                />
+                <span className={styles.controlLabel}>Subscribed to newsletter</span>
               </label>
 
               {!isSelf && (
