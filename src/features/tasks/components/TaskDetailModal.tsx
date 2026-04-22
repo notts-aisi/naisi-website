@@ -685,22 +685,20 @@ function AttachmentsSection({
   viewerIsAdmin: boolean;
   canParticipate: boolean;
 }) {
-  const { attachments, loading } = useTaskAttachments(taskId);
+  const { attachments } = useTaskAttachments(taskId);
+  // Skip the "Loading attachments…" banner — the list is empty for most
+  // tasks, and the few that have attachments will see the rows pop in
+  // within ~200ms. Loud banners make the modal feel slow even when the
+  // task body already rendered instantly from the parent seed.
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-      {loading ? (
-        <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
-          Loading attachments…
-        </p>
-      ) : (
-        <AttachmentList
-          taskId={taskId}
-          attachments={attachments}
-          users={users}
-          viewerUid={viewerUid}
-          viewerIsAdmin={viewerIsAdmin}
-        />
-      )}
+      <AttachmentList
+        taskId={taskId}
+        attachments={attachments}
+        users={users}
+        viewerUid={viewerUid}
+        viewerIsAdmin={viewerIsAdmin}
+      />
       {canParticipate && <AttachmentUpload taskId={taskId} />}
     </div>
   );
@@ -862,12 +860,20 @@ function Overlay({ children, onClose }: { children: React.ReactNode; onClose: ()
             position: "absolute",
             top: "var(--space-3)",
             right: "var(--space-3)",
-            background: "transparent",
-            border: "none",
-            color: "var(--color-text-muted)",
-            fontSize: "var(--text-lg)",
+            width: "2rem",
+            height: "2rem",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "var(--color-bg)",
+            border: "1px solid var(--color-border)",
+            borderRadius: "999px",
+            color: "var(--color-text)",
+            fontSize: "var(--text-md)",
+            lineHeight: 1,
             cursor: "pointer",
-            zIndex: 1,
+            zIndex: 2,
+            boxShadow: "var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.15))",
           }}
         >
           ✕

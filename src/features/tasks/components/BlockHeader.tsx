@@ -4,11 +4,13 @@ import { useState } from "react";
 import {
   TASK_FIELD_LIMITS,
   getBlockConsensusState,
+  getBlockEffectiveReviewerUids,
   type TaskBlock,
   type TaskDoc,
 } from "@/lib/firestore/tasks";
 import {
   deleteBlock,
+  ensureBlockReviewSubtasks,
   forceSealBlock,
   renameBlock,
   toggleBlockConsent,
@@ -45,6 +47,19 @@ export default function BlockHeader({
   const isSealed = block.sealState === "sealed";
   const requiredCount = consensus.required.length;
   const consentCount = consensus.consenting.length;
+  // Missing-reviewer detection for the admin catch-up button. Compares
+  // every effective reviewer for the block against existing reviewer-hint
+  // rows in that block. Non-zero when the block was sealed before PR 2's
+  // auto-spawn landed, or when a reviewer got added after seal.
+  const effectiveReviewers = getBlockEffectiveReviewerUids(task, block.id);
+  const existingReviewerUids = new Set(
+    task.subtasks
+      .filter((s) => s.blockId === block.id && s.roleHint === "reviewer")
+      .flatMap((s) => s.reviewerUids),
+  );
+  const missingReviewerCount = effectiveReviewers.filter(
+    (u) => !existingReviewerUids.has(u),
+  ).length;
 
   async function saveName() {
     const trimmed = nameDraft.trim();
@@ -101,6 +116,22 @@ export default function BlockHeader({
       await unsealBlock(task, block.id);
     } catch (err) {
       console.error(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSpawnMissing() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const added = await ensureBlockReviewSubtasks(task, block.id);
+      if (added === 0) {
+        window.alert("No missing reviewer rows — every effective reviewer already has one.");
+      }
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Regenerate failed");
     } finally {
       setBusy(false);
     }
@@ -276,6 +307,17 @@ export default function BlockHeader({
               title="Admin: re-open this block and reset the lock-in tally"
             >
               Unseal
+            </button>
+          )}
+          {isSealed && isAdmin && missingReviewerCount > 0 && (
+            <button
+              type="button"
+              onClick={handleSpawnMissing}
+              disabled={busy}
+              style={{ ...ghostBtn, color: "var(--color-warning, var(--color-accent))" }}
+              title={`Admin: spawn ${missingReviewerCount} missing reviewer signoff row${missingReviewerCount === 1 ? "" : "s"} for this sealed block`}
+            >
+              Spawn {missingReviewerCount} review{missingReviewerCount === 1 ? "" : "s"}
             </button>
           )}
           {canEditStructure && (isAdmin || isCreator) && (

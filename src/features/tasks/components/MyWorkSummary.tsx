@@ -94,6 +94,7 @@ export default function MyWorkSummary() {
 
       {openId && (
         <TaskDetailModal
+          key={openId}
           taskId={openId}
           viewerUid={user.uid}
           viewerRole={role}

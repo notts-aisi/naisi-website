@@ -146,6 +146,7 @@ export default function MyWorkPage() {
 
       {openTaskId && (
         <TaskDetailModal
+          key={openTaskId}
           taskId={openTaskId}
           viewerUid={user.uid}
           viewerRole={role}
