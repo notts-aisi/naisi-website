@@ -41,10 +41,15 @@ export async function sendEmail({ to, subject, react, replyTo, fromName }: SendA
   const fromEmail = process.env.SMTP_FROM_EMAIL ?? process.env.SMTP_USER;
   if (!fromEmail) throw new Error("SMTP_FROM_EMAIL or SMTP_USER must be set.");
 
+  // Default Reply-To (e.g. a human-monitored inbox) so recipients who hit
+  // "Reply" without noticing the Reply-To don't bounce into the void when the
+  // From domain has no receiving MX. Per-call replyTo still wins.
+  const effectiveReplyTo = replyTo ?? process.env.EMAIL_DEFAULT_REPLY_TO;
+
   const info = await transporter().sendMail({
     from: `"${displayName}" <${fromEmail}>`,
     to: Array.isArray(to) ? to.join(", ") : to,
-    replyTo,
+    replyTo: effectiveReplyTo,
     subject,
     html,
     text,

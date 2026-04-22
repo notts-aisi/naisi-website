@@ -57,5 +57,18 @@ env:
   - variable: NEXT_PUBLIC_APP_URL
     value: https://naisi.uk
     availability: [BUILD, RUNTIME]
+  # Default Reply-To header for outbound mail. Set so recipients who hit
+  # "Reply" without noticing Reply-To land in a monitored inbox, since the
+  # From domain (naisi.uk) has no receiving MX during the SES trust-build phase.
+  - variable: EMAIL_DEFAULT_REPLY_TO
+    value: ai-safety@uonsu.com
+    availability: [RUNTIME]
+  # When "true", newsletter sends ignore self-declared university addresses
+  # and deliver only to Google-authenticated primary addresses. First-phase
+  # reputation-build flag — flip to "false" once suppression pipeline has
+  # accumulated enough history to tolerate uni-email bounces.
+  - variable: EMAIL_GMAIL_ONLY_MODE
+    value: "true"
+    availability: [RUNTIME]
   # Admin credentials are injected automatically by App Hosting (ADC) —
   # no FIREBASE_ADMIN_* env vars needed in production.

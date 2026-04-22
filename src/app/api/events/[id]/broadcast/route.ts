@@ -8,6 +8,7 @@ import {
   changeUrl as buildChangeUrl,
   signRsvpToken,
 } from "@/lib/events/rsvpToken";
+import { filterSuppressed } from "@/lib/firestore/suppression";
 
 type BroadcastPayload = {
   subject?: unknown;
@@ -103,7 +104,7 @@ export async function POST(
     .get();
 
   if (snap.empty) {
-    return NextResponse.json({ ok: true, sent: 0, failed: 0 });
+    return NextResponse.json({ ok: true, sent: 0, failed: 0, suppressed: 0 });
   }
 
   const whenLine = formatWhen(
@@ -121,8 +122,15 @@ export async function POST(
     "ai-safety@uonsu.com";
   const eventTitle = (event.title ?? "NAISI event").toString();
 
+  const plannedAddresses = snap.docs
+    .map((d) => (typeof d.data()?.email === "string" ? (d.data().email as string) : ""))
+    .filter(Boolean);
+  const { suppressed: suppressedList } = await filterSuppressed(db, plannedAddresses);
+  const suppressedSet = new Set(suppressedList.map((a) => a.toLowerCase()));
+
   let sent = 0;
   let failed = 0;
+  let suppressed = 0;
   // Serialize sends to stay well under typical SMTP rate limits — NAISI events
   // are small (tens, not thousands), so throughput isn't a concern.
   for (const doc of snap.docs) {
@@ -131,6 +139,11 @@ export async function POST(
     const name = typeof rsvp.name === "string" ? rsvp.name : "";
     if (!to) {
       failed += 1;
+      continue;
+    }
+    if (suppressedSet.has(to.toLowerCase())) {
+      suppressed += 1;
+      console.log("[event broadcast] suppressed:", to);
       continue;
     }
     let cancelUrl: string | undefined;
@@ -167,5 +180,5 @@ export async function POST(
     }
   }
 
-  return NextResponse.json({ ok: true, sent, failed });
+  return NextResponse.json({ ok: true, sent, failed, suppressed });
 }
