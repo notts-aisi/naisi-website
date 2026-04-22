@@ -14,7 +14,10 @@ import { normalizeTask, type TaskDoc, type TaskSource } from "@/lib/firestore/ta
 
 type UseTasksArgs = {
   projectId?: string;
-  assigneeUid?: string;
+  /** Tasks where this uid is in `completerUids`. Reviewer-only membership is
+   * not yet surfaced via this hook; the My Work page will gain a reviewer
+   * merge in a follow-up. */
+  completerUid?: string;
   source?: TaskSource;
   includeArchived?: boolean;
   /**
@@ -38,8 +41,8 @@ export function useTasks(args: UseTasksArgs = {}) {
     const db = getClientDb();
     const constraints: QueryConstraint[] = [];
     if (stable.projectId) constraints.push(where("projectId", "==", stable.projectId));
-    if (stable.assigneeUid) {
-      constraints.push(where("assigneeUids", "array-contains", stable.assigneeUid));
+    if (stable.completerUid) {
+      constraints.push(where("completerUids", "array-contains", stable.completerUid));
     }
     if (stable.source) constraints.push(where("source", "==", stable.source));
     if (stable.visibility) constraints.push(where("visibility", "==", stable.visibility));

@@ -52,6 +52,9 @@ src/
 - **Two-layer auth gate**: `src/proxy.ts` does a fast session-cookie presence check on protected routes. Real role enforcement happens in `(app)/layout.tsx` via `getCurrentUser()` (Admin SDK, reliable).
 - **No `orderBy` on sparse fields**: Firestore drops docs missing the ordered field. Query without orderBy, sort client-side, or only orderBy on fields that are *always* present.
 - **No `undefined` in `setDoc`**: Firestore refuses it. Use the `compact()` helper in `src/auth/signInWithGoogle.ts` before writing.
+- **Main-area width — lessons from a reverted attempt (PR #11, reverted 2026-04-21)**: `AppShell`'s `<main>` caps at `max-width: 64rem` (1024px). A per-route opt-in for a wider 100rem cap was tried so kanban pages could fill fullscreen — scrapped because:
+  1. **Authed pages must not overflow horizontally.** `TaskBoard`'s fixed-width columns overflow at intermediate viewports, and `AppShell`'s sidebar is only `position: sticky` vertically (not horizontally) — so horizontal document scroll orphans the nav and the user has to scroll past empty space to reach it. Worse UX than the narrow cap it was trying to fix.
+  2. **Fix the page, not the shell.** Wide-data views (kanban, courses grid, booking calendar, wide tables) must handle their own responsiveness — internal horizontal scroll *inside their own container*, collapsing columns, or stackable layouts — before the shell's cap is ever revisited. If a future wide-cap attempt is made, the sidebar likely needs to become viewport-fixed (not just sticky) so horizontal scroll can't orphan it.
 
 ## Data model (Firestore)
 

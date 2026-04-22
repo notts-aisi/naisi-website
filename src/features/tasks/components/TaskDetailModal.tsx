@@ -11,6 +11,9 @@ import {
   TASK_PRIORITY_LABELS,
   TASK_STATUSES,
   TASK_STATUS_LABELS,
+  canMarkTaskDone,
+  getSubtaskApprovalStatus,
+  type TaskDoc,
   type TaskPriority,
   type TaskStatus,
   type TaskVisibility,
@@ -27,8 +30,14 @@ import {
   updateTask,
 } from "../taskMutations";
 import AssigneePicker from "./AssigneePicker";
+import AttachmentList from "./AttachmentList";
+import AttachmentUpload from "./AttachmentUpload";
+import CommentThread from "./CommentThread";
 import DueDateBadge from "./DueDateBadge";
 import SubtaskList from "./SubtaskList";
+import { useCommentsAndActivity } from "../hooks/useCommentsAndActivity";
+import { useTaskAttachments } from "../hooks/useTaskAttachments";
+import type { ActivityDoc } from "@/lib/firestore/taskActivity";
 
 type Props = {
   taskId: string;
@@ -36,6 +45,11 @@ type Props = {
   viewerRole: Role;
   projects: ProjectDoc[];
   users: UserDoc[];
+  /** Optional seed from the parent's `useTasks` cache so the modal renders
+   *  the already-known task instantly instead of flashing "Loading task…"
+   *  while the first Firestore snapshot arrives. Live edits still stream
+   *  through `useTask`'s onSnapshot after mount. */
+  initialTask?: TaskDoc | null;
   onClose: () => void;
 };
 
@@ -50,19 +64,60 @@ export default function TaskDetailModal({
   viewerRole,
   projects,
   users,
+  initialTask,
   onClose,
 }: Props) {
-  const { task, loading } = useTask(taskId);
+  const { task, loading } = useTask(taskId, initialTask);
+  const { feed, activity, loading: feedLoading } = useCommentsAndActivity(taskId);
   const isAdmin = viewerRole === "admin";
   const isCommittee = viewerRole === "committee" || viewerRole === "admin";
-  const isAssignee = task ? task.assigneeUids.includes(viewerUid) : false;
+  const isCompleter = task ? task.completerUids.includes(viewerUid) : false;
+  const isTaskReviewer = task ? task.reviewerUids.includes(viewerUid) : false;
+  // A viewer is a reviewer if they're on task-level reviewerUids OR on any
+  // subtask's per-row reviewerUids. This governs matrix visibility.
+  const isAnyReviewer =
+    isTaskReviewer ||
+    (task?.subtasks.some((s) => s.reviewerUids.includes(viewerUid)) ?? false);
   const isCreator = task ? task.creatorUid === viewerUid : false;
   const canEditAll =
     !!task &&
     (isAdmin ||
       (isCommittee && task.visibility === "committee") ||
       (task.source === "personal" && isCreator));
-  const canEditAssigneeFields = canEditAll || isAssignee;
+  // Task-level completer / reviewer rosters are stricter than the broader
+  // `canEditAll` — per Phase 3 policy, once a task is created, only admins
+  // can reshape its top-level rosters. Committee creators set the roster
+  // at creation via TaskForm; post-creation it's locked to admin. Personal
+  // tasks stay editable by their creator (who is their only completer).
+  const canEditTaskRoster =
+    !!task && (isAdmin || (task.source === "personal" && isCreator));
+  // Completers and reviewers both can tick subtasks and change status.
+  // Reviewers in this band is what lets them tick their review step even if
+  // they're not on the completer list.
+  const canEditProgressFields = canEditAll || isCompleter || isAnyReviewer;
+  // Matrix + reviewer section visibility: admin + creator + any reviewer.
+  // Completers who aren't also reviewers see the row state colours only, not
+  // the per-reviewer columns or the reviewer picker.
+  const canSeeReviewerSection = isAdmin || isCreator || isAnyReviewer;
+
+  // Pending sent_for_review — derive from activity so SubtaskRow can tint
+  // pending rows orange and the composer can gate its own button. Task-level
+  // pending is used for the Done-status disable logic; subtask-level is per-row.
+  // pendingTaskReview is computed here too (the helper returns both halves),
+  // but right now only pendingSubtaskIds is consumed — for row tinting. The
+  // task-level pending is surfaced in the CommentComposer via its own local
+  // derivation. Leaving the helper returning both so Phase 3 (which will
+  // also disable the Done option while a task-level review is outstanding)
+  // doesn't have to refactor.
+  const { pendingSubtaskIds } = computePendingReview(activity, task);
+  const doneGate = task ? canMarkTaskDone(task) : { ok: false, reason: null };
+  // Status = "done" is reviewer/admin/creator-only on tasks with reviewers.
+  // Reviewer-less tasks fall back to admin + creator.
+  const canMarkDone = task
+    ? task.reviewerUids.length > 0
+      ? isAdmin || isTaskReviewer || isCreator
+      : isAdmin || isCreator
+    : false;
 
   const [titleDraft, setTitleDraft] = useState("");
   const [descDraft, setDescDraft] = useState("");
@@ -162,9 +217,17 @@ export default function TaskDetailModal({
     }
   }
 
-  async function onAssigneesChange(uids: string[]) {
+  async function onCompletersChange(uids: string[]) {
     try {
-      await updateTask(task!.id, { assigneeUids: uids });
+      await updateTask(task!.id, { completerUids: uids });
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function onReviewersChange(uids: string[]) {
+    try {
+      await updateTask(task!.id, { reviewerUids: uids });
     } catch (err) {
       console.error(err);
     }
@@ -204,9 +267,12 @@ export default function TaskDetailModal({
         style={{
           display: "grid",
           gridTemplateColumns: "minmax(0, 2fr) minmax(16rem, 1fr)",
+          // Fixed row so children with overflow can bound their content. Using
+          // maxHeight without an explicit row height lets the grid grow with
+          // content and breaks internal scroll (the main column never knows
+          // it's constrained).
+          gridTemplateRows: "85vh",
           gap: 0,
-          maxHeight: "85vh",
-          overflow: "hidden",
         }}
       >
         {/* Main column */}
@@ -214,6 +280,10 @@ export default function TaskDetailModal({
           style={{
             padding: "var(--space-6)",
             overflowY: "auto",
+            // min-height: 0 is the classic grid/flex scroll fix — without it a
+            // scrollable child inherits its intrinsic height instead of the
+            // grid row's bounded height.
+            minHeight: 0,
             display: "flex",
             flexDirection: "column",
             gap: "var(--space-5)",
@@ -270,11 +340,30 @@ export default function TaskDetailModal({
               <Select
                 value={task.status}
                 onChange={(e) => onStatusChange(e.target.value as TaskStatus)}
-                disabled={!canEditAssigneeFields}
+                disabled={!canEditProgressFields}
                 aria-label="Status"
+                title={
+                  !canMarkDone && task.status !== "done"
+                    ? "Only a reviewer, admin, or creator (on reviewer-less tasks) can mark Done"
+                    : !doneGate.ok
+                      ? (doneGate.reason ?? undefined)
+                      : undefined
+                }
               >
                 {TASK_STATUSES.map((s) => (
-                  <option key={s} value={s}>
+                  <option
+                    key={s}
+                    value={s}
+                    // Block "done" when (a) viewer isn't eligible, or
+                    // (b) the per-subtask + global coverage gates aren't met.
+                    // Always allow the current value to render so the select
+                    // doesn't show a phantom option when already "done".
+                    disabled={
+                      s === "done" &&
+                      task.status !== "done" &&
+                      (!canMarkDone || !doneGate.ok)
+                    }
+                  >
                     {TASK_STATUS_LABELS[s]}
                   </option>
                 ))}
@@ -388,21 +477,45 @@ export default function TaskDetailModal({
                 />
               </div>
             )}
-            <SubtaskList task={task} canEdit={canEditAssigneeFields} />
+            {canSeeReviewerSection && task.reviewerUids.length > 0 && (
+              <ReviewerProgressSummary task={task} users={users} />
+            )}
+            <SubtaskList
+              task={task}
+              users={users}
+              viewerUid={viewerUid}
+              viewerRole={viewerRole}
+              canEdit={canEditProgressFields}
+              canEditStructure={canEditAll}
+              canEditRoster={isAdmin || isCreator}
+              showMatrix={canSeeReviewerSection}
+              pendingReviewSubtaskIds={pendingSubtaskIds}
+            />
           </section>
 
           <section>
             <h3 style={sectionLabel}>Attachments</h3>
-            <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
-              File attachments ship in Phase 3.
-            </p>
+            <AttachmentsSection
+              taskId={task.id}
+              users={users}
+              viewerUid={viewerUid}
+              viewerIsAdmin={isAdmin}
+              canParticipate={canEditProgressFields}
+            />
           </section>
 
           <section>
-            <h3 style={sectionLabel}>Comments</h3>
-            <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
-              Discussion thread ships in Phase 2.
-            </p>
+            <h3 style={sectionLabel}>Discussion</h3>
+            <CommentThread
+              task={task}
+              users={users}
+              viewerUid={viewerUid}
+              viewerIsAdmin={isAdmin}
+              canParticipate={canEditProgressFields}
+              feed={feed}
+              activity={activity}
+              feedLoading={feedLoading}
+            />
           </section>
         </div>
 
@@ -413,6 +526,7 @@ export default function TaskDetailModal({
             background: "var(--color-bg-elevated)",
             borderLeft: "1px solid var(--color-border)",
             overflowY: "auto",
+            minHeight: 0,
             display: "flex",
             flexDirection: "column",
             gap: "var(--space-5)",
@@ -443,22 +557,29 @@ export default function TaskDetailModal({
           )}
 
           <div>
-            <h4 style={sectionLabel}>Assignees</h4>
-            {canEditAll ? (
+            <h4 style={sectionLabel}>Completers</h4>
+            {/* Task-level roster edits are admin-only post-creation.
+                Committee creators set rosters via TaskForm at creation;
+                they can't rewrite them afterwards. Personal-task creators
+                retain edit rights on their own tasks. Completer self-
+                service for SUBTASK-level membership still works via the
+                +Me / −Me buttons on each row. */}
+            {canEditTaskRoster ? (
               <AssigneePicker
                 users={users}
-                selected={task.assigneeUids}
-                onChange={onAssigneesChange}
-                max={TASK_FIELD_LIMITS.maxAssignees}
+                selected={task.completerUids}
+                onChange={onCompletersChange}
+                max={TASK_FIELD_LIMITS.maxCompleters}
+                role="completer"
               />
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
-                {task.assigneeUids.length === 0 && (
+                {task.completerUids.length === 0 && (
                   <span style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
                     Unassigned
                   </span>
                 )}
-                {task.assigneeUids.map((uid) => {
+                {task.completerUids.map((uid) => {
                   const u = users.find((x) => x.uid === uid);
                   return (
                     <span key={uid} style={{ fontSize: "var(--text-sm)" }}>
@@ -469,6 +590,40 @@ export default function TaskDetailModal({
               </div>
             )}
           </div>
+
+          {/* Reviewer picker + read-only list are hidden from completers
+              and non-involved committee. Admin, creator, and anyone who's
+              actually a reviewer on this task see it. */}
+          {canSeeReviewerSection && (
+          <div>
+            <h4 style={sectionLabel}>Reviewers</h4>
+            {canEditTaskRoster ? (
+              <AssigneePicker
+                users={users}
+                selected={task.reviewerUids}
+                onChange={onReviewersChange}
+                max={TASK_FIELD_LIMITS.maxReviewers}
+                role="reviewer"
+              />
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+                {task.reviewerUids.length === 0 && (
+                  <span style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
+                    No reviewer set
+                  </span>
+                )}
+                {task.reviewerUids.map((uid) => {
+                  const u = users.find((x) => x.uid === uid);
+                  return (
+                    <span key={uid} style={{ fontSize: "var(--text-sm)" }}>
+                      {u?.displayName ?? u?.email ?? uid}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          )}
 
           {isAdmin && (
             <div>
@@ -496,7 +651,14 @@ export default function TaskDetailModal({
             <div style={{ textTransform: "capitalize" }}>Kind: {task.kind.replace("-", " ")}</div>
           </div>
 
-          {canEditAll && (
+          {/* Archive + delete are both creator/admin only. Archive is
+              reversible (there's an unarchive button) but it removes the
+              task from everyone else's default view, so a completer
+              archiving a task they're assigned to would feel like it
+              disappeared out from under the rest of the team. Matches the
+              delete gate for consistency — "big visibility-altering
+              actions require elevated privilege". */}
+          {(isAdmin || isCreator) && (
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
               <Button size="sm" variant="secondary" onClick={handleArchiveToggle}>
                 {task.archived ? "Unarchive" : "Archive"}
@@ -510,6 +672,142 @@ export default function TaskDetailModal({
       </div>
     </Overlay>
   );
+}
+
+/**
+ * Small local wrapper so the AttachmentList/Upload hook call (useTaskAttachments)
+ * is colocated with the section that uses it — keeps the main modal body
+ * uncluttered and avoids lifting attachment state higher than needed.
+ */
+function AttachmentsSection({
+  taskId,
+  users,
+  viewerUid,
+  viewerIsAdmin,
+  canParticipate,
+}: {
+  taskId: string;
+  users: UserDoc[];
+  viewerUid: string;
+  viewerIsAdmin: boolean;
+  canParticipate: boolean;
+}) {
+  const { attachments } = useTaskAttachments(taskId);
+  // Skip the "Loading attachments…" banner — the list is empty for most
+  // tasks, and the few that have attachments will see the rows pop in
+  // within ~200ms. Loud banners make the modal feel slow even when the
+  // task body already rendered instantly from the parent seed.
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+      <AttachmentList
+        taskId={taskId}
+        attachments={attachments}
+        users={users}
+        viewerUid={viewerUid}
+        viewerIsAdmin={viewerIsAdmin}
+      />
+      {canParticipate && <AttachmentUpload taskId={taskId} />}
+    </div>
+  );
+}
+
+/**
+ * Summary strip above the subtask list: "Alice 3/4 ✓ · Bob 2/4 ✓ (1 ?)".
+ * Only rendered when the viewer can see the matrix (admin / creator / reviewer).
+ */
+function ReviewerProgressSummary({
+  task,
+  users,
+}: {
+  task: TaskDoc;
+  users: UserDoc[];
+}) {
+  const stats = task.reviewerUids.map((uid) => {
+    let approvedCount = 0;
+    let questionCount = 0;
+    let totalRequired = 0;
+    for (const s of task.subtasks) {
+      const status = getSubtaskApprovalStatus(s, task.reviewerUids);
+      if (!status.required.includes(uid)) continue;
+      totalRequired += 1;
+      if (status.approved.includes(uid)) approvedCount += 1;
+      else if (status.questioned.includes(uid)) questionCount += 1;
+    }
+    const user = users.find((u) => u.uid === uid);
+    const name = user?.displayName ?? user?.email ?? uid;
+    return { uid, name, approvedCount, questionCount, totalRequired };
+  });
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "var(--space-3)",
+        padding: "0.5rem 0.75rem",
+        marginBottom: "var(--space-2)",
+        background: "var(--color-bg-elevated)",
+        border: "1px solid var(--color-border)",
+        borderRadius: "var(--radius-md)",
+        fontSize: "var(--text-xs)",
+      }}
+    >
+      {stats.map((s) => {
+        const done = s.totalRequired > 0 && s.approvedCount === s.totalRequired;
+        return (
+          <span
+            key={s.uid}
+            style={{
+              color: done
+                ? "var(--color-success, #16a34a)"
+                : s.questionCount > 0
+                  ? "var(--color-warning, var(--color-text))"
+                  : "var(--color-text-muted)",
+            }}
+          >
+            <strong style={{ color: "var(--color-text)" }}>{s.name}</strong>{" "}
+            {s.approvedCount}/{s.totalRequired} ✓
+            {s.questionCount > 0 && ` (${s.questionCount} ?)`}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Walk the activity stream to find the latest `sent_for_review` per target
+ * (subtask id, or null for task-level). A target is considered "pending"
+ * until its resolution event — subtask done, or task status = done.
+ */
+function computePendingReview(
+  activity: ActivityDoc[],
+  task: TaskDoc | null,
+): { pendingTaskReview: boolean; pendingSubtaskIds: Set<string> } {
+  if (!task) return { pendingTaskReview: false, pendingSubtaskIds: new Set() };
+  let latestTask: ActivityDoc | null = null;
+  const latestBySubtask = new Map<string, ActivityDoc>();
+  for (const a of activity) {
+    if (a.kind !== "sent_for_review") continue;
+    const subId =
+      typeof a.payload?.subtaskId === "string" ? (a.payload.subtaskId as string) : null;
+    if (subId === null) {
+      if (!latestTask || (a.createdAt?.getTime() ?? 0) > (latestTask.createdAt?.getTime() ?? 0)) {
+        latestTask = a;
+      }
+    } else {
+      const prev = latestBySubtask.get(subId);
+      if (!prev || (a.createdAt?.getTime() ?? 0) > (prev.createdAt?.getTime() ?? 0)) {
+        latestBySubtask.set(subId, a);
+      }
+    }
+  }
+  const pendingTaskReview = Boolean(latestTask && task.status !== "done");
+  const pendingSubtaskIds = new Set<string>();
+  for (const [subId] of latestBySubtask) {
+    const sub = task.subtasks.find((s) => s.id === subId);
+    if (sub && !sub.done) pendingSubtaskIds.add(subId);
+  }
+  return { pendingTaskReview, pendingSubtaskIds };
 }
 
 const sectionLabel: React.CSSProperties = {
@@ -569,12 +867,20 @@ function Overlay({ children, onClose }: { children: React.ReactNode; onClose: ()
             position: "absolute",
             top: "var(--space-3)",
             right: "var(--space-3)",
-            background: "transparent",
-            border: "none",
-            color: "var(--color-text-muted)",
-            fontSize: "var(--text-lg)",
+            width: "2rem",
+            height: "2rem",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "var(--color-bg)",
+            border: "1px solid var(--color-border)",
+            borderRadius: "999px",
+            color: "var(--color-text)",
+            fontSize: "var(--text-md)",
+            lineHeight: 1,
             cursor: "pointer",
-            zIndex: 1,
+            zIndex: 2,
+            boxShadow: "var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.15))",
           }}
         >
           ✕

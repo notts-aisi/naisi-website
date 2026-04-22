@@ -3,29 +3,79 @@
 import { useMemo, useState } from "react";
 import type { UserDoc } from "@/lib/firestore/users";
 
+export type PickerRole = "completer" | "reviewer";
+
+type RoleFilter = "all" | "admin" | "committee" | "member";
+const ROLE_FILTERS: RoleFilter[] = ["all", "admin", "committee", "member"];
+const ROLE_FILTER_LABELS: Record<RoleFilter, string> = {
+  all: "All",
+  admin: "Admins",
+  committee: "Committee",
+  member: "Members",
+};
+
 type Props = {
   users: UserDoc[];
   selected: string[];
   onChange: (uids: string[]) => void;
   label?: string;
   max?: number;
+  role?: PickerRole;
+  /** When true, show a role-filter chip strip above the search input. */
+  showRoleFilter?: boolean;
+  /** Restrict the picker to a specific set of uids. Used on subtask-level
+   *  pickers so assignees can only come from `task.completerUids` and
+   *  reviewers only from `task.reviewerUids` — you can't accidentally drag
+   *  a non-roster person onto a single subtask. When the set is empty,
+   *  the picker renders an inert hint instead of an empty list. */
+  limitToUids?: string[];
+  /** Copy shown when `limitToUids` is an empty array (so the UI explains
+   *  why the picker is empty rather than just being bare). */
+  emptyLimitHint?: string;
 };
 
-export default function AssigneePicker({ users, selected, onChange, label, max = 10 }: Props) {
+const ROLE_COPY: Record<PickerRole, { verb: string; countLabel: string }> = {
+  completer: { verb: "assigned", countLabel: "completer" },
+  reviewer: { verb: "reviewing", countLabel: "reviewer" },
+};
+
+export default function AssigneePicker({
+  users,
+  selected,
+  onChange,
+  label,
+  max = 10,
+  role = "completer",
+  showRoleFilter = false,
+  limitToUids,
+  emptyLimitHint,
+}: Props) {
   const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
+
+  const limitSet = useMemo(
+    () => (limitToUids ? new Set(limitToUids) : null),
+    [limitToUids],
+  );
 
   const sorted = useMemo(() => {
     const term = search.trim().toLowerCase();
-    const withName = users.map((u) => ({
-      user: u,
-      name: (u.displayName ?? u.email ?? u.uid).toLowerCase(),
-    }));
-    const filtered = term
-      ? withName.filter((x) => x.name.includes(term))
-      : withName;
-    filtered.sort((a, b) => a.name.localeCompare(b.name));
-    return filtered.map((x) => x.user);
-  }, [users, search]);
+    const matches = users.filter((u) => {
+      if (limitSet && !limitSet.has(u.uid)) return false;
+      if (roleFilter !== "all" && u.role !== roleFilter) return false;
+      if (term) {
+        const hay = (u.displayName ?? u.email ?? u.uid).toLowerCase();
+        if (!hay.includes(term)) return false;
+      }
+      return true;
+    });
+    matches.sort((a, b) => {
+      const na = (a.displayName ?? a.email ?? a.uid).toLowerCase();
+      const nb = (b.displayName ?? b.email ?? b.uid).toLowerCase();
+      return na.localeCompare(nb);
+    });
+    return matches;
+  }, [users, search, roleFilter, limitSet]);
 
   function toggle(uid: string) {
     if (selected.includes(uid)) {
@@ -59,8 +109,14 @@ export default function AssigneePicker({ users, selected, onChange, label, max =
                 gap: "var(--space-1)",
                 padding: "0.25rem 0.55rem",
                 borderRadius: "var(--radius-pill)",
-                background: "var(--color-accent-soft)",
-                color: "var(--color-accent)",
+                background:
+                  role === "reviewer"
+                    ? "var(--color-warning-soft, var(--color-surface-hover))"
+                    : "var(--color-accent-soft)",
+                color:
+                  role === "reviewer"
+                    ? "var(--color-warning, var(--color-text))"
+                    : "var(--color-accent)",
                 fontSize: "var(--text-xs)",
                 border: "none",
                 cursor: "pointer",
@@ -70,6 +126,33 @@ export default function AssigneePicker({ users, selected, onChange, label, max =
               <span aria-hidden>✕</span>
             </button>
           ))}
+        </div>
+      )}
+
+      {showRoleFilter && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-1)" }}>
+          {ROLE_FILTERS.map((rf) => {
+            const active = roleFilter === rf;
+            return (
+              <button
+                key={rf}
+                type="button"
+                onClick={() => setRoleFilter(rf)}
+                style={{
+                  padding: "0.2rem 0.6rem",
+                  borderRadius: "var(--radius-pill)",
+                  border: "1px solid var(--color-border)",
+                  background: active ? "var(--color-accent-soft)" : "transparent",
+                  color: active ? "var(--color-accent)" : "var(--color-text-muted)",
+                  fontSize: "var(--text-xs)",
+                  cursor: "pointer",
+                  fontWeight: active ? 600 : 400,
+                }}
+              >
+                {ROLE_FILTER_LABELS[rf]}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -105,7 +188,9 @@ export default function AssigneePicker({ users, selected, onChange, label, max =
               fontSize: "var(--text-sm)",
             }}
           >
-            No matches.
+            {limitSet && limitSet.size === 0 && emptyLimitHint
+              ? emptyLimitHint
+              : "No matches."}
           </p>
         )}
         {sorted.map((u) => {
@@ -144,7 +229,7 @@ export default function AssigneePicker({ users, selected, onChange, label, max =
         })}
       </div>
       <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-subtle)" }}>
-        {selected.length}/{max} assigned
+        {selected.length}/{max} {ROLE_COPY[role].verb}
       </span>
     </div>
   );

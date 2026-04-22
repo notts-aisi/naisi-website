@@ -55,65 +55,43 @@ export const TASK_KIND_LABELS: Record<TaskKind, string> = {
   "fellowship-weekly": "Fellowship weekly",
 };
 
-/**
- * Subtask templates applied automatically at task creation for kinds that have
- * a well-defined checklist. Empty array = no template (just the tasks-manager
- * subtasks users add manually). Future: attendee RSVP + capacity live on the
- * task itself, not in subtasks — tracked separately when the booking feature
- * lands.
- */
-export const TASK_KIND_SUBTASK_TEMPLATES: Record<TaskKind, string[]> = {
-  generic: [],
-  "project-work": [],
-  "fellowship-weekly": [],
-  social: [
-    "Pick date + time",
-    "Book venue / pick location",
-    "Create poster or graphic",
-    "Announce on Instagram",
-    "Announce in Slack / Discord",
-    "Confirm rough numbers",
-    "Run the social",
-    "Post short debrief / photo",
-  ],
-  event: [
-    "Confirm date + speaker(s)",
-    "Book venue",
-    "Create poster + any materials",
-    "Open sign-ups / RSVP (when available)",
-    "Announce on Instagram",
-    "Announce in Slack / Discord",
-    "Send reminder day-before",
-    "Run event",
-    "Share recording / resources afterwards",
-  ],
-  "instagram-post": [
-    "Draft caption",
-    "Create visual / carousel",
-    "Copy approved",
-    "Visual approved",
-    "Scheduled in planner",
-    "Posted",
-    "Engagement check next day",
-  ],
-  "instagram-story": [
-    "Create visual",
-    "Draft caption / stickers",
-    "Post story",
-    "Check replies + engagement",
-  ],
-};
-
 export const TASK_FIELD_LIMITS = {
   title: 120,
   description: 4000,
   subtaskTitle: 160,
+  blockName: 60,
   tag: 40,
   maxSubtasks: 50,
-  maxAssignees: 10,
+  maxBlocks: 10,
+  maxCompleters: 10,
+  maxReviewers: 5,
+  maxAssigneesPerSubtask: 10,
+  maxReviewersPerSubtask: 5,
+  maxBlockedBy: 10,
   maxTags: 8,
   commentBody: 2000,
 } as const;
+
+/**
+ * Completion-phase container. A task's `subtasks` array stays flat; block
+ * membership is carried on each subtask via `blockId`. `sealState` gates
+ * the completer lock-in — pre-seal the completers can freely self-add or
+ * -remove from subtasks in this block; post-seal they can only self-ADD
+ * (cover-for-sick-teammate path). Auto-spawned review subtasks land on
+ * `sealState === "sealed"`.
+ */
+export type TaskBlock = {
+  id: string;
+  name: string;
+  order: number;
+  sealState: "open" | "sealed";
+  sealedAt: Date | null;
+  /** Admin UID who force-sealed this block, or null if it sealed via
+   *  consensus. Purely informational — doesn't affect gating. */
+  forceSealedByUid: string | null;
+};
+
+export type BlockConsentMap = Record<string, { consentingCompleterUids: string[] }>;
 
 export type Subtask = {
   id: string;
@@ -121,6 +99,38 @@ export type Subtask = {
   done: boolean;
   doneAt: Date | null;
   doneByUid: string | null;
+  assigneeUids: string[];
+  /** Reviewers opted into approving this specific subtask. Empty → falls
+   *  back to the task-level reviewerUids at render/gate time. */
+  reviewerUids: string[];
+  blockedBy: string[];
+  /** Reviewer UIDs who have ticked ✓ on this subtask. Per review-matrix
+   *  design: each reviewer's uid can appear in AT MOST ONE of
+   *  approvedByReviewerUids / questionedByReviewerUids / rejectedByReviewerUids
+   *  — they're mutually exclusive states. */
+  approvedByReviewerUids: string[];
+  /** Reviewer UIDs who have flagged ❓ on this subtask — "I have a question,
+   *  partially reviewed". Blocks their overall signoff (all-my-columns-✓)
+   *  but not individual ticks on other subtasks. */
+  questionedByReviewerUids: string[];
+  /** Reviewer UIDs who have flagged ❌ on this subtask. Holds the row in a
+   *  red "rejected" state until the completer re-does the work and the
+   *  reviewer re-reviews. Wired into the 4-state approval popover in Phase 3
+   *  PR 2; field lands here now so the data model only migrates once. */
+  rejectedByReviewerUids: string[];
+  /** Phase 3 block membership. `null` = ungrouped (task has no blocks, or
+   *  subtask sits at the task root). Migration wraps every pre-Phase-3
+   *  subtask into a single default block. */
+  blockId: string | null;
+  /** Subtask-level lock — admin-only toggle. Independent of block-level
+   *  seal, so an admin can freeze an individual subtask's assignee list
+   *  while the rest of the block stays open. */
+  sealState: "open" | "sealed";
+  sealedAt: Date | null;
+  /** Auto-spawned review subtasks carry `roleHint: "reviewer"` so the UI
+   *  can style them distinctly (pill / divider). `"completer"` is for
+   *  template-level hints; `null` for regular user-added subtasks. */
+  roleHint: "completer" | "reviewer" | null;
 };
 
 export type SubtaskStats = {
@@ -141,18 +151,29 @@ export type TaskDoc = {
   kind: TaskKind;
   projectId: string | null;
   creatorUid: string;
-  assigneeUids: string[];
+  completerUids: string[];
+  reviewerUids: string[];
   status: TaskStatus;
   priority: TaskPriority;
   dueDate: Date | null;
   archived: boolean;
   visibility: TaskVisibility;
   subtasks: Subtask[];
+  /** Phase 3. Ordered completion phases. Empty array = legacy task with no
+   *  blocks (all subtasks carry `blockId: null`). Migration inserts a single
+   *  default block onto pre-Phase-3 tasks. */
+  blocks: TaskBlock[];
+  /** Per-block running tally of completers who've ticked "Lock in" on the
+   *  current allocation. Cleared to `[]` on any roster change to a subtask
+   *  in that block while the block is still open. On reaching N/N, the
+   *  block seals and this record's usefulness ends (kept for audit). */
+  blockConsents: BlockConsentMap;
   subtaskStats: SubtaskStats;
   attachmentCount: number;
   commentCount: number;
   tags: string[];
   sourceRef: SourceRef;
+  sourceTemplateId: string | null;
   createdAt: Date | null;
   updatedAt: Date | null;
   completedAt: Date | null;
@@ -167,19 +188,73 @@ function tsToDate(v: unknown): Date | null {
   return typeof obj?.toDate === "function" ? obj.toDate() : null;
 }
 
+function stringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return (v as unknown[]).filter((s): s is string => typeof s === "string");
+}
+
 function normalizeSubtask(raw: unknown): Subtask | null {
   if (!raw || typeof raw !== "object") return null;
   const s = raw as Raw;
   const id = typeof s.id === "string" ? s.id : null;
   const title = typeof s.title === "string" ? s.title : null;
   if (!id || !title) return null;
+  const rawRoleHint = s.roleHint;
+  const roleHint: Subtask["roleHint"] =
+    rawRoleHint === "completer" || rawRoleHint === "reviewer" ? rawRoleHint : null;
+  const rawSealState = s.sealState;
+  const sealState: Subtask["sealState"] =
+    rawSealState === "sealed" ? "sealed" : "open";
   return {
     id,
     title,
     done: Boolean(s.done),
     doneAt: tsToDate(s.doneAt),
     doneByUid: typeof s.doneByUid === "string" ? s.doneByUid : null,
+    assigneeUids: stringArray(s.assigneeUids),
+    reviewerUids: stringArray(s.reviewerUids),
+    blockedBy: stringArray(s.blockedBy),
+    approvedByReviewerUids: stringArray(s.approvedByReviewerUids),
+    questionedByReviewerUids: stringArray(s.questionedByReviewerUids),
+    rejectedByReviewerUids: stringArray(s.rejectedByReviewerUids),
+    blockId: typeof s.blockId === "string" ? s.blockId : null,
+    sealState,
+    sealedAt: tsToDate(s.sealedAt),
+    roleHint,
   };
+}
+
+function normalizeBlock(raw: unknown): TaskBlock | null {
+  if (!raw || typeof raw !== "object") return null;
+  const b = raw as Raw;
+  const id = typeof b.id === "string" ? b.id : null;
+  const name = typeof b.name === "string" ? b.name : null;
+  if (!id || !name) return null;
+  const sealState: TaskBlock["sealState"] =
+    b.sealState === "sealed" ? "sealed" : "open";
+  const order = typeof b.order === "number" ? b.order : 0;
+  return {
+    id,
+    name,
+    order,
+    sealState,
+    sealedAt: tsToDate(b.sealedAt),
+    forceSealedByUid:
+      typeof b.forceSealedByUid === "string" ? b.forceSealedByUid : null,
+  };
+}
+
+function normalizeBlockConsents(raw: unknown): BlockConsentMap {
+  if (!raw || typeof raw !== "object") return {};
+  const out: BlockConsentMap = {};
+  for (const [blockId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const cb = value as Raw;
+    out[blockId] = {
+      consentingCompleterUids: stringArray(cb.consentingCompleterUids),
+    };
+  }
+  return out;
 }
 
 function normalizeSourceRef(raw: unknown): SourceRef {
@@ -196,6 +271,11 @@ export function normalizeTask(id: string, data: Raw): TaskDoc {
   const subtasks = rawSubtasks
     .map(normalizeSubtask)
     .filter((s): s is Subtask => s !== null);
+  const rawBlocks = Array.isArray(data.blocks) ? (data.blocks as unknown[]) : [];
+  const blocks = rawBlocks
+    .map(normalizeBlock)
+    .filter((b): b is TaskBlock => b !== null)
+    .sort((a, b) => a.order - b.order);
   const stats = (data.subtaskStats as Raw | undefined) ?? {};
   return {
     id,
@@ -205,25 +285,26 @@ export function normalizeTask(id: string, data: Raw): TaskDoc {
     kind: (data.kind as TaskKind) ?? "generic",
     projectId: (data.projectId as string | null | undefined) ?? null,
     creatorUid: (data.creatorUid as string) ?? "",
-    assigneeUids: Array.isArray(data.assigneeUids)
-      ? (data.assigneeUids as unknown[]).filter((u): u is string => typeof u === "string")
-      : [],
+    completerUids: stringArray(data.completerUids),
+    reviewerUids: stringArray(data.reviewerUids),
     status: (data.status as TaskStatus) ?? "todo",
     priority: (data.priority as TaskPriority) ?? "normal",
     dueDate: tsToDate(data.dueDate),
     archived: Boolean(data.archived),
     visibility: (data.visibility as TaskVisibility) ?? "committee",
     subtasks,
+    blocks,
+    blockConsents: normalizeBlockConsents(data.blockConsents),
     subtaskStats: {
       done: typeof stats.done === "number" ? stats.done : subtasks.filter((s) => s.done).length,
       total: typeof stats.total === "number" ? stats.total : subtasks.length,
     },
     attachmentCount: typeof data.attachmentCount === "number" ? data.attachmentCount : 0,
     commentCount: typeof data.commentCount === "number" ? data.commentCount : 0,
-    tags: Array.isArray(data.tags)
-      ? (data.tags as unknown[]).filter((t): t is string => typeof t === "string")
-      : [],
+    tags: stringArray(data.tags),
     sourceRef: normalizeSourceRef(data.sourceRef),
+    sourceTemplateId:
+      typeof data.sourceTemplateId === "string" ? data.sourceTemplateId : null,
     createdAt: tsToDate(data.createdAt),
     updatedAt: tsToDate(data.updatedAt),
     completedAt: tsToDate(data.completedAt),
@@ -247,4 +328,400 @@ export function isDueSoon(task: TaskDoc, now: Date = new Date()): boolean {
   if (task.status === "done" || task.archived) return false;
   const diff = task.dueDate.getTime() - now.getTime();
   return diff > 0 && diff < 48 * 60 * 60 * 1000;
+}
+
+/**
+ * Effective reviewer set for a given subtask: the subtask's own
+ * reviewerUids if non-empty, otherwise the task-level reviewerUids as a
+ * fallback. An empty effective set means "no reviewer gate on this
+ * subtask" — blue ticks resolve immediately.
+ */
+export function effectiveReviewerUids(
+  subtask: Subtask,
+  taskReviewerUids: string[],
+): string[] {
+  return subtask.reviewerUids.length > 0 ? subtask.reviewerUids : taskReviewerUids;
+}
+
+export type SubtaskApprovalStatus = {
+  /** Reviewers expected to weigh in on this subtask. */
+  required: string[];
+  approved: string[];
+  questioned: string[];
+  /** Reviewers who've placed ❌ — outranks ? and ✓ for row state. Re-review
+   *  clears this (completer re-ticks → reviewer slate resets). */
+  rejected: string[];
+  /** Every required reviewer has placed ✓ AND nobody has rejected. */
+  fullyApproved: boolean;
+  /** At least one required reviewer has placed ✓ — the per-subtask
+   *  threshold for blockedBy resolution. Still false if any reviewer has
+   *  rejected, because a rejection holds the row until re-review. */
+  hasAnyApproval: boolean;
+  /** At least one reviewer has an outstanding ❓. */
+  hasOutstandingQuestion: boolean;
+  /** At least one reviewer has placed ❌. */
+  hasRejection: boolean;
+};
+
+export function getSubtaskApprovalStatus(
+  subtask: Subtask,
+  taskReviewerUids: string[],
+): SubtaskApprovalStatus {
+  const required = effectiveReviewerUids(subtask, taskReviewerUids);
+  const requiredSet = new Set(required);
+  const approved = subtask.approvedByReviewerUids.filter((u) => requiredSet.has(u));
+  const questioned = subtask.questionedByReviewerUids.filter((u) => requiredSet.has(u));
+  const rejected = subtask.rejectedByReviewerUids.filter((u) => requiredSet.has(u));
+  const hasRejection = rejected.length > 0;
+  return {
+    required,
+    approved,
+    questioned,
+    rejected,
+    fullyApproved:
+      required.length > 0 && approved.length === required.length && !hasRejection,
+    hasAnyApproval: approved.length > 0 && !hasRejection,
+    hasOutstandingQuestion: questioned.length > 0,
+    hasRejection,
+  };
+}
+
+/**
+ * A subtask is tickable only when every blockedBy-reference resolves to a
+ * sibling that is (a) `done: true` AND (b) meets its per-subtask approval
+ * threshold (≥1 required reviewer has placed ✓, OR the blocker has no
+ * required reviewers). Unknown blocker ids are fail-safe blocked — better
+ * to lock a row than silently unlock on a dangling ref.
+ */
+export function isSubtaskBlocked(
+  subtask: Subtask,
+  siblings: Subtask[],
+  taskReviewerUids: string[] = [],
+): boolean {
+  if (subtask.blockedBy.length === 0) return false;
+  const byId = new Map(siblings.map((s) => [s.id, s]));
+  return subtask.blockedBy.some((id) => {
+    const blocker = byId.get(id);
+    if (!blocker) return true; // unknown id = stay blocked
+    if (!blocker.done) return true;
+    const status = getSubtaskApprovalStatus(blocker, taskReviewerUids);
+    // Blocker has required reviewers → they must have at least one ✓.
+    if (status.required.length > 0 && !status.hasAnyApproval) return true;
+    return false;
+  });
+}
+
+export type RowState = "neutral" | "blue" | "orange" | "green" | "red";
+
+/**
+ * Derives the colour band for a subtask row given its current state + whether
+ * a sent_for_review has already fired targeting it. Rules (first match wins):
+ *   - red: any required reviewer has placed ❌ (rejection — outranks everything)
+ *   - neutral: not done yet
+ *   - orange: any outstanding ❓, OR sent-for-review pending with approvals incomplete
+ *   - green: fully approved, OR done-with-no-reviewers
+ *   - blue: done but approvals outstanding and no ❓ yet (resting state)
+ *
+ * Rejection outranks the "not done" check because a rejected completer may
+ * still be looking at their ticked row deciding whether to un-tick and re-do
+ * — the red signal is what tells them they need to act.
+ */
+export function subtaskRowState(
+  subtask: Subtask,
+  taskReviewerUids: string[],
+  sentForReviewPending: boolean,
+): RowState {
+  const status = getSubtaskApprovalStatus(subtask, taskReviewerUids);
+  if (status.hasRejection) return "red";
+  if (!subtask.done) return "neutral";
+  if (status.hasOutstandingQuestion) return "orange";
+  if (status.required.length === 0) return "green"; // no review gate
+  if (status.fullyApproved) return "green";
+  if (sentForReviewPending) return "orange";
+  return "blue";
+}
+
+/**
+ * Subtasks grouped for render. Each block gets:
+ *   - `completion`: the work subtasks (non-reviewer-hint)
+ *   - `signoffs`: the auto-spawned reviewer rows (roleHint === "reviewer")
+ *
+ * Rendered as two visually-distinct containers so the review phase reads
+ * as its own thing, not as trailing rows inside the completion block.
+ * Ungrouped subtasks (`blockId === null`) land at the end with `block: null`
+ * and any reviewer-hint ones sit with them in `completion` (shouldn't
+ * happen in practice — review rows are always spawned into a block).
+ */
+export function groupSubtasksByBlock(
+  task: TaskDoc,
+): Array<{ block: TaskBlock | null; completion: Subtask[]; signoffs: Subtask[] }> {
+  const completionByBlock = new Map<string | null, Subtask[]>();
+  const signoffByBlock = new Map<string, Subtask[]>();
+  for (const s of task.subtasks) {
+    const key = s.blockId ?? null;
+    if (s.roleHint === "reviewer" && key !== null) {
+      const list = signoffByBlock.get(key) ?? [];
+      list.push(s);
+      signoffByBlock.set(key, list);
+    } else {
+      const list = completionByBlock.get(key) ?? [];
+      list.push(s);
+      completionByBlock.set(key, list);
+    }
+  }
+  const out: Array<{ block: TaskBlock | null; completion: Subtask[]; signoffs: Subtask[] }> = [];
+  for (const block of task.blocks) {
+    out.push({
+      block,
+      completion: completionByBlock.get(block.id) ?? [],
+      signoffs: signoffByBlock.get(block.id) ?? [],
+    });
+  }
+  const ungrouped = completionByBlock.get(null) ?? [];
+  if (ungrouped.length > 0) {
+    out.push({ block: null, completion: ungrouped, signoffs: [] });
+  }
+  return out;
+}
+
+/**
+ * Successor lookup: the block with the smallest `order` strictly greater than
+ * the given block's. Returns null when the given block is the last one, when
+ * no block with that id exists, or when the task has fewer than two blocks.
+ * Used by the block-gate button to know what to gate on.
+ */
+export function getNextBlock(task: TaskDoc, blockId: string): TaskBlock | null {
+  const current = task.blocks.find((b) => b.id === blockId);
+  if (!current) return null;
+  let next: TaskBlock | null = null;
+  for (const b of task.blocks) {
+    if (b.order <= current.order) continue;
+    if (!next || b.order < next.order) next = b;
+  }
+  return next;
+}
+
+/**
+ * The review subtasks auto-spawned inside a block on seal. Identified by
+ * `roleHint === "reviewer"` + matching blockId. Used by block-gate apply
+ * to know what to add to downstream subtasks' blockedBy.
+ */
+export function getBlockReviewSubtaskIds(task: TaskDoc, blockId: string): string[] {
+  return task.subtasks
+    .filter((s) => s.blockId === blockId && s.roleHint === "reviewer")
+    .map((s) => s.id);
+}
+
+/**
+ * Gate state for the "Gate next block on reviews" button: true when every
+ * subtask in the next block contains every review-subtask id from this
+ * block in its `blockedBy`. Used to drive the Apply/Clear toggle.
+ */
+export function isBlockGateApplied(task: TaskDoc, blockId: string): boolean {
+  const nextBlock = getNextBlock(task, blockId);
+  if (!nextBlock) return false;
+  const reviewIds = getBlockReviewSubtaskIds(task, blockId);
+  if (reviewIds.length === 0) return false;
+  const nextSubtasks = task.subtasks.filter((s) => s.blockId === nextBlock.id);
+  if (nextSubtasks.length === 0) return false;
+  return nextSubtasks.every((s) =>
+    reviewIds.every((rid) => s.blockedBy.includes(rid)),
+  );
+}
+
+export type BlockConsensusState = {
+  /** Completers whose consent is required for this block to seal — mirrors
+   *  `task.completerUids` at the moment of evaluation. Zero-length means
+   *  "no completers on task" → vacuously sealed. */
+  required: string[];
+  consenting: string[];
+  /** `required.length === 0 || consenting ⊇ required`. Consumers use this
+   *  to drive the "Lock in" button → seal transition. */
+  allConsented: boolean;
+};
+
+export function getBlockConsensusState(
+  task: TaskDoc,
+  blockId: string,
+): BlockConsensusState {
+  const required = task.completerUids;
+  const record = task.blockConsents[blockId];
+  const consenting = (record?.consentingCompleterUids ?? []).filter((u) =>
+    required.includes(u),
+  );
+  const allConsented = required.length === 0
+    ? true
+    : required.every((u) => consenting.includes(u));
+  return { required, consenting, allConsented };
+}
+
+/**
+ * Effective reviewer set for a block: union of every subtask.reviewerUids on
+ * non-review-hint subtasks inside this block. Falls back to task-level
+ * reviewerUids if the union is empty. Used by the auto-spawn logic (PR 2)
+ * and by the block-gate button enablement.
+ */
+export function getBlockEffectiveReviewerUids(
+  task: TaskDoc,
+  blockId: string,
+): string[] {
+  const out = new Set<string>();
+  for (const s of task.subtasks) {
+    if (s.blockId !== blockId) continue;
+    if (s.roleHint === "reviewer") continue;
+    for (const u of s.reviewerUids) out.add(u);
+  }
+  if (out.size > 0) return Array.from(out);
+  return [...task.reviewerUids];
+}
+
+/**
+ * Gating for a reviewer-signoff subtask (`roleHint: "reviewer"`). The
+ * reviewer can only tick their signoff once they've approved every
+ * completion row in the same block that they're required to review.
+ *
+ * Returns the specific block-mates that are holding the signoff back —
+ * each entry explains why (`not-done`, `not-approved-by-me`, or
+ * `rejected-by-me` for sanity). Empty array means the signoff is
+ * unlocked for this reviewer.
+ *
+ * Ignores other reviewer-hint rows in the same block — those are peer
+ * signoffs, not work to approve.
+ */
+export type ReviewerSignoffBlocker = {
+  id: string;
+  title: string;
+  reason: "not-done" | "not-approved-by-me" | "rejected-by-me";
+};
+
+export function getReviewerSignoffBlockers(
+  task: TaskDoc,
+  signoffSubtask: Subtask,
+  reviewerUid: string,
+): ReviewerSignoffBlocker[] {
+  if (signoffSubtask.roleHint !== "reviewer") return [];
+  if (signoffSubtask.blockId === null) return [];
+  const out: ReviewerSignoffBlocker[] = [];
+  for (const s of task.subtasks) {
+    if (s.id === signoffSubtask.id) continue;
+    if (s.blockId !== signoffSubtask.blockId) continue;
+    if (s.roleHint === "reviewer") continue;
+    const effective = effectiveReviewerUids(s, task.reviewerUids);
+    if (!effective.includes(reviewerUid)) continue;
+    if (s.rejectedByReviewerUids.includes(reviewerUid)) {
+      out.push({ id: s.id, title: s.title, reason: "rejected-by-me" });
+      continue;
+    }
+    if (!s.done) {
+      out.push({ id: s.id, title: s.title, reason: "not-done" });
+      continue;
+    }
+    if (!s.approvedByReviewerUids.includes(reviewerUid)) {
+      out.push({ id: s.id, title: s.title, reason: "not-approved-by-me" });
+    }
+  }
+  return out;
+}
+
+/**
+ * True when the given reviewer has already ticked their signoff row for
+ * the given block. Used to lock their per-subtask review cells in that
+ * block — once a reviewer has signed off, their approvals / rejections /
+ * questions on the block are frozen. Other reviewers stay independent.
+ */
+export function hasReviewerSignedOffBlock(
+  task: TaskDoc,
+  blockId: string,
+  reviewerUid: string,
+): boolean {
+  return task.subtasks.some(
+    (s) =>
+      s.blockId === blockId &&
+      s.roleHint === "reviewer" &&
+      s.reviewerUids.includes(reviewerUid) &&
+      s.done,
+  );
+}
+
+/**
+ * Per-reviewer global coverage across the whole task: how many of the
+ * subtasks this reviewer is required on they've approved. Used by the
+ * final-signoff confirmation popup — when `approved === required - 1` and
+ * the reviewer is about to place their last ✓, we pop a confirm to make
+ * "completely signed off" feel intentional rather than accidental.
+ */
+export function getReviewerGlobalCoverage(
+  task: TaskDoc,
+  reviewerUid: string,
+): { approved: number; required: number } {
+  let approved = 0;
+  let required = 0;
+  for (const s of task.subtasks) {
+    const effective = effectiveReviewerUids(s, task.reviewerUids);
+    if (!effective.includes(reviewerUid)) continue;
+    required += 1;
+    // Reviewer-signoff rows (auto-spawned on block seal): ticking `done`
+    // IS the approval — no separate matrix cell. Count the tick as an
+    // approval so global coverage is consistent with the matrix-based rows.
+    if (s.roleHint === "reviewer" && s.done) {
+      approved += 1;
+      continue;
+    }
+    if (s.approvedByReviewerUids.includes(reviewerUid)) approved += 1;
+  }
+  return { approved, required };
+}
+
+/**
+ * Task-level "done" gate: every subtask must be done, every subtask with
+ * required reviewers must have at least one approval, and every task-level
+ * reviewer must have ticked at least one ✓ somewhere (global coverage —
+ * catches a reviewer who was listed but never engaged).
+ */
+export function canMarkTaskDone(task: TaskDoc): {
+  ok: boolean;
+  reason: string | null;
+} {
+  if (task.subtasks.length === 0) return { ok: true, reason: null };
+  for (const s of task.subtasks) {
+    const status = getSubtaskApprovalStatus(s, task.reviewerUids);
+    if (status.hasRejection) {
+      return {
+        ok: false,
+        reason: `Subtask "${s.title}" has an outstanding rejection — re-do and re-review before closing.`,
+      };
+    }
+    if (!s.done) {
+      return { ok: false, reason: `Subtask "${s.title}" is not marked done yet.` };
+    }
+    if (status.required.length > 0 && !status.hasAnyApproval) {
+      return {
+        ok: false,
+        reason: `Subtask "${s.title}" is waiting on at least one reviewer approval.`,
+      };
+    }
+  }
+  // Global coverage — every task-level reviewer has signed off ≥1
+  // subtask somewhere. Counts either a ✓ in the matrix OR a ticked-done
+  // reviewer-signoff row (auto-spawned on block seal).
+  for (const reviewerUid of task.reviewerUids) {
+    const ticked = task.subtasks.some((s) => {
+      if (s.approvedByReviewerUids.includes(reviewerUid)) return true;
+      if (
+        s.roleHint === "reviewer" &&
+        s.done &&
+        s.reviewerUids.includes(reviewerUid)
+      ) {
+        return true;
+      }
+      return false;
+    });
+    if (!ticked) {
+      return {
+        ok: false,
+        reason: "A listed reviewer hasn't signed off on anything yet.",
+      };
+    }
+  }
+  return { ok: true, reason: null };
 }

@@ -8,7 +8,6 @@ import {
   TASK_FIELD_LIMITS,
   TASK_KINDS,
   TASK_KIND_LABELS,
-  TASK_KIND_SUBTASK_TEMPLATES,
   TASK_PRIORITIES,
   TASK_PRIORITY_LABELS,
   type TaskKind,
@@ -18,8 +17,11 @@ import {
 } from "@/lib/firestore/tasks";
 import type { ProjectDoc } from "@/lib/firestore/projects";
 import type { UserDoc } from "@/lib/firestore/users";
-import { createTask } from "../taskMutations";
+import type { TaskTemplate } from "@/lib/firestore/taskTemplates";
+import { createTask, type CreateSubtaskInput } from "../taskMutations";
+import { materialiseTemplate } from "../templateMutations";
 import AssigneePicker from "./AssigneePicker";
+import TemplatePicker from "./TemplatePicker";
 
 type Props = {
   mode: "committee" | "personal";
@@ -44,22 +46,32 @@ export default function TaskForm({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [projectId, setProjectId] = useState<string>(defaultProjectId ?? "");
-  const [assigneeUids, setAssigneeUids] = useState<string[]>(
+  const [completerUids, setCompleterUids] = useState<string[]>(
     isCommittee ? [] : [currentUserUid],
   );
+  const [reviewerUids, setReviewerUids] = useState<string[]>([]);
   const [kind, setKind] = useState<TaskKind>("generic");
   const [priority, setPriority] = useState<TaskPriority>("normal");
   const [dueDate, setDueDate] = useState<string>("");
   const [visibility, setVisibility] = useState<TaskVisibility>(
     isCommittee ? "committee" : "assignees-only",
   );
-  const [useTemplate, setUseTemplate] = useState(true);
+  const [templateId, setTemplateId] = useState<string | null>(null);
+  const [templateSubtasks, setTemplateSubtasks] = useState<CreateSubtaskInput[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const source: TaskSource = isCommittee ? "committee" : "personal";
-  const template = TASK_KIND_SUBTASK_TEMPLATES[kind] ?? [];
-  const hasTemplate = template.length > 0;
+
+  function handleTemplate(id: string | null, template: TaskTemplate | null) {
+    setTemplateId(id);
+    if (!template) {
+      setTemplateSubtasks([]);
+      return;
+    }
+    setTemplateSubtasks(materialiseTemplate(template));
+    if (template.kind) setKind(template.kind);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -76,11 +88,13 @@ export default function TaskForm({
         source,
         kind,
         projectId: isCommittee ? projectId || null : null,
-        assigneeUids,
+        completerUids,
+        reviewerUids,
         priority,
         dueDate: dueDate ? new Date(dueDate) : null,
         visibility,
-        subtasks: useTemplate && hasTemplate ? template.map((t) => ({ title: t })) : undefined,
+        subtasks: templateSubtasks.length > 0 ? templateSubtasks : undefined,
+        sourceTemplateId: templateId,
       });
       onDone();
     } catch (err) {
@@ -97,6 +111,10 @@ export default function TaskForm({
         {isCommittee ? "New committee task" : "New personal task"}
       </h3>
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+        {isCommittee && (
+          <TemplatePicker value={templateId} onChange={handleTemplate} disabled={busy} />
+        )}
+
         <Field id="task-title" label="Title">
           <Input
             id="task-title"
@@ -183,7 +201,7 @@ export default function TaskForm({
           </Field>
         </div>
 
-        {hasTemplate && (
+        {templateSubtasks.length > 0 && (
           <div
             style={{
               padding: "var(--space-3) var(--space-4)",
@@ -192,56 +210,63 @@ export default function TaskForm({
               borderRadius: "var(--radius-md)",
               display: "flex",
               flexDirection: "column",
-              gap: "var(--space-2)",
+              gap: "var(--space-1)",
             }}
           >
-            <label
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-muted)" }}>
+              Template will seed {templateSubtasks.length} subtasks (editable after creation):
+            </span>
+            <ul
               style={{
+                margin: 0,
+                paddingLeft: "var(--space-6)",
+                fontSize: "var(--text-xs)",
+                color: "var(--color-text-muted)",
                 display: "flex",
-                alignItems: "center",
-                gap: "var(--space-2)",
-                fontSize: "var(--text-sm)",
-                cursor: "pointer",
+                flexDirection: "column",
+                gap: "0.15rem",
               }}
             >
-              <input
-                type="checkbox"
-                checked={useTemplate}
-                onChange={(e) => setUseTemplate(e.target.checked)}
-              />
-              <span>
-                Auto-add {template.length} subtasks for {TASK_KIND_LABELS[kind].toLowerCase()}
-              </span>
-            </label>
-            {useTemplate && (
-              <ul
-                style={{
-                  margin: 0,
-                  paddingLeft: "var(--space-6)",
-                  fontSize: "var(--text-xs)",
-                  color: "var(--color-text-muted)",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "0.15rem",
-                }}
-              >
-                {template.map((t) => (
-                  <li key={t}>{t}</li>
-                ))}
-              </ul>
-            )}
+              {templateSubtasks.map((s, i) => (
+                <li key={i}>
+                  {s.title}
+                  {(s.blockedBy?.length ?? 0) > 0 && (
+                    <span style={{ color: "var(--color-text-subtle)", marginLeft: 6 }}>
+                      — blocked by {s.blockedBy!.length}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
         {isCommittee && (
-          <Field id="task-assignees" label="Assignees">
-            <AssigneePicker
-              users={users}
-              selected={assigneeUids}
-              onChange={setAssigneeUids}
-              max={TASK_FIELD_LIMITS.maxAssignees}
-            />
-          </Field>
+          <div style={{ display: "grid", gap: "var(--space-4)", gridTemplateColumns: "1fr 1fr" }}>
+            <Field id="task-completers" label="Completers">
+              <AssigneePicker
+                users={users}
+                selected={completerUids}
+                onChange={setCompleterUids}
+                max={TASK_FIELD_LIMITS.maxCompleters}
+                role="completer"
+              />
+            </Field>
+
+            <Field
+              id="task-reviewers"
+              label="Reviewers"
+              hint="Final review gate. Leave empty if none."
+            >
+              <AssigneePicker
+                users={users}
+                selected={reviewerUids}
+                onChange={setReviewerUids}
+                max={TASK_FIELD_LIMITS.maxReviewers}
+                role="reviewer"
+              />
+            </Field>
+          </div>
         )}
 
         {isCommittee && isAdmin && (
@@ -252,7 +277,7 @@ export default function TaskForm({
               onChange={(e) => setVisibility(e.target.value as TaskVisibility)}
             >
               <option value="committee">Committee-visible (default)</option>
-              <option value="assignees-only">Private — assignees + admins only</option>
+              <option value="assignees-only">Private — completers + reviewers + admins only</option>
             </Select>
           </Field>
         )}

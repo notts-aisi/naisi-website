@@ -46,13 +46,24 @@ export default function TaskCard({
     [task.projectId, projects],
   );
 
-  const assignees = useMemo(
+  const completers = useMemo(
     () =>
-      task.assigneeUids
+      task.completerUids
         .map((uid) => users.find((u) => u.uid === uid))
         .filter((u): u is UserDoc => Boolean(u)),
-    [task.assigneeUids, users],
+    [task.completerUids, users],
   );
+  const reviewers = useMemo(
+    () =>
+      task.reviewerUids
+        .map((uid) => users.find((u) => u.uid === uid))
+        .filter((u): u is UserDoc => Boolean(u)),
+    [task.reviewerUids, users],
+  );
+
+  function nameOf(u: UserDoc): string {
+    return u.displayName ?? u.email ?? u.uid;
+  }
 
   const subtasksComplete = task.subtaskStats.total > 0 && task.subtaskStats.done === task.subtaskStats.total;
 
@@ -63,8 +74,9 @@ export default function TaskCard({
       onClick={() => onOpen(task.id)}
       style={{
         cursor: "pointer",
-        opacity: isDragging ? 0.4 : 1,
+        opacity: isDragging ? 0.4 : task.archived ? 0.65 : 1,
         borderLeft: `3px solid ${PRIORITY_COLORS[task.priority] ?? "transparent"}`,
+        borderStyle: task.archived ? "dashed" : undefined,
       }}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
@@ -88,7 +100,10 @@ export default function TaskCard({
           >
             {task.title}
           </div>
-          {task.priority === "urgent" && <Badge tone="danger">Urgent</Badge>}
+          <div style={{ display: "flex", gap: "var(--space-1)", alignItems: "center" }}>
+            {task.archived && <Badge tone="neutral">Archived</Badge>}
+            {task.priority === "urgent" && <Badge tone="danger">Urgent</Badge>}
+          </div>
         </div>
 
         {!dense && task.description && (
@@ -141,41 +156,36 @@ export default function TaskCard({
         <div
           style={{
             display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
+            flexDirection: "column",
+            gap: "var(--space-1)",
             fontSize: "var(--text-xs)",
-            color: "var(--color-text-subtle)",
+            color: "var(--color-text-muted)",
           }}
         >
-          <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
-            {assignees.slice(0, 3).map((u) => {
-              const initial = (u.displayName ?? u.email ?? "?").charAt(0).toUpperCase();
-              return (
-                <span
-                  key={u.uid}
-                  title={u.displayName ?? u.email ?? u.uid}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: "1.5rem",
-                    height: "1.5rem",
-                    borderRadius: "50%",
-                    background: "var(--color-surface-hover)",
-                    color: "var(--color-text)",
-                    fontSize: "var(--text-xs)",
-                    fontWeight: 600,
-                  }}
-                >
-                  {initial}
-                </span>
-              );
-            })}
-            {assignees.length > 3 && <span>+{assignees.length - 3}</span>}
-            {assignees.length === 0 && <span>Unassigned</span>}
-          </div>
+          <PeopleLine
+            label="Assigned to"
+            people={completers}
+            tone="accent"
+            emptyLabel="Unassigned"
+            nameOf={nameOf}
+          />
+          {reviewers.length > 0 && (
+            <PeopleLine
+              label={reviewers.length === 1 ? "Reviewer" : "Reviewers"}
+              people={reviewers}
+              tone="warning"
+              emptyLabel={null}
+              nameOf={nameOf}
+            />
+          )}
           {(task.commentCount > 0 || task.attachmentCount > 0) && (
-            <div style={{ display: "flex", gap: "var(--space-2)" }}>
+            <div
+              style={{
+                display: "flex",
+                gap: "var(--space-2)",
+                color: "var(--color-text-subtle)",
+              }}
+            >
               {task.commentCount > 0 && <span>💬 {task.commentCount}</span>}
               {task.attachmentCount > 0 && <span>📎 {task.attachmentCount}</span>}
             </div>
@@ -183,5 +193,43 @@ export default function TaskCard({
         </div>
       </div>
     </Card>
+  );
+}
+
+function PeopleLine({
+  label,
+  people,
+  tone,
+  emptyLabel,
+  nameOf,
+}: {
+  label: string;
+  people: UserDoc[];
+  tone: "accent" | "warning";
+  emptyLabel: string | null;
+  nameOf: (u: UserDoc) => string;
+}) {
+  const nameColor =
+    tone === "warning"
+      ? "var(--color-warning, var(--color-text))"
+      : "var(--color-accent)";
+  if (people.length === 0) {
+    if (!emptyLabel) return null;
+    return (
+      <div>
+        <span style={{ color: "var(--color-text-subtle)" }}>{emptyLabel}</span>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+      <span style={{ color: "var(--color-text-subtle)" }}>{label}:</span>
+      {people.map((u, i) => (
+        <span key={u.uid} style={{ color: nameColor, fontWeight: 500 }}>
+          {nameOf(u)}
+          {i < people.length - 1 ? "," : ""}
+        </span>
+      ))}
+    </div>
   );
 }

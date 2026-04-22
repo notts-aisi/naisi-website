@@ -5,9 +5,21 @@ import { doc, onSnapshot } from "firebase/firestore";
 import { getClientDb } from "@/lib/firebase/client";
 import { normalizeTask, type TaskDoc } from "@/lib/firestore/tasks";
 
-export function useTask(taskId: string | null | undefined) {
-  const [task, setTask] = useState<TaskDoc | null>(null);
-  const [loading, setLoading] = useState(true);
+/**
+ * Live task subscription.
+ *
+ * `initialTask` lets callers seed the hook with a cached doc from their
+ * `useTasks` list so the modal can render instantly on click instead of
+ * flashing a loading state while the first snapshot arrives (200ms–2s on
+ * cold connections). The onSnapshot stream still runs and replaces the
+ * seed with live data on the first server push.
+ */
+export function useTask(
+  taskId: string | null | undefined,
+  initialTask?: TaskDoc | null,
+) {
+  const [task, setTask] = useState<TaskDoc | null>(initialTask ?? null);
+  const [loading, setLoading] = useState(initialTask ? false : true);
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
