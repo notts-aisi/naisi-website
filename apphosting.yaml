@@ -31,17 +31,19 @@ env:
   - variable: EVENTS_TOKEN_SECRET
     secret: EVENTS_TOKEN_SECRET
     availability: [RUNTIME]
-  # Gmail Workspace SMTP for transactional + newsletter mail. App password set
-  # via `firebase apphosting:secrets:set SMTP_PASSWORD`; host/user/from are
-  # public enough to live here directly.
+  # AWS SES SMTP (eu-west-2). The password is an SES-generated token stored
+  # via `firebase apphosting:secrets:set SMTP_PASSWORD`. SMTP_USER is the IAM
+  # access key ID paired with that password — it can't send mail on its own, so
+  # a plain value here is fine. SMTP_FROM_EMAIL must sit on the verified
+  # domain (naisi.uk) to satisfy DKIM/DMARC alignment.
   - variable: SMTP_HOST
-    value: smtp.gmail.com
+    value: email-smtp.eu-west-2.amazonaws.com
     availability: [RUNTIME]
   - variable: SMTP_PORT
     value: "587"
     availability: [RUNTIME]
   - variable: SMTP_USER
-    value: ai-safety@uonsu.com
+    value: AKIA3WX4NEOX4GGTWGXX
     availability: [RUNTIME]
   - variable: SMTP_PASSWORD
     secret: SMTP_PASSWORD
@@ -50,7 +52,7 @@ env:
     value: NAISI
     availability: [RUNTIME]
   - variable: SMTP_FROM_EMAIL
-    value: ai-safety@uonsu.com
+    value: newsletter@naisi.uk
     availability: [RUNTIME]
   # Absolute base URL baked into outbound email links (unsubscribe, RSVP
   # self-serve). Must match the live origin or links break.
