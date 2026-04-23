@@ -32,6 +32,7 @@ import {
   getNextBlock,
   isBlockGateApplied,
   reorderSubtasks,
+  sendBlockToReviewers,
 } from "../taskMutations";
 import BlockHeader from "./BlockHeader";
 import SubtaskRow from "./SubtaskRow";
@@ -240,6 +241,17 @@ export default function SubtaskList({
               {canEdit && task.subtasks.length < TASK_FIELD_LIMITS.maxSubtasks && (
                 <InlineAddSubtask task={task} blockId={group.block?.id ?? null} />
               )}
+              {group.block &&
+                group.block.sealState === "sealed" &&
+                signoffRows.length === 0 &&
+                group.completion.length > 0 && (
+                  <NotifyReviewersButton
+                    task={task}
+                    blockId={group.block.id}
+                    completion={group.completion}
+                    viewerIsCompleter={task.completerUids.includes(viewerUid)}
+                  />
+                )}
             </div>
             {group.block && signoffRows.length > 0 && (
               <SignoffPhase
@@ -263,6 +275,95 @@ export default function SubtaskList({
       {canEditStructure && task.blocks.length < TASK_FIELD_LIMITS.maxBlocks && (
         <InlineAddBlock task={task} hasBlocks={hasBlocks} />
       )}
+    </div>
+  );
+}
+
+/**
+ * "Send block to reviewers" button at the bottom of the completion block.
+ * Only rendered pre-Notify (no signoff rows yet) and when the block has at
+ * least one completion subtask. Greyed with helper text until every
+ * non-reviewer subtask in the block is done. Press spawns reviewer signoff
+ * rows server-side and logs a `block_sent_to_reviewers` activity entry.
+ *
+ * Visible only to listed completers — non-completers don't see the button.
+ */
+function NotifyReviewersButton({
+  task,
+  blockId,
+  completion,
+  viewerIsCompleter,
+}: {
+  task: TaskDoc;
+  blockId: string;
+  completion: Subtask[];
+  viewerIsCompleter: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  if (!viewerIsCompleter) return null;
+  const outstanding = completion.filter((s) => !s.done);
+  const canSend = outstanding.length === 0;
+  const helperText = canSend
+    ? "All tasks complete — ready to send to reviewers."
+    : "All tasks must be marked as complete before sending to reviewers.";
+
+  async function handleSend() {
+    if (!canSend || busy) return;
+    setBusy(true);
+    try {
+      await sendBlockToReviewers(task, blockId);
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Send failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "var(--space-2)",
+        paddingTop: "var(--space-2)",
+        borderTop: "1px dashed var(--color-border)",
+      }}
+    >
+      <span
+        style={{
+          flex: 1,
+          fontSize: "var(--text-xs)",
+          color: canSend ? "var(--color-text)" : "var(--color-text-muted)",
+        }}
+      >
+        {helperText}
+      </span>
+      <button
+        type="button"
+        onClick={handleSend}
+        disabled={!canSend || busy}
+        style={{
+          padding: "0.35rem 0.85rem",
+          background: canSend
+            ? "var(--color-accent-soft)"
+            : "var(--color-bg-elevated)",
+          color: canSend ? "var(--color-accent)" : "var(--color-text-muted)",
+          border: canSend ? "none" : "1px solid var(--color-border)",
+          borderRadius: "var(--radius-sm, 4px)",
+          fontSize: "var(--text-xs)",
+          fontWeight: 600,
+          cursor: !canSend || busy ? "not-allowed" : "pointer",
+          opacity: !canSend ? 0.6 : 1,
+        }}
+        title={
+          canSend
+            ? "Spawn reviewer signoff rows and kick off the review phase."
+            : helperText
+        }
+      >
+        {busy ? "Sending…" : "Notify reviewers"}
+      </button>
     </div>
   );
 }

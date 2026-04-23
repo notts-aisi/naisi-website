@@ -47,37 +47,26 @@ export default function BlockHeader({
   const isSealed = block.sealState === "sealed";
   const requiredCount = consensus.required.length;
   const consentCount = consensus.consenting.length;
-  // Lock-in gate: every completion subtask the viewer is assigned to in
-  // this block must be ticked done before they can lock in. Retracting
-  // a prior lock-in stays unrestricted (you realise you weren't actually
-  // finished — let them back out). Mirrored in `toggleBlockConsent`.
-  const myOutstanding = task.subtasks.filter(
-    (s) =>
-      s.blockId === block.id &&
-      s.roleHint !== "reviewer" &&
-      s.assigneeUids.includes(viewerUid) &&
-      !s.done,
-  );
-  const lockInGated = !hasConsented && myOutstanding.length > 0;
-  const lockInGateTooltip = lockInGated
-    ? `Finish your assigned subtasks first: ${myOutstanding
-        .slice(0, 3)
-        .map((s) => `"${s.title}"`)
-        .join(", ")}${myOutstanding.length > 3 ? ` (+${myOutstanding.length - 3} more)` : ""}`
-    : null;
+  // Stage 1.5a: lock-in is an ALLOCATION gate, not a submission gate.
+  // Completers can lock in as soon as they're happy with who's doing what;
+  // work-done is gated separately by the "Send block to reviewers" button
+  // at the bottom of the completion block.
   // Missing-reviewer detection for the admin catch-up button. Compares
   // every effective reviewer for the block against existing reviewer-hint
-  // rows in that block. Non-zero when the block was sealed before PR 2's
-  // auto-spawn landed, or when a reviewer got added after seal.
+  // rows in that block. Non-zero when a reviewer got added to the task
+  // *after* the block was sent to reviewers. Stage 1.5a (2026-04-23):
+  // gated on having at least one existing signoff row so the button
+  // doesn't show pre-Notify (where zero rows is the intended state).
   const effectiveReviewers = getBlockEffectiveReviewerUids(task, block.id);
   const existingReviewerUids = new Set(
     task.subtasks
       .filter((s) => s.blockId === block.id && s.roleHint === "reviewer")
       .flatMap((s) => s.reviewerUids),
   );
-  const missingReviewerCount = effectiveReviewers.filter(
-    (u) => !existingReviewerUids.has(u),
-  ).length;
+  const hasSpawnedRows = existingReviewerUids.size > 0;
+  const missingReviewerCount = hasSpawnedRows
+    ? effectiveReviewers.filter((u) => !existingReviewerUids.has(u)).length
+    : 0;
 
   async function saveName() {
     const trimmed = nameDraft.trim();
@@ -283,7 +272,7 @@ export default function BlockHeader({
             <button
               type="button"
               onClick={handleLockInToggle}
-              disabled={busy || lockInGated}
+              disabled={busy}
               style={{
                 padding: "0.3rem 0.75rem",
                 background: hasConsented
@@ -296,14 +285,12 @@ export default function BlockHeader({
                 borderRadius: "var(--radius-sm, 4px)",
                 fontSize: "var(--text-xs)",
                 fontWeight: 600,
-                cursor: busy || lockInGated ? "not-allowed" : "pointer",
-                opacity: lockInGated ? 0.55 : 1,
+                cursor: busy ? "not-allowed" : "pointer",
               }}
               title={
-                lockInGateTooltip ??
-                (hasConsented
-                  ? "You've locked in. Click to unlock and edit allocation."
-                  : "Click to lock in — submits your assigned work for review.")
+                hasConsented
+                  ? "You've locked in. Click to unlock and re-open allocation."
+                  : "Click to lock in — confirms the subtask allocation and starts work."
               }
             >
               {hasConsented ? "✓ Locked in" : "Lock in"}
