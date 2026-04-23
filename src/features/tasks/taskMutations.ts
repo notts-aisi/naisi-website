@@ -618,11 +618,21 @@ export async function setSubtaskApproval(
     if (state === "approve") approved.push(uid);
     if (state === "question") questioned.push(uid);
     if (state === "reject") rejected.push(uid);
+    // Stage 2 (2026-04-24): rejection auto-unticks the subtask so the
+    // completer has a clear "redo this" signal rather than a done-but-bad
+    // state. Keep `rejectedByReviewerUids` populated so the row tints
+    // orange (via `subtaskRowState`) and the resubmit affordance surfaces.
+    // The block's phase drops back to "in-progress" automatically because
+    // `getBlockPhase` checks completion-row done-ness.
+    const shouldUntick = state === "reject" && s.done;
     return {
       ...s,
       approvedByReviewerUids: approved,
       questionedByReviewerUids: questioned,
       rejectedByReviewerUids: rejected,
+      done: shouldUntick ? false : s.done,
+      doneAt: shouldUntick ? null : s.doneAt,
+      doneByUid: shouldUntick ? null : s.doneByUid,
     };
   });
   const batch = writeBatch(db);

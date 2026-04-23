@@ -218,24 +218,29 @@ export default function SubtaskDetailModal({
           )}
         </section>
 
-        <section>
-          <h3 style={sectionLabel}>Due date</h3>
-          {canEditDescription ? (
-            <DueDateEditor
-              value={subtask.dueDate}
-              onChange={(date) => onDueChange(date ? toDateInputValue(date) : "")}
-              disabled={dueBusy}
-              isOverdue={isOverdue}
-            />
-          ) : subtask.dueDate ? (
-            <p style={{ margin: 0, fontSize: "var(--text-md)", color: isOverdue ? "var(--color-danger, #dc2626)" : "var(--color-text)" }}>
-              {subtask.dueDate.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
-              {isOverdue && " — overdue"}
-            </p>
-          ) : (
-            <p style={emptyHint}>No due date set.</p>
-          )}
-        </section>
+        {/* Reviewer-signoff rows are auto-spawned — their deadline follows
+            the block, not an independent due date. Hide the section
+            entirely so nobody (including committee editors) can set one. */}
+        {subtask.roleHint !== "reviewer" && (
+          <section>
+            <h3 style={sectionLabel}>Due date</h3>
+            {canEditDescription ? (
+              <DueDateEditor
+                value={subtask.dueDate}
+                onChange={(date) => onDueChange(date ? toDateInputValue(date) : "")}
+                disabled={dueBusy}
+                isOverdue={isOverdue}
+              />
+            ) : subtask.dueDate ? (
+              <p style={{ margin: 0, fontSize: "var(--text-md)", color: isOverdue ? "var(--color-danger, #dc2626)" : "var(--color-text)" }}>
+                {subtask.dueDate.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
+                {isOverdue && " — overdue"}
+              </p>
+            ) : (
+              <p style={emptyHint}>No due date set.</p>
+            )}
+          </section>
+        )}
 
         <section>
           <h3 style={sectionLabel}>Assignees</h3>
