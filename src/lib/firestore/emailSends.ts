@@ -47,7 +47,11 @@ export type LogSendInput = Omit<EmailSend, "status" | "sentAt"> & {
 export async function logEmailSend(db: Firestore, entry: LogSendInput): Promise<void> {
   const doc: Record<string, unknown> = {
     messageId: entry.messageId,
-    to: entry.to,
+    // Trim the recipient on write — dirty inputs (e.g. trailing space in a
+    // user's stored email) break (recipient, id) lookups in markSendStatus
+    // even though the mail itself delivers fine. Trimming at write + at
+    // comparison gives us belt-and-braces.
+    to: entry.to.trim(),
     subject: entry.subject,
     fromEmail: entry.fromEmail,
     fromName: entry.fromName,
@@ -115,7 +119,7 @@ export async function markSendStatus(
       .where(field, "==", value)
       .get();
     hit = snap.docs.find(
-      (d) => ((d.data().to as string | undefined) ?? "").toLowerCase() === recipientLc,
+      (d) => ((d.data().to as string | undefined) ?? "").trim().toLowerCase() === recipientLc,
     );
   }
 
@@ -129,12 +133,22 @@ export async function markSendStatus(
     hit = snap.docs.find((d) => {
       const data = d.data();
       if (data.status !== "sent") return false;
-      if (((data.to as string | undefined) ?? "").toLowerCase() !== recipientLc) return false;
+      if (((data.to as string | undefined) ?? "").trim().toLowerCase() !== recipientLc) return false;
       return sentAtMs(data.sentAt) >= cutoffMs;
     });
   }
 
-  if (!hit) return false;
+  if (!hit) {
+    console.warn("[markSendStatus] no match", {
+      recipient: recipientLc,
+      sesMessageId: match.sesMessageId ?? null,
+      resendEmailId: match.resendEmailId ?? null,
+      targetStatus: status,
+    });
+    return false;
+  }
+
+  console.log("[markSendStatus] matched row", hit.id, "for", recipientLc, "→", status);
 
   const patch: Record<string, unknown> = {
     status,
