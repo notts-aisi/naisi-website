@@ -19,6 +19,7 @@ import {
   forceSealSubtask,
   removeSubtask,
   renameSubtask,
+  resubmitSubtask,
   selfAddToSubtask,
   selfRemoveFromSubtask,
   setSubtaskApproval,
@@ -30,6 +31,7 @@ import {
   unsealSubtask,
   type ReviewState,
 } from "../taskMutations";
+import { addComment } from "../commentMutations";
 import AssigneePicker from "./AssigneePicker";
 
 type Props = {
@@ -113,6 +115,12 @@ export default function SubtaskRow({
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState(subtask.title);
+  // Rejection-reason composer. `null` = dialog closed. Non-null string =
+  // open with that draft value. Intercepts the ❌ menu click so reviewers
+  // always accompany a reject with a reason that's emailed to completers.
+  const [rejectReasonDraft, setRejectReasonDraft] = useState<string | null>(null);
+  const [rejectBusy, setRejectBusy] = useState(false);
+  const [resendBusy, setResendBusy] = useState(false);
 
   const blocked = !subtask.done && isSubtaskBlocked(subtask, task.subtasks, task.reviewerUids);
   // Reviewer-signoff gate: the viewer can only tick their own signoff once
@@ -260,6 +268,73 @@ export default function SubtaskRow({
     } catch (err) {
       console.error(err);
       window.alert(err instanceof Error ? err.message : "Could not toggle");
+    }
+  }
+
+  /**
+   * Matrix-popover ❌ click handler. Instead of writing the reject state
+   * straight through, pop a required-reason dialog. On submit the dialog
+   * posts a comment, emails completers, and THEN applies the reject state
+   * — so a rejection in the UI always ships with context.
+   */
+  async function handleSetReview(state: ReviewState) {
+    if (state === "reject") {
+      setRejectReasonDraft("");
+      return;
+    }
+    try {
+      await setSubtaskApproval(task, subtask.id, state);
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Review failed");
+    }
+  }
+
+  async function submitRejection() {
+    const reason = rejectReasonDraft?.trim() ?? "";
+    if (!reason || rejectBusy) return;
+    // Mention the specific assignees on this subtask, falling back to the
+    // task-level completers if no one's per-row-assigned. Those uids drive
+    // the /notify route's forceEmailCompleters recipient list.
+    const mentionUids =
+      subtask.assigneeUids.length > 0 ? subtask.assigneeUids : task.completerUids;
+    setRejectBusy(true);
+    try {
+      const commentId = await addComment({
+        taskId: task.id,
+        bodyMarkdown: `**❌ Rejected "${subtask.title}"**\n\n${reason}`,
+        mentions: mentionUids,
+      });
+      await setSubtaskApproval(task, subtask.id, "reject");
+      // Fire-and-forget; comment + reject already persisted regardless.
+      try {
+        await fetch(`/api/tasks/${task.id}/notify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ commentId, forceEmailCompleters: true }),
+        });
+      } catch (emailErr) {
+        console.warn("[submitRejection] email dispatch failed", emailErr);
+      }
+      setRejectReasonDraft(null);
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Rejection failed");
+    } finally {
+      setRejectBusy(false);
+    }
+  }
+
+  async function handleResubmit() {
+    if (resendBusy) return;
+    setResendBusy(true);
+    try {
+      await resubmitSubtask(task, subtask.id);
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Resubmit failed");
+    } finally {
+      setResendBusy(false);
     }
   }
 
@@ -413,12 +488,9 @@ export default function SubtaskRow({
             approveWillFinalise={approveWillFinalise}
             awaitingCompleterSubmit={!subtask.done}
             viewerFrozenOnBlock={viewerFrozenOnBlock}
-            onSet={(state) =>
-              setSubtaskApproval(task, subtask.id, state).catch((err) => {
-                console.error(err);
-                window.alert(err instanceof Error ? err.message : "Review failed");
-              })
-            }
+            onSet={(state) => {
+              handleSetReview(state).catch(console.error);
+            }}
           />
         )}
 
@@ -500,7 +572,141 @@ export default function SubtaskRow({
           {approvalStatus.approved.length} / {approvalStatus.required.length} approved
           {approvalStatus.questioned.length > 0 &&
             ` · ${approvalStatus.questioned.length} open question${approvalStatus.questioned.length === 1 ? "" : "s"}`}
+          {approvalStatus.rejected.length > 0 &&
+            ` · ${approvalStatus.rejected.length} rejection${approvalStatus.rejected.length === 1 ? "" : "s"}`}
         </p>
+      )}
+
+      {/* Resend for review — shown on red (rejected) rows to the people
+          who can actually fix it. Wipes reviewer state + emails reviewers. */}
+      {approvalStatus.hasRejection &&
+        subtask.roleHint !== "reviewer" &&
+        (isAdmin || isTaskCreator || isSelfAssigned ||
+          (subtask.assigneeUids.length === 0 && isCompleter)) && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              paddingTop: "var(--space-1)",
+              borderTop: "1px dashed var(--color-danger, #dc2626)",
+            }}
+          >
+            <span
+              style={{
+                flex: 1,
+                fontSize: "var(--text-xs)",
+                color: "var(--color-danger, #dc2626)",
+                fontWeight: 500,
+              }}
+            >
+              Rejected — fix the issue, then resend for review.
+            </span>
+            <button
+              type="button"
+              onClick={handleResubmit}
+              disabled={resendBusy}
+              style={{
+                padding: "0.3rem 0.75rem",
+                background: "var(--color-accent-soft)",
+                color: "var(--color-accent)",
+                border: "none",
+                borderRadius: "var(--radius-sm, 4px)",
+                fontSize: "var(--text-xs)",
+                fontWeight: 600,
+                cursor: resendBusy ? "not-allowed" : "pointer",
+                opacity: resendBusy ? 0.6 : 1,
+              }}
+            >
+              {resendBusy ? "Resending…" : "Resend for review"}
+            </button>
+          </div>
+        )}
+
+      {rejectReasonDraft !== null && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "var(--space-2)",
+            padding: "var(--space-3)",
+            marginTop: "var(--space-1)",
+            background: "var(--color-bg)",
+            border: "1px solid var(--color-danger, #dc2626)",
+            borderRadius: "var(--radius-md)",
+          }}
+        >
+          <span
+            style={{
+              fontSize: "var(--text-xs)",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              fontWeight: 700,
+              color: "var(--color-danger, #dc2626)",
+            }}
+          >
+            Rejection reason (required)
+          </span>
+          <textarea
+            autoFocus
+            value={rejectReasonDraft}
+            onChange={(e) => setRejectReasonDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setRejectReasonDraft(null);
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submitRejection();
+            }}
+            placeholder="Explain what's wrong so the completer knows what to fix. Sent as a comment + email to the listed assignees."
+            rows={3}
+            style={{
+              width: "100%",
+              padding: "var(--space-2)",
+              background: "var(--color-bg-elevated)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-md)",
+              color: "var(--color-text)",
+              fontSize: "var(--text-sm)",
+              resize: "vertical",
+              fontFamily: "inherit",
+            }}
+          />
+          <div style={{ display: "flex", gap: "var(--space-2)", justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              onClick={() => setRejectReasonDraft(null)}
+              disabled={rejectBusy}
+              style={{
+                padding: "0.35rem 0.75rem",
+                background: "transparent",
+                color: "var(--color-text-muted)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-sm, 4px)",
+                fontSize: "var(--text-xs)",
+                cursor: rejectBusy ? "not-allowed" : "pointer",
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submitRejection}
+              disabled={rejectBusy || !rejectReasonDraft.trim()}
+              style={{
+                padding: "0.35rem 0.85rem",
+                background: "var(--color-danger, #dc2626)",
+                color: "white",
+                border: "none",
+                borderRadius: "var(--radius-sm, 4px)",
+                fontSize: "var(--text-xs)",
+                fontWeight: 600,
+                cursor:
+                  rejectBusy || !rejectReasonDraft.trim() ? "not-allowed" : "pointer",
+                opacity: rejectBusy || !rejectReasonDraft.trim() ? 0.55 : 1,
+              }}
+            >
+              {rejectBusy ? "Sending…" : "Reject + notify completers"}
+            </button>
+          </div>
+        </div>
       )}
 
       {editing && canEdit && (

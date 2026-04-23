@@ -105,6 +105,10 @@ function renderActivityCopy(a: ActivityDoc, users: UserDoc[], task: TaskDoc): st
       return `${actor} gated "${pickStr("nextBlockName") ?? "next block"}" on "${pickStr("name") ?? "this block"}"'s reviews`;
     case "block_gate_cleared":
       return `${actor} cleared the gate from "${pickStr("nextBlockName") ?? "next block"}"`;
+    case "subtask_rejected":
+      return `${actor} rejected ${subtaskTitle(pickStr("subtaskId"))}`;
+    case "subtask_resubmitted":
+      return `${actor} resent ${subtaskTitle(pickStr("subtaskId"))} for review`;
     default:
       return `${actor} updated the task`;
   }
