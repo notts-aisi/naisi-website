@@ -32,7 +32,8 @@ export type ActivityKind =
   | "block_gate_applied"
   | "block_gate_cleared"
   | "subtask_rejected"
-  | "subtask_resubmitted";
+  | "subtask_resubmitted"
+  | "block_sent_to_reviewers";
 
 export type ActivityPayload = Record<string, unknown>;
 
@@ -79,6 +80,7 @@ const KNOWN_KINDS: ActivityKind[] = [
   "block_gate_cleared",
   "subtask_rejected",
   "subtask_resubmitted",
+  "block_sent_to_reviewers",
 ];
 
 export function normalizeActivity(id: string, data: Raw): ActivityDoc {

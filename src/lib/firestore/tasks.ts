@@ -396,15 +396,16 @@ export function getSubtaskApprovalStatus(
 
 /**
  * A subtask is tickable only when every blockedBy-reference resolves to a
- * sibling that is (a) `done: true` AND (b) meets its per-subtask approval
- * threshold (≥1 required reviewer has placed ✓, OR the blocker has no
- * required reviewers). Unknown blocker ids are fail-safe blocked — better
- * to lock a row than silently unlock on a dangling ref.
+ * sibling that is `done: true`. Softened 2026-04-23 (Stage 1.5a) from
+ * also-gating-on-approval — acts as a light circuit-breaker so completers
+ * don't race ahead of each other, without waiting on reviewer latency.
+ * Unknown blocker ids are fail-safe blocked — better to lock a row than
+ * silently unlock on a dangling ref.
  */
 export function isSubtaskBlocked(
   subtask: Subtask,
   siblings: Subtask[],
-  taskReviewerUids: string[] = [],
+  _taskReviewerUids: string[] = [],
 ): boolean {
   if (subtask.blockedBy.length === 0) return false;
   const byId = new Map(siblings.map((s) => [s.id, s]));
@@ -412,9 +413,6 @@ export function isSubtaskBlocked(
     const blocker = byId.get(id);
     if (!blocker) return true; // unknown id = stay blocked
     if (!blocker.done) return true;
-    const status = getSubtaskApprovalStatus(blocker, taskReviewerUids);
-    // Blocker has required reviewers → they must have at least one ✓.
-    if (status.required.length > 0 && !status.hasAnyApproval) return true;
     return false;
   });
 }

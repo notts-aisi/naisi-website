@@ -295,18 +295,17 @@ export async function toggleSubtask(
       }
     }
   } else {
-    // Regular completion rows: only listed assignees (or the task creator)
-    // can tick. Empty `assigneeUids` = open to any completer on the task.
-    // Creator is an escape hatch so the person who set the task up can
-    // always move it forward; admins who want to force-tick can self-add
-    // to the subtask first via the `+ Me` affordance (or self-add on
-    // behalf via the Edit panel).
-    const isCreator = task.creatorUid === uid;
+    // Regular completion rows: only listed assignees (or any completer on
+    // an empty-assignees open row) can tick. Admins can bypass via the
+    // `asAdmin` flag for oversight cases. The task-creator bypass was
+    // dropped 2026-04-23 (Stage 1.5a) — creators who want to move work
+    // forward should self-add to the subtask via the `+ Me` affordance so
+    // the tick is attributed to someone doing the work.
     const isAssigned = target.assigneeUids.includes(uid);
     const isCompleterOnTask = task.completerUids.includes(uid);
     const anyoneWhoCan =
       target.assigneeUids.length === 0 && isCompleterOnTask;
-    if (!isCreator && !isAssigned && !anyoneWhoCan) {
+    if (!asAdmin && !isAssigned && !anyoneWhoCan) {
       throw new Error(
         target.assigneeUids.length === 0
           ? "Only task completers can tick subtasks on this task."
@@ -928,6 +927,11 @@ export async function setSubtaskBlock(
  * brings consent to N/N of `task.completerUids`, the block seals atomically
  * (sealState = sealed, sealedAt = serverTimestamp, activity entry). Caller
  * must be a listed completer on the task — client-enforced, rules-backed.
+ *
+ * Stage 1.5a semantic shift (2026-04-23): lock-in = allocation consensus,
+ * not submission. Dropped the work-done gate so completers can lock in once
+ * they're happy with who's doing what. Reviewer signoff rows no longer
+ * spawn on seal — they spawn when completers press `sendBlockToReviewers`.
  */
 export async function toggleBlockConsent(task: TaskDoc, blockId: string) {
   const db = getClientDb();
@@ -942,27 +946,6 @@ export async function toggleBlockConsent(task: TaskDoc, blockId: string) {
   }
   const current = task.blockConsents[blockId]?.consentingCompleterUids ?? [];
   const already = current.includes(uid);
-  // When ADDING consent (the "I'm done, send me to review" signal), every
-  // completion-row the acting user is assigned to in this block must be
-  // ticked done. Un-locking (retracting consent) is unrestricted — lets
-  // someone back out if they realise their work isn't actually finished.
-  if (!already) {
-    const myOutstanding = task.subtasks.filter(
-      (s) =>
-        s.blockId === blockId &&
-        s.roleHint !== "reviewer" &&
-        s.assigneeUids.includes(uid) &&
-        !s.done,
-    );
-    if (myOutstanding.length > 0) {
-      const first = myOutstanding[0];
-      const more =
-        myOutstanding.length > 1 ? ` (+${myOutstanding.length - 1} more)` : "";
-      throw new Error(
-        `Finish your assigned subtasks first — "${first.title}" isn't marked done yet${more}.`,
-      );
-    }
-  }
   const nextConsenting = already
     ? current.filter((u) => u !== uid)
     : [...current, uid];
@@ -994,18 +977,6 @@ export async function toggleBlockConsent(task: TaskDoc, blockId: string) {
       blockId,
       name: block.name,
     });
-    const spawned = planReviewSpawn(task, blockId);
-    if (spawned.length > 0) {
-      const nextSubtasks = [...task.subtasks, ...spawned];
-      patch.subtasks = nextSubtasks.map(serializeSubtask);
-      patch.subtaskStats = computeSubtaskStats(nextSubtasks);
-      queueActivity(batch, task.id, "review_subtasks_spawned", uid, {
-        blockId,
-        name: block.name,
-        count: spawned.length,
-        reviewerUids: spawned.flatMap((s) => s.reviewerUids),
-      });
-    }
   }
   batch.update(doc(db, "tasks", task.id), patch);
   await batch.commit();
@@ -1015,6 +986,10 @@ export async function toggleBlockConsent(task: TaskDoc, blockId: string) {
  * Admin escape hatch — seal a block without waiting for unanimous consent.
  * Logged distinctly from the natural-consensus seal so the audit trail
  * preserves the "we moved despite missing sign-off" provenance.
+ *
+ * Stage 1.5a (2026-04-23): no longer spawns reviewer signoff rows. Seal now
+ * means "allocation locked, work begins" — reviewer rows spawn via
+ * `sendBlockToReviewers` once work is complete.
  */
 export async function forceSealBlock(task: TaskDoc, blockId: string) {
   const db = getClientDb();
@@ -1033,20 +1008,69 @@ export async function forceSealBlock(task: TaskDoc, blockId: string) {
       : b,
   );
   const batch = writeBatch(db);
-  const patch: Record<string, unknown> = {
+  batch.update(doc(db, "tasks", task.id), {
     blocks: blocks.map(serializeBlock),
     updatedAt: serverTimestamp(),
-  };
+  });
+  queueActivity(batch, task.id, "block_force_sealed", uid, {
+    blockId,
+    name: block.name,
+  });
+  await batch.commit();
+}
+
+/**
+ * Completer-pressed handoff: spawn reviewer signoff rows for a sealed block
+ * and log a `block_sent_to_reviewers` activity entry. Validates that every
+ * non-reviewer subtask in the block is done, no signoff rows exist yet, and
+ * the caller is a listed completer on the task.
+ *
+ * Stage 1.5a (2026-04-23) replaces the old "seal = spawn reviewers" flow.
+ */
+export async function sendBlockToReviewers(task: TaskDoc, blockId: string) {
+  const db = getClientDb();
+  const uid = actingUid();
+  if (!task.completerUids.includes(uid)) {
+    throw new Error("Only listed completers can send a block to reviewers.");
+  }
+  const block = task.blocks.find((b) => b.id === blockId);
+  if (!block) throw new Error("Block not found");
+  if (block.sealState !== "sealed") {
+    throw new Error("Lock in the block's allocation before sending to reviewers.");
+  }
+  const completionRows = task.subtasks.filter(
+    (s) => s.blockId === blockId && s.roleHint !== "reviewer",
+  );
+  const outstanding = completionRows.filter((s) => !s.done);
+  if (outstanding.length > 0) {
+    const first = outstanding[0];
+    const more = outstanding.length > 1 ? ` (+${outstanding.length - 1} more)` : "";
+    throw new Error(
+      `All tasks must be marked as complete before sending to reviewers — "${first.title}" isn't done yet${more}.`,
+    );
+  }
+  const alreadySent = task.subtasks.some(
+    (s) => s.blockId === blockId && s.roleHint === "reviewer",
+  );
+  if (alreadySent) {
+    throw new Error("This block has already been sent to reviewers.");
+  }
   const spawned = planReviewSpawn(task, blockId);
+  const batch = writeBatch(db);
+  const patch: Record<string, unknown> = {
+    updatedAt: serverTimestamp(),
+  };
   if (spawned.length > 0) {
     const nextSubtasks = [...task.subtasks, ...spawned];
     patch.subtasks = nextSubtasks.map(serializeSubtask);
     patch.subtaskStats = computeSubtaskStats(nextSubtasks);
   }
   batch.update(doc(db, "tasks", task.id), patch);
-  queueActivity(batch, task.id, "block_force_sealed", uid, {
+  queueActivity(batch, task.id, "block_sent_to_reviewers", uid, {
     blockId,
     name: block.name,
+    reviewerCount: spawned.length,
+    reviewerUids: spawned.flatMap((s) => s.reviewerUids),
   });
   if (spawned.length > 0) {
     queueActivity(batch, task.id, "review_subtasks_spawned", uid, {
