@@ -210,6 +210,7 @@ export default function SubtaskList({
                             isAdmin={isAdmin}
                             canEditRoster={canEditRoster}
                             canEdit={canEdit}
+                            canEditStructure={canEditStructure}
                             showMatrix={showMatrix}
                             isReviewPending={pendingReviewSubtaskIds.has(s.id)}
                             dragHandle={handle}
@@ -230,6 +231,7 @@ export default function SubtaskList({
                     isAdmin={isAdmin}
                     canEditRoster={canEditRoster}
                     canEdit={canEdit}
+                    canEditStructure={canEditStructure}
                     showMatrix={showMatrix}
                     isReviewPending={pendingReviewSubtaskIds.has(s.id)}
                   />
@@ -360,6 +362,7 @@ function SignoffPhase({
           isAdmin={isAdmin}
           canEditRoster={canEditRoster}
           canEdit={canEdit}
+          canEditStructure={canEditStructure}
           showMatrix={showMatrix}
           isReviewPending={pendingReviewSubtaskIds.has(s.id)}
         />
