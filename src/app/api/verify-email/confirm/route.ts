@@ -13,11 +13,18 @@ import { verifyToken } from "@/lib/signedTokens";
 export async function POST(req: Request) {
   const { signed } = (await req.json().catch(() => ({}))) as { signed?: string };
   if (!signed) {
+    console.warn("[verify-email confirm] no token in body");
     return NextResponse.json({ error: "Missing token" }, { status: 400 });
   }
 
+  console.log("[verify-email confirm] token received", {
+    length: signed.length,
+    preview: `${signed.slice(0, 16)}...${signed.slice(-8)}`,
+  });
+
   const payload = verifyToken(signed, "verify-uni-email");
   if (!payload || payload.s !== "verify-uni-email") {
+    console.warn("[verify-email confirm] verifyToken returned null — see [verifyToken] reason above");
     return NextResponse.json({ error: "Invalid or expired link" }, { status: 400 });
   }
 
@@ -29,12 +36,18 @@ export async function POST(req: Request) {
   const ref = db.collection("emailVerifications").doc(payload.v);
   const snap = await ref.get();
   if (!snap.exists) {
+    console.warn("[verify-email confirm] Firestore doc missing", { tokenId: payload.v });
     return NextResponse.json({ error: "Verification request not found" }, { status: 404 });
   }
 
   const data = snap.data()!;
   const expiresAt = data.expiresAt as Timestamp | undefined;
   if (expiresAt && expiresAt.toMillis() <= Date.now()) {
+    console.warn("[verify-email confirm] Firestore doc expiresAt in past", {
+      tokenId: payload.v,
+      expiresAt: expiresAt.toDate().toISOString(),
+      now: new Date().toISOString(),
+    });
     return NextResponse.json({ error: "Link has expired" }, { status: 410 });
   }
 
@@ -42,5 +55,6 @@ export async function POST(req: Request) {
     await ref.update({ verifiedAt: Timestamp.now() });
   }
 
+  console.log("[verify-email confirm] verified", { tokenId: payload.v, email: data.email });
   return NextResponse.json({ ok: true, email: data.email });
 }
