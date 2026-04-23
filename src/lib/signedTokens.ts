@@ -93,24 +93,60 @@ export function verifyToken<T extends TokenPayload>(
   token: string,
   expectedScope: T["s"],
 ): T | null {
-  if (typeof token !== "string" || !token.includes(".")) return null;
+  if (typeof token !== "string" || !token.includes(".")) {
+    console.warn("[verifyToken] rejected: no separator", { scope: expectedScope, len: token?.length });
+    return null;
+  }
   const [body, sig] = token.split(".", 2);
-  if (!body || !sig) return null;
+  if (!body || !sig) {
+    console.warn("[verifyToken] rejected: empty body or sig", { scope: expectedScope });
+    return null;
+  }
 
   const expected = createHmac("sha256", secret()).update(body).digest();
   const given = fromB64url(sig);
-  if (given.length !== expected.length) return null;
-  if (!timingSafeEqual(given, expected)) return null;
+  if (given.length !== expected.length) {
+    console.warn("[verifyToken] rejected: sig length mismatch", {
+      scope: expectedScope,
+      given: given.length,
+      expected: expected.length,
+      sigPreview: sig.slice(0, 8),
+    });
+    return null;
+  }
+  if (!timingSafeEqual(given, expected)) {
+    console.warn("[verifyToken] rejected: sig content mismatch", {
+      scope: expectedScope,
+      bodyPreview: body.slice(0, 16),
+      sigPreview: sig.slice(0, 8),
+    });
+    return null;
+  }
 
   let payload: TokenPayload;
   try {
     payload = JSON.parse(fromB64url(body).toString("utf8")) as TokenPayload;
-  } catch {
+  } catch (err) {
+    console.warn("[verifyToken] rejected: JSON parse failed", { scope: expectedScope, err });
     return null;
   }
-  if (payload.s !== expectedScope) return null;
+  if (payload.s !== expectedScope) {
+    console.warn("[verifyToken] rejected: scope mismatch", {
+      expected: expectedScope,
+      got: payload.s,
+    });
+    return null;
+  }
   const now = Math.floor(Date.now() / 1000);
-  if (payload.exp <= now) return null;
+  if (payload.exp <= now) {
+    console.warn("[verifyToken] rejected: expired", {
+      scope: expectedScope,
+      now,
+      exp: payload.exp,
+      agedSeconds: now - payload.exp,
+    });
+    return null;
+  }
   return payload as T;
 }
 
