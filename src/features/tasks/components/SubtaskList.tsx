@@ -236,12 +236,15 @@ export default function SubtaskList({
                   />
                 ))
               )}
-              {/* Stage 1.9a gap-fix: in a sealed block, only structure-editors
-                  can add subtasks. Pre-seal or ungrouped: any completer/
+              {/* Stage 2 (2026-04-23): sealed-block add tightened to
+                  admin-only. Rationale: post-lock-in, committee creators
+                  and task reviewers shouldn't add subtasks either — use
+                  a comment for ad-hoc follow-ups so dependency wiring
+                  stays intact. Pre-seal or ungrouped: any completer/
                   reviewer with canEdit can add. */}
               {canEdit &&
                 task.subtasks.length < TASK_FIELD_LIMITS.maxSubtasks &&
-                (group.block?.sealState !== "sealed" || canEditStructure) && (
+                (group.block?.sealState !== "sealed" || isAdmin) && (
                   <InlineAddSubtask task={task} blockId={group.block?.id ?? null} />
                 )}
               {group.block &&
@@ -642,7 +645,7 @@ function InlineAddBlock({ task, hasBlocks }: { task: TaskDoc; hasBlocks: boolean
           cursor: "pointer",
         }}
       >
-        {hasBlocks ? "+ Add another block" : "+ Group subtasks into a block"}
+        {hasBlocks ? "+ Add another block" : "+ Add a block"}
       </button>
     );
   }

@@ -58,6 +58,7 @@ function serializeSubtask(s: Subtask) {
     id: s.id,
     title: s.title,
     description: s.description,
+    dueDate: s.dueDate ? Timestamp.fromDate(s.dueDate) : null,
     done: s.done,
     doneAt: s.doneAt ? Timestamp.fromDate(s.doneAt) : null,
     doneByUid: s.doneByUid,
@@ -96,6 +97,7 @@ function planReviewSpawn(task: TaskDoc, blockId: string): Subtask[] {
       id: genId(),
       title: "Reviewer signoff",
       description: "",
+      dueDate: null,
       done: false,
       doneAt: null,
       doneByUid: null,
@@ -132,7 +134,7 @@ function clampUids(uids: string[] | undefined, max: number): string[] {
 }
 
 export type CreateSubtaskInput = Pick<Subtask, "title"> &
-  Partial<Pick<Subtask, "id" | "description" | "assigneeUids" | "reviewerUids" | "blockedBy" | "blockId" | "roleHint">>;
+  Partial<Pick<Subtask, "id" | "description" | "dueDate" | "assigneeUids" | "reviewerUids" | "blockedBy" | "blockId" | "roleHint">>;
 
 export type CreateTaskInput = {
   title: string;
@@ -172,6 +174,7 @@ export async function createTask(input: CreateTaskInput): Promise<string> {
     id: s.id ?? genId(),
     title: s.title.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
     description: (s.description ?? "").slice(0, TASK_FIELD_LIMITS.subtaskDescription),
+    dueDate: s.dueDate ?? null,
     done: false,
     doneAt: null,
     doneByUid: null,
@@ -365,6 +368,7 @@ export async function addSubtask(
     id: genId(),
     title: trimmed.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
     description: (init.description ?? "").slice(0, TASK_FIELD_LIMITS.subtaskDescription),
+    dueDate: init.dueDate ?? null,
     done: false,
     doneAt: null,
     doneByUid: null,
@@ -702,6 +706,23 @@ export async function updateSubtaskDescription(
   await patchSubtask(task, subtaskId, (s) => ({
     ...s,
     description: description.slice(0, TASK_FIELD_LIMITS.subtaskDescription),
+  }));
+}
+
+/**
+ * Set or clear a subtask's due date. Pass `null` to remove. Intentionally
+ * NOT enforced against task.dueDate — subtask deadlines are often firmer
+ * than the task's aspirational deadline (e.g. publicity must land before
+ * the event itself). UI-gated to admin/creator/committee-on-committee.
+ */
+export async function updateSubtaskDueDate(
+  task: TaskDoc,
+  subtaskId: string,
+  dueDate: Date | null,
+) {
+  await patchSubtask(task, subtaskId, (s) => ({
+    ...s,
+    dueDate,
   }));
 }
 
