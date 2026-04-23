@@ -59,6 +59,7 @@ export const TASK_FIELD_LIMITS = {
   title: 120,
   description: 4000,
   subtaskTitle: 160,
+  subtaskDescription: 2000,
   blockName: 60,
   tag: 40,
   maxSubtasks: 50,
@@ -96,6 +97,12 @@ export type BlockConsentMap = Record<string, { consentingCompleterUids: string[]
 export type Subtask = {
   id: string;
   title: string;
+  /** Stable per-subtask instructions from the task creator — what's being
+   *  asked for, suggested flow, acceptance cues. Distinct from the comment
+   *  thread (which is dynamic back-and-forth). Empty string = not set.
+   *  Markdown is not rendered; the popover shows plain text with preserved
+   *  whitespace so formatting stays author-controlled. */
+  description: string;
   done: boolean;
   doneAt: Date | null;
   doneByUid: string | null;
@@ -208,6 +215,7 @@ function normalizeSubtask(raw: unknown): Subtask | null {
   return {
     id,
     title,
+    description: typeof s.description === "string" ? s.description : "",
     done: Boolean(s.done),
     doneAt: tsToDate(s.doneAt),
     doneByUid: typeof s.doneByUid === "string" ? s.doneByUid : null,

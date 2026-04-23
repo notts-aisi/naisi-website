@@ -33,6 +33,7 @@ import {
 } from "../taskMutations";
 import { addComment } from "../commentMutations";
 import AssigneePicker from "./AssigneePicker";
+import SubtaskDetailModal from "./SubtaskDetailModal";
 
 type Props = {
   task: TaskDoc;
@@ -49,6 +50,11 @@ type Props = {
    *  users see a read-only list. */
   canEditRoster: boolean;
   canEdit: boolean;
+  /** True when the viewer can edit the subtask description. Mirrors the
+   *  task-level `canEditStructure` (admin / committee on committee tasks /
+   *  creator on personal). Non-editors still open the detail modal — they
+   *  just see the description read-only. */
+  canEditStructure: boolean;
   /** Whether the viewer can see the reviewer columns. Completers + non-
    *  involved committee members get this `false` — they see the row's
    *  aggregate colour state but not the per-reviewer grid. */
@@ -109,11 +115,13 @@ export default function SubtaskRow({
   isAdmin,
   canEditRoster,
   canEdit,
+  canEditStructure,
   showMatrix,
   isReviewPending,
   dragHandle,
 }: Props) {
   const [editing, setEditing] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [titleDraft, setTitleDraft] = useState(subtask.title);
   // Rejection-reason composer. `null` = dialog closed. Non-null string =
   // open with that draft value. Intercepts the ❌ menu click so reviewers
@@ -365,12 +373,37 @@ export default function SubtaskRow({
         borderRadius: "var(--radius-md)",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", minHeight: "2rem" }}>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setDetailOpen(true)}
+        onKeyDown={(e) => {
+          // Keep Enter/Space as the only keyboard triggers — matches native
+          // button semantics and avoids swallowing keystrokes meant for
+          // nested inputs (e.g. the inline title rename field). Guard on
+          // e.target === e.currentTarget so focus-on-child keys bubble
+          // normally.
+          if (e.target !== e.currentTarget) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setDetailOpen(true);
+          }
+        }}
+        aria-label={`Open details for "${subtask.title}"`}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "var(--space-3)",
+          minHeight: "2rem",
+          cursor: "pointer",
+        }}
+      >
         {dragHandle}
         <input
           type="checkbox"
           checked={subtask.done}
           disabled={blocked || signoffBlocked || signoffRetractLocked || !canToggleRow}
+          onClick={(e) => e.stopPropagation()}
           onChange={() => handleCheckboxToggle().catch(console.error)}
           aria-label={
             blocked
@@ -434,7 +467,10 @@ export default function SubtaskRow({
         {canSelfAdd && (
           <button
             type="button"
-            onClick={() => selfAddToSubtask(task, subtask.id).catch(console.error)}
+            onClick={(e) => {
+              e.stopPropagation();
+              selfAddToSubtask(task, subtask.id).catch(console.error);
+            }}
             style={selfBtn}
             title={
               parentSealed
@@ -448,7 +484,10 @@ export default function SubtaskRow({
         {canSelfRemove && (
           <button
             type="button"
-            onClick={() => selfRemoveFromSubtask(task, subtask.id).catch(console.error)}
+            onClick={(e) => {
+              e.stopPropagation();
+              selfRemoveFromSubtask(task, subtask.id).catch(console.error);
+            }}
             style={selfBtn}
             title="Remove me from this subtask"
           >
@@ -479,23 +518,28 @@ export default function SubtaskRow({
         {/* Hide the per-reviewer matrix on reviewer-signoff rows — the
             checkbox IS the approval there, no grid needed. */}
         {showMatrix && reviewers.length > 0 && subtask.roleHint !== "reviewer" && (
-          <ApprovalMatrixRow
-            reviewers={reviewers}
-            approvedUids={subtask.approvedByReviewerUids}
-            questionedUids={subtask.questionedByReviewerUids}
-            rejectedUids={subtask.rejectedByReviewerUids}
-            viewerUid={viewerUid}
-            approveWillFinalise={approveWillFinalise}
-            awaitingCompleterSubmit={!subtask.done}
-            viewerFrozenOnBlock={viewerFrozenOnBlock}
-            onSet={(state) => {
-              handleSetReview(state).catch(console.error);
-            }}
-          />
+          <div onClick={(e) => e.stopPropagation()} style={{ display: "contents" }}>
+            <ApprovalMatrixRow
+              reviewers={reviewers}
+              approvedUids={subtask.approvedByReviewerUids}
+              questionedUids={subtask.questionedByReviewerUids}
+              rejectedUids={subtask.rejectedByReviewerUids}
+              viewerUid={viewerUid}
+              approveWillFinalise={approveWillFinalise}
+              awaitingCompleterSubmit={!subtask.done}
+              viewerFrozenOnBlock={viewerFrozenOnBlock}
+              onSet={(state) => {
+                handleSetReview(state).catch(console.error);
+              }}
+            />
+          </div>
         )}
 
         {canEdit && (
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", marginLeft: "var(--space-2)" }}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", marginLeft: "var(--space-2)" }}
+          >
             <button
               type="button"
               onClick={() => setEditing((v) => !v)}
@@ -937,6 +981,15 @@ export default function SubtaskRow({
             </div>
           )}
         </div>
+      )}
+      {detailOpen && (
+        <SubtaskDetailModal
+          task={task}
+          subtask={subtask}
+          users={users}
+          canEditDescription={canEditStructure}
+          onClose={() => setDetailOpen(false)}
+        />
       )}
     </div>
   );

@@ -57,6 +57,7 @@ function serializeSubtask(s: Subtask) {
   return {
     id: s.id,
     title: s.title,
+    description: s.description,
     done: s.done,
     doneAt: s.doneAt ? Timestamp.fromDate(s.doneAt) : null,
     doneByUid: s.doneByUid,
@@ -94,6 +95,7 @@ function planReviewSpawn(task: TaskDoc, blockId: string): Subtask[] {
     out.push({
       id: genId(),
       title: "Reviewer signoff",
+      description: "",
       done: false,
       doneAt: null,
       doneByUid: null,
@@ -130,7 +132,7 @@ function clampUids(uids: string[] | undefined, max: number): string[] {
 }
 
 export type CreateSubtaskInput = Pick<Subtask, "title"> &
-  Partial<Pick<Subtask, "id" | "assigneeUids" | "reviewerUids" | "blockedBy" | "blockId" | "roleHint">>;
+  Partial<Pick<Subtask, "id" | "description" | "assigneeUids" | "reviewerUids" | "blockedBy" | "blockId" | "roleHint">>;
 
 export type CreateTaskInput = {
   title: string;
@@ -169,6 +171,7 @@ export async function createTask(input: CreateTaskInput): Promise<string> {
   const subtasks: Subtask[] = rawSubtasks.map((s) => ({
     id: s.id ?? genId(),
     title: s.title.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
+    description: (s.description ?? "").slice(0, TASK_FIELD_LIMITS.subtaskDescription),
     done: false,
     doneAt: null,
     doneByUid: null,
@@ -352,6 +355,7 @@ export async function addSubtask(
   const next: Subtask = {
     id: genId(),
     title: trimmed.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
+    description: (init.description ?? "").slice(0, TASK_FIELD_LIMITS.subtaskDescription),
     done: false,
     doneAt: null,
     doneByUid: null,
@@ -671,6 +675,24 @@ export async function renameSubtask(task: TaskDoc, subtaskId: string, title: str
   await patchSubtask(task, subtaskId, (s) => ({
     ...s,
     title: trimmed.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
+  }));
+}
+
+/**
+ * Edit the per-subtask description — stable instructions from the task
+ * creator. Empty string clears the description. Caller permission (admin /
+ * creator / committee on committee tasks) is gated in the UI — same pattern
+ * as task-level description edits. No activity log entry; descriptions
+ * evolve freely during drafting and the noise isn't worth the audit value.
+ */
+export async function updateSubtaskDescription(
+  task: TaskDoc,
+  subtaskId: string,
+  description: string,
+) {
+  await patchSubtask(task, subtaskId, (s) => ({
+    ...s,
+    description: description.slice(0, TASK_FIELD_LIMITS.subtaskDescription),
   }));
 }
 
