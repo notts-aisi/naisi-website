@@ -17,7 +17,9 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   TASK_FIELD_LIMITS,
+  getBlockPhase,
   groupSubtasksByBlock,
+  type BlockPhase,
   type Subtask,
   type TaskBlock,
   type TaskDoc,
@@ -132,27 +134,23 @@ export default function SubtaskList({
       )}
 
       {groups.map((group) => {
-        const isSealed = group.block?.sealState === "sealed";
-        // Colour semantics:
-        //   Green = Active (where the work/attention is right now).
-        //   Orange = Passive (done its turn, waiting on a downstream
-        //   phase). So an OPEN block is green (completers are active),
-        //   a SEALED block flips to orange (completion work is done,
-        //   attention moves to the review phase below it).
-        const blockContainerStyle: React.CSSProperties = group.block
+        // Stage 1.9a block-phase colour scheme:
+        //   allocating (open)    → red    (attention: allocation incomplete)
+        //   in-progress (sealed) → orange (work under way)
+        //   reviewing            → yellow (handed to reviewers, not done)
+        //   complete             → green  (all reviewers signed off)
+        const phase: BlockPhase | null = group.block
+          ? getBlockPhase(task, group.block)
+          : null;
+        const phasePalette = phase ? BLOCK_PHASE_PALETTE[phase] : null;
+        const blockContainerStyle: React.CSSProperties = phasePalette
           ? {
               display: "flex",
               flexDirection: "column",
               gap: "var(--space-2)",
               padding: "var(--space-3)",
-              background: isSealed
-                ? "var(--color-warning-soft, var(--color-surface-hover))"
-                : "var(--color-success-soft, rgba(22, 163, 74, 0.04))",
-              border: `1px solid ${
-                isSealed
-                  ? "var(--color-warning, var(--color-accent))"
-                  : "var(--color-success, #16a34a)"
-              }`,
+              background: phasePalette.bg,
+              border: `1px solid ${phasePalette.border}`,
               borderLeftWidth: "3px",
               borderRadius: "var(--radius-md)",
             }
@@ -238,9 +236,14 @@ export default function SubtaskList({
                   />
                 ))
               )}
-              {canEdit && task.subtasks.length < TASK_FIELD_LIMITS.maxSubtasks && (
-                <InlineAddSubtask task={task} blockId={group.block?.id ?? null} />
-              )}
+              {/* Stage 1.9a gap-fix: in a sealed block, only structure-editors
+                  can add subtasks. Pre-seal or ungrouped: any completer/
+                  reviewer with canEdit can add. */}
+              {canEdit &&
+                task.subtasks.length < TASK_FIELD_LIMITS.maxSubtasks &&
+                (group.block?.sealState !== "sealed" || canEditStructure) && (
+                  <InlineAddSubtask task={task} blockId={group.block?.id ?? null} />
+                )}
               {group.block &&
                 group.block.sealState === "sealed" &&
                 signoffRows.length === 0 &&
@@ -403,18 +406,15 @@ function SignoffPhase({
   canEditRoster: boolean;
 }) {
   const allSignedOff = signoffs.length > 0 && signoffs.every((s) => s.done);
-  // Signoff container mirrors the same green=Active / orange=Passive
-  // convention as blocks: reviews-in-progress = green (active phase);
-  // every reviewer has signed = orange (done, waiting on downstream).
-  const signoffBg = allSignedOff
-    ? "var(--color-warning-soft, var(--color-surface-hover))"
-    : "var(--color-success-soft, rgba(22, 163, 74, 0.08))";
-  const signoffBorder = allSignedOff
-    ? "var(--color-warning, var(--color-accent))"
-    : "var(--color-success, #16a34a)";
-  const signoffLabel = allSignedOff
-    ? "var(--color-warning, var(--color-text))"
-    : "var(--color-success, #16a34a)";
+  // Stage 1.9a: SignoffPhase container mirrors the parent block's phase
+  // colours — yellow while reviews are outstanding, green once every
+  // reviewer has signed off.
+  const signoffPalette = allSignedOff
+    ? BLOCK_PHASE_PALETTE.complete
+    : BLOCK_PHASE_PALETTE.reviewing;
+  const signoffBg = signoffPalette.bg;
+  const signoffBorder = signoffPalette.border;
+  const signoffLabel = signoffPalette.labelColor;
   return (
     <div
       style={{
@@ -776,6 +776,36 @@ function SortableSubtaskRow({
     </div>
   );
 }
+
+export const BLOCK_PHASE_PALETTE: Record<
+  BlockPhase,
+  { bg: string; border: string; label: string; labelColor: string }
+> = {
+  allocating: {
+    bg: "var(--color-danger-soft, rgba(220, 38, 38, 0.06))",
+    border: "var(--color-danger, #dc2626)",
+    label: "Allocating",
+    labelColor: "var(--color-danger, #dc2626)",
+  },
+  "in-progress": {
+    bg: "var(--color-warning-soft, var(--color-surface-hover))",
+    border: "var(--color-warning, var(--color-accent))",
+    label: "In progress",
+    labelColor: "var(--color-warning, var(--color-text))",
+  },
+  reviewing: {
+    bg: "var(--color-caution-soft, rgba(234, 179, 8, 0.10))",
+    border: "var(--color-caution, #eab308)",
+    label: "Under review",
+    labelColor: "var(--color-caution, #a16207)",
+  },
+  complete: {
+    bg: "var(--color-success-soft, rgba(22, 163, 74, 0.08))",
+    border: "var(--color-success, #16a34a)",
+    label: "Complete",
+    labelColor: "var(--color-success, #16a34a)",
+  },
+};
 
 // TaskBlock import is used implicitly via groupSubtasksByBlock's return type.
 export type { TaskBlock };

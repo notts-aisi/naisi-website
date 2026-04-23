@@ -491,6 +491,29 @@ export function groupSubtasksByBlock(
 }
 
 /**
+ * Phase of a block in the Stage 1.9 lifecycle:
+ *   - `allocating`: block is open, completers deciding who does what.
+ *     Colour: red (attention needed, allocation incomplete).
+ *   - `in-progress`: block sealed (roster locked), work underway, no
+ *     signoff rows yet. Colour: orange.
+ *   - `reviewing`: signoff rows spawned (Notify pressed), not yet all done.
+ *     Colour: yellow.
+ *   - `complete`: every signoff row is ticked done — block accepted.
+ *     Colour: green.
+ */
+export type BlockPhase = "allocating" | "in-progress" | "reviewing" | "complete";
+
+export function getBlockPhase(task: TaskDoc, block: TaskBlock): BlockPhase {
+  if (block.sealState !== "sealed") return "allocating";
+  const signoffs = task.subtasks.filter(
+    (s) => s.blockId === block.id && s.roleHint === "reviewer",
+  );
+  if (signoffs.length === 0) return "in-progress";
+  if (signoffs.every((s) => s.done)) return "complete";
+  return "reviewing";
+}
+
+/**
  * Successor lookup: the block with the smallest `order` strictly greater than
  * the given block's. Returns null when the given block is the last one, when
  * no block with that id exists, or when the task has fewer than two blocks.

@@ -194,7 +194,13 @@ export default function SubtaskRow({
   // allowed post-block-seal (cover-for-sick path) but is gated by subtask-
   // level seal — a subtask admin-sealed is frozen both ways.
   const canSelfRemove = isCompleter && isSelfAssigned && !rosterLocked;
-  const canSelfAdd = isCompleter && !isSelfAssigned && !subtaskSealed;
+  // Stage 1.9a gap-fix: hide +Me on reviewer-signoff rows so completers
+  // don't see an affordance they can't use (server-side already rejects).
+  const canSelfAdd =
+    isCompleter &&
+    !isSelfAssigned &&
+    !subtaskSealed &&
+    subtask.roleHint !== "reviewer";
   const blockers = useMemo(
     () =>
       subtask.blockedBy
