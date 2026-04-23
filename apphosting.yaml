@@ -36,19 +36,19 @@ env:
   - variable: EVENTS_TOKEN_SECRET
     secret: EVENTS_TOKEN_SECRET
     availability: [RUNTIME]
-  # AWS SES SMTP (eu-west-2). The password is an SES-generated token stored
-  # via `firebase apphosting:secrets:set SMTP_PASSWORD`. SMTP_USER is the IAM
-  # access key ID paired with that password — it can't send mail on its own, so
-  # a plain value here is fine. SMTP_FROM_EMAIL must sit on the verified
-  # domain (naisi.uk) to satisfy DKIM/DMARC alignment.
+  # Resend SMTP (eu-west-1). Migrated off AWS SES 2026-04-22 after T&S denied
+  # production access. SMTP_USER is literally the string "resend" for every
+  # Resend account; SMTP_PASSWORD is an account-scoped API key stored per
+  # project in Secret Manager. DKIM signs d=naisi.uk via resend._domainkey,
+  # so SMTP_FROM_EMAIL on @naisi.uk preserves DMARC alignment.
   - variable: SMTP_HOST
-    value: email-smtp.eu-west-2.amazonaws.com
+    value: smtp.resend.com
     availability: [RUNTIME]
   - variable: SMTP_PORT
     value: "587"
     availability: [RUNTIME]
   - variable: SMTP_USER
-    value: AKIA3WX4NEOX4GGTWGXX
+    value: resend
     availability: [RUNTIME]
   - variable: SMTP_PASSWORD
     secret: SMTP_PASSWORD
