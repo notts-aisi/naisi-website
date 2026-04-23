@@ -121,12 +121,38 @@ export async function updateUserProfile(uid: string, fields: FullProfileUpdate) 
  * prefs (deliverToGmail, deliverToUniEmail). Re-subscribing is allowed for
  * when an earlier opt-out was mistaken — GDPR only requires honouring an
  * unsubscribe request promptly, not forbidding reversal on user-facing ask.
+ *
+ * Dual-writes the new and legacy shapes while the migration window is open
+ * so send paths on either shape stay consistent.
  */
 export async function setNewsletterSubscribed(uid: string, subscribed: boolean) {
   const db = getClientDb();
   await updateDoc(doc(db, "users", uid), {
     "profile.newsletter.subscribed": subscribed,
+    "profile.notifications.categories.newsletter": subscribed,
   });
+}
+
+/**
+ * Admin-only toggle for any single notification category on a given user.
+ * Used by the members admin panel to (re)subscribe users to events or the
+ * newsletter independently.
+ */
+export async function setUserNotificationCategory(
+  uid: string,
+  category: "newsletter" | "events",
+  enabled: boolean,
+) {
+  const db = getClientDb();
+  const patch: Record<string, unknown> = {
+    [`profile.notifications.categories.${category}`]: enabled,
+  };
+  // Keep legacy `profile.newsletter.subscribed` roughly in sync for
+  // un-migrated reads; events has no legacy equivalent so we skip it.
+  if (category === "newsletter") {
+    patch["profile.newsletter.subscribed"] = enabled;
+  }
+  await updateDoc(doc(db, "users", uid), patch);
 }
 
 // === Projects ===

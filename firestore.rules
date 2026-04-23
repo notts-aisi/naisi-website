@@ -325,6 +325,19 @@ service cloud.firestore {
         && request.resource.data.subject.size() <= 200;
     }
 
+    // === emailVerifications ===
+    // One doc per outstanding magic-link uni-email verification. Created by
+    // the server-side /api/verify-email/send route; mutated by the
+    // /api/verify-email/confirm route (admin SDK in both cases). Clients are
+    // allowed to READ the doc they initiated (so the register tab can
+    // onSnapshot for `verifiedAt != null`), but cannot write — writes go
+    // through the signed-token endpoints only.
+    match /emailVerifications/{tokenId} {
+      allow read: if isSignedIn()
+        && request.auth.uid == resource.data.authUid;
+      allow write: if false;
+    }
+
     // === suppressedEmails ===
     // Populated by the SES→SNS bounce/complaint webhook via the admin SDK.
     // No client access — the send routes that consult this list also use the

@@ -46,7 +46,11 @@ export async function signInWithGoogle(): Promise<SignInResult> {
  * Called by the /register form after Google auth + profile fields submitted.
  * Writes the initial users/{uid} doc with role: 'pending'.
  */
-import type { AffiliationStatus, NewsletterPrefs } from "@/lib/firestore/users";
+import type { AffiliationStatus } from "@/lib/firestore/users";
+import {
+  serialiseNotifications,
+  type NotificationPrefs,
+} from "@/lib/firestore/notifications";
 
 /** Drop undefined values — Firestore's `setDoc` rejects them outright. */
 function compact<T extends Record<string, unknown>>(obj: T): Partial<T> {
@@ -66,22 +70,48 @@ export async function completeRegistration(profile: {
   expectedGraduation?: string;
   motivation: string;
   interests?: string;
-  newsletter: NewsletterPrefs;
+  notifications: NotificationPrefs;
+  /** If present, server-side `uniEmailVerifiedAt` should be set from the
+   * backing `emailVerifications` doc. The server treats this as a hint —
+   * actual trust comes from the doc, not the client's say-so. */
+  verifiedTokenId?: string;
+  /** ISO timestamp stamped when the register tab saw verification complete. */
+  uniEmailVerifiedAt?: Date;
 }): Promise<void> {
   const auth = getClientAuth();
   const db = getClientDb();
   const user = auth.currentUser;
   if (!user) throw new Error("Not signed in");
 
+  const { notifications, verifiedTokenId, uniEmailVerifiedAt, ...rest } = profile;
+  const writableProfile: Record<string, unknown> = {
+    ...compact(rest),
+    notifications: serialiseNotifications(notifications),
+    // Legacy compat — keep `newsletter` in sync so un-migrated read paths
+    // (newsletter send, useNewsletterSubscribers) work during the transition.
+    newsletter: {
+      subscribed: notifications.categories.newsletter,
+      deliverToGmail: notifications.channels.gmail,
+      deliverToUniEmail: notifications.channels.uniEmail,
+    },
+  };
+  if (uniEmailVerifiedAt) {
+    writableProfile.uniEmailVerifiedAt = uniEmailVerifiedAt;
+  }
+
   await setDoc(doc(db, "users", user.uid), {
     email: user.email,
     displayName: user.displayName,
     photoURL: user.photoURL,
     role: "pending",
-    profile: compact(profile),
+    profile: writableProfile,
     showOnMembers: false,
     createdAt: serverTimestamp(),
   });
+  // verifiedTokenId is accepted into the signature for forward-compat with a
+  // planned server-side authoritative stamp, but not sent anywhere yet —
+  // uniEmailVerifiedAt above is the current source of truth.
+  void verifiedTokenId;
 
   // Fire-and-forget submission confirmation. User flow proceeds regardless.
   fetch("/api/admin/application-emails/send", {
