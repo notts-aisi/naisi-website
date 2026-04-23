@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { headers } from "next/headers";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { confirmUniEmailVerification } from "@/lib/email/confirmUniEmailVerification";
 
 type SearchParams = { t?: string | string[] };
 
@@ -7,44 +8,18 @@ type Result =
   | { status: "ok"; email: string }
   | { status: "error"; message: string };
 
-async function confirmOnServer(signed: string): Promise<Result> {
-  const h = await headers();
-  const host = h.get("host");
-  const proto = h.get("x-forwarded-proto") ?? "https";
-  // Absolute-URL fetch from a server component is the simplest way to reuse
-  // the existing POST /confirm route; no shared handler refactor needed.
-  const base = `${proto}://${host}`;
-  try {
-    const res = await fetch(`${base}/api/verify-email/confirm`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ signed }),
-      cache: "no-store",
-    });
-    const body = (await res.json().catch(() => null)) as
-      | { ok: boolean; email: string }
-      | { error: string }
-      | null;
-    if (!res.ok) {
-      const message =
-        (body && "error" in body && body.error) ||
-        "This verification link is no longer valid.";
-      return { status: "error", message };
-    }
-    return { status: "ok", email: (body as { email: string }).email };
-  } catch (err) {
-    console.error("[verify-email/page] confirm fetch failed", err);
-    return {
-      status: "error",
-      message: "We couldn't reach the verification service. Try clicking the link again.",
-    };
-  }
-}
-
 /**
  * Magic-link landing page. Hit from the email button; confirms the token
  * server-side, tells the user they can close the tab (their original
  * register tab is subscribed via onSnapshot and will update on its own).
+ *
+ * Calls `confirmUniEmailVerification` directly rather than POSTing to the
+ * sibling API route. An HTTP roundtrip back to our own service would have
+ * to reuse the incoming request's `host` header, which — under Firebase
+ * App Hosting — is the internal Cloud Run revision URL (e.g.
+ * `t-XXX---<service>-<suffix>.a.run.app`) rather than the public hostname.
+ * That internal URL requires IAM auth we don't pass, so the roundtrip
+ * always returned 403 and the page rendered as if the link was invalid.
  */
 export default async function VerifyEmailLandingPage({
   searchParams,
@@ -54,9 +29,28 @@ export default async function VerifyEmailLandingPage({
   const params = await searchParams;
   const raw = params.t;
   const signed = Array.isArray(raw) ? raw[0] : raw;
-  const result: Result = signed
-    ? await confirmOnServer(signed)
-    : { status: "error", message: "This link is missing its verification token." };
+
+  let result: Result;
+  if (!signed) {
+    result = {
+      status: "error",
+      message: "This link is missing its verification token.",
+    };
+  } else {
+    const db = getAdminDb();
+    if (!db) {
+      console.error("[verify-email/page] getAdminDb returned null");
+      result = {
+        status: "error",
+        message: "We couldn't reach the verification service. Try again in a moment.",
+      };
+    } else {
+      const r = await confirmUniEmailVerification(db, signed);
+      result = r.ok
+        ? { status: "ok", email: r.email }
+        : { status: "error", message: r.error };
+    }
+  }
 
   return (
     <main
