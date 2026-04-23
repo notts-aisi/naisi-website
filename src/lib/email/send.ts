@@ -22,6 +22,18 @@ type SendArgs = {
   actorUid?: string;
   /** Related entity id (draft id, event id, RSVP id) for cross-referencing. */
   referenceId?: string;
+  /**
+   * RFC 8058 one-click unsubscribe. Setting this adds the
+   * `List-Unsubscribe` + `List-Unsubscribe-Post` headers that Gmail/Yahoo
+   * require on bulk senders since Feb 2024 — and that give inbox clients
+   * permission to render a prominent "unsubscribe" affordance.
+   */
+  listUnsubscribe?: {
+    /** Must be a direct HTTPS URL that will accept a POST with empty body. */
+    url: string;
+    /** Optional mailto fallback for inbox clients that don't do one-click. */
+    mailto?: string;
+  };
 };
 
 let cached: Transporter | null = null;
@@ -56,6 +68,7 @@ export async function sendEmail({
   kind,
   actorUid,
   referenceId,
+  listUnsubscribe,
 }: SendArgs) {
   const [html, text] = await Promise.all([render(react), render(react, { plainText: true })]);
   const displayName = fromName ?? process.env.SMTP_FROM_NAME ?? "NAISI";
@@ -67,6 +80,14 @@ export async function sendEmail({
   // From domain has no receiving MX. Per-call replyTo still wins.
   const effectiveReplyTo = replyTo ?? process.env.EMAIL_DEFAULT_REPLY_TO;
 
+  const extraHeaders: Record<string, string> = {};
+  if (listUnsubscribe) {
+    const parts = [`<${listUnsubscribe.url}>`];
+    if (listUnsubscribe.mailto) parts.push(`<mailto:${listUnsubscribe.mailto}>`);
+    extraHeaders["List-Unsubscribe"] = parts.join(", ");
+    extraHeaders["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+  }
+
   const info = await transporter().sendMail({
     from: `"${displayName}" <${fromEmail}>`,
     to: Array.isArray(to) ? to.join(", ") : to,
@@ -74,6 +95,7 @@ export async function sendEmail({
     subject,
     html,
     text,
+    headers: extraHeaders,
   });
 
   // Pull SES's own message-id out of the 250 response so later bounce events

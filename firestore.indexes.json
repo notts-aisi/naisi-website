@@ -109,6 +109,15 @@
         { "fieldPath": "eventId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "emailVerifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "authUid", "order": "ASCENDING" },
+        { "fieldPath": "email", "order": "ASCENDING" },
+        { "fieldPath": "verifiedAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

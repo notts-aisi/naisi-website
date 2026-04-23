@@ -10,34 +10,27 @@ import {
   type Block,
 } from "@/lib/firestore/newsletterBlocks";
 import { filterSuppressed } from "@/lib/firestore/suppression";
+import {
+  addressesForSend,
+  normaliseNotifications,
+  wantsCategory,
+} from "@/lib/firestore/notifications";
+import { signToken } from "@/lib/signedTokens";
 
 type Ctx = RouteContext<"/api/newsletter/[id]/send">;
+
+const UNSUB_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year
 
 type SubscriberRow = {
   uid: string;
   preferredName: string;
   gmailEmail: string | null;
   universityEmail: string | null;
-  deliverToGmail: boolean;
-  deliverToUniEmail: boolean;
+  addresses: string[];
 };
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-function fallbackAddresses(s: SubscriberRow, gmailOnly: boolean): string[] {
-  const out: string[] = [];
-  if (s.deliverToGmail && s.gmailEmail) out.push(s.gmailEmail);
-  // Gmail-only mode ignores self-declared university addresses so early sends
-  // only hit Google-authenticated inboxes. Toggle off via env once the
-  // bounce/complaint pipeline has built trust on the sending domain.
-  if (!gmailOnly && s.deliverToUniEmail && s.universityEmail) {
-    out.push(s.universityEmail);
-  }
-  // Edge case: subscribed but no delivery box set — default to gmail.
-  if (out.length === 0 && s.gmailEmail) out.push(s.gmailEmail);
-  return out;
 }
 
 export async function POST(_req: Request, ctx: Ctx) {
@@ -76,7 +69,6 @@ export async function POST(_req: Request, ctx: Ctx) {
   const subject = (draft.subject as string)?.trim() ?? "";
   let blocks: Block[] = sanitizeBlocks(draft.blocks);
   if (blocks.length === 0) {
-    // Legacy path: draft was authored before the block editor existed.
     const legacyMarkdown = (draft.bodyMarkdown as string) ?? "";
     blocks = bodyMarkdownToBlocks(legacyMarkdown);
   }
@@ -87,26 +79,43 @@ export async function POST(_req: Request, ctx: Ctx) {
     );
   }
 
-  // Fetch subscribers (admin SDK, bypasses client rules).
-  const subSnap = await db
-    .collection("users")
-    .where("profile.newsletter.subscribed", "==", true)
-    .get();
+  // Pull every user; filter client-side. Filtering on the new notifications
+  // shape via where() would miss un-migrated users, and the legacy-shape
+  // where() would miss users saved under the new UI. One query + in-memory
+  // normalise is simplest and stays correct across the migration window.
+  const allUsers = await db.collection("users").get();
 
-  const subscribers: SubscriberRow[] = subSnap.docs.map((d) => {
+  const gmailOnly = process.env.EMAIL_GMAIL_ONLY_MODE === "true";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
+
+  const subscribers: SubscriberRow[] = allUsers.docs.flatMap((d) => {
     const data = d.data();
-    const nl = data.profile?.newsletter ?? {};
-    return {
-      uid: d.id,
-      preferredName:
-        (data.profile?.preferredName as string) ||
-        (data.displayName as string) ||
-        "there",
-      gmailEmail: (data.email as string) ?? null,
-      universityEmail: (data.profile?.universityEmail as string) ?? null,
-      deliverToGmail: Boolean(nl.deliverToGmail),
-      deliverToUniEmail: Boolean(nl.deliverToUniEmail),
-    };
+    const profile = (data.profile ?? {}) as Record<string, unknown>;
+    const prefs = normaliseNotifications(profile);
+    if (!wantsCategory(prefs, "newsletter")) return [];
+    const gmailEmail = (data.email as string) ?? null;
+    const universityEmail =
+      (profile.universityEmail as string | undefined) ?? null;
+    const addresses = addressesForSend({
+      prefs,
+      category: "newsletter",
+      gmailEmail,
+      universityEmail,
+      gmailOnlyMode: gmailOnly,
+    });
+    if (addresses.length === 0) return [];
+    return [
+      {
+        uid: d.id,
+        preferredName:
+          (profile.preferredName as string | undefined) ||
+          (data.displayName as string | undefined) ||
+          "there",
+        gmailEmail,
+        universityEmail,
+        addresses,
+      },
+    ];
   });
 
   if (subscribers.length === 0) {
@@ -116,22 +125,13 @@ export async function POST(_req: Request, ctx: Ctx) {
     );
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
-  const unsubscribeUrl = `${appUrl}/profile`;
-  const gmailOnly = process.env.EMAIL_GMAIL_ONLY_MODE === "true";
-
-  // Batch-check the suppression list once up-front — cheaper than a per-send
-  // lookup when lists grow, and gives us a single place to surface counts.
-  const planned = subscribers.flatMap((s) => fallbackAddresses(s, gmailOnly));
+  const planned = subscribers.flatMap((s) => s.addresses);
   const { suppressed: suppressedList } = await filterSuppressed(db, planned);
   const suppressedSet = new Set(suppressedList.map((a) => a.toLowerCase()));
 
-  // Send one email per (subscriber, opted-in address). Gmail Workspace rate limits
-  // at roughly 150/min — a 200ms delay between sends is well under that even
-  // if the subscriber list grows.
-  let sentCount = 0; // total emails actually sent (addresses)
-  let suppressedCount = 0; // addresses skipped due to bounce/complaint history
-  const reachedUids = new Set<string>(); // distinct subscribers who got ≥1 email
+  let sentCount = 0;
+  let suppressedCount = 0;
+  const reachedUids = new Set<string>();
   const failures: Array<{ uid: string; address: string; error: string }> = [];
 
   for (const sub of subscribers) {
@@ -139,7 +139,16 @@ export async function POST(_req: Request, ctx: Ctx) {
       preferredName: sub.preferredName,
     });
 
-    for (const address of fallbackAddresses(sub, gmailOnly)) {
+    // One unsubscribe token per (uid, newsletter). Reusing across recipient
+    // inboxes for the same user is fine — the token targets the user, not
+    // the address, and one-click unsub flips the category pref.
+    const unsubToken = signToken(
+      { s: "unsubscribe", uid: sub.uid, c: "newsletter" },
+      UNSUB_TOKEN_TTL_SECONDS,
+    );
+    const unsubscribeUrl = `${appUrl}/api/unsubscribe?t=${encodeURIComponent(unsubToken)}`;
+
+    for (const address of sub.addresses) {
       if (suppressedSet.has(address.toLowerCase())) {
         suppressedCount += 1;
         console.log("[newsletter send] suppressed:", sub.uid, address);
@@ -158,6 +167,10 @@ export async function POST(_req: Request, ctx: Ctx) {
           kind: "newsletter",
           actorUid: actor.uid,
           referenceId: id,
+          listUnsubscribe: {
+            url: unsubscribeUrl,
+            mailto: process.env.EMAIL_DEFAULT_REPLY_TO,
+          },
         });
         sentCount += 1;
         reachedUids.add(sub.uid);
@@ -175,7 +188,6 @@ export async function POST(_req: Request, ctx: Ctx) {
 
   const subscribersReached = reachedUids.size;
 
-  // Mark as sent regardless of partial failures; the admin can see counts.
   await draftRef.update({
     status: "sent",
     sentAt: new Date(),

@@ -1,9 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { collection, onSnapshot } from "firebase/firestore";
 import { getClientDb } from "@/lib/firebase/client";
 import { normalizeUser, type UserDoc } from "@/lib/firestore/users";
+import {
+  normaliseNotifications,
+  wantsCategory,
+} from "@/lib/firestore/notifications";
 
 export type Subscriber = {
   uid: string;
@@ -12,25 +16,31 @@ export type Subscriber = {
   universityEmail: string | null;
   deliverToGmail: boolean;
   deliverToUniEmail: boolean;
+  wantsEvents: boolean;
   role: UserDoc["role"];
 };
 
 function toSubscriber(u: UserDoc): Subscriber {
-  const nl = u.profile?.newsletter;
+  const prefs = normaliseNotifications(u.profile ?? {});
   return {
     uid: u.uid,
     displayName: u.profile?.preferredName ?? u.displayName ?? u.email ?? "Unnamed",
     gmailEmail: u.email,
     universityEmail: u.profile?.universityEmail ?? null,
-    deliverToGmail: Boolean(nl?.deliverToGmail),
-    deliverToUniEmail: Boolean(nl?.deliverToUniEmail),
+    deliverToGmail: prefs.channels.gmail,
+    deliverToUniEmail: prefs.channels.uniEmail,
+    wantsEvents: prefs.categories.events,
     role: u.role,
   };
 }
 
 /**
- * Live list of users with `profile.newsletter.subscribed == true`.
- * Read is scoped by Firestore rules (admin-only pages already gate access).
+ * Live list of users subscribed to the newsletter category. We read all users
+ * and filter in-memory via `normaliseNotifications()` because a Firestore
+ * `where()` on either the legacy or the new shape would miss users on the
+ * other during the migration window. Member-list sizes on NAISI are small;
+ * if this ever gets expensive, dedicated indexes + `where()` on the new
+ * shape become the answer (after all users migrate).
  */
 export function useNewsletterSubscribers() {
   const [subs, setSubs] = useState<Subscriber[]>([]);
@@ -39,15 +49,13 @@ export function useNewsletterSubscribers() {
 
   useEffect(() => {
     const db = getClientDb();
-    const q = query(
-      collection(db, "users"),
-      where("profile.newsletter.subscribed", "==", true),
-    );
     const unsub = onSnapshot(
-      q,
+      collection(db, "users"),
       (snap) => {
         const rows = snap.docs
-          .map((d) => toSubscriber(normalizeUser(d.id, d.data())))
+          .map((d) => normalizeUser(d.id, d.data()))
+          .filter((u) => wantsCategory(normaliseNotifications(u.profile ?? {}), "newsletter"))
+          .map(toSubscriber)
           .sort((a, b) => a.displayName.localeCompare(b.displayName));
         setSubs(rows);
         setLoading(false);
