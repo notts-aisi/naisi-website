@@ -28,11 +28,7 @@ import type { UserDoc } from "@/lib/firestore/users";
 import type { Role } from "@/lib/firebase/session";
 import {
   addSubtask,
-  applyBlockGate,
-  clearBlockGate,
   createBlock,
-  getNextBlock,
-  isBlockGateApplied,
   reorderSubtasks,
   sendBlockToReviewers,
 } from "../taskMutations";
@@ -471,92 +467,6 @@ function SignoffPhase({
           isReviewPending={pendingReviewSubtaskIds.has(s.id)}
         />
       ))}
-      {canEditStructure && <BlockGateControls task={task} blockId={block.id} />}
-    </div>
-  );
-}
-
-/**
- * Post-seal gate control. Only renders when the block is sealed and has a
- * downstream block to gate. If review subtasks haven't spawned (no effective
- * reviewers), button is disabled with an explanatory tooltip. Otherwise it
- * toggles applied/cleared — pressing Apply sets every non-reviewer subtask
- * in the next block to `blockedBy` including all of this block's review
- * subtask ids.
- */
-function BlockGateControls({ task, blockId }: { task: TaskDoc; blockId: string }) {
-  const block = task.blocks.find((b) => b.id === blockId);
-  if (!block || block.sealState !== "sealed") return null;
-  const nextBlock = getNextBlock(task, blockId);
-  if (!nextBlock) return null;
-  const hasReviewSubtasks = task.subtasks.some(
-    (s) => s.blockId === blockId && s.roleHint === "reviewer",
-  );
-  const applied = isBlockGateApplied(task, blockId);
-
-  async function handleToggle() {
-    try {
-      if (applied) {
-        await clearBlockGate(task, blockId);
-      } else {
-        await applyBlockGate(task, blockId);
-      }
-    } catch (err) {
-      console.error(err);
-      window.alert(err instanceof Error ? err.message : "Update failed");
-    }
-  }
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "var(--space-2)",
-        paddingTop: "var(--space-2)",
-        borderTop: "1px dashed var(--color-border)",
-      }}
-    >
-      <span
-        style={{
-          fontSize: "var(--text-xs)",
-          color: "var(--color-text-muted)",
-          flex: 1,
-        }}
-      >
-        {hasReviewSubtasks
-          ? `Gate "${nextBlock.name}" on this block's reviews?`
-          : `"${nextBlock.name}" gates on reviewer signoffs — waiting for them to spawn.`}
-      </span>
-      <button
-        type="button"
-        disabled={!hasReviewSubtasks}
-        onClick={handleToggle}
-        style={{
-          padding: "0.3rem 0.75rem",
-          background: applied
-            ? "var(--color-warning-soft, var(--color-surface-hover))"
-            : "var(--color-accent-soft)",
-          color: applied
-            ? "var(--color-warning, var(--color-text))"
-            : "var(--color-accent)",
-          border: "none",
-          borderRadius: "var(--radius-sm, 4px)",
-          fontSize: "var(--text-xs)",
-          fontWeight: 600,
-          cursor: hasReviewSubtasks ? "pointer" : "not-allowed",
-          opacity: hasReviewSubtasks ? 1 : 0.5,
-        }}
-        title={
-          hasReviewSubtasks
-            ? applied
-              ? `Stop gating "${nextBlock.name}" on this block's reviews`
-              : `Require this block's reviewer signoffs before "${nextBlock.name}" unlocks`
-            : "This block has no review subtasks — add task reviewers or seal it first."
-        }
-      >
-        {applied ? "Gate applied — clear" : "Gate next block"}
-      </button>
     </div>
   );
 }

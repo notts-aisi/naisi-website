@@ -24,6 +24,7 @@ import {
   isBlockGateApplied,
   isSubtaskBlocked,
   type BlockConsentMap,
+  type BlockGatingMode,
   type Subtask,
   type TaskBlock,
   type TaskDoc,
@@ -124,6 +125,7 @@ function serializeBlock(b: TaskBlock) {
     sealState: b.sealState,
     sealedAt: b.sealedAt ? Timestamp.fromDate(b.sealedAt) : null,
     forceSealedByUid: b.forceSealedByUid,
+    gatingMode: b.gatingMode,
   };
 }
 
@@ -260,8 +262,10 @@ export async function toggleSubtask(
   if (!target) throw new Error("Subtask not found");
   const nextDone = !target.done;
   const asAdmin = opts.asAdmin === true;
-  if (nextDone && isSubtaskBlocked(target, task.subtasks, task.reviewerUids)) {
-    throw new Error("Subtask is blocked by an unfinished prerequisite");
+  if (nextDone && isSubtaskBlocked(target, task)) {
+    throw new Error(
+      "Subtask is blocked — upstream block or prerequisite subtask isn't done yet.",
+    );
   }
   // Stage 1.5a gap-fix: work on completion rows can't start until the
   // parent block has had its allocation locked in. Admin bypass preserved.
@@ -325,6 +329,23 @@ export async function toggleSubtask(
           : "This subtask is assigned to specific people — add yourself or ask an assignee to tick.",
       );
     }
+    // Stage 1.9c: post-Notify subtask un-tick lock. Once reviewer signoff
+    // rows exist in this block, completers can't un-tick their work —
+    // they should leave a comment on the subtask instead while review is
+    // in progress. Admin bypass preserved.
+    if (!nextDone && !asAdmin && target.blockId) {
+      const parentBlock = task.blocks.find((b) => b.id === target.blockId);
+      if (parentBlock?.sealState === "sealed") {
+        const hasSignoffs = task.subtasks.some(
+          (s) => s.blockId === target.blockId && s.roleHint === "reviewer",
+        );
+        if (hasSignoffs) {
+          throw new Error(
+            "The block has been sent to reviewers — leave a comment on the subtask instead of un-ticking.",
+          );
+        }
+      }
+    }
   }
   const subtasks = task.subtasks.map<Subtask>((s) => {
     if (s.id !== subtaskId) return s;
@@ -368,7 +389,10 @@ export async function addSubtask(
     id: genId(),
     title: trimmed.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
     description: (init.description ?? "").slice(0, TASK_FIELD_LIMITS.subtaskDescription),
-    dueDate: init.dueDate ?? null,
+    // Auto-default subtask due date to the task's due date when the caller
+    // doesn't provide one — a subtask inside a task rarely wants to fall
+    // AFTER the task's deadline. Editable afterwards via the detail modal.
+    dueDate: init.dueDate !== undefined ? init.dueDate : task.dueDate,
     done: false,
     doneAt: null,
     doneByUid: null,
@@ -819,6 +843,9 @@ export async function createBlock(task: TaskDoc, name: string): Promise<string> 
     sealState: "open",
     sealedAt: null,
     forceSealedByUid: null,
+    // First block ignores gatingMode; subsequent blocks default to gating
+    // on the immediate previous block (works out of the box).
+    gatingMode: task.blocks.length === 0 ? "none" : "previous",
   };
   const batch = writeBatch(db);
   batch.update(doc(db, "tasks", task.id), {
@@ -835,6 +862,30 @@ export async function createBlock(task: TaskDoc, name: string): Promise<string> 
   });
   await batch.commit();
   return block.id;
+}
+
+/**
+ * Set a block's upstream-gating mode (1.9e). Caller permission is UI-gated
+ * to admin + task-level reviewers. First block (order === 0) ignores the
+ * field so we accept any mode without branching. Cheap write — no batched
+ * side effects; downstream-subtask edges are purely derived from mode now.
+ */
+export async function setBlockGatingMode(
+  task: TaskDoc,
+  blockId: string,
+  mode: BlockGatingMode,
+) {
+  const db = getClientDb();
+  const existing = task.blocks.find((b) => b.id === blockId);
+  if (!existing) throw new Error("Block not found");
+  if (existing.gatingMode === mode) return;
+  const blocks = task.blocks.map((b) =>
+    b.id === blockId ? { ...b, gatingMode: mode } : b,
+  );
+  await updateDoc(doc(db, "tasks", task.id), {
+    blocks: blocks.map(serializeBlock),
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function renameBlock(task: TaskDoc, blockId: string, name: string) {
@@ -1245,6 +1296,84 @@ export async function selfRemoveFromSubtask(task: TaskDoc, subtaskId: string) {
   const consentsPatch = clearConsentIfOpen(task, target.blockId);
   if (consentsPatch) patch.blockConsents = consentsPatch;
   await updateDoc(doc(db, "tasks", task.id), patch);
+}
+
+/**
+ * Reviewer self-service — add the acting user to a subtask's reviewer
+ * roster. Caller must be on `task.reviewerUids` (set by admin/creator). No
+ * lock-in gate: reviewers are trusted, senior members — they can organise
+ * their own scope. Post-Notify behaviour: same `selfAdd` path works, the
+ * UI applies a "confirm you've spoken to existing reviewers" popup before
+ * calling this so the cultural "talk first" norm lands.
+ */
+export async function selfAddReviewerToSubtask(
+  task: TaskDoc,
+  subtaskId: string,
+) {
+  const uid = actingUid();
+  if (!task.reviewerUids.includes(uid)) {
+    throw new Error(
+      "Only listed task reviewers can self-assign as a subtask reviewer.",
+    );
+  }
+  const target = task.subtasks.find((s) => s.id === subtaskId);
+  if (!target) throw new Error("Subtask not found");
+  if (target.roleHint === "reviewer") {
+    throw new Error(
+      "This is a reviewer-signoff row — scope is managed at the block level.",
+    );
+  }
+  if (target.sealState === "sealed") {
+    throw new Error(
+      "Subtask is sealed — an admin must unseal before roster changes.",
+    );
+  }
+  if (target.reviewerUids.includes(uid)) return;
+  if (target.reviewerUids.length >= TASK_FIELD_LIMITS.maxReviewersPerSubtask) {
+    throw new Error(
+      `Max ${TASK_FIELD_LIMITS.maxReviewersPerSubtask} reviewers per subtask`,
+    );
+  }
+  await patchSubtask(task, subtaskId, (s) => ({
+    ...s,
+    reviewerUids: [...s.reviewerUids, uid],
+  }));
+}
+
+/**
+ * Reviewer self-service — remove the acting user from a subtask's reviewer
+ * roster. Pre-Notify: unrestricted self-remove. Post-Notify (signoff rows
+ * exist in the block): non-admins locked out — ask an admin to retire you
+ * if you genuinely can't review. Admin bypass via `asAdmin` covers the
+ * admin-removing-someone-else case handled elsewhere.
+ */
+export async function selfRemoveReviewerFromSubtask(
+  task: TaskDoc,
+  subtaskId: string,
+  opts: { asAdmin?: boolean } = {},
+) {
+  const uid = actingUid();
+  const target = task.subtasks.find((s) => s.id === subtaskId);
+  if (!target) throw new Error("Subtask not found");
+  if (!target.reviewerUids.includes(uid)) return;
+  const asAdmin = opts.asAdmin === true;
+  if (target.sealState === "sealed" && !asAdmin) {
+    throw new Error("Subtask is sealed — ask an admin to unseal.");
+  }
+  if (!asAdmin && target.blockId) {
+    const hasSignoffs = task.subtasks.some(
+      (s) => s.blockId === target.blockId && s.roleHint === "reviewer",
+    );
+    if (hasSignoffs) {
+      throw new Error(
+        "This block has been sent to reviewers — ask an admin to remove you.",
+      );
+    }
+  }
+  await patchSubtask(task, subtaskId, (s) => ({
+    ...s,
+    reviewerUids: s.reviewerUids.filter((u) => u !== uid),
+  }));
 }
 
 /**

@@ -144,6 +144,8 @@ export default function DeliverabilityDashboard() {
         </Card>
       )}
 
+      <TaskEmailKillSwitch />
+
       <section style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
         <h3 style={{ fontSize: "var(--text-lg)" }}>Recent sends</h3>
         {loading && sends.length === 0 ? (
@@ -251,5 +253,107 @@ export default function DeliverabilityDashboard() {
         )}
       </section>
     </div>
+  );
+}
+
+/**
+ * Admin-toggleable kill switch for task-manager outbound emails. Dev
+ * affordance — lets us click through task flows on dev without spamming
+ * real inboxes. Other email pipelines (newsletter, auth, deliverability
+ * webhook notifications) are unaffected.
+ */
+function TaskEmailKillSwitch() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/config/task-emails");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { enabled: boolean; updatedAt: string | null };
+      setEnabled(data.enabled);
+      setUpdatedAt(data.updatedAt);
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Load failed");
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function toggle() {
+    if (enabled === null || busy) return;
+    const next = !enabled;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/admin/config/task-emails", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setEnabled(next);
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Toggle failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+      <h3 style={{ fontSize: "var(--text-lg)" }}>Task email kill switch</h3>
+      <Card padding="md">
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--space-3)",
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ flex: 1, minWidth: "16rem" }}>
+            <p style={{ margin: 0, fontSize: "var(--text-sm)" }}>
+              When <strong>off</strong>, the task manager's comment-notify and
+              send-for-review endpoints short-circuit before calling the mail
+              provider. Comments still post in-app. Other pipelines (newsletter,
+              auth, deliverability webhooks) are unaffected.
+            </p>
+            {updatedAt && (
+              <p
+                style={{
+                  margin: "var(--space-1) 0 0",
+                  fontSize: "var(--text-xs)",
+                  color: "var(--color-text-muted)",
+                }}
+              >
+                Last changed {formatDate(updatedAt)}
+              </p>
+            )}
+            {err && (
+              <p style={{ margin: "var(--space-1) 0 0", color: "var(--color-danger)", fontSize: "var(--text-xs)" }}>
+                {err}
+              </p>
+            )}
+          </div>
+          <Badge tone={enabled === false ? "warning" : "success"}>
+            {enabled === null ? "Loading…" : enabled ? "Emails on" : "Emails off"}
+          </Badge>
+          <Button
+            size="sm"
+            variant={enabled ? "secondary" : "primary"}
+            onClick={() => void toggle()}
+            disabled={enabled === null || busy}
+          >
+            {busy ? "Saving…" : enabled ? "Turn off" : "Turn on"}
+          </Button>
+        </div>
+      </Card>
+    </section>
   );
 }
