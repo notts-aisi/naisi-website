@@ -2,15 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { doc, onSnapshot } from "firebase/firestore";
+import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import CountedTextarea from "@/components/ui/CountedTextarea";
 import GraduationSelect from "@/components/ui/GraduationSelect";
 import StatusSelect from "@/components/ui/StatusSelect";
+import Switch from "@/components/ui/Switch";
 import { Field, Input } from "@/components/ui/Input";
 import { completeRegistration, signInWithGoogle } from "@/auth/signInWithGoogle";
 import { useAuth } from "@/auth/AuthProvider";
+import { getClientDb } from "@/lib/firebase/client";
 import {
   FIELD_LIMITS,
   STATUSES_WITH_GRADUATION,
@@ -18,12 +22,28 @@ import {
   validateUniversityEmail,
   type AffiliationStatus,
 } from "@/lib/firestore/users";
+import {
+  ALL_CATEGORIES,
+  CATEGORY_DESCRIPTIONS,
+  CATEGORY_LABELS,
+  DEFAULT_NOTIFICATION_PREFS,
+  isSubscribedToAnything,
+  setCategory,
+  setChannel,
+  type NotificationPrefs,
+} from "@/lib/firestore/notifications";
+
+type VerificationState =
+  | { status: "idle" }
+  | { status: "sending" }
+  | { status: "sent"; tokenId: string; nextSendAt: number }
+  | { status: "verified"; tokenId: string; verifiedAt: Date }
+  | { status: "error"; message: string };
 
 export default function RegisterPage() {
   const router = useRouter();
   const { user, role, loading: authLoading } = useAuth();
 
-  // Already approved? Send to dashboard. Already pending? Send to waiting screen.
   useEffect(() => {
     if (authLoading) return;
     if (!user) return;
@@ -36,13 +56,13 @@ export default function RegisterPage() {
     }
   }, [authLoading, user, role, router]);
 
-  // Only show the profile form once a user is signed in but has no role yet
-  // (i.e. brand-new signups that haven't submitted the profile).
-  const [step, setStep] = useState<"sign-in" | "profile">(user && !role ? "profile" : "sign-in");
+  const [step, setStep] = useState<"sign-in" | "profile">(
+    user && !role ? "profile" : "sign-in",
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Profile form state
+  // Profile state
   const [preferredName, setPreferredName] = useState("");
   const [universityEmail, setUniversityEmail] = useState("");
   const [status, setStatus] = useState<AffiliationStatus | "">("");
@@ -51,12 +71,111 @@ export default function RegisterPage() {
   const [expectedGraduation, setExpectedGraduation] = useState("");
   const [motivation, setMotivation] = useState("");
   const [interests, setInterests] = useState("");
-  const [subscribed, setSubscribed] = useState(true);
-  const [deliverGmail, setDeliverGmail] = useState(true);
-  const [deliverUni, setDeliverUni] = useState(false);
+  const [prefs, setPrefs] = useState<NotificationPrefs>({
+    channels: { gmail: true, uniEmail: false },
+    categories: { newsletter: true, events: true },
+  });
+
+  // Verification state
+  const [verification, setVerification] = useState<VerificationState>({ status: "idle" });
+  const [cooldown, setCooldown] = useState(0);
+  const [allowUnverifiedSubmit, setAllowUnverifiedSubmit] = useState(false);
+  const lastVerifiedEmailRef = useRef<string | null>(null);
 
   const showGraduation = status !== "" && STATUSES_WITH_GRADUATION.includes(status);
   const showStatusOther = status === "other";
+  const anyCategoryOn = isSubscribedToAnything(prefs);
+
+  // Subscribe to the outstanding verification doc. Firestore rules gate read
+  // to authUid == request.auth.uid, so only this tab (signed in as the
+  // initiator) can see the doc update.
+  useEffect(() => {
+    if (verification.status !== "sent") return;
+    if (!user) return;
+    const tokenId = verification.tokenId;
+    const db = getClientDb();
+    const unsub = onSnapshot(doc(db, "emailVerifications", tokenId), (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      if (data.verifiedAt) {
+        const verifiedAt =
+          data.verifiedAt instanceof Date
+            ? data.verifiedAt
+            : typeof (data.verifiedAt as { toDate?: () => Date }).toDate === "function"
+              ? (data.verifiedAt as { toDate: () => Date }).toDate()
+              : new Date();
+        lastVerifiedEmailRef.current = (data.email as string) ?? universityEmail.trim().toLowerCase();
+        setVerification({ status: "verified", tokenId, verifiedAt });
+      }
+    });
+    return unsub;
+  }, [verification, user, universityEmail]);
+
+  // Cooldown ticker — drives the resend button countdown.
+  useEffect(() => {
+    if (verification.status !== "sent") {
+      setCooldown(0);
+      return;
+    }
+    const tick = () => {
+      const remaining = Math.max(
+        0,
+        Math.ceil((verification.nextSendAt - Date.now()) / 1000),
+      );
+      setCooldown(remaining);
+    };
+    tick();
+    const id = setInterval(tick, 500);
+    return () => clearInterval(id);
+  }, [verification]);
+
+  // If user edits the uni email after a successful verification, the stamp
+  // no longer applies — reset verification state. They need to re-verify.
+  useEffect(() => {
+    if (verification.status !== "verified") return;
+    const current = universityEmail.trim().toLowerCase();
+    if (current !== lastVerifiedEmailRef.current) {
+      setVerification({ status: "idle" });
+    }
+  }, [universityEmail, verification]);
+
+  const sendVerification = useCallback(async () => {
+    setError(null);
+    const emailError = validateUniversityEmail(universityEmail);
+    if (emailError) {
+      setError(emailError);
+      return;
+    }
+    setVerification({ status: "sending" });
+    try {
+      const res = await fetch("/api/verify-email/send", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: universityEmail.trim().toLowerCase(),
+          preferredName: preferredName.trim(),
+        }),
+      });
+      const body = (await res.json().catch(() => null)) as
+        | { ok: boolean; tokenId: string; cooldownRemaining: number }
+        | { error: string }
+        | null;
+      if (!res.ok || !body || "error" in body) {
+        const msg =
+          (body && "error" in body && body.error) ||
+          "Couldn't send the verification email. Try again in a moment.";
+        throw new Error(msg);
+      }
+      const nextSendAt = Date.now() + body.cooldownRemaining * 1000;
+      setVerification({ status: "sent", tokenId: body.tokenId, nextSendAt });
+    } catch (err) {
+      console.error(err);
+      setVerification({
+        status: "error",
+        message: err instanceof Error ? err.message : "Unknown error",
+      });
+    }
+  }, [universityEmail, preferredName]);
 
   async function handleSignIn() {
     setError(null);
@@ -64,7 +183,6 @@ export default function RegisterPage() {
     try {
       const result = await signInWithGoogle();
       if (!result.isNew) {
-        // Existing user — server-side (app)/layout.tsx handles role-based routing.
         router.push("/dashboard");
         return;
       }
@@ -97,26 +215,33 @@ export default function RegisterPage() {
       setError("Please pick your expected graduation month and year.");
       return;
     }
-    if (subscribed && !deliverGmail && !deliverUni) {
-      setError("Pick at least one email to send the newsletter to.");
+    if (anyCategoryOn && !prefs.channels.gmail && !prefs.channels.uniEmail) {
+      setError("Pick at least one email to send messages to, or turn off all subscriptions.");
       return;
     }
+
+    const verified = verification.status === "verified";
+    if (!verified && !allowUnverifiedSubmit) {
+      setError(
+        "Please verify your university email first — we sent a link to your inbox. If you're stuck, click 'I'm having trouble' below.",
+      );
+      return;
+    }
+
     setLoading(true);
     try {
       await completeRegistration({
         preferredName,
         universityEmail: universityEmail.trim(),
-        status,
+        status: status as AffiliationStatus,
         statusOther: showStatusOther ? statusOther.trim() : undefined,
         subject,
         expectedGraduation: showGraduation ? expectedGraduation : undefined,
         motivation,
         interests: interests.trim() || undefined,
-        newsletter: {
-          subscribed,
-          deliverToGmail: subscribed ? deliverGmail : false,
-          deliverToUniEmail: subscribed ? deliverUni : false,
-        },
+        notifications: prefs,
+        verifiedTokenId: verified ? verification.tokenId : undefined,
+        uniEmailVerifiedAt: verified ? verification.verifiedAt : undefined,
       });
       router.push("/pending-approval");
     } catch (err) {
@@ -128,7 +253,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <Card padding="lg" style={{ width: "100%", maxWidth: "30rem" }}>
+    <Card padding="lg" style={{ width: "100%", maxWidth: "32rem" }}>
       <h1 style={{ fontSize: "var(--text-2xl)", marginBottom: "var(--space-2)" }}>
         Join NAISI
       </h1>
@@ -208,23 +333,20 @@ export default function RegisterPage() {
                   fontSize: "var(--text-sm)",
                   cursor: "pointer",
                   whiteSpace: "nowrap",
-                  transition:
-                    "color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast)",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.color = "var(--color-text)";
-                  e.currentTarget.style.borderColor = "var(--color-accent)";
-                  e.currentTarget.style.background = "var(--color-accent-soft)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.color = "var(--color-text-muted)";
-                  e.currentTarget.style.borderColor = "var(--color-border)";
-                  e.currentTarget.style.background = "var(--color-bg-elevated)";
                 }}
               >
                 @nottingham.ac.uk
               </button>
             </div>
+
+            <VerificationPanel
+              state={verification}
+              cooldown={cooldown}
+              hasEmail={Boolean(universityEmail.trim())}
+              onSend={sendVerification}
+              allowUnverifiedSubmit={allowUnverifiedSubmit}
+              onToggleAllowUnverified={() => setAllowUnverifiedSubmit((v) => !v)}
+            />
           </Field>
           <Field id="status" label="What do you do at UoN?">
             <StatusSelect id="status" value={status} onChange={setStatus} required />
@@ -311,7 +433,7 @@ export default function RegisterPage() {
               padding: "var(--space-4)",
               display: "flex",
               flexDirection: "column",
-              gap: "var(--space-3)",
+              gap: "var(--space-4)",
             }}
           >
             <legend
@@ -322,68 +444,58 @@ export default function RegisterPage() {
                 color: "var(--color-text)",
               }}
             >
-              Newsletter
+              Email preferences
             </legend>
-            <label style={{ display: "flex", gap: "var(--space-2)", alignItems: "center", fontSize: "var(--text-sm)" }}>
-              <input
-                type="checkbox"
-                checked={subscribed}
-                onChange={(e) => {
-                  const next = e.target.checked;
-                  setSubscribed(next);
-                  // If turning subscription on but nothing's ticked, default to Gmail.
-                  if (next && !deliverGmail && !deliverUni) setDeliverGmail(true);
-                }}
+            {ALL_CATEGORIES.map((cat) => (
+              <Switch
+                key={cat}
+                checked={prefs.categories[cat]}
+                onChange={(next) => setPrefs((p) => setCategory(p, cat, next))}
+                label={CATEGORY_LABELS[cat]}
+                description={CATEGORY_DESCRIPTIONS[cat]}
               />
-              <span>Subscribe me to the NAISI newsletter</span>
-            </label>
-            {subscribed && (
+            ))}
+            {anyCategoryOn && (
               <div
                 style={{
+                  padding: "var(--space-3)",
+                  background: "var(--color-bg-elevated)",
+                  borderRadius: "var(--radius-md)",
                   display: "flex",
                   flexDirection: "column",
-                  gap: "var(--space-2)",
-                  paddingLeft: "var(--space-6)",
-                  fontSize: "var(--text-sm)",
-                  color: "var(--color-text-muted)",
+                  gap: "var(--space-3)",
                 }}
               >
-                <span>Send to:</span>
-                <label style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
-                  <input
-                    type="checkbox"
-                    checked={deliverGmail}
-                    onChange={(e) => {
-                      const next = e.target.checked;
-                      setDeliverGmail(next);
-                      // Both delivery channels off ⇒ effectively unsubscribed.
-                      if (!next && !deliverUni) setSubscribed(false);
-                    }}
-                  />
-                  <span>My Google account email ({user?.email ?? "your sign-in email"})</span>
-                </label>
-                <label style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
-                  <input
-                    type="checkbox"
-                    checked={deliverUni}
-                    onChange={(e) => {
-                      const next = e.target.checked;
-                      setDeliverUni(next);
-                      if (!next && !deliverGmail) setSubscribed(false);
-                    }}
-                  />
-                  <span>My university email</span>
-                </label>
+                <span
+                  style={{
+                    fontSize: "var(--text-xs)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.04em",
+                    color: "var(--color-text-muted)",
+                  }}
+                >
+                  Deliver to
+                </span>
+                <Switch
+                  checked={prefs.channels.gmail}
+                  onChange={(next) => setPrefs((p) => setChannel(p, "gmail", next))}
+                  label={`Google account email (${user?.email ?? "your sign-in email"})`}
+                />
+                <Switch
+                  checked={prefs.channels.uniEmail}
+                  onChange={(next) => setPrefs((p) => setChannel(p, "uniEmail", next))}
+                  label="University email"
+                />
               </div>
             )}
             <p
               style={{
                 fontSize: "var(--text-xs)",
                 color: "var(--color-text-subtle)",
-                marginTop: "var(--space-1)",
               }}
             >
-              You can unsubscribe at any time — every email includes a one-click unsubscribe link.
+              You can change these at any time from your profile page, and every
+              email includes a one-click unsubscribe link.
             </p>
           </fieldset>
           {error && (
@@ -395,5 +507,131 @@ export default function RegisterPage() {
         </form>
       )}
     </Card>
+  );
+}
+
+function VerificationPanel({
+  state,
+  cooldown,
+  hasEmail,
+  onSend,
+  allowUnverifiedSubmit,
+  onToggleAllowUnverified,
+}: {
+  state: VerificationState;
+  cooldown: number;
+  hasEmail: boolean;
+  onSend: () => void;
+  allowUnverifiedSubmit: boolean;
+  onToggleAllowUnverified: () => void;
+}) {
+  if (!hasEmail) return null;
+
+  if (state.status === "verified") {
+    return (
+      <div
+        style={{
+          marginTop: "var(--space-3)",
+          padding: "var(--space-3)",
+          borderRadius: "var(--radius-md)",
+          background: "var(--color-success-soft)",
+          color: "var(--color-success)",
+          fontSize: "var(--text-sm)",
+          display: "flex",
+          alignItems: "center",
+          gap: "var(--space-2)",
+        }}
+      >
+        <Badge tone="success">Verified</Badge>
+        <span>You&apos;re all set — this email is confirmed.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        marginTop: "var(--space-3)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--space-2)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
+        <Badge tone={state.status === "sent" ? "accent" : "neutral"}>
+          {state.status === "sent" ? "Check your inbox" : "Not verified"}
+        </Badge>
+        {state.status === "sent" ? (
+          <button
+            type="button"
+            onClick={onSend}
+            disabled={cooldown > 0}
+            style={{
+              padding: "0.35rem 0.7rem",
+              background: "transparent",
+              color: cooldown > 0 ? "var(--color-text-muted)" : "var(--color-accent)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-md)",
+              fontSize: "var(--text-xs)",
+              cursor: cooldown > 0 ? "not-allowed" : "pointer",
+            }}
+          >
+            {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend email"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onSend}
+            disabled={state.status === "sending"}
+            style={{
+              padding: "0.35rem 0.7rem",
+              background: "var(--color-accent)",
+              color: "white",
+              border: "none",
+              borderRadius: "var(--radius-md)",
+              fontSize: "var(--text-xs)",
+              cursor: "pointer",
+              fontWeight: 500,
+            }}
+          >
+            {state.status === "sending" ? "Sending…" : "Send verification email"}
+          </button>
+        )}
+      </div>
+      {state.status === "sent" && (
+        <p style={{ fontSize: "var(--text-xs)", color: "var(--color-text-muted)" }}>
+          We&apos;ve sent a link to your university email. Click it — this page
+          will update automatically when we see the click. Check spam if it
+          doesn&apos;t land in a minute.
+        </p>
+      )}
+      {state.status === "error" && (
+        <p style={{ fontSize: "var(--text-xs)", color: "var(--color-danger)" }}>
+          {state.message}
+        </p>
+      )}
+      <label
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: "var(--space-2)",
+          fontSize: "var(--text-xs)",
+          color: "var(--color-text-subtle)",
+          marginTop: "var(--space-1)",
+          cursor: "pointer",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={allowUnverifiedSubmit}
+          onChange={onToggleAllowUnverified}
+        />
+        <span>
+          I&apos;m having trouble with the verification email. Let me submit
+          without verifying — the committee will check my email manually
+          before approving.
+        </span>
+      </label>
+    </div>
   );
 }
