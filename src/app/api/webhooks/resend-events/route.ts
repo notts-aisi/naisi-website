@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import type { Firestore } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { addSuppression } from "@/lib/firestore/suppression";
+import { markSendStatus } from "@/lib/firestore/emailSends";
 
 const REPLAY_TOLERANCE_SECONDS = 5 * 60;
 
@@ -128,6 +129,7 @@ export async function POST(req: Request) {
 
   const kind = event.type;
   const recipients = event.data?.to ?? [];
+  const resendEmailId = event.data?.email_id;
 
   if (kind === "email.bounced") {
     // Only Permanent bounces are suppressed; Transient/Undetermined may still deliver on retry.
@@ -145,6 +147,12 @@ export async function POST(req: Request) {
         source: "resend-webhook",
       });
       await applyUserSuppressionEffects(db, email, false);
+      await markSendStatus(
+        db,
+        { recipient: email, resendEmailId },
+        "bounced",
+        event.data?.bounce?.subType,
+      );
       console.log("[resend-events] suppressed (bounce):", email);
     }
   } else if (kind === "email.complained") {
@@ -156,6 +164,7 @@ export async function POST(req: Request) {
         source: "resend-webhook",
       });
       await applyUserSuppressionEffects(db, email, true);
+      await markSendStatus(db, { recipient: email, resendEmailId }, "complained");
       console.log("[resend-events] suppressed (complaint):", email);
     }
   } else if (kind === "email.suppressed") {
@@ -171,6 +180,12 @@ export async function POST(req: Request) {
         source: "resend-webhook",
       });
       await applyUserSuppressionEffects(db, email, false);
+      await markSendStatus(
+        db,
+        { recipient: email, resendEmailId },
+        "bounced",
+        event.data?.suppressed?.type,
+      );
       console.log(
         "[resend-events] provider-suppressed:",
         email,

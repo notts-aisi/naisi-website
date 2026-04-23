@@ -130,7 +130,7 @@ export default function DeliverabilityDashboard() {
             Deliverability
           </h2>
           <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)", margin: 0 }}>
-            Recent sends and the suppression list fed by SES bounce + complaint events.
+            Recent sends and the suppression list fed by email provider bounce + complaint events.
           </p>
         </div>
         <Button size="sm" variant="secondary" onClick={() => void fetchAll()} disabled={loading}>
