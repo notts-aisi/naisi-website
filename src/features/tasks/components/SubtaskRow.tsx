@@ -299,11 +299,18 @@ export default function SubtaskRow({
    * straight through, pop a required-reason dialog. On submit the dialog
    * posts a comment, emails completers, and THEN applies the reject state
    * — so a rejection in the UI always ships with context.
+   *
+   * Stage 2 (2026-04-23): if the reject-reason box is open and the reviewer
+   * clicks a different state (misclick recovery), auto-close the box so
+   * it doesn't linger while the row is no longer "rejecting".
    */
   async function handleSetReview(state: ReviewState) {
     if (state === "reject") {
       setRejectReasonDraft("");
       return;
+    }
+    if (rejectReasonDraft !== null) {
+      setRejectReasonDraft(null);
     }
     try {
       await setSubtaskApproval(task, subtask.id, state);
@@ -458,9 +465,37 @@ export default function SubtaskRow({
             fontSize: "var(--text-sm)",
             textDecoration: subtask.done ? "line-through" : "none",
             color: subtask.done ? "var(--color-text-muted)" : "var(--color-text)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "var(--space-2)",
           }}
         >
           {subtask.title}
+          {subtask.dueDate && !subtask.done && (() => {
+            const overdue = subtask.dueDate.getTime() < Date.now();
+            return (
+              <span
+                title={`Due ${subtask.dueDate.toLocaleDateString()}${overdue ? " — overdue" : ""}`}
+                style={{
+                  padding: "2px 8px",
+                  borderRadius: "999px",
+                  background: overdue
+                    ? "var(--color-danger-soft, rgba(220, 38, 38, 0.12))"
+                    : "var(--color-bg-elevated)",
+                  color: overdue
+                    ? "var(--color-danger, #dc2626)"
+                    : "var(--color-text-muted)",
+                  border: overdue ? "none" : "1px solid var(--color-border)",
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                {overdue ? "Overdue" : `Due ${subtask.dueDate.toLocaleDateString()}`}
+              </span>
+            );
+          })()}
         </span>
 
         {subtask.roleHint === "reviewer" && (

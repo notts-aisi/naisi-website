@@ -10,7 +10,7 @@ import {
   type TaskDoc,
 } from "@/lib/firestore/tasks";
 import type { UserDoc } from "@/lib/firestore/users";
-import { updateSubtaskDescription } from "../taskMutations";
+import { updateSubtaskDescription, updateSubtaskDueDate } from "../taskMutations";
 
 type Props = {
   task: TaskDoc;
@@ -23,6 +23,11 @@ type Props = {
   onClose: () => void;
 };
 
+function toDateInputValue(d: Date | null): string {
+  if (!d) return "";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 export default function SubtaskDetailModal({
   task,
   subtask,
@@ -33,6 +38,7 @@ export default function SubtaskDetailModal({
   const [editingDesc, setEditingDesc] = useState(false);
   const [descDraft, setDescDraft] = useState(subtask.description);
   const [saving, setSaving] = useState(false);
+  const [dueBusy, setDueBusy] = useState(false);
 
   // Sync the draft if the underlying subtask changes (e.g. another writer
   // edited the description while this modal was open).
@@ -75,6 +81,23 @@ export default function SubtaskDetailModal({
       setSaving(false);
     }
   }
+
+  async function onDueChange(value: string) {
+    const next = value ? new Date(value) : null;
+    setDueBusy(true);
+    try {
+      await updateSubtaskDueDate(task, subtask.id, next);
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Couldn't save due date");
+    } finally {
+      setDueBusy(false);
+    }
+  }
+
+  const now = new Date();
+  const isOverdue =
+    subtask.dueDate !== null && !subtask.done && subtask.dueDate.getTime() < now.getTime();
 
   return (
     <Overlay onClose={onClose}>
@@ -192,6 +215,70 @@ export default function SubtaskDetailModal({
                   ? "Click to add instructions, suggested flow, or acceptance cues…"
                   : "No description provided.")}
             </p>
+          )}
+        </section>
+
+        <section>
+          <h3 style={sectionLabel}>Due date</h3>
+          {canEditDescription ? (
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+              <input
+                type="date"
+                value={toDateInputValue(subtask.dueDate)}
+                onChange={(e) => onDueChange(e.target.value)}
+                disabled={dueBusy}
+                style={{
+                  padding: "var(--space-2) var(--space-3)",
+                  background: "var(--color-bg-elevated)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "var(--radius-md)",
+                  color: "var(--color-text)",
+                  fontSize: "var(--text-sm)",
+                  fontFamily: "inherit",
+                }}
+              />
+              {subtask.dueDate && (
+                <button
+                  type="button"
+                  onClick={() => onDueChange("")}
+                  disabled={dueBusy}
+                  style={{
+                    padding: "0.3rem 0.65rem",
+                    background: "transparent",
+                    border: "1px solid var(--color-border)",
+                    borderRadius: "var(--radius-sm, 4px)",
+                    color: "var(--color-text-muted)",
+                    fontSize: "var(--text-xs)",
+                    cursor: dueBusy ? "not-allowed" : "pointer",
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+              {isOverdue && (
+                <span
+                  style={{
+                    padding: "2px 8px",
+                    borderRadius: "999px",
+                    background: "var(--color-danger-soft, rgba(220, 38, 38, 0.12))",
+                    color: "var(--color-danger, #dc2626)",
+                    fontSize: "10px",
+                    fontWeight: 700,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.05em",
+                  }}
+                >
+                  Overdue
+                </span>
+              )}
+            </div>
+          ) : subtask.dueDate ? (
+            <p style={{ margin: 0, fontSize: "var(--text-sm)", color: isOverdue ? "var(--color-danger, #dc2626)" : "var(--color-text)" }}>
+              {subtask.dueDate.toLocaleDateString()}
+              {isOverdue && " — overdue"}
+            </p>
+          ) : (
+            <p style={emptyHint}>No due date set.</p>
           )}
         </section>
 

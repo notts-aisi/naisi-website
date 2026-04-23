@@ -103,6 +103,11 @@ export type Subtask = {
    *  Markdown is not rendered; the popover shows plain text with preserved
    *  whitespace so formatting stays author-controlled. */
   description: string;
+  /** Optional per-subtask due date. Independent of the task-level dueDate —
+   *  often *firmer* than the task's aspirational deadline (e.g. the
+   *  publicity post for an event must land days before the event itself).
+   *  Not enforced against task.dueDate by design. */
+  dueDate: Date | null;
   done: boolean;
   doneAt: Date | null;
   doneByUid: string | null;
@@ -216,6 +221,7 @@ function normalizeSubtask(raw: unknown): Subtask | null {
     id,
     title,
     description: typeof s.description === "string" ? s.description : "",
+    dueDate: tsToDate(s.dueDate),
     done: Boolean(s.done),
     doneAt: tsToDate(s.doneAt),
     doneByUid: typeof s.doneByUid === "string" ? s.doneByUid : null,
