@@ -480,15 +480,15 @@ export type RowState = "neutral" | "blue" | "orange" | "green" | "red";
 /**
  * Derives the colour band for a subtask row given its current state + whether
  * a sent_for_review has already fired targeting it. Rules (first match wins):
- *   - red: any required reviewer has placed ❌ (rejection — outranks everything)
- *   - neutral: not done yet
+ *   - orange: any required reviewer has placed ❌ (rejection — softened from
+ *             red 2026-04-24 per user direction: "humane tone, rejection
+ *             feels less alarming as orange"). Auto-unticks on reject so
+ *             completers see it as "redo this" rather than a done-but-bad
+ *             state.
+ *   - neutral: not done yet AND no rejection pending
  *   - orange: any outstanding ❓, OR sent-for-review pending with approvals incomplete
  *   - green: fully approved, OR done-with-no-reviewers
  *   - blue: done but approvals outstanding and no ❓ yet (resting state)
- *
- * Rejection outranks the "not done" check because a rejected completer may
- * still be looking at their ticked row deciding whether to un-tick and re-do
- * — the red signal is what tells them they need to act.
  */
 export function subtaskRowState(
   subtask: Subtask,
@@ -496,7 +496,7 @@ export function subtaskRowState(
   sentForReviewPending: boolean,
 ): RowState {
   const status = getSubtaskApprovalStatus(subtask, taskReviewerUids);
-  if (status.hasRejection) return "red";
+  if (status.hasRejection) return "orange";
   if (!subtask.done) return "neutral";
   if (status.hasOutstandingQuestion) return "orange";
   if (status.required.length === 0) return "green"; // no review gate
@@ -567,6 +567,15 @@ export function getBlockPhase(task: TaskDoc, block: TaskBlock): BlockPhase {
     (s) => s.blockId === block.id && s.roleHint === "reviewer",
   );
   if (signoffs.length === 0) return "in-progress";
+  // A rejection auto-unticks its subtask → if any non-reviewer completion
+  // row is not done, the block drops back to "in-progress" (orange) even
+  // if reviewer signoff rows have already spawned. Approved sibling
+  // subtasks stay green at the row level; the block's phase just reflects
+  // "there's more completer work to do before we can finish reviews".
+  const completionRows = task.subtasks.filter(
+    (s) => s.blockId === block.id && s.roleHint !== "reviewer",
+  );
+  if (completionRows.some((s) => !s.done)) return "in-progress";
   if (signoffs.every((s) => s.done)) return "complete";
   return "reviewing";
 }
