@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { deleteField, doc, onSnapshot, Timestamp, updateDoc } from "firebase/firestore";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Switch from "@/components/ui/Switch";
 import { Field, Input } from "@/components/ui/Input";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
@@ -14,6 +15,18 @@ import {
   validateUniversityEmail,
   type UserDoc,
 } from "@/lib/firestore/users";
+import {
+  ALL_CATEGORIES,
+  CATEGORY_DESCRIPTIONS,
+  CATEGORY_LABELS,
+  DEFAULT_NOTIFICATION_PREFS,
+  isSubscribedToAnything,
+  normaliseNotifications,
+  serialiseNotifications,
+  setCategory,
+  setChannel,
+  type NotificationPrefs,
+} from "@/lib/firestore/notifications";
 import styles from "./ProfileForm.module.css";
 
 const UNI_EMAIL_LOCK_MS = 24 * 60 * 60 * 1000;
@@ -35,12 +48,6 @@ function asDate(v: unknown): Date | null {
   return null;
 }
 
-type NewsletterPrefs = {
-  subscribed: boolean;
-  deliverToGmail: boolean;
-  deliverToUniEmail: boolean;
-};
-
 export default function ProfileForm() {
   const { user } = useAuth();
   const [me, setMe] = useState<UserDoc | null>(null);
@@ -48,9 +55,7 @@ export default function ProfileForm() {
 
   const [preferredName, setPreferredName] = useState("");
   const [universityEmail, setUniversityEmail] = useState("");
-  const [subscribed, setSubscribed] = useState(false);
-  const [deliverToGmail, setDeliverToGmail] = useState(true);
-  const [deliverToUniEmail, setDeliverToUniEmail] = useState(false);
+  const [prefs, setPrefs] = useState<NotificationPrefs>(DEFAULT_NOTIFICATION_PREFS);
 
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -68,14 +73,18 @@ export default function ProfileForm() {
       setMe(normalized);
       setPreferredName(normalized.profile?.preferredName ?? "");
       setUniversityEmail(normalized.profile?.universityEmail ?? "");
-      const nl = normalized.profile?.newsletter;
-      setSubscribed(Boolean(nl?.subscribed));
-      setDeliverToGmail(nl ? Boolean(nl.deliverToGmail) : true);
-      setDeliverToUniEmail(Boolean(nl?.deliverToUniEmail));
+      setPrefs(normaliseNotifications(normalized.profile ?? {}));
       setLoading(false);
     });
     return unsub;
   }, [user]);
+
+  const anyCategoryOn = useMemo(() => isSubscribedToAnything(prefs), [prefs]);
+  const hasUniEmail = universityEmail.trim().length > 0;
+  const uniEmailVerified = Boolean(
+    (me?.profile as { uniEmailVerifiedAt?: unknown } | undefined)?.uniEmailVerifiedAt,
+  );
+  const uniEmailChanged = universityEmail.trim() !== (me?.profile?.universityEmail ?? "");
 
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
@@ -90,15 +99,17 @@ export default function ProfileForm() {
         return;
       }
     }
-    if (subscribed && !deliverToGmail && !deliverToUniEmail) {
-      setError("Pick at least one inbox to deliver to, or turn off the subscription.");
+    if (anyCategoryOn && !prefs.channels.gmail && !prefs.channels.uniEmail) {
+      setError("Pick at least one inbox to deliver to, or turn off all subscriptions.");
+      return;
+    }
+    if (anyCategoryOn && prefs.channels.uniEmail && !hasUniEmail) {
+      setError("Add your university email above, or turn off 'University email' delivery.");
       return;
     }
 
     const previousUniEmail = me?.profile?.universityEmail ?? "";
     const uniEmailChanging = uniEmailTrimmed !== previousUniEmail;
-    // Client-side lock check. Firestore rule is the real enforcement — this
-    // is for UX so the user sees the friendly message, not a cryptic rule error.
     if (uniEmailChanging) {
       const lockUntil = asDate(
         (me?.profile as { universityEmailLockUntil?: unknown } | undefined)
@@ -114,20 +125,19 @@ export default function ProfileForm() {
     try {
       if (!user) throw new Error("Not signed in");
       const db = getClientDb();
-      const newsletter: NewsletterPrefs = {
-        subscribed,
-        deliverToGmail: subscribed ? deliverToGmail : false,
-        deliverToUniEmail: subscribed ? deliverToUniEmail : false,
-      };
       const patch: Record<string, unknown> = {
         "profile.preferredName": preferredName.trim(),
         "profile.universityEmail": uniEmailTrimmed,
-        "profile.newsletter": newsletter,
+        "profile.notifications": serialiseNotifications(prefs),
+        // Keep the legacy field roughly in sync for any code still reading it
+        // pre-migration. This is belt + braces — the normaliser prefers
+        // `notifications` — but avoids surprise drift on a partial rollout.
+        "profile.newsletter": {
+          subscribed: anyCategoryOn,
+          deliverToGmail: prefs.channels.gmail,
+          deliverToUniEmail: prefs.channels.uniEmail,
+        },
       };
-      // If the current uni email was suppressed (flag stamped by the SES
-      // webhook), and the user is changing to a new address, lock further
-      // changes for 24h and clear the flag. Legitimate typo recovery gets
-      // through; rapid cycling after a bounce/complaint gets gated.
       const wasSuppressed = Boolean(
         (me?.profile as { universityEmailWasSuppressed?: boolean } | undefined)
           ?.universityEmailWasSuppressed,
@@ -136,15 +146,52 @@ export default function ProfileForm() {
         patch["profile.universityEmailLockUntil"] = new Date(Date.now() + UNI_EMAIL_LOCK_MS);
         patch["profile.universityEmailWasSuppressed"] = deleteField();
       } else if (uniEmailChanging) {
-        // Clear any expired lock on a successful change so the field doesn't
-        // stay stamped forever.
         patch["profile.universityEmailLockUntil"] = deleteField();
+      }
+      // Any uni-email change invalidates an old verified-at stamp — the
+      // user needs to re-verify the new address before it's trusted again.
+      if (uniEmailChanging) {
+        patch["profile.uniEmailVerifiedAt"] = deleteField();
       }
       await updateDoc(doc(db, "users", user.uid), patch);
       setSaved(true);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onRequestVerification() {
+    setError(null);
+    const emailError = validateUniversityEmail(universityEmail);
+    if (emailError) {
+      setError(emailError);
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/verify-email/send", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: universityEmail.trim().toLowerCase(),
+          preferredName: preferredName.trim() || me?.displayName || "",
+        }),
+      });
+      const body = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+      } | null;
+      if (!res.ok || !body?.ok) {
+        throw new Error(body?.error ?? "Verification email failed to send");
+      }
+      setSaved(true);
+      setError(null);
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Verification email failed to send");
     } finally {
       setBusy(false);
     }
@@ -167,6 +214,8 @@ export default function ProfileForm() {
     );
   }
 
+  const uniChannelDisabled = !hasUniEmail;
+
   return (
     <form onSubmit={onSave} style={{ display: "flex", flexDirection: "column", gap: "var(--space-6)" }}>
       <Card padding="lg">
@@ -188,7 +237,11 @@ export default function ProfileForm() {
           <Field
             id="uni-email"
             label="University email"
-            hint="Any @nottingham.ac.uk address (subdomains like exmail.nottingham.ac.uk included). Optional here, required for newsletter delivery to your uni inbox. If your address is a different format, email ai-safety@uonsu.com."
+            hint={
+              uniEmailVerified && !uniEmailChanged
+                ? "Verified. If you change it, you'll need to verify the new address."
+                : "Any @nottingham.ac.uk address (subdomains like exmail.nottingham.ac.uk included). Required if you want events/newsletter delivered to your uni inbox."
+            }
           >
             <Input
               id="uni-email"
@@ -198,62 +251,74 @@ export default function ProfileForm() {
               placeholder="you@nottingham.ac.uk"
               maxLength={FIELD_LIMITS.universityEmail}
             />
+            <div className={styles.verifyRow}>
+              {uniEmailVerified && !uniEmailChanged ? (
+                <Badge tone="success">Verified</Badge>
+              ) : hasUniEmail ? (
+                <>
+                  <Badge tone="neutral">Not verified</Badge>
+                  <button
+                    type="button"
+                    onClick={onRequestVerification}
+                    disabled={busy}
+                    className={styles.verifyButton}
+                  >
+                    Send verification email
+                  </button>
+                </>
+              ) : null}
+            </div>
           </Field>
         </div>
       </Card>
 
       <Card padding="lg">
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-1)" }}>
-          <h2 style={{ fontSize: "var(--text-xl)" }}>Newsletter</h2>
-          <Badge tone={subscribed ? "success" : "neutral"}>
-            {subscribed ? "Subscribed" : "Unsubscribed"}
+          <h2 style={{ fontSize: "var(--text-xl)" }}>Email preferences</h2>
+          <Badge tone={anyCategoryOn ? "success" : "neutral"}>
+            {anyCategoryOn ? "Getting emails" : "No emails"}
           </Badge>
         </div>
         <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)", marginBottom: "var(--space-5)" }}>
-          Low-frequency updates about our courses, events, and what the committee is working on.
+          Pick what you want us to email you about. You can unsubscribe from any
+          email with one click.
         </p>
 
-        <label className={styles.bigToggle}>
-          <input
-            type="checkbox"
-            checked={subscribed}
-            onChange={(e) => setSubscribed(e.target.checked)}
-          />
-          <span>
-            <strong>
-              {subscribed ? "Subscribed to the newsletter" : "Subscribe to the newsletter"}
-            </strong>
-            <span style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)", display: "block" }}>
-              Uncheck to unsubscribe. We&apos;ll stop sending immediately.
-            </span>
-          </span>
-        </label>
+        <div className={styles.categoryList}>
+          {ALL_CATEGORIES.map((cat) => (
+            <div key={cat} className={styles.categoryRow}>
+              <Switch
+                checked={prefs.categories[cat]}
+                onChange={(next) => setPrefs((p) => setCategory(p, cat, next))}
+                label={CATEGORY_LABELS[cat]}
+                description={CATEGORY_DESCRIPTIONS[cat]}
+                size="lg"
+                tone="accent"
+              />
+            </div>
+          ))}
+        </div>
 
-        {subscribed && (
+        {anyCategoryOn && (
           <div className={styles.deliveryBlock}>
             <p className={styles.deliveryLabel}>Deliver to</p>
-            <label className={styles.deliveryOption}>
-              <input
-                type="checkbox"
-                checked={deliverToGmail}
-                onChange={(e) => setDeliverToGmail(e.target.checked)}
+            <div className={styles.channelList}>
+              <Switch
+                checked={prefs.channels.gmail}
+                onChange={(next) => setPrefs((p) => setChannel(p, "gmail", next))}
+                label={`Google account email${me.email ? ` (${me.email})` : ""}`}
               />
-              <span>
-                My Google account email{me.email ? ` (${me.email})` : ""}
-              </span>
-            </label>
-            <label className={styles.deliveryOption}>
-              <input
-                type="checkbox"
-                checked={deliverToUniEmail}
-                onChange={(e) => setDeliverToUniEmail(e.target.checked)}
-                disabled={!universityEmail.trim()}
+              <Switch
+                checked={prefs.channels.uniEmail}
+                onChange={(next) => setPrefs((p) => setChannel(p, "uniEmail", next))}
+                disabled={uniChannelDisabled}
+                label={
+                  hasUniEmail
+                    ? `University email (${universityEmail.trim()})`
+                    : "University email (add one above first)"
+                }
               />
-              <span>
-                My university email
-                {universityEmail.trim() ? ` (${universityEmail.trim()})` : " (add one above first)"}
-              </span>
-            </label>
+            </div>
           </div>
         )}
       </Card>

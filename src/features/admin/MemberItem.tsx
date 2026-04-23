@@ -3,6 +3,9 @@
 import { useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
+import SegmentedControl, { type SegmentedOption } from "@/components/ui/SegmentedControl";
+import Select from "@/components/ui/Select";
+import Switch from "@/components/ui/Switch";
 import type { Role } from "@/lib/firebase/session";
 import {
   ALL_TRACKS,
@@ -13,13 +16,18 @@ import {
   type UserDoc,
   type UserPermissions,
 } from "@/lib/firestore/users";
+import {
+  CATEGORY_LABELS,
+  normaliseNotifications,
+  type NotificationCategory,
+} from "@/lib/firestore/notifications";
 import MemberEditForm from "./MemberEditForm";
 import {
   deleteUser,
-  setNewsletterSubscribed,
   setPermissions,
   setRole,
   setTracks,
+  setUserNotificationCategory,
   unrejectUser,
   updateMember,
 } from "./adminMutations";
@@ -35,6 +43,14 @@ type Props = {
 const ACTIVE_ROLES: Role[] = ["member", "committee", "admin"];
 
 type Tone = "neutral" | "accent" | "success" | "danger" | "warning";
+
+type PermissionTier = "none" | "draft" | "approve";
+
+const PERMISSION_OPTIONS: readonly SegmentedOption<PermissionTier>[] = [
+  { value: "none", label: "None" },
+  { value: "draft", label: "Draft" },
+  { value: "approve", label: "Draft + approve" },
+];
 
 function roleTone(role: Role): Tone {
   switch (role) {
@@ -94,13 +110,43 @@ function shortStatusLabel(status: AffiliationStatus): string {
   }
 }
 
+function permissionTier(
+  perms: UserPermissions | undefined,
+  draftKey: keyof UserPermissions,
+  approveKey: keyof UserPermissions,
+): PermissionTier {
+  if (perms?.[approveKey]) return "approve";
+  if (perms?.[draftKey]) return "draft";
+  return "none";
+}
+
+function applyTier(
+  perms: UserPermissions,
+  draftKey: keyof UserPermissions,
+  approveKey: keyof UserPermissions,
+  tier: PermissionTier,
+): UserPermissions {
+  // approve implies draft — keeps the segmented control honest; there's no
+  // useful "approve but not draft" configuration.
+  switch (tier) {
+    case "none":
+      return { ...perms, [draftKey]: false, [approveKey]: false };
+    case "draft":
+      return { ...perms, [draftKey]: true, [approveKey]: false };
+    case "approve":
+      return { ...perms, [draftKey]: true, [approveKey]: true };
+  }
+}
+
 export default function MemberItem({ user, currentAdminUid, expanded, onToggleExpand }: Props) {
   const [busy, setBusy] = useState(false);
 
   const isSelf = user.uid === currentAdminUid;
   const isRejected = user.role === "rejected";
+  const isAdminRole = user.role === "admin";
   const displayName =
     user.displayName ?? user.profile?.preferredName ?? user.email ?? "Unnamed";
+  const prefs = normaliseNotifications(user.profile ?? {});
 
   async function onRoleChange(next: Role) {
     if (next === user.role) return;
@@ -133,14 +179,14 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
     }
   }
 
-  async function onToggleNewsletter() {
-    const currentlySubscribed = Boolean(user.profile?.newsletter?.subscribed);
+  async function onToggleCategory(category: NotificationCategory) {
+    const current = prefs.categories[category];
     setBusy(true);
     try {
-      await setNewsletterSubscribed(user.uid, !currentlySubscribed);
+      await setUserNotificationCategory(user.uid, category, !current);
     } catch (err) {
       console.error(err);
-      alert("Failed to update newsletter subscription");
+      alert(`Failed to toggle ${category}`);
     } finally {
       setBusy(false);
     }
@@ -150,7 +196,6 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
     const current = new Set(user.tracks ?? []);
     if (current.has(track)) current.delete(track);
     else current.add(track);
-    // Preserve canonical order so downstream equality checks stay stable.
     const next = ALL_TRACKS.filter((t) => current.has(t));
     setBusy(true);
     try {
@@ -163,9 +208,12 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
     }
   }
 
-  async function onTogglePermission(key: keyof UserPermissions) {
-    const current = user.permissions ?? {};
-    const next: UserPermissions = { ...current, [key]: !current[key] };
+  async function onChangePermissionTier(
+    draftKey: keyof UserPermissions,
+    approveKey: keyof UserPermissions,
+    tier: PermissionTier,
+  ) {
+    const next = applyTier(user.permissions ?? {}, draftKey, approveKey, tier);
     setBusy(true);
     try {
       await setPermissions(user.uid, next);
@@ -212,7 +260,6 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
   const status = user.profile?.status;
   const showCommitteeTitle = user.role === "committee" || user.role === "admin";
 
-  // Collapsed summary — clickable row. Always rendered.
   const summary = (
     <button
       type="button"
@@ -280,7 +327,6 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
     );
   }
 
-  // Expanded panel.
   return (
     <div
       className={`${styles.item} ${styles.itemExpanded} ${isRejected ? styles.itemRejected : ""}`}
@@ -313,9 +359,9 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
         ) : (
           <>
             <div className={styles.controls}>
-              <label className={styles.controlBlock}>
+              <div className={styles.controlBlock}>
                 <span className={styles.controlLabel}>Role</span>
-                <select
+                <Select
                   className={styles.rolePicker}
                   value={user.role}
                   onChange={(e) => onRoleChange(e.target.value as Role)}
@@ -326,8 +372,8 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                       {r}
                     </option>
                   ))}
-                </select>
-              </label>
+                </Select>
+              </div>
 
               <div className={styles.controlBlock}>
                 <span className={styles.controlLabel}>Tracks (private)</span>
@@ -335,15 +381,15 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                   {ALL_TRACKS.map((t) => {
                     const checked = (user.tracks ?? []).includes(t);
                     return (
-                      <label key={t} className={styles.trackChoice}>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => onToggleTrack(t)}
-                          disabled={busy}
-                        />
-                        <span>{TRACK_LABELS[t]}</span>
-                      </label>
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => onToggleTrack(t)}
+                        disabled={busy}
+                        className={`${styles.trackPill} ${checked ? styles.trackPillOn : ""}`}
+                      >
+                        {TRACK_LABELS[t]}
+                      </button>
                     );
                   })}
                 </div>
@@ -352,80 +398,72 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
               <div className={styles.controlBlock}>
                 <span className={styles.controlLabel}>
                   Newsletter permissions
-                  {user.role === "admin" && (
+                  {isAdminRole && (
                     <span className={styles.hint}> (admins always have both)</span>
                   )}
                 </span>
-                <div className={styles.trackRow}>
-                  <label className={styles.trackChoice}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(user.permissions?.draftNewsletter)}
-                      onChange={() => onTogglePermission("draftNewsletter")}
-                      disabled={busy}
-                    />
-                    <span>Can draft</span>
-                  </label>
-                  <label className={styles.trackChoice}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(user.permissions?.approveNewsletter)}
-                      onChange={() => onTogglePermission("approveNewsletter")}
-                      disabled={busy}
-                    />
-                    <span>Can approve + send</span>
-                  </label>
-                </div>
+                <SegmentedControl
+                  ariaLabel="Newsletter permissions"
+                  value={permissionTier(
+                    user.permissions,
+                    "draftNewsletter",
+                    "approveNewsletter",
+                  )}
+                  onChange={(next) =>
+                    onChangePermissionTier("draftNewsletter", "approveNewsletter", next)
+                  }
+                  options={PERMISSION_OPTIONS}
+                  size="sm"
+                  disabled={busy || isAdminRole}
+                />
               </div>
 
               <div className={styles.controlBlock}>
                 <span className={styles.controlLabel}>
                   Event permissions
-                  {user.role === "admin" && (
+                  {isAdminRole && (
                     <span className={styles.hint}> (admins always have both)</span>
                   )}
                 </span>
-                <div className={styles.trackRow}>
-                  <label className={styles.trackChoice}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(user.permissions?.draftEvent)}
-                      onChange={() => onTogglePermission("draftEvent")}
-                      disabled={busy}
-                    />
-                    <span>Can draft</span>
-                  </label>
-                  <label className={styles.trackChoice}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(user.permissions?.approveEvent)}
-                      onChange={() => onTogglePermission("approveEvent")}
-                      disabled={busy}
-                    />
-                    <span>Can approve + publish</span>
-                  </label>
+                <SegmentedControl
+                  ariaLabel="Event permissions"
+                  value={permissionTier(user.permissions, "draftEvent", "approveEvent")}
+                  onChange={(next) =>
+                    onChangePermissionTier("draftEvent", "approveEvent", next)
+                  }
+                  options={PERMISSION_OPTIONS}
+                  size="sm"
+                  disabled={busy || isAdminRole}
+                />
+              </div>
+
+              <div className={styles.controlBlock}>
+                <span className={styles.controlLabel}>Email subscriptions</span>
+                <div className={styles.switchColumn}>
+                  <Switch
+                    checked={prefs.categories.newsletter}
+                    onChange={() => onToggleCategory("newsletter")}
+                    disabled={busy}
+                    label={CATEGORY_LABELS.newsletter}
+                  />
+                  <Switch
+                    checked={prefs.categories.events}
+                    onChange={() => onToggleCategory("events")}
+                    disabled={busy}
+                    label={CATEGORY_LABELS.events}
+                  />
                 </div>
               </div>
 
-              <label className={`${styles.controlBlock} ${styles.controlToggle}`}>
-                <input
-                  type="checkbox"
+              <div className={styles.controlBlock}>
+                <span className={styles.controlLabel}>Public profile</span>
+                <Switch
                   checked={Boolean(user.showOnMembers)}
                   onChange={onToggleShow}
                   disabled={busy}
+                  label="Show on public /members page"
                 />
-                <span className={styles.controlLabel}>Show on public /members page</span>
-              </label>
-
-              <label className={`${styles.controlBlock} ${styles.controlToggle}`}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(user.profile?.newsletter?.subscribed)}
-                  onChange={onToggleNewsletter}
-                  disabled={busy}
-                />
-                <span className={styles.controlLabel}>Subscribed to newsletter</span>
-              </label>
+              </div>
 
               {!isSelf && (
                 <button

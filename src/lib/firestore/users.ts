@@ -1,4 +1,5 @@
 import type { Role } from "@/lib/firebase/session";
+import type { NotificationPrefs } from "./notifications";
 
 export type AffiliationStatus =
   | "employee"
@@ -34,6 +35,12 @@ export function subjectLabel(status: AffiliationStatus | undefined): string {
   return "Degree name";
 }
 
+/**
+ * @deprecated Legacy shape kept for compat reads only. New writes use
+ * `UserProfile.notifications` (see `./notifications.ts`). Once the admin
+ * migration endpoint has backfilled all users, this type can be removed
+ * along with the `profile.newsletter` field.
+ */
 export type NewsletterPrefs = {
   subscribed: boolean;
   deliverToGmail: boolean;
@@ -84,7 +91,22 @@ export type UserProfile = {
   expectedGraduation?: string; // ISO month like "2027-06"
   motivation: string;
   interests?: string;
+  /** @deprecated Use `notifications` instead — kept for compat reads on
+   * un-migrated user docs. `normaliseNotifications()` in `./notifications.ts`
+   * picks between the two. */
   newsletter?: NewsletterPrefs;
+  /**
+   * Per-category notification preferences. New shape. Once all users are
+   * migrated (via the admin backfill endpoint) the `newsletter` field above
+   * can be removed.
+   */
+  notifications?: NotificationPrefs;
+  /**
+   * ISO timestamp of when the user verified control of `universityEmail` via
+   * the magic-link flow. Unset for legacy users (they get a non-blocking
+   * nudge in ProfileForm); required for public-signup merges to be safe.
+   */
+  uniEmailVerifiedAt?: Date;
   /**
    * Set to true by the SES webhook when a Bounce or Complaint event names
    * this user's universityEmail. Cleared on the next uni-email change, which

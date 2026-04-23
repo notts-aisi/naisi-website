@@ -129,25 +129,19 @@
 }
 
 .controls {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--space-5) var(--space-5);
+  align-items: start;
 }
 
 .controlBlock {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-}
-
-.controlToggle {
-  flex-direction: row;
-  align-items: center;
   gap: var(--space-2);
-  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  min-width: 0;
 }
 
 .controlLabel {
@@ -158,30 +152,55 @@
 }
 
 .rolePicker {
-  padding: 0.45rem 0.6rem;
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  color: var(--color-text);
-  font-size: var(--text-sm);
   text-transform: capitalize;
-  min-width: 9rem;
+  min-width: 10rem;
 }
 
 .trackRow {
   display: flex;
-  gap: var(--space-3);
+  gap: var(--space-2);
   align-items: center;
-  padding-top: var(--space-1);
+  flex-wrap: wrap;
 }
 
-.trackChoice {
+.trackPill {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+  padding: 0.35rem 0.75rem;
   font-size: var(--text-sm);
-  color: var(--color-text);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
   cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.trackPill:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+.trackPillOn {
+  background: var(--color-accent);
+  color: white;
+  border-color: var(--color-accent);
+}
+
+.trackPillOn:hover:not(:disabled) {
+  color: white;
+  border-color: var(--color-accent-hover);
+  background: var(--color-accent-hover);
+}
+
+.switchColumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
 .hint {
