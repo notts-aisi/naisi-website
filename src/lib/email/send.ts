@@ -8,6 +8,7 @@ import {
   type EmailSendKind,
 } from "@/lib/firestore/emailSends";
 import { parseSesMessageId } from "./sesMessageId";
+import { parseResendMessageId } from "./resendMessageId";
 
 type SendArgs = {
   to: string | string[];
@@ -98,10 +99,13 @@ export async function sendEmail({
     headers: extraHeaders,
   });
 
-  // Pull SES's own message-id out of the 250 response so later bounce events
-  // from SNS can link back to this exact row. Missing is fine — the row still
-  // lands, just without the cross-link.
+  // Pull the provider's own message id out of the 250 response so later
+  // bounce/complaint events can link back to this exact row. The two parsers
+  // are mutually exclusive in practice (one matches, the other returns
+  // undefined) — the webhook handler tolerates both being absent via a
+  // recipient + recency fallback.
   const sesMessageId = parseSesMessageId(info.response);
+  const resendEmailId = parseResendMessageId(info.response);
 
   // Log the send to Firestore. Swallow failures: a missing dashboard entry
   // is never worth failing the caller's API request over.
@@ -113,6 +117,7 @@ export async function sendEmail({
         logEmailSend(db, {
           messageId: info.messageId,
           sesMessageId,
+          resendEmailId,
           to: addr,
           subject,
           fromEmail,
@@ -127,5 +132,5 @@ export async function sendEmail({
     );
   }
 
-  return { messageId: info.messageId, sesMessageId };
+  return { messageId: info.messageId, sesMessageId, resendEmailId };
 }
