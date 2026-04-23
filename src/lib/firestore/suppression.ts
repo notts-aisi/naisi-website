@@ -7,7 +7,7 @@ export type SuppressionEntry = {
   email: string;
   reason: SuppressionReason;
   subReason?: string;
-  source: "ses-sns" | "manual";
+  source: "ses-sns" | "resend-webhook" | "manual";
   addedAt: Date;
 };
 
