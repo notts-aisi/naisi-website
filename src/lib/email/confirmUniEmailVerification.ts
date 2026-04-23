@@ -47,7 +47,37 @@ export async function confirmUniEmailVerification(
   }
 
   if (!data.verifiedAt) {
-    await ref.update({ verifiedAt: Timestamp.now() });
+    const now = Timestamp.now();
+    const batch = db.batch();
+    batch.update(ref, { verifiedAt: now });
+
+    // Also stamp the user doc so `profile.uniEmailVerifiedAt` reflects the
+    // current verification state without needing the user to submit a form.
+    // Only stamp if the user's current `profile.universityEmail` still matches
+    // the address that was just verified — if they changed it in the meantime,
+    // the old verification doesn't apply to the new address and we'd be
+    // falsely marking them verified.
+    const authUid = data.authUid as string | undefined;
+    const verifiedEmail = (data.email as string | undefined)?.trim().toLowerCase() ?? "";
+    if (authUid && verifiedEmail) {
+      const userRef = db.collection("users").doc(authUid);
+      const userSnap = await userRef.get();
+      if (userSnap.exists) {
+        const profile = userSnap.data()?.profile as Record<string, unknown> | undefined;
+        const currentUniEmail =
+          (profile?.universityEmail as string | undefined)?.trim().toLowerCase() ?? "";
+        if (currentUniEmail === verifiedEmail) {
+          batch.update(userRef, { "profile.uniEmailVerifiedAt": now });
+        } else {
+          console.log(
+            "[confirmUniEmail] user's current uni email differs from verified address — skipping user-doc stamp",
+            { authUid, currentUniEmail, verifiedEmail },
+          );
+        }
+      }
+    }
+
+    await batch.commit();
   }
 
   console.log("[confirmUniEmail] verified", { tokenId: payload.v, email: data.email });
