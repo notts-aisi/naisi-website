@@ -176,7 +176,10 @@ export async function createTask(input: CreateTaskInput): Promise<string> {
     id: s.id ?? genId(),
     title: s.title.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
     description: (s.description ?? "").slice(0, TASK_FIELD_LIMITS.subtaskDescription),
-    dueDate: s.dueDate ?? null,
+    // Inherit the task-level dueDate on creation when the caller doesn't
+    // set a per-subtask one. Matches the `addSubtask` default so subtasks
+    // surface a meaningful date on day one; editable afterwards.
+    dueDate: s.dueDate !== undefined ? s.dueDate : input.dueDate ?? null,
     done: false,
     doneAt: null,
     doneByUid: null,
@@ -583,10 +586,13 @@ export async function setSubtaskApproval(
   const uid = actingUid();
   const target = task.subtasks.find((s) => s.id === subtaskId);
   if (!target) throw new Error("Subtask not found");
-  const effectiveReviewers =
-    target.reviewerUids.length > 0 ? target.reviewerUids : task.reviewerUids;
-  if (!effectiveReviewers.includes(uid)) {
-    throw new Error("You're not listed as a reviewer for this subtask.");
+  // Stage 2 (2026-04-24): strict self-service model — you must be
+  // explicitly in `subtask.reviewerUids` to review. Task-level fallback
+  // dropped so reviewers consciously claim their scope via `+ Review`.
+  if (!target.reviewerUids.includes(uid)) {
+    throw new Error(
+      "You haven't added yourself to review this subtask — click \"+ Review\" to claim it first.",
+    );
   }
   // Gate: reviewers can't approve/question/reject until a completer has
   // marked the work done. Clearing a prior state is still allowed — the
@@ -1344,10 +1350,55 @@ export async function selfAddReviewerToSubtask(
       `Max ${TASK_FIELD_LIMITS.maxReviewersPerSubtask} reviewers per subtask`,
     );
   }
-  await patchSubtask(task, subtaskId, (s) => ({
-    ...s,
-    reviewerUids: [...s.reviewerUids, uid],
-  }));
+  const db = getClientDb();
+  let nextSubtasks: Subtask[] = task.subtasks.map((s) =>
+    s.id === subtaskId ? { ...s, reviewerUids: [...s.reviewerUids, uid] } : s,
+  );
+  // Stage 2 (2026-04-24): if the block has already been sent to reviewers
+  // (signoff rows exist) and the acting reviewer doesn't have a signoff
+  // row of their own yet, spawn one atomically. Without this, a reviewer
+  // who self-adds post-Notify would appear in the matrix but have no
+  // signoff row in the "Reviews for …" container.
+  if (target.blockId) {
+    const blockHasSignoffs = task.subtasks.some(
+      (s) => s.blockId === target.blockId && s.roleHint === "reviewer",
+    );
+    const hasOwnSignoff = task.subtasks.some(
+      (s) =>
+        s.blockId === target.blockId &&
+        s.roleHint === "reviewer" &&
+        s.reviewerUids.includes(uid),
+    );
+    if (blockHasSignoffs && !hasOwnSignoff) {
+      nextSubtasks = [
+        ...nextSubtasks,
+        {
+          id: genId(),
+          title: "Reviewer signoff",
+          description: "",
+          dueDate: null,
+          done: false,
+          doneAt: null,
+          doneByUid: null,
+          assigneeUids: [],
+          reviewerUids: [uid],
+          blockedBy: [],
+          approvedByReviewerUids: [],
+          questionedByReviewerUids: [],
+          rejectedByReviewerUids: [],
+          blockId: target.blockId,
+          sealState: "open",
+          sealedAt: null,
+          roleHint: "reviewer",
+        },
+      ];
+    }
+  }
+  await updateDoc(doc(db, "tasks", task.id), {
+    subtasks: nextSubtasks.map(serializeSubtask),
+    subtaskStats: computeSubtaskStats(nextSubtasks),
+    updatedAt: serverTimestamp(),
+  });
 }
 
 /**
