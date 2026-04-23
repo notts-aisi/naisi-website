@@ -53,6 +53,12 @@ env:
   - variable: SMTP_PASSWORD
     secret: SMTP_PASSWORD
     availability: [RUNTIME]
+  # Svix-style signing secret issued by Resend per webhook endpoint. Each env
+  # has its own endpoint URL and therefore its own secret value in that
+  # project's Secret Manager.
+  - variable: RESEND_WEBHOOK_SECRET
+    secret: RESEND_WEBHOOK_SECRET
+    availability: [RUNTIME]
   - variable: SMTP_FROM_NAME
     value: NAISI
     availability: [RUNTIME]
