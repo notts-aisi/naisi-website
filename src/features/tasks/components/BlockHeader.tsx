@@ -51,6 +51,30 @@ export default function BlockHeader({
   // Completers can lock in as soon as they're happy with who's doing what;
   // work-done is gated separately by the "Send block to reviewers" button
   // at the bottom of the completion block.
+
+  // Stage 1.5a gap-fix: the LAST lock-in (the consent that would seal the
+  // block) is gated on every non-reviewer subtask having ≥1 assignee.
+  // Earlier consents pass unchecked — they don't yet commit the allocation.
+  const wouldSealOnMyConsent =
+    !hasConsented &&
+    isCompleter &&
+    requiredCount > 0 &&
+    requiredCount === consentCount + 1;
+  const unassignedInBlock = wouldSealOnMyConsent
+    ? task.subtasks.filter(
+        (s) =>
+          s.blockId === block.id &&
+          s.roleHint !== "reviewer" &&
+          s.assigneeUids.length === 0,
+      )
+    : [];
+  const finalLockInBlocked = unassignedInBlock.length > 0;
+  const finalLockInTooltip = finalLockInBlocked
+    ? `Can't seal yet — unassigned subtasks: ${unassignedInBlock
+        .slice(0, 3)
+        .map((s) => `"${s.title}"`)
+        .join(", ")}${unassignedInBlock.length > 3 ? ` (+${unassignedInBlock.length - 3} more)` : ""}`
+    : null;
   // Missing-reviewer detection for the admin catch-up button. Compares
   // every effective reviewer for the block against existing reviewer-hint
   // rows in that block. Non-zero when a reviewer got added to the task
@@ -272,7 +296,7 @@ export default function BlockHeader({
             <button
               type="button"
               onClick={handleLockInToggle}
-              disabled={busy}
+              disabled={busy || finalLockInBlocked}
               style={{
                 padding: "0.3rem 0.75rem",
                 background: hasConsented
@@ -285,12 +309,14 @@ export default function BlockHeader({
                 borderRadius: "var(--radius-sm, 4px)",
                 fontSize: "var(--text-xs)",
                 fontWeight: 600,
-                cursor: busy ? "not-allowed" : "pointer",
+                cursor: busy || finalLockInBlocked ? "not-allowed" : "pointer",
+                opacity: finalLockInBlocked ? 0.55 : 1,
               }}
               title={
-                hasConsented
+                finalLockInTooltip ??
+                (hasConsented
                   ? "You've locked in. Click to unlock and re-open allocation."
-                  : "Click to lock in — confirms the subtask allocation and starts work."
+                  : "Click to lock in — confirms the subtask allocation and starts work.")
               }
             >
               {hasConsented ? "✓ Locked in" : "Lock in"}

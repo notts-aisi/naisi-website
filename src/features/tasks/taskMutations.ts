@@ -260,6 +260,16 @@ export async function toggleSubtask(
   if (nextDone && isSubtaskBlocked(target, task.subtasks, task.reviewerUids)) {
     throw new Error("Subtask is blocked by an unfinished prerequisite");
   }
+  // Stage 1.5a gap-fix: work on completion rows can't start until the
+  // parent block has had its allocation locked in. Admin bypass preserved.
+  if (nextDone && !asAdmin && target.roleHint !== "reviewer" && target.blockId) {
+    const parentBlock = task.blocks.find((b) => b.id === target.blockId);
+    if (parentBlock && parentBlock.sealState !== "sealed") {
+      throw new Error(
+        "Lock in the block's allocation before starting work on its subtasks.",
+      );
+    }
+  }
   // Reviewer-signoff rows:
   //   - Ticking: only the listed reviewer (or admin), with approve-first gate.
   //   - Unticking (retracting signoff): admin only. Once a reviewer has
@@ -960,6 +970,27 @@ export async function toggleBlockConsent(task: TaskDoc, blockId: string) {
     task.completerUids.length > 0 &&
     task.completerUids.every((u) => nextConsenting.includes(u)) &&
     nextConsenting.every((u) => requiredSet.has(u));
+
+  // Stage 1.5a gap-fix: the lock-in that SEALS the block (last consent
+  // arriving) can't go through if any non-reviewer subtask still has
+  // zero assignees — we'd seal an incomplete allocation. Earlier
+  // consents pass through unchecked.
+  if (allConsented) {
+    const unassigned = task.subtasks.filter(
+      (s) =>
+        s.blockId === blockId &&
+        s.roleHint !== "reviewer" &&
+        s.assigneeUids.length === 0,
+    );
+    if (unassigned.length > 0) {
+      const first = unassigned[0];
+      const more =
+        unassigned.length > 1 ? ` (+${unassigned.length - 1} more)` : "";
+      throw new Error(
+        `Can't lock in — "${first.title}" has no one assigned yet${more}.`,
+      );
+    }
+  }
 
   const batch = writeBatch(db);
   const patch: Record<string, unknown> = {

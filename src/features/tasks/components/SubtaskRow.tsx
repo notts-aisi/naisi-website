@@ -170,15 +170,24 @@ export default function SubtaskRow({
   const isCompleter = task.completerUids.includes(viewerUid);
   const isSelfAssigned = subtask.assigneeUids.includes(viewerUid);
   const isTaskCreator = task.creatorUid === viewerUid;
-  // Permission to toggle the checkbox. Mirrors the guard in `toggleSubtask`:
-  //   - Reviewer-signoff row: only the listed reviewer.
-  //   - Regular completion row: only a listed assignee (or task creator as
-  //     an always-available escape hatch). Empty `assigneeUids` = any
-  //     completer on the task may tick.
+  // Stage 1.5a gap-fix: completion-row work can't start before the parent
+  // block's allocation is locked in. Admin bypass preserved.
+  const preSealWorkLocked =
+    subtask.roleHint !== "reviewer" &&
+    subtask.blockId !== null &&
+    parentBlock !== null &&
+    !parentSealed &&
+    !isAdmin &&
+    !subtask.done;
+  // Permission to toggle the checkbox. Mirrors the guard in `toggleSubtask`
+  // (Stage 1.5a): reviewer rows are listed-reviewer-only; completion rows
+  // are admin OR listed assignee OR (empty-assignees open to any listed
+  // completer). Creator bypass dropped 2026-04-23 — creators who want to
+  // move work forward should self-add via `+ Me`.
   const canToggleRow =
     subtask.roleHint === "reviewer"
       ? subtask.reviewerUids.includes(viewerUid)
-      : isTaskCreator ||
+      : isAdmin ||
         isSelfAssigned ||
         (subtask.assigneeUids.length === 0 && isCompleter);
   // Self-remove is allowed only when nothing is sealed. Self-add remains
@@ -402,7 +411,13 @@ export default function SubtaskRow({
         <input
           type="checkbox"
           checked={subtask.done}
-          disabled={blocked || signoffBlocked || signoffRetractLocked || !canToggleRow}
+          disabled={
+            blocked ||
+            signoffBlocked ||
+            signoffRetractLocked ||
+            preSealWorkLocked ||
+            !canToggleRow
+          }
           onClick={(e) => e.stopPropagation()}
           onChange={() => handleCheckboxToggle().catch(console.error)}
           aria-label={
@@ -412,9 +427,11 @@ export default function SubtaskRow({
                 ? signoffTooltip ?? "Signoff gated on outstanding approvals"
                 : signoffRetractLocked
                   ? "Signoff already placed — only an admin can retract."
-                  : !canToggleRow
-                    ? notPermittedTooltip(subtask)
-                    : `Mark "${subtask.title}" ${subtask.done ? "incomplete" : "complete"}`
+                  : preSealWorkLocked
+                    ? "Lock in the block's allocation before starting work on its subtasks."
+                    : !canToggleRow
+                      ? notPermittedTooltip(subtask)
+                      : `Mark "${subtask.title}" ${subtask.done ? "incomplete" : "complete"}`
           }
           title={
             blocked
@@ -422,9 +439,11 @@ export default function SubtaskRow({
               : signoffTooltip ??
                 (signoffRetractLocked
                   ? "Your signoff is final — only an admin can retract it."
-                  : !canToggleRow
-                    ? notPermittedTooltip(subtask)
-                    : undefined)
+                  : preSealWorkLocked
+                    ? "Lock in the block's allocation before starting work on its subtasks."
+                    : !canToggleRow
+                      ? notPermittedTooltip(subtask)
+                      : undefined)
           }
         />
         <span
@@ -843,7 +862,10 @@ export default function SubtaskRow({
             )}
           </div>
 
-          {task.blocks.length > 0 && (
+          {/* Block move is a structural edit — gated to admin/creator/committee
+              rather than any completer. Previously leaked via the outer
+              `canEdit` gate on the edit panel. */}
+          {canEditStructure && task.blocks.length > 0 && (
             <label
               style={{
                 gridColumn: "span 2",
