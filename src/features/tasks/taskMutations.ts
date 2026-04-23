@@ -566,7 +566,9 @@ export async function setSubtaskApproval(
       "You've already signed off on this block — approvals are locked. Ask an admin to retract your signoff first.",
     );
   }
-  await patchSubtask(task, subtaskId, (s) => {
+  const db = getClientDb();
+  const nextSubtasks = task.subtasks.map((s) => {
+    if (s.id !== subtaskId) return s;
     // Mutually exclusive across the three arrays — remove uid from all,
     // then add to the chosen one (or to none, for "clear").
     const approved = s.approvedByReviewerUids.filter((u) => u !== uid);
@@ -582,6 +584,85 @@ export async function setSubtaskApproval(
       rejectedByReviewerUids: rejected,
     };
   });
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    subtasks: nextSubtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  });
+  if (state === "reject") {
+    queueActivity(batch, task.id, "subtask_rejected", uid, {
+      subtaskId,
+      title: target.title,
+    });
+  }
+  await batch.commit();
+}
+
+/**
+ * Resend a rejected subtask for review. Wipes every reviewer's state on
+ * that subtask so the review slate is clean for the next cycle, appends
+ * a `subtask_resubmitted` activity entry, and hands off to the existing
+ * /send-for-review API route to email the reviewers. Row transitions
+ * red → blue automatically (done=true + no reviewer state = "awaiting
+ * review" resting state).
+ *
+ * Permission (client-enforced, mirrors the Phase 3 pattern): callable by
+ * any listed assignee on the subtask, any completer if assigneeUids is
+ * empty, or the task creator. Admins go through via the same path.
+ */
+export async function resubmitSubtask(task: TaskDoc, subtaskId: string) {
+  const db = getClientDb();
+  const uid = actingUid();
+  const target = task.subtasks.find((s) => s.id === subtaskId);
+  if (!target) throw new Error("Subtask not found");
+  if (target.rejectedByReviewerUids.length === 0) {
+    throw new Error("Nothing to resend — this subtask isn't currently rejected.");
+  }
+  const isCreator = task.creatorUid === uid;
+  const isAssigned = target.assigneeUids.includes(uid);
+  const openToAnyCompleter =
+    target.assigneeUids.length === 0 && task.completerUids.includes(uid);
+  if (!isCreator && !isAssigned && !openToAnyCompleter) {
+    throw new Error(
+      "Only the people assigned to this subtask (or the task creator) can resend it for review.",
+    );
+  }
+  const nextSubtasks = task.subtasks.map((s) =>
+    s.id === subtaskId
+      ? {
+          ...s,
+          approvedByReviewerUids: [],
+          questionedByReviewerUids: [],
+          rejectedByReviewerUids: [],
+        }
+      : s,
+  );
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    subtasks: nextSubtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "subtask_resubmitted", uid, {
+    subtaskId,
+    title: target.title,
+  });
+  await batch.commit();
+  // Fire-and-forget email call — the reviewer-state wipe is the critical
+  // bit; email failure is a soft-failure surfaced via the returned payload.
+  try {
+    const res = await fetch(`/api/tasks/${task.id}/send-for-review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subtaskId }),
+    });
+    if (!res.ok) {
+      console.warn(
+        `[resubmitSubtask] /send-for-review returned ${res.status}`,
+      );
+    }
+  } catch (err) {
+    console.warn("[resubmitSubtask] email dispatch failed", err);
+  }
 }
 
 export async function renameSubtask(task: TaskDoc, subtaskId: string, title: string) {
