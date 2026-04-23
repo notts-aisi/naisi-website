@@ -304,46 +304,93 @@ export default function BlockHeader({
         )}
 
         {showGating && canEditGating && (
-          <select
-            value={block.gatingMode}
-            onChange={(e) =>
-              setBlockGatingMode(
-                task,
-                block.id,
-                e.target.value as BlockGatingMode,
-              ).catch(console.error)
-            }
-            aria-label="Upstream gating for this block"
-            title="Controls what must be complete before this block's work can start."
+          <label
             style={{
-              padding: "0.25rem 0.5rem",
-              background: "var(--color-bg)",
-              border: "1px solid var(--color-border)",
-              borderRadius: "var(--radius-sm, 4px)",
-              color: "var(--color-text)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              padding: "0.35rem 0.75rem",
+              background:
+                block.gatingMode === "none"
+                  ? "var(--color-bg-elevated)"
+                  : "var(--color-accent-soft)",
+              border: `1px solid ${
+                block.gatingMode === "none"
+                  ? "var(--color-border)"
+                  : "var(--color-accent)"
+              }`,
+              borderRadius: "999px",
               fontSize: "var(--text-xs)",
+              fontWeight: 600,
+              color:
+                block.gatingMode === "none"
+                  ? "var(--color-text-muted)"
+                  : "var(--color-accent)",
+              cursor: "pointer",
             }}
+            title="Controls what must be complete before this block's work can start."
           >
-            <option value="previous">{GATING_LABELS.previous}</option>
-            <option value="all-previous">{GATING_LABELS["all-previous"]}</option>
-            <option value="none">{GATING_LABELS.none}</option>
-          </select>
+            <span aria-hidden="true" style={{ fontSize: "14px", lineHeight: 1 }}>
+              {block.gatingMode === "none" ? "🔓" : "🔗"}
+            </span>
+            <select
+              value={block.gatingMode}
+              onChange={(e) =>
+                setBlockGatingMode(
+                  task,
+                  block.id,
+                  e.target.value as BlockGatingMode,
+                ).catch(console.error)
+              }
+              aria-label="Upstream gating for this block"
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "inherit",
+                fontSize: "inherit",
+                fontWeight: "inherit",
+                fontFamily: "inherit",
+                cursor: "pointer",
+                outline: "none",
+                padding: 0,
+                paddingRight: "0.2rem",
+              }}
+            >
+              <option value="previous">{GATING_LABELS.previous}</option>
+              <option value="all-previous">{GATING_LABELS["all-previous"]}</option>
+              <option value="none">{GATING_LABELS.none}</option>
+            </select>
+          </label>
         )}
         {showGating && !canEditGating && (
           <span
             style={{
-              padding: "2px 8px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--space-1)",
+              padding: "0.25rem 0.6rem",
               borderRadius: "999px",
-              background: "var(--color-bg-elevated)",
-              border: "1px solid var(--color-border)",
-              color: "var(--color-text-muted)",
+              background:
+                block.gatingMode === "none"
+                  ? "var(--color-bg-elevated)"
+                  : "var(--color-accent-soft)",
+              border: `1px solid ${
+                block.gatingMode === "none"
+                  ? "var(--color-border)"
+                  : "var(--color-accent)"
+              }`,
+              color:
+                block.gatingMode === "none"
+                  ? "var(--color-text-muted)"
+                  : "var(--color-accent)",
               fontSize: "10px",
-              fontWeight: 600,
+              fontWeight: 700,
               textTransform: "uppercase",
               letterSpacing: "0.05em",
             }}
             title={GATING_LABELS[block.gatingMode]}
           >
+            <span aria-hidden="true">{block.gatingMode === "none" ? "🔓" : "🔗"}</span>
             {block.gatingMode === "none" ? "Ungated" : "Gated"}
           </span>
         )}

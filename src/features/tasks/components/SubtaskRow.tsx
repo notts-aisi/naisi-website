@@ -267,11 +267,14 @@ export default function SubtaskRow({
   );
 
   const reviewers = useMemo(() => {
-    const uids = effectiveReviewerUids(subtask, task.reviewerUids);
-    return uids
+    // Stage 2 (2026-04-24): strict — only show reviewers who have
+    // explicitly claimed this subtask (no task-level fallback). Matches
+    // the `setSubtaskApproval` gate so the matrix only shows cells the
+    // viewer can actually interact with.
+    return subtask.reviewerUids
       .map((uid) => users.find((u) => u.uid === uid) ?? { uid, displayName: null, email: null, role: "member" } as UserDoc)
       .filter(Boolean) as UserDoc[];
-  }, [subtask, task.reviewerUids, users]);
+  }, [subtask.reviewerUids, users]);
 
   const approvalStatus = useMemo(
     () => getSubtaskApprovalStatus(subtask, task.reviewerUids),
@@ -558,8 +561,8 @@ export default function SubtaskRow({
           }}
         >
           {subtask.title}
-          {subtask.dueDate && !subtask.done && (() => {
-            const overdue = subtask.dueDate.getTime() < Date.now();
+          {subtask.dueDate && (() => {
+            const overdue = !subtask.done && subtask.dueDate.getTime() < Date.now();
             return (
               <span
                 title={`Due ${subtask.dueDate.toLocaleDateString()}${overdue ? " — overdue" : ""}`}
@@ -577,6 +580,8 @@ export default function SubtaskRow({
                   fontWeight: 700,
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
+                  textDecoration: subtask.done ? "line-through" : "none",
+                  opacity: subtask.done ? 0.7 : 1,
                 }}
               >
                 {overdue ? "Overdue" : `Due ${subtask.dueDate.toLocaleDateString()}`}

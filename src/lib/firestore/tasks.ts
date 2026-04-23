@@ -360,16 +360,20 @@ export function isDueSoon(task: TaskDoc, now: Date = new Date()): boolean {
 }
 
 /**
- * Effective reviewer set for a given subtask: the subtask's own
- * reviewerUids if non-empty, otherwise the task-level reviewerUids as a
- * fallback. An empty effective set means "no reviewer gate on this
- * subtask" — blue ticks resolve immediately.
+ * Effective reviewer set for a given subtask. Stage 2 (2026-04-24):
+ * dropped the task-level fallback — reviewers must explicitly claim
+ * individual subtasks via `+ Review` (the self-service affordance in
+ * `SubtaskRow`). If `subtask.reviewerUids` is empty, the subtask has no
+ * review gate at all (green-when-done).
+ *
+ * Second parameter retained for backward-compat with existing callers;
+ * value is unused.
  */
 export function effectiveReviewerUids(
   subtask: Subtask,
-  taskReviewerUids: string[],
+  _taskReviewerUids: string[] = [],
 ): string[] {
-  return subtask.reviewerUids.length > 0 ? subtask.reviewerUids : taskReviewerUids;
+  return subtask.reviewerUids;
 }
 
 export type SubtaskApprovalStatus = {
