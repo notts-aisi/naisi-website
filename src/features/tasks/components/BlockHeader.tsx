@@ -5,9 +5,11 @@ import {
   TASK_FIELD_LIMITS,
   getBlockConsensusState,
   getBlockEffectiveReviewerUids,
+  getBlockPhase,
   type TaskBlock,
   type TaskDoc,
 } from "@/lib/firestore/tasks";
+import { BLOCK_PHASE_PALETTE } from "./SubtaskList";
 import {
   deleteBlock,
   ensureBlockReviewSubtasks,
@@ -184,6 +186,8 @@ export default function BlockHeader({
     }
   }
 
+  const phase = getBlockPhase(task, block);
+  const phasePalette = BLOCK_PHASE_PALETTE[phase];
   return (
     <div
       style={{
@@ -191,14 +195,8 @@ export default function BlockHeader({
         flexDirection: "column",
         gap: "var(--space-2)",
         padding: "0.65rem 0.85rem",
-        background: isSealed
-          ? "var(--color-warning-soft, var(--color-surface-hover))"
-          : "var(--color-success-soft, rgba(22, 163, 74, 0.08))",
-        border: `1px solid ${
-          isSealed
-            ? "var(--color-warning, var(--color-accent))"
-            : "var(--color-success, #16a34a)"
-        }`,
+        background: phasePalette.bg,
+        border: `1px solid ${phasePalette.border}`,
         borderRadius: "var(--radius-md)",
       }}
     >
@@ -248,22 +246,24 @@ export default function BlockHeader({
             letterSpacing: "0.05em",
             padding: "2px 8px",
             borderRadius: "999px",
-            background: isSealed
-              ? "var(--color-warning, var(--color-accent))"
-              : "var(--color-success, #16a34a)",
+            background: phasePalette.border,
             color: "white",
             border: "none",
             fontWeight: 700,
           }}
           title={
-            isSealed
-              ? block.forceSealedByUid
-                ? "Sealed — attention moves to reviewers. (admin force-seal)"
-                : "Sealed — attention moves to reviewers."
-              : "Active — completers at work on this block."
+            phase === "allocating"
+              ? "Allocating — completers deciding who does what."
+              : phase === "in-progress"
+                ? block.forceSealedByUid
+                  ? "In progress — work under way. (admin force-sealed allocation)"
+                  : "In progress — allocation locked, work under way."
+                : phase === "reviewing"
+                  ? "Under review — reviewers working through the block."
+                  : "Complete — every reviewer has signed off."
           }
         >
-          {isSealed ? "Sealed" : "Active"}
+          {phasePalette.label}
         </span>
 
         {!isSealed && requiredCount > 0 && (
