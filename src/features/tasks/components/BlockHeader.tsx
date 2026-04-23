@@ -6,6 +6,7 @@ import {
   getBlockConsensusState,
   getBlockEffectiveReviewerUids,
   getBlockPhase,
+  type BlockGatingMode,
   type TaskBlock,
   type TaskDoc,
 } from "@/lib/firestore/tasks";
@@ -15,9 +16,16 @@ import {
   ensureBlockReviewSubtasks,
   forceSealBlock,
   renameBlock,
+  setBlockGatingMode,
   toggleBlockConsent,
   unsealBlock,
 } from "../taskMutations";
+
+const GATING_LABELS: Record<BlockGatingMode, string> = {
+  previous: "Gated by previous block",
+  "all-previous": "Gated by all previous blocks",
+  none: "Not gated",
+};
 
 type Props = {
   task: TaskDoc;
@@ -188,6 +196,10 @@ export default function BlockHeader({
 
   const phase = getBlockPhase(task, block);
   const phasePalette = BLOCK_PHASE_PALETTE[phase];
+  const showGating = block.order > 0;
+  // Task-level reviewers can also manage gating — they steer the review
+  // flow. Admin bypass implicit.
+  const canEditGating = isAdmin || task.reviewerUids.includes(viewerUid);
   return (
     <div
       style={{
@@ -288,6 +300,51 @@ export default function BlockHeader({
           >
             Sealed {block.sealedAt.toLocaleDateString()}
             {block.forceSealedByUid ? " (admin force)" : ""}
+          </span>
+        )}
+
+        {showGating && canEditGating && (
+          <select
+            value={block.gatingMode}
+            onChange={(e) =>
+              setBlockGatingMode(
+                task,
+                block.id,
+                e.target.value as BlockGatingMode,
+              ).catch(console.error)
+            }
+            aria-label="Upstream gating for this block"
+            title="Controls what must be complete before this block's work can start."
+            style={{
+              padding: "0.25rem 0.5rem",
+              background: "var(--color-bg)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-sm, 4px)",
+              color: "var(--color-text)",
+              fontSize: "var(--text-xs)",
+            }}
+          >
+            <option value="previous">{GATING_LABELS.previous}</option>
+            <option value="all-previous">{GATING_LABELS["all-previous"]}</option>
+            <option value="none">{GATING_LABELS.none}</option>
+          </select>
+        )}
+        {showGating && !canEditGating && (
+          <span
+            style={{
+              padding: "2px 8px",
+              borderRadius: "999px",
+              background: "var(--color-bg-elevated)",
+              border: "1px solid var(--color-border)",
+              color: "var(--color-text-muted)",
+              fontSize: "10px",
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+            }}
+            title={GATING_LABELS[block.gatingMode]}
+          >
+            {block.gatingMode === "none" ? "Ungated" : "Gated"}
           </span>
         )}
 

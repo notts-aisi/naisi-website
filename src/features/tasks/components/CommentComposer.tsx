@@ -161,7 +161,7 @@ export default function CommentComposer(props: Props) {
       (s) =>
         s.reviewerUids.length > 0 &&
         !s.done &&
-        !isSubtaskBlocked(s, task.subtasks, task.reviewerUids),
+        !isSubtaskBlocked(s, task),
     );
     if (reviewSub) {
       return {

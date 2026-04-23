@@ -221,60 +221,15 @@ export default function SubtaskDetailModal({
         <section>
           <h3 style={sectionLabel}>Due date</h3>
           {canEditDescription ? (
-            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-              <input
-                type="date"
-                value={toDateInputValue(subtask.dueDate)}
-                onChange={(e) => onDueChange(e.target.value)}
-                disabled={dueBusy}
-                style={{
-                  padding: "var(--space-2) var(--space-3)",
-                  background: "var(--color-bg-elevated)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "var(--radius-md)",
-                  color: "var(--color-text)",
-                  fontSize: "var(--text-sm)",
-                  fontFamily: "inherit",
-                }}
-              />
-              {subtask.dueDate && (
-                <button
-                  type="button"
-                  onClick={() => onDueChange("")}
-                  disabled={dueBusy}
-                  style={{
-                    padding: "0.3rem 0.65rem",
-                    background: "transparent",
-                    border: "1px solid var(--color-border)",
-                    borderRadius: "var(--radius-sm, 4px)",
-                    color: "var(--color-text-muted)",
-                    fontSize: "var(--text-xs)",
-                    cursor: dueBusy ? "not-allowed" : "pointer",
-                  }}
-                >
-                  Clear
-                </button>
-              )}
-              {isOverdue && (
-                <span
-                  style={{
-                    padding: "2px 8px",
-                    borderRadius: "999px",
-                    background: "var(--color-danger-soft, rgba(220, 38, 38, 0.12))",
-                    color: "var(--color-danger, #dc2626)",
-                    fontSize: "10px",
-                    fontWeight: 700,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                  }}
-                >
-                  Overdue
-                </span>
-              )}
-            </div>
+            <DueDateEditor
+              value={subtask.dueDate}
+              onChange={(date) => onDueChange(date ? toDateInputValue(date) : "")}
+              disabled={dueBusy}
+              isOverdue={isOverdue}
+            />
           ) : subtask.dueDate ? (
-            <p style={{ margin: 0, fontSize: "var(--text-sm)", color: isOverdue ? "var(--color-danger, #dc2626)" : "var(--color-text)" }}>
-              {subtask.dueDate.toLocaleDateString()}
+            <p style={{ margin: 0, fontSize: "var(--text-md)", color: isOverdue ? "var(--color-danger, #dc2626)" : "var(--color-text)" }}>
+              {subtask.dueDate.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
               {isOverdue && " — overdue"}
             </p>
           ) : (
@@ -376,6 +331,132 @@ const assigneeChip: React.CSSProperties = {
   fontSize: "var(--text-xs)",
   fontWeight: 500,
 };
+
+/**
+ * Stage 2 polish — larger, more discoverable due-date editor. Native
+ * `<input type="date">` calendar popup is browser-owned, but the input's
+ * own footprint can be scaled up so it's visible at a glance and offers
+ * quick-set shortcuts (Today / +1 week / +1 month) so you rarely need
+ * the tiny native calendar at all.
+ */
+function DueDateEditor({
+  value,
+  onChange,
+  disabled,
+  isOverdue,
+}: {
+  value: Date | null;
+  onChange: (date: Date | null) => void;
+  disabled: boolean;
+  isOverdue: boolean;
+}) {
+  function addDays(days: number): Date {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + days);
+    return d;
+  }
+  const displayLabel = value
+    ? value.toLocaleDateString(undefined, {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })
+    : "No due date";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
+        <span
+          style={{
+            fontSize: "24px",
+            lineHeight: 1,
+          }}
+          aria-hidden="true"
+        >
+          📅
+        </span>
+        <input
+          type="date"
+          value={value ? toDateInputValue(value) : ""}
+          onChange={(e) => onChange(e.target.value ? new Date(e.target.value) : null)}
+          disabled={disabled}
+          style={{
+            padding: "0.6rem 0.85rem",
+            background: "var(--color-bg-elevated)",
+            border: `1px solid ${isOverdue ? "var(--color-danger, #dc2626)" : "var(--color-border)"}`,
+            borderRadius: "var(--radius-md)",
+            color: isOverdue ? "var(--color-danger, #dc2626)" : "var(--color-text)",
+            fontSize: "var(--text-md)",
+            fontFamily: "inherit",
+            minWidth: "12rem",
+            fontWeight: 500,
+          }}
+        />
+        <span
+          style={{
+            fontSize: "var(--text-sm)",
+            color: isOverdue ? "var(--color-danger, #dc2626)" : "var(--color-text-muted)",
+            fontWeight: 500,
+          }}
+        >
+          {displayLabel}
+          {isOverdue && " — overdue"}
+        </span>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
+        <DueDateShortcut label="Today" disabled={disabled} onClick={() => onChange(addDays(0))} />
+        <DueDateShortcut label="+1 week" disabled={disabled} onClick={() => onChange(addDays(7))} />
+        <DueDateShortcut label="+2 weeks" disabled={disabled} onClick={() => onChange(addDays(14))} />
+        <DueDateShortcut label="+1 month" disabled={disabled} onClick={() => onChange(addDays(30))} />
+        {value && (
+          <DueDateShortcut
+            label="Clear"
+            disabled={disabled}
+            onClick={() => onChange(null)}
+            variant="danger"
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DueDateShortcut({
+  label,
+  onClick,
+  disabled,
+  variant,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled: boolean;
+  variant?: "danger";
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        padding: "0.4rem 0.75rem",
+        background: "transparent",
+        border: "1px solid var(--color-border)",
+        borderRadius: "999px",
+        color:
+          variant === "danger"
+            ? "var(--color-danger, #dc2626)"
+            : "var(--color-text)",
+        fontSize: "var(--text-xs)",
+        fontWeight: 500,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.55 : 1,
+      }}
+    >
+      {label}
+    </button>
+  );
+}
 
 function Overlay({
   children,

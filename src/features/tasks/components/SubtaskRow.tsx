@@ -20,8 +20,10 @@ import {
   removeSubtask,
   renameSubtask,
   resubmitSubtask,
+  selfAddReviewerToSubtask,
   selfAddToSubtask,
   selfRemoveFromSubtask,
+  selfRemoveReviewerFromSubtask,
   setSubtaskApproval,
   setSubtaskAssignees,
   setSubtaskBlock,
@@ -71,6 +73,18 @@ const selfBtn: React.CSSProperties = {
   padding: "2px 8px",
   background: "var(--color-accent-soft)",
   color: "var(--color-accent)",
+  border: "none",
+  borderRadius: "999px",
+  fontSize: "10px",
+  fontWeight: 600,
+  cursor: "pointer",
+  letterSpacing: "0.02em",
+};
+
+const reviewerSelfBtn: React.CSSProperties = {
+  padding: "2px 8px",
+  background: "var(--color-warning-soft, var(--color-surface-hover))",
+  color: "var(--color-warning, var(--color-text))",
   border: "none",
   borderRadius: "999px",
   fontSize: "10px",
@@ -130,7 +144,7 @@ export default function SubtaskRow({
   const [rejectBusy, setRejectBusy] = useState(false);
   const [resendBusy, setResendBusy] = useState(false);
 
-  const blocked = !subtask.done && isSubtaskBlocked(subtask, task.subtasks, task.reviewerUids);
+  const blocked = !subtask.done && isSubtaskBlocked(subtask, task);
   // Reviewer-signoff gate: the viewer can only tick their own signoff once
   // every block-mate they're required to review is done + approved by them.
   // Computed here for checkbox disable/tooltip; `toggleSubtask` enforces it
@@ -179,6 +193,19 @@ export default function SubtaskRow({
     !parentSealed &&
     !isAdmin &&
     !subtask.done;
+  // Stage 1.9c: once reviewer signoff rows exist in the parent block,
+  // completers can't un-tick their done subtasks — the handoff to
+  // reviewers has happened. Leave comments on the subtask instead.
+  // Admin bypass.
+  const postNotifyUntickLocked =
+    subtask.roleHint !== "reviewer" &&
+    subtask.blockId !== null &&
+    parentSealed &&
+    subtask.done &&
+    !isAdmin &&
+    task.subtasks.some(
+      (s) => s.blockId === subtask.blockId && s.roleHint === "reviewer",
+    );
   // Permission to toggle the checkbox. Mirrors the guard in `toggleSubtask`
   // (Stage 1.5a): reviewer rows are listed-reviewer-only; completion rows
   // are admin OR listed assignee OR (empty-assignees open to any listed
@@ -201,6 +228,27 @@ export default function SubtaskRow({
     !isSelfAssigned &&
     !subtaskSealed &&
     subtask.roleHint !== "reviewer";
+  // Stage 1.9b: reviewer self-service on completion rows. Anyone on the
+  // task's reviewer roster can claim/drop review scope per-subtask.
+  // Post-Notify: add still OK (via confirm popup), remove admin-only.
+  const isTaskLevelReviewer = task.reviewerUids.includes(viewerUid);
+  const isReviewerOnSubtask = subtask.reviewerUids.includes(viewerUid);
+  const blockHasSignoffs =
+    subtask.blockId !== null &&
+    task.subtasks.some(
+      (s) => s.blockId === subtask.blockId && s.roleHint === "reviewer",
+    );
+  const canSelfAddReviewer =
+    subtask.roleHint !== "reviewer" &&
+    isTaskLevelReviewer &&
+    !isReviewerOnSubtask &&
+    !subtaskSealed;
+  const canSelfRemoveReviewer =
+    subtask.roleHint !== "reviewer" &&
+    isTaskLevelReviewer &&
+    isReviewerOnSubtask &&
+    !subtaskSealed &&
+    (isAdmin || !blockHasSignoffs);
   const blockers = useMemo(
     () =>
       subtask.blockedBy
@@ -368,6 +416,40 @@ export default function SubtaskRow({
     }
   }
 
+  async function handleSelfAddReviewer() {
+    // Post-Notify takeover confirm: if the block has already been sent to
+    // reviewers AND the subtask has existing reviewers, show a culture-
+    // gate popup ("confirm you've spoken to them"). Pre-Notify or empty
+    // reviewer list → skip the popup.
+    if (blockHasSignoffs && subtask.reviewerUids.length > 0) {
+      const names = subtask.reviewerUids
+        .map((u) => {
+          const user = users.find((x) => x.uid === u);
+          return user?.displayName ?? user?.email ?? u;
+        })
+        .join(", ");
+      const ok = window.confirm(
+        `This block has been sent to reviewers. Confirm you've spoken to ${names} and they're OK with you taking over this review.`,
+      );
+      if (!ok) return;
+    }
+    try {
+      await selfAddReviewerToSubtask(task, subtask.id);
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Couldn't add review scope");
+    }
+  }
+
+  async function handleSelfRemoveReviewer() {
+    try {
+      await selfRemoveReviewerFromSubtask(task, subtask.id, { asAdmin: isAdmin });
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Couldn't drop review scope");
+    }
+  }
+
   async function handleTitleBlur() {
     const trimmed = titleDraft.trim();
     if (!trimmed || trimmed === subtask.title) {
@@ -429,6 +511,7 @@ export default function SubtaskRow({
             signoffBlocked ||
             signoffRetractLocked ||
             preSealWorkLocked ||
+            postNotifyUntickLocked ||
             !canToggleRow
           }
           onClick={(e) => e.stopPropagation()}
@@ -442,9 +525,11 @@ export default function SubtaskRow({
                   ? "Signoff already placed — only an admin can retract."
                   : preSealWorkLocked
                     ? "Lock in the block's allocation before starting work on its subtasks."
-                    : !canToggleRow
-                      ? notPermittedTooltip(subtask)
-                      : `Mark "${subtask.title}" ${subtask.done ? "incomplete" : "complete"}`
+                    : postNotifyUntickLocked
+                      ? "The block has been sent to reviewers — leave a comment on the subtask instead of un-ticking."
+                      : !canToggleRow
+                        ? notPermittedTooltip(subtask)
+                        : `Mark "${subtask.title}" ${subtask.done ? "incomplete" : "complete"}`
           }
           title={
             blocked
@@ -454,9 +539,11 @@ export default function SubtaskRow({
                   ? "Your signoff is final — only an admin can retract it."
                   : preSealWorkLocked
                     ? "Lock in the block's allocation before starting work on its subtasks."
-                    : !canToggleRow
-                      ? notPermittedTooltip(subtask)
-                      : undefined)
+                    : postNotifyUntickLocked
+                      ? "Please leave comments about your submission in the comments section of this subtask while it's under review."
+                      : !canToggleRow
+                        ? notPermittedTooltip(subtask)
+                        : undefined)
           }
         />
         <span
@@ -552,6 +639,40 @@ export default function SubtaskRow({
             title="Remove me from this subtask"
           >
             − Me
+          </button>
+        )}
+        {canSelfAddReviewer && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleSelfAddReviewer().catch(console.error);
+            }}
+            style={reviewerSelfBtn}
+            title={
+              blockHasSignoffs
+                ? "Add yourself as a reviewer — confirms culture-gate popup since the block is already under review."
+                : "Add yourself as a reviewer on this subtask."
+            }
+          >
+            + Review
+          </button>
+        )}
+        {canSelfRemoveReviewer && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleSelfRemoveReviewer().catch(console.error);
+            }}
+            style={reviewerSelfBtn}
+            title={
+              blockHasSignoffs
+                ? "Admin can still remove themselves post-Notify."
+                : "Drop your review scope on this subtask."
+            }
+          >
+            − Review
           </button>
         )}
         {subtaskSealed && (
@@ -663,6 +784,18 @@ export default function SubtaskRow({
         >
           Approve first: {signoffBlockers.map((b) => b.title).join(" • ")}
         </p>
+      )}
+
+      {/* Stage 1.9c: composite signoff row — for each reviewer-signoff row,
+          show the list of completion subtasks this reviewer is covering
+          with their per-subtask decision state icon. Derived from existing
+          approval arrays; no schema change. */}
+      {subtask.roleHint === "reviewer" && subtask.reviewerUids.length > 0 && (
+        <CompositeSignoffItems
+          task={task}
+          blockId={subtask.blockId}
+          reviewerUid={subtask.reviewerUids[0]}
+        />
       )}
 
       {showMatrix && approvalStatus.required.length > 0 && (
@@ -1207,6 +1340,105 @@ function getInitials(u: UserDoc): string {
  * while others render as static spans.
  */
 type CellState = "approved" | "question" | "rejected" | "empty";
+
+/**
+ * Composite signoff row content (Stage 1.9c). For a reviewer-signoff
+ * subtask, enumerate the completion subtasks in the same block that this
+ * reviewer is covering — per effective reviewers (subtask.reviewerUids
+ * with fallback to task.reviewerUids). Render each with a state icon so
+ * the reviewer can see their whole queue at a glance.
+ */
+function CompositeSignoffItems({
+  task,
+  blockId,
+  reviewerUid,
+}: {
+  task: TaskDoc;
+  blockId: string | null;
+  reviewerUid: string;
+}) {
+  if (!blockId) return null;
+  const covered = task.subtasks.filter((s) => {
+    if (s.blockId !== blockId) return false;
+    if (s.roleHint === "reviewer") return false;
+    const effective = effectiveReviewerUids(s, task.reviewerUids);
+    return effective.includes(reviewerUid);
+  });
+  if (covered.length === 0) {
+    return (
+      <p
+        style={{
+          margin: 0,
+          fontSize: "var(--text-xs)",
+          color: "var(--color-text-subtle)",
+          fontStyle: "italic",
+        }}
+      >
+        No subtasks claimed — use "+ Review" on a completion row to add scope.
+      </p>
+    );
+  }
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "2px",
+        marginLeft: "1.75rem",
+      }}
+    >
+      <span
+        style={{
+          fontSize: "10px",
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+          color: "var(--color-text-muted)",
+          fontWeight: 600,
+        }}
+      >
+        Reviewing
+      </span>
+      {covered.map((s) => {
+        const approved = s.approvedByReviewerUids.includes(reviewerUid);
+        const questioned = s.questionedByReviewerUids.includes(reviewerUid);
+        const rejected = s.rejectedByReviewerUids.includes(reviewerUid);
+        const [icon, color] = rejected
+          ? ["✗", "var(--color-danger, #dc2626)"]
+          : questioned
+            ? ["?", "var(--color-warning, var(--color-accent))"]
+            : approved
+              ? ["✓", "var(--color-success, #16a34a)"]
+              : ["⬜", "var(--color-text-subtle)"];
+        return (
+          <span
+            key={s.id}
+            style={{
+              fontSize: "var(--text-xs)",
+              color: "var(--color-text)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--space-1)",
+            }}
+          >
+            <span
+              style={{
+                display: "inline-block",
+                width: "1rem",
+                textAlign: "center",
+                color,
+                fontWeight: 700,
+              }}
+              aria-hidden="true"
+            >
+              {icon}
+            </span>
+            {s.title}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 function ApprovalMatrixRow({
   reviewers,

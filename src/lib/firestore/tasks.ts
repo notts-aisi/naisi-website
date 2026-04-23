@@ -81,6 +81,8 @@ export const TASK_FIELD_LIMITS = {
  * (cover-for-sick-teammate path). Auto-spawned review subtasks land on
  * `sealState === "sealed"`.
  */
+export type BlockGatingMode = "previous" | "all-previous" | "none";
+
 export type TaskBlock = {
   id: string;
   name: string;
@@ -90,6 +92,13 @@ export type TaskBlock = {
   /** Admin UID who force-sealed this block, or null if it sealed via
    *  consensus. Purely informational — doesn't affect gating. */
   forceSealedByUid: string | null;
+  /** Phase 3 / 1.9e: declarative upstream-deps mode. Drives whether this
+   *  block's completion rows are blocked until upstream block(s) are
+   *  complete. Defaults to "previous" for new blocks — gating works out
+   *  of the box without admin action. Existing blocks (pre-migration)
+   *  normalize to "previous". First block (order === 0) ignores this
+   *  field — it has no upstream blocks. */
+  gatingMode: BlockGatingMode;
 };
 
 export type BlockConsentMap = Record<string, { consentingCompleterUids: string[] }>;
@@ -247,6 +256,11 @@ function normalizeBlock(raw: unknown): TaskBlock | null {
   const sealState: TaskBlock["sealState"] =
     b.sealState === "sealed" ? "sealed" : "open";
   const order = typeof b.order === "number" ? b.order : 0;
+  const rawMode = b.gatingMode;
+  const gatingMode: BlockGatingMode =
+    rawMode === "all-previous" || rawMode === "none"
+      ? rawMode
+      : "previous";
   return {
     id,
     name,
@@ -255,6 +269,7 @@ function normalizeBlock(raw: unknown): TaskBlock | null {
     sealedAt: tsToDate(b.sealedAt),
     forceSealedByUid:
       typeof b.forceSealedByUid === "string" ? b.forceSealedByUid : null,
+    gatingMode,
   };
 }
 
@@ -401,23 +416,60 @@ export function getSubtaskApprovalStatus(
 }
 
 /**
- * A subtask is tickable only when every blockedBy-reference resolves to a
- * sibling that is `done: true`. Softened 2026-04-23 (Stage 1.5a) from
- * also-gating-on-approval — acts as a light circuit-breaker so completers
- * don't race ahead of each other, without waiting on reviewer latency.
- * Unknown blocker ids are fail-safe blocked — better to lock a row than
- * silently unlock on a dangling ref.
+ * Block-level gating check: is the block's upstream dependency unmet?
+ * Drives the Phase 3 / 1.9e declarative gating dropdown. First block
+ * (order === 0) is always ungated — nothing upstream. `none` mode never
+ * gates. `previous` gates on the immediate upstream block. `all-previous`
+ * gates on every block with a lower order.
+ */
+export function isBlockGatedByUpstream(
+  task: TaskDoc,
+  block: TaskBlock,
+): boolean {
+  if (block.gatingMode === "none") return false;
+  if (block.order === 0) return false;
+  const upstream = task.blocks.filter((b) => b.order < block.order);
+  if (upstream.length === 0) return false;
+  if (block.gatingMode === "previous") {
+    let previous: TaskBlock | null = null;
+    for (const b of upstream) {
+      if (!previous || b.order > previous.order) previous = b;
+    }
+    if (!previous) return false;
+    return getBlockPhase(task, previous) !== "complete";
+  }
+  // all-previous
+  return upstream.some((b) => getBlockPhase(task, b) !== "complete");
+}
+
+/**
+ * A subtask is tickable only when its parent block's upstream gating is
+ * satisfied AND every `blockedBy`-reference resolves to a sibling that is
+ * `done: true`. Block-level gating 2026-04-23 (1.9e) — previously the
+ * only gate was `blockedBy`. Unknown blocker ids are fail-safe blocked.
+ *
+ * Accepts either the full `TaskDoc` (preferred — enables block-gating
+ * check) or just `siblings` (legacy callers; degrades to subtask-level
+ * `blockedBy` only).
  */
 export function isSubtaskBlocked(
   subtask: Subtask,
-  siblings: Subtask[],
+  taskOrSiblings: TaskDoc | Subtask[],
   _taskReviewerUids: string[] = [],
 ): boolean {
+  const siblings = Array.isArray(taskOrSiblings)
+    ? taskOrSiblings
+    : taskOrSiblings.subtasks;
+  const task = Array.isArray(taskOrSiblings) ? null : taskOrSiblings;
+  if (task && subtask.blockId) {
+    const parentBlock = task.blocks.find((b) => b.id === subtask.blockId);
+    if (parentBlock && isBlockGatedByUpstream(task, parentBlock)) return true;
+  }
   if (subtask.blockedBy.length === 0) return false;
   const byId = new Map(siblings.map((s) => [s.id, s]));
   return subtask.blockedBy.some((id) => {
     const blocker = byId.get(id);
-    if (!blocker) return true; // unknown id = stay blocked
+    if (!blocker) return true;
     if (!blocker.done) return true;
     return false;
   });
