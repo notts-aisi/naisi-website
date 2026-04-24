@@ -14,6 +14,7 @@ import { BLOCK_PHASE_PALETTE } from "./SubtaskList";
 import {
   deleteBlock,
   ensureBlockReviewSubtasks,
+  finalizeBlockSetup,
   forceSealBlock,
   renameBlock,
   setBlockDueDate,
@@ -61,6 +62,15 @@ export default function BlockHeader({
   const isCompleter = task.completerUids.includes(viewerUid);
   const hasConsented = consensus.consenting.includes(viewerUid);
   const isSealed = block.sealState === "sealed";
+  const isSetup = block.sealState === "setup";
+  const isTaskReviewer = task.reviewerUids.includes(viewerUid);
+  // Task-setter phase: only admin + task-level reviewers + the task creator
+  // can finalize the block's subtask structure and open it for allocation.
+  // Committee-at-large is deliberately excluded. Creator is included so
+  // reviewer-less tasks (common on committee generics + personal tasks)
+  // aren't stuck in setup forever waiting for a reviewer who doesn't
+  // exist — the person who set it up can move it forward.
+  const canFinalizeSetup = isAdmin || isTaskReviewer || isCreator;
   const requiredCount = consensus.required.length;
   const consentCount = consensus.consenting.length;
   // Stage 1.5a: lock-in is an ALLOCATION gate, not a submission gate.
@@ -197,6 +207,28 @@ export default function BlockHeader({
     }
   }
 
+  async function handleFinalizeSetup() {
+    if (busy) return;
+    const completionCount = task.subtasks.filter(
+      (s) => s.blockId === block.id && s.roleHint !== "reviewer",
+    ).length;
+    if (completionCount === 0) {
+      const ok = window.confirm(
+        `"${block.name}" has no subtasks yet. Finalize anyway? You can still add subtasks post-finalize as admin, but normal users won't be able to.`,
+      );
+      if (!ok) return;
+    }
+    setBusy(true);
+    try {
+      await finalizeBlockSetup(task, block.id);
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Finalize failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDelete() {
     if (busy) return;
     const ok = window.confirm(
@@ -302,21 +334,23 @@ export default function BlockHeader({
             fontWeight: 700,
           }}
           title={
-            phase === "allocating"
-              ? "Allocating — completers deciding who does what."
-              : phase === "in-progress"
-                ? block.forceSealedByUid
-                  ? "In progress — work under way. (admin force-sealed allocation)"
-                  : "In progress — allocation locked, work under way."
-                : phase === "reviewing"
-                  ? "Under review — reviewers working through the block."
-                  : "Complete — every reviewer has signed off."
+            phase === "setup"
+              ? "Setup — reviewers defining what subtasks exist. Finalize to start allocation."
+              : phase === "allocating"
+                ? "Allocating — completers deciding who does what."
+                : phase === "in-progress"
+                  ? block.forceSealedByUid
+                    ? "In progress — work under way. (admin force-sealed allocation)"
+                    : "In progress — allocation locked, work under way."
+                  : phase === "reviewing"
+                    ? "Under review — reviewers working through the block."
+                    : "Complete — every reviewer has signed off."
           }
         >
           {phasePalette.label}
         </span>
 
-        {!isSealed && requiredCount > 0 && (
+        {!isSealed && !isSetup && requiredCount > 0 && (
           <span
             style={{
               fontSize: "var(--text-xs)",
@@ -480,7 +514,31 @@ export default function BlockHeader({
         )}
 
         <div style={{ marginLeft: "auto", display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
-          {!isSealed && isCompleter && (
+          {isSetup && canFinalizeSetup && (
+            <button
+              type="button"
+              onClick={handleFinalizeSetup}
+              disabled={busy}
+              style={{
+                padding: "0.3rem 0.75rem",
+                background: "rgba(124, 58, 237, 0.12)",
+                color: "#7c3aed",
+                border: "none",
+                borderRadius: "var(--radius-sm, 4px)",
+                fontSize: "var(--text-xs)",
+                fontWeight: 600,
+                cursor: busy ? "not-allowed" : "pointer",
+              }}
+              title={
+                isAdmin
+                  ? "Finalize setup: lock which subtasks exist and open this block for allocation."
+                  : "Finalize setup: confirm subtask structure and open this block for completers to allocate."
+              }
+            >
+              Finalize setup
+            </button>
+          )}
+          {!isSealed && !isSetup && isCompleter && (
             <button
               type="button"
               onClick={handleLockInToggle}
@@ -510,7 +568,7 @@ export default function BlockHeader({
               {hasConsented ? "✓ Locked in" : "Lock in"}
             </button>
           )}
-          {!isSealed && isAdmin && requiredCount > 0 && !consensus.allConsented && (
+          {!isSealed && !isSetup && isAdmin && requiredCount > 0 && !consensus.allConsented && (
             <button
               type="button"
               onClick={handleForceSeal}
@@ -558,7 +616,7 @@ export default function BlockHeader({
         </div>
       </div>
 
-      {!isSealed && requiredCount > 0 && (
+      {!isSealed && !isSetup && requiredCount > 0 && (
         <div
           style={{
             height: "4px",

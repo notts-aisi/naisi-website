@@ -101,6 +101,8 @@ function renderActivityCopy(a: ActivityDoc, users: UserDoc[], task: TaskDoc): st
       return `${actor} force-sealed block "${pickStr("name") ?? "a block"}"`;
     case "block_unsealed":
       return `${actor} re-opened block "${pickStr("name") ?? "a block"}"`;
+    case "block_setup_finalized":
+      return `${actor} finalized setup on "${pickStr("name") ?? "a block"}" — allocation open`;
     case "subtask_force_sealed":
       return `${actor} sealed subtask ${subtaskTitle(pickStr("subtaskId"))}`;
     case "subtask_unsealed":
