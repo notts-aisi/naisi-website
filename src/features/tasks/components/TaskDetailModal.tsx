@@ -241,14 +241,30 @@ export default function TaskDetailModal({
     }
   }
 
+  const [deleting, setDeleting] = useState(false);
+  const [deleteErr, setDeleteErr] = useState<string | null>(null);
+
   async function handleDelete() {
     if (!task) return;
-    if (!window.confirm("Delete this task? This cannot be undone.")) return;
+    if (
+      !window.confirm(
+        "Delete this task?\n\nAll comments, activity history, and attachments will be permanently removed. This cannot be undone.",
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    setDeleteErr(null);
     try {
-      await deleteTask(task.id);
+      const report = await deleteTask(task.id);
+      console.info(
+        `[deleteTask] removed ${report.comments} comments, ${report.activity} activity entries, ${report.attachments} attachments`,
+      );
       onClose();
     } catch (err) {
       console.error(err);
+      setDeleteErr(err instanceof Error ? err.message : "Delete failed");
+      setDeleting(false); // on success the modal closes; only reset on failure
     }
   }
 
@@ -660,12 +676,33 @@ export default function TaskDetailModal({
               actions require elevated privilege". */}
           {(isAdmin || isCreator) && (
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-              <Button size="sm" variant="secondary" onClick={handleArchiveToggle}>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleArchiveToggle}
+                disabled={deleting}
+              >
                 {task.archived ? "Unarchive" : "Archive"}
               </Button>
-              <Button size="sm" variant="danger" onClick={handleDelete}>
-                Delete task
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={handleDelete}
+                disabled={deleting}
+              >
+                {deleting ? "Deleting task + history…" : "Delete task"}
               </Button>
+              {deleteErr && (
+                <span
+                  role="alert"
+                  style={{
+                    fontSize: "var(--text-xs)",
+                    color: "var(--color-danger, #dc2626)",
+                  }}
+                >
+                  {deleteErr}
+                </span>
+              )}
             </div>
           )}
         </div>

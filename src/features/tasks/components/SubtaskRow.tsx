@@ -1314,32 +1314,105 @@ function InlineAvatars({
   const fg = tone === "warning"
     ? "var(--color-warning, var(--color-text))"
     : "var(--color-accent)";
+  const names = users.map((u) => u.displayName ?? u.email ?? u.uid);
+  return (
+    <HoverTooltip
+      content={
+        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+          <div
+            style={{
+              fontSize: "9px",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              opacity: 0.6,
+            }}
+          >
+            {title}
+          </div>
+          {names.map((n) => (
+            <div key={n}>{n}</div>
+          ))}
+        </div>
+      }
+    >
+      <span style={{ display: "inline-flex", gap: "2px" }}>
+        {users.slice(0, 3).map((u) => (
+          <span
+            key={u.uid}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: "1.25rem",
+              height: "1.25rem",
+              borderRadius: "50%",
+              background: bg,
+              color: fg,
+              fontSize: "10px",
+              fontWeight: 600,
+            }}
+          >
+            {(u.displayName ?? u.email ?? "?").charAt(0).toUpperCase()}
+          </span>
+        ))}
+        {users.length > 3 && (
+          <span style={{ fontSize: "10px", color: "var(--color-text-subtle)" }}>+{users.length - 3}</span>
+        )}
+      </span>
+    </HoverTooltip>
+  );
+}
+
+/**
+ * Small hover-tooltip helper — shows `content` above `children` after a
+ * ~120ms hover delay (short enough to feel responsive, long enough that
+ * you don't get a popover on every cursor transit). Positioned absolutely,
+ * auto-centred over the trigger; falls back to browser `title` if the user
+ * is keyboard-navigating (the content is also reflected via aria-label on
+ * trigger).
+ */
+function HoverTooltip({
+  content,
+  children,
+}: {
+  content: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
   return (
     <span
-      title={`${title}: ${users.map((u) => u.displayName ?? u.email ?? u.uid).join(", ")}`}
-      style={{ display: "inline-flex", gap: "2px" }}
+      style={{ position: "relative", display: "inline-flex" }}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
     >
-      {users.slice(0, 3).map((u) => (
+      {children}
+      {open && (
         <span
-          key={u.uid}
+          role="tooltip"
           style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: "1.25rem",
-            height: "1.25rem",
-            borderRadius: "50%",
-            background: bg,
-            color: fg,
-            fontSize: "10px",
-            fontWeight: 600,
+            position: "absolute",
+            bottom: "calc(100% + 4px)",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 20,
+            padding: "0.4rem 0.6rem",
+            background: "var(--color-text)",
+            color: "var(--color-bg)",
+            border: "1px solid var(--color-border, transparent)",
+            borderRadius: "var(--radius-sm, 4px)",
+            boxShadow: "var(--shadow-md, 0 2px 6px rgba(0,0,0,0.25))",
+            fontSize: "var(--text-xs)",
+            lineHeight: 1.3,
+            pointerEvents: "none",
+            maxWidth: "18rem",
+            wordBreak: "break-word",
           }}
         >
-          {(u.displayName ?? u.email ?? "?").charAt(0).toUpperCase()}
+          {content}
         </span>
-      ))}
-      {users.length > 3 && (
-        <span style={{ fontSize: "10px", color: "var(--color-text-subtle)" }}>+{users.length - 3}</span>
       )}
     </span>
   );
@@ -1617,13 +1690,21 @@ function ApprovalCell({
   };
   if (!isMine) {
     return (
-      <span
-        title={`${label}: ${stateCopy[state]}`}
-        aria-label={`${label} ${state}`}
-        style={{ ...sharedCellStyle, cursor: "default" }}
+      <HoverTooltip
+        content={
+          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+            <div style={{ fontWeight: 600 }}>{label}</div>
+            <div style={{ opacity: 0.75 }}>{stateCopy[state]}</div>
+          </div>
+        }
       >
-        {icon}
-      </span>
+        <span
+          aria-label={`${label} ${state}`}
+          style={{ ...sharedCellStyle, cursor: "default" }}
+        >
+          {icon}
+        </span>
+      </HoverTooltip>
     );
   }
 
