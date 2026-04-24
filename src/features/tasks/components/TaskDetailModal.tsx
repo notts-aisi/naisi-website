@@ -505,7 +505,7 @@ export default function TaskDetailModal({
           </section>
 
           <section>
-            <h3 style={sectionLabel}>Discussion</h3>
+            <h3 style={sectionLabel}>Discussion &amp; activity</h3>
             <CommentThread
               task={task}
               users={users}

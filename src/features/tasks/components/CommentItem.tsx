@@ -29,9 +29,17 @@ function formatRelative(date: Date | null): string {
   if (diffM < 60) return `${diffM}m ago`;
   const diffH = Math.round(diffM / 60);
   if (diffH < 24) return `${diffH}h ago`;
-  const diffD = Math.round(diffH / 24);
-  if (diffD < 7) return `${diffD}d ago`;
-  return date.toLocaleDateString();
+  // Over a day — switch to an absolute date + time so readers get a
+  // precise anchor rather than "11d ago". Include year only if it isn't
+  // the current year.
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return date.toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export default function CommentItem({
