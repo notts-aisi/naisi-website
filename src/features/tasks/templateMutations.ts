@@ -1,11 +1,11 @@
 "use client";
 
 import {
-  addDoc,
   collection,
   deleteDoc,
   doc,
   serverTimestamp,
+  setDoc,
   updateDoc,
 } from "firebase/firestore";
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
@@ -15,6 +15,7 @@ import {
   type TaskTemplate,
   type TemplateSubtask,
 } from "@/lib/firestore/taskTemplates";
+import { slugId } from "@/lib/firestore/slugId";
 import type { TaskKind } from "@/lib/firestore/tasks";
 
 function actingUid(): string {
@@ -40,8 +41,8 @@ function sanitizeSubtasks(
   // incoming data is not trusted to be collision-free.
   const idMap = new Map<string, string>();
   const withIds = limited.map((s) => {
-    const oldId = s.id ?? newTemplateSubtaskId();
-    const newId = newTemplateSubtaskId();
+    const oldId = s.id ?? newTemplateSubtaskId(s.title);
+    const newId = newTemplateSubtaskId(s.title);
     idMap.set(oldId, newId);
     return { ...s, _oldId: oldId, id: newId };
   });
@@ -63,7 +64,8 @@ export async function createTemplate(input: CreateTemplateInput): Promise<string
   if (name.length > TASK_TEMPLATE_FIELD_LIMITS.name) {
     throw new Error(`Name must be ${TASK_TEMPLATE_FIELD_LIMITS.name} characters or fewer`);
   }
-  const ref = await addDoc(collection(db, "taskTemplates"), {
+  const ref = doc(collection(db, "taskTemplates"), slugId(name));
+  await setDoc(ref, {
     name,
     description: (input.description ?? "").slice(0, TASK_TEMPLATE_FIELD_LIMITS.description),
     kind: input.kind ?? null,
@@ -122,7 +124,7 @@ export function materialiseTemplate(template: TaskTemplate) {
   // Remap template subtask ids → fresh ids for the task, carrying blockedBy refs.
   const idMap = new Map<string, string>();
   const fresh = template.subtasks.map((s) => {
-    const newId = newTemplateSubtaskId();
+    const newId = newTemplateSubtaskId(s.title);
     idMap.set(s.id, newId);
     return { ...s, id: newId };
   });

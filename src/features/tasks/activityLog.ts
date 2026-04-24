@@ -7,6 +7,7 @@ import {
   type WriteBatch,
 } from "firebase/firestore";
 import { getClientDb } from "@/lib/firebase/client";
+import { slugId } from "@/lib/firestore/slugId";
 import type {
   ActivityKind,
   ActivityPayload,
@@ -29,7 +30,10 @@ export function queueActivity(
   payload: ActivityPayload = {},
 ): void {
   const db = getClientDb();
-  const ref = doc(collection(db, "tasks", taskId, "activity"));
+  // Slug by kind — `subtask_approved__a7f3k2m1` in the Console tells you what
+  // happened without opening the doc. Underscore→hyphen conversion is handled
+  // by slugify so the `_` in activity kinds comes through cleanly as `-`.
+  const ref = doc(collection(db, "tasks", taskId, "activity"), slugId(kind));
   batch.set(ref, {
     kind,
     actorUid,
