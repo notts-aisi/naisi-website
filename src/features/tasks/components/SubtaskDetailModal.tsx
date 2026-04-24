@@ -14,7 +14,9 @@ import type { UserDoc } from "@/lib/firestore/users";
 import { updateSubtaskDescription, updateSubtaskDueDate } from "../taskMutations";
 import { addComment } from "../commentMutations";
 import { useSubtaskComments } from "../hooks/useSubtaskComments";
+import { useSubtaskActivity } from "../hooks/useSubtaskActivity";
 import CommentItem from "./CommentItem";
+import type { ActivityDoc } from "@/lib/firestore/taskActivity";
 
 type Props = {
   task: TaskDoc;
@@ -59,6 +61,7 @@ export default function SubtaskDetailModal({
     task.id,
     subtask.id,
   );
+  const { entries: subActivity } = useSubtaskActivity(task.id, subtask.id);
 
   async function postSubComment() {
     const body = commentDraft.trim();
@@ -353,32 +356,58 @@ export default function SubtaskDetailModal({
         )}
 
         <section>
-          <h3 style={sectionLabel}>Comments</h3>
-          {subCommentsLoading && subComments.length === 0 ? (
-            <p style={emptyHint}>Loading…</p>
-          ) : subComments.length === 0 ? (
-            <p style={emptyHint}>
-              No comments on this subtask yet. Use the box below to add one.
-            </p>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-              {subComments.map((c) => (
-                <CommentItem
-                  key={c.id}
-                  taskId={task.id}
-                  comment={c}
-                  users={users}
-                  viewerUid={viewerUid}
-                  viewerIsAdmin={viewerIsAdmin}
-                  onEditRequested={() => {
-                    /* Inline edit not wired in the subtask modal yet —
-                       use the task-level thread on the task modal to edit
-                       your own comment if needed. */
-                  }}
-                />
-              ))}
-            </div>
-          )}
+          <h3 style={sectionLabel}>Activity &amp; comments</h3>
+          {(() => {
+            type Entry =
+              | { kind: "comment"; at: Date | null; payload: (typeof subComments)[number] }
+              | { kind: "activity"; at: Date | null; payload: ActivityDoc };
+            const rows: Entry[] = [];
+            for (const c of subComments) {
+              rows.push({ kind: "comment", at: c.createdAt, payload: c });
+            }
+            for (const a of subActivity) {
+              // Skip comment_added — the comment itself already renders.
+              if (a.kind === "comment_added") continue;
+              rows.push({ kind: "activity", at: a.createdAt, payload: a });
+            }
+            rows.sort((a, b) => (a.at?.getTime() ?? 0) - (b.at?.getTime() ?? 0));
+            if (subCommentsLoading && rows.length === 0) {
+              return <p style={emptyHint}>Loading…</p>;
+            }
+            if (rows.length === 0) {
+              return (
+                <p style={emptyHint}>
+                  No activity on this subtask yet. Use the box below to add a comment.
+                </p>
+              );
+            }
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+                {rows.map((row, i) =>
+                  row.kind === "comment" ? (
+                    <CommentItem
+                      key={`c-${row.payload.id}`}
+                      taskId={task.id}
+                      comment={row.payload}
+                      users={users}
+                      viewerUid={viewerUid}
+                      viewerIsAdmin={viewerIsAdmin}
+                      onEditRequested={() => {
+                        /* Inline edit not wired on subtask thread yet —
+                           use the task-level thread to edit. */
+                      }}
+                    />
+                  ) : (
+                    <ActivityLine
+                      key={`a-${row.payload.id}-${i}`}
+                      entry={row.payload}
+                      users={users}
+                    />
+                  ),
+                )}
+              </div>
+            );
+          })()}
           {canComment && (
             <div
               style={{
@@ -586,6 +615,85 @@ function DueDateShortcut({
       {label}
     </button>
   );
+}
+
+/**
+ * Single-line rendering of a subtask-scoped activity entry (self-add, done,
+ * rejected, resubmitted, etc.). Narrow set for the subtask modal — the
+ * task-level ActivityFeed handles the broader taxonomy.
+ */
+function ActivityLine({
+  entry,
+  users,
+}: {
+  entry: ActivityDoc;
+  users: UserDoc[];
+}) {
+  const actor = users.find((u) => u.uid === entry.actorUid);
+  const actorName = actor?.displayName ?? actor?.email ?? "Someone";
+  const verb = summariseActivity(entry);
+  if (!verb) return null;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        gap: "var(--space-2)",
+        padding: "0.4rem 0.85rem",
+        fontSize: "var(--text-xs)",
+        color: "var(--color-text-muted)",
+        background: "transparent",
+        borderLeft: "2px solid var(--color-border)",
+      }}
+    >
+      <span>
+        <strong style={{ color: "var(--color-text)" }}>{actorName}</strong> {verb}
+      </span>
+      {entry.createdAt && (
+        <span style={{ marginLeft: "auto", color: "var(--color-text-subtle)" }}>
+          {entry.createdAt.toLocaleString(undefined, {
+            day: "numeric",
+            month: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function summariseActivity(entry: ActivityDoc): string | null {
+  switch (entry.kind) {
+    case "subtask_added":
+      return "added this subtask";
+    case "subtask_done":
+      return "marked this subtask done";
+    case "subtask_rejected":
+      return "rejected this subtask";
+    case "subtask_resubmitted":
+      return "resubmitted this subtask for review";
+    case "subtask_force_sealed":
+      return "sealed this subtask (admin)";
+    case "subtask_unsealed":
+      return "unsealed this subtask (admin)";
+    case "sent_for_review":
+      return "sent this subtask for review";
+    case "assignee_added":
+      return "added as assignee";
+    case "assignee_removed":
+      return "removed as assignee";
+    case "reviewer_added":
+      return "added as reviewer";
+    case "reviewer_removed":
+      return "removed as reviewer";
+    case "attachment_added":
+      return "uploaded a file";
+    case "subtask_blocked_changed":
+      return "changed this subtask's dependencies";
+    default:
+      return null;
+  }
 }
 
 function Overlay({

@@ -904,6 +904,43 @@ export async function setBlockGatingMode(
   });
 }
 
+/**
+ * Cascade a due date across every non-reviewer subtask in a block (Phase 3,
+ * 2026-04-24). Reviewer-signoff rows are left alone — their deadline
+ * follows the block, not an independent date. Pass `null` to clear. UI
+ * gates this to admin/creator/committee via `canEditStructure`.
+ *
+ * Writes one Firestore op updating every affected subtask's `dueDate` in
+ * a single patch. Emits a `block_due_date_set` activity entry so the
+ * cascade shows up in history.
+ */
+export async function setBlockDueDate(
+  task: TaskDoc,
+  blockId: string,
+  dueDate: Date | null,
+) {
+  const db = getClientDb();
+  const uid = actingUid();
+  const block = task.blocks.find((b) => b.id === blockId);
+  if (!block) throw new Error("Block not found");
+  const subtasks = task.subtasks.map((s) => {
+    if (s.blockId !== blockId) return s;
+    if (s.roleHint === "reviewer") return s;
+    return { ...s, dueDate };
+  });
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    subtasks: subtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "block_due_date_set", uid, {
+    blockId,
+    name: block.name,
+    dueDate: dueDate ? Timestamp.fromDate(dueDate) : null,
+  });
+  await batch.commit();
+}
+
 export async function renameBlock(task: TaskDoc, blockId: string, name: string) {
   const db = getClientDb();
   const uid = actingUid();
@@ -1239,8 +1276,11 @@ export async function unsealBlock(task: TaskDoc, blockId: string) {
 /**
  * Completer self-service: add own uid to a subtask's assigneeUids. Valid both
  * pre-seal AND post-seal — "my teammate is sick, I'm covering" is the
- * explicit post-seal path. Clears block lock-in consent when the block is
- * still open (the allocation picture moved).
+ * explicit post-seal path.
+ *
+ * Stage 2 (2026-04-24): no longer clears lock-in consent on self-add.
+ * Taking on more work shouldn't invalidate the team's allocation agreement
+ * — only *dropping* work does (handled in `selfRemoveFromSubtask`).
  */
 export async function selfAddToSubtask(task: TaskDoc, subtaskId: string) {
   const db = getClientDb();
@@ -1267,13 +1307,10 @@ export async function selfAddToSubtask(task: TaskDoc, subtaskId: string) {
   const subtasks = task.subtasks.map((s) =>
     s.id === subtaskId ? { ...s, assigneeUids: [...s.assigneeUids, uid] } : s,
   );
-  const patch: Record<string, unknown> = {
+  await updateDoc(doc(db, "tasks", task.id), {
     subtasks: subtasks.map(serializeSubtask),
     updatedAt: serverTimestamp(),
-  };
-  const consentsPatch = clearConsentIfOpen(task, target.blockId);
-  if (consentsPatch) patch.blockConsents = consentsPatch;
-  await updateDoc(doc(db, "tasks", task.id), patch);
+  });
 }
 
 /**

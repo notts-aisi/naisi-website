@@ -16,10 +16,16 @@ import {
   ensureBlockReviewSubtasks,
   forceSealBlock,
   renameBlock,
+  setBlockDueDate,
   setBlockGatingMode,
   toggleBlockConsent,
   unsealBlock,
 } from "../taskMutations";
+
+function toDateInputValue(d: Date | null): string {
+  if (!d) return "";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 const GATING_LABELS: Record<BlockGatingMode, string> = {
   previous: "Gated by previous block",
@@ -178,6 +184,19 @@ export default function BlockHeader({
     }
   }
 
+  async function handleBlockDueChange(value: string) {
+    const next = value ? new Date(value) : null;
+    setBusy(true);
+    try {
+      await setBlockDueDate(task, block.id, next);
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Couldn't set block due date");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDelete() {
     if (busy) return;
     const ok = window.confirm(
@@ -200,6 +219,25 @@ export default function BlockHeader({
   // Task-level reviewers can also manage gating — they steer the review
   // flow. Admin bypass implicit.
   const canEditGating = isAdmin || task.reviewerUids.includes(viewerUid);
+
+  // Block-level due-date cascade (Phase 3): infer the "common" date from
+  // non-reviewer subtasks in the block. If every subtask shares the same
+  // date, show it; if they differ, show "Mixed" and still let the control
+  // overwrite them all. Empty block → null.
+  const completionSubtasksInBlock = task.subtasks.filter(
+    (s) => s.blockId === block.id && s.roleHint !== "reviewer",
+  );
+  const dueTimestamps = completionSubtasksInBlock.map((s) =>
+    s.dueDate ? s.dueDate.getTime() : null,
+  );
+  const commonDue: Date | null =
+    dueTimestamps.length > 0 && dueTimestamps.every((t) => t === dueTimestamps[0])
+      ? dueTimestamps[0] !== null
+        ? new Date(dueTimestamps[0])
+        : null
+      : null;
+  const dueIsMixed =
+    dueTimestamps.length > 0 && !dueTimestamps.every((t) => t === dueTimestamps[0]);
   return (
     <div
       style={{
@@ -393,6 +431,52 @@ export default function BlockHeader({
             <span aria-hidden="true">{block.gatingMode === "none" ? "🔓" : "🔗"}</span>
             {block.gatingMode === "none" ? "Ungated" : "Gated"}
           </span>
+        )}
+
+        {canEditStructure && completionSubtasksInBlock.length > 0 && (
+          <label
+            style={{
+              position: "relative",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              padding: "0.35rem 0.75rem",
+              background: "var(--color-bg-elevated)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "999px",
+              fontSize: "var(--text-xs)",
+              fontWeight: 600,
+              color: "var(--color-text-muted)",
+              cursor: "pointer",
+            }}
+            title="Set due date for every subtask in this block. Overwrites individual dates."
+          >
+            <span aria-hidden="true" style={{ fontSize: "14px", lineHeight: 1 }}>
+              📅
+            </span>
+            <span>
+              {dueIsMixed
+                ? "Mixed dates"
+                : commonDue
+                  ? commonDue.toLocaleDateString()
+                  : "Set all due"}
+            </span>
+            <input
+              type="date"
+              value={commonDue ? toDateInputValue(commonDue) : ""}
+              onChange={(e) => handleBlockDueChange(e.target.value).catch(console.error)}
+              disabled={busy}
+              aria-label="Set due date for every subtask in this block"
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                opacity: 0,
+                cursor: "pointer",
+              }}
+            />
+          </label>
         )}
 
         <div style={{ marginLeft: "auto", display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
