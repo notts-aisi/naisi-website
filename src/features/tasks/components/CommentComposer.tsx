@@ -53,7 +53,16 @@ export default function CommentComposer(props: Props) {
   // won't pick up new names until next edit-session, which is fine. A deeper
   // live-sync would require reconfiguring the extension and cost caret
   // position on every users refresh.
-  const usersSnapshot = useMemo(() => users, [users]);
+  //
+  // The mention pool is scoped to the task's current roster (completers ∪
+  // reviewers) — @-mentioning someone who was removed from the task surfaces
+  // nobody useful, and keeping stale members in the dropdown confuses the
+  // "who's still on this" signal. Historical mentions of now-removed users
+  // still render as pills (CommentItem falls back to the stored displayName).
+  const mentionableSnapshot = useMemo(() => {
+    const roster = new Set<string>([...task.completerUids, ...task.reviewerUids]);
+    return users.filter((u) => roster.has(u.uid));
+  }, [users, task.completerUids, task.reviewerUids]);
 
   const editor = useEditor(
     {
@@ -61,7 +70,7 @@ export default function CommentComposer(props: Props) {
         StarterKit,
         Mention.configure({
           HTMLAttributes: { class: "mention" },
-          suggestion: buildMentionSuggestion(() => usersSnapshot),
+          suggestion: buildMentionSuggestion(() => mentionableSnapshot),
         }),
       ],
       content:
