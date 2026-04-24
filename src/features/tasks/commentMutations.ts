@@ -23,6 +23,11 @@ export type AddCommentInput = {
   taskId: string;
   bodyMarkdown: string;
   mentions: string[];
+  /** Phase 3 (2026-04-24): scope a comment to a specific subtask. `null` or
+   *  omitted = task-level (the original behaviour). Subtask comments
+   *  render inside the subtask's detail modal and don't appear in the
+   *  task-level thread. */
+  subtaskId?: string | null;
 };
 
 /**
@@ -49,12 +54,14 @@ export async function addComment(input: AddCommentInput): Promise<string> {
   // addDoc doesn't play with writeBatch, so we pre-generate the comment ref
   // via doc(collection(...)) and use batch.set on it. Keeps the commentCount
   // increment + activity entry atomic with the comment write.
+  const subtaskId = input.subtaskId ?? null;
   const commentRef = doc(collection(db, "tasks", input.taskId, "comments"));
   const batch = writeBatch(db);
   batch.set(commentRef, {
     authorUid: uid,
     bodyMarkdown: body,
     mentions,
+    subtaskId,
     createdAt: serverTimestamp(),
     editedAt: null,
     deleted: false,
@@ -65,6 +72,7 @@ export async function addComment(input: AddCommentInput): Promise<string> {
   });
   queueActivity(batch, input.taskId, "comment_added", uid, {
     commentId: commentRef.id,
+    subtaskId,
   });
   await batch.commit();
   return commentRef.id;

@@ -570,16 +570,27 @@ export function getBlockPhase(task: TaskDoc, block: TaskBlock): BlockPhase {
   const signoffs = task.subtasks.filter(
     (s) => s.blockId === block.id && s.roleHint === "reviewer",
   );
-  if (signoffs.length === 0) return "in-progress";
-  // A rejection auto-unticks its subtask → if any non-reviewer completion
-  // row is not done, the block drops back to "in-progress" (orange) even
-  // if reviewer signoff rows have already spawned. Approved sibling
-  // subtasks stay green at the row level; the block's phase just reflects
-  // "there's more completer work to do before we can finish reviews".
   const completionRows = task.subtasks.filter(
     (s) => s.blockId === block.id && s.roleHint !== "reviewer",
   );
-  if (completionRows.some((s) => !s.done)) return "in-progress";
+  const allCompletionDone =
+    completionRows.length === 0 || completionRows.every((s) => s.done);
+  if (signoffs.length === 0) {
+    // No signoff rows yet. Two cases:
+    //  (a) no reviewers claimed on any subtask → no review gate ever,
+    //      go green as soon as every completion row is ticked done.
+    //  (b) reviewers have claimed scope but Notify hasn't been pressed —
+    //      stay in-progress so the "Notify reviewers" button surfaces.
+    const hasAnyReviewerClaim = completionRows.some(
+      (s) => s.reviewerUids.length > 0,
+    );
+    if (!hasAnyReviewerClaim && allCompletionDone) return "complete";
+    return "in-progress";
+  }
+  // Signoffs exist (Notify has been pressed). A rejection auto-unticks
+  // its subtask → if any completion row isn't done, drop back to
+  // "in-progress" (orange) even with signoff rows spawned.
+  if (!allCompletionDone) return "in-progress";
   if (signoffs.every((s) => s.done)) return "complete";
   return "reviewing";
 }

@@ -9,17 +9,27 @@ import {
   type Subtask,
   type TaskDoc,
 } from "@/lib/firestore/tasks";
+import { COMMENT_FIELD_LIMITS } from "@/lib/firestore/comments";
 import type { UserDoc } from "@/lib/firestore/users";
 import { updateSubtaskDescription, updateSubtaskDueDate } from "../taskMutations";
+import { addComment } from "../commentMutations";
+import { useSubtaskComments } from "../hooks/useSubtaskComments";
+import CommentItem from "./CommentItem";
 
 type Props = {
   task: TaskDoc;
   subtask: Subtask;
   users: UserDoc[];
+  viewerUid: string;
+  viewerIsAdmin: boolean;
   /** True when the viewer can edit this subtask's description. Mirrors the
    *  `canEditStructure` permission on the surrounding task — admin or
    *  committee on committee tasks, or creator on personal tasks. */
   canEditDescription: boolean;
+  /** True when the viewer can post subcomments. Task participants
+   *  (completer/reviewer/admin/creator) can; outside viewers see the
+   *  thread read-only. */
+  canComment: boolean;
   onClose: () => void;
 };
 
@@ -32,13 +42,47 @@ export default function SubtaskDetailModal({
   task,
   subtask,
   users,
+  viewerUid,
+  viewerIsAdmin,
   canEditDescription,
+  canComment,
   onClose,
 }: Props) {
   const [editingDesc, setEditingDesc] = useState(false);
   const [descDraft, setDescDraft] = useState(subtask.description);
   const [saving, setSaving] = useState(false);
   const [dueBusy, setDueBusy] = useState(false);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
+  const [commentErr, setCommentErr] = useState<string | null>(null);
+  const { comments: subComments, loading: subCommentsLoading } = useSubtaskComments(
+    task.id,
+    subtask.id,
+  );
+
+  async function postSubComment() {
+    const body = commentDraft.trim();
+    if (!body || commentBusy) return;
+    if (body.length > COMMENT_FIELD_LIMITS.bodyMarkdown) {
+      setCommentErr(`Too long (${body.length}/${COMMENT_FIELD_LIMITS.bodyMarkdown}).`);
+      return;
+    }
+    setCommentBusy(true);
+    setCommentErr(null);
+    try {
+      await addComment({
+        taskId: task.id,
+        bodyMarkdown: body,
+        mentions: [],
+        subtaskId: subtask.id,
+      });
+      setCommentDraft("");
+    } catch (err) {
+      setCommentErr(err instanceof Error ? err.message : "Post failed");
+    } finally {
+      setCommentBusy(false);
+    }
+  }
 
   // Sync the draft if the underlying subtask changes (e.g. another writer
   // edited the description while this modal was open).
@@ -307,6 +351,87 @@ export default function SubtaskDetailModal({
             </div>
           </section>
         )}
+
+        <section>
+          <h3 style={sectionLabel}>Comments</h3>
+          {subCommentsLoading && subComments.length === 0 ? (
+            <p style={emptyHint}>Loading…</p>
+          ) : subComments.length === 0 ? (
+            <p style={emptyHint}>
+              No comments on this subtask yet. Use the box below to add one.
+            </p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+              {subComments.map((c) => (
+                <CommentItem
+                  key={c.id}
+                  taskId={task.id}
+                  comment={c}
+                  users={users}
+                  viewerUid={viewerUid}
+                  viewerIsAdmin={viewerIsAdmin}
+                  onEditRequested={() => {
+                    /* Inline edit not wired in the subtask modal yet —
+                       use the task-level thread on the task modal to edit
+                       your own comment if needed. */
+                  }}
+                />
+              ))}
+            </div>
+          )}
+          {canComment && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "var(--space-2)",
+                marginTop: "var(--space-3)",
+              }}
+            >
+              <textarea
+                value={commentDraft}
+                onChange={(e) => setCommentDraft(e.target.value)}
+                rows={3}
+                maxLength={COMMENT_FIELD_LIMITS.bodyMarkdown}
+                placeholder="Add a comment on this subtask…"
+                style={{
+                  width: "100%",
+                  padding: "var(--space-2) var(--space-3)",
+                  background: "var(--color-bg-elevated)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "var(--radius-md)",
+                  color: "var(--color-text)",
+                  fontSize: "var(--text-sm)",
+                  fontFamily: "inherit",
+                  resize: "vertical",
+                }}
+              />
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                <Button
+                  size="sm"
+                  onClick={() => void postSubComment()}
+                  disabled={commentBusy || !commentDraft.trim()}
+                >
+                  {commentBusy ? "Posting…" : "Post comment"}
+                </Button>
+                <span
+                  style={{
+                    marginLeft: "auto",
+                    fontSize: "var(--text-xs)",
+                    color: "var(--color-text-muted)",
+                  }}
+                >
+                  {commentDraft.length} / {COMMENT_FIELD_LIMITS.bodyMarkdown}
+                </span>
+              </div>
+              {commentErr && (
+                <p style={{ color: "var(--color-danger)", fontSize: "var(--text-xs)", margin: 0 }}>
+                  {commentErr}
+                </p>
+              )}
+            </div>
+          )}
+        </section>
       </div>
     </Overlay>
   );

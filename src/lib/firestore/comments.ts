@@ -20,6 +20,11 @@ export type CommentDoc = {
   authorUid: string;
   bodyMarkdown: string;
   mentions: string[];
+  /** Phase 3 (2026-04-24): comments can be scoped to a specific subtask.
+   *  `null` = task-level comment (the original behaviour). A string value
+   *  pins the comment to the named subtask — rendered inside its detail
+   *  modal, omitted from the task-level thread. */
+  subtaskId: string | null;
   createdAt: Date | null;
   editedAt: Date | null;
   deleted: boolean;
@@ -45,6 +50,7 @@ export function normalizeComment(id: string, data: Raw): CommentDoc {
     authorUid: (data.authorUid as string) ?? "",
     bodyMarkdown: (data.bodyMarkdown as string) ?? "",
     mentions: stringArray(data.mentions),
+    subtaskId: typeof data.subtaskId === "string" ? data.subtaskId : null,
     createdAt: tsToDate(data.createdAt),
     editedAt: tsToDate(data.editedAt),
     deleted: Boolean(data.deleted),
