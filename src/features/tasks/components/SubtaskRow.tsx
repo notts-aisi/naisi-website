@@ -1188,7 +1188,16 @@ export default function SubtaskRow({
           task={task}
           subtask={subtask}
           users={users}
+          viewerUid={viewerUid}
+          viewerIsAdmin={isAdmin}
           canEditDescription={canEditStructure}
+          canComment={
+            isAdmin ||
+            isTaskCreator ||
+            isCompleter ||
+            isTaskLevelReviewer ||
+            subtask.reviewerUids.includes(viewerUid)
+          }
           onClose={() => setDetailOpen(false)}
         />
       )}
