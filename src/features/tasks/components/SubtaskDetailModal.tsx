@@ -9,13 +9,13 @@ import {
   type Subtask,
   type TaskDoc,
 } from "@/lib/firestore/tasks";
-import { COMMENT_FIELD_LIMITS } from "@/lib/firestore/comments";
 import type { UserDoc } from "@/lib/firestore/users";
 import { updateSubtaskDescription, updateSubtaskDueDate } from "../taskMutations";
 import { addComment, updateComment } from "../commentMutations";
 import { useSubtaskComments } from "../hooks/useSubtaskComments";
 import { useSubtaskActivity } from "../hooks/useSubtaskActivity";
 import CommentItem from "./CommentItem";
+import CommentEditor from "./CommentEditor";
 import type { ActivityDoc } from "@/lib/firestore/taskActivity";
 
 type Props = {
@@ -54,68 +54,31 @@ export default function SubtaskDetailModal({
   const [descDraft, setDescDraft] = useState(subtask.description);
   const [saving, setSaving] = useState(false);
   const [dueBusy, setDueBusy] = useState(false);
-  const [commentDraft, setCommentDraft] = useState("");
-  const [commentBusy, setCommentBusy] = useState(false);
-  const [commentErr, setCommentErr] = useState<string | null>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState("");
-  const [editBusy, setEditBusy] = useState(false);
-  const [editErr, setEditErr] = useState<string | null>(null);
 
-  async function saveEdit() {
-    if (!editingCommentId) return;
-    const body = editDraft.trim();
-    if (!body || editBusy) return;
-    setEditBusy(true);
-    setEditErr(null);
-    try {
-      // Mentions aren't yet parsed in the subtask MVP composer, so pass [].
-      // Upgrading to TipTap + mentions is a follow-up.
-      await updateComment(task.id, editingCommentId, body, []);
-      setEditingCommentId(null);
-      setEditDraft("");
-    } catch (err) {
-      setEditErr(err instanceof Error ? err.message : "Save failed");
-    } finally {
-      setEditBusy(false);
-    }
-  }
-
-  function beginEdit(commentId: string) {
-    const target = subComments.find((c) => c.id === commentId);
-    if (!target) return;
-    setEditingCommentId(commentId);
-    setEditDraft(target.bodyMarkdown);
-    setEditErr(null);
-  }
   const { comments: subComments, loading: subCommentsLoading } = useSubtaskComments(
     task.id,
     subtask.id,
   );
   const { entries: subActivity } = useSubtaskActivity(task.id, subtask.id);
 
-  async function postSubComment() {
-    const body = commentDraft.trim();
-    if (!body || commentBusy) return;
-    if (body.length > COMMENT_FIELD_LIMITS.bodyMarkdown) {
-      setCommentErr(`Too long (${body.length}/${COMMENT_FIELD_LIMITS.bodyMarkdown}).`);
-      return;
-    }
-    setCommentBusy(true);
-    setCommentErr(null);
-    try {
-      await addComment({
-        taskId: task.id,
-        bodyMarkdown: body,
-        mentions: [],
-        subtaskId: subtask.id,
-      });
-      setCommentDraft("");
-    } catch (err) {
-      setCommentErr(err instanceof Error ? err.message : "Post failed");
-    } finally {
-      setCommentBusy(false);
-    }
+  function beginEdit(commentId: string) {
+    setEditingCommentId(commentId);
+  }
+
+  async function postSubComment(body: string, mentions: string[]) {
+    await addComment({
+      taskId: task.id,
+      bodyMarkdown: body,
+      mentions,
+      subtaskId: subtask.id,
+    });
+  }
+
+  async function saveEdit(body: string, mentions: string[]) {
+    if (!editingCommentId) return;
+    await updateComment(task.id, editingCommentId, body, mentions);
+    setEditingCommentId(null);
   }
 
   // Sync the draft if the underlying subtask changes (e.g. another writer
@@ -429,49 +392,17 @@ export default function SubtaskDetailModal({
                           borderRadius: "var(--radius-md)",
                         }}
                       >
-                        <textarea
+                        <CommentEditor
+                          users={users}
+                          editorKey={`edit:${row.payload.id}`}
+                          initialBody={row.payload.bodyMarkdown}
+                          submitLabel="Save"
+                          busyLabel="Saving…"
                           autoFocus
-                          value={editDraft}
-                          onChange={(e) => setEditDraft(e.target.value)}
-                          rows={3}
-                          maxLength={COMMENT_FIELD_LIMITS.bodyMarkdown}
-                          style={{
-                            width: "100%",
-                            padding: "var(--space-2) var(--space-3)",
-                            background: "var(--color-bg)",
-                            border: "1px solid var(--color-border)",
-                            borderRadius: "var(--radius-md)",
-                            color: "var(--color-text)",
-                            fontSize: "var(--text-sm)",
-                            fontFamily: "inherit",
-                            resize: "vertical",
-                          }}
+                          clearOnSubmit={false}
+                          onSubmit={saveEdit}
+                          onCancel={() => setEditingCommentId(null)}
                         />
-                        <div style={{ display: "flex", gap: "var(--space-2)" }}>
-                          <Button
-                            size="sm"
-                            onClick={() => void saveEdit()}
-                            disabled={editBusy || !editDraft.trim()}
-                          >
-                            {editBusy ? "Saving…" : "Save"}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setEditingCommentId(null);
-                              setEditDraft("");
-                              setEditErr(null);
-                            }}
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                        {editErr && (
-                          <p style={{ color: "var(--color-danger)", fontSize: "var(--text-xs)", margin: 0 }}>
-                            {editErr}
-                          </p>
-                        )}
                       </div>
                     ) : (
                       <CommentItem
@@ -496,55 +427,12 @@ export default function SubtaskDetailModal({
             );
           })()}
           {canComment && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: "var(--space-2)",
-                marginTop: "var(--space-3)",
-              }}
-            >
-              <textarea
-                value={commentDraft}
-                onChange={(e) => setCommentDraft(e.target.value)}
-                rows={3}
-                maxLength={COMMENT_FIELD_LIMITS.bodyMarkdown}
-                placeholder="Add a comment on this subtask…"
-                style={{
-                  width: "100%",
-                  padding: "var(--space-2) var(--space-3)",
-                  background: "var(--color-bg-elevated)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "var(--radius-md)",
-                  color: "var(--color-text)",
-                  fontSize: "var(--text-sm)",
-                  fontFamily: "inherit",
-                  resize: "vertical",
-                }}
+            <div style={{ marginTop: "var(--space-3)" }}>
+              <CommentEditor
+                users={users}
+                editorKey={`new:${subtask.id}`}
+                onSubmit={postSubComment}
               />
-              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-                <Button
-                  size="sm"
-                  onClick={() => void postSubComment()}
-                  disabled={commentBusy || !commentDraft.trim()}
-                >
-                  {commentBusy ? "Posting…" : "Post comment"}
-                </Button>
-                <span
-                  style={{
-                    marginLeft: "auto",
-                    fontSize: "var(--text-xs)",
-                    color: "var(--color-text-muted)",
-                  }}
-                >
-                  {commentDraft.length} / {COMMENT_FIELD_LIMITS.bodyMarkdown}
-                </span>
-              </div>
-              {commentErr && (
-                <p style={{ color: "var(--color-danger)", fontSize: "var(--text-xs)", margin: 0 }}>
-                  {commentErr}
-                </p>
-              )}
             </div>
           )}
         </section>
