@@ -3,9 +3,9 @@
 import {
   addDoc,
   collection,
-  deleteDoc,
   deleteField,
   doc,
+  getDoc,
   serverTimestamp,
   Timestamp,
   updateDoc,
@@ -23,6 +23,7 @@ import {
   hasReviewerSignedOffBlock,
   isBlockGateApplied,
   isSubtaskBlocked,
+  normalizeTask,
   type BlockConsentMap,
   type BlockGatingMode,
   type Subtask,
@@ -867,11 +868,15 @@ export async function updateTask(taskId: string, fields: UpdateTaskInput) {
     patch.description = fields.description.slice(0, TASK_FIELD_LIMITS.description);
   }
   if (fields.projectId !== undefined) patch.projectId = fields.projectId ?? null;
+  let nextCompleters: string[] | null = null;
+  let nextReviewers: string[] | null = null;
   if (fields.completerUids !== undefined) {
-    patch.completerUids = clampUids(fields.completerUids, TASK_FIELD_LIMITS.maxCompleters);
+    nextCompleters = clampUids(fields.completerUids, TASK_FIELD_LIMITS.maxCompleters);
+    patch.completerUids = nextCompleters;
   }
   if (fields.reviewerUids !== undefined) {
-    patch.reviewerUids = clampUids(fields.reviewerUids, TASK_FIELD_LIMITS.maxReviewers);
+    nextReviewers = clampUids(fields.reviewerUids, TASK_FIELD_LIMITS.maxReviewers);
+    patch.reviewerUids = nextReviewers;
   }
   if (fields.priority !== undefined) patch.priority = fields.priority;
   if (fields.dueDate !== undefined) {
@@ -881,6 +886,50 @@ export async function updateTask(taskId: string, fields: UpdateTaskInput) {
   if (fields.tags !== undefined) {
     patch.tags = fields.tags.slice(0, TASK_FIELD_LIMITS.maxTags);
   }
+
+  // Roster-shrink cascade: removing someone from the task-level roster must
+  // strip them from every subtask's assignee/reviewer/approval arrays and
+  // from block consents. Otherwise their avatar keeps rendering on subtasks
+  // and their stale approval counts toward block gates. Mirrors the same
+  // cleanup in adminMutations.updateProject (project-member removal).
+  if (nextCompleters !== null || nextReviewers !== null) {
+    const snap = await getDoc(doc(db, "tasks", taskId));
+    if (snap.exists()) {
+      const task = normalizeTask(taskId, snap.data() as Record<string, unknown>);
+      // A uid is "removed from the task" only when it's absent from BOTH
+      // final rosters — if we're demoting reviewer→completer (or vice
+      // versa), the uid stays on the task and its per-subtask assignments
+      // shouldn't be wiped.
+      const finalRoster = new Set<string>([
+        ...(nextCompleters ?? task.completerUids),
+        ...(nextReviewers ?? task.reviewerUids),
+      ]);
+      const removed = new Set<string>();
+      for (const u of task.completerUids) if (!finalRoster.has(u)) removed.add(u);
+      for (const u of task.reviewerUids) if (!finalRoster.has(u)) removed.add(u);
+      if (removed.size > 0) {
+        const filter = (arr: string[]) => arr.filter((u) => !removed.has(u));
+        patch.subtasks = task.subtasks.map((s) =>
+          serializeSubtask({
+            ...s,
+            assigneeUids: filter(s.assigneeUids),
+            reviewerUids: filter(s.reviewerUids),
+            approvedByReviewerUids: filter(s.approvedByReviewerUids),
+            questionedByReviewerUids: filter(s.questionedByReviewerUids),
+            rejectedByReviewerUids: filter(s.rejectedByReviewerUids),
+          }),
+        );
+        const nextConsents: Record<string, { consentingCompleterUids: string[] }> = {};
+        for (const [blockId, rec] of Object.entries(task.blockConsents)) {
+          nextConsents[blockId] = {
+            consentingCompleterUids: filter(rec.consentingCompleterUids),
+          };
+        }
+        patch.blockConsents = nextConsents;
+      }
+    }
+  }
+
   await updateDoc(doc(db, "tasks", taskId), patch);
 }
 
@@ -908,9 +957,48 @@ export async function archiveTask(taskId: string, archived: boolean) {
   });
 }
 
-export async function deleteTask(taskId: string) {
-  const db = getClientDb();
-  await deleteDoc(doc(db, "tasks", taskId));
+/** Shape returned by POST /api/tasks/[id]/delete — what actually got removed. */
+export type TaskDeletionReport = {
+  comments: number;
+  activity: number;
+  attachments: number;
+  storageDeleted: number;
+  storageFailed: number;
+};
+
+/**
+ * Cascade-delete a task via the Admin-SDK-backed server route.
+ *
+ * Client-side deletes can't wipe the `tasks/{id}/activity/*` subcollection —
+ * Firestore rules forbid it. The route also drops comments + attachments
+ * (Firestore doc + Storage blob) in one pass, so the Firebase Console no
+ * longer shows phantom parent paths pinned by orphan subcollection docs.
+ *
+ * Returns counts of what got removed so the UI can surface an audit line
+ * like "Deleted: 3 comments, 42 activity entries, 2 files".
+ */
+export async function deleteTask(taskId: string): Promise<TaskDeletionReport> {
+  const res = await fetch(`/api/tasks/${taskId}/delete`, { method: "POST" });
+  if (!res.ok) {
+    let msg = `Delete failed (${res.status})`;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body?.error) msg = body.error;
+    } catch {
+      // swallow — msg already has the status code
+    }
+    throw new Error(msg);
+  }
+  const body = (await res.json()) as { deleted?: TaskDeletionReport };
+  return (
+    body.deleted ?? {
+      comments: 0,
+      activity: 0,
+      attachments: 0,
+      storageDeleted: 0,
+      storageFailed: 0,
+    }
+  );
 }
 
 // ============================================================================
