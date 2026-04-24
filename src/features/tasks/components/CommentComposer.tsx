@@ -11,9 +11,9 @@ import type { ActivityDoc } from "@/lib/firestore/taskActivity";
 import { COMMENT_FIELD_LIMITS } from "@/lib/firestore/comments";
 import { isSubtaskBlocked } from "@/lib/firestore/tasks";
 import {
+  bodyToTipTapDoc,
   extractMentionUids,
   serializeTipTapDoc,
-  tokenizeCommentBody,
 } from "../lib/comments/markdown";
 import { buildMentionSuggestion } from "../lib/comments/mentionSuggestion";
 import { addComment, updateComment } from "../commentMutations";
@@ -40,28 +40,6 @@ type EditProps = CommonProps & {
 };
 
 type Props = CreateProps | EditProps;
-
-// Initial TipTap content when editing an existing comment. We round-trip
-// our storage format → TipTap JSON so mention pills render instead of raw
-// token text.
-function bodyToTipTapDoc(body: string) {
-  const tokens = tokenizeCommentBody(body);
-  const content: Array<Record<string, unknown>> = [];
-  let para: Array<Record<string, unknown>> = [];
-  const flush = () => {
-    content.push({ type: "paragraph", content: para.length ? para : undefined });
-    para = [];
-  };
-  for (const t of tokens) {
-    if (t.kind === "paragraph-break") flush();
-    else if (t.kind === "linebreak") para.push({ type: "hardBreak" });
-    else if (t.kind === "text") para.push({ type: "text", text: t.value });
-    else if (t.kind === "mention")
-      para.push({ type: "mention", attrs: { id: t.uid, label: t.displayName } });
-  }
-  flush();
-  return { type: "doc", content };
-}
 
 export default function CommentComposer(props: Props) {
   const { task, users, mode } = props;

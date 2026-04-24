@@ -129,6 +129,30 @@ export function serializeTipTapDoc(doc: TipTapNode | null | undefined): {
   return { body: paragraphs.join("\n\n").replace(/\s+$/, ""), mentions: dedupedMentions };
 }
 
+/**
+ * Inverse of `serializeTipTapDoc`: parse a stored body back into TipTap JSON
+ * so mention pills render (instead of raw `@[name](uid:...)` text) when the
+ * editor is seeded with existing content.
+ */
+export function bodyToTipTapDoc(body: string): TipTapNode {
+  const tokens = tokenizeCommentBody(body);
+  const content: TipTapNode[] = [];
+  let para: TipTapNode[] = [];
+  const flush = () => {
+    content.push({ type: "paragraph", content: para.length ? para : undefined });
+    para = [];
+  };
+  for (const t of tokens) {
+    if (t.kind === "paragraph-break") flush();
+    else if (t.kind === "linebreak") para.push({ type: "hardBreak" });
+    else if (t.kind === "text") para.push({ type: "text", text: t.value });
+    else if (t.kind === "mention")
+      para.push({ type: "mention", attrs: { id: t.uid, label: t.displayName } });
+  }
+  flush();
+  return { type: "doc", content };
+}
+
 function renderInline(nodes: TipTapNode[], mentionUids: string[]): string {
   let out = "";
   for (const n of nodes) {
