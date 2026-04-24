@@ -363,8 +363,22 @@ export default function SubtaskRow({
     if (rejectReasonDraft !== null) {
       setRejectReasonDraft(null);
     }
+    // Optional note on approve/question — logged in the activity payload
+    // so the subtask feed reads "X approved this subtask with note: ...".
+    // Using window.prompt for MVP; polished inline UI is a follow-up.
+    let note: string | undefined;
+    if (state === "approve" || state === "question") {
+      const entered = window.prompt(
+        state === "approve"
+          ? "Optional note for this approval (leave blank to skip):"
+          : "Write your question (leave blank to just flag it):",
+        "",
+      );
+      if (entered === null) return; // cancelled
+      note = entered.trim() || undefined;
+    }
     try {
-      await setSubtaskApproval(task, subtask.id, state);
+      await setSubtaskApproval(task, subtask.id, state, note ? { note } : {});
     } catch (err) {
       console.error(err);
       window.alert(err instanceof Error ? err.message : "Review failed");
