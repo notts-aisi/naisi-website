@@ -37,7 +37,8 @@ export type ActivityKind =
   | "block_due_date_set"
   | "subtask_approved"
   | "subtask_questioned"
-  | "subtask_undone";
+  | "subtask_undone"
+  | "subtask_block_locked_in";
 
 export type ActivityPayload = Record<string, unknown>;
 
@@ -89,6 +90,7 @@ const KNOWN_KINDS: ActivityKind[] = [
   "subtask_approved",
   "subtask_questioned",
   "subtask_undone",
+  "subtask_block_locked_in",
 ];
 
 export function normalizeActivity(id: string, data: Raw): ActivityDoc {

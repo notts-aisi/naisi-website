@@ -1210,6 +1210,19 @@ export async function toggleBlockConsent(task: TaskDoc, blockId: string) {
       blockId,
       name: block.name,
     });
+    // Emit a per-subtask entry so each subtask's activity feed shows the
+    // block lock-in event. Distinct kind from `block_sealed` so the
+    // task-level feed doesn't render N duplicates.
+    for (const s of task.subtasks) {
+      if (s.blockId !== blockId) continue;
+      if (s.roleHint === "reviewer") continue;
+      queueActivity(batch, task.id, "subtask_block_locked_in", uid, {
+        subtaskId: s.id,
+        title: s.title,
+        blockId,
+        name: block.name,
+      });
+    }
   }
   batch.update(doc(db, "tasks", task.id), patch);
   await batch.commit();
