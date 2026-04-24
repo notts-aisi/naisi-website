@@ -11,7 +11,21 @@ import {
 } from "firebase/firestore";
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import { COMMENT_FIELD_LIMITS } from "@/lib/firestore/comments";
+import { slugId } from "@/lib/firestore/slugId";
 import { queueActivity } from "./activityLog";
+
+/**
+ * Build a slug source from a comment body: strip mention tokens down to
+ * `@Name`, take the first ~6 words. Prefixing subcomments with `sub-` is the
+ * cheap way to distinguish them from task-level comments at a glance in the
+ * Firebase Console — a subcomment's `subtaskId` field is still the precise
+ * reference, this is just scannability.
+ */
+function commentSlugSource(bodyMarkdown: string, subtaskId: string | null): string {
+  const stripped = bodyMarkdown.replace(/@\[([^\]]+)\]\(uid:[^)]+\)/g, "@$1");
+  const firstWords = stripped.split(/\s+/).filter(Boolean).slice(0, 6).join(" ");
+  return subtaskId ? `sub-${firstWords}` : firstWords;
+}
 
 function actingUid(): string {
   const uid = getClientAuth().currentUser?.uid;
@@ -55,7 +69,10 @@ export async function addComment(input: AddCommentInput): Promise<string> {
   // via doc(collection(...)) and use batch.set on it. Keeps the commentCount
   // increment + activity entry atomic with the comment write.
   const subtaskId = input.subtaskId ?? null;
-  const commentRef = doc(collection(db, "tasks", input.taskId, "comments"));
+  const commentRef = doc(
+    collection(db, "tasks", input.taskId, "comments"),
+    slugId(commentSlugSource(body, subtaskId)),
+  );
   const batch = writeBatch(db);
   batch.set(commentRef, {
     authorUid: uid,

@@ -1,4 +1,5 @@
 import type { TaskKind } from "./tasks";
+import { slugId } from "./slugId";
 
 export const TASK_TEMPLATE_FIELD_LIMITS = {
   name: 80,
@@ -76,13 +77,11 @@ export function normalizeTaskTemplate(id: string, data: Raw): TaskTemplate {
 }
 
 /**
- * Short, stable subtask IDs for templates. Chosen for readability in Firestore
- * console and the dependency graph editor. Uses crypto.randomUUID if available
- * (browser + node 20+), falling back to a timestamp + random suffix.
+ * Slug-prefixed inline id for a template subtask. The `tpl-` prefix tags the
+ * id as coming from a template (distinct from task-instance subtask ids), so
+ * a blockedBy reference in the Firestore Console tells you at a glance which
+ * subtask it points to. Pass the subtask's title as the slug source.
  */
-export function newTemplateSubtaskId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `st_${crypto.randomUUID().slice(0, 8)}`;
-  }
-  return `st_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+export function newTemplateSubtaskId(title: string): string {
+  return `tpl-${slugId(title)}`;
 }

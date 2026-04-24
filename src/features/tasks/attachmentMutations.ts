@@ -16,6 +16,7 @@ import {
 } from "firebase/storage";
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import { ATTACHMENT_LIMITS, isMimeAllowed } from "@/lib/firestore/taskAttachments";
+import { slugId } from "@/lib/firestore/slugId";
 import { queueActivity } from "./activityLog";
 
 function actingUid(): string {
@@ -59,7 +60,13 @@ export async function uploadAttachment(
 
   const db = getClientDb();
   const storage = getStorage();
-  const docRef = doc(collection(db, "tasks", args.taskId, "attachments"));
+  // Slug source: filename stem (strip extension) so the Console shows which
+  // file the doc corresponds to.
+  const fileStem = args.file.name.replace(/\.[^.]+$/, "");
+  const docRef = doc(
+    collection(db, "tasks", args.taskId, "attachments"),
+    slugId(fileStem),
+  );
   const safeName = args.file.name.replace(/[^\w.\-]/g, "_");
   const path = `tasks/${args.taskId}/${docRef.id}/${safeName}`;
   const objRef = storageRef(storage, path);

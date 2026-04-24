@@ -1,17 +1,18 @@
 "use client";
 
 import {
-  addDoc,
   collection,
   deleteField,
   doc,
   getDoc,
   serverTimestamp,
+  setDoc,
   Timestamp,
   updateDoc,
   writeBatch,
 } from "firebase/firestore";
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
+import { slugId } from "@/lib/firestore/slugId";
 import {
   TASK_FIELD_LIMITS,
   computeSubtaskStats,
@@ -43,11 +44,13 @@ function actingUid(): string {
   return uid;
 }
 
-function genId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+/** Slug-prefixed inline-id generator for subtasks + blocks + other embedded
+ *  structures inside a task doc. These IDs don't live in Firestore as
+ *  separate docs but DO appear in fields like `subtask.blockId`,
+ *  `comment.subtaskId`, activity payloads — making them scannable means
+ *  console debugging doesn't require cross-referencing opaque hashes. */
+function genId(source: string): string {
+  return slugId(source);
 }
 
 /**
@@ -96,7 +99,7 @@ function planReviewSpawn(task: TaskDoc, blockId: string): Subtask[] {
   for (const reviewerUid of reviewers) {
     if (existingByReviewer.has(reviewerUid)) continue;
     out.push({
-      id: genId(),
+      id: genId("reviewer-signoff"),
       title: "Reviewer signoff",
       description: "",
       dueDate: null,
@@ -174,7 +177,7 @@ export async function createTask(input: CreateTaskInput): Promise<string> {
   // from a freeform caller without ids, generate fresh ones.
   const rawSubtasks = (input.subtasks ?? []).slice(0, TASK_FIELD_LIMITS.maxSubtasks);
   const subtasks: Subtask[] = rawSubtasks.map((s) => ({
-    id: s.id ?? genId(),
+    id: s.id ?? genId(s.title),
     title: s.title.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
     description: (s.description ?? "").slice(0, TASK_FIELD_LIMITS.subtaskDescription),
     // Inherit the task-level dueDate on creation when the caller doesn't
@@ -203,7 +206,8 @@ export async function createTask(input: CreateTaskInput): Promise<string> {
   const visibility: TaskVisibility =
     input.visibility ?? (input.source === "personal" ? "assignees-only" : "committee");
 
-  const ref = await addDoc(collection(db, "tasks"), {
+  const ref = doc(collection(db, "tasks"), slugId(title));
+  await setDoc(ref, {
     title,
     description: (input.description ?? "").slice(0, TASK_FIELD_LIMITS.description),
     source: input.source,
@@ -407,7 +411,7 @@ export async function addSubtask(
   }
   const blockId = resolveBlockId(task, init.blockId ?? null);
   const next: Subtask = {
-    id: genId(),
+    id: genId(trimmed),
     title: trimmed.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
     description: (init.description ?? "").slice(0, TASK_FIELD_LIMITS.subtaskDescription),
     // Auto-default subtask due date to the task's due date when the caller
@@ -1018,7 +1022,7 @@ export async function createBlock(task: TaskDoc, name: string): Promise<string> 
     throw new Error(`Max ${TASK_FIELD_LIMITS.maxBlocks} blocks per task`);
   }
   const block: TaskBlock = {
-    id: genId(),
+    id: genId(trimmed),
     name: trimmed.slice(0, TASK_FIELD_LIMITS.blockName),
     order: task.blocks.length,
     sealState: "open",
@@ -1609,7 +1613,7 @@ export async function selfAddReviewerToSubtask(
       nextSubtasks = [
         ...nextSubtasks,
         {
-          id: genId(),
+          id: genId("reviewer-signoff"),
           title: "Reviewer signoff",
           description: "",
           dueDate: null,
