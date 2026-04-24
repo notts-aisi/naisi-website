@@ -77,8 +77,13 @@ function renderActivityCopy(a: ActivityDoc, users: UserDoc[], task: TaskDoc): st
       return `${actor} ticked ${subtaskTitle(pickStr("subtaskId"))} done`;
     case "subtask_blocked_changed":
       return `${actor} changed blockers on ${subtaskTitle(pickStr("subtaskId"))}`;
-    case "attachment_added":
-      return `${actor} attached ${pickStr("filename") ?? "a file"}`;
+    case "attachment_added": {
+      const filename = pickStr("filename") ?? "a file";
+      const subId = pickStr("subtaskId");
+      return subId
+        ? `${actor} attached ${filename} on ${subtaskTitle(subId)}`
+        : `${actor} attached ${filename}`;
+    }
     case "comment_added":
       // Already rendered as the comment itself — we skip this in the hook.
       return `${actor} commented`;

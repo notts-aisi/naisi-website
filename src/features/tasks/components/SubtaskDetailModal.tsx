@@ -14,8 +14,11 @@ import { updateSubtaskDescription, updateSubtaskDueDate } from "../taskMutations
 import { addComment, updateComment } from "../commentMutations";
 import { useSubtaskComments } from "../hooks/useSubtaskComments";
 import { useSubtaskActivity } from "../hooks/useSubtaskActivity";
+import { useTaskAttachments } from "../hooks/useTaskAttachments";
 import CommentItem from "./CommentItem";
 import CommentEditor from "./CommentEditor";
+import AttachmentList from "./AttachmentList";
+import AttachmentUpload from "./AttachmentUpload";
 import type { ActivityDoc } from "@/lib/firestore/taskActivity";
 
 type Props = {
@@ -357,6 +360,15 @@ export default function SubtaskDetailModal({
           </section>
         )}
 
+        <SubtaskAttachmentsSection
+          task={task}
+          subtaskId={subtask.id}
+          users={users}
+          viewerUid={viewerUid}
+          viewerIsAdmin={viewerIsAdmin}
+          canUpload={canComment}
+        />
+
         <section>
           <h3 style={sectionLabel}>Activity &amp; comments</h3>
           {(() => {
@@ -446,6 +458,47 @@ export default function SubtaskDetailModal({
         </section>
       </div>
     </Overlay>
+  );
+}
+
+/**
+ * Subtask-scoped attachments section. Reuses the task-level hook and filters
+ * down to attachments whose `subtaskId` matches this row — task-level
+ * attachments (subtaskId === null) render in `TaskDetailModal` instead, so
+ * the same artefact never double-shows. Upload is gated on `canUpload`
+ * (currently mirrors `canComment`: task participants only).
+ */
+function SubtaskAttachmentsSection({
+  task,
+  subtaskId,
+  users,
+  viewerUid,
+  viewerIsAdmin,
+  canUpload,
+}: {
+  task: TaskDoc;
+  subtaskId: string;
+  users: UserDoc[];
+  viewerUid: string;
+  viewerIsAdmin: boolean;
+  canUpload: boolean;
+}) {
+  const { attachments } = useTaskAttachments(task.id);
+  const scoped = attachments.filter((a) => a.subtaskId === subtaskId);
+  return (
+    <section>
+      <h3 style={sectionLabel}>Attachments</h3>
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+        <AttachmentList
+          taskId={task.id}
+          attachments={scoped}
+          users={users}
+          viewerUid={viewerUid}
+          viewerIsAdmin={viewerIsAdmin}
+        />
+        {canUpload && <AttachmentUpload taskId={task.id} subtaskId={subtaskId} />}
+      </div>
+    </section>
   );
 }
 
