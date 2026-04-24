@@ -6,12 +6,18 @@ import {
   deleteDoc,
   deleteField,
   doc,
+  getDoc,
+  getDocs,
+  query,
   serverTimestamp,
   updateDoc,
+  where,
+  writeBatch,
 } from "firebase/firestore";
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import type { Role } from "@/lib/firebase/session";
 import type { Track, UserPermissions } from "@/lib/firestore/users";
+import { normalizeTask } from "@/lib/firestore/tasks";
 
 function actingAdminUid(): string {
   const uid = getClientAuth().currentUser?.uid;
@@ -179,10 +185,113 @@ export async function updateProject(
   fields: Partial<{ name: string; leadUid: string; memberUids: string[] }>,
 ) {
   const db = getClientDb();
-  await updateDoc(doc(db, "projects", id), {
+  // Stage 3 (2026-04-24): if memberUids is being rewritten and the change
+  // removes anyone, cascade-strip those uids from every task in the
+  // project — roster arrays, lock-in consents, review-state arrays.
+  // Sealed blocks and completed signoff rows stay as-is (history). The
+  // user is rare enough that we don't unwind further; treat it as a
+  // membership hygiene pass.
+  let removedUids: string[] = [];
+  if (fields.memberUids !== undefined) {
+    const existing = await getDoc(doc(db, "projects", id));
+    if (existing.exists()) {
+      const oldMembers = (existing.data().memberUids as string[] | undefined) ?? [];
+      const newMembers = fields.memberUids;
+      removedUids = oldMembers.filter((u) => !newMembers.includes(u));
+    }
+  }
+
+  if (removedUids.length === 0) {
+    await updateDoc(doc(db, "projects", id), {
+      ...fields,
+      updatedAt: serverTimestamp(),
+    });
+    return;
+  }
+
+  // Cascade: fetch all tasks in this project, strip removed uids from
+  // every roster/consent/review-state field.
+  const tasksQuery = query(
+    collection(db, "tasks"),
+    where("projectId", "==", id),
+  );
+  const tasksSnap = await getDocs(tasksQuery);
+  const removedSet = new Set(removedUids);
+  const batch = writeBatch(db);
+  batch.update(doc(db, "projects", id), {
     ...fields,
     updatedAt: serverTimestamp(),
   });
+  for (const taskSnap of tasksSnap.docs) {
+    const task = normalizeTask(taskSnap.id, taskSnap.data());
+    const filterOut = (arr: string[]) => arr.filter((u) => !removedSet.has(u));
+    const nextCompleters = filterOut(task.completerUids);
+    const nextReviewers = filterOut(task.reviewerUids);
+    const nextSubtasks = task.subtasks.map((s) => ({
+      ...s,
+      assigneeUids: filterOut(s.assigneeUids),
+      reviewerUids: filterOut(s.reviewerUids),
+      approvedByReviewerUids: filterOut(s.approvedByReviewerUids),
+      questionedByReviewerUids: filterOut(s.questionedByReviewerUids),
+      rejectedByReviewerUids: filterOut(s.rejectedByReviewerUids),
+    }));
+    const nextConsents: Record<string, { consentingCompleterUids: string[] }> = {};
+    for (const [blockId, rec] of Object.entries(task.blockConsents)) {
+      nextConsents[blockId] = {
+        consentingCompleterUids: filterOut(rec.consentingCompleterUids),
+      };
+    }
+    // Skip the write if nothing changed — avoids touching updatedAt on
+    // tasks whose rosters didn't include any of the removed uids.
+    const dirty =
+      nextCompleters.length !== task.completerUids.length ||
+      nextReviewers.length !== task.reviewerUids.length ||
+      nextSubtasks.some((s, i) => {
+        const orig = task.subtasks[i];
+        return (
+          s.assigneeUids.length !== orig.assigneeUids.length ||
+          s.reviewerUids.length !== orig.reviewerUids.length ||
+          s.approvedByReviewerUids.length !== orig.approvedByReviewerUids.length ||
+          s.questionedByReviewerUids.length !== orig.questionedByReviewerUids.length ||
+          s.rejectedByReviewerUids.length !== orig.rejectedByReviewerUids.length
+        );
+      }) ||
+      Object.entries(nextConsents).some(
+        ([k, v]) =>
+          v.consentingCompleterUids.length !==
+          (task.blockConsents[k]?.consentingCompleterUids.length ?? 0),
+      );
+    if (!dirty) continue;
+    // Serialize subtasks inline (avoids importing the task-side helper,
+    // which is client-scoped). We preserve every non-uid field intact.
+    const serializedSubtasks = nextSubtasks.map((s) => ({
+      id: s.id,
+      title: s.title,
+      description: s.description,
+      dueDate: s.dueDate, // Already a Date; Firestore will coerce.
+      done: s.done,
+      doneAt: s.doneAt,
+      doneByUid: s.doneByUid,
+      assigneeUids: s.assigneeUids,
+      reviewerUids: s.reviewerUids,
+      blockedBy: s.blockedBy,
+      approvedByReviewerUids: s.approvedByReviewerUids,
+      questionedByReviewerUids: s.questionedByReviewerUids,
+      rejectedByReviewerUids: s.rejectedByReviewerUids,
+      blockId: s.blockId,
+      sealState: s.sealState,
+      sealedAt: s.sealedAt,
+      roleHint: s.roleHint,
+    }));
+    batch.update(doc(db, "tasks", taskSnap.id), {
+      completerUids: nextCompleters,
+      reviewerUids: nextReviewers,
+      subtasks: serializedSubtasks,
+      blockConsents: nextConsents,
+      updatedAt: serverTimestamp(),
+    });
+  }
+  await batch.commit();
 }
 
 export async function setProjectArchived(id: string, archived: boolean) {

@@ -773,6 +773,12 @@ function summariseActivity(
       return "marked this subtask done";
     case "subtask_undone":
       return "un-ticked this subtask";
+    case "subtask_block_locked_in": {
+      const name = typeof entry.payload?.name === "string" ? entry.payload.name : null;
+      return name
+        ? `locked in block "${name}" — work begins`
+        : "locked in the parent block — work begins";
+    }
     case "subtask_approved":
       return withNote("approved this subtask");
     case "subtask_questioned":
