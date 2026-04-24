@@ -123,6 +123,10 @@ export default function TaskDetailModal({
   const [descDraft, setDescDraft] = useState("");
   const [editingTitle, setEditingTitle] = useState(false);
   const [editingDesc, setEditingDesc] = useState(false);
+  // Delete-in-flight state. Declared up here (rather than next to
+  // handleDelete) so the Escape handler useEffect below can read it.
+  const [deleting, setDeleting] = useState(false);
+  const [deleteErr, setDeleteErr] = useState<string | null>(null);
   // Sync drafts when the loaded task changes. Calling setState during render
   // based on a previous-value ref is React's supported pattern for
   // derived-from-props resets (avoids the react-hooks/set-state-in-effect trap
@@ -136,14 +140,64 @@ export default function TaskDetailModal({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      // Don't let Escape dismiss the modal while the delete request is in
+      // flight — the cascade is already running on the server and the user
+      // pressing Escape mid-delete just leaves them staring at a half-gone
+      // task on the next page render.
+      if (e.key === "Escape" && !deleting) onClose();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, deleting]);
 
   const project = task?.projectId ? projects.find((p) => p.id === task.projectId) : null;
   const creator = task ? users.find((u) => u.uid === task.creatorUid) : null;
+
+  // Delete overlay takes precedence over the null-task fallback — once the
+  // server finishes deleting the parent doc, the client's `useTask`
+  // onSnapshot fires with `task = null`, which would otherwise drop the
+  // modal through to "Task not found or you don't have access." mid-request
+  // and feel like the page crashed. We stay in the deleting state until the
+  // handler resolves and calls onClose().
+  if (deleting) {
+    return (
+      <Overlay onClose={() => {}}>
+        <div
+          role="status"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "var(--space-4)",
+            padding: "var(--space-8)",
+            minHeight: "14rem",
+            textAlign: "center",
+          }}
+        >
+          <Spinner />
+          <div style={{ fontSize: "var(--text-md)", color: "var(--color-text)" }}>
+            Deleting task + history…
+          </div>
+          <div
+            style={{
+              fontSize: "var(--text-xs)",
+              color: "var(--color-text-muted)",
+              maxWidth: "22rem",
+            }}
+          >
+            Clearing comments, activity, and attachments. This can take a few
+            seconds for tasks with a long history — don't close the tab.
+          </div>
+          {deleteErr && (
+            <div style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)" }}>
+              {deleteErr}
+            </div>
+          )}
+        </div>
+      </Overlay>
+    );
+  }
 
   if (loading || !task) {
     return (
@@ -240,9 +294,6 @@ export default function TaskDetailModal({
       console.error(err);
     }
   }
-
-  const [deleting, setDeleting] = useState(false);
-  const [deleteErr, setDeleteErr] = useState<string | null>(null);
 
   async function handleDelete() {
     if (!task) return;
@@ -925,5 +976,48 @@ function Overlay({ children, onClose }: { children: React.ReactNode; onClose: ()
         {children}
       </div>
     </div>
+  );
+}
+
+/**
+ * Small spinning ring, used in the "Deleting…" overlay. SMIL-animated so we
+ * don't need a CSS keyframe block in this file (the codebase doesn't set up
+ * a shared `@keyframes spin` and inline `<style>` tags render oddly inside
+ * portalled modals).
+ */
+function Spinner() {
+  return (
+    <svg
+      width="32"
+      height="32"
+      viewBox="0 0 32 32"
+      aria-hidden="true"
+      style={{ display: "block" }}
+    >
+      <circle
+        cx="16"
+        cy="16"
+        r="12"
+        fill="none"
+        stroke="var(--color-border)"
+        strokeWidth="3"
+      />
+      <path
+        d="M16 4 A12 12 0 0 1 28 16"
+        fill="none"
+        stroke="var(--color-accent, var(--color-text))"
+        strokeWidth="3"
+        strokeLinecap="round"
+      >
+        <animateTransform
+          attributeName="transform"
+          type="rotate"
+          from="0 16 16"
+          to="360 16 16"
+          dur="0.9s"
+          repeatCount="indefinite"
+        />
+      </path>
+    </svg>
   );
 }
