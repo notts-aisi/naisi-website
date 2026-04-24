@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Button from "@/components/ui/Button";
 import {
   TASK_FIELD_LIMITS,
@@ -55,6 +55,14 @@ export default function SubtaskDetailModal({
   const [saving, setSaving] = useState(false);
   const [dueBusy, setDueBusy] = useState(false);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+
+  // Mention pool = the task's current roster. Previous completers / reviewers
+  // who were removed shouldn't surface in the dropdown. See CommentComposer
+  // for the same filter applied to task-level comments.
+  const mentionableUsers = useMemo(() => {
+    const roster = new Set<string>([...task.completerUids, ...task.reviewerUids]);
+    return users.filter((u) => roster.has(u.uid));
+  }, [users, task.completerUids, task.reviewerUids]);
 
   const { comments: subComments, loading: subCommentsLoading } = useSubtaskComments(
     task.id,
@@ -393,7 +401,7 @@ export default function SubtaskDetailModal({
                         }}
                       >
                         <CommentEditor
-                          users={users}
+                          users={mentionableUsers}
                           editorKey={`edit:${row.payload.id}`}
                           initialBody={row.payload.bodyMarkdown}
                           submitLabel="Save"
@@ -429,7 +437,7 @@ export default function SubtaskDetailModal({
           {canComment && (
             <div style={{ marginTop: "var(--space-3)" }}>
               <CommentEditor
-                users={users}
+                users={mentionableUsers}
                 editorKey={`new:${subtask.id}`}
                 onSubmit={postSubComment}
               />
