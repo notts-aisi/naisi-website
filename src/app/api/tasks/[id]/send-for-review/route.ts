@@ -3,6 +3,7 @@ import { FieldValue, type DocumentData } from "firebase-admin/firestore";
 import TaskReviewRequestEmail from "@/emails/TaskReviewRequestEmail";
 import { sendEmail } from "@/lib/email/send";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isTaskEmailEnabled } from "@/lib/firestore/taskEmailConfig";
 import { getCurrentUser } from "@/lib/firebase/session";
 
 type Payload = {
@@ -71,6 +72,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const viewer = await getCurrentUser();
   if (!viewer) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+
+  // Admin-toggleable kill switch (config/taskEmails). Dev affordance.
+  if (!(await isTaskEmailEnabled(db))) {
+    return NextResponse.json(
+      { ok: true, skipped: "task-emails-disabled", recipients: 0 },
+      { status: 200 },
+    );
+  }
 
   let payload: Payload;
   try {

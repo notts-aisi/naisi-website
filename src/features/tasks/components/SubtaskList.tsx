@@ -17,7 +17,9 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   TASK_FIELD_LIMITS,
+  getBlockPhase,
   groupSubtasksByBlock,
+  type BlockPhase,
   type Subtask,
   type TaskBlock,
   type TaskDoc,
@@ -26,12 +28,9 @@ import type { UserDoc } from "@/lib/firestore/users";
 import type { Role } from "@/lib/firebase/session";
 import {
   addSubtask,
-  applyBlockGate,
-  clearBlockGate,
   createBlock,
-  getNextBlock,
-  isBlockGateApplied,
   reorderSubtasks,
+  sendBlockToReviewers,
 } from "../taskMutations";
 import BlockHeader from "./BlockHeader";
 import SubtaskRow from "./SubtaskRow";
@@ -131,27 +130,23 @@ export default function SubtaskList({
       )}
 
       {groups.map((group) => {
-        const isSealed = group.block?.sealState === "sealed";
-        // Colour semantics:
-        //   Green = Active (where the work/attention is right now).
-        //   Orange = Passive (done its turn, waiting on a downstream
-        //   phase). So an OPEN block is green (completers are active),
-        //   a SEALED block flips to orange (completion work is done,
-        //   attention moves to the review phase below it).
-        const blockContainerStyle: React.CSSProperties = group.block
+        // Stage 1.9a block-phase colour scheme:
+        //   allocating (open)    → red    (attention: allocation incomplete)
+        //   in-progress (sealed) → orange (work under way)
+        //   reviewing            → yellow (handed to reviewers, not done)
+        //   complete             → green  (all reviewers signed off)
+        const phase: BlockPhase | null = group.block
+          ? getBlockPhase(task, group.block)
+          : null;
+        const phasePalette = phase ? BLOCK_PHASE_PALETTE[phase] : null;
+        const blockContainerStyle: React.CSSProperties = phasePalette
           ? {
               display: "flex",
               flexDirection: "column",
               gap: "var(--space-2)",
               padding: "var(--space-3)",
-              background: isSealed
-                ? "var(--color-warning-soft, var(--color-surface-hover))"
-                : "var(--color-success-soft, rgba(22, 163, 74, 0.04))",
-              border: `1px solid ${
-                isSealed
-                  ? "var(--color-warning, var(--color-accent))"
-                  : "var(--color-success, #16a34a)"
-              }`,
+              background: phasePalette.bg,
+              border: `1px solid ${phasePalette.border}`,
               borderLeftWidth: "3px",
               borderRadius: "var(--radius-md)",
             }
@@ -210,6 +205,7 @@ export default function SubtaskList({
                             isAdmin={isAdmin}
                             canEditRoster={canEditRoster}
                             canEdit={canEdit}
+                            canEditStructure={canEditStructure}
                             showMatrix={showMatrix}
                             isReviewPending={pendingReviewSubtaskIds.has(s.id)}
                             dragHandle={handle}
@@ -230,14 +226,34 @@ export default function SubtaskList({
                     isAdmin={isAdmin}
                     canEditRoster={canEditRoster}
                     canEdit={canEdit}
+                    canEditStructure={canEditStructure}
                     showMatrix={showMatrix}
                     isReviewPending={pendingReviewSubtaskIds.has(s.id)}
                   />
                 ))
               )}
-              {canEdit && task.subtasks.length < TASK_FIELD_LIMITS.maxSubtasks && (
-                <InlineAddSubtask task={task} blockId={group.block?.id ?? null} />
-              )}
+              {/* Stage 2 (2026-04-23): sealed-block add tightened to
+                  admin-only. Rationale: post-lock-in, committee creators
+                  and task reviewers shouldn't add subtasks either — use
+                  a comment for ad-hoc follow-ups so dependency wiring
+                  stays intact. Pre-seal or ungrouped: any completer/
+                  reviewer with canEdit can add. */}
+              {canEdit &&
+                task.subtasks.length < TASK_FIELD_LIMITS.maxSubtasks &&
+                (group.block?.sealState !== "sealed" || isAdmin) && (
+                  <InlineAddSubtask task={task} blockId={group.block?.id ?? null} />
+                )}
+              {group.block &&
+                group.block.sealState === "sealed" &&
+                signoffRows.length === 0 &&
+                group.completion.length > 0 && (
+                  <NotifyReviewersButton
+                    task={task}
+                    blockId={group.block.id}
+                    completion={group.completion}
+                    viewerIsCompleter={task.completerUids.includes(viewerUid)}
+                  />
+                )}
             </div>
             {group.block && signoffRows.length > 0 && (
               <SignoffPhase
@@ -261,6 +277,95 @@ export default function SubtaskList({
       {canEditStructure && task.blocks.length < TASK_FIELD_LIMITS.maxBlocks && (
         <InlineAddBlock task={task} hasBlocks={hasBlocks} />
       )}
+    </div>
+  );
+}
+
+/**
+ * "Send block to reviewers" button at the bottom of the completion block.
+ * Only rendered pre-Notify (no signoff rows yet) and when the block has at
+ * least one completion subtask. Greyed with helper text until every
+ * non-reviewer subtask in the block is done. Press spawns reviewer signoff
+ * rows server-side and logs a `block_sent_to_reviewers` activity entry.
+ *
+ * Visible only to listed completers — non-completers don't see the button.
+ */
+function NotifyReviewersButton({
+  task,
+  blockId,
+  completion,
+  viewerIsCompleter,
+}: {
+  task: TaskDoc;
+  blockId: string;
+  completion: Subtask[];
+  viewerIsCompleter: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  if (!viewerIsCompleter) return null;
+  const outstanding = completion.filter((s) => !s.done);
+  const canSend = outstanding.length === 0;
+  const helperText = canSend
+    ? "All tasks complete — ready to send to reviewers."
+    : "All tasks must be marked as complete before sending to reviewers.";
+
+  async function handleSend() {
+    if (!canSend || busy) return;
+    setBusy(true);
+    try {
+      await sendBlockToReviewers(task, blockId);
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Send failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "var(--space-2)",
+        paddingTop: "var(--space-2)",
+        borderTop: "1px dashed var(--color-border)",
+      }}
+    >
+      <span
+        style={{
+          flex: 1,
+          fontSize: "var(--text-xs)",
+          color: canSend ? "var(--color-text)" : "var(--color-text-muted)",
+        }}
+      >
+        {helperText}
+      </span>
+      <button
+        type="button"
+        onClick={handleSend}
+        disabled={!canSend || busy}
+        style={{
+          padding: "0.35rem 0.85rem",
+          background: canSend
+            ? "var(--color-accent-soft)"
+            : "var(--color-bg-elevated)",
+          color: canSend ? "var(--color-accent)" : "var(--color-text-muted)",
+          border: canSend ? "none" : "1px solid var(--color-border)",
+          borderRadius: "var(--radius-sm, 4px)",
+          fontSize: "var(--text-xs)",
+          fontWeight: 600,
+          cursor: !canSend || busy ? "not-allowed" : "pointer",
+          opacity: !canSend ? 0.6 : 1,
+        }}
+        title={
+          canSend
+            ? "Spawn reviewer signoff rows and kick off the review phase."
+            : helperText
+        }
+      >
+        {busy ? "Sending…" : "Notify reviewers"}
+      </button>
     </div>
   );
 }
@@ -300,18 +405,15 @@ function SignoffPhase({
   canEditRoster: boolean;
 }) {
   const allSignedOff = signoffs.length > 0 && signoffs.every((s) => s.done);
-  // Signoff container mirrors the same green=Active / orange=Passive
-  // convention as blocks: reviews-in-progress = green (active phase);
-  // every reviewer has signed = orange (done, waiting on downstream).
-  const signoffBg = allSignedOff
-    ? "var(--color-warning-soft, var(--color-surface-hover))"
-    : "var(--color-success-soft, rgba(22, 163, 74, 0.08))";
-  const signoffBorder = allSignedOff
-    ? "var(--color-warning, var(--color-accent))"
-    : "var(--color-success, #16a34a)";
-  const signoffLabel = allSignedOff
-    ? "var(--color-warning, var(--color-text))"
-    : "var(--color-success, #16a34a)";
+  // Stage 1.9a: SignoffPhase container mirrors the parent block's phase
+  // colours — yellow while reviews are outstanding, green once every
+  // reviewer has signed off.
+  const signoffPalette = allSignedOff
+    ? BLOCK_PHASE_PALETTE.complete
+    : BLOCK_PHASE_PALETTE.reviewing;
+  const signoffBg = signoffPalette.bg;
+  const signoffBorder = signoffPalette.border;
+  const signoffLabel = signoffPalette.labelColor;
   return (
     <div
       style={{
@@ -360,96 +462,11 @@ function SignoffPhase({
           isAdmin={isAdmin}
           canEditRoster={canEditRoster}
           canEdit={canEdit}
+          canEditStructure={canEditStructure}
           showMatrix={showMatrix}
           isReviewPending={pendingReviewSubtaskIds.has(s.id)}
         />
       ))}
-      {canEditStructure && <BlockGateControls task={task} blockId={block.id} />}
-    </div>
-  );
-}
-
-/**
- * Post-seal gate control. Only renders when the block is sealed and has a
- * downstream block to gate. If review subtasks haven't spawned (no effective
- * reviewers), button is disabled with an explanatory tooltip. Otherwise it
- * toggles applied/cleared — pressing Apply sets every non-reviewer subtask
- * in the next block to `blockedBy` including all of this block's review
- * subtask ids.
- */
-function BlockGateControls({ task, blockId }: { task: TaskDoc; blockId: string }) {
-  const block = task.blocks.find((b) => b.id === blockId);
-  if (!block || block.sealState !== "sealed") return null;
-  const nextBlock = getNextBlock(task, blockId);
-  if (!nextBlock) return null;
-  const hasReviewSubtasks = task.subtasks.some(
-    (s) => s.blockId === blockId && s.roleHint === "reviewer",
-  );
-  const applied = isBlockGateApplied(task, blockId);
-
-  async function handleToggle() {
-    try {
-      if (applied) {
-        await clearBlockGate(task, blockId);
-      } else {
-        await applyBlockGate(task, blockId);
-      }
-    } catch (err) {
-      console.error(err);
-      window.alert(err instanceof Error ? err.message : "Update failed");
-    }
-  }
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "var(--space-2)",
-        paddingTop: "var(--space-2)",
-        borderTop: "1px dashed var(--color-border)",
-      }}
-    >
-      <span
-        style={{
-          fontSize: "var(--text-xs)",
-          color: "var(--color-text-muted)",
-          flex: 1,
-        }}
-      >
-        {hasReviewSubtasks
-          ? `Gate "${nextBlock.name}" on this block's reviews?`
-          : `"${nextBlock.name}" gates on reviewer signoffs — waiting for them to spawn.`}
-      </span>
-      <button
-        type="button"
-        disabled={!hasReviewSubtasks}
-        onClick={handleToggle}
-        style={{
-          padding: "0.3rem 0.75rem",
-          background: applied
-            ? "var(--color-warning-soft, var(--color-surface-hover))"
-            : "var(--color-accent-soft)",
-          color: applied
-            ? "var(--color-warning, var(--color-text))"
-            : "var(--color-accent)",
-          border: "none",
-          borderRadius: "var(--radius-sm, 4px)",
-          fontSize: "var(--text-xs)",
-          fontWeight: 600,
-          cursor: hasReviewSubtasks ? "pointer" : "not-allowed",
-          opacity: hasReviewSubtasks ? 1 : 0.5,
-        }}
-        title={
-          hasReviewSubtasks
-            ? applied
-              ? `Stop gating "${nextBlock.name}" on this block's reviews`
-              : `Require this block's reviewer signoffs before "${nextBlock.name}" unlocks`
-            : "This block has no review subtasks — add task reviewers or seal it first."
-        }
-      >
-        {applied ? "Gate applied — clear" : "Gate next block"}
-      </button>
     </div>
   );
 }
@@ -538,7 +555,7 @@ function InlineAddBlock({ task, hasBlocks }: { task: TaskDoc; hasBlocks: boolean
           cursor: "pointer",
         }}
       >
-        {hasBlocks ? "+ Add another block" : "+ Group subtasks into a block"}
+        {hasBlocks ? "+ Add another block" : "+ Add a block"}
       </button>
     );
   }
@@ -672,6 +689,36 @@ function SortableSubtaskRow({
     </div>
   );
 }
+
+export const BLOCK_PHASE_PALETTE: Record<
+  BlockPhase,
+  { bg: string; border: string; label: string; labelColor: string }
+> = {
+  allocating: {
+    bg: "var(--color-danger-soft, rgba(220, 38, 38, 0.06))",
+    border: "var(--color-danger, #dc2626)",
+    label: "Allocating",
+    labelColor: "var(--color-danger, #dc2626)",
+  },
+  "in-progress": {
+    bg: "var(--color-warning-soft, var(--color-surface-hover))",
+    border: "var(--color-warning, var(--color-accent))",
+    label: "In progress",
+    labelColor: "var(--color-warning, var(--color-text))",
+  },
+  reviewing: {
+    bg: "var(--color-caution-soft, rgba(234, 179, 8, 0.10))",
+    border: "var(--color-caution, #eab308)",
+    label: "Under review",
+    labelColor: "var(--color-caution, #a16207)",
+  },
+  complete: {
+    bg: "var(--color-success-soft, rgba(22, 163, 74, 0.08))",
+    border: "var(--color-success, #16a34a)",
+    label: "Complete",
+    labelColor: "var(--color-success, #16a34a)",
+  },
+};
 
 // TaskBlock import is used implicitly via groupSubtasksByBlock's return type.
 export type { TaskBlock };

@@ -31,7 +31,16 @@ function formatShort(date: Date | null): string {
   if (diffM < 60) return `${diffM}m ago`;
   const diffH = Math.round(diffM / 60);
   if (diffH < 24) return `${diffH}h ago`;
-  return date.toLocaleDateString();
+  // Over a day — absolute date + time. Year shown only if different
+  // from the current year.
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return date.toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function renderActivityCopy(a: ActivityDoc, users: UserDoc[], task: TaskDoc): string {
@@ -105,10 +114,75 @@ function renderActivityCopy(a: ActivityDoc, users: UserDoc[], task: TaskDoc): st
       return `${actor} gated "${pickStr("nextBlockName") ?? "next block"}" on "${pickStr("name") ?? "this block"}"'s reviews`;
     case "block_gate_cleared":
       return `${actor} cleared the gate from "${pickStr("nextBlockName") ?? "next block"}"`;
-    case "subtask_rejected":
-      return `${actor} rejected ${subtaskTitle(pickStr("subtaskId"))}`;
+    case "subtask_rejected": {
+      const note = pickStr("note");
+      return note
+        ? `${actor} rejected ${subtaskTitle(pickStr("subtaskId"))} — "${note}"`
+        : `${actor} rejected ${subtaskTitle(pickStr("subtaskId"))}`;
+    }
+    case "subtask_approved": {
+      const note = pickStr("note");
+      return note
+        ? `${actor} approved ${subtaskTitle(pickStr("subtaskId"))} — "${note}"`
+        : `${actor} approved ${subtaskTitle(pickStr("subtaskId"))}`;
+    }
+    case "subtask_questioned": {
+      const note = pickStr("note");
+      return note
+        ? `${actor} has a question about ${subtaskTitle(pickStr("subtaskId"))} — "${note}"`
+        : `${actor} flagged a question on ${subtaskTitle(pickStr("subtaskId"))}`;
+    }
     case "subtask_resubmitted":
       return `${actor} resent ${subtaskTitle(pickStr("subtaskId"))} for review`;
+    case "subtask_done":
+      return `${actor} marked ${subtaskTitle(pickStr("subtaskId"))} done`;
+    case "subtask_undone":
+      return `${actor} un-ticked ${subtaskTitle(pickStr("subtaskId"))}`;
+    case "block_sent_to_reviewers":
+      return `${actor} sent block "${pickStr("name") ?? "?"}" to reviewers`;
+    case "block_due_date_set": {
+      const raw = p.dueDate as { toDate?: () => Date } | null | undefined;
+      const d = raw && typeof raw.toDate === "function" ? raw.toDate() : null;
+      return d
+        ? `${actor} set every subtask in "${pickStr("name") ?? "a block"}" due ${d.toLocaleDateString()}`
+        : `${actor} cleared the due date on "${pickStr("name") ?? "a block"}"`;
+    }
+    case "assignee_added": {
+      const addedUid = pickStr("addedUid");
+      if (addedUid) {
+        const u = users.find((x) => x.uid === addedUid);
+        const name = u?.displayName ?? u?.email ?? addedUid;
+        return `${actor} added ${name} as assignee on ${subtaskTitle(pickStr("subtaskId"))}`;
+      }
+      return `${actor} joined ${subtaskTitle(pickStr("subtaskId"))} as assignee`;
+    }
+    case "assignee_removed": {
+      const removedUid = pickStr("removedUid");
+      if (removedUid) {
+        const u = users.find((x) => x.uid === removedUid);
+        const name = u?.displayName ?? u?.email ?? removedUid;
+        return `${actor} removed ${name} from ${subtaskTitle(pickStr("subtaskId"))}`;
+      }
+      return `${actor} left ${subtaskTitle(pickStr("subtaskId"))}`;
+    }
+    case "reviewer_added": {
+      const addedUid = pickStr("addedUid");
+      if (addedUid) {
+        const u = users.find((x) => x.uid === addedUid);
+        const name = u?.displayName ?? u?.email ?? addedUid;
+        return `${actor} added ${name} as reviewer on ${subtaskTitle(pickStr("subtaskId"))}`;
+      }
+      return `${actor} joined ${subtaskTitle(pickStr("subtaskId"))} as reviewer`;
+    }
+    case "reviewer_removed": {
+      const removedUid = pickStr("removedUid");
+      if (removedUid) {
+        const u = users.find((x) => x.uid === removedUid);
+        const name = u?.displayName ?? u?.email ?? removedUid;
+        return `${actor} removed ${name} from reviewing ${subtaskTitle(pickStr("subtaskId"))}`;
+      }
+      return `${actor} dropped reviewing ${subtaskTitle(pickStr("subtaskId"))}`;
+    }
     default:
       return `${actor} updated the task`;
   }

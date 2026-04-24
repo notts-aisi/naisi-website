@@ -24,6 +24,7 @@ import {
   isBlockGateApplied,
   isSubtaskBlocked,
   type BlockConsentMap,
+  type BlockGatingMode,
   type Subtask,
   type TaskBlock,
   type TaskDoc,
@@ -57,6 +58,8 @@ function serializeSubtask(s: Subtask) {
   return {
     id: s.id,
     title: s.title,
+    description: s.description,
+    dueDate: s.dueDate ? Timestamp.fromDate(s.dueDate) : null,
     done: s.done,
     doneAt: s.doneAt ? Timestamp.fromDate(s.doneAt) : null,
     doneByUid: s.doneByUid,
@@ -94,6 +97,8 @@ function planReviewSpawn(task: TaskDoc, blockId: string): Subtask[] {
     out.push({
       id: genId(),
       title: "Reviewer signoff",
+      description: "",
+      dueDate: null,
       done: false,
       doneAt: null,
       doneByUid: null,
@@ -120,6 +125,7 @@ function serializeBlock(b: TaskBlock) {
     sealState: b.sealState,
     sealedAt: b.sealedAt ? Timestamp.fromDate(b.sealedAt) : null,
     forceSealedByUid: b.forceSealedByUid,
+    gatingMode: b.gatingMode,
   };
 }
 
@@ -130,7 +136,7 @@ function clampUids(uids: string[] | undefined, max: number): string[] {
 }
 
 export type CreateSubtaskInput = Pick<Subtask, "title"> &
-  Partial<Pick<Subtask, "id" | "assigneeUids" | "reviewerUids" | "blockedBy" | "blockId" | "roleHint">>;
+  Partial<Pick<Subtask, "id" | "description" | "dueDate" | "assigneeUids" | "reviewerUids" | "blockedBy" | "blockId" | "roleHint">>;
 
 export type CreateTaskInput = {
   title: string;
@@ -169,6 +175,11 @@ export async function createTask(input: CreateTaskInput): Promise<string> {
   const subtasks: Subtask[] = rawSubtasks.map((s) => ({
     id: s.id ?? genId(),
     title: s.title.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
+    description: (s.description ?? "").slice(0, TASK_FIELD_LIMITS.subtaskDescription),
+    // Inherit the task-level dueDate on creation when the caller doesn't
+    // set a per-subtask one. Matches the `addSubtask` default so subtasks
+    // surface a meaningful date on day one; editable afterwards.
+    dueDate: s.dueDate !== undefined ? s.dueDate : input.dueDate ?? null,
     done: false,
     doneAt: null,
     doneByUid: null,
@@ -254,8 +265,20 @@ export async function toggleSubtask(
   if (!target) throw new Error("Subtask not found");
   const nextDone = !target.done;
   const asAdmin = opts.asAdmin === true;
-  if (nextDone && isSubtaskBlocked(target, task.subtasks, task.reviewerUids)) {
-    throw new Error("Subtask is blocked by an unfinished prerequisite");
+  if (nextDone && isSubtaskBlocked(target, task)) {
+    throw new Error(
+      "Subtask is blocked — upstream block or prerequisite subtask isn't done yet.",
+    );
+  }
+  // Stage 1.5a gap-fix: work on completion rows can't start until the
+  // parent block has had its allocation locked in. Admin bypass preserved.
+  if (nextDone && !asAdmin && target.roleHint !== "reviewer" && target.blockId) {
+    const parentBlock = task.blocks.find((b) => b.id === target.blockId);
+    if (parentBlock && parentBlock.sealState !== "sealed") {
+      throw new Error(
+        "Lock in the block's allocation before starting work on its subtasks.",
+      );
+    }
   }
   // Reviewer-signoff rows:
   //   - Ticking: only the listed reviewer (or admin), with approve-first gate.
@@ -292,23 +315,39 @@ export async function toggleSubtask(
       }
     }
   } else {
-    // Regular completion rows: only listed assignees (or the task creator)
-    // can tick. Empty `assigneeUids` = open to any completer on the task.
-    // Creator is an escape hatch so the person who set the task up can
-    // always move it forward; admins who want to force-tick can self-add
-    // to the subtask first via the `+ Me` affordance (or self-add on
-    // behalf via the Edit panel).
-    const isCreator = task.creatorUid === uid;
+    // Regular completion rows: only listed assignees (or any completer on
+    // an empty-assignees open row) can tick. Admins can bypass via the
+    // `asAdmin` flag for oversight cases. The task-creator bypass was
+    // dropped 2026-04-23 (Stage 1.5a) — creators who want to move work
+    // forward should self-add to the subtask via the `+ Me` affordance so
+    // the tick is attributed to someone doing the work.
     const isAssigned = target.assigneeUids.includes(uid);
     const isCompleterOnTask = task.completerUids.includes(uid);
     const anyoneWhoCan =
       target.assigneeUids.length === 0 && isCompleterOnTask;
-    if (!isCreator && !isAssigned && !anyoneWhoCan) {
+    if (!asAdmin && !isAssigned && !anyoneWhoCan) {
       throw new Error(
         target.assigneeUids.length === 0
           ? "Only task completers can tick subtasks on this task."
           : "This subtask is assigned to specific people — add yourself or ask an assignee to tick.",
       );
+    }
+    // Stage 1.9c: post-Notify subtask un-tick lock. Once reviewer signoff
+    // rows exist in this block, completers can't un-tick their work —
+    // they should leave a comment on the subtask instead while review is
+    // in progress. Admin bypass preserved.
+    if (!nextDone && !asAdmin && target.blockId) {
+      const parentBlock = task.blocks.find((b) => b.id === target.blockId);
+      if (parentBlock?.sealState === "sealed") {
+        const hasSignoffs = task.subtasks.some(
+          (s) => s.blockId === target.blockId && s.roleHint === "reviewer",
+        );
+        if (hasSignoffs) {
+          throw new Error(
+            "The block has been sent to reviewers — leave a comment on the subtask instead of un-ticking.",
+          );
+        }
+      }
     }
   }
   const subtasks = task.subtasks.map<Subtask>((s) => {
@@ -331,11 +370,28 @@ export async function toggleSubtask(
     };
   });
   const stats = computeSubtaskStats(subtasks);
-  await updateDoc(doc(db, "tasks", task.id), {
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
     subtasks: subtasks.map(serializeSubtask),
     subtaskStats: stats,
     updatedAt: serverTimestamp(),
   });
+  // Stage 3 polish: emit activity entries so the subtask modal's feed
+  // surfaces completer actions. `subtask_undone` on un-tick, `subtask_done`
+  // on tick.
+  if (target.roleHint !== "reviewer") {
+    queueActivity(
+      batch,
+      task.id,
+      nextDone ? "subtask_done" : "subtask_undone",
+      uid,
+      {
+        subtaskId,
+        title: target.title,
+      },
+    );
+  }
+  await batch.commit();
 }
 
 export async function addSubtask(
@@ -352,6 +408,11 @@ export async function addSubtask(
   const next: Subtask = {
     id: genId(),
     title: trimmed.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
+    description: (init.description ?? "").slice(0, TASK_FIELD_LIMITS.subtaskDescription),
+    // Auto-default subtask due date to the task's due date when the caller
+    // doesn't provide one — a subtask inside a task rarely wants to fall
+    // AFTER the task's deadline. Editable afterwards via the detail modal.
+    dueDate: init.dueDate !== undefined ? init.dueDate : task.dueDate,
     done: false,
     doneAt: null,
     doneByUid: null,
@@ -476,6 +537,7 @@ async function patchSubtask(
 
 export async function setSubtaskAssignees(task: TaskDoc, subtaskId: string, uids: string[]) {
   const db = getClientDb();
+  const actor = actingUid();
   const target = task.subtasks.find((s) => s.id === subtaskId);
   if (!target) throw new Error("Subtask not found");
   if (target.sealState === "sealed") {
@@ -486,6 +548,8 @@ export async function setSubtaskAssignees(task: TaskDoc, subtaskId: string, uids
   // Firestore rules can't affordably diff nested arrays to check
   // "only-self-changes" semantics.
   const next = clampUids(uids, TASK_FIELD_LIMITS.maxAssigneesPerSubtask);
+  const added = next.filter((u) => !target.assigneeUids.includes(u));
+  const removed = target.assigneeUids.filter((u) => !next.includes(u));
   const subtasks = task.subtasks.map((s) =>
     s.id === subtaskId ? { ...s, assigneeUids: next } : s,
   );
@@ -495,17 +559,59 @@ export async function setSubtaskAssignees(task: TaskDoc, subtaskId: string, uids
   };
   const consentsPatch = clearConsentIfOpen(task, target.blockId);
   if (consentsPatch) patch.blockConsents = consentsPatch;
-  await updateDoc(doc(db, "tasks", task.id), patch);
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), patch);
+  for (const addedUid of added) {
+    queueActivity(batch, task.id, "assignee_added", actor, {
+      subtaskId,
+      title: target.title,
+      addedUid,
+    });
+  }
+  for (const removedUid of removed) {
+    queueActivity(batch, task.id, "assignee_removed", actor, {
+      subtaskId,
+      title: target.title,
+      removedUid,
+    });
+  }
+  await batch.commit();
 }
 
 export async function setSubtaskReviewers(task: TaskDoc, subtaskId: string, uids: string[]) {
   // Caller permission (admin / creator) is gated by the UI not rendering
   // the picker for anyone else. Phase 3 is client-enforced — see
   // setSubtaskAssignees.
-  await patchSubtask(task, subtaskId, (s) => ({
-    ...s,
-    reviewerUids: clampUids(uids, TASK_FIELD_LIMITS.maxReviewersPerSubtask),
-  }));
+  const db = getClientDb();
+  const actor = actingUid();
+  const target = task.subtasks.find((s) => s.id === subtaskId);
+  if (!target) throw new Error("Subtask not found");
+  const next = clampUids(uids, TASK_FIELD_LIMITS.maxReviewersPerSubtask);
+  const added = next.filter((u) => !target.reviewerUids.includes(u));
+  const removed = target.reviewerUids.filter((u) => !next.includes(u));
+  const subtasks = task.subtasks.map((s) =>
+    s.id === subtaskId ? { ...s, reviewerUids: next } : s,
+  );
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    subtasks: subtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  });
+  for (const addedUid of added) {
+    queueActivity(batch, task.id, "reviewer_added", actor, {
+      subtaskId,
+      title: target.title,
+      addedUid,
+    });
+  }
+  for (const removedUid of removed) {
+    queueActivity(batch, task.id, "reviewer_removed", actor, {
+      subtaskId,
+      title: target.title,
+      removedUid,
+    });
+  }
+  await batch.commit();
 }
 
 export async function setSubtaskBlockedBy(
@@ -538,14 +644,18 @@ export async function setSubtaskApproval(
   task: TaskDoc,
   subtaskId: string,
   state: ReviewState,
+  opts: { note?: string } = {},
 ) {
   const uid = actingUid();
   const target = task.subtasks.find((s) => s.id === subtaskId);
   if (!target) throw new Error("Subtask not found");
-  const effectiveReviewers =
-    target.reviewerUids.length > 0 ? target.reviewerUids : task.reviewerUids;
-  if (!effectiveReviewers.includes(uid)) {
-    throw new Error("You're not listed as a reviewer for this subtask.");
+  // Stage 2 (2026-04-24): strict self-service model — you must be
+  // explicitly in `subtask.reviewerUids` to review. Task-level fallback
+  // dropped so reviewers consciously claim their scope via `+ Review`.
+  if (!target.reviewerUids.includes(uid)) {
+    throw new Error(
+      "You haven't added yourself to review this subtask — click \"+ Review\" to claim it first.",
+    );
   }
   // Gate: reviewers can't approve/question/reject until a completer has
   // marked the work done. Clearing a prior state is still allowed — the
@@ -577,11 +687,21 @@ export async function setSubtaskApproval(
     if (state === "approve") approved.push(uid);
     if (state === "question") questioned.push(uid);
     if (state === "reject") rejected.push(uid);
+    // Stage 2 (2026-04-24): rejection auto-unticks the subtask so the
+    // completer has a clear "redo this" signal rather than a done-but-bad
+    // state. Keep `rejectedByReviewerUids` populated so the row tints
+    // orange (via `subtaskRowState`) and the resubmit affordance surfaces.
+    // The block's phase drops back to "in-progress" automatically because
+    // `getBlockPhase` checks completion-row done-ness.
+    const shouldUntick = state === "reject" && s.done;
     return {
       ...s,
       approvedByReviewerUids: approved,
       questionedByReviewerUids: questioned,
       rejectedByReviewerUids: rejected,
+      done: shouldUntick ? false : s.done,
+      doneAt: shouldUntick ? null : s.doneAt,
+      doneByUid: shouldUntick ? null : s.doneByUid,
     };
   });
   const batch = writeBatch(db);
@@ -589,10 +709,24 @@ export async function setSubtaskApproval(
     subtasks: nextSubtasks.map(serializeSubtask),
     updatedAt: serverTimestamp(),
   });
+  const note = typeof opts.note === "string" ? opts.note.trim().slice(0, 500) : "";
   if (state === "reject") {
     queueActivity(batch, task.id, "subtask_rejected", uid, {
       subtaskId,
       title: target.title,
+      note: note || null,
+    });
+  } else if (state === "approve") {
+    queueActivity(batch, task.id, "subtask_approved", uid, {
+      subtaskId,
+      title: target.title,
+      note: note || null,
+    });
+  } else if (state === "question") {
+    queueActivity(batch, task.id, "subtask_questioned", uid, {
+      subtaskId,
+      title: target.title,
+      note: note || null,
     });
   }
   await batch.commit();
@@ -671,6 +805,41 @@ export async function renameSubtask(task: TaskDoc, subtaskId: string, title: str
   await patchSubtask(task, subtaskId, (s) => ({
     ...s,
     title: trimmed.slice(0, TASK_FIELD_LIMITS.subtaskTitle),
+  }));
+}
+
+/**
+ * Edit the per-subtask description — stable instructions from the task
+ * creator. Empty string clears the description. Caller permission (admin /
+ * creator / committee on committee tasks) is gated in the UI — same pattern
+ * as task-level description edits. No activity log entry; descriptions
+ * evolve freely during drafting and the noise isn't worth the audit value.
+ */
+export async function updateSubtaskDescription(
+  task: TaskDoc,
+  subtaskId: string,
+  description: string,
+) {
+  await patchSubtask(task, subtaskId, (s) => ({
+    ...s,
+    description: description.slice(0, TASK_FIELD_LIMITS.subtaskDescription),
+  }));
+}
+
+/**
+ * Set or clear a subtask's due date. Pass `null` to remove. Intentionally
+ * NOT enforced against task.dueDate — subtask deadlines are often firmer
+ * than the task's aspirational deadline (e.g. publicity must land before
+ * the event itself). UI-gated to admin/creator/committee-on-committee.
+ */
+export async function updateSubtaskDueDate(
+  task: TaskDoc,
+  subtaskId: string,
+  dueDate: Date | null,
+) {
+  await patchSubtask(task, subtaskId, (s) => ({
+    ...s,
+    dueDate,
   }));
 }
 
@@ -767,6 +936,9 @@ export async function createBlock(task: TaskDoc, name: string): Promise<string> 
     sealState: "open",
     sealedAt: null,
     forceSealedByUid: null,
+    // First block ignores gatingMode; subsequent blocks default to gating
+    // on the immediate previous block (works out of the box).
+    gatingMode: task.blocks.length === 0 ? "none" : "previous",
   };
   const batch = writeBatch(db);
   batch.update(doc(db, "tasks", task.id), {
@@ -783,6 +955,67 @@ export async function createBlock(task: TaskDoc, name: string): Promise<string> 
   });
   await batch.commit();
   return block.id;
+}
+
+/**
+ * Set a block's upstream-gating mode (1.9e). Caller permission is UI-gated
+ * to admin + task-level reviewers. First block (order === 0) ignores the
+ * field so we accept any mode without branching. Cheap write — no batched
+ * side effects; downstream-subtask edges are purely derived from mode now.
+ */
+export async function setBlockGatingMode(
+  task: TaskDoc,
+  blockId: string,
+  mode: BlockGatingMode,
+) {
+  const db = getClientDb();
+  const existing = task.blocks.find((b) => b.id === blockId);
+  if (!existing) throw new Error("Block not found");
+  if (existing.gatingMode === mode) return;
+  const blocks = task.blocks.map((b) =>
+    b.id === blockId ? { ...b, gatingMode: mode } : b,
+  );
+  await updateDoc(doc(db, "tasks", task.id), {
+    blocks: blocks.map(serializeBlock),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Cascade a due date across every non-reviewer subtask in a block (Phase 3,
+ * 2026-04-24). Reviewer-signoff rows are left alone — their deadline
+ * follows the block, not an independent date. Pass `null` to clear. UI
+ * gates this to admin/creator/committee via `canEditStructure`.
+ *
+ * Writes one Firestore op updating every affected subtask's `dueDate` in
+ * a single patch. Emits a `block_due_date_set` activity entry so the
+ * cascade shows up in history.
+ */
+export async function setBlockDueDate(
+  task: TaskDoc,
+  blockId: string,
+  dueDate: Date | null,
+) {
+  const db = getClientDb();
+  const uid = actingUid();
+  const block = task.blocks.find((b) => b.id === blockId);
+  if (!block) throw new Error("Block not found");
+  const subtasks = task.subtasks.map((s) => {
+    if (s.blockId !== blockId) return s;
+    if (s.roleHint === "reviewer") return s;
+    return { ...s, dueDate };
+  });
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    subtasks: subtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "block_due_date_set", uid, {
+    blockId,
+    name: block.name,
+    dueDate: dueDate ? Timestamp.fromDate(dueDate) : null,
+  });
+  await batch.commit();
 }
 
 export async function renameBlock(task: TaskDoc, blockId: string, name: string) {
@@ -906,6 +1139,11 @@ export async function setSubtaskBlock(
  * brings consent to N/N of `task.completerUids`, the block seals atomically
  * (sealState = sealed, sealedAt = serverTimestamp, activity entry). Caller
  * must be a listed completer on the task — client-enforced, rules-backed.
+ *
+ * Stage 1.5a semantic shift (2026-04-23): lock-in = allocation consensus,
+ * not submission. Dropped the work-done gate so completers can lock in once
+ * they're happy with who's doing what. Reviewer signoff rows no longer
+ * spawn on seal — they spawn when completers press `sendBlockToReviewers`.
  */
 export async function toggleBlockConsent(task: TaskDoc, blockId: string) {
   const db = getClientDb();
@@ -920,27 +1158,6 @@ export async function toggleBlockConsent(task: TaskDoc, blockId: string) {
   }
   const current = task.blockConsents[blockId]?.consentingCompleterUids ?? [];
   const already = current.includes(uid);
-  // When ADDING consent (the "I'm done, send me to review" signal), every
-  // completion-row the acting user is assigned to in this block must be
-  // ticked done. Un-locking (retracting consent) is unrestricted — lets
-  // someone back out if they realise their work isn't actually finished.
-  if (!already) {
-    const myOutstanding = task.subtasks.filter(
-      (s) =>
-        s.blockId === blockId &&
-        s.roleHint !== "reviewer" &&
-        s.assigneeUids.includes(uid) &&
-        !s.done,
-    );
-    if (myOutstanding.length > 0) {
-      const first = myOutstanding[0];
-      const more =
-        myOutstanding.length > 1 ? ` (+${myOutstanding.length - 1} more)` : "";
-      throw new Error(
-        `Finish your assigned subtasks first — "${first.title}" isn't marked done yet${more}.`,
-      );
-    }
-  }
   const nextConsenting = already
     ? current.filter((u) => u !== uid)
     : [...current, uid];
@@ -955,6 +1172,27 @@ export async function toggleBlockConsent(task: TaskDoc, blockId: string) {
     task.completerUids.length > 0 &&
     task.completerUids.every((u) => nextConsenting.includes(u)) &&
     nextConsenting.every((u) => requiredSet.has(u));
+
+  // Stage 1.5a gap-fix: the lock-in that SEALS the block (last consent
+  // arriving) can't go through if any non-reviewer subtask still has
+  // zero assignees — we'd seal an incomplete allocation. Earlier
+  // consents pass through unchecked.
+  if (allConsented) {
+    const unassigned = task.subtasks.filter(
+      (s) =>
+        s.blockId === blockId &&
+        s.roleHint !== "reviewer" &&
+        s.assigneeUids.length === 0,
+    );
+    if (unassigned.length > 0) {
+      const first = unassigned[0];
+      const more =
+        unassigned.length > 1 ? ` (+${unassigned.length - 1} more)` : "";
+      throw new Error(
+        `Can't lock in — "${first.title}" has no one assigned yet${more}.`,
+      );
+    }
+  }
 
   const batch = writeBatch(db);
   const patch: Record<string, unknown> = {
@@ -972,16 +1210,17 @@ export async function toggleBlockConsent(task: TaskDoc, blockId: string) {
       blockId,
       name: block.name,
     });
-    const spawned = planReviewSpawn(task, blockId);
-    if (spawned.length > 0) {
-      const nextSubtasks = [...task.subtasks, ...spawned];
-      patch.subtasks = nextSubtasks.map(serializeSubtask);
-      patch.subtaskStats = computeSubtaskStats(nextSubtasks);
-      queueActivity(batch, task.id, "review_subtasks_spawned", uid, {
+    // Emit a per-subtask entry so each subtask's activity feed shows the
+    // block lock-in event. Distinct kind from `block_sealed` so the
+    // task-level feed doesn't render N duplicates.
+    for (const s of task.subtasks) {
+      if (s.blockId !== blockId) continue;
+      if (s.roleHint === "reviewer") continue;
+      queueActivity(batch, task.id, "subtask_block_locked_in", uid, {
+        subtaskId: s.id,
+        title: s.title,
         blockId,
         name: block.name,
-        count: spawned.length,
-        reviewerUids: spawned.flatMap((s) => s.reviewerUids),
       });
     }
   }
@@ -993,6 +1232,10 @@ export async function toggleBlockConsent(task: TaskDoc, blockId: string) {
  * Admin escape hatch — seal a block without waiting for unanimous consent.
  * Logged distinctly from the natural-consensus seal so the audit trail
  * preserves the "we moved despite missing sign-off" provenance.
+ *
+ * Stage 1.5a (2026-04-23): no longer spawns reviewer signoff rows. Seal now
+ * means "allocation locked, work begins" — reviewer rows spawn via
+ * `sendBlockToReviewers` once work is complete.
  */
 export async function forceSealBlock(task: TaskDoc, blockId: string) {
   const db = getClientDb();
@@ -1011,20 +1254,69 @@ export async function forceSealBlock(task: TaskDoc, blockId: string) {
       : b,
   );
   const batch = writeBatch(db);
-  const patch: Record<string, unknown> = {
+  batch.update(doc(db, "tasks", task.id), {
     blocks: blocks.map(serializeBlock),
     updatedAt: serverTimestamp(),
-  };
+  });
+  queueActivity(batch, task.id, "block_force_sealed", uid, {
+    blockId,
+    name: block.name,
+  });
+  await batch.commit();
+}
+
+/**
+ * Completer-pressed handoff: spawn reviewer signoff rows for a sealed block
+ * and log a `block_sent_to_reviewers` activity entry. Validates that every
+ * non-reviewer subtask in the block is done, no signoff rows exist yet, and
+ * the caller is a listed completer on the task.
+ *
+ * Stage 1.5a (2026-04-23) replaces the old "seal = spawn reviewers" flow.
+ */
+export async function sendBlockToReviewers(task: TaskDoc, blockId: string) {
+  const db = getClientDb();
+  const uid = actingUid();
+  if (!task.completerUids.includes(uid)) {
+    throw new Error("Only listed completers can send a block to reviewers.");
+  }
+  const block = task.blocks.find((b) => b.id === blockId);
+  if (!block) throw new Error("Block not found");
+  if (block.sealState !== "sealed") {
+    throw new Error("Lock in the block's allocation before sending to reviewers.");
+  }
+  const completionRows = task.subtasks.filter(
+    (s) => s.blockId === blockId && s.roleHint !== "reviewer",
+  );
+  const outstanding = completionRows.filter((s) => !s.done);
+  if (outstanding.length > 0) {
+    const first = outstanding[0];
+    const more = outstanding.length > 1 ? ` (+${outstanding.length - 1} more)` : "";
+    throw new Error(
+      `All tasks must be marked as complete before sending to reviewers — "${first.title}" isn't done yet${more}.`,
+    );
+  }
+  const alreadySent = task.subtasks.some(
+    (s) => s.blockId === blockId && s.roleHint === "reviewer",
+  );
+  if (alreadySent) {
+    throw new Error("This block has already been sent to reviewers.");
+  }
   const spawned = planReviewSpawn(task, blockId);
+  const batch = writeBatch(db);
+  const patch: Record<string, unknown> = {
+    updatedAt: serverTimestamp(),
+  };
   if (spawned.length > 0) {
     const nextSubtasks = [...task.subtasks, ...spawned];
     patch.subtasks = nextSubtasks.map(serializeSubtask);
     patch.subtaskStats = computeSubtaskStats(nextSubtasks);
   }
   batch.update(doc(db, "tasks", task.id), patch);
-  queueActivity(batch, task.id, "block_force_sealed", uid, {
+  queueActivity(batch, task.id, "block_sent_to_reviewers", uid, {
     blockId,
     name: block.name,
+    reviewerCount: spawned.length,
+    reviewerUids: spawned.flatMap((s) => s.reviewerUids),
   });
   if (spawned.length > 0) {
     queueActivity(batch, task.id, "review_subtasks_spawned", uid, {
@@ -1032,6 +1324,15 @@ export async function forceSealBlock(task: TaskDoc, blockId: string) {
       name: block.name,
       count: spawned.length,
       reviewerUids: spawned.flatMap((s) => s.reviewerUids),
+    });
+  }
+  // Emit a per-subtask sent_for_review entry so each subtask's activity
+  // feed shows the handoff event ("X sent this subtask for review").
+  for (const s of completionRows) {
+    queueActivity(batch, task.id, "sent_for_review", uid, {
+      subtaskId: s.id,
+      title: s.title,
+      viaBlockSend: true,
     });
   }
   await batch.commit();
@@ -1074,8 +1375,11 @@ export async function unsealBlock(task: TaskDoc, blockId: string) {
 /**
  * Completer self-service: add own uid to a subtask's assigneeUids. Valid both
  * pre-seal AND post-seal — "my teammate is sick, I'm covering" is the
- * explicit post-seal path. Clears block lock-in consent when the block is
- * still open (the allocation picture moved).
+ * explicit post-seal path.
+ *
+ * Stage 2 (2026-04-24): no longer clears lock-in consent on self-add.
+ * Taking on more work shouldn't invalidate the team's allocation agreement
+ * — only *dropping* work does (handled in `selfRemoveFromSubtask`).
  */
 export async function selfAddToSubtask(task: TaskDoc, subtaskId: string) {
   const db = getClientDb();
@@ -1102,13 +1406,16 @@ export async function selfAddToSubtask(task: TaskDoc, subtaskId: string) {
   const subtasks = task.subtasks.map((s) =>
     s.id === subtaskId ? { ...s, assigneeUids: [...s.assigneeUids, uid] } : s,
   );
-  const patch: Record<string, unknown> = {
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
     subtasks: subtasks.map(serializeSubtask),
     updatedAt: serverTimestamp(),
-  };
-  const consentsPatch = clearConsentIfOpen(task, target.blockId);
-  if (consentsPatch) patch.blockConsents = consentsPatch;
-  await updateDoc(doc(db, "tasks", task.id), patch);
+  });
+  queueActivity(batch, task.id, "assignee_added", uid, {
+    subtaskId,
+    title: target.title,
+  });
+  await batch.commit();
 }
 
 /**
@@ -1146,7 +1453,154 @@ export async function selfRemoveFromSubtask(task: TaskDoc, subtaskId: string) {
   };
   const consentsPatch = clearConsentIfOpen(task, target.blockId);
   if (consentsPatch) patch.blockConsents = consentsPatch;
-  await updateDoc(doc(db, "tasks", task.id), patch);
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), patch);
+  queueActivity(batch, task.id, "assignee_removed", uid, {
+    subtaskId,
+    title: target.title,
+  });
+  await batch.commit();
+}
+
+/**
+ * Reviewer self-service — add the acting user to a subtask's reviewer
+ * roster. Caller must be on `task.reviewerUids` (set by admin/creator). No
+ * lock-in gate: reviewers are trusted, senior members — they can organise
+ * their own scope. Post-Notify behaviour: same `selfAdd` path works, the
+ * UI applies a "confirm you've spoken to existing reviewers" popup before
+ * calling this so the cultural "talk first" norm lands.
+ */
+export async function selfAddReviewerToSubtask(
+  task: TaskDoc,
+  subtaskId: string,
+) {
+  const uid = actingUid();
+  if (!task.reviewerUids.includes(uid)) {
+    throw new Error(
+      "Only listed task reviewers can self-assign as a subtask reviewer.",
+    );
+  }
+  const target = task.subtasks.find((s) => s.id === subtaskId);
+  if (!target) throw new Error("Subtask not found");
+  if (target.roleHint === "reviewer") {
+    throw new Error(
+      "This is a reviewer-signoff row — scope is managed at the block level.",
+    );
+  }
+  if (target.sealState === "sealed") {
+    throw new Error(
+      "Subtask is sealed — an admin must unseal before roster changes.",
+    );
+  }
+  if (target.reviewerUids.includes(uid)) return;
+  if (target.reviewerUids.length >= TASK_FIELD_LIMITS.maxReviewersPerSubtask) {
+    throw new Error(
+      `Max ${TASK_FIELD_LIMITS.maxReviewersPerSubtask} reviewers per subtask`,
+    );
+  }
+  const db = getClientDb();
+  let nextSubtasks: Subtask[] = task.subtasks.map((s) =>
+    s.id === subtaskId ? { ...s, reviewerUids: [...s.reviewerUids, uid] } : s,
+  );
+  // Stage 2 (2026-04-24): if the block has already been sent to reviewers
+  // (signoff rows exist) and the acting reviewer doesn't have a signoff
+  // row of their own yet, spawn one atomically. Without this, a reviewer
+  // who self-adds post-Notify would appear in the matrix but have no
+  // signoff row in the "Reviews for …" container.
+  if (target.blockId) {
+    const blockHasSignoffs = task.subtasks.some(
+      (s) => s.blockId === target.blockId && s.roleHint === "reviewer",
+    );
+    const hasOwnSignoff = task.subtasks.some(
+      (s) =>
+        s.blockId === target.blockId &&
+        s.roleHint === "reviewer" &&
+        s.reviewerUids.includes(uid),
+    );
+    if (blockHasSignoffs && !hasOwnSignoff) {
+      nextSubtasks = [
+        ...nextSubtasks,
+        {
+          id: genId(),
+          title: "Reviewer signoff",
+          description: "",
+          dueDate: null,
+          done: false,
+          doneAt: null,
+          doneByUid: null,
+          assigneeUids: [],
+          reviewerUids: [uid],
+          blockedBy: [],
+          approvedByReviewerUids: [],
+          questionedByReviewerUids: [],
+          rejectedByReviewerUids: [],
+          blockId: target.blockId,
+          sealState: "open",
+          sealedAt: null,
+          roleHint: "reviewer",
+        },
+      ];
+    }
+  }
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    subtasks: nextSubtasks.map(serializeSubtask),
+    subtaskStats: computeSubtaskStats(nextSubtasks),
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "reviewer_added", uid, {
+    subtaskId,
+    title: target.title,
+  });
+  await batch.commit();
+}
+
+/**
+ * Reviewer self-service — remove the acting user from a subtask's reviewer
+ * roster. Pre-Notify: unrestricted self-remove. Post-Notify (signoff rows
+ * exist in the block): non-admins locked out — ask an admin to retire you
+ * if you genuinely can't review. Admin bypass via `asAdmin` covers the
+ * admin-removing-someone-else case handled elsewhere.
+ */
+export async function selfRemoveReviewerFromSubtask(
+  task: TaskDoc,
+  subtaskId: string,
+  opts: { asAdmin?: boolean } = {},
+) {
+  const uid = actingUid();
+  const target = task.subtasks.find((s) => s.id === subtaskId);
+  if (!target) throw new Error("Subtask not found");
+  if (!target.reviewerUids.includes(uid)) return;
+  const asAdmin = opts.asAdmin === true;
+  if (target.sealState === "sealed" && !asAdmin) {
+    throw new Error("Subtask is sealed — ask an admin to unseal.");
+  }
+  if (!asAdmin && target.blockId) {
+    const hasSignoffs = task.subtasks.some(
+      (s) => s.blockId === target.blockId && s.roleHint === "reviewer",
+    );
+    if (hasSignoffs) {
+      throw new Error(
+        "This block has been sent to reviewers — ask an admin to remove you.",
+      );
+    }
+  }
+  const db = getClientDb();
+  const subtasks = task.subtasks.map((s) =>
+    s.id === subtaskId
+      ? { ...s, reviewerUids: s.reviewerUids.filter((u) => u !== uid) }
+      : s,
+  );
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    subtasks: subtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "reviewer_removed", uid, {
+    subtaskId,
+    title: target.title,
+  });
+  await batch.commit();
 }
 
 /**

@@ -73,11 +73,18 @@ export function useCommentsAndActivity(taskId: string | null) {
   const feed = useMemo<FeedEntry[]>(() => {
     const rows: FeedEntry[] = [];
     for (const c of comments) {
+      // Phase 3: task-level thread shows task-scoped comments only.
+      // Subtask-scoped comments render inside the subtask's detail modal.
+      if (c.subtaskId !== null) continue;
       rows.push({ kind: "comment", at: c.createdAt, comment: c });
     }
     for (const a of activity) {
       // Skip comment_added — the comment itself is already in the feed.
       if (a.kind === "comment_added") continue;
+      // Skip the per-subtask lock-in entries — task-level already has the
+      // single `block_sealed` entry; the per-subtask ones would render as
+      // N duplicates here.
+      if (a.kind === "subtask_block_locked_in") continue;
       rows.push({ kind: "activity", at: a.createdAt, activity: a });
     }
     rows.sort((a, b) => {

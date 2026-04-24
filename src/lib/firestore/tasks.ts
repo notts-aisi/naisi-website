@@ -59,6 +59,7 @@ export const TASK_FIELD_LIMITS = {
   title: 120,
   description: 4000,
   subtaskTitle: 160,
+  subtaskDescription: 2000,
   blockName: 60,
   tag: 40,
   maxSubtasks: 50,
@@ -80,6 +81,8 @@ export const TASK_FIELD_LIMITS = {
  * (cover-for-sick-teammate path). Auto-spawned review subtasks land on
  * `sealState === "sealed"`.
  */
+export type BlockGatingMode = "previous" | "all-previous" | "none";
+
 export type TaskBlock = {
   id: string;
   name: string;
@@ -89,6 +92,13 @@ export type TaskBlock = {
   /** Admin UID who force-sealed this block, or null if it sealed via
    *  consensus. Purely informational — doesn't affect gating. */
   forceSealedByUid: string | null;
+  /** Phase 3 / 1.9e: declarative upstream-deps mode. Drives whether this
+   *  block's completion rows are blocked until upstream block(s) are
+   *  complete. Defaults to "previous" for new blocks — gating works out
+   *  of the box without admin action. Existing blocks (pre-migration)
+   *  normalize to "previous". First block (order === 0) ignores this
+   *  field — it has no upstream blocks. */
+  gatingMode: BlockGatingMode;
 };
 
 export type BlockConsentMap = Record<string, { consentingCompleterUids: string[] }>;
@@ -96,6 +106,17 @@ export type BlockConsentMap = Record<string, { consentingCompleterUids: string[]
 export type Subtask = {
   id: string;
   title: string;
+  /** Stable per-subtask instructions from the task creator — what's being
+   *  asked for, suggested flow, acceptance cues. Distinct from the comment
+   *  thread (which is dynamic back-and-forth). Empty string = not set.
+   *  Markdown is not rendered; the popover shows plain text with preserved
+   *  whitespace so formatting stays author-controlled. */
+  description: string;
+  /** Optional per-subtask due date. Independent of the task-level dueDate —
+   *  often *firmer* than the task's aspirational deadline (e.g. the
+   *  publicity post for an event must land days before the event itself).
+   *  Not enforced against task.dueDate by design. */
+  dueDate: Date | null;
   done: boolean;
   doneAt: Date | null;
   doneByUid: string | null;
@@ -208,6 +229,8 @@ function normalizeSubtask(raw: unknown): Subtask | null {
   return {
     id,
     title,
+    description: typeof s.description === "string" ? s.description : "",
+    dueDate: tsToDate(s.dueDate),
     done: Boolean(s.done),
     doneAt: tsToDate(s.doneAt),
     doneByUid: typeof s.doneByUid === "string" ? s.doneByUid : null,
@@ -233,6 +256,11 @@ function normalizeBlock(raw: unknown): TaskBlock | null {
   const sealState: TaskBlock["sealState"] =
     b.sealState === "sealed" ? "sealed" : "open";
   const order = typeof b.order === "number" ? b.order : 0;
+  const rawMode = b.gatingMode;
+  const gatingMode: BlockGatingMode =
+    rawMode === "all-previous" || rawMode === "none"
+      ? rawMode
+      : "previous";
   return {
     id,
     name,
@@ -241,6 +269,7 @@ function normalizeBlock(raw: unknown): TaskBlock | null {
     sealedAt: tsToDate(b.sealedAt),
     forceSealedByUid:
       typeof b.forceSealedByUid === "string" ? b.forceSealedByUid : null,
+    gatingMode,
   };
 }
 
@@ -331,16 +360,20 @@ export function isDueSoon(task: TaskDoc, now: Date = new Date()): boolean {
 }
 
 /**
- * Effective reviewer set for a given subtask: the subtask's own
- * reviewerUids if non-empty, otherwise the task-level reviewerUids as a
- * fallback. An empty effective set means "no reviewer gate on this
- * subtask" — blue ticks resolve immediately.
+ * Effective reviewer set for a given subtask. Stage 2 (2026-04-24):
+ * dropped the task-level fallback — reviewers must explicitly claim
+ * individual subtasks via `+ Review` (the self-service affordance in
+ * `SubtaskRow`). If `subtask.reviewerUids` is empty, the subtask has no
+ * review gate at all (green-when-done).
+ *
+ * Second parameter retained for backward-compat with existing callers;
+ * value is unused.
  */
 export function effectiveReviewerUids(
   subtask: Subtask,
-  taskReviewerUids: string[],
+  _taskReviewerUids: string[] = [],
 ): string[] {
-  return subtask.reviewerUids.length > 0 ? subtask.reviewerUids : taskReviewerUids;
+  return subtask.reviewerUids;
 }
 
 export type SubtaskApprovalStatus = {
@@ -387,26 +420,61 @@ export function getSubtaskApprovalStatus(
 }
 
 /**
- * A subtask is tickable only when every blockedBy-reference resolves to a
- * sibling that is (a) `done: true` AND (b) meets its per-subtask approval
- * threshold (≥1 required reviewer has placed ✓, OR the blocker has no
- * required reviewers). Unknown blocker ids are fail-safe blocked — better
- * to lock a row than silently unlock on a dangling ref.
+ * Block-level gating check: is the block's upstream dependency unmet?
+ * Drives the Phase 3 / 1.9e declarative gating dropdown. First block
+ * (order === 0) is always ungated — nothing upstream. `none` mode never
+ * gates. `previous` gates on the immediate upstream block. `all-previous`
+ * gates on every block with a lower order.
+ */
+export function isBlockGatedByUpstream(
+  task: TaskDoc,
+  block: TaskBlock,
+): boolean {
+  if (block.gatingMode === "none") return false;
+  if (block.order === 0) return false;
+  const upstream = task.blocks.filter((b) => b.order < block.order);
+  if (upstream.length === 0) return false;
+  if (block.gatingMode === "previous") {
+    let previous: TaskBlock | null = null;
+    for (const b of upstream) {
+      if (!previous || b.order > previous.order) previous = b;
+    }
+    if (!previous) return false;
+    return getBlockPhase(task, previous) !== "complete";
+  }
+  // all-previous
+  return upstream.some((b) => getBlockPhase(task, b) !== "complete");
+}
+
+/**
+ * A subtask is tickable only when its parent block's upstream gating is
+ * satisfied AND every `blockedBy`-reference resolves to a sibling that is
+ * `done: true`. Block-level gating 2026-04-23 (1.9e) — previously the
+ * only gate was `blockedBy`. Unknown blocker ids are fail-safe blocked.
+ *
+ * Accepts either the full `TaskDoc` (preferred — enables block-gating
+ * check) or just `siblings` (legacy callers; degrades to subtask-level
+ * `blockedBy` only).
  */
 export function isSubtaskBlocked(
   subtask: Subtask,
-  siblings: Subtask[],
-  taskReviewerUids: string[] = [],
+  taskOrSiblings: TaskDoc | Subtask[],
+  _taskReviewerUids: string[] = [],
 ): boolean {
+  const siblings = Array.isArray(taskOrSiblings)
+    ? taskOrSiblings
+    : taskOrSiblings.subtasks;
+  const task = Array.isArray(taskOrSiblings) ? null : taskOrSiblings;
+  if (task && subtask.blockId) {
+    const parentBlock = task.blocks.find((b) => b.id === subtask.blockId);
+    if (parentBlock && isBlockGatedByUpstream(task, parentBlock)) return true;
+  }
   if (subtask.blockedBy.length === 0) return false;
   const byId = new Map(siblings.map((s) => [s.id, s]));
   return subtask.blockedBy.some((id) => {
     const blocker = byId.get(id);
-    if (!blocker) return true; // unknown id = stay blocked
+    if (!blocker) return true;
     if (!blocker.done) return true;
-    const status = getSubtaskApprovalStatus(blocker, taskReviewerUids);
-    // Blocker has required reviewers → they must have at least one ✓.
-    if (status.required.length > 0 && !status.hasAnyApproval) return true;
     return false;
   });
 }
@@ -416,15 +484,15 @@ export type RowState = "neutral" | "blue" | "orange" | "green" | "red";
 /**
  * Derives the colour band for a subtask row given its current state + whether
  * a sent_for_review has already fired targeting it. Rules (first match wins):
- *   - red: any required reviewer has placed ❌ (rejection — outranks everything)
- *   - neutral: not done yet
+ *   - orange: any required reviewer has placed ❌ (rejection — softened from
+ *             red 2026-04-24 per user direction: "humane tone, rejection
+ *             feels less alarming as orange"). Auto-unticks on reject so
+ *             completers see it as "redo this" rather than a done-but-bad
+ *             state.
+ *   - neutral: not done yet AND no rejection pending
  *   - orange: any outstanding ❓, OR sent-for-review pending with approvals incomplete
  *   - green: fully approved, OR done-with-no-reviewers
  *   - blue: done but approvals outstanding and no ❓ yet (resting state)
- *
- * Rejection outranks the "not done" check because a rejected completer may
- * still be looking at their ticked row deciding whether to un-tick and re-do
- * — the red signal is what tells them they need to act.
  */
 export function subtaskRowState(
   subtask: Subtask,
@@ -432,7 +500,7 @@ export function subtaskRowState(
   sentForReviewPending: boolean,
 ): RowState {
   const status = getSubtaskApprovalStatus(subtask, taskReviewerUids);
-  if (status.hasRejection) return "red";
+  if (status.hasRejection) return "orange";
   if (!subtask.done) return "neutral";
   if (status.hasOutstandingQuestion) return "orange";
   if (status.required.length === 0) return "green"; // no review gate
@@ -482,6 +550,49 @@ export function groupSubtasksByBlock(
     out.push({ block: null, completion: ungrouped, signoffs: [] });
   }
   return out;
+}
+
+/**
+ * Phase of a block in the Stage 1.9 lifecycle:
+ *   - `allocating`: block is open, completers deciding who does what.
+ *     Colour: red (attention needed, allocation incomplete).
+ *   - `in-progress`: block sealed (roster locked), work underway, no
+ *     signoff rows yet. Colour: orange.
+ *   - `reviewing`: signoff rows spawned (Notify pressed), not yet all done.
+ *     Colour: yellow.
+ *   - `complete`: every signoff row is ticked done — block accepted.
+ *     Colour: green.
+ */
+export type BlockPhase = "allocating" | "in-progress" | "reviewing" | "complete";
+
+export function getBlockPhase(task: TaskDoc, block: TaskBlock): BlockPhase {
+  if (block.sealState !== "sealed") return "allocating";
+  const signoffs = task.subtasks.filter(
+    (s) => s.blockId === block.id && s.roleHint === "reviewer",
+  );
+  const completionRows = task.subtasks.filter(
+    (s) => s.blockId === block.id && s.roleHint !== "reviewer",
+  );
+  const allCompletionDone =
+    completionRows.length === 0 || completionRows.every((s) => s.done);
+  if (signoffs.length === 0) {
+    // No signoff rows yet. Two cases:
+    //  (a) no reviewers claimed on any subtask → no review gate ever,
+    //      go green as soon as every completion row is ticked done.
+    //  (b) reviewers have claimed scope but Notify hasn't been pressed —
+    //      stay in-progress so the "Notify reviewers" button surfaces.
+    const hasAnyReviewerClaim = completionRows.some(
+      (s) => s.reviewerUids.length > 0,
+    );
+    if (!hasAnyReviewerClaim && allCompletionDone) return "complete";
+    return "in-progress";
+  }
+  // Signoffs exist (Notify has been pressed). A rejection auto-unticks
+  // its subtask → if any completion row isn't done, drop back to
+  // "in-progress" (orange) even with signoff rows spawned.
+  if (!allCompletionDone) return "in-progress";
+  if (signoffs.every((s) => s.done)) return "complete";
+  return "reviewing";
 }
 
 /**

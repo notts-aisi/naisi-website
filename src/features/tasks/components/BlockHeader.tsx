@@ -5,17 +5,33 @@ import {
   TASK_FIELD_LIMITS,
   getBlockConsensusState,
   getBlockEffectiveReviewerUids,
+  getBlockPhase,
+  type BlockGatingMode,
   type TaskBlock,
   type TaskDoc,
 } from "@/lib/firestore/tasks";
+import { BLOCK_PHASE_PALETTE } from "./SubtaskList";
 import {
   deleteBlock,
   ensureBlockReviewSubtasks,
   forceSealBlock,
   renameBlock,
+  setBlockDueDate,
+  setBlockGatingMode,
   toggleBlockConsent,
   unsealBlock,
 } from "../taskMutations";
+
+function toDateInputValue(d: Date | null): string {
+  if (!d) return "";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+const GATING_LABELS: Record<BlockGatingMode, string> = {
+  previous: "Gated by previous block",
+  "all-previous": "Gated by all previous blocks",
+  none: "Not gated",
+};
 
 type Props = {
   task: TaskDoc;
@@ -47,37 +63,50 @@ export default function BlockHeader({
   const isSealed = block.sealState === "sealed";
   const requiredCount = consensus.required.length;
   const consentCount = consensus.consenting.length;
-  // Lock-in gate: every completion subtask the viewer is assigned to in
-  // this block must be ticked done before they can lock in. Retracting
-  // a prior lock-in stays unrestricted (you realise you weren't actually
-  // finished — let them back out). Mirrored in `toggleBlockConsent`.
-  const myOutstanding = task.subtasks.filter(
-    (s) =>
-      s.blockId === block.id &&
-      s.roleHint !== "reviewer" &&
-      s.assigneeUids.includes(viewerUid) &&
-      !s.done,
-  );
-  const lockInGated = !hasConsented && myOutstanding.length > 0;
-  const lockInGateTooltip = lockInGated
-    ? `Finish your assigned subtasks first: ${myOutstanding
+  // Stage 1.5a: lock-in is an ALLOCATION gate, not a submission gate.
+  // Completers can lock in as soon as they're happy with who's doing what;
+  // work-done is gated separately by the "Send block to reviewers" button
+  // at the bottom of the completion block.
+
+  // Stage 1.5a gap-fix: the LAST lock-in (the consent that would seal the
+  // block) is gated on every non-reviewer subtask having ≥1 assignee.
+  // Earlier consents pass unchecked — they don't yet commit the allocation.
+  const wouldSealOnMyConsent =
+    !hasConsented &&
+    isCompleter &&
+    requiredCount > 0 &&
+    requiredCount === consentCount + 1;
+  const unassignedInBlock = wouldSealOnMyConsent
+    ? task.subtasks.filter(
+        (s) =>
+          s.blockId === block.id &&
+          s.roleHint !== "reviewer" &&
+          s.assigneeUids.length === 0,
+      )
+    : [];
+  const finalLockInBlocked = unassignedInBlock.length > 0;
+  const finalLockInTooltip = finalLockInBlocked
+    ? `Can't seal yet — unassigned subtasks: ${unassignedInBlock
         .slice(0, 3)
         .map((s) => `"${s.title}"`)
-        .join(", ")}${myOutstanding.length > 3 ? ` (+${myOutstanding.length - 3} more)` : ""}`
+        .join(", ")}${unassignedInBlock.length > 3 ? ` (+${unassignedInBlock.length - 3} more)` : ""}`
     : null;
   // Missing-reviewer detection for the admin catch-up button. Compares
   // every effective reviewer for the block against existing reviewer-hint
-  // rows in that block. Non-zero when the block was sealed before PR 2's
-  // auto-spawn landed, or when a reviewer got added after seal.
+  // rows in that block. Non-zero when a reviewer got added to the task
+  // *after* the block was sent to reviewers. Stage 1.5a (2026-04-23):
+  // gated on having at least one existing signoff row so the button
+  // doesn't show pre-Notify (where zero rows is the intended state).
   const effectiveReviewers = getBlockEffectiveReviewerUids(task, block.id);
   const existingReviewerUids = new Set(
     task.subtasks
       .filter((s) => s.blockId === block.id && s.roleHint === "reviewer")
       .flatMap((s) => s.reviewerUids),
   );
-  const missingReviewerCount = effectiveReviewers.filter(
-    (u) => !existingReviewerUids.has(u),
-  ).length;
+  const hasSpawnedRows = existingReviewerUids.size > 0;
+  const missingReviewerCount = hasSpawnedRows
+    ? effectiveReviewers.filter((u) => !existingReviewerUids.has(u)).length
+    : 0;
 
   async function saveName() {
     const trimmed = nameDraft.trim();
@@ -155,6 +184,19 @@ export default function BlockHeader({
     }
   }
 
+  async function handleBlockDueChange(value: string) {
+    const next = value ? new Date(value) : null;
+    setBusy(true);
+    try {
+      await setBlockDueDate(task, block.id, next);
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Couldn't set block due date");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDelete() {
     if (busy) return;
     const ok = window.confirm(
@@ -171,6 +213,31 @@ export default function BlockHeader({
     }
   }
 
+  const phase = getBlockPhase(task, block);
+  const phasePalette = BLOCK_PHASE_PALETTE[phase];
+  const showGating = block.order > 0;
+  // Task-level reviewers can also manage gating — they steer the review
+  // flow. Admin bypass implicit.
+  const canEditGating = isAdmin || task.reviewerUids.includes(viewerUid);
+
+  // Block-level due-date cascade (Phase 3): infer the "common" date from
+  // non-reviewer subtasks in the block. If every subtask shares the same
+  // date, show it; if they differ, show "Mixed" and still let the control
+  // overwrite them all. Empty block → null.
+  const completionSubtasksInBlock = task.subtasks.filter(
+    (s) => s.blockId === block.id && s.roleHint !== "reviewer",
+  );
+  const dueTimestamps = completionSubtasksInBlock.map((s) =>
+    s.dueDate ? s.dueDate.getTime() : null,
+  );
+  const commonDue: Date | null =
+    dueTimestamps.length > 0 && dueTimestamps.every((t) => t === dueTimestamps[0])
+      ? dueTimestamps[0] !== null
+        ? new Date(dueTimestamps[0])
+        : null
+      : null;
+  const dueIsMixed =
+    dueTimestamps.length > 0 && !dueTimestamps.every((t) => t === dueTimestamps[0]);
   return (
     <div
       style={{
@@ -178,14 +245,8 @@ export default function BlockHeader({
         flexDirection: "column",
         gap: "var(--space-2)",
         padding: "0.65rem 0.85rem",
-        background: isSealed
-          ? "var(--color-warning-soft, var(--color-surface-hover))"
-          : "var(--color-success-soft, rgba(22, 163, 74, 0.08))",
-        border: `1px solid ${
-          isSealed
-            ? "var(--color-warning, var(--color-accent))"
-            : "var(--color-success, #16a34a)"
-        }`,
+        background: phasePalette.bg,
+        border: `1px solid ${phasePalette.border}`,
         borderRadius: "var(--radius-md)",
       }}
     >
@@ -235,22 +296,24 @@ export default function BlockHeader({
             letterSpacing: "0.05em",
             padding: "2px 8px",
             borderRadius: "999px",
-            background: isSealed
-              ? "var(--color-warning, var(--color-accent))"
-              : "var(--color-success, #16a34a)",
+            background: phasePalette.border,
             color: "white",
             border: "none",
             fontWeight: 700,
           }}
           title={
-            isSealed
-              ? block.forceSealedByUid
-                ? "Sealed — attention moves to reviewers. (admin force-seal)"
-                : "Sealed — attention moves to reviewers."
-              : "Active — completers at work on this block."
+            phase === "allocating"
+              ? "Allocating — completers deciding who does what."
+              : phase === "in-progress"
+                ? block.forceSealedByUid
+                  ? "In progress — work under way. (admin force-sealed allocation)"
+                  : "In progress — allocation locked, work under way."
+                : phase === "reviewing"
+                  ? "Under review — reviewers working through the block."
+                  : "Complete — every reviewer has signed off."
           }
         >
-          {isSealed ? "Sealed" : "Active"}
+          {phasePalette.label}
         </span>
 
         {!isSealed && requiredCount > 0 && (
@@ -278,12 +341,150 @@ export default function BlockHeader({
           </span>
         )}
 
+        {showGating && canEditGating && (
+          <label
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              padding: "0.35rem 0.75rem",
+              background:
+                block.gatingMode === "none"
+                  ? "var(--color-bg-elevated)"
+                  : "var(--color-accent-soft)",
+              border: `1px solid ${
+                block.gatingMode === "none"
+                  ? "var(--color-border)"
+                  : "var(--color-accent)"
+              }`,
+              borderRadius: "999px",
+              fontSize: "var(--text-xs)",
+              fontWeight: 600,
+              color:
+                block.gatingMode === "none"
+                  ? "var(--color-text-muted)"
+                  : "var(--color-accent)",
+              cursor: "pointer",
+            }}
+            title="Controls what must be complete before this block's work can start."
+          >
+            <span aria-hidden="true" style={{ fontSize: "14px", lineHeight: 1 }}>
+              {block.gatingMode === "none" ? "🔓" : "🔗"}
+            </span>
+            <select
+              value={block.gatingMode}
+              onChange={(e) =>
+                setBlockGatingMode(
+                  task,
+                  block.id,
+                  e.target.value as BlockGatingMode,
+                ).catch(console.error)
+              }
+              aria-label="Upstream gating for this block"
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "inherit",
+                fontSize: "inherit",
+                fontWeight: "inherit",
+                fontFamily: "inherit",
+                cursor: "pointer",
+                outline: "none",
+                padding: 0,
+                paddingRight: "0.2rem",
+              }}
+            >
+              <option value="previous">{GATING_LABELS.previous}</option>
+              <option value="all-previous">{GATING_LABELS["all-previous"]}</option>
+              <option value="none">{GATING_LABELS.none}</option>
+            </select>
+          </label>
+        )}
+        {showGating && !canEditGating && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--space-1)",
+              padding: "0.25rem 0.6rem",
+              borderRadius: "999px",
+              background:
+                block.gatingMode === "none"
+                  ? "var(--color-bg-elevated)"
+                  : "var(--color-accent-soft)",
+              border: `1px solid ${
+                block.gatingMode === "none"
+                  ? "var(--color-border)"
+                  : "var(--color-accent)"
+              }`,
+              color:
+                block.gatingMode === "none"
+                  ? "var(--color-text-muted)"
+                  : "var(--color-accent)",
+              fontSize: "10px",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+            }}
+            title={GATING_LABELS[block.gatingMode]}
+          >
+            <span aria-hidden="true">{block.gatingMode === "none" ? "🔓" : "🔗"}</span>
+            {block.gatingMode === "none" ? "Ungated" : "Gated"}
+          </span>
+        )}
+
+        {canEditStructure && completionSubtasksInBlock.length > 0 && (
+          <label
+            style={{
+              position: "relative",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              padding: "0.35rem 0.75rem",
+              background: "var(--color-bg-elevated)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "999px",
+              fontSize: "var(--text-xs)",
+              fontWeight: 600,
+              color: "var(--color-text-muted)",
+              cursor: "pointer",
+            }}
+            title="Set due date for every subtask in this block. Overwrites individual dates."
+          >
+            <span aria-hidden="true" style={{ fontSize: "14px", lineHeight: 1 }}>
+              📅
+            </span>
+            <span>
+              {dueIsMixed
+                ? "Mixed dates"
+                : commonDue
+                  ? commonDue.toLocaleDateString()
+                  : "Set all due"}
+            </span>
+            <input
+              type="date"
+              value={commonDue ? toDateInputValue(commonDue) : ""}
+              onChange={(e) => handleBlockDueChange(e.target.value).catch(console.error)}
+              disabled={busy}
+              aria-label="Set due date for every subtask in this block"
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                opacity: 0,
+                cursor: "pointer",
+              }}
+            />
+          </label>
+        )}
+
         <div style={{ marginLeft: "auto", display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
           {!isSealed && isCompleter && (
             <button
               type="button"
               onClick={handleLockInToggle}
-              disabled={busy || lockInGated}
+              disabled={busy || finalLockInBlocked}
               style={{
                 padding: "0.3rem 0.75rem",
                 background: hasConsented
@@ -296,14 +497,14 @@ export default function BlockHeader({
                 borderRadius: "var(--radius-sm, 4px)",
                 fontSize: "var(--text-xs)",
                 fontWeight: 600,
-                cursor: busy || lockInGated ? "not-allowed" : "pointer",
-                opacity: lockInGated ? 0.55 : 1,
+                cursor: busy || finalLockInBlocked ? "not-allowed" : "pointer",
+                opacity: finalLockInBlocked ? 0.55 : 1,
               }}
               title={
-                lockInGateTooltip ??
+                finalLockInTooltip ??
                 (hasConsented
-                  ? "You've locked in. Click to unlock and edit allocation."
-                  : "Click to lock in — submits your assigned work for review.")
+                  ? "You've locked in. Click to unlock and re-open allocation."
+                  : "Click to lock in — confirms the subtask allocation and starts work.")
               }
             >
               {hasConsented ? "✓ Locked in" : "Lock in"}
