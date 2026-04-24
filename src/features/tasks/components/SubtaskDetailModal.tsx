@@ -12,7 +12,7 @@ import {
 import { COMMENT_FIELD_LIMITS } from "@/lib/firestore/comments";
 import type { UserDoc } from "@/lib/firestore/users";
 import { updateSubtaskDescription, updateSubtaskDueDate } from "../taskMutations";
-import { addComment } from "../commentMutations";
+import { addComment, updateComment } from "../commentMutations";
 import { useSubtaskComments } from "../hooks/useSubtaskComments";
 import { useSubtaskActivity } from "../hooks/useSubtaskActivity";
 import CommentItem from "./CommentItem";
@@ -57,6 +57,37 @@ export default function SubtaskDetailModal({
   const [commentDraft, setCommentDraft] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
   const [commentErr, setCommentErr] = useState<string | null>(null);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+  const [editErr, setEditErr] = useState<string | null>(null);
+
+  async function saveEdit() {
+    if (!editingCommentId) return;
+    const body = editDraft.trim();
+    if (!body || editBusy) return;
+    setEditBusy(true);
+    setEditErr(null);
+    try {
+      // Mentions aren't yet parsed in the subtask MVP composer, so pass [].
+      // Upgrading to TipTap + mentions is a follow-up.
+      await updateComment(task.id, editingCommentId, body, []);
+      setEditingCommentId(null);
+      setEditDraft("");
+    } catch (err) {
+      setEditErr(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  function beginEdit(commentId: string) {
+    const target = subComments.find((c) => c.id === commentId);
+    if (!target) return;
+    setEditingCommentId(commentId);
+    setEditDraft(target.bodyMarkdown);
+    setEditErr(null);
+  }
   const { comments: subComments, loading: subCommentsLoading } = useSubtaskComments(
     task.id,
     subtask.id,
@@ -385,18 +416,74 @@ export default function SubtaskDetailModal({
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
                 {rows.map((row, i) =>
                   row.kind === "comment" ? (
-                    <CommentItem
-                      key={`c-${row.payload.id}`}
-                      taskId={task.id}
-                      comment={row.payload}
-                      users={users}
-                      viewerUid={viewerUid}
-                      viewerIsAdmin={viewerIsAdmin}
-                      onEditRequested={() => {
-                        /* Inline edit not wired on subtask thread yet —
-                           use the task-level thread to edit. */
-                      }}
-                    />
+                    editingCommentId === row.payload.id ? (
+                      <div
+                        key={`edit-${row.payload.id}`}
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "var(--space-2)",
+                          padding: "var(--space-3)",
+                          background: "var(--color-bg-elevated)",
+                          border: "1px solid var(--color-accent)",
+                          borderRadius: "var(--radius-md)",
+                        }}
+                      >
+                        <textarea
+                          autoFocus
+                          value={editDraft}
+                          onChange={(e) => setEditDraft(e.target.value)}
+                          rows={3}
+                          maxLength={COMMENT_FIELD_LIMITS.bodyMarkdown}
+                          style={{
+                            width: "100%",
+                            padding: "var(--space-2) var(--space-3)",
+                            background: "var(--color-bg)",
+                            border: "1px solid var(--color-border)",
+                            borderRadius: "var(--radius-md)",
+                            color: "var(--color-text)",
+                            fontSize: "var(--text-sm)",
+                            fontFamily: "inherit",
+                            resize: "vertical",
+                          }}
+                        />
+                        <div style={{ display: "flex", gap: "var(--space-2)" }}>
+                          <Button
+                            size="sm"
+                            onClick={() => void saveEdit()}
+                            disabled={editBusy || !editDraft.trim()}
+                          >
+                            {editBusy ? "Saving…" : "Save"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setEditingCommentId(null);
+                              setEditDraft("");
+                              setEditErr(null);
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                        {editErr && (
+                          <p style={{ color: "var(--color-danger)", fontSize: "var(--text-xs)", margin: 0 }}>
+                            {editErr}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <CommentItem
+                        key={`c-${row.payload.id}`}
+                        taskId={task.id}
+                        comment={row.payload}
+                        users={users}
+                        viewerUid={viewerUid}
+                        viewerIsAdmin={viewerIsAdmin}
+                        onEditRequested={beginEdit}
+                      />
+                    )
                   ) : (
                     <ActivityLine
                       key={`a-${row.payload.id}-${i}`}
@@ -631,7 +718,7 @@ function ActivityLine({
 }) {
   const actor = users.find((u) => u.uid === entry.actorUid);
   const actorName = actor?.displayName ?? actor?.email ?? "Someone";
-  const verb = summariseActivity(entry);
+  const verb = summariseActivity(entry, users);
   if (!verb) return null;
   return (
     <div
@@ -663,7 +750,22 @@ function ActivityLine({
   );
 }
 
-function summariseActivity(entry: ActivityDoc): string | null {
+function summariseActivity(
+  entry: ActivityDoc,
+  users: UserDoc[],
+): string | null {
+  const note = typeof entry.payload?.note === "string" ? entry.payload.note : null;
+  const withNote = (base: string) =>
+    note ? `${base} with note: "${note}"` : base;
+  const addedUid =
+    typeof entry.payload?.addedUid === "string" ? entry.payload.addedUid : null;
+  const removedUid =
+    typeof entry.payload?.removedUid === "string" ? entry.payload.removedUid : null;
+  const viaBlockSend = entry.payload?.viaBlockSend === true;
+  function nameOf(uid: string): string {
+    const u = users.find((x) => x.uid === uid);
+    return u?.displayName ?? u?.email ?? uid;
+  }
   switch (entry.kind) {
     case "subtask_added":
       return "added this subtask";
@@ -672,11 +774,11 @@ function summariseActivity(entry: ActivityDoc): string | null {
     case "subtask_undone":
       return "un-ticked this subtask";
     case "subtask_approved":
-      return "approved this subtask";
+      return withNote("approved this subtask");
     case "subtask_questioned":
-      return "has a question about this subtask";
+      return withNote("has a question about this subtask");
     case "subtask_rejected":
-      return "rejected this subtask";
+      return withNote("rejected this subtask");
     case "subtask_resubmitted":
       return "resubmitted this subtask for review";
     case "subtask_force_sealed":
@@ -684,15 +786,25 @@ function summariseActivity(entry: ActivityDoc): string | null {
     case "subtask_unsealed":
       return "unsealed this subtask (admin)";
     case "sent_for_review":
-      return "sent this subtask for review";
+      return viaBlockSend
+        ? "sent this subtask to reviewers (block handoff)"
+        : "sent this subtask for review";
     case "assignee_added":
-      return "added themselves as an assignee";
+      return addedUid
+        ? `added ${nameOf(addedUid)} as an assignee`
+        : "added themselves as an assignee";
     case "assignee_removed":
-      return "removed themselves as an assignee";
+      return removedUid
+        ? `removed ${nameOf(removedUid)} as an assignee`
+        : "removed themselves as an assignee";
     case "reviewer_added":
-      return "added themselves as a reviewer";
+      return addedUid
+        ? `added ${nameOf(addedUid)} as a reviewer`
+        : "added themselves as a reviewer";
     case "reviewer_removed":
-      return "removed themselves as a reviewer";
+      return removedUid
+        ? `removed ${nameOf(removedUid)} as a reviewer`
+        : "removed themselves as a reviewer";
     case "attachment_added":
       return "uploaded a file";
     case "subtask_blocked_changed":

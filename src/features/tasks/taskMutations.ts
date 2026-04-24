@@ -537,6 +537,7 @@ async function patchSubtask(
 
 export async function setSubtaskAssignees(task: TaskDoc, subtaskId: string, uids: string[]) {
   const db = getClientDb();
+  const actor = actingUid();
   const target = task.subtasks.find((s) => s.id === subtaskId);
   if (!target) throw new Error("Subtask not found");
   if (target.sealState === "sealed") {
@@ -547,6 +548,8 @@ export async function setSubtaskAssignees(task: TaskDoc, subtaskId: string, uids
   // Firestore rules can't affordably diff nested arrays to check
   // "only-self-changes" semantics.
   const next = clampUids(uids, TASK_FIELD_LIMITS.maxAssigneesPerSubtask);
+  const added = next.filter((u) => !target.assigneeUids.includes(u));
+  const removed = target.assigneeUids.filter((u) => !next.includes(u));
   const subtasks = task.subtasks.map((s) =>
     s.id === subtaskId ? { ...s, assigneeUids: next } : s,
   );
@@ -556,17 +559,59 @@ export async function setSubtaskAssignees(task: TaskDoc, subtaskId: string, uids
   };
   const consentsPatch = clearConsentIfOpen(task, target.blockId);
   if (consentsPatch) patch.blockConsents = consentsPatch;
-  await updateDoc(doc(db, "tasks", task.id), patch);
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), patch);
+  for (const addedUid of added) {
+    queueActivity(batch, task.id, "assignee_added", actor, {
+      subtaskId,
+      title: target.title,
+      addedUid,
+    });
+  }
+  for (const removedUid of removed) {
+    queueActivity(batch, task.id, "assignee_removed", actor, {
+      subtaskId,
+      title: target.title,
+      removedUid,
+    });
+  }
+  await batch.commit();
 }
 
 export async function setSubtaskReviewers(task: TaskDoc, subtaskId: string, uids: string[]) {
   // Caller permission (admin / creator) is gated by the UI not rendering
   // the picker for anyone else. Phase 3 is client-enforced — see
   // setSubtaskAssignees.
-  await patchSubtask(task, subtaskId, (s) => ({
-    ...s,
-    reviewerUids: clampUids(uids, TASK_FIELD_LIMITS.maxReviewersPerSubtask),
-  }));
+  const db = getClientDb();
+  const actor = actingUid();
+  const target = task.subtasks.find((s) => s.id === subtaskId);
+  if (!target) throw new Error("Subtask not found");
+  const next = clampUids(uids, TASK_FIELD_LIMITS.maxReviewersPerSubtask);
+  const added = next.filter((u) => !target.reviewerUids.includes(u));
+  const removed = target.reviewerUids.filter((u) => !next.includes(u));
+  const subtasks = task.subtasks.map((s) =>
+    s.id === subtaskId ? { ...s, reviewerUids: next } : s,
+  );
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    subtasks: subtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  });
+  for (const addedUid of added) {
+    queueActivity(batch, task.id, "reviewer_added", actor, {
+      subtaskId,
+      title: target.title,
+      addedUid,
+    });
+  }
+  for (const removedUid of removed) {
+    queueActivity(batch, task.id, "reviewer_removed", actor, {
+      subtaskId,
+      title: target.title,
+      removedUid,
+    });
+  }
+  await batch.commit();
 }
 
 export async function setSubtaskBlockedBy(
@@ -599,6 +644,7 @@ export async function setSubtaskApproval(
   task: TaskDoc,
   subtaskId: string,
   state: ReviewState,
+  opts: { note?: string } = {},
 ) {
   const uid = actingUid();
   const target = task.subtasks.find((s) => s.id === subtaskId);
@@ -663,20 +709,24 @@ export async function setSubtaskApproval(
     subtasks: nextSubtasks.map(serializeSubtask),
     updatedAt: serverTimestamp(),
   });
+  const note = typeof opts.note === "string" ? opts.note.trim().slice(0, 500) : "";
   if (state === "reject") {
     queueActivity(batch, task.id, "subtask_rejected", uid, {
       subtaskId,
       title: target.title,
+      note: note || null,
     });
   } else if (state === "approve") {
     queueActivity(batch, task.id, "subtask_approved", uid, {
       subtaskId,
       title: target.title,
+      note: note || null,
     });
   } else if (state === "question") {
     queueActivity(batch, task.id, "subtask_questioned", uid, {
       subtaskId,
       title: target.title,
+      note: note || null,
     });
   }
   await batch.commit();
@@ -1261,6 +1311,15 @@ export async function sendBlockToReviewers(task: TaskDoc, blockId: string) {
       name: block.name,
       count: spawned.length,
       reviewerUids: spawned.flatMap((s) => s.reviewerUids),
+    });
+  }
+  // Emit a per-subtask sent_for_review entry so each subtask's activity
+  // feed shows the handoff event ("X sent this subtask for review").
+  for (const s of completionRows) {
+    queueActivity(batch, task.id, "sent_for_review", uid, {
+      subtaskId: s.id,
+      title: s.title,
+      viaBlockSend: true,
     });
   }
   await batch.commit();
