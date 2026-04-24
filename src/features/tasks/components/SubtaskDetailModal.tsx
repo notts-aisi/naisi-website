@@ -669,6 +669,12 @@ function summariseActivity(entry: ActivityDoc): string | null {
       return "added this subtask";
     case "subtask_done":
       return "marked this subtask done";
+    case "subtask_undone":
+      return "un-ticked this subtask";
+    case "subtask_approved":
+      return "approved this subtask";
+    case "subtask_questioned":
+      return "has a question about this subtask";
     case "subtask_rejected":
       return "rejected this subtask";
     case "subtask_resubmitted":
@@ -680,13 +686,13 @@ function summariseActivity(entry: ActivityDoc): string | null {
     case "sent_for_review":
       return "sent this subtask for review";
     case "assignee_added":
-      return "added as assignee";
+      return "added themselves as an assignee";
     case "assignee_removed":
-      return "removed as assignee";
+      return "removed themselves as an assignee";
     case "reviewer_added":
-      return "added as reviewer";
+      return "added themselves as a reviewer";
     case "reviewer_removed":
-      return "removed as reviewer";
+      return "removed themselves as a reviewer";
     case "attachment_added":
       return "uploaded a file";
     case "subtask_blocked_changed":

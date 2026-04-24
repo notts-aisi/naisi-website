@@ -370,11 +370,28 @@ export async function toggleSubtask(
     };
   });
   const stats = computeSubtaskStats(subtasks);
-  await updateDoc(doc(db, "tasks", task.id), {
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
     subtasks: subtasks.map(serializeSubtask),
     subtaskStats: stats,
     updatedAt: serverTimestamp(),
   });
+  // Stage 3 polish: emit activity entries so the subtask modal's feed
+  // surfaces completer actions. `subtask_undone` on un-tick, `subtask_done`
+  // on tick.
+  if (target.roleHint !== "reviewer") {
+    queueActivity(
+      batch,
+      task.id,
+      nextDone ? "subtask_done" : "subtask_undone",
+      uid,
+      {
+        subtaskId,
+        title: target.title,
+      },
+    );
+  }
+  await batch.commit();
 }
 
 export async function addSubtask(
@@ -648,6 +665,16 @@ export async function setSubtaskApproval(
   });
   if (state === "reject") {
     queueActivity(batch, task.id, "subtask_rejected", uid, {
+      subtaskId,
+      title: target.title,
+    });
+  } else if (state === "approve") {
+    queueActivity(batch, task.id, "subtask_approved", uid, {
+      subtaskId,
+      title: target.title,
+    });
+  } else if (state === "question") {
+    queueActivity(batch, task.id, "subtask_questioned", uid, {
       subtaskId,
       title: target.title,
     });
@@ -1307,10 +1334,16 @@ export async function selfAddToSubtask(task: TaskDoc, subtaskId: string) {
   const subtasks = task.subtasks.map((s) =>
     s.id === subtaskId ? { ...s, assigneeUids: [...s.assigneeUids, uid] } : s,
   );
-  await updateDoc(doc(db, "tasks", task.id), {
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
     subtasks: subtasks.map(serializeSubtask),
     updatedAt: serverTimestamp(),
   });
+  queueActivity(batch, task.id, "assignee_added", uid, {
+    subtaskId,
+    title: target.title,
+  });
+  await batch.commit();
 }
 
 /**
@@ -1348,7 +1381,13 @@ export async function selfRemoveFromSubtask(task: TaskDoc, subtaskId: string) {
   };
   const consentsPatch = clearConsentIfOpen(task, target.blockId);
   if (consentsPatch) patch.blockConsents = consentsPatch;
-  await updateDoc(doc(db, "tasks", task.id), patch);
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), patch);
+  queueActivity(batch, task.id, "assignee_removed", uid, {
+    subtaskId,
+    title: target.title,
+  });
+  await batch.commit();
 }
 
 /**
@@ -1431,11 +1470,17 @@ export async function selfAddReviewerToSubtask(
       ];
     }
   }
-  await updateDoc(doc(db, "tasks", task.id), {
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
     subtasks: nextSubtasks.map(serializeSubtask),
     subtaskStats: computeSubtaskStats(nextSubtasks),
     updatedAt: serverTimestamp(),
   });
+  queueActivity(batch, task.id, "reviewer_added", uid, {
+    subtaskId,
+    title: target.title,
+  });
+  await batch.commit();
 }
 
 /**
@@ -1468,10 +1513,22 @@ export async function selfRemoveReviewerFromSubtask(
       );
     }
   }
-  await patchSubtask(task, subtaskId, (s) => ({
-    ...s,
-    reviewerUids: s.reviewerUids.filter((u) => u !== uid),
-  }));
+  const db = getClientDb();
+  const subtasks = task.subtasks.map((s) =>
+    s.id === subtaskId
+      ? { ...s, reviewerUids: s.reviewerUids.filter((u) => u !== uid) }
+      : s,
+  );
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    subtasks: subtasks.map(serializeSubtask),
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "reviewer_removed", uid, {
+    subtaskId,
+    title: target.title,
+  });
+  await batch.commit();
 }
 
 /**
