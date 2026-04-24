@@ -23,6 +23,12 @@ export type AttachmentDoc = {
   storagePath: string;
   uploadedByUid: string;
   uploadedAt: Date | null;
+  /** Scopes the attachment to a specific subtask when non-null. Task-level
+   *  attachments (the original behaviour) store `null` and show up only in
+   *  `TaskDetailModal`'s attachment section. Subtask-scoped attachments
+   *  show up in that subtask's detail modal instead. Storage path is
+   *  unchanged regardless — scoping lives purely in the metadata. */
+  subtaskId: string | null;
 };
 
 type Raw = Record<string, unknown>;
@@ -43,6 +49,9 @@ export function normalizeAttachment(id: string, data: Raw): AttachmentDoc {
     storagePath: (data.storagePath as string) ?? "",
     uploadedByUid: (data.uploadedByUid as string) ?? "",
     uploadedAt: tsToDate(data.uploadedAt),
+    // Pre-migration attachments have no `subtaskId` field — default to null
+    // (task-level) so they stay visible in `TaskDetailModal` like before.
+    subtaskId: typeof data.subtaskId === "string" ? data.subtaskId : null,
   };
 }
 

@@ -781,6 +781,11 @@ function AttachmentsSection({
   canParticipate: boolean;
 }) {
   const { attachments } = useTaskAttachments(taskId);
+  // Task-level section only shows task-level attachments — subtask-scoped
+  // attachments render inside each subtask's detail modal instead.
+  // Pre-migration docs have `subtaskId: null` via normalizeAttachment, so
+  // they continue to appear here.
+  const taskLevel = attachments.filter((a) => a.subtaskId === null);
   // Skip the "Loading attachments…" banner — the list is empty for most
   // tasks, and the few that have attachments will see the rows pop in
   // within ~200ms. Loud banners make the modal feel slow even when the
@@ -789,7 +794,7 @@ function AttachmentsSection({
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
       <AttachmentList
         taskId={taskId}
-        attachments={attachments}
+        attachments={taskLevel}
         users={users}
         viewerUid={viewerUid}
         viewerIsAdmin={viewerIsAdmin}

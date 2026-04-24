@@ -29,6 +29,10 @@ export type UploadAttachmentArgs = {
   taskId: string;
   file: File;
   onProgress?: (fraction: number) => void;
+  /** Scopes the attachment to a specific subtask. Omit / null for task-level
+   *  (the original behaviour). Storage path is unchanged either way — the
+   *  metadata `subtaskId` field is what routes it to the right UI surface. */
+  subtaskId?: string | null;
 };
 
 export type UploadedAttachment = {
@@ -93,6 +97,7 @@ export async function uploadAttachment(
 
   const downloadURL = await getDownloadURL(objRef);
 
+  const subtaskId = args.subtaskId ?? null;
   const batch = writeBatch(db);
   batch.set(docRef, {
     filename: args.file.name.slice(0, 200),
@@ -101,6 +106,7 @@ export async function uploadAttachment(
     storagePath: path,
     uploadedByUid: uid,
     uploadedAt: serverTimestamp(),
+    subtaskId,
   });
   batch.update(doc(db, "tasks", args.taskId), {
     attachmentCount: increment(1),
@@ -109,6 +115,7 @@ export async function uploadAttachment(
   queueActivity(batch, args.taskId, "attachment_added", uid, {
     attachmentId: docRef.id,
     filename: args.file.name,
+    subtaskId,
   });
   await batch.commit();
 
