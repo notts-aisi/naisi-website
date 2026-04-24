@@ -87,7 +87,18 @@ export type TaskBlock = {
   id: string;
   name: string;
   order: number;
-  sealState: "open" | "sealed";
+  /** Block lifecycle:
+   *   - "setup": task-setter phase — task reviewers (+ admin) are choosing
+   *     which subtasks exist. Completers can't allocate themselves yet.
+   *     Exit via `finalizeBlockSetup` (admin or task-level reviewer).
+   *   - "open": allocation phase — roster being filled, consensus lock-in
+   *     pending. Exit via consent tally reaching N/N (→ sealed).
+   *   - "sealed": work phase — roster locked, subtasks immutable (admin
+   *     override only), reviewer signoffs can be spawned.
+   *
+   * Existing blocks created before the task-setter phase PR have no
+   * "setup" state — they normalize to "open" and keep the old behaviour. */
+  sealState: "setup" | "open" | "sealed";
   sealedAt: Date | null;
   /** Admin UID who force-sealed this block, or null if it sealed via
    *  consensus. Purely informational — doesn't affect gating. */
@@ -253,8 +264,16 @@ function normalizeBlock(raw: unknown): TaskBlock | null {
   const id = typeof b.id === "string" ? b.id : null;
   const name = typeof b.name === "string" ? b.name : null;
   if (!id || !name) return null;
+  // Preserve backward-compat: unknown / missing sealState defaults to
+  // "open" so existing blocks from before the task-setter phase keep
+  // their old behaviour. Only new blocks created after this PR start
+  // in "setup".
   const sealState: TaskBlock["sealState"] =
-    b.sealState === "sealed" ? "sealed" : "open";
+    b.sealState === "sealed"
+      ? "sealed"
+      : b.sealState === "setup"
+        ? "setup"
+        : "open";
   const order = typeof b.order === "number" ? b.order : 0;
   const rawMode = b.gatingMode;
   const gatingMode: BlockGatingMode =
@@ -563,9 +582,10 @@ export function groupSubtasksByBlock(
  *   - `complete`: every signoff row is ticked done — block accepted.
  *     Colour: green.
  */
-export type BlockPhase = "allocating" | "in-progress" | "reviewing" | "complete";
+export type BlockPhase = "setup" | "allocating" | "in-progress" | "reviewing" | "complete";
 
 export function getBlockPhase(task: TaskDoc, block: TaskBlock): BlockPhase {
+  if (block.sealState === "setup") return "setup";
   if (block.sealState !== "sealed") return "allocating";
   const signoffs = task.subtasks.filter(
     (s) => s.blockId === block.id && s.roleHint === "reviewer",

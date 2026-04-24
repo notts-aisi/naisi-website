@@ -1025,7 +1025,10 @@ export async function createBlock(task: TaskDoc, name: string): Promise<string> 
     id: genId(trimmed),
     name: trimmed.slice(0, TASK_FIELD_LIMITS.blockName),
     order: task.blocks.length,
-    sealState: "open",
+    // New blocks start in the task-setter phase — reviewers define which
+    // subtasks exist before allocation opens. Admin + task-level
+    // reviewers press "Finalize setup" to transition to "open".
+    sealState: "setup",
     sealedAt: null,
     forceSealedByUid: null,
     // First block ignores gatingMode; subsequent blocks default to gating
@@ -1047,6 +1050,36 @@ export async function createBlock(task: TaskDoc, name: string): Promise<string> 
   });
   await batch.commit();
   return block.id;
+}
+
+/**
+ * Task-setter phase exit: transition a block from "setup" → "open". Called
+ * after a task-level reviewer (or admin) has finalized which subtasks exist.
+ *
+ * Only admin + task-level reviewers can finalize — this is what splits the
+ * "what needs doing" (reviewer-owned) decision from the "who's doing it"
+ * (completer-owned) decision that follows. Committee-at-large cannot,
+ * deliberately — that's the whole point of the phase.
+ */
+export async function finalizeBlockSetup(task: TaskDoc, blockId: string) {
+  const db = getClientDb();
+  const uid = actingUid();
+  const block = task.blocks.find((b) => b.id === blockId);
+  if (!block) throw new Error("Block not found");
+  if (block.sealState !== "setup") return;
+  const blocks = task.blocks.map((b) =>
+    b.id === blockId ? { ...b, sealState: "open" as const } : b,
+  );
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    blocks: blocks.map(serializeBlock),
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "block_setup_finalized", uid, {
+    blockId,
+    name: block.name,
+  });
+  await batch.commit();
 }
 
 /**
@@ -1248,6 +1281,11 @@ export async function toggleBlockConsent(task: TaskDoc, blockId: string) {
   if (block.sealState === "sealed") {
     throw new Error("Block is already sealed.");
   }
+  if (block.sealState === "setup") {
+    throw new Error(
+      "Block is still in setup. A reviewer needs to finalize setup before lock-in can start.",
+    );
+  }
   const current = task.blockConsents[blockId]?.consentingCompleterUids ?? [];
   const already = current.includes(uid);
   const nextConsenting = already
@@ -1441,7 +1479,10 @@ export async function unsealBlock(task: TaskDoc, blockId: string) {
   const uid = actingUid();
   const block = task.blocks.find((b) => b.id === blockId);
   if (!block) throw new Error("Block not found");
-  if (block.sealState === "open") return;
+  // No-op if the block isn't actually sealed — "setup" and "open" both
+  // short-circuit here. An admin unsealing a setup block is nonsense
+  // anyway (setup is already pre-sealed).
+  if (block.sealState !== "sealed") return;
   const blocks = task.blocks.map((b) =>
     b.id === blockId
       ? { ...b, sealState: "open" as const, sealedAt: null, forceSealedByUid: null }

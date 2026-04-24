@@ -69,7 +69,14 @@ export default function SubtaskList({
   pendingReviewSubtaskIds,
 }: Props) {
   const isAdmin = viewerRole === "admin";
+  const isTaskReviewer = task.reviewerUids.includes(viewerUid);
   const isCreator = task.creatorUid === viewerUid;
+  // Task-setter phase: during a block's "setup" state, only admin + task-
+  // level reviewers + creator can add subtasks. Committee-at-large and
+  // completers are deliberately locked out — the phase exists to give
+  // reviewers (or the task owner) a clean window to define the work.
+  // Creator-fallback covers reviewer-less tasks so they aren't stuck.
+  const canAddInSetup = isAdmin || isTaskReviewer || isCreator;
 
   // `activationConstraint` prevents accidental drags when the user is just
   // clicking checkboxes or text inputs inside a row.
@@ -232,15 +239,19 @@ export default function SubtaskList({
                   />
                 ))
               )}
-              {/* Stage 2 (2026-04-23): sealed-block add tightened to
-                  admin-only. Rationale: post-lock-in, committee creators
-                  and task reviewers shouldn't add subtasks either — use
-                  a comment for ad-hoc follow-ups so dependency wiring
-                  stays intact. Pre-seal or ungrouped: any completer/
-                  reviewer with canEdit can add. */}
+              {/* Subtask-add gating by block phase:
+                    - setup: admin + task-level reviewers only (task-setter phase)
+                    - sealed: admin only (Stage 2 tightening — post-lock-in,
+                      everyone else files a comment instead so dependency
+                      wiring stays intact)
+                    - open / ungrouped: any completer/reviewer with canEdit */}
               {canEdit &&
                 task.subtasks.length < TASK_FIELD_LIMITS.maxSubtasks &&
-                (group.block?.sealState !== "sealed" || isAdmin) && (
+                (group.block?.sealState === "setup"
+                  ? canAddInSetup
+                  : group.block?.sealState === "sealed"
+                    ? isAdmin
+                    : true) && (
                   <InlineAddSubtask task={task} blockId={group.block?.id ?? null} />
                 )}
               {group.block &&
@@ -694,6 +705,16 @@ export const BLOCK_PHASE_PALETTE: Record<
   BlockPhase,
   { bg: string; border: string; label: string; labelColor: string }
 > = {
+  setup: {
+    // Violet — picked to sit clearly before red in the phase progression so
+    // a glance down the block stack reads as a gradient (violet → red →
+    // orange → yellow → green) without two adjacent phases fighting for
+    // attention.
+    bg: "rgba(124, 58, 237, 0.08)",
+    border: "#7c3aed",
+    label: "Setup",
+    labelColor: "#7c3aed",
+  },
   allocating: {
     bg: "var(--color-danger-soft, rgba(220, 38, 38, 0.06))",
     border: "var(--color-danger, #dc2626)",
