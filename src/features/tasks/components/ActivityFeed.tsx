@@ -31,7 +31,16 @@ function formatShort(date: Date | null): string {
   if (diffM < 60) return `${diffM}m ago`;
   const diffH = Math.round(diffM / 60);
   if (diffH < 24) return `${diffH}h ago`;
-  return date.toLocaleDateString();
+  // Over a day — absolute date + time. Year shown only if different
+  // from the current year.
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return date.toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function renderActivityCopy(a: ActivityDoc, users: UserDoc[], task: TaskDoc): string {
