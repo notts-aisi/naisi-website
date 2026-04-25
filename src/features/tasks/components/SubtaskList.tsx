@@ -261,7 +261,7 @@ export default function SubtaskList({
                 group.completion.length > 0 && (
                   <NotifyReviewersButton
                     task={task}
-                    blockId={group.block.id}
+                    block={group.block}
                     completion={group.completion}
                     viewerIsCompleter={task.completerUids.includes(viewerUid)}
                     viewerIsAdmin={isAdmin}
@@ -309,19 +309,20 @@ export default function SubtaskList({
  */
 function NotifyReviewersButton({
   task,
-  blockId,
+  block,
   completion,
   viewerIsCompleter,
   viewerIsAdmin,
   viewerIsCreator,
 }: {
   task: TaskDoc;
-  blockId: string;
+  block: TaskBlock;
   completion: Subtask[];
   viewerIsCompleter: boolean;
   viewerIsAdmin: boolean;
   viewerIsCreator: boolean;
 }) {
+  const blockId = block.id;
   const [busy, setBusy] = useState(false);
   if (!viewerIsCompleter && !viewerIsAdmin && !viewerIsCreator) return null;
   const outstanding = completion.filter((s) => !s.done);
@@ -332,23 +333,28 @@ function NotifyReviewersButton({
   // wait for everything to be ticked.
   const canOverride = viewerIsAdmin || viewerIsCreator;
   const canSend = allDone || canOverride;
-  // No-reviewer path: when neither task-level nor any per-subtask reviewer
-  // is configured, "Notify reviewers" is misleading — there's nobody to
-  // notify and `planReviewSpawn` no-ops the spawn anyway. Flip the label
-  // and helper to make the press read as "close out the block" rather
-  // than a phantom hand-off. The block stays in the "complete" phase
-  // (green) since `getBlockPhase` returns complete on no-reviewers + all-
-  // done, so the flow doesn't false-flash through "reviewing" yellow.
-  const hasReviewers = getBlockEffectiveReviewerUids(task, blockId).length > 0;
+  // Treat "skip-review" mode the same as "no effective reviewers" for
+  // labelling — both lead to no spawn. Skip-review is the explicit setting,
+  // empty effective-reviewers is the legacy fallback path. Either way,
+  // press = close out the block, not "hand off to reviewers".
+  const skipReview = block.reviewMode === "skip-review";
+  const hasReviewers =
+    !skipReview && getBlockEffectiveReviewerUids(task, blockId).length > 0;
   const helperText = !allDone
     ? canOverride
       ? `${outstanding.length} subtask${outstanding.length === 1 ? "" : "s"} not yet done — admin/creator can force-send anyway.`
-      : "All tasks must be marked as complete before sending to reviewers."
+      : hasReviewers
+        ? "All tasks must be marked as complete before sending to reviewers."
+        : "All tasks must be marked as complete before closing out this block."
     : hasReviewers
       ? "All tasks complete — ready to send to reviewers."
-      : "All tasks complete — no reviewers configured, nothing to hand off.";
+      : skipReview
+        ? "All tasks complete — block is set to no-review mode, ready to close out."
+        : "All tasks complete — no reviewers configured, nothing to hand off.";
   const buttonLabel = busy
-    ? "Sending…"
+    ? hasReviewers
+      ? "Sending…"
+      : "Closing…"
     : hasReviewers
       ? "Notify reviewers"
       : "Mark block complete";
@@ -356,8 +362,12 @@ function NotifyReviewersButton({
   async function handleSend() {
     if (!canSend || busy) return;
     if (!allDone && canOverride) {
+      const verb = hasReviewers ? "Send" : "Close out";
+      const tail = hasReviewers
+        ? "The signoff rows will spawn anyway — admin/creator override."
+        : "The block will be closed out anyway — admin/creator override.";
       const ok = window.confirm(
-        `Send "${task.subtasks.find((s) => s.blockId === blockId)?.title ?? "this block"}" to reviewers with ${outstanding.length} subtask${outstanding.length === 1 ? "" : "s"} still outstanding? The signoff rows will spawn anyway — admin/creator override.`,
+        `${verb} "${block.name}" with ${outstanding.length} subtask${outstanding.length === 1 ? "" : "s"} still outstanding? ${tail}`,
       );
       if (!ok) return;
     }

@@ -108,6 +108,13 @@ function renderActivityCopy(a: ActivityDoc, users: UserDoc[], task: TaskDoc): st
       return `${actor} re-opened block "${pickStr("name") ?? "a block"}"`;
     case "block_setup_finalized":
       return `${actor} finalized setup on "${pickStr("name") ?? "a block"}" — allocation open`;
+    case "block_review_mode_set": {
+      const mode = pickStr("mode");
+      const name = pickStr("name") ?? "a block";
+      return mode === "skip-review"
+        ? `${actor} set "${name}" to no-review mode`
+        : `${actor} set "${name}" to needs-review mode`;
+    }
     case "subtask_force_sealed":
       return `${actor} sealed subtask ${subtaskTitle(pickStr("subtaskId"))}`;
     case "subtask_unsealed":

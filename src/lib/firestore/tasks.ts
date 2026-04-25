@@ -83,6 +83,18 @@ export const TASK_FIELD_LIMITS = {
  */
 export type BlockGatingMode = "previous" | "all-previous" | "none";
 
+/**
+ * Per-block review-needed toggle. Defaults to `"review"` so existing blocks
+ * keep their current spawn-signoff-rows-on-Notify behaviour. Set to
+ * `"skip-review"` for blocks that don't need any review pass — Notify
+ * becomes "Mark block complete", no signoff rows spawn, the block jumps
+ * straight from `"in-progress"` to `"complete"` on all-done. Lets a task
+ * mix review-required blocks with no-review-needed ones (e.g. a "draft
+ * outline" block that's setup-only, then a "final copy" block that needs
+ * a real review).
+ */
+export type BlockReviewMode = "review" | "skip-review";
+
 export type TaskBlock = {
   id: string;
   name: string;
@@ -103,6 +115,13 @@ export type TaskBlock = {
   /** Admin UID who force-sealed this block, or null if it sealed via
    *  consensus. Purely informational — doesn't affect gating. */
   forceSealedByUid: string | null;
+  /** Per-block review-needed toggle. `"review"` (default) keeps the
+   *  existing flow: Notify spawns signoff rows for effective reviewers,
+   *  block phase passes through `"reviewing"` before `"complete"`.
+   *  `"skip-review"` short-circuits — no spawn, button labels as "Mark
+   *  block complete", phase jumps straight to `"complete"` on all-done.
+   *  Pre-migration blocks normalize to `"review"`. */
+  reviewMode: BlockReviewMode;
   /** Phase 3 / 1.9e: declarative upstream-deps mode. Drives whether this
    *  block's completion rows are blocked until upstream block(s) are
    *  complete. Defaults to "previous" for new blocks — gating works out
@@ -280,6 +299,11 @@ function normalizeBlock(raw: unknown): TaskBlock | null {
     rawMode === "all-previous" || rawMode === "none"
       ? rawMode
       : "previous";
+  // Pre-migration blocks normalise to "review" so the existing flow is
+  // preserved unchanged. Only blocks explicitly toggled via the new
+  // BlockHeader dropdown carry "skip-review".
+  const reviewMode: BlockReviewMode =
+    b.reviewMode === "skip-review" ? "skip-review" : "review";
   return {
     id,
     name,
@@ -288,6 +312,7 @@ function normalizeBlock(raw: unknown): TaskBlock | null {
     sealedAt: tsToDate(b.sealedAt),
     forceSealedByUid:
       typeof b.forceSealedByUid === "string" ? b.forceSealedByUid : null,
+    reviewMode,
     gatingMode,
   };
 }
@@ -648,14 +673,21 @@ export type BlockPhase = "setup" | "allocating" | "in-progress" | "reviewing" | 
 export function getBlockPhase(task: TaskDoc, block: TaskBlock): BlockPhase {
   if (block.sealState === "setup") return "setup";
   if (block.sealState !== "sealed") return "allocating";
-  const signoffs = task.subtasks.filter(
-    (s) => s.blockId === block.id && s.roleHint === "reviewer",
-  );
   const completionRows = task.subtasks.filter(
     (s) => s.blockId === block.id && s.roleHint !== "reviewer",
   );
   const allCompletionDone =
     completionRows.length === 0 || completionRows.every((s) => s.done);
+  // Skip-review blocks short-circuit to complete on all-done. They never
+  // pass through "reviewing" yellow because by definition they don't have
+  // a review pass. Pre-this-PR data normalises to "review" so existing
+  // blocks behave unchanged.
+  if (block.reviewMode === "skip-review") {
+    return allCompletionDone ? "complete" : "in-progress";
+  }
+  const signoffs = task.subtasks.filter(
+    (s) => s.blockId === block.id && s.roleHint === "reviewer",
+  );
   if (signoffs.length === 0) {
     // No signoff rows yet. Two cases:
     //  (a) no reviewers claimed on any subtask → no review gate ever,

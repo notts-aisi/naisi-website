@@ -7,6 +7,7 @@ import {
   getBlockEffectiveReviewerUids,
   getBlockPhase,
   type BlockGatingMode,
+  type BlockReviewMode,
   type TaskBlock,
   type TaskDoc,
 } from "@/lib/firestore/tasks";
@@ -19,6 +20,7 @@ import {
   renameBlock,
   setBlockDueDate,
   setBlockGatingMode,
+  setBlockReviewMode,
   toggleBlockConsent,
   unsealBlock,
 } from "../taskMutations";
@@ -32,6 +34,11 @@ const GATING_LABELS: Record<BlockGatingMode, string> = {
   previous: "Gated by previous block",
   "all-previous": "Gated by all previous blocks",
   none: "Not gated",
+};
+
+const REVIEW_MODE_LABELS: Record<BlockReviewMode, string> = {
+  review: "Needs review",
+  "skip-review": "No review needed",
 };
 
 type Props = {
@@ -468,6 +475,91 @@ export default function BlockHeader({
           >
             <span aria-hidden="true">{block.gatingMode === "none" ? "🔓" : "🔗"}</span>
             {block.gatingMode === "none" ? "Ungated" : "Gated"}
+          </span>
+        )}
+
+        {/* Review-mode dropdown — same edit-trio as due dates + setup
+            finalize. Skip-review blocks short-circuit Notify, hide +Review
+            buttons on rows, and getBlockPhase jumps from "in-progress" to
+            "complete" without passing through "reviewing". */}
+        {canEditDueDates && (
+          <label
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              padding: "0.35rem 0.75rem",
+              background:
+                block.reviewMode === "skip-review"
+                  ? "var(--color-bg-elevated)"
+                  : "var(--color-accent-soft)",
+              border: `1px solid ${
+                block.reviewMode === "skip-review"
+                  ? "var(--color-border)"
+                  : "var(--color-accent)"
+              }`,
+              borderRadius: "999px",
+              fontSize: "var(--text-xs)",
+              fontWeight: 600,
+              color:
+                block.reviewMode === "skip-review"
+                  ? "var(--color-text-muted)"
+                  : "var(--color-accent)",
+              cursor: "pointer",
+            }}
+            title="Whether this block requires a reviewer signoff before it can be marked complete."
+          >
+            <span aria-hidden="true" style={{ fontSize: "14px", lineHeight: 1 }}>
+              {block.reviewMode === "skip-review" ? "⤳" : "👁"}
+            </span>
+            <select
+              value={block.reviewMode}
+              onChange={(e) =>
+                setBlockReviewMode(
+                  task,
+                  block.id,
+                  e.target.value as BlockReviewMode,
+                ).catch(console.error)
+              }
+              aria-label="Review mode for this block"
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "inherit",
+                fontSize: "inherit",
+                fontWeight: "inherit",
+                fontFamily: "inherit",
+                cursor: "pointer",
+                outline: "none",
+                padding: 0,
+                paddingRight: "0.2rem",
+              }}
+            >
+              <option value="review">{REVIEW_MODE_LABELS.review}</option>
+              <option value="skip-review">{REVIEW_MODE_LABELS["skip-review"]}</option>
+            </select>
+          </label>
+        )}
+        {!canEditDueDates && block.reviewMode === "skip-review" && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--space-1)",
+              padding: "0.25rem 0.6rem",
+              borderRadius: "999px",
+              background: "var(--color-bg-elevated)",
+              border: "1px solid var(--color-border)",
+              color: "var(--color-text-muted)",
+              fontSize: "10px",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+            }}
+            title={REVIEW_MODE_LABELS["skip-review"]}
+          >
+            <span aria-hidden="true">⤳</span>
+            No review
           </span>
         )}
 
