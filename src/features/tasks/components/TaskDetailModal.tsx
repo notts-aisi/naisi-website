@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
-import ProgressBar from "@/components/ui/ProgressBar";
 import {
   TASK_FIELD_LIMITS,
   TASK_PRIORITIES,
@@ -13,6 +12,7 @@ import {
   TASK_STATUS_LABELS,
   canMarkTaskDone,
   getSubtaskApprovalStatus,
+  getSubtaskBreakdown,
   type TaskDoc,
   type TaskPriority,
   type TaskStatus,
@@ -34,6 +34,7 @@ import AttachmentList from "./AttachmentList";
 import AttachmentUpload from "./AttachmentUpload";
 import CommentThread from "./CommentThread";
 import DueDateBadge from "./DueDateBadge";
+import SubtaskBreakdown from "./SubtaskBreakdown";
 import SubtaskList from "./SubtaskList";
 import { useCommentsAndActivity } from "../hooks/useCommentsAndActivity";
 import { useTaskAttachments } from "../hooks/useTaskAttachments";
@@ -527,21 +528,10 @@ export default function TaskDetailModal({
           </section>
 
           <section>
-            <h3 style={sectionLabel}>
-              Subtasks{" "}
-              {task.subtaskStats.total > 0 && (
-                <span style={{ color: "var(--color-text-muted)", fontWeight: 400 }}>
-                  ({task.subtaskStats.done}/{task.subtaskStats.total})
-                </span>
-              )}
-            </h3>
+            <h3 style={sectionLabel}>Subtasks</h3>
             {task.subtaskStats.total > 0 && (
-              <div style={{ marginBottom: "var(--space-2)" }}>
-                <ProgressBar
-                  value={task.subtaskStats.done}
-                  max={task.subtaskStats.total}
-                  tone={task.subtaskStats.done === task.subtaskStats.total ? "success" : "accent"}
-                />
+              <div style={{ marginBottom: "var(--space-3)" }}>
+                <SubtaskBreakdown breakdown={getSubtaskBreakdown(task)} variant="verbose" />
               </div>
             )}
             {canSeeReviewerSection && task.reviewerUids.length > 0 && (

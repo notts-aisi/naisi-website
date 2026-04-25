@@ -529,6 +529,49 @@ export function subtaskRowState(
 }
 
 /**
+ * Per-state count of *completion* subtasks (non-reviewer rows). Drives the
+ * task-level breakdown chip and segmented progress bar — replaces the old
+ * flat `done/total` pill, which was meaningless once tasks gained blocks
+ * + review states. Reviewer-signoff rows are workflow infrastructure and
+ * aren't counted here; their progression is reflected via the parent
+ * subtask's "approved" bucket once every required reviewer ticks.
+ *
+ * Buckets are mutually exclusive — every completion row lands in exactly
+ * one. First-match-wins so rejection / question always surface even on a
+ * subtask that's also been ticked done.
+ */
+export type SubtaskBreakdown = {
+  rejected: number;     // any reviewer placed ✗
+  questioned: number;   // any outstanding ❓ (and no rejection)
+  approved: number;     // ticked + every required reviewer approved
+  done: number;         // ticked + no review gate
+  inReview: number;     // ticked + reviewers required but not yet fully approved
+  pending: number;      // not ticked, no flags
+  total: number;
+};
+
+export function getSubtaskBreakdown(task: TaskDoc): SubtaskBreakdown {
+  const rows = task.subtasks.filter((s) => s.roleHint !== "reviewer");
+  let rejected = 0;
+  let questioned = 0;
+  let approved = 0;
+  let done = 0;
+  let inReview = 0;
+  let pending = 0;
+  for (const s of rows) {
+    const status = getSubtaskApprovalStatus(s, task.reviewerUids);
+    if (status.hasRejection) rejected += 1;
+    else if (status.hasOutstandingQuestion) questioned += 1;
+    else if (s.done) {
+      if (status.required.length === 0) done += 1;
+      else if (status.fullyApproved) approved += 1;
+      else inReview += 1;
+    } else pending += 1;
+  }
+  return { rejected, questioned, approved, done, inReview, pending, total: rows.length };
+}
+
+/**
  * Subtasks grouped for render. Each block gets:
  *   - `completion`: the work subtasks (non-reviewer-hint)
  *   - `signoffs`: the auto-spawned reviewer rows (roleHint === "reviewer")
