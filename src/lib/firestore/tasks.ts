@@ -547,11 +547,19 @@ export type SubtaskBreakdown = {
   done: number;         // ticked + no review gate
   inReview: number;     // ticked + reviewers required but not yet fully approved
   pending: number;      // not ticked, no flags
-  total: number;
+  total: number;        // count of completion rows (excludes signoff rows)
+  /** Count of reviewer-signoff rows that exist but haven't been ticked. These
+   *  are workflow-infra rows (`roleHint: "reviewer"`) — separate from the
+   *  per-state completion buckets above. Surfaced so a task that reads as
+   *  "all approved" but can't be marked Done is no longer mysterious — the
+   *  unticked signoff is the gate. */
+  signoffPending: number;
+  signoffTotal: number;
 };
 
 export function getSubtaskBreakdown(task: TaskDoc): SubtaskBreakdown {
   const rows = task.subtasks.filter((s) => s.roleHint !== "reviewer");
+  const signoffRows = task.subtasks.filter((s) => s.roleHint === "reviewer");
   let rejected = 0;
   let questioned = 0;
   let approved = 0;
@@ -568,7 +576,17 @@ export function getSubtaskBreakdown(task: TaskDoc): SubtaskBreakdown {
       else inReview += 1;
     } else pending += 1;
   }
-  return { rejected, questioned, approved, done, inReview, pending, total: rows.length };
+  return {
+    rejected,
+    questioned,
+    approved,
+    done,
+    inReview,
+    pending,
+    total: rows.length,
+    signoffPending: signoffRows.filter((s) => !s.done).length,
+    signoffTotal: signoffRows.length,
+  };
 }
 
 /**
