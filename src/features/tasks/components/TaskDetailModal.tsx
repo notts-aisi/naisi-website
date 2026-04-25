@@ -100,6 +100,12 @@ export default function TaskDetailModal({
   // Completers who aren't also reviewers see the row state colours only, not
   // the per-reviewer columns or the reviewer picker.
   const canSeeReviewerSection = isAdmin || isCreator || isAnyReviewer;
+  // Due dates are owned by whoever set the task up, not the people doing
+  // the work. Admin / creator / task-level reviewer can amend; committee-
+  // at-large completers cannot. Mirrors the `finalizeBlockSetup` gate from
+  // PR #71 — same "task-setter" mental model. Tightened 2026-04-25 after
+  // user feedback that completers were able to move dates.
+  const canEditDueDates = !!task && (isAdmin || isCreator || isTaskReviewer);
 
   // Pending sent_for_review — derive from activity so SubtaskRow can tint
   // pending rows orange and the composer can gate its own button. Task-level
@@ -455,7 +461,7 @@ export default function TaskDetailModal({
             ) : (
               <Badge tone="neutral">Priority: {TASK_PRIORITY_LABELS[task.priority]}</Badge>
             )}
-            {canEditAll ? (
+            {canEditDueDates ? (
               <label style={fieldLabel}>
                 <span>Due date</span>
                 <Input

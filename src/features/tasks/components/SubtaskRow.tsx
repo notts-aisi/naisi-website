@@ -1205,6 +1205,7 @@ export default function SubtaskRow({
           viewerUid={viewerUid}
           viewerIsAdmin={isAdmin}
           canEditDescription={canEditStructure}
+          canEditDueDates={isAdmin || isTaskCreator || isTaskLevelReviewer}
           canComment={
             isAdmin ||
             isTaskCreator ||

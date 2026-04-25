@@ -31,6 +31,10 @@ type Props = {
    *  `canEditStructure` permission on the surrounding task — admin or
    *  committee on committee tasks, or creator on personal tasks. */
   canEditDescription: boolean;
+  /** True when the viewer can edit due dates. Stricter than
+   *  `canEditDescription` — admin / creator / task-level reviewer only.
+   *  Completers (even committee ones) can't move dates. */
+  canEditDueDates: boolean;
   /** True when the viewer can post subcomments. Task participants
    *  (completer/reviewer/admin/creator) can; outside viewers see the
    *  thread read-only. */
@@ -50,6 +54,7 @@ export default function SubtaskDetailModal({
   viewerUid,
   viewerIsAdmin,
   canEditDescription,
+  canEditDueDates,
   canComment,
   onClose,
 }: Props) {
@@ -276,7 +281,7 @@ export default function SubtaskDetailModal({
         {subtask.roleHint !== "reviewer" && (
           <section>
             <h3 style={sectionLabel}>Due date</h3>
-            {canEditDescription ? (
+            {canEditDueDates ? (
               <DueDateEditor
                 value={subtask.dueDate}
                 onChange={(date) => onDueChange(date ? toDateInputValue(date) : "")}
