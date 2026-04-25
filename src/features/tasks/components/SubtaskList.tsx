@@ -263,6 +263,8 @@ export default function SubtaskList({
                     blockId={group.block.id}
                     completion={group.completion}
                     viewerIsCompleter={task.completerUids.includes(viewerUid)}
+                    viewerIsAdmin={isAdmin}
+                    viewerIsCreator={isCreator}
                   />
                 )}
             </div>
@@ -299,21 +301,28 @@ export default function SubtaskList({
  * non-reviewer subtask in the block is done. Press spawns reviewer signoff
  * rows server-side and logs a `block_sent_to_reviewers` activity entry.
  *
- * Visible only to listed completers — non-completers don't see the button.
+ * Visible to listed completers + admin + creator. Stage 1.9a originally
+ * gated this to completers only — widened 2026-04-25 because reviewer-less
+ * test tasks (admin testing alone) had no path to advance the block, and
+ * creator-fallback mirrors the same widening on `finalizeBlockSetup`.
  */
 function NotifyReviewersButton({
   task,
   blockId,
   completion,
   viewerIsCompleter,
+  viewerIsAdmin,
+  viewerIsCreator,
 }: {
   task: TaskDoc;
   blockId: string;
   completion: Subtask[];
   viewerIsCompleter: boolean;
+  viewerIsAdmin: boolean;
+  viewerIsCreator: boolean;
 }) {
   const [busy, setBusy] = useState(false);
-  if (!viewerIsCompleter) return null;
+  if (!viewerIsCompleter && !viewerIsAdmin && !viewerIsCreator) return null;
   const outstanding = completion.filter((s) => !s.done);
   const canSend = outstanding.length === 0;
   const helperText = canSend

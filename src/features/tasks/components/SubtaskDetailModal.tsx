@@ -324,12 +324,12 @@ export default function SubtaskDetailModal({
                 const questioned = approvalStatus.questioned.includes(uid);
                 const rejected = approvalStatus.rejected.includes(uid);
                 const label = rejected
-                  ? "✗ rejected"
+                  ? "✗ Rejected"
                   : questioned
-                    ? "? question"
+                    ? "? Question"
                     : approved
-                      ? "✓ approved"
-                      : "pending";
+                      ? "✓ Approved"
+                      : "Pending";
                 const colour = rejected
                   ? "var(--color-danger, #dc2626)"
                   : questioned

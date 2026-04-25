@@ -77,12 +77,30 @@ export default function SubtaskBreakdown({
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          {approved > 0 && <Pill color="var(--color-success, #16a34a)">{approved} ✓ approved</Pill>}
-          {done > 0 && <Pill color="var(--color-success, #16a34a)">{done} ✓ done</Pill>}
-          {inReview > 0 && <Pill color="var(--color-info, #3b82f6)">{inReview} ⏳ in review</Pill>}
-          {questioned > 0 && <Pill color="var(--color-warning, #eab308)">{questioned} ? questioned</Pill>}
-          {rejected > 0 && <Pill color="var(--color-danger, #dc2626)">{rejected} ✗ rejected</Pill>}
-          {pending > 0 && <Pill color="var(--color-text-muted)">{pending} pending</Pill>}
+          {approved > 0 && <Pill color="var(--color-success, #16a34a)">{approved} ✓ Approved</Pill>}
+          {done > 0 && <Pill color="var(--color-success, #16a34a)">{done} ✓ Done</Pill>}
+          {inReview > 0 && <Pill color="var(--color-info, #3b82f6)">{inReview} ⏳ In review</Pill>}
+          {questioned > 0 && <Pill color="var(--color-warning, #eab308)">{questioned} ? Questioned</Pill>}
+          {rejected > 0 && <Pill color="var(--color-danger, #dc2626)">{rejected} ✗ Rejected</Pill>}
+          {pending > 0 && <Pill color="var(--color-text-muted)">{pending} Pending</Pill>}
+        </div>
+      )}
+      {/* Reviewer signoff rows are workflow-infra and excluded from the
+          per-state buckets above. Surfaced here so a task that reads
+          "all approved" but can't be marked Done is no longer mysterious —
+          the unticked signoff row is the gate; users see it and know to
+          look at the Reviews-for-block section below. */}
+      {variant === "verbose" && breakdown.signoffTotal > 0 && breakdown.signoffPending > 0 && (
+        <div
+          style={{
+            fontSize: "var(--text-xs)",
+            color: "var(--color-text-muted)",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          ↳ {breakdown.signoffPending} reviewer signoff
+          {breakdown.signoffPending === 1 ? "" : "s"} pending of {breakdown.signoffTotal}
+          {" — see “Reviews for…” section below."}
         </div>
       )}
     </div>
