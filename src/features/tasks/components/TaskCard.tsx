@@ -3,11 +3,11 @@
 import { useMemo } from "react";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
-import ProgressBar from "@/components/ui/ProgressBar";
-import { TASK_KIND_LABELS, type TaskDoc } from "@/lib/firestore/tasks";
+import { TASK_KIND_LABELS, getSubtaskBreakdown, type TaskDoc } from "@/lib/firestore/tasks";
 import type { ProjectDoc } from "@/lib/firestore/projects";
 import type { UserDoc } from "@/lib/firestore/users";
 import DueDateBadge from "./DueDateBadge";
+import SubtaskBreakdown from "./SubtaskBreakdown";
 
 type Props = {
   task: TaskDoc;
@@ -65,7 +65,6 @@ export default function TaskCard({
     return u.displayName ?? u.email ?? u.uid;
   }
 
-  const subtasksComplete = task.subtaskStats.total > 0 && task.subtaskStats.done === task.subtaskStats.total;
 
   return (
     <Card
@@ -166,14 +165,7 @@ export default function TaskCard({
         </div>
 
         {task.subtaskStats.total > 0 && (
-          <ProgressBar
-            value={task.subtaskStats.done}
-            max={task.subtaskStats.total}
-            ariaLabel={`Subtasks: ${task.subtaskStats.done} of ${task.subtaskStats.total} done`}
-            tone={subtasksComplete ? "success" : "accent"}
-            size="sm"
-            showLabel
-          />
+          <SubtaskBreakdown breakdown={getSubtaskBreakdown(task)} variant="compact" />
         )}
 
         <div
