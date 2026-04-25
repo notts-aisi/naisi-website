@@ -4,7 +4,7 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { sendEmail } from "@/lib/email/send";
 import { randomOpaqueId, signToken } from "@/lib/signedTokens";
-import { validateUniversityEmail } from "@/lib/firestore/users";
+import { FIELD_LIMITS } from "@/lib/firestore/users";
 import VerifyUniEmail from "@/emails/VerifyUniEmail";
 
 const COOLDOWN_SECONDS = 60;
@@ -45,7 +45,16 @@ export async function POST(req: Request) {
   }
 
   const email = (body.email ?? "").trim().toLowerCase();
-  const emailError = validateUniversityEmail(email);
+  // TEMPORARY (revert before re-locking registration): bypass the @nottingham.ac.uk
+  // requirement so a demo account can register. Restore by swapping this block back to
+  // `const emailError = validateUniversityEmail(email);` and re-importing it.
+  const emailError = !email
+    ? "Email is required."
+    : email.length > FIELD_LIMITS.universityEmail
+      ? "That email is too long."
+      : !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)
+        ? "That doesn't look like a valid email."
+        : null;
   if (emailError) {
     return NextResponse.json({ error: emailError }, { status: 400 });
   }

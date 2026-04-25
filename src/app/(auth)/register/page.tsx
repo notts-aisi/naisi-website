@@ -305,6 +305,7 @@ export default function RegisterPage() {
             hint="We accept @nottingham.ac.uk (including subdomains like exmail.nottingham.ac.uk). Staff welcome. If your address is a different format, email ai-safety@uonsu.com and we'll add you manually."
           >
             <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "stretch" }}>
+              {/* TEMPORARY (revert before re-locking registration): pattern + title removed so any email passes the client-side check during a demo. */}
               <Input
                 id="universityEmail"
                 type="email"
@@ -312,8 +313,6 @@ export default function RegisterPage() {
                 onChange={(e) => setUniversityEmail(e.target.value)}
                 placeholder="you@nottingham.ac.uk"
                 maxLength={FIELD_LIMITS.universityEmail}
-                pattern="^[^@\s]+@([a-zA-Z0-9-]+\.)*nottingham\.ac\.uk$"
-                title="Use your University of Nottingham email address"
                 required
                 style={{ flex: 1 }}
               />
