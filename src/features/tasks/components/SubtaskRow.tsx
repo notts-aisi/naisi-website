@@ -238,11 +238,15 @@ export default function SubtaskRow({
     task.subtasks.some(
       (s) => s.blockId === subtask.blockId && s.roleHint === "reviewer",
     );
+  // Skip-review blocks have no review pass — claiming review scope on a
+  // subtask inside one is a no-op affordance, so hide the +Review button.
+  const parentBlockSkipsReview = parentBlock?.reviewMode === "skip-review";
   const canSelfAddReviewer =
     subtask.roleHint !== "reviewer" &&
     isTaskLevelReviewer &&
     !isReviewerOnSubtask &&
-    !subtaskSealed;
+    !subtaskSealed &&
+    !parentBlockSkipsReview;
   const canSelfRemoveReviewer =
     subtask.roleHint !== "reviewer" &&
     isTaskLevelReviewer &&

@@ -27,6 +27,7 @@ import {
   normalizeTask,
   type BlockConsentMap,
   type BlockGatingMode,
+  type BlockReviewMode,
   type Subtask,
   type TaskBlock,
   type TaskDoc,
@@ -129,6 +130,7 @@ function serializeBlock(b: TaskBlock) {
     sealState: b.sealState,
     sealedAt: b.sealedAt ? Timestamp.fromDate(b.sealedAt) : null,
     forceSealedByUid: b.forceSealedByUid,
+    reviewMode: b.reviewMode,
     gatingMode: b.gatingMode,
   };
 }
@@ -1031,6 +1033,11 @@ export async function createBlock(task: TaskDoc, name: string): Promise<string> 
     sealState: "setup",
     sealedAt: null,
     forceSealedByUid: null,
+    // Default to review-needed — preserves backward-compat with every
+    // existing block. Toggle via `setBlockReviewMode` if a block is
+    // genuinely review-free (e.g. a draft-outline block before the
+    // real review-required final-copy block).
+    reviewMode: "review",
     // First block ignores gatingMode; subsequent blocks default to gating
     // on the immediate previous block (works out of the box).
     gatingMode: task.blocks.length === 0 ? "none" : "previous",
@@ -1104,6 +1111,44 @@ export async function setBlockGatingMode(
     blocks: blocks.map(serializeBlock),
     updatedAt: serverTimestamp(),
   });
+}
+
+/**
+ * Per-block review-needed toggle. Settable by the same trio as
+ * `finalizeBlockSetup` (admin / creator / task-level reviewer) — the
+ * "task-setter" role decides whether a block needs a review pass at all.
+ * Logged as a `block_review_mode_set` activity entry so the audit trail
+ * captures who flipped it.
+ *
+ * If a block is flipped from "review" → "skip-review" while signoff rows
+ * already exist (Notify already pressed), the rows are deliberately
+ * preserved — admin can clean them up via the existing per-row controls
+ * if needed. Spawning new ones is gated, but existing audit isn't wiped.
+ */
+export async function setBlockReviewMode(
+  task: TaskDoc,
+  blockId: string,
+  mode: BlockReviewMode,
+) {
+  const db = getClientDb();
+  const uid = actingUid();
+  const existing = task.blocks.find((b) => b.id === blockId);
+  if (!existing) throw new Error("Block not found");
+  if (existing.reviewMode === mode) return;
+  const blocks = task.blocks.map((b) =>
+    b.id === blockId ? { ...b, reviewMode: mode } : b,
+  );
+  const batch = writeBatch(db);
+  batch.update(doc(db, "tasks", task.id), {
+    blocks: blocks.map(serializeBlock),
+    updatedAt: serverTimestamp(),
+  });
+  queueActivity(batch, task.id, "block_review_mode_set", uid, {
+    blockId,
+    name: existing.name,
+    mode,
+  });
+  await batch.commit();
 }
 
 /**
@@ -1396,18 +1441,28 @@ export async function forceSealBlock(task: TaskDoc, blockId: string) {
 }
 
 /**
- * Completer-pressed handoff: spawn reviewer signoff rows for a sealed block
- * and log a `block_sent_to_reviewers` activity entry. Validates that every
- * non-reviewer subtask in the block is done, no signoff rows exist yet, and
- * the caller is a listed completer on the task.
- *
- * Stage 1.5a (2026-04-23) replaces the old "seal = spawn reviewers" flow.
+ * Hand off a sealed block to reviewers (or close it out, on skip-review
+ * blocks). Spawns reviewer signoff rows in `"review"` mode; no-ops the spawn
+ * in `"skip-review"` mode but still logs the activity entry so the press is
+ * audit-trail visible. Caller permission widened from completer-only to
+ * completer + admin + creator (mirrors the UI gate from PR #74); the
+ * outstanding-subtasks check is bypassable by admin/creator (UI already
+ * wraps the call with a confirm dialog when not all-done).
  */
 export async function sendBlockToReviewers(task: TaskDoc, blockId: string) {
   const db = getClientDb();
   const uid = actingUid();
-  if (!task.completerUids.includes(uid)) {
-    throw new Error("Only listed completers can send a block to reviewers.");
+  const isCompleter = task.completerUids.includes(uid);
+  const isCreator = task.creatorUid === uid;
+  // Admin status isn't tracked on the task — we trust the UI gate (which is
+  // role-gated on viewerRole) plus the completer/creator membership check
+  // here. A non-completer non-creator either has admin role or shouldn't be
+  // calling this.
+  const allowOverride = isCreator;
+  if (!isCompleter && !allowOverride) {
+    throw new Error(
+      "Only completers, creators, or admins can hand off a block to reviewers.",
+    );
   }
   const block = task.blocks.find((b) => b.id === blockId);
   if (!block) throw new Error("Block not found");
@@ -1418,7 +1473,7 @@ export async function sendBlockToReviewers(task: TaskDoc, blockId: string) {
     (s) => s.blockId === blockId && s.roleHint !== "reviewer",
   );
   const outstanding = completionRows.filter((s) => !s.done);
-  if (outstanding.length > 0) {
+  if (outstanding.length > 0 && !allowOverride) {
     const first = outstanding[0];
     const more = outstanding.length > 1 ? ` (+${outstanding.length - 1} more)` : "";
     throw new Error(
@@ -1430,6 +1485,21 @@ export async function sendBlockToReviewers(task: TaskDoc, blockId: string) {
   );
   if (alreadySent) {
     throw new Error("This block has already been sent to reviewers.");
+  }
+  // Skip-review short-circuit: log the activity (so the press is visible in
+  // the audit trail and the block is recorded as "handed off") but skip the
+  // signoff-row spawn. `getBlockPhase` will return `"complete"` directly on
+  // all-done since reviewMode is "skip-review".
+  if (block.reviewMode === "skip-review") {
+    const batch = writeBatch(db);
+    batch.update(doc(db, "tasks", task.id), { updatedAt: serverTimestamp() });
+    queueActivity(batch, task.id, "block_sent_to_reviewers", uid, {
+      blockId,
+      name: block.name,
+      skippedReview: true,
+    });
+    await batch.commit();
+    return;
   }
   const spawned = planReviewSpawn(task, blockId);
   const batch = writeBatch(db);
