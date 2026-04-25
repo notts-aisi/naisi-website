@@ -17,6 +17,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   TASK_FIELD_LIMITS,
+  getBlockEffectiveReviewerUids,
   getBlockPhase,
   groupSubtasksByBlock,
   type BlockPhase,
@@ -331,11 +332,26 @@ function NotifyReviewersButton({
   // wait for everything to be ticked.
   const canOverride = viewerIsAdmin || viewerIsCreator;
   const canSend = allDone || canOverride;
-  const helperText = allDone
-    ? "All tasks complete — ready to send to reviewers."
-    : canOverride
+  // No-reviewer path: when neither task-level nor any per-subtask reviewer
+  // is configured, "Notify reviewers" is misleading — there's nobody to
+  // notify and `planReviewSpawn` no-ops the spawn anyway. Flip the label
+  // and helper to make the press read as "close out the block" rather
+  // than a phantom hand-off. The block stays in the "complete" phase
+  // (green) since `getBlockPhase` returns complete on no-reviewers + all-
+  // done, so the flow doesn't false-flash through "reviewing" yellow.
+  const hasReviewers = getBlockEffectiveReviewerUids(task, blockId).length > 0;
+  const helperText = !allDone
+    ? canOverride
       ? `${outstanding.length} subtask${outstanding.length === 1 ? "" : "s"} not yet done — admin/creator can force-send anyway.`
-      : "All tasks must be marked as complete before sending to reviewers.";
+      : "All tasks must be marked as complete before sending to reviewers."
+    : hasReviewers
+      ? "All tasks complete — ready to send to reviewers."
+      : "All tasks complete — no reviewers configured, nothing to hand off.";
+  const buttonLabel = busy
+    ? "Sending…"
+    : hasReviewers
+      ? "Notify reviewers"
+      : "Mark block complete";
 
   async function handleSend() {
     if (!canSend || busy) return;
@@ -394,11 +410,13 @@ function NotifyReviewersButton({
         }}
         title={
           canSend
-            ? "Spawn reviewer signoff rows and kick off the review phase."
+            ? hasReviewers
+              ? "Spawn reviewer signoff rows and kick off the review phase."
+              : "Close out this block — no reviewers to spawn signoff rows for."
             : helperText
         }
       >
-        {busy ? "Sending…" : "Notify reviewers"}
+        {buttonLabel}
       </button>
     </div>
   );
