@@ -71,6 +71,10 @@ export default function BlockHeader({
   // aren't stuck in setup forever waiting for a reviewer who doesn't
   // exist — the person who set it up can move it forward.
   const canFinalizeSetup = isAdmin || isTaskReviewer || isCreator;
+  // Same trio owns block due-dates — the task setter (admin / creator /
+  // task-level reviewer) decides when the work is due, completers don't.
+  // Tightened from `canEditStructure` 2026-04-25 after user feedback.
+  const canEditDueDates = isAdmin || isTaskReviewer || isCreator;
   const requiredCount = consensus.required.length;
   const consentCount = consensus.consenting.length;
   // Stage 1.5a: lock-in is an ALLOCATION gate, not a submission gate.
@@ -467,7 +471,7 @@ export default function BlockHeader({
           </span>
         )}
 
-        {canEditStructure && completionSubtasksInBlock.length > 0 && (
+        {canEditDueDates && completionSubtasksInBlock.length > 0 && (
           <label
             style={{
               position: "relative",

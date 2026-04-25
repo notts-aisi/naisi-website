@@ -324,13 +324,27 @@ function NotifyReviewersButton({
   const [busy, setBusy] = useState(false);
   if (!viewerIsCompleter && !viewerIsAdmin && !viewerIsCreator) return null;
   const outstanding = completion.filter((s) => !s.done);
-  const canSend = outstanding.length === 0;
-  const helperText = canSend
+  const allDone = outstanding.length === 0;
+  // Admin / creator can press regardless of completion state — they get a
+  // confirm popup if there are outstanding subtasks. Same escape-hatch
+  // pattern as `forceSealBlock` for the lock-in gate. Completers must
+  // wait for everything to be ticked.
+  const canOverride = viewerIsAdmin || viewerIsCreator;
+  const canSend = allDone || canOverride;
+  const helperText = allDone
     ? "All tasks complete — ready to send to reviewers."
-    : "All tasks must be marked as complete before sending to reviewers.";
+    : canOverride
+      ? `${outstanding.length} subtask${outstanding.length === 1 ? "" : "s"} not yet done — admin/creator can force-send anyway.`
+      : "All tasks must be marked as complete before sending to reviewers.";
 
   async function handleSend() {
     if (!canSend || busy) return;
+    if (!allDone && canOverride) {
+      const ok = window.confirm(
+        `Send "${task.subtasks.find((s) => s.blockId === blockId)?.title ?? "this block"}" to reviewers with ${outstanding.length} subtask${outstanding.length === 1 ? "" : "s"} still outstanding? The signoff rows will spawn anyway — admin/creator override.`,
+      );
+      if (!ok) return;
+    }
     setBusy(true);
     try {
       await sendBlockToReviewers(task, blockId);
