@@ -12,6 +12,7 @@ import {
   type TaskDoc,
 } from "@/lib/firestore/tasks";
 import { BLOCK_PHASE_PALETTE } from "./SubtaskList";
+import TaskCalendar from "./TaskCalendar";
 import {
   deleteBlock,
   ensureBlockReviewSubtasks,
@@ -64,6 +65,7 @@ export default function BlockHeader({
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(block.name);
   const [busy, setBusy] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
 
   const consensus = getBlockConsensusState(task, block.id);
   const isCompleter = task.completerUids.includes(viewerUid);
@@ -564,22 +566,31 @@ export default function BlockHeader({
         )}
 
         {canEditDueDates && completionSubtasksInBlock.length > 0 && (
-          <label
+          <button
+            type="button"
+            onClick={() => setCalendarOpen((v) => !v)}
+            disabled={busy}
+            aria-expanded={calendarOpen}
+            aria-controls={`block-calendar-${block.id}`}
+            title="Set due date for every subtask in this block. Overwrites individual dates."
             style={{
-              position: "relative",
               display: "inline-flex",
               alignItems: "center",
               gap: "var(--space-2)",
               padding: "0.35rem 0.75rem",
-              background: "var(--color-bg-elevated)",
-              border: "1px solid var(--color-border)",
+              background: calendarOpen
+                ? "var(--color-accent-soft)"
+                : "var(--color-bg-elevated)",
+              border: `1px solid ${calendarOpen ? "var(--color-accent)" : "var(--color-border)"}`,
               borderRadius: "999px",
               fontSize: "var(--text-xs)",
               fontWeight: 600,
-              color: "var(--color-text-muted)",
-              cursor: "pointer",
+              color: calendarOpen
+                ? "var(--color-accent)"
+                : "var(--color-text-muted)",
+              cursor: busy ? "not-allowed" : "pointer",
+              fontFamily: "inherit",
             }}
-            title="Set due date for every subtask in this block. Overwrites individual dates."
           >
             <span aria-hidden="true" style={{ fontSize: "14px", lineHeight: 1 }}>
               📅
@@ -591,22 +602,7 @@ export default function BlockHeader({
                   ? commonDue.toLocaleDateString()
                   : "Set all due"}
             </span>
-            <input
-              type="date"
-              value={commonDue ? toDateInputValue(commonDue) : ""}
-              onChange={(e) => handleBlockDueChange(e.target.value).catch(console.error)}
-              disabled={busy}
-              aria-label="Set due date for every subtask in this block"
-              style={{
-                position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: "100%",
-                opacity: 0,
-                cursor: "pointer",
-              }}
-            />
-          </label>
+          </button>
         )}
 
         <div style={{ marginLeft: "auto", display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
@@ -711,6 +707,25 @@ export default function BlockHeader({
           )}
         </div>
       </div>
+
+      {calendarOpen && canEditDueDates && completionSubtasksInBlock.length > 0 && (
+        <div
+          id={`block-calendar-${block.id}`}
+          style={{ display: "flex", justifyContent: "flex-start" }}
+        >
+          <TaskCalendar
+            mode="edit"
+            value={dueIsMixed ? null : commonDue}
+            disabled={busy}
+            size="sm"
+            onChange={(date) => {
+              const v = date ? toDateInputValue(date) : "";
+              handleBlockDueChange(v).catch(console.error);
+              setCalendarOpen(false);
+            }}
+          />
+        </div>
+      )}
 
       {!isSealed && !isSetup && requiredCount > 0 && (
         <div

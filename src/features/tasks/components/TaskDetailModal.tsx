@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
-import { Input, Select } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Input";
 import {
   TASK_FIELD_LIMITS,
   TASK_PRIORITIES,
@@ -33,7 +33,7 @@ import AssigneePicker from "./AssigneePicker";
 import AttachmentList from "./AttachmentList";
 import AttachmentUpload from "./AttachmentUpload";
 import CommentThread from "./CommentThread";
-import DueDateBadge from "./DueDateBadge";
+import TaskCalendar from "./TaskCalendar";
 import SubtaskBreakdown from "./SubtaskBreakdown";
 import SubtaskList from "./SubtaskList";
 import { useCommentsAndActivity } from "../hooks/useCommentsAndActivity";
@@ -106,6 +106,7 @@ export default function TaskDetailModal({
   // PR #71 — same "task-setter" mental model. Tightened 2026-04-25 after
   // user feedback that completers were able to move dates.
   const canEditDueDates = !!task && (isAdmin || isCreator || isTaskReviewer);
+  const now = new Date();
 
   // Pending sent_for_review — derive from activity so SubtaskRow can tint
   // pending rows orange and the composer can gate its own button. Task-level
@@ -461,20 +462,25 @@ export default function TaskDetailModal({
             ) : (
               <Badge tone="neutral">Priority: {TASK_PRIORITY_LABELS[task.priority]}</Badge>
             )}
-            {canEditDueDates ? (
-              <label style={fieldLabel}>
-                <span>Due date</span>
-                <Input
-                  type="date"
-                  value={toDateInputValue(task.dueDate)}
-                  onChange={(e) => onDueChange(e.target.value)}
-                  aria-label="Due date"
-                />
-              </label>
-            ) : (
-              <DueDateBadge dueDate={task.dueDate} done={task.status === "done"} />
-            )}
           </div>
+
+          {(canEditDueDates || task.dueDate) && (
+            <section>
+              <h3 style={sectionLabel}>Due date</h3>
+              <TaskCalendar
+                mode={canEditDueDates ? "edit" : "view"}
+                value={task.dueDate}
+                isOverdue={
+                  task.dueDate !== null &&
+                  task.status !== "done" &&
+                  task.dueDate.getTime() < now.getTime()
+                }
+                onChange={(date) =>
+                  onDueChange(date ? toDateInputValue(date) : "")
+                }
+              />
+            </section>
+          )}
 
           <section>
             <h3 style={sectionLabel}>Description</h3>
