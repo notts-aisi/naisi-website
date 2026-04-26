@@ -12,6 +12,7 @@ import {
 import type { UserDoc } from "@/lib/firestore/users";
 import { updateSubtaskDescription, updateSubtaskDueDate } from "../taskMutations";
 import { addComment, updateComment } from "../commentMutations";
+import { extractMentionUids } from "../lib/comments/markdown";
 import { useSubtaskComments } from "../hooks/useSubtaskComments";
 import { useSubtaskActivity } from "../hooks/useSubtaskActivity";
 import { useTaskAttachments } from "../hooks/useTaskAttachments";
@@ -84,18 +85,51 @@ export default function SubtaskDetailModal({
   }
 
   async function postSubComment(body: string, mentions: string[]) {
-    await addComment({
+    const commentId = await addComment({
       taskId: task.id,
       bodyMarkdown: body,
       mentions,
       subtaskId: subtask.id,
     });
+    // Held-back wiring (2026-04-26): subcomment pings now fire through
+    // the same /notify route as task-level mentions, scoped to the
+    // subtask so the email subject reads "commented on subtask X".
+    // Fire-and-forget; the comment doc has already persisted.
+    if (mentions.length > 0) {
+      fireNotify(task.id, {
+        commentId,
+        subtaskId: subtask.id,
+      });
+    }
   }
 
   async function saveEdit(body: string, mentions: string[]) {
     if (!editingCommentId) return;
+    const previousBody =
+      subComments.find((c) => c.id === editingCommentId)?.bodyMarkdown ?? "";
     await updateComment(task.id, editingCommentId, body, mentions);
     setEditingCommentId(null);
+    // Edit-fires-only-on-newly-added-mentions semantics, mirroring the
+    // task-level CommentComposer. priorMentions stops the route from
+    // re-emailing names that were already pinged in the original.
+    const priorMentions = extractMentionUids(previousBody);
+    const addedMentions = mentions.filter((u) => !priorMentions.includes(u));
+    if (addedMentions.length > 0) {
+      fireNotify(task.id, {
+        commentId: editingCommentId,
+        subtaskId: subtask.id,
+        priorMentions,
+      });
+    }
+  }
+
+  function fireNotify(taskId: string, payload: Record<string, unknown>): void {
+    fetch(`/api/tasks/${taskId}/notify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch((err) => console.warn("subcomment notify failed:", err));
   }
 
   // Sync the draft if the underlying subtask changes (e.g. another writer

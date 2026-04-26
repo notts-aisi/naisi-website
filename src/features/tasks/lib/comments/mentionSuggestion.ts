@@ -27,10 +27,12 @@ import MentionDropdown, {
  */
 export function buildMentionSuggestion(
   getUsers: () => UserDoc[],
+  opts: { includeAll?: boolean } = {},
 ): Omit<SuggestionOptions<MentionDropdownItem>, "editor"> {
   return {
     char: "@",
-    items: ({ query }: { query: string }) => mentionItemsFromUsers(getUsers(), query),
+    items: ({ query }: { query: string }) =>
+      mentionItemsFromUsers(getUsers(), query, 8, { includeAll: opts.includeAll === true }),
     render: () => {
       let container: HTMLDivElement | null = null;
       let root: Root | null = null;

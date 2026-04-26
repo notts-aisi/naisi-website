@@ -197,6 +197,28 @@ function renderActivityCopy(a: ActivityDoc, users: UserDoc[], task: TaskDoc): st
       }
       return `${actor} dropped reviewing ${subtaskTitle(pickStr("subtaskId"))}`;
     }
+    case "review_outcome_sent": {
+      const blockName = pickStr("blockName") ?? "a block";
+      const recipients = typeof p.recipients === "number" ? p.recipients : null;
+      return recipients !== null
+        ? `${actor} sent the review outcome for "${blockName}" to ${recipients} member${recipients === 1 ? "" : "s"}`
+        : `${actor} sent the review outcome for "${blockName}"`;
+    }
+    case "initial_notifications_sent": {
+      const recipients = typeof p.recipients === "number" ? p.recipients : null;
+      return recipients !== null
+        ? `${actor} sent initial notifications to ${recipients} member${recipients === 1 ? "" : "s"}`
+        : `${actor} sent initial notifications`;
+    }
+    case "member_notified": {
+      const uid = pickStr("uid");
+      if (uid) {
+        const u = users.find((x) => x.uid === uid);
+        const name = u?.displayName ?? u?.email ?? uid;
+        return `${actor} sent the membership email to ${name}`;
+      }
+      return `${actor} sent a membership email`;
+    }
     default:
       return `${actor} updated the task`;
   }

@@ -32,6 +32,14 @@ type Props = {
   /** Copy shown when `limitToUids` is an empty array (so the UI explains
    *  why the picker is empty rather than just being bare). */
   emptyLimitHint?: string;
+  /** Stage 5 (2026-04-26): per-uid inline Notify button. Renders an
+   *  optional ghost-style "Notify" affordance next to any selected chip
+   *  whose uid appears here. Only the task-level Completers + Reviewers
+   *  pickers thread these props through; subtask-level pickers ignore them
+   *  (subtask self-add doesn't trigger the membership-email flow). */
+  notifyableUids?: string[];
+  onNotify?: (uid: string) => void;
+  notifyBusyUids?: string[];
 };
 
 const ROLE_COPY: Record<PickerRole, { verb: string; countLabel: string }> = {
@@ -49,7 +57,18 @@ export default function AssigneePicker({
   showRoleFilter = false,
   limitToUids,
   emptyLimitHint,
+  notifyableUids,
+  onNotify,
+  notifyBusyUids,
 }: Props) {
+  const notifySet = useMemo(
+    () => new Set(notifyableUids ?? []),
+    [notifyableUids],
+  );
+  const notifyBusySet = useMemo(
+    () => new Set(notifyBusyUids ?? []),
+    [notifyBusyUids],
+  );
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
 
@@ -98,34 +117,67 @@ export default function AssigneePicker({
 
       {selectedUsers.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
-          {selectedUsers.map((u) => (
-            <button
-              key={u.uid}
-              type="button"
-              onClick={() => toggle(u.uid)}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "var(--space-1)",
-                padding: "0.25rem 0.55rem",
-                borderRadius: "var(--radius-pill)",
-                background:
-                  role === "reviewer"
-                    ? "var(--color-warning-soft, var(--color-surface-hover))"
-                    : "var(--color-accent-soft)",
-                color:
-                  role === "reviewer"
-                    ? "var(--color-warning, var(--color-text))"
-                    : "var(--color-accent)",
-                fontSize: "var(--text-xs)",
-                border: "none",
-                cursor: "pointer",
-              }}
-            >
-              <span>{u.displayName ?? u.email ?? u.uid}</span>
-              <span aria-hidden>✕</span>
-            </button>
-          ))}
+          {selectedUsers.map((u) => {
+            const showNotify = onNotify && notifySet.has(u.uid);
+            const notifyBusy = notifyBusySet.has(u.uid);
+            return (
+              <span
+                key={u.uid}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "var(--space-1)",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => toggle(u.uid)}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "var(--space-1)",
+                    padding: "0.25rem 0.55rem",
+                    borderRadius: "var(--radius-pill)",
+                    background:
+                      role === "reviewer"
+                        ? "var(--color-warning-soft, var(--color-surface-hover))"
+                        : "var(--color-accent-soft)",
+                    color:
+                      role === "reviewer"
+                        ? "var(--color-warning, var(--color-text))"
+                        : "var(--color-accent)",
+                    fontSize: "var(--text-xs)",
+                    border: "none",
+                    cursor: "pointer",
+                  }}
+                >
+                  <span>{u.displayName ?? u.email ?? u.uid}</span>
+                  <span aria-hidden>✕</span>
+                </button>
+                {showNotify && (
+                  <button
+                    type="button"
+                    onClick={() => onNotify!(u.uid)}
+                    disabled={notifyBusy}
+                    title={`Send the membership email to ${u.displayName ?? u.email ?? u.uid}.`}
+                    style={{
+                      padding: "0.2rem 0.55rem",
+                      background: "transparent",
+                      color: "var(--color-text-muted)",
+                      border: "1px dashed var(--color-border)",
+                      borderRadius: "var(--radius-pill)",
+                      fontSize: "var(--text-xs)",
+                      fontWeight: 500,
+                      cursor: notifyBusy ? "not-allowed" : "pointer",
+                      opacity: notifyBusy ? 0.6 : 1,
+                    }}
+                  >
+                    {notifyBusy ? "Notifying…" : "Notify"}
+                  </button>
+                )}
+              </span>
+            );
+          })}
         </div>
       )}
 

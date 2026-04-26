@@ -40,7 +40,10 @@ export type ActivityKind =
   | "subtask_undone"
   | "subtask_block_locked_in"
   | "block_setup_finalized"
-  | "block_review_mode_set";
+  | "block_review_mode_set"
+  | "review_outcome_sent"
+  | "initial_notifications_sent"
+  | "member_notified";
 
 export type ActivityPayload = Record<string, unknown>;
 
@@ -95,6 +98,9 @@ const KNOWN_KINDS: ActivityKind[] = [
   "subtask_block_locked_in",
   "block_setup_finalized",
   "block_review_mode_set",
+  "review_outcome_sent",
+  "initial_notifications_sent",
+  "member_notified",
 ];
 
 export function normalizeActivity(id: string, data: Raw): ActivityDoc {

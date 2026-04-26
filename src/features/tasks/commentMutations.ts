@@ -4,6 +4,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   increment,
   serverTimestamp,
   updateDoc,
@@ -13,6 +14,68 @@ import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import { COMMENT_FIELD_LIMITS } from "@/lib/firestore/comments";
 import { slugId } from "@/lib/firestore/slugId";
 import { queueActivity } from "./activityLog";
+
+/**
+ * Sentinel uid used by the `@all` mention in TipTap-powered task-level
+ * comments. Stored in the body as `@[all](uid:__all__)` (so the editor
+ * keeps a single pill), but expanded in `addComment` /
+ * `updateComment` to the actual current roster before the comment doc
+ * is written. The /notify route therefore sees real uids — no special
+ * casing needed downstream. Subcomments compose via a plain textarea
+ * (no mention plugin), so this token can't appear there until the
+ * TipTap subcomment upgrade lands.
+ */
+export const MENTION_ALL_UID = "__all__";
+
+/**
+ * Replace the `@all` sentinel in a mentions array with the task's
+ * current roster (completerUids ∪ reviewerUids). Author is excluded so
+ * a user @-mentioning the team doesn't ping themselves. De-duplicated;
+ * preserves first-occurrence order of any explicit mentions that
+ * preceded the sentinel.
+ */
+async function expandMentionAll(
+  taskId: string,
+  mentions: string[],
+  authorUid: string,
+): Promise<string[]> {
+  if (!mentions.includes(MENTION_ALL_UID)) return mentions;
+  const db = getClientDb();
+  const snap = await getDoc(doc(db, "tasks", taskId));
+  if (!snap.exists()) {
+    // Defensive: drop the sentinel rather than persist garbage.
+    return mentions.filter((u) => u !== MENTION_ALL_UID);
+  }
+  const data = snap.data() ?? {};
+  const completers: string[] = Array.isArray(data.completerUids)
+    ? (data.completerUids as unknown[]).filter(
+        (u): u is string => typeof u === "string",
+      )
+    : [];
+  const reviewers: string[] = Array.isArray(data.reviewerUids)
+    ? (data.reviewerUids as unknown[]).filter(
+        (u): u is string => typeof u === "string",
+      )
+    : [];
+  const expanded: string[] = [];
+  const seen = new Set<string>();
+  function push(uid: string) {
+    if (uid === MENTION_ALL_UID) return;
+    if (uid === authorUid) return;
+    if (seen.has(uid)) return;
+    seen.add(uid);
+    expanded.push(uid);
+  }
+  for (const uid of mentions) {
+    if (uid === MENTION_ALL_UID) {
+      for (const u of completers) push(u);
+      for (const u of reviewers) push(u);
+    } else {
+      push(uid);
+    }
+  }
+  return expanded;
+}
 
 /**
  * Build a slug source from a comment body: strip mention tokens down to
@@ -60,7 +123,16 @@ export async function addComment(input: AddCommentInput): Promise<string> {
       `Comment must be ${COMMENT_FIELD_LIMITS.bodyMarkdown} characters or fewer`,
     );
   }
-  const mentions = Array.from(new Set(input.mentions)).slice(
+  const subtaskId = input.subtaskId ?? null;
+  // Stage 6 (2026-04-26): @all is a task-level affordance only — the
+  // TipTap composer is the sole surface that can produce the sentinel,
+  // and it isn't rendered for subcomments yet. Strip the sentinel from
+  // subcomments defensively so a hand-rolled body can't leak it.
+  const rawMentions =
+    subtaskId === null
+      ? await expandMentionAll(input.taskId, input.mentions, uid)
+      : input.mentions.filter((u) => u !== MENTION_ALL_UID);
+  const mentions = Array.from(new Set(rawMentions)).slice(
     0,
     COMMENT_FIELD_LIMITS.maxMentions,
   );
@@ -68,7 +140,6 @@ export async function addComment(input: AddCommentInput): Promise<string> {
   // addDoc doesn't play with writeBatch, so we pre-generate the comment ref
   // via doc(collection(...)) and use batch.set on it. Keeps the commentCount
   // increment + activity entry atomic with the comment write.
-  const subtaskId = input.subtaskId ?? null;
   const commentRef = doc(
     collection(db, "tasks", input.taskId, "comments"),
     slugId(commentSlugSource(body, subtaskId)),
@@ -102,6 +173,7 @@ export async function updateComment(
   nextMentions: string[],
 ): Promise<void> {
   const db = getClientDb();
+  const uid = actingUid();
   const body = nextBody.trim();
   if (!body) throw new Error("Comment body required");
   if (body.length > COMMENT_FIELD_LIMITS.bodyMarkdown) {
@@ -109,7 +181,16 @@ export async function updateComment(
       `Comment must be ${COMMENT_FIELD_LIMITS.bodyMarkdown} characters or fewer`,
     );
   }
-  const mentions = Array.from(new Set(nextMentions)).slice(
+  // Mirror addComment: expand the @all sentinel against the current
+  // roster on edit too, so editing a comment to add @all pings the
+  // CURRENT team rather than whoever was on it at create-time. The
+  // existing comment doc carries `subtaskId`, but we don't read it
+  // here — subcomments don't expose @all, so the sentinel can only
+  // arrive on a task-level comment edit.
+  const expanded = nextMentions.includes(MENTION_ALL_UID)
+    ? await expandMentionAll(taskId, nextMentions, uid)
+    : nextMentions;
+  const mentions = Array.from(new Set(expanded)).slice(
     0,
     COMMENT_FIELD_LIMITS.maxMentions,
   );
