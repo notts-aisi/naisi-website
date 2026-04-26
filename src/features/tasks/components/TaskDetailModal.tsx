@@ -475,6 +475,7 @@ export default function TaskDetailModal({
                   task.status !== "done" &&
                   task.dueDate.getTime() < now.getTime()
                 }
+                collapsible
                 onChange={(date) =>
                   onDueChange(date ? toDateInputValue(date) : "")
                 }

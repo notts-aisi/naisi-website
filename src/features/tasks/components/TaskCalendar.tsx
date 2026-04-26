@@ -15,6 +15,10 @@ type Props = {
   size?: "sm" | "md";
   /** Optional surrounding label, e.g. "Due date". Rendered above the grid. */
   label?: string;
+  /** Render a collapsed pill by default and expand on click. The grid auto-
+   *  collapses on commit (cell click, shortcut, Clear). Without it the grid
+   *  is always visible. */
+  collapsible?: boolean;
 };
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -63,11 +67,13 @@ export default function TaskCalendar({
   disabled = false,
   size = "md",
   label,
+  collapsible = false,
 }: Props) {
   const today = useMemo(() => localMidnight(new Date()), []);
   const [viewMonth, setViewMonth] = useState<Date>(() =>
     startOfMonth(value ?? today),
   );
+  const [expanded, setExpanded] = useState<boolean>(!collapsible);
 
   const cellPx = size === "sm" ? 30 : 36;
   const headerFont = size === "sm" ? "var(--text-xs)" : "var(--text-sm)";
@@ -88,16 +94,33 @@ export default function TaskCalendar({
       })
     : null;
 
+  function commit(next: Date | null) {
+    onChange?.(next);
+    if (collapsible) setExpanded(false);
+  }
+
   function pick(d: Date) {
     if (mode !== "edit" || disabled || !onChange) return;
     if (d.getMonth() !== viewMonth.getMonth()) {
       setViewMonth(startOfMonth(d));
     }
-    onChange(localMidnight(d));
+    commit(localMidnight(d));
   }
 
   function jumpToMonthOf(d: Date) {
     setViewMonth(startOfMonth(d));
+  }
+
+  if (collapsible && !expanded) {
+    return (
+      <CollapsedPill
+        value={value}
+        isOverdue={isOverdue}
+        disabled={disabled}
+        canEdit={mode === "edit"}
+        onClick={() => setExpanded(true)}
+      />
+    );
   }
 
   return (
@@ -281,15 +304,27 @@ export default function TaskCalendar({
             <span style={{ color: "var(--color-text-subtle)" }}>No date set</span>
           )}
         </span>
-        {mode === "view" && !sameDay(viewMonth, startOfMonth(today)) && (
-          <button
-            type="button"
-            onClick={() => jumpToMonthOf(today)}
-            style={linkBtnStyle}
-          >
-            Jump to today
-          </button>
-        )}
+        <span style={{ display: "inline-flex", gap: "var(--space-3)" }}>
+          {mode === "view" && !sameDay(viewMonth, startOfMonth(today)) && (
+            <button
+              type="button"
+              onClick={() => jumpToMonthOf(today)}
+              style={linkBtnStyle}
+            >
+              Jump to today
+            </button>
+          )}
+          {collapsible && (
+            <button
+              type="button"
+              onClick={() => setExpanded(false)}
+              style={linkBtnStyle}
+              aria-label="Close calendar"
+            >
+              Done
+            </button>
+          )}
+        </span>
       </div>
 
       {/* Edit-only shortcuts */}
@@ -309,7 +344,7 @@ export default function TaskCalendar({
             onClick={() => {
               const t = today;
               jumpToMonthOf(t);
-              onChange?.(t);
+              commit(t);
             }}
           />
           <Shortcut
@@ -318,7 +353,7 @@ export default function TaskCalendar({
             onClick={() => {
               const d = addDays(today, 7);
               jumpToMonthOf(d);
-              onChange?.(d);
+              commit(d);
             }}
           />
           <Shortcut
@@ -327,7 +362,7 @@ export default function TaskCalendar({
             onClick={() => {
               const d = addDays(today, 30);
               jumpToMonthOf(d);
-              onChange?.(d);
+              commit(d);
             }}
           />
           {value && (
@@ -335,12 +370,83 @@ export default function TaskCalendar({
               label="Clear"
               variant="danger"
               disabled={disabled}
-              onClick={() => onChange?.(null)}
+              onClick={() => commit(null)}
             />
           )}
         </div>
       )}
     </div>
+  );
+}
+
+function CollapsedPill({
+  value,
+  isOverdue,
+  disabled,
+  canEdit,
+  onClick,
+}: {
+  value: Date | null;
+  isOverdue: boolean;
+  disabled: boolean;
+  canEdit: boolean;
+  onClick: () => void;
+}) {
+  const label = value
+    ? value.toLocaleDateString(undefined, {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })
+    : canEdit
+      ? "Set due date"
+      : "No due date";
+  const tinted = value !== null;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={canEdit ? "Click to pick a date" : "Click to view calendar"}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "var(--space-2)",
+        padding: "0.35rem 0.75rem",
+        background: isOverdue
+          ? "var(--color-danger-soft)"
+          : tinted
+            ? "var(--color-accent-soft)"
+            : "var(--color-bg-elevated)",
+        border: `1px solid ${
+          isOverdue
+            ? "var(--color-danger)"
+            : tinted
+              ? "var(--color-accent)"
+              : "var(--color-border)"
+        }`,
+        borderRadius: "999px",
+        fontSize: "var(--text-xs)",
+        fontWeight: 600,
+        color: isOverdue
+          ? "var(--color-danger)"
+          : tinted
+            ? "var(--color-accent)"
+            : "var(--color-text-muted)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        fontFamily: "inherit",
+        opacity: disabled ? 0.6 : 1,
+      }}
+    >
+      <span aria-hidden="true" style={{ fontSize: "14px", lineHeight: 1 }}>
+        📅
+      </span>
+      <span>
+        {label}
+        {isOverdue && value ? " — overdue" : ""}
+      </span>
+    </button>
   );
 }
 

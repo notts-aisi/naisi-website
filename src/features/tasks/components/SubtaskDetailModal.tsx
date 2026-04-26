@@ -287,6 +287,7 @@ export default function SubtaskDetailModal({
               value={subtask.dueDate}
               disabled={dueBusy}
               isOverdue={isOverdue}
+              collapsible
               onChange={(date) => onDueChange(date ? toDateInputValue(date) : "")}
             />
           </section>
