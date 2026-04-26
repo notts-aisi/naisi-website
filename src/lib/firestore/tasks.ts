@@ -868,6 +868,33 @@ export function hasReviewerSignedOffBlock(
 }
 
 /**
+ * Block-scoped variant of `getReviewerGlobalCoverage`: how many completion
+ * subtasks in the given block this reviewer is required on, and how many
+ * they've approved via the matrix. Skips reviewer-signoff rows (they're
+ * the audit-trail row, not work to approve). Drives the counter shown
+ * below a signoff row in `SubtaskRow` — using `getSubtaskApprovalStatus`
+ * on the signoff row itself returns 0/N forever because signoff rows are
+ * ticked via `done`, not via matrix cells.
+ */
+export function getReviewerBlockCoverage(
+  task: TaskDoc,
+  blockId: string,
+  reviewerUid: string,
+): { approved: number; required: number } {
+  let approved = 0;
+  let required = 0;
+  for (const s of task.subtasks) {
+    if (s.blockId !== blockId) continue;
+    if (s.roleHint === "reviewer") continue;
+    const effective = effectiveReviewerUids(s, task.reviewerUids);
+    if (!effective.includes(reviewerUid)) continue;
+    required += 1;
+    if (s.approvedByReviewerUids.includes(reviewerUid)) approved += 1;
+  }
+  return { approved, required };
+}
+
+/**
  * Per-reviewer global coverage across the whole task: how many of the
  * subtasks this reviewer is required on they've approved. Used by the
  * final-signoff confirmation popup — when `approved === required - 1` and

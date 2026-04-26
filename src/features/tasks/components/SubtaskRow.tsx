@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
   TASK_FIELD_LIMITS,
   effectiveReviewerUids,
+  getReviewerBlockCoverage,
   getReviewerGlobalCoverage,
   getReviewerSignoffBlockers,
   getSubtaskApprovalStatus,
@@ -284,6 +285,22 @@ export default function SubtaskRow({
     () => getSubtaskApprovalStatus(subtask, task.reviewerUids),
     [subtask, task.reviewerUids],
   );
+
+  // Reviewer-signoff rows can't use approvalStatus for the "X / N approved"
+  // counter — their `approvedByReviewerUids` is always empty (they're
+  // ticked via `done`, not the matrix). Substitute a block-scoped coverage
+  // count for the assigned reviewer so the counter actually moves as they
+  // approve their block-mates.
+  const signoffCoverage = useMemo(() => {
+    if (subtask.roleHint !== "reviewer") return null;
+    if (subtask.blockId === null) return null;
+    if (subtask.reviewerUids.length === 0) return null;
+    return getReviewerBlockCoverage(
+      task,
+      subtask.blockId,
+      subtask.reviewerUids[0],
+    );
+  }, [subtask, task]);
 
   const rowState = subtaskRowState(subtask, task.reviewerUids, isReviewPending);
   const rowPalette = ROW_COLOURS[rowState];
@@ -821,7 +838,18 @@ export default function SubtaskRow({
         />
       )}
 
-      {showMatrix && approvalStatus.required.length > 0 && (
+      {showMatrix && signoffCoverage !== null && signoffCoverage.required > 0 && (
+        <p
+          style={{
+            margin: 0,
+            fontSize: "var(--text-xs)",
+            color: "var(--color-text-muted)",
+          }}
+        >
+          {signoffCoverage.approved} / {signoffCoverage.required} approved
+        </p>
+      )}
+      {showMatrix && signoffCoverage === null && approvalStatus.required.length > 0 && (
         <p
           style={{
             margin: 0,
