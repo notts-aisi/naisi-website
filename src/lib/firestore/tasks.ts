@@ -115,6 +115,15 @@ export type TaskBlock = {
   /** Admin UID who force-sealed this block, or null if it sealed via
    *  consensus. Purely informational — doesn't affect gating. */
   forceSealedByUid: string | null;
+  /** When the block's "Mark block complete" / "Notify reviewers" press
+   *  fired. Drives the `complete` phase for blocks that don't go through
+   *  signoff (skip-review mode, or review mode with no effective
+   *  reviewers): without an explicit press, ticking all subtasks done
+   *  leaves the block in `in-progress` so it doesn't quietly ungate
+   *  downstream work. Review-mode blocks with signoff rows ignore this
+   *  field — their `complete` is determined by signoff completion.
+   *  Cleared on `unsealBlock`. Pre-migration blocks normalize to null. */
+  completedAt: Date | null;
   /** Per-block review-needed toggle. `"review"` (default) keeps the
    *  existing flow: Notify spawns signoff rows for effective reviewers,
    *  block phase passes through `"reviewing"` before `"complete"`.
@@ -312,6 +321,7 @@ function normalizeBlock(raw: unknown): TaskBlock | null {
     sealedAt: tsToDate(b.sealedAt),
     forceSealedByUid:
       typeof b.forceSealedByUid === "string" ? b.forceSealedByUid : null,
+    completedAt: tsToDate(b.completedAt),
     reviewMode,
     gatingMode,
   };
@@ -678,34 +688,28 @@ export function getBlockPhase(task: TaskDoc, block: TaskBlock): BlockPhase {
   );
   const allCompletionDone =
     completionRows.length === 0 || completionRows.every((s) => s.done);
-  // Skip-review blocks short-circuit to complete on all-done. They never
-  // pass through "reviewing" yellow because by definition they don't have
-  // a review pass. Pre-this-PR data normalises to "review" so existing
-  // blocks behave unchanged.
-  if (block.reviewMode === "skip-review") {
-    return allCompletionDone ? "complete" : "in-progress";
-  }
   const signoffs = task.subtasks.filter(
     (s) => s.blockId === block.id && s.roleHint === "reviewer",
   );
-  if (signoffs.length === 0) {
-    // No signoff rows yet. Two cases:
-    //  (a) no reviewers claimed on any subtask → no review gate ever,
-    //      go green as soon as every completion row is ticked done.
-    //  (b) reviewers have claimed scope but Notify hasn't been pressed —
-    //      stay in-progress so the "Notify reviewers" button surfaces.
-    const hasAnyReviewerClaim = completionRows.some(
-      (s) => s.reviewerUids.length > 0,
-    );
-    if (!hasAnyReviewerClaim && allCompletionDone) return "complete";
-    return "in-progress";
+  if (signoffs.length > 0) {
+    // Signoffs exist (Notify pressed in review mode). A rejection auto-
+    // unticks its subtask — if any completion row regresses, drop back
+    // to in-progress even with signoff rows present. Otherwise the
+    // signoffs themselves determine the phase.
+    if (!allCompletionDone) return "in-progress";
+    if (signoffs.every((s) => s.done)) return "complete";
+    return "reviewing";
   }
-  // Signoffs exist (Notify has been pressed). A rejection auto-unticks
-  // its subtask → if any completion row isn't done, drop back to
-  // "in-progress" (orange) even with signoff rows spawned.
-  if (!allCompletionDone) return "in-progress";
-  if (signoffs.every((s) => s.done)) return "complete";
-  return "reviewing";
+  // No signoff rows: the block reaches "complete" only when the user has
+  // explicitly pressed "Mark block complete" / "Notify reviewers" (which
+  // stamps `block.completedAt`). Without that press, ticking the last
+  // subtask done leaves the block in "in-progress" so it doesn't quietly
+  // ungate downstream gated blocks. Covers both skip-review mode and
+  // review-mode-with-no-effective-reviewers. Pre-migration blocks have
+  // `completedAt: null` so they need a press to flip green — acceptable
+  // one-off for users who had auto-greened blocks before.
+  if (block.completedAt && allCompletionDone) return "complete";
+  return "in-progress";
 }
 
 /**
