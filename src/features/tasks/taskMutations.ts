@@ -130,6 +130,7 @@ function serializeBlock(b: TaskBlock) {
     sealState: b.sealState,
     sealedAt: b.sealedAt ? Timestamp.fromDate(b.sealedAt) : null,
     forceSealedByUid: b.forceSealedByUid,
+    completedAt: b.completedAt ? Timestamp.fromDate(b.completedAt) : null,
     reviewMode: b.reviewMode,
     gatingMode: b.gatingMode,
   };
@@ -1033,6 +1034,7 @@ export async function createBlock(task: TaskDoc, name: string): Promise<string> 
     sealState: "setup",
     sealedAt: null,
     forceSealedByUid: null,
+    completedAt: null,
     // Default to review-needed — preserves backward-compat with every
     // existing block. Toggle via `setBlockReviewMode` if a block is
     // genuinely review-free (e.g. a draft-outline block before the
@@ -1487,12 +1489,20 @@ export async function sendBlockToReviewers(task: TaskDoc, blockId: string) {
     throw new Error("This block has already been sent to reviewers.");
   }
   // Skip-review short-circuit: log the activity (so the press is visible in
-  // the audit trail and the block is recorded as "handed off") but skip the
-  // signoff-row spawn. `getBlockPhase` will return `"complete"` directly on
-  // all-done since reviewMode is "skip-review".
+  // the audit trail) and stamp `block.completedAt` so `getBlockPhase` can
+  // flip the phase to `"complete"`. We deliberately do NOT auto-green a
+  // block on all-done alone — without an explicit press, ticking subtasks
+  // would silently ungate downstream blocks, and the user wouldn't see
+  // the "this block is done" moment.
   if (block.reviewMode === "skip-review") {
+    const blocks = task.blocks.map((b) =>
+      b.id === blockId ? { ...b, completedAt: new Date() } : b,
+    );
     const batch = writeBatch(db);
-    batch.update(doc(db, "tasks", task.id), { updatedAt: serverTimestamp() });
+    batch.update(doc(db, "tasks", task.id), {
+      blocks: blocks.map(serializeBlock),
+      updatedAt: serverTimestamp(),
+    });
     queueActivity(batch, task.id, "block_sent_to_reviewers", uid, {
       blockId,
       name: block.name,
@@ -1510,6 +1520,15 @@ export async function sendBlockToReviewers(task: TaskDoc, blockId: string) {
     const nextSubtasks = [...task.subtasks, ...spawned];
     patch.subtasks = nextSubtasks.map(serializeSubtask);
     patch.subtaskStats = computeSubtaskStats(nextSubtasks);
+  } else {
+    // No signoff rows will spawn (review mode but no effective reviewers
+    // anywhere on the block). Same closeout semantics as skip-review —
+    // stamp completedAt so the explicit press is what flips the phase to
+    // green, not the all-done state.
+    const blocks = task.blocks.map((b) =>
+      b.id === blockId ? { ...b, completedAt: new Date() } : b,
+    );
+    patch.blocks = blocks.map(serializeBlock);
   }
   batch.update(doc(db, "tasks", task.id), patch);
   queueActivity(batch, task.id, "block_sent_to_reviewers", uid, {
@@ -1555,7 +1574,17 @@ export async function unsealBlock(task: TaskDoc, blockId: string) {
   if (block.sealState !== "sealed") return;
   const blocks = task.blocks.map((b) =>
     b.id === blockId
-      ? { ...b, sealState: "open" as const, sealedAt: null, forceSealedByUid: null }
+      ? {
+          ...b,
+          sealState: "open" as const,
+          sealedAt: null,
+          forceSealedByUid: null,
+          // Clear completion stamp too — re-opening allocation rolls the
+          // block back through "in-progress" → "complete" again, and a
+          // stale completedAt would leave it green on the next all-done
+          // without requiring a fresh press.
+          completedAt: null,
+        }
       : b,
   );
   const nextConsents: BlockConsentMap = {
