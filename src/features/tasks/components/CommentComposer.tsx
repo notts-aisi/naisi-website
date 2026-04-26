@@ -70,7 +70,9 @@ export default function CommentComposer(props: Props) {
         StarterKit,
         Mention.configure({
           HTMLAttributes: { class: "mention" },
-          suggestion: buildMentionSuggestion(() => mentionableSnapshot),
+          suggestion: buildMentionSuggestion(() => mentionableSnapshot, {
+            includeAll: true,
+          }),
         }),
       ],
       content:

@@ -133,6 +133,7 @@ function serializeBlock(b: TaskBlock) {
     completedAt: b.completedAt ? Timestamp.fromDate(b.completedAt) : null,
     reviewMode: b.reviewMode,
     gatingMode: b.gatingMode,
+    reviewPassSentAt: b.reviewPassSentAt ? Timestamp.fromDate(b.reviewPassSentAt) : null,
   };
 }
 
@@ -236,6 +237,8 @@ export async function createTask(input: CreateTaskInput): Promise<string> {
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     completedAt: null,
+    initialNotifyAt: null,
+    pendingNotifyUids: [],
   });
   return ref.id;
 }
@@ -934,6 +937,27 @@ export async function updateTask(taskId: string, fields: UpdateTaskInput) {
         }
         patch.blockConsents = nextConsents;
       }
+
+      // Stage 5 (2026-04-26): post-initial-send roster diff updates the
+      // pending-notify queue. New roster joins land in pendingNotifyUids;
+      // anyone removed (or who already received initial notifications +
+      // hasn't been individually notified) is dropped from the queue. Pre-
+      // initial-send tasks (initialNotifyAt === null) keep an empty queue
+      // — the setup phase handles every member via the one-off batch.
+      if (task.initialNotifyAt) {
+        const priorRoster = new Set<string>([
+          ...task.completerUids,
+          ...task.reviewerUids,
+        ]);
+        const added: string[] = [];
+        for (const uid of finalRoster) {
+          if (!priorRoster.has(uid)) added.push(uid);
+        }
+        const queue = new Set(task.pendingNotifyUids);
+        for (const uid of added) queue.add(uid);
+        for (const uid of removed) queue.delete(uid);
+        patch.pendingNotifyUids = Array.from(queue);
+      }
     }
   }
 
@@ -1043,6 +1067,7 @@ export async function createBlock(task: TaskDoc, name: string): Promise<string> 
     // First block ignores gatingMode; subsequent blocks default to gating
     // on the immediate previous block (works out of the box).
     gatingMode: task.blocks.length === 0 ? "none" : "previous",
+    reviewPassSentAt: null,
   };
   const batch = writeBatch(db);
   batch.update(doc(db, "tasks", task.id), {

@@ -138,6 +138,14 @@ export type TaskBlock = {
    *  normalize to "previous". First block (order === 0) ignores this
    *  field — it has no upstream blocks. */
   gatingMode: BlockGatingMode;
+  /** Stage 4 (2026-04-26): timestamp of the most recent batched
+   *  review-outcome email send for this block. Set by the
+   *  `/api/tasks/[id]/send-review-outcome` route when a signed-off
+   *  reviewer presses "Send review" in the block header. Used to
+   *  scope the "questions-resolved" detection to the current review
+   *  pass (anything after this timestamp is the next pass). Null
+   *  until the first send. */
+  reviewPassSentAt: Date | null;
 };
 
 export type BlockConsentMap = Record<string, { consentingCompleterUids: string[] }>;
@@ -237,6 +245,20 @@ export type TaskDoc = {
   createdAt: Date | null;
   updatedAt: Date | null;
   completedAt: Date | null;
+  /** Stage 5 (2026-04-26): timestamp of the one-time "Send initial
+   *  notifications" press. While null, the task is in setup — admins
+   *  can add and remove members freely with zero email risk, and no
+   *  inline Notify buttons render. Once stamped, subsequent member
+   *  adds populate `pendingNotifyUids` and surface optional inline
+   *  Notify buttons. One-way transition; archive the task to halt
+   *  further notifications. */
+  initialNotifyAt: Date | null;
+  /** Stage 5 (2026-04-26): uids that joined the roster after initial
+   *  notifications fired and haven't been individually notified yet.
+   *  Cleared on Notify-press OR on remove-before-notify. Always empty
+   *  while `initialNotifyAt === null` — the gate is initial-send,
+   *  not individual notification per uid. */
+  pendingNotifyUids: string[];
 };
 
 type Raw = Record<string, unknown>;
@@ -324,6 +346,7 @@ function normalizeBlock(raw: unknown): TaskBlock | null {
     completedAt: tsToDate(b.completedAt),
     reviewMode,
     gatingMode,
+    reviewPassSentAt: tsToDate(b.reviewPassSentAt),
   };
 }
 
@@ -391,6 +414,8 @@ export function normalizeTask(id: string, data: Raw): TaskDoc {
     createdAt: tsToDate(data.createdAt),
     updatedAt: tsToDate(data.updatedAt),
     completedAt: tsToDate(data.completedAt),
+    initialNotifyAt: tsToDate(data.initialNotifyAt),
+    pendingNotifyUids: stringArray(data.pendingNotifyUids),
   };
 }
 
@@ -869,6 +894,73 @@ export function hasReviewerSignedOffBlock(
       s.reviewerUids.includes(reviewerUid) &&
       s.done,
   );
+}
+
+/**
+ * Stage 4 gate (2026-04-26) — derives whether a block is in a state where
+ * its batched review-outcome email can fire. The Send review button in
+ * BlockHeader uses this to enable / disable + tooltip itself; the API
+ * route re-checks server-side to defend against stale UI.
+ *
+ * Rules:
+ *   - Block must be sealed AND review-mode (skip-review blocks bypass the
+ *     review pass entirely).
+ *   - Reviewer signoff rows must exist (Notify already pressed).
+ *   - Every completion row must be in a terminal state — no outstanding
+ *     questions, no missing reviews. A "rejected" row is terminal too.
+ *   - Every signoff row in the block must be ticked done.
+ */
+export function canSendReviewOutcome(
+  task: TaskDoc,
+  block: TaskBlock,
+): { ok: boolean; reason: string | null } {
+  if (block.sealState !== "sealed") {
+    return { ok: false, reason: "Block isn't sealed yet — lock in allocation first." };
+  }
+  if (block.reviewMode === "skip-review") {
+    return { ok: false, reason: "Block is in skip-review mode — no outcome to send." };
+  }
+  const signoffs = task.subtasks.filter(
+    (s) => s.blockId === block.id && s.roleHint === "reviewer",
+  );
+  if (signoffs.length === 0) {
+    return {
+      ok: false,
+      reason: "Press Notify reviewers first — there are no signoff rows yet.",
+    };
+  }
+  const completion = task.subtasks.filter(
+    (s) => s.blockId === block.id && s.roleHint !== "reviewer",
+  );
+  for (const s of completion) {
+    if (s.questionedByReviewerUids.length > 0) {
+      return {
+        ok: false,
+        reason: `"${s.title}" still has an outstanding question — resolve before sending.`,
+      };
+    }
+    if (s.reviewerUids.length === 0) continue;
+    const fullyApproved =
+      s.approvedByReviewerUids.length > 0 &&
+      s.reviewerUids.every((u) => s.approvedByReviewerUids.includes(u));
+    const rejected = s.rejectedByReviewerUids.length > 0;
+    if (!fullyApproved && !rejected) {
+      return {
+        ok: false,
+        reason: `"${s.title}" hasn't reached a decision yet — every reviewer must approve or reject.`,
+      };
+    }
+  }
+  if (!signoffs.every((s) => s.done)) {
+    const pending = signoffs.find((s) => !s.done);
+    return {
+      ok: false,
+      reason: pending
+        ? `Reviewer signoff still pending — at least one reviewer hasn't ticked their row.`
+        : "Every reviewer must tick their signoff row before sending.",
+    };
+  }
+  return { ok: true, reason: null };
 }
 
 /**

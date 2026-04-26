@@ -135,6 +135,12 @@ export default function TaskDetailModal({
   // handleDelete) so the Escape handler useEffect below can read it.
   const [deleting, setDeleting] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
+  // Stage 5 (2026-04-26) — initial-notification + per-uid notify in-flight
+  // sets. Visual hierarchy: the batch button reads as a prominent CTA
+  // (one-time send ceremony); the inline Notify pills read as ghost /
+  // optional opt-in next to each pending chip.
+  const [initialBusy, setInitialBusy] = useState(false);
+  const [notifyBusy, setNotifyBusy] = useState<Set<string>>(new Set());
   // Sync drafts when the loaded task changes. Calling setState during render
   // based on a previous-value ref is React's supported pattern for
   // derived-from-props resets (avoids the react-hooks/set-state-in-effect trap
@@ -333,6 +339,66 @@ export default function TaskDetailModal({
       await archiveTask(task.id, !task.archived);
     } catch (err) {
       console.error(err);
+    }
+  }
+
+  async function handleSendInitialNotifications() {
+    if (!task || initialBusy) return;
+    if (task.initialNotifyAt) return; // one-way
+    if (task.completerUids.length === 0 && task.reviewerUids.length === 0) return;
+    const memberCount = task.completerUids.length + task.reviewerUids.length;
+    const ok = window.confirm(
+      `Send membership emails to ${memberCount} member${memberCount === 1 ? "" : "s"}? This is a one-time press — you can't undo it (archive the task to halt further notifications).`,
+    );
+    if (!ok) return;
+    setInitialBusy(true);
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/send-initial-notifications`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          (body as { error?: string }).error ?? `Send failed (${res.status})`,
+        );
+      }
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Send failed");
+    } finally {
+      setInitialBusy(false);
+    }
+  }
+
+  async function handleNotifyMember(uid: string) {
+    if (!task) return;
+    setNotifyBusy((prev) => {
+      const next = new Set(prev);
+      next.add(uid);
+      return next;
+    });
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/notify-member`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uid }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          (body as { error?: string }).error ?? `Notify failed (${res.status})`,
+        );
+      }
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Notify failed");
+    } finally {
+      setNotifyBusy((prev) => {
+        const next = new Set(prev);
+        next.delete(uid);
+        return next;
+      });
     }
   }
 
@@ -641,6 +707,9 @@ export default function TaskDetailModal({
                 onChange={onCompletersChange}
                 max={TASK_FIELD_LIMITS.maxCompleters}
                 role="completer"
+                notifyableUids={canEditTaskRoster ? task.pendingNotifyUids : undefined}
+                onNotify={canEditTaskRoster ? handleNotifyMember : undefined}
+                notifyBusyUids={Array.from(notifyBusy)}
               />
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
@@ -674,6 +743,9 @@ export default function TaskDetailModal({
                 onChange={onReviewersChange}
                 max={TASK_FIELD_LIMITS.maxReviewers}
                 role="reviewer"
+                notifyableUids={canEditTaskRoster ? task.pendingNotifyUids : undefined}
+                onNotify={canEditTaskRoster ? handleNotifyMember : undefined}
+                notifyBusyUids={Array.from(notifyBusy)}
               />
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
@@ -693,6 +765,53 @@ export default function TaskDetailModal({
               </div>
             )}
           </div>
+          )}
+
+          {/* Stage 5 (2026-04-26) — "Send initial notifications" CTA, the
+              one-time exit from setup phase. Visible only to roster
+              editors (admin / personal creator) so committee at large
+              don't see a button they can't press. Disabled with a tooltip
+              when there are zero members yet so the affordance is
+              discoverable but inert. Hidden once initialNotifyAt is
+              stamped (one-way transition). */}
+          {canEditTaskRoster && task.initialNotifyAt === null && (
+            <div>
+              {(() => {
+                const memberCount =
+                  task.completerUids.length + task.reviewerUids.length;
+                const disabled = memberCount === 0 || initialBusy;
+                return (
+                  <Button
+                    onClick={handleSendInitialNotifications}
+                    disabled={disabled}
+                    title={
+                      memberCount === 0
+                        ? "Add at least one member first."
+                        : "Send the membership email to every current completer + reviewer. One-time press."
+                    }
+                  >
+                    {initialBusy
+                      ? "Sending…"
+                      : memberCount === 0
+                        ? "Send initial notifications"
+                        : `Send initial notifications (${memberCount})`}
+                  </Button>
+                );
+              })()}
+            </div>
+          )}
+          {canEditTaskRoster && task.initialNotifyAt !== null && (
+            <div
+              style={{
+                fontSize: "var(--text-xs)",
+                color: "var(--color-text-muted)",
+              }}
+              title={`Initial notifications were sent ${task.initialNotifyAt.toLocaleString()}.`}
+            >
+              ✓ Initial notifications sent
+              {task.pendingNotifyUids.length > 0 &&
+                ` · ${task.pendingNotifyUids.length} new member${task.pendingNotifyUids.length === 1 ? "" : "s"} pending`}
+            </div>
           )}
 
           {isAdmin && (

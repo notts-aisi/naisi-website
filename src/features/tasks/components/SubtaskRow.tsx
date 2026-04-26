@@ -409,29 +409,19 @@ export default function SubtaskRow({
   async function submitRejection() {
     const reason = rejectReasonDraft?.trim() ?? "";
     if (!reason || rejectBusy) return;
-    // Mention the specific assignees on this subtask, falling back to the
-    // task-level completers if no one's per-row-assigned. Those uids drive
-    // the /notify route's forceEmailCompleters recipient list.
-    const mentionUids =
-      subtask.assigneeUids.length > 0 ? subtask.assigneeUids : task.completerUids;
     setRejectBusy(true);
     try {
-      const commentId = await addComment({
+      // Comment captures the rejection reason in-app; no email fires here.
+      // Completers learn the outcome via the batched review email when the
+      // reviewer presses "Send review" on the block (Stage 4). Comment
+      // stays task-level so the existing thread surface keeps working
+      // unchanged — only the per-rejection email is what's being removed.
+      await addComment({
         taskId: task.id,
         bodyMarkdown: `**❌ Rejected "${subtask.title}"**\n\n${reason}`,
-        mentions: mentionUids,
+        mentions: [],
       });
       await setSubtaskApproval(task, subtask.id, "reject");
-      // Fire-and-forget; comment + reject already persisted regardless.
-      try {
-        await fetch(`/api/tasks/${task.id}/notify`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ commentId, forceEmailCompleters: true }),
-        });
-      } catch (emailErr) {
-        console.warn("[submitRejection] email dispatch failed", emailErr);
-      }
       setRejectReasonDraft(null);
     } catch (err) {
       console.error(err);

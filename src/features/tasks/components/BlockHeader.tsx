@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   TASK_FIELD_LIMITS,
+  canSendReviewOutcome,
   getBlockConsensusState,
   getBlockEffectiveReviewerUids,
   getBlockPhase,
@@ -130,6 +131,59 @@ export default function BlockHeader({
   const missingReviewerCount = hasSpawnedRows
     ? effectiveReviewers.filter((u) => !existingReviewerUids.has(u)).length
     : 0;
+
+  // Stage 4 (2026-04-26) — Send review button. Visible whenever the block
+  // is sealed + review-mode + has signoff rows; gate-disabled until every
+  // completion row is decided AND every reviewer has ticked their signoff
+  // row. Press eligibility = admin OR any reviewer who has personally
+  // signed off on this block.
+  const [sendReviewBusy, setSendReviewBusy] = useState(false);
+  const viewerHasSignedOff = task.subtasks.some(
+    (s) =>
+      s.blockId === block.id &&
+      s.roleHint === "reviewer" &&
+      s.reviewerUids.includes(viewerUid) &&
+      s.done,
+  );
+  const showSendReview =
+    isSealed && block.reviewMode === "review" && hasSpawnedRows;
+  const sendReviewGate = canSendReviewOutcome(task, block);
+  const canPressSendReview = isAdmin || viewerHasSignedOff;
+  const sendReviewDisabledReason = !canPressSendReview
+    ? "Only a reviewer who has signed off on this block (or an admin) can send the review outcome."
+    : sendReviewGate.reason;
+  const lastReviewSent = block.reviewPassSentAt;
+
+  async function handleSendReview() {
+    if (sendReviewBusy) return;
+    if (sendReviewDisabledReason) {
+      window.alert(sendReviewDisabledReason);
+      return;
+    }
+    const ok = window.confirm(
+      `Send the review outcome for "${block.name}" to every completer + reviewer? They'll get the approved / questions-resolved / rejected breakdown.`,
+    );
+    if (!ok) return;
+    setSendReviewBusy(true);
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/send-review-outcome`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blockId: block.id }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          (body as { error?: string }).error ?? `Send failed (${res.status})`,
+        );
+      }
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Send failed");
+    } finally {
+      setSendReviewBusy(false);
+    }
+  }
 
   async function saveName() {
     const trimmed = nameDraft.trim();
@@ -691,6 +745,45 @@ export default function BlockHeader({
               title={`Admin: spawn ${missingReviewerCount} missing reviewer signoff row${missingReviewerCount === 1 ? "" : "s"} for this sealed block`}
             >
               Spawn {missingReviewerCount} review{missingReviewerCount === 1 ? "" : "s"}
+            </button>
+          )}
+          {showSendReview && (
+            <button
+              type="button"
+              onClick={handleSendReview}
+              disabled={sendReviewBusy || sendReviewDisabledReason !== null}
+              style={{
+                padding: "0.3rem 0.75rem",
+                background:
+                  sendReviewDisabledReason !== null
+                    ? "var(--color-bg-elevated)"
+                    : "rgba(22, 163, 74, 0.12)",
+                color:
+                  sendReviewDisabledReason !== null
+                    ? "var(--color-text-muted)"
+                    : "var(--color-success, #16a34a)",
+                border: "none",
+                borderRadius: "var(--radius-sm, 4px)",
+                fontSize: "var(--text-xs)",
+                fontWeight: 600,
+                cursor:
+                  sendReviewBusy || sendReviewDisabledReason !== null
+                    ? "not-allowed"
+                    : "pointer",
+                opacity: sendReviewDisabledReason !== null ? 0.65 : 1,
+              }}
+              title={
+                sendReviewDisabledReason ??
+                (lastReviewSent
+                  ? `Re-send the batched review outcome to every completer + reviewer (last sent ${lastReviewSent.toLocaleString()}).`
+                  : "Send the batched review outcome to every completer + reviewer.")
+              }
+            >
+              {sendReviewBusy
+                ? "Sending…"
+                : lastReviewSent
+                  ? "Re-send review"
+                  : "Send review"}
             </button>
           )}
           {canEditStructure && (isAdmin || isCreator) && (

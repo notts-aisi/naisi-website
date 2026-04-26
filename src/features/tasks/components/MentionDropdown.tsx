@@ -130,19 +130,37 @@ export function mentionItemsFromUsers(
   users: UserDoc[],
   query: string,
   limit = 8,
+  opts: { includeAll?: boolean } = {},
 ): MentionDropdownItem[] {
   const term = query.trim().toLowerCase();
+  const items: MentionDropdownItem[] = [];
+  // Stage 6 (2026-04-26): @all sits at the top of the dropdown when
+  // enabled by the caller. Match it on either an empty query or any
+  // prefix of "all" so the affordance surfaces during natural typing
+  // without dominating unrelated searches.
+  if (opts.includeAll && (!term || "all".startsWith(term) || term.startsWith("all"))) {
+    items.push({
+      uid: "__all__",
+      displayName: "all",
+      email: null,
+      role: "everyone on this task",
+    });
+  }
   const matches = users.filter((u) => {
     if (!term) return true;
     const hay = (u.displayName ?? u.email ?? u.uid).toLowerCase();
     return hay.includes(term);
   });
-  return matches.slice(0, limit).map<MentionDropdownItem>((u) => ({
-    uid: u.uid,
-    displayName: u.displayName ?? u.email ?? u.uid,
-    email: u.email,
-    role: u.role,
-  }));
+  for (const u of matches) {
+    if (items.length >= limit) break;
+    items.push({
+      uid: u.uid,
+      displayName: u.displayName ?? u.email ?? u.uid,
+      email: u.email,
+      role: u.role,
+    });
+  }
+  return items.slice(0, limit);
 }
 
 export default MentionDropdown;
