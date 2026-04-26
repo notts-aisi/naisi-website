@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 type Mode = "edit" | "view";
 
@@ -74,6 +74,21 @@ export default function TaskCalendar({
     startOfMonth(value ?? today),
   );
   const [expanded, setExpanded] = useState<boolean>(!collapsible);
+  // In collapsible mode, picking a cell / shortcut updates a local draft
+  // instead of firing onChange immediately. The bottom Done button commits
+  // the draft; Clear commits null. Non-collapsible callers keep the legacy
+  // pick = commit behaviour so BlockHeader and others don't break.
+  const [draft, setDraft] = useState<Date | null>(value);
+  const lastSyncedValue = useRef<Date | null>(value);
+  if (
+    (lastSyncedValue.current?.getTime() ?? null) !==
+    (value?.getTime() ?? null)
+  ) {
+    lastSyncedValue.current = value;
+    setDraft(value);
+  }
+
+  const selected = collapsible ? draft : value;
 
   const cellPx = size === "sm" ? 30 : 36;
   const headerFont = size === "sm" ? "var(--text-xs)" : "var(--text-sm)";
@@ -85,8 +100,8 @@ export default function TaskCalendar({
     return Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
   }, [viewMonth]);
 
-  const selectedLabel = value
-    ? value.toLocaleDateString(undefined, {
+  const selectedLabel = selected
+    ? selected.toLocaleDateString(undefined, {
         weekday: "short",
         day: "numeric",
         month: "short",
@@ -100,11 +115,24 @@ export default function TaskCalendar({
   }
 
   function pick(d: Date) {
-    if (mode !== "edit" || disabled || !onChange) return;
+    if (mode !== "edit" || disabled) return;
     if (d.getMonth() !== viewMonth.getMonth()) {
       setViewMonth(startOfMonth(d));
     }
-    commit(localMidnight(d));
+    if (collapsible) {
+      setDraft(localMidnight(d));
+    } else {
+      commit(localMidnight(d));
+    }
+  }
+
+  function applyShortcut(d: Date) {
+    jumpToMonthOf(d);
+    if (collapsible) {
+      setDraft(d);
+    } else {
+      commit(d);
+    }
   }
 
   function jumpToMonthOf(d: Date) {
@@ -200,7 +228,7 @@ export default function TaskCalendar({
         {cells.map((d) => {
           const inMonth = d.getMonth() === viewMonth.getMonth();
           const isToday = sameDay(d, today);
-          const isSelected = value !== null && sameDay(d, value);
+          const isSelected = selected !== null && sameDay(d, selected);
           const isInteractive = mode === "edit" && !disabled;
 
           let bg = "transparent";
@@ -304,30 +332,19 @@ export default function TaskCalendar({
             <span style={{ color: "var(--color-text-subtle)" }}>No date set</span>
           )}
         </span>
-        <span style={{ display: "inline-flex", gap: "var(--space-3)" }}>
-          {mode === "view" && !sameDay(viewMonth, startOfMonth(today)) && (
-            <button
-              type="button"
-              onClick={() => jumpToMonthOf(today)}
-              style={linkBtnStyle}
-            >
-              Jump to today
-            </button>
-          )}
-          {collapsible && (
-            <button
-              type="button"
-              onClick={() => setExpanded(false)}
-              style={linkBtnStyle}
-              aria-label="Close calendar"
-            >
-              Done
-            </button>
-          )}
-        </span>
+        {!sameDay(viewMonth, startOfMonth(today)) && (
+          <button
+            type="button"
+            onClick={() => jumpToMonthOf(today)}
+            style={linkBtnStyle}
+          >
+            Jump to today
+          </button>
+        )}
       </div>
 
-      {/* Edit-only shortcuts */}
+      {/* Edit-only shortcuts. In collapsible mode the Clear shortcut is
+          dropped here — Clear has its own dedicated bottom button. */}
       {mode === "edit" && (
         <div
           style={{
@@ -341,31 +358,19 @@ export default function TaskCalendar({
           <Shortcut
             label="Today"
             disabled={disabled}
-            onClick={() => {
-              const t = today;
-              jumpToMonthOf(t);
-              commit(t);
-            }}
+            onClick={() => applyShortcut(today)}
           />
           <Shortcut
             label="+1 week"
             disabled={disabled}
-            onClick={() => {
-              const d = addDays(today, 7);
-              jumpToMonthOf(d);
-              commit(d);
-            }}
+            onClick={() => applyShortcut(addDays(today, 7))}
           />
           <Shortcut
             label="+1 month"
             disabled={disabled}
-            onClick={() => {
-              const d = addDays(today, 30);
-              jumpToMonthOf(d);
-              commit(d);
-            }}
+            onClick={() => applyShortcut(addDays(today, 30))}
           />
-          {value && (
+          {!collapsible && value && (
             <Shortcut
               label="Clear"
               variant="danger"
@@ -375,7 +380,81 @@ export default function TaskCalendar({
           )}
         </div>
       )}
+
+      {/* Collapsible-mode bottom action bar — explicit Clear / Done. */}
+      {collapsible && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: "var(--space-2)",
+            paddingTop: "var(--space-2)",
+            borderTop: "1px solid var(--color-border)",
+          }}
+        >
+          {mode === "edit" ? (
+            <ActionBtn
+              label="Clear"
+              variant="danger"
+              disabled={disabled}
+              onClick={() => {
+                setDraft(null);
+                commit(null);
+              }}
+            />
+          ) : (
+            <span />
+          )}
+          <ActionBtn
+            label="Done"
+            variant="success"
+            disabled={disabled}
+            onClick={() => {
+              if (mode === "edit") {
+                commit(draft);
+              } else {
+                setExpanded(false);
+              }
+            }}
+          />
+        </div>
+      )}
     </div>
+  );
+}
+
+function ActionBtn({
+  label,
+  onClick,
+  disabled,
+  variant,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  variant: "success" | "danger";
+}) {
+  const bg = variant === "success" ? "#16a34a" : "var(--color-danger)";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        padding: "0.4rem 1rem",
+        background: bg,
+        color: "#ffffff",
+        border: "none",
+        borderRadius: "var(--radius-sm)",
+        fontSize: "var(--text-sm)",
+        fontWeight: 600,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.55 : 1,
+        fontFamily: "inherit",
+      }}
+    >
+      {label}
+    </button>
   );
 }
 
