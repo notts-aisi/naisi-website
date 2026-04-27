@@ -33,6 +33,8 @@ import AssigneePicker from "./AssigneePicker";
 import AttachmentList from "./AttachmentList";
 import AttachmentUpload from "./AttachmentUpload";
 import CommentThread from "./CommentThread";
+import DescriptionEditor from "./DescriptionEditor";
+import RichTextRender from "./RichTextRender";
 import TaskCalendar from "./TaskCalendar";
 import SubtaskBreakdown from "./SubtaskBreakdown";
 import SubtaskList from "./SubtaskList";
@@ -240,6 +242,12 @@ export default function TaskDetailModal({
 
   async function saveDesc() {
     if (!task) return;
+    if (descDraft.length > TASK_FIELD_LIMITS.description) {
+      window.alert(
+        `Description is too long (${descDraft.length}/${TASK_FIELD_LIMITS.description}). Trim before saving.`,
+      );
+      return;
+    }
     if (descDraft === task.description) {
       setEditingDesc(false);
       return;
@@ -553,24 +561,14 @@ export default function TaskDetailModal({
             <h3 style={sectionLabel}>Description</h3>
             {editingDesc && canEditAll ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-                <textarea
+                <DescriptionEditor
+                  editorKey={`task-desc:${task.id}`}
+                  initialBody={task.description}
+                  onChange={setDescDraft}
                   autoFocus
-                  value={descDraft}
-                  onChange={(e) => setDescDraft(e.target.value)}
-                  rows={6}
-                  maxLength={TASK_FIELD_LIMITS.description}
-                  style={{
-                    width: "100%",
-                    padding: "var(--space-3)",
-                    background: "var(--color-bg-elevated)",
-                    border: "1px solid var(--color-border)",
-                    borderRadius: "var(--radius-md)",
-                    color: "var(--color-text)",
-                    fontSize: "var(--text-sm)",
-                    resize: "vertical",
-                  }}
+                  minHeightRem={6}
                 />
-                <div style={{ display: "flex", gap: "var(--space-2)" }}>
+                <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
                   <Button size="sm" onClick={saveDesc}>
                     Save
                   </Button>
@@ -584,13 +582,24 @@ export default function TaskDetailModal({
                   >
                     Cancel
                   </Button>
+                  <span
+                    style={{
+                      marginLeft: "auto",
+                      fontSize: "var(--text-xs)",
+                      color:
+                        descDraft.length > TASK_FIELD_LIMITS.description
+                          ? "var(--color-danger, #dc2626)"
+                          : "var(--color-text-muted)",
+                    }}
+                  >
+                    {descDraft.length} / {TASK_FIELD_LIMITS.description}
+                  </span>
                 </div>
               </div>
             ) : (
-              <p
+              <div
                 onClick={() => canEditAll && setEditingDesc(true)}
                 style={{
-                  whiteSpace: "pre-wrap",
                   fontSize: "var(--text-sm)",
                   color: task.description ? "var(--color-text)" : "var(--color-text-muted)",
                   cursor: canEditAll ? "text" : "default",
@@ -599,10 +608,18 @@ export default function TaskDetailModal({
                   border: "1px solid var(--color-border)",
                   borderRadius: "var(--radius-md)",
                   minHeight: "3rem",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
                 }}
               >
-                {task.description || (canEditAll ? "Click to add a description…" : "No description.")}
-              </p>
+                {task.description ? (
+                  <RichTextRender body={task.description} />
+                ) : canEditAll ? (
+                  "Click to add a description…"
+                ) : (
+                  "No description."
+                )}
+              </div>
             )}
           </section>
 

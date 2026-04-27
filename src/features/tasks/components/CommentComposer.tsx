@@ -98,12 +98,13 @@ export default function CommentComposer(props: Props) {
       editorProps: {
         attributes: {
           class: "naisi-comment-editor",
+          // Border + radius live on the wrapper now (see render below) so
+          // the toolbar visually attaches as a single piece of chrome.
+          // The editor itself only carries padding + base typography.
           style: [
             "min-height: 4.5rem",
             "padding: 0.6rem 0.75rem",
-            "background: var(--color-bg-elevated)",
-            "border: 1px solid var(--color-border)",
-            "border-radius: var(--radius-md)",
+            "background: transparent",
             "color: var(--color-text)",
             "font-size: var(--text-sm)",
             "outline: none",
@@ -111,6 +112,11 @@ export default function CommentComposer(props: Props) {
         },
       },
       immediatelyRender: false,
+      // Re-render on every transaction so `editor.isActive(...)` driven
+      // toolbar buttons reflect the current selection's marks. Default
+      // is false in @tiptap/react v3 for perf; comment composers are
+      // small enough that the per-keystroke render cost is negligible.
+      shouldRerenderOnTransaction: true,
     },
     [mode === "edit" ? props.commentId : "new"],
   );
@@ -261,8 +267,20 @@ export default function CommentComposer(props: Props) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-      <CommentToolbar editor={editor} />
-      <EditorContent editor={editor} />
+      <div
+        style={{
+          background: "var(--color-bg-elevated)",
+          border: "1px solid var(--color-border)",
+          borderRadius: "var(--radius-md)",
+          // No `overflow: hidden` — it would clip the link popover when
+          // it extends past the editor's bottom edge. The toolbar
+          // carries its own top-corner radius to keep the chrome
+          // visually flush.
+        }}
+      >
+        <CommentToolbar editor={editor} />
+        <EditorContent editor={editor} />
+      </div>
 
       {mode === "create" && (
         <div
