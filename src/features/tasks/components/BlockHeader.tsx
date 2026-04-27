@@ -298,15 +298,22 @@ export default function BlockHeader({
 
   async function handleDelete() {
     if (busy) return;
+    const subtaskCount = task.subtasks.filter((s) => s.blockId === block.id).length;
     const ok = window.confirm(
-      `Delete block "${block.name}"? Subtasks inside it will be un-grouped, not deleted.`,
+      subtaskCount === 0
+        ? `Delete block "${block.name}"? It has no subtasks — this just removes the empty container.`
+        : `Delete block "${block.name}"? ${subtaskCount} subtask${subtaskCount === 1 ? "" : "s"} inside will be permanently removed, along with their comments, activity history, and attachments. This cannot be undone.`,
     );
     if (!ok) return;
     setBusy(true);
     try {
-      await deleteBlock(task, block.id);
+      const report = await deleteBlock(task, block.id);
+      console.info(
+        `[deleteBlock] removed ${report.subtasks} subtasks, ${report.comments} comments, ${report.activity} activity entries, ${report.attachments} attachments`,
+      );
     } catch (err) {
       console.error(err);
+      window.alert(err instanceof Error ? err.message : "Delete failed");
     } finally {
       setBusy(false);
     }
