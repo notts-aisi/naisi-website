@@ -1262,39 +1262,59 @@ export async function reorderBlocks(task: TaskDoc, orderedIds: string[]) {
   });
 }
 
+/** Shape returned by POST /api/tasks/[id]/delete-block — what was removed. */
+export type BlockDeletionReport = {
+  subtasks: number;
+  comments: number;
+  activity: number;
+  attachments: number;
+  storageDeleted: number;
+  storageFailed: number;
+};
+
 /**
- * Remove a block and rehome its subtasks to the ungrouped null block. Keeps
- * all subtask state (assignees, approvals, blockedBy refs) intact — a deleted
- * block is just the grouping being dropped, not the work. Also purges the
- * block's consent record.
+ * Cascade-delete a block via the Admin-SDK-backed server route.
+ *
+ * Pre-2026-04-27 behaviour was rehome-to-ungrouped — subtasks survived
+ * with `blockId: null`, leaving them stranded in the no-block tail of the
+ * task. Surfaced as a footgun: admins expected delete to actually delete.
+ * The route now wipes subtasks + their subcomments + activity entries +
+ * attachments (Firestore docs + Storage blobs) in one pass, plus strips
+ * any `blockedBy` edges from surviving subtasks that pointed into the
+ * deleted set so no row gets stuck waiting on a phantom blocker.
  */
-export async function deleteBlock(task: TaskDoc, blockId: string) {
-  const db = getClientDb();
-  const uid = actingUid();
+export async function deleteBlock(
+  task: TaskDoc,
+  blockId: string,
+): Promise<BlockDeletionReport> {
   const existing = task.blocks.find((b) => b.id === blockId);
   if (!existing) throw new Error("Block not found");
-  const subtasks = task.subtasks.map((s) =>
-    s.blockId === blockId ? { ...s, blockId: null } : s,
-  );
-  const blocks = task.blocks
-    .filter((b) => b.id !== blockId)
-    .map((b, i) => ({ ...b, order: i }));
-  const restConsents: BlockConsentMap = {};
-  for (const [k, v] of Object.entries(task.blockConsents)) {
-    if (k !== blockId) restConsents[k] = v;
+  const res = await fetch(`/api/tasks/${task.id}/delete-block`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ blockId }),
+  });
+  if (!res.ok) {
+    let msg = `Delete failed (${res.status})`;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body?.error) msg = body.error;
+    } catch {
+      // swallow — msg already has the status code
+    }
+    throw new Error(msg);
   }
-  const batch = writeBatch(db);
-  batch.update(doc(db, "tasks", task.id), {
-    subtasks: subtasks.map(serializeSubtask),
-    blocks: blocks.map(serializeBlock),
-    blockConsents: restConsents,
-    updatedAt: serverTimestamp(),
-  });
-  queueActivity(batch, task.id, "block_deleted", uid, {
-    blockId,
-    name: existing.name,
-  });
-  await batch.commit();
+  const body = (await res.json()) as { deleted?: BlockDeletionReport };
+  return (
+    body.deleted ?? {
+      subtasks: 0,
+      comments: 0,
+      activity: 0,
+      attachments: 0,
+      storageDeleted: 0,
+      storageFailed: 0,
+    }
+  );
 }
 
 /**
