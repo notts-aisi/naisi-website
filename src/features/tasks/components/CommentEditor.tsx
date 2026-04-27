@@ -87,12 +87,13 @@ export default function CommentEditor({
       editorProps: {
         attributes: {
           class: "naisi-comment-editor",
+          // Border + radius live on the wrapper (see render below); the
+          // editor itself only carries padding + typography so the
+          // toolbar attaches flush above without doubled chrome.
           style: [
             `min-height: ${minHeightRem}rem`,
             "padding: 0.6rem 0.75rem",
-            "background: var(--color-bg-elevated)",
-            "border: 1px solid var(--color-border)",
-            "border-radius: var(--radius-md)",
+            "background: transparent",
             "color: var(--color-text)",
             "font-size: var(--text-sm)",
             "outline: none",
@@ -104,6 +105,10 @@ export default function CommentEditor({
         setLength(body.length);
       },
       immediatelyRender: false,
+      // Toolbar's `editor.isActive(...)` checks need a re-render hook to
+      // reflect selection changes; v3's default of false would leave
+      // the buttons stale until the next prop change.
+      shouldRerenderOnTransaction: true,
     },
     [editorKey],
   );
@@ -160,8 +165,19 @@ export default function CommentEditor({
       style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}
       onKeyDown={handleKeyDown}
     >
-      <CommentToolbar editor={editor} />
-      <EditorContent editor={editor} />
+      <div
+        style={{
+          background: "var(--color-bg-elevated)",
+          border: "1px solid var(--color-border)",
+          borderRadius: "var(--radius-md)",
+          // No `overflow: hidden` — it would clip the link popover. The
+          // toolbar carries its own top-corner radius to keep the
+          // chrome visually flush.
+        }}
+      >
+        <CommentToolbar editor={editor} />
+        <EditorContent editor={editor} />
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
         <Button
           size="sm"

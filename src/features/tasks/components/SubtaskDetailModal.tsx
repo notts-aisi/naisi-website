@@ -20,6 +20,8 @@ import CommentItem from "./CommentItem";
 import CommentEditor from "./CommentEditor";
 import AttachmentList from "./AttachmentList";
 import AttachmentUpload from "./AttachmentUpload";
+import DescriptionEditor from "./DescriptionEditor";
+import RichTextRender from "./RichTextRender";
 import TaskCalendar from "./TaskCalendar";
 import type { ActivityDoc } from "@/lib/firestore/taskActivity";
 
@@ -158,6 +160,12 @@ export default function SubtaskDetailModal({
   const approvalStatus = getSubtaskApprovalStatus(subtask, task.reviewerUids);
 
   async function saveDesc() {
+    if (descDraft.length > TASK_FIELD_LIMITS.subtaskDescription) {
+      window.alert(
+        `Description is too long (${descDraft.length}/${TASK_FIELD_LIMITS.subtaskDescription}). Trim before saving.`,
+      );
+      return;
+    }
     if (descDraft === subtask.description) {
       setEditingDesc(false);
       return;
@@ -240,24 +248,13 @@ export default function SubtaskDetailModal({
           <h3 style={sectionLabel}>Description</h3>
           {editingDesc && canEditDescription ? (
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-              <textarea
+              <DescriptionEditor
+                editorKey={`subtask-desc:${task.id}:${subtask.id}`}
+                initialBody={subtask.description}
+                onChange={setDescDraft}
                 autoFocus
-                value={descDraft}
-                onChange={(e) => setDescDraft(e.target.value)}
-                rows={8}
-                maxLength={TASK_FIELD_LIMITS.subtaskDescription}
-                placeholder="What's being asked for on this subtask? Acceptance cues, suggested flow, links to context…"
-                style={{
-                  width: "100%",
-                  padding: "var(--space-3)",
-                  background: "var(--color-bg-elevated)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "var(--radius-md)",
-                  color: "var(--color-text)",
-                  fontSize: "var(--text-sm)",
-                  resize: "vertical",
-                  fontFamily: "inherit",
-                }}
+                minHeightRem={8}
+                disabled={saving}
               />
               <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
                 <Button size="sm" onClick={saveDesc} disabled={saving}>
@@ -277,7 +274,10 @@ export default function SubtaskDetailModal({
                   style={{
                     marginLeft: "auto",
                     fontSize: "var(--text-xs)",
-                    color: "var(--color-text-muted)",
+                    color:
+                      descDraft.length > TASK_FIELD_LIMITS.subtaskDescription
+                        ? "var(--color-danger, #dc2626)"
+                        : "var(--color-text-muted)",
                   }}
                 >
                   {descDraft.length} / {TASK_FIELD_LIMITS.subtaskDescription}
@@ -285,10 +285,9 @@ export default function SubtaskDetailModal({
               </div>
             </div>
           ) : (
-            <p
+            <div
               onClick={() => canEditDescription && setEditingDesc(true)}
               style={{
-                whiteSpace: "pre-wrap",
                 fontSize: "var(--text-sm)",
                 color: subtask.description
                   ? "var(--color-text)"
@@ -299,14 +298,18 @@ export default function SubtaskDetailModal({
                 border: "1px solid var(--color-border)",
                 borderRadius: "var(--radius-md)",
                 minHeight: "4rem",
-                margin: 0,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
               }}
             >
-              {subtask.description ||
-                (canEditDescription
-                  ? "Click to add instructions, suggested flow, or acceptance cues…"
-                  : "No description provided.")}
-            </p>
+              {subtask.description ? (
+                <RichTextRender body={subtask.description} />
+              ) : canEditDescription ? (
+                "Click to add instructions, suggested flow, or acceptance cues…"
+              ) : (
+                "No description provided."
+              )}
+            </div>
           )}
         </section>
 
