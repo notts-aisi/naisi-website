@@ -1,9 +1,14 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, type ReactNode, useState } from "react";
 import type { CommentDoc } from "@/lib/firestore/comments";
 import type { UserDoc } from "@/lib/firestore/users";
-import { tokenizeCommentBody } from "../lib/comments/markdown";
+import {
+  sanitizeHref,
+  tokenizeCommentBody,
+  type TextMark,
+  type TextToken,
+} from "../lib/comments/markdown";
 import { softDeleteComment } from "../commentMutations";
 
 type Props = {
@@ -163,7 +168,7 @@ function CommentBody({ body, users }: { body: string; users: UserDoc[] }) {
   return (
     <>
       {tokens.map((t, i) => {
-        if (t.kind === "text") return <Fragment key={i}>{t.value}</Fragment>;
+        if (t.kind === "text") return <FormattedText key={i} token={t} />;
         if (t.kind === "linebreak") return <br key={i} />;
         if (t.kind === "paragraph-break") {
           return (
@@ -194,6 +199,53 @@ function CommentBody({ body, users }: { body: string; users: UserDoc[] }) {
       })}
     </>
   );
+}
+
+/**
+ * Render a text token with its mark stack applied innermost-first. The
+ * marks array is outermost-first (parser convention), so iterating from
+ * the end produces `<bold><italic><underline>text</underline></italic></bold>`-
+ * style nesting in source order. Defence-in-depth on `link.href` — the
+ * stored body has already been sanitised by the parser, but a stray
+ * `javascript:` from an admin-edited Firestore doc shouldn't be able to
+ * slip past the renderer.
+ */
+function FormattedText({ token }: { token: TextToken }) {
+  let node: ReactNode = token.value;
+  for (let i = token.marks.length - 1; i >= 0; i--) {
+    node = wrapWithMark(token.marks[i], node);
+  }
+  return <>{node}</>;
+}
+
+function wrapWithMark(mark: TextMark, child: ReactNode): ReactNode {
+  switch (mark.type) {
+    case "bold":
+      return <strong>{child}</strong>;
+    case "italic":
+      return <em>{child}</em>;
+    case "underline":
+      return <u>{child}</u>;
+    case "link": {
+      const safe = sanitizeHref(mark.href);
+      if (!safe) return <>{child}</>;
+      return (
+        <a
+          href={safe}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            color: "var(--color-accent)",
+            textDecoration: "underline",
+          }}
+        >
+          {child}
+        </a>
+      );
+    }
+    default:
+      return <>{child}</>;
+  }
 }
 
 function Avatar({ initial, muted }: { initial: string; muted?: boolean }) {

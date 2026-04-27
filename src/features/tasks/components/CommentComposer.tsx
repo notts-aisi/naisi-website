@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
+import Underline from "@tiptap/extension-underline";
+import Link from "@tiptap/extension-link";
 import Button from "@/components/ui/Button";
 import type { UserDoc } from "@/lib/firestore/users";
 import type { TaskDoc } from "@/lib/firestore/tasks";
@@ -17,6 +19,7 @@ import {
 } from "../lib/comments/markdown";
 import { buildMentionSuggestion } from "../lib/comments/mentionSuggestion";
 import { addComment, updateComment } from "../commentMutations";
+import CommentToolbar from "./CommentToolbar";
 
 type CommonProps = {
   task: TaskDoc;
@@ -68,6 +71,19 @@ export default function CommentComposer(props: Props) {
     {
       extensions: [
         StarterKit,
+        Underline,
+        // `openOnClick: false` keeps the editor in edit-mode when the
+        // author drags through their own link — opening the URL while
+        // composing is rarely intended. Validation lives in the
+        // toolbar's prompt + the storage-format sanitizeHref allowlist.
+        Link.configure({
+          openOnClick: false,
+          autolink: false,
+          HTMLAttributes: {
+            rel: "noopener noreferrer",
+            target: "_blank",
+          },
+        }),
         Mention.configure({
           HTMLAttributes: { class: "mention" },
           suggestion: buildMentionSuggestion(() => mentionableSnapshot, {
@@ -245,6 +261,7 @@ export default function CommentComposer(props: Props) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+      <CommentToolbar editor={editor} />
       <EditorContent editor={editor} />
 
       {mode === "create" && (
