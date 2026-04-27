@@ -4,11 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
+import Underline from "@tiptap/extension-underline";
+import Link from "@tiptap/extension-link";
 import Button from "@/components/ui/Button";
 import type { UserDoc } from "@/lib/firestore/users";
 import { COMMENT_FIELD_LIMITS } from "@/lib/firestore/comments";
 import { bodyToTipTapDoc, serializeTipTapDoc } from "../lib/comments/markdown";
 import { buildMentionSuggestion } from "../lib/comments/mentionSuggestion";
+import CommentToolbar from "./CommentToolbar";
 
 type Props = {
   users: UserDoc[];
@@ -57,9 +60,25 @@ export default function CommentEditor({
     {
       extensions: [
         StarterKit,
+        Underline,
+        Link.configure({
+          openOnClick: false,
+          autolink: false,
+          HTMLAttributes: {
+            rel: "noopener noreferrer",
+            target: "_blank",
+          },
+        }),
         Mention.configure({
           HTMLAttributes: { class: "mention" },
-          suggestion: buildMentionSuggestion(() => usersSnapshot),
+          // `@all` is now valid on subcomments too (the storage format
+          // sentinel `__all__` expands at write-time in `addComment`).
+          // Subcomment composer was the last place still gated to
+          // explicit @-uids; flipping this matches the task-level
+          // composer's affordance and finishes the @all rollout.
+          suggestion: buildMentionSuggestion(() => usersSnapshot, {
+            includeAll: true,
+          }),
         }),
       ],
       content: initialBody
@@ -141,6 +160,7 @@ export default function CommentEditor({
       style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}
       onKeyDown={handleKeyDown}
     >
+      <CommentToolbar editor={editor} />
       <EditorContent editor={editor} />
       <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
         <Button

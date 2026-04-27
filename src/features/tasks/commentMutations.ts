@@ -124,14 +124,13 @@ export async function addComment(input: AddCommentInput): Promise<string> {
     );
   }
   const subtaskId = input.subtaskId ?? null;
-  // Stage 6 (2026-04-26): @all is a task-level affordance only — the
-  // TipTap composer is the sole surface that can produce the sentinel,
-  // and it isn't rendered for subcomments yet. Strip the sentinel from
-  // subcomments defensively so a hand-rolled body can't leak it.
-  const rawMentions =
-    subtaskId === null
-      ? await expandMentionAll(input.taskId, input.mentions, uid)
-      : input.mentions.filter((u) => u !== MENTION_ALL_UID);
+  // 2026-04-27: subcomment composer now exposes `@all` too (CommentEditor
+  // passes `includeAll: true`), so `expandMentionAll` runs for both task-
+  // level and subtask-level comments. Either way, the sentinel resolves
+  // against the current task roster (completers ∪ reviewers, minus author)
+  // — subcomments inherit the same audience because they live on the
+  // same task.
+  const rawMentions = await expandMentionAll(input.taskId, input.mentions, uid);
   const mentions = Array.from(new Set(rawMentions)).slice(
     0,
     COMMENT_FIELD_LIMITS.maxMentions,
