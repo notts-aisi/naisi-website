@@ -219,6 +219,24 @@ function renderActivityCopy(a: ActivityDoc, users: UserDoc[], task: TaskDoc): st
       }
       return `${actor} sent a membership email`;
     }
+    case "subtask_deleted": {
+      const title = pickStr("title");
+      const removedComments = typeof p.removedComments === "number" ? p.removedComments : 0;
+      const removedActivity = typeof p.removedActivity === "number" ? p.removedActivity : 0;
+      const removedAttachments =
+        typeof p.removedAttachments === "number" ? p.removedAttachments : 0;
+      const cascadeBits: string[] = [];
+      if (removedComments > 0)
+        cascadeBits.push(`${removedComments} comment${removedComments === 1 ? "" : "s"}`);
+      if (removedAttachments > 0)
+        cascadeBits.push(
+          `${removedAttachments} attachment${removedAttachments === 1 ? "" : "s"}`,
+        );
+      if (removedActivity > 0)
+        cascadeBits.push(`${removedActivity} activity entr${removedActivity === 1 ? "y" : "ies"}`);
+      const tail = cascadeBits.length > 0 ? ` (cascade: ${cascadeBits.join(", ")})` : "";
+      return `${actor} deleted subtask "${title ?? "?"}"${tail}`;
+    }
     default:
       return `${actor} updated the task`;
   }
