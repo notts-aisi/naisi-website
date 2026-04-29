@@ -515,22 +515,55 @@ export async function reorderSubtasks(task: TaskDoc, orderedIds: string[]) {
   });
 }
 
-export async function removeSubtask(task: TaskDoc, subtaskId: string) {
-  const db = getClientDb();
-  const target = task.subtasks.find((s) => s.id === subtaskId);
-  // Drop references to this subtask from any sibling's blockedBy so the graph
-  // doesn't end up with dangling refs that permanently block a row.
-  const subtasks = task.subtasks
-    .filter((s) => s.id !== subtaskId)
-    .map((s) => ({ ...s, blockedBy: s.blockedBy.filter((id) => id !== subtaskId) }));
-  const patch: Record<string, unknown> = {
-    subtasks: subtasks.map(serializeSubtask),
-    subtaskStats: computeSubtaskStats(subtasks),
-    updatedAt: serverTimestamp(),
-  };
-  const consentsPatch = clearConsentIfOpen(task, target?.blockId ?? null);
-  if (consentsPatch) patch.blockConsents = consentsPatch;
-  await updateDoc(doc(db, "tasks", task.id), patch);
+/** Shape returned by POST /api/tasks/[id]/delete-subtask — what got swept. */
+export type SubtaskDeletionReport = {
+  comments: number;
+  activity: number;
+  attachments: number;
+  storageDeleted: number;
+  storageFailed: number;
+};
+
+/**
+ * Cascade-delete a subtask via the Admin-SDK-backed server route.
+ *
+ * Pre-2026-04-29 behaviour was an array splice + `blockedBy` cleanup —
+ * subtask gone from the parent doc, but its subcomments + activity +
+ * attachments lingered as invisible orphans. The route now sweeps every
+ * subcollection doc whose `subtaskId` (or `payload.subtaskId`) matches
+ * the deleted id, plus the corresponding Storage blobs. Dropping the
+ * `blockedBy` edges + recomputing `subtaskStats` happens server-side
+ * too so a single round trip lands the whole change.
+ */
+export async function removeSubtask(
+  task: TaskDoc,
+  subtaskId: string,
+): Promise<SubtaskDeletionReport> {
+  const res = await fetch(`/api/tasks/${task.id}/delete-subtask`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ subtaskId }),
+  });
+  if (!res.ok) {
+    let msg = `Delete failed (${res.status})`;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body?.error) msg = body.error;
+    } catch {
+      // swallow — msg already has the status code
+    }
+    throw new Error(msg);
+  }
+  const body = (await res.json()) as { deleted?: SubtaskDeletionReport };
+  return (
+    body.deleted ?? {
+      comments: 0,
+      activity: 0,
+      attachments: 0,
+      storageDeleted: 0,
+      storageFailed: 0,
+    }
+  );
 }
 
 async function patchSubtask(

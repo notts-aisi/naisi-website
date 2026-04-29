@@ -323,13 +323,17 @@ export default function SubtaskRow({
 
   async function handleDelete() {
     const ok = window.confirm(
-      `Delete subtask "${subtask.title}"? This also clears any other subtask's dependency on it.`,
+      `Delete subtask "${subtask.title}"? Its comments, activity history, and attachments will be permanently removed too. Any other subtask blocked on this one will be un-blocked. This cannot be undone.`,
     );
     if (!ok) return;
     try {
-      await removeSubtask(task, subtask.id);
+      const report = await removeSubtask(task, subtask.id);
+      console.info(
+        `[removeSubtask] removed subtask + ${report.comments} comments, ${report.activity} activity entries, ${report.attachments} attachments`,
+      );
     } catch (err) {
       console.error(err);
+      window.alert(err instanceof Error ? err.message : "Delete failed");
     }
   }
 

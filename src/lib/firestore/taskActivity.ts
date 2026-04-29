@@ -43,7 +43,8 @@ export type ActivityKind =
   | "block_review_mode_set"
   | "review_outcome_sent"
   | "initial_notifications_sent"
-  | "member_notified";
+  | "member_notified"
+  | "subtask_deleted";
 
 export type ActivityPayload = Record<string, unknown>;
 
@@ -101,6 +102,7 @@ const KNOWN_KINDS: ActivityKind[] = [
   "review_outcome_sent",
   "initial_notifications_sent",
   "member_notified",
+  "subtask_deleted",
 ];
 
 export function normalizeActivity(id: string, data: Raw): ActivityDoc {
