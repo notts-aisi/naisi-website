@@ -44,7 +44,7 @@ function VideoBlockView({ block }: { block: Extract<Block, { type: "video" }> })
         />
       </EmailLink>
       <Text style={captionStyle}>
-        {block.caption ? `${block.caption} — ` : ""}
+        {block.caption ? `${block.caption} · ` : ""}
         <EmailLink href={href} style={{ color: "#2563eb" }}>
           Watch on YouTube
         </EmailLink>

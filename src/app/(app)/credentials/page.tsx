@@ -18,8 +18,9 @@ export default function CredentialsPage() {
           Not built yet
         </h3>
         <p style={{ color: "var(--color-text-muted)" }}>
-          The encrypted credentials store is planned — client-side AES-GCM with a key derived from a
-          shared master password. Until it ships, this page is a placeholder so the nav link works.
+          The encrypted credentials store is planned: client-side AES-GCM
+          with a key derived from a shared master password. Until it
+          ships, this page is a placeholder so the nav link works.
         </p>
       </Card>
     </div>

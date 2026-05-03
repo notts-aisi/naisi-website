@@ -46,8 +46,8 @@ export default function TaskTemplatesPage() {
         }}
       >
         <p style={{ color: "var(--color-text-muted)", margin: 0, maxWidth: "40rem" }}>
-          Reusable task structures — subtask checklists, role hints, and gating. Committee
-          members pick from these when creating a task.
+          Reusable task structures: subtask checklists, role hints, and
+          gating. Committee members pick from these when creating a task.
         </p>
         <Button onClick={() => setMode({ kind: "create" })}>New template</Button>
       </div>

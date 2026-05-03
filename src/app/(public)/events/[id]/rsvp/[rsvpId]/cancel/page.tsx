@@ -39,8 +39,8 @@ export default async function CancelRsvpPage({
           Link no longer valid
         </h2>
         <p style={{ color: "var(--color-text-muted)", margin: 0 }}>
-          We couldn&apos;t find this RSVP — it may already have been cancelled, or the event
-          has been removed.
+          We couldn&apos;t find this RSVP. It may already have been
+          cancelled, or the event has been removed.
         </p>
       </Card>,
     );
@@ -70,7 +70,7 @@ export default async function CancelRsvpPage({
           Already cancelled
         </h2>
         <p style={{ color: "var(--color-text-muted)", margin: 0 }}>
-          This RSVP was cancelled already — no action needed.
+          This RSVP was cancelled already. No action needed.
         </p>
       </Card>,
     );

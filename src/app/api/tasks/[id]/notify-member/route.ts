@@ -58,7 +58,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json(
       {
         error:
-          "Initial notifications haven't been sent yet — use 'Send initial notifications' first.",
+          "Initial notifications haven't been sent yet. Use 'Send initial notifications' first.",
       },
       { status: 400 },
     );

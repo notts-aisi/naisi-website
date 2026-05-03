@@ -180,7 +180,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       await sendEmail({
         to: user.email,
         subject: subtaskTitle
-          ? `Review requested: ${subtaskTitle} — ${taskTitle}`
+          ? `Review requested: ${subtaskTitle} (${taskTitle})`
           : `Review requested: ${taskTitle}`,
         fromName: "NAISI Tasks",
         react: TaskReviewRequestEmail({
