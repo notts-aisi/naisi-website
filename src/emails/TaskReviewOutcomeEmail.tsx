@@ -32,7 +32,7 @@ export default function TaskReviewOutcomeEmail({
   // Sections render in approve → questions-resolved → rejected order so the
   // good news leads — feedback the user explicitly called out as humane.
   // Any section with no rows is skipped entirely.
-  const subject = `Review outcome: ${blockName} — ${taskTitle}`;
+  const subject = `Review outcome: ${blockName} (${taskTitle})`;
   return (
     <EmailChrome subject={subject} greeting={`Hi ${recipientName},`}>
       <Section>

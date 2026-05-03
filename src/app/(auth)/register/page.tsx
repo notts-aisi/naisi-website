@@ -223,7 +223,7 @@ export default function RegisterPage() {
     const verified = verification.status === "verified";
     if (!verified && !allowUnverifiedSubmit) {
       setError(
-        "Please verify your university email first — we sent a link to your inbox. If you're stuck, click 'I'm having trouble' below.",
+        "Please verify your university email first. We sent a link to your inbox. If you're stuck, click 'I'm having trouble' below.",
       );
       return;
     }
@@ -414,7 +414,7 @@ export default function RegisterPage() {
           <Field
             id="interests"
             label="Interests within AI safety (optional)"
-            hint="e.g. interpretability, alignment, governance, evals — anything that draws you in."
+            hint="e.g. interpretability, alignment, governance, evals. Anything that draws you in."
           >
             <CountedTextarea
               id="interests"
@@ -542,7 +542,7 @@ function VerificationPanel({
         }}
       >
         <Badge tone="success">Verified</Badge>
-        <span>You&apos;re all set — this email is confirmed.</span>
+        <span>You&apos;re all set. This email is confirmed.</span>
       </div>
     );
   }
@@ -599,9 +599,9 @@ function VerificationPanel({
       </div>
       {state.status === "sent" && (
         <p style={{ fontSize: "var(--text-xs)", color: "var(--color-text-muted)" }}>
-          We&apos;ve sent a link to your university email. Click it — this page
-          will update automatically when we see the click. Check spam if it
-          doesn&apos;t land in a minute.
+          We&apos;ve sent a link to your university email. Click it and
+          this page will update automatically when we see the click.
+          Check spam if it doesn&apos;t land in a minute.
         </p>
       )}
       {state.status === "error" && (
@@ -626,9 +626,9 @@ function VerificationPanel({
           onChange={onToggleAllowUnverified}
         />
         <span>
-          I&apos;m having trouble with the verification email. Let me submit
-          without verifying — the committee will check my email manually
-          before approving.
+          I&apos;m having trouble with the verification email. Let me
+          submit without verifying. The committee will check my email
+          manually before approving.
         </span>
       </label>
     </div>

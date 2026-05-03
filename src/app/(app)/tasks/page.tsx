@@ -99,7 +99,7 @@ export default function MyWorkPage() {
           <Input
             value={quickTitle}
             onChange={(e) => setQuickTitle(e.target.value)}
-            placeholder="Quick add — a personal task for you"
+            placeholder="Quick add: a personal task for you"
             maxLength={120}
             style={{ flex: 1 }}
           />

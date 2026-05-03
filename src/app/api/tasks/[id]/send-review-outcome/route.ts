@@ -167,7 +167,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
   if (block.sealState !== "sealed") {
     return NextResponse.json(
-      { error: "Block is not sealed yet — lock in allocation first." },
+      { error: "Block is not sealed yet. Lock in allocation first." },
       { status: 400 },
     );
   }
@@ -186,7 +186,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (s.questionedByReviewerUids.length > 0) {
       return NextResponse.json(
         {
-          error: `"${s.title}" still has an outstanding question — resolve it before sending the review.`,
+          error: `"${s.title}" still has an outstanding question. Resolve it before sending the review.`,
         },
         { status: 400 },
       );
@@ -200,7 +200,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (!fullyApproved && !rejected) {
       return NextResponse.json(
         {
-          error: `"${s.title}" hasn't reached a decision yet — every reviewer needs to approve or reject.`,
+          error: `"${s.title}" hasn't reached a decision yet. Every reviewer needs to approve or reject.`,
         },
         { status: 400 },
       );
@@ -208,7 +208,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
   if (signoffs.length === 0) {
     return NextResponse.json(
-      { error: "No reviewer signoff rows on this block — nothing to send." },
+      { error: "No reviewer signoff rows on this block. Nothing to send." },
       { status: 400 },
     );
   }
@@ -319,7 +319,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     try {
       await sendEmail({
         to: user.email,
-        subject: `Review outcome: ${block.name} — ${taskTitle}`,
+        subject: `Review outcome: ${block.name} (${taskTitle})`,
         fromName: "NAISI Tasks",
         kind: "task",
         actorUid: viewer.uid,

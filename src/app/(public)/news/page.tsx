@@ -7,7 +7,7 @@ import { listPublishedNews } from "@/features/news/fetchNews";
 export const metadata: Metadata = {
   title: "News",
   description:
-    "Weekly/monthly summaries of what's happening in AI and AI safety — key developments, TL;DR, and opportunities for students.",
+    "What actually moved in AI safety this week. The TL;DR, the things worth reading, and any opportunities you can act on.",
 };
 
 export const dynamic = "force-dynamic";
@@ -22,8 +22,9 @@ export default async function NewsIndex() {
           <Badge>What&apos;s going on in AI/AIS</Badge>
           <h1 style={{ marginTop: "var(--space-4)" }}>News & digest</h1>
           <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-3)" }}>
-            Short, honest write-ups of the week&apos;s most important AI safety developments — and
-            what they mean for students thinking about the field.
+            Short, honest write-ups of the week&apos;s most important AI
+            safety developments, and what they mean if you&apos;re thinking
+            about the field.
           </p>
         </div>
 

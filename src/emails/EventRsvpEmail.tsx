@@ -54,16 +54,16 @@ const COPY: Record<
 > = {
   requested: {
     eyebrow: "RSVP received",
-    subject: "We got your RSVP — pending review",
+    subject: "We got your RSVP (pending review)",
     preview: "A NAISI organiser will review your RSVP shortly.",
-    heading: "Thanks — we've got your RSVP",
+    heading: "Thanks, we've got your RSVP",
     body: "A NAISI organiser will review it and confirm your spot. You'll get another email once it's approved (or if we need any more info).",
   },
   approved: {
     eyebrow: "You're confirmed",
     subject: "You're confirmed",
     preview: "Here's where and when.",
-    heading: "You're in — see you there",
+    heading: "You're in. See you there.",
     body: "Your RSVP has been approved. Here are the details you need.",
   },
   waitlisted: {
@@ -71,12 +71,12 @@ const COPY: Record<
     subject: "You're on the waitlist",
     preview: "We'll bump you up automatically if a spot opens.",
     heading: "You're on the waitlist",
-    body: "This event is full, but you've been approved for the waitlist — if someone cancels we'll bump you to confirmed automatically and email you again.",
+    body: "This event is full, but you've been approved for the waitlist. If someone cancels we'll bump you to confirmed automatically and email you again.",
   },
   promoted: {
     eyebrow: "You're off the waitlist",
-    subject: "A spot opened — you're confirmed",
-    preview: "Great news — a spot opened and you're now confirmed.",
+    subject: "A spot opened. You're confirmed.",
+    preview: "Great news: a spot opened and you're now confirmed.",
     heading: "You're off the waitlist",
     body: "A spot opened up and you've been bumped from the waitlist to confirmed. Here are the details.",
   },
@@ -85,7 +85,7 @@ const COPY: Record<
     subject: "Your RSVP wasn't approved",
     preview: "An update on your event RSVP.",
     heading: "We weren't able to confirm your spot",
-    body: "Thanks for your interest — we can't confirm your RSVP this time. If you think this was a mistake, reply to this email and we'll take another look.",
+    body: "Thanks for your interest. We can't confirm your RSVP this time. If you think this was a mistake, reply to this email and we'll take another look.",
   },
   cancelled: {
     eyebrow: "RSVP cancelled",
@@ -173,8 +173,9 @@ export default function EventRsvpEmail({
               </Text>
               <Text style={detailLine}>{answersLine}</Text>
               <Text style={detailMuted}>
-                Something off? Use the &ldquo;update my answers&rdquo; link below, or message
-                us — details at the bottom of this email.
+                Something off? Use the &ldquo;update my answers&rdquo;
+                link below, or message us (details at the bottom of this
+                email).
               </Text>
             </Section>
           )}
@@ -196,7 +197,7 @@ export default function EventRsvpEmail({
                   <EmailLink href={cancelUrl} style={link}>
                     Cancel my RSVP
                   </EmailLink>{" "}
-                  — this frees up a spot for someone on the waitlist.
+                  . This frees up a spot for someone on the waitlist.
                 </Text>
               )}
             </Section>
@@ -239,7 +240,7 @@ export default function EventRsvpEmail({
 
 export function subjectFor(variant: EventRsvpEmailVariant, title: string): string {
   const base = COPY[variant].subject;
-  return title ? `${base} — ${title}` : base;
+  return title ? `${base}: ${title}` : base;
 }
 
 const body: React.CSSProperties = {

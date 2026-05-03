@@ -6,7 +6,7 @@ import { getPublicMembers, type PublicMember } from "@/features/members/fetchMem
 export const metadata: Metadata = {
   title: "Members",
   description:
-    "The committee running the Nottingham AI Safety Initiative — who we are, what we work on, and how to reach us.",
+    "The committee running the Nottingham AI Safety Initiative. Who we are, what we work on, and how to reach us.",
 };
 
 export const dynamic = "force-dynamic";

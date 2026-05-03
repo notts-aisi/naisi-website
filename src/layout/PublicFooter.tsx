@@ -10,7 +10,7 @@ export default function PublicFooter() {
         <div className={styles.brandBlock}>
           <BrandMark size={28} />
           <p className={styles.tagline}>
-            Nottingham AI Safety Initiative — a student community at the University of Nottingham.
+            Nottingham AI Safety Initiative. A student community at the University of Nottingham.
           </p>
         </div>
         <nav className={styles.col} aria-label="Site">

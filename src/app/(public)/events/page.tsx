@@ -7,7 +7,7 @@ import { listPublishedEvents } from "@/features/events/fetchEvents";
 export const metadata: Metadata = {
   title: "Events",
   description:
-    "Upcoming NAISI events — socials, talks, fellowship sessions. RSVP to save a spot.",
+    "Upcoming NAISI events. Socials, talks, fellowship sessions. RSVP to save a spot.",
 };
 
 export const dynamic = "force-dynamic";
@@ -114,7 +114,7 @@ function EventRow({
           )}
           {event.location && <span>· {event.location}</span>}
           {event.visibility === "members" && <Badge tone="neutral">Members only</Badge>}
-          {full && event.waitlistEnabled && <Badge tone="warning">Full — waitlist open</Badge>}
+          {full && event.waitlistEnabled && <Badge tone="warning">Full · waitlist open</Badge>}
           {full && !event.waitlistEnabled && <Badge tone="danger">Full</Badge>}
         </div>
         <h2 style={{ fontSize: "var(--text-2xl)", marginBottom: "var(--space-2)" }}>

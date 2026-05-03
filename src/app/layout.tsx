@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     template: "%s · NAISI",
   },
   description:
-    "A student community at the University of Nottingham focused on AI safety — courses, projects, and a weekly digest of what's happening in the field.",
+    "The AI safety student community at the University of Nottingham. Termly courses, real projects, and a weekly digest of what's happening in the field.",
   openGraph: {
     title: "Nottingham AI Safety Initiative",
     description:

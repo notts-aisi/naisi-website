@@ -98,9 +98,9 @@ export async function GET(req: Request) {
 
   if (!result.ok) {
     return htmlResponse(
-      `<!doctype html><html><head><meta charset="utf-8"><title>Unsubscribe — NAISI</title></head><body style="font-family: ui-sans-serif, system-ui; max-width: 520px; margin: 80px auto; padding: 0 20px; color: #1a2032; line-height: 1.5;">
+      `<!doctype html><html><head><meta charset="utf-8"><title>Unsubscribe · NAISI</title></head><body style="font-family: ui-sans-serif, system-ui; max-width: 520px; margin: 80px auto; padding: 0 20px; color: #1a2032; line-height: 1.5;">
         <h1 style="margin-bottom: 12px;">This unsubscribe link didn't work</h1>
-        <p style="color: #5b6785;">${escapeHtml(result.error ?? "Unknown error")} — if you're still getting email, reply to the most recent one and we'll remove you manually.</p>
+        <p style="color: #5b6785;">${escapeHtml(result.error ?? "Unknown error")}. If you're still getting email, reply to the most recent one and we'll remove you manually.</p>
       </body></html>`,
       result.status,
     );
@@ -116,7 +116,7 @@ export async function GET(req: Request) {
           : "these messages";
 
   return htmlResponse(
-    `<!doctype html><html><head><meta charset="utf-8"><title>Unsubscribed — NAISI</title></head><body style="font-family: ui-sans-serif, system-ui; max-width: 520px; margin: 80px auto; padding: 0 20px; color: #1a2032; line-height: 1.5;">
+    `<!doctype html><html><head><meta charset="utf-8"><title>Unsubscribed · NAISI</title></head><body style="font-family: ui-sans-serif, system-ui; max-width: 520px; margin: 80px auto; padding: 0 20px; color: #1a2032; line-height: 1.5;">
       <h1 style="margin-bottom: 12px;">You're unsubscribed from ${escapeHtml(scopeLabel)}</h1>
       <p style="color: #5b6785;">We won't send any more to this inbox. If you change your mind, you can re-enable delivery from your <a href="/profile" style="color: #3b55e3;">profile page</a>.</p>
       <p style="color: #5b6785; margin-top: 24px;">Made a mistake, or want to stop other NAISI emails too? <a href="mailto:ai-safety@uonsu.com" style="color: #3b55e3;">Email us</a>.</p>

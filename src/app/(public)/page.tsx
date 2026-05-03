@@ -7,15 +7,15 @@ import styles from "./landing.module.css";
 const HIGHLIGHTS = [
   {
     title: "Courses",
-    body: "Run termly, based on BlueDot Impact's AI Safety Fundamentals. Readings, facilitated discussion, and a final project.",
+    body: "A termly fellowship built on BlueDot Impact's AI Safety Fundamentals. Readings, weekly facilitated discussion, a final project.",
   },
   {
     title: "Weekly digest",
-    body: "A short summary of what's happening in AI and AI safety — key developments, TL;DR, and opportunities for students.",
+    body: "A short Sunday email on what actually moved in AI safety that week. The TL;DR, the things worth reading, and any opportunities you can act on.",
   },
   {
     title: "Projects",
-    body: "Committee-led projects across technical alignment, governance, and outreach. Real work you can put on a CV.",
+    body: "Technical alignment, governance, and outreach work led by the committee. The kind of thing that earns you something real to point at.",
   },
 ];
 
@@ -26,13 +26,14 @@ export default function Landing() {
         <div className={`container ${styles.heroInner}`}>
           <Badge tone="accent">University of Nottingham · AI Safety</Badge>
           <h1 className={styles.title}>
-            Make AI go well —{" "}
-            <span className={styles.titleAccent}>from Nottingham.</span>
+            Make AI go well.{" "}
+            <span className={styles.titleAccent}>From Nottingham.</span>
           </h1>
           <p className={styles.lede}>
-            NAISI is a student community building technical and governance
-            understanding of how to make increasingly capable AI systems safe,
-            beneficial, and trustworthy.
+            NAISI is the AI safety student group at the University of
+            Nottingham. We run a termly fellowship, ship technical and
+            governance projects, and write about what&apos;s actually
+            happening in the field.
           </p>
           <div className={styles.ctas}>
             <Link href="/register" className={styles.primaryCta}>
@@ -69,9 +70,9 @@ export default function Landing() {
         <div className="container">
           <div className={styles.cta}>
             <div>
-              <h2>Want to get involved?</h2>
+              <h2>Want in?</h2>
               <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-3)" }}>
-                Sign up for an account and we&apos;ll get you into the next cohort.
+                Sign up and we&apos;ll loop you into the next cohort.
               </p>
             </div>
             <Link href="/register" className={styles.primaryCta}>

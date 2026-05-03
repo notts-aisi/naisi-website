@@ -210,7 +210,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
             ? `${authorName} mentioned you on subtask "${subtaskTitle}"`
             : `${authorName} mentioned you in "${taskTitle}"`
           : subtaskTitle
-            ? `${authorName} commented on subtask "${subtaskTitle}" — ${taskTitle}`
+            ? `${authorName} commented on "${subtaskTitle}" (${taskTitle})`
             : `${authorName} commented on "${taskTitle}"`;
       await sendEmail({
         to: user.email,
