@@ -51,23 +51,30 @@ export async function POST(req: Request) {
     );
   }
 
-  const tasksSnap = await db.collection("tasks").get();
-  const taskCount = tasksSnap.size;
+  // listDocuments() (NOT .get()) returns refs for every document path
+  // under `tasks/`, including "ghost parents" — paths that have
+  // surviving subcollection docs but no actual parent doc. Those ghosts
+  // are what shows up italicised in the Firebase Console after a
+  // pre-cascade delete (or a direct Console delete) and were the whole
+  // gap in the first cut of this route. Iterating these refs catches
+  // every subcollection stuck under deleted-or-never-existed tasks.
+  const taskRefs = await db.collection("tasks").listDocuments();
+  const taskCount = taskRefs.length;
 
-  // Enumerate every attachment Storage path BEFORE the recursive doc
-  // delete — once the parent task doc is gone we lose the
-  // `storagePath` strings we'd need to clean Storage. Same posture as
-  // the per-task `/delete` route.
+  // Per-ref subcollection enumeration: count comments + activity, pull
+  // attachment storagePaths so we can clean Storage afterwards. Doing
+  // this BEFORE the recursive delete because once the doc tree is
+  // gone, we can't reconstruct the paths.
   const storagePaths: string[] = [];
   let totalComments = 0;
   let totalActivity = 0;
   let totalAttachments = 0;
 
-  for (const taskDoc of tasksSnap.docs) {
+  for (const ref of taskRefs) {
     const [commentsSnap, activitySnap, attachmentsSnap] = await Promise.all([
-      taskDoc.ref.collection("comments").count().get(),
-      taskDoc.ref.collection("activity").count().get(),
-      taskDoc.ref.collection("attachments").get(),
+      ref.collection("comments").count().get(),
+      ref.collection("activity").count().get(),
+      ref.collection("attachments").get(),
     ]);
     totalComments += commentsSnap.data().count;
     totalActivity += activitySnap.data().count;
@@ -78,35 +85,61 @@ export async function POST(req: Request) {
     }
   }
 
-  // Recursive delete each task doc — same primitive `/api/tasks/{id}/
-  // delete` uses, just iterated. Done sequentially so a rate-limit
-  // burst on Firestore doesn't fire all at once on a project with many
-  // tasks. Per-task volumes are small; latency from sequencing is
-  // acceptable for a fire-once tool.
-  for (const taskDoc of tasksSnap.docs) {
-    await db.recursiveDelete(taskDoc.ref);
-  }
+  // Single recursive-delete on the whole `tasks/` collection. The
+  // collection-ref form of `recursiveDelete` walks listDocuments()
+  // internally — so it catches ghost parents AND every nested
+  // subcollection in one pass. Cheaper + more thorough than iterating
+  // the ref list ourselves; the iteration above is just for the
+  // pre-delete bookkeeping (Storage paths + report counts).
+  await db.recursiveDelete(db.collection("tasks"));
 
-  // Best-effort Storage cleanup. Same posture as the existing delete
-  // routes — orphaned blobs are strictly better than phantom Firestore
-  // docs (blobs are invisible to the Console, phantom docs clutter the
-  // task list).
+  // Belt-and-braces Storage cleanup. Two passes:
+  //
+  //   1. Delete each path from the `storagePath` field on attachment
+  //      docs (matches what `/api/tasks/{id}/delete` does).
+  //   2. Prefix-delete every blob under the `tasks/` Storage prefix.
+  //      Catches orphaned blobs whose attachment doc was already gone
+  //      before this route fired (legacy uploads from before the
+  //      cascade work). Safe because `tasks/` is exclusively task-
+  //      attachment territory in this project — newsletter uploads
+  //      live under a different prefix.
   let storageDeleted = 0;
   let storageFailed = 0;
+  let prefixSwept = 0;
   const storage = getAdminStorage();
-  if (storage && storagePaths.length > 0) {
+  if (storage) {
     const bucket = storage.bucket();
-    await Promise.all(
-      storagePaths.map(async (path) => {
-        try {
-          await bucket.file(path).delete({ ignoreNotFound: true });
-          storageDeleted += 1;
-        } catch (err) {
-          storageFailed += 1;
-          console.warn(`[nuke-tasks] storage delete failed for ${path}:`, err);
-        }
-      }),
-    );
+    if (storagePaths.length > 0) {
+      await Promise.all(
+        storagePaths.map(async (path) => {
+          try {
+            await bucket.file(path).delete({ ignoreNotFound: true });
+            storageDeleted += 1;
+          } catch (err) {
+            storageFailed += 1;
+            console.warn(`[nuke-tasks] storage delete failed for ${path}:`, err);
+          }
+        }),
+      );
+    }
+    // Prefix sweep — `getFiles({ prefix: "tasks/" })` returns every
+    // blob whose name starts with `tasks/`, regardless of whether it's
+    // referenced by a Firestore doc. Deletes are best-effort.
+    try {
+      const [files] = await bucket.getFiles({ prefix: "tasks/" });
+      await Promise.all(
+        files.map(async (file) => {
+          try {
+            await file.delete({ ignoreNotFound: true });
+            prefixSwept += 1;
+          } catch (err) {
+            console.warn(`[nuke-tasks] prefix sweep failed for ${file.name}:`, err);
+          }
+        }),
+      );
+    } catch (err) {
+      console.warn("[nuke-tasks] prefix listing failed; orphan blobs may remain:", err);
+    }
   }
 
   // Server-side breadcrumb so the deploy logs show who wiped what,
@@ -115,7 +148,7 @@ export async function POST(req: Request) {
   // along with the tasks themselves; logging here is the only
   // surviving trace.
   console.warn(
-    `[nuke-tasks] admin=${viewer.uid} wiped ${taskCount} tasks, ${totalComments} comments, ${totalActivity} activity entries, ${totalAttachments} attachments (${storageDeleted} Storage blobs deleted, ${storageFailed} failed)`,
+    `[nuke-tasks] admin=${viewer.uid} wiped ${taskCount} task paths (incl. ghost parents), ${totalComments} comments, ${totalActivity} activity entries, ${totalAttachments} attachments (${storageDeleted} referenced blobs deleted, ${storageFailed} failed; ${prefixSwept} additional blobs swept from tasks/ prefix)`,
   );
 
   return NextResponse.json({
@@ -127,6 +160,7 @@ export async function POST(req: Request) {
       attachments: totalAttachments,
       storageDeleted,
       storageFailed,
+      prefixSwept,
     },
   });
 }
