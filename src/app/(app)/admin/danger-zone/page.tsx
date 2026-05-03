@@ -25,6 +25,10 @@ type DeletionReport = {
   attachments: number;
   storageDeleted: number;
   storageFailed: number;
+  /** Storage blobs swept from the `tasks/` prefix that weren't
+   *  referenced by any attachment doc — orphans from pre-cascade
+   *  deletes. */
+  prefixSwept: number;
 };
 
 export default function DangerZonePage() {
@@ -99,10 +103,15 @@ export default function DangerZonePage() {
                 marginTop: "var(--space-2)",
               }}
             >
-              Deletes every task in this project — every doc under{" "}
-              <code>tasks/</code>, plus their comments, activity entries,
-              attachments, and Storage blobs. Cannot be undone. Task templates,
-              users, projects, and email-deliverability data are NOT touched.
+              Wipes every doc under <code>tasks/</code> in this project,
+              including <strong>ghost parents</strong> (italicised paths in
+              the Firebase Console where the task doc is gone but legacy
+              comment / activity / attachment subcollection docs survived
+              from pre-cascade deletes). Storage runs a prefix-sweep on{" "}
+              <code>tasks/</code> to catch orphan blobs that no longer have
+              an attachment doc pointing at them. Cannot be undone. Task
+              templates, users, projects, and email-deliverability data
+              are NOT touched.
             </p>
             <p
               style={{
@@ -110,12 +119,17 @@ export default function DangerZonePage() {
                 marginTop: "var(--space-2)",
               }}
             >
-              Currently in this project:{" "}
+              Live task count:{" "}
               <strong>
                 {loading
                   ? "counting…"
                   : `${tasks.length} task${tasks.length === 1 ? "" : "s"}`}
-              </strong>
+              </strong>{" "}
+              <span style={{ color: "var(--color-text-muted)" }}>
+                (the report after wipe will surface ghost-parent + orphan-
+                blob counts too; those don&apos;t show up in this in-app
+                count)
+              </span>
             </p>
           </div>
 
@@ -128,12 +142,24 @@ export default function DangerZonePage() {
                   setConfirmText("");
                   setError(null);
                 }}
-                disabled={loading || tasks.length === 0}
+                disabled={loading}
               >
-                {tasks.length === 0
-                  ? "Nothing to wipe"
-                  : "Wipe every task in this project"}
+                Wipe every task path in this project
               </Button>
+              {!loading && tasks.length === 0 && (
+                <p
+                  style={{
+                    fontSize: "var(--text-xs)",
+                    color: "var(--color-text-muted)",
+                    marginTop: "var(--space-2)",
+                  }}
+                >
+                  Note: the in-app count says zero, but ghost parents and
+                  orphan blobs may still be hiding in Firestore + Storage.
+                  Pressing the wipe is still useful; the report will tell
+                  you whether anything was actually swept.
+                </p>
+              )}
             </div>
           )}
 
@@ -225,10 +251,17 @@ export default function DangerZonePage() {
                 fontSize: "var(--text-sm)",
               }}
             >
-              <strong>Done.</strong> Deleted {report.tasks} tasks, {report.comments}{" "}
-              comments, {report.activity} activity entries, {report.attachments}{" "}
-              attachments ({report.storageDeleted} Storage blobs cleaned, {report.storageFailed}{" "}
-              failed). Refresh the task board to see the empty state.
+              <strong>Done.</strong> Deleted {report.tasks} task path
+              {report.tasks === 1 ? "" : "s"} (including ghost parents),{" "}
+              {report.comments} comments, {report.activity} activity entries,{" "}
+              {report.attachments} attachments. Storage:{" "}
+              {report.storageDeleted} referenced blob
+              {report.storageDeleted === 1 ? "" : "s"} cleaned,{" "}
+              {report.storageFailed} failed,{" "}
+              {report.prefixSwept} additional orphan blob
+              {report.prefixSwept === 1 ? "" : "s"} swept from the{" "}
+              <code>tasks/</code> prefix. Refresh the task board + the
+              Firebase Console to confirm the empty state.
             </div>
           )}
         </div>
