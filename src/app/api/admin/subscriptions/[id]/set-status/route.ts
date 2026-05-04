@@ -27,17 +27,12 @@ import {
  * during the migration window. Mirror of the inverse direction already in
  * place via adminMutations.setUserNotificationCategory.
  *
- * The route still accepts the legacy `{ status: "confirmed" | "unsubscribed" }`
- * body for one PR cycle while any cached client code transitions, mapping
- * confirmed → subscribed=true and unsubscribed → subscribed=false. This
- * compatibility shim can be dropped after the schema-split rollout settles.
  */
 
 type Ctx = { params: Promise<{ id: string }> };
 
 type Body = {
   subscribed?: unknown;
-  status?: unknown;
 };
 
 export async function POST(req: Request, ctx: Ctx) {
@@ -58,22 +53,13 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  // Prefer the new boolean field; fall back to the legacy status enum if
-  // the client hasn't been updated yet.
-  let subscribed: boolean | null = null;
-  if (typeof parsed.subscribed === "boolean") {
-    subscribed = parsed.subscribed;
-  } else if (parsed.status === "confirmed") {
-    subscribed = true;
-  } else if (parsed.status === "unsubscribed") {
-    subscribed = false;
-  }
-  if (subscribed === null) {
+  if (typeof parsed.subscribed !== "boolean") {
     return NextResponse.json(
-      { error: "Body must include `subscribed` (boolean) or legacy `status` ('confirmed'|'unsubscribed')." },
+      { error: "Body must include `subscribed` (boolean)." },
       { status: 400 },
     );
   }
+  const subscribed = parsed.subscribed;
 
   const db = getAdminDb();
   if (!db) {

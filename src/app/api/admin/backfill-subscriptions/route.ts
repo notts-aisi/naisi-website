@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
@@ -100,6 +100,8 @@ export async function POST() {
       // Use set({ merge: true }) so existing rows keep their current
       // confirmedAt / subscribedAt timestamps and we just upsert the
       // current intent. New rows pick up everything below.
+      // The legacy `status` field gets nuked on this same write so a
+      // member row that pre-dates the schema split sheds its dead byte.
       const row: Record<string, unknown> = {
         email: normalised,
         channel: cat,
@@ -110,6 +112,7 @@ export async function POST() {
         subscribed: wantsThis,
         source: "backfill",
         createdAt: now,
+        status: FieldValue.delete(),
       };
       if (wantsThis) {
         row.subscribedAt = now;
@@ -135,12 +138,19 @@ export async function POST() {
     batchOps = 0;
   }
 
-  // === Pass B: migrate legacy `status`-only rows ===
+  // === Pass B: migrate legacy `status`-only rows + nuke dead status fields ===
+  //
+  // Walks every subscription row. For rows still on the legacy single-axis
+  // shape, derives the new (confirmed, subscribed) booleans from `status`.
+  // For rows already migrated but still carrying a stale `status` field,
+  // deletes the field. Both behaviours rolled into one helper call so a
+  // single update() per row does the right thing regardless of state.
 
   const allSubs = await db.collection("subscriptions").get();
   for (const subDoc of allSubs.docs) {
     const patch = migrationPatchFromLegacyStatus(
       subDoc.data() as Record<string, unknown>,
+      FieldValue.delete(),
     );
     if (!patch) continue;
     batch.update(subDoc.ref, patch);
