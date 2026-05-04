@@ -12,16 +12,15 @@ import styles from "./landing.module.css";
  *  1. Hero. Brand statement, lede tightened to set up the rest of the page.
  *     Layered radial gradients kept (atmosphere, no animation).
  *  2. What NAISI is. One paragraph of plain prose, no card frame, two
- *     inline links. Replaces the previous "fellowship streams 2-up" which
- *     read like a SaaS template and duplicated the Badge / heading text.
- *  3. Reading lists. Four curated lists from `src/content/readingLists.ts`,
- *     three or four picks each, type-driven layout. Where the page does
- *     its "actually has substance" lifting.
- *  4. Events nod. One paragraph + link to /events + the events-mailing-list
- *     signup. The Instagram strip is gone; the IG link lives in the footer
- *     until the Behold widget is configured.
- *  5. Sunday digest signup. Name + email. The form's only chrome is its
- *     section's top border and slightly elevated bg.
+ *     inline links.
+ *  3. "Where to start" reading lists. Four curated lists, collapsible,
+ *     closed by default. The page's substance.
+ *  4. Events nod. Editorial paragraph + link to /events. No inline form
+ *     here — the single subscribe form below covers both newsletter
+ *     and event announcements via checkboxes.
+ *  5. "Stay in touch" signup. One form, name + email + checkboxes for the
+ *     two lists (Sunday digest and event announcements). Single
+ *     confirmation email lists everything they ticked.
  */
 
 export default function Landing() {
@@ -116,35 +115,45 @@ export default function Landing() {
               See what&apos;s on →
             </Link>
           </p>
-          <p className={styles.eventsBody}>
-            Want a heads-up when we run something? Subscribe to event
-            announcements separately from the digest below.
-          </p>
-          <div className={styles.eventsForm}>
-            <SubscribeForm
-              channel="events"
-              hint="Different list from the Sunday digest. Subscribe to either or both."
-            />
-          </div>
         </div>
       </section>
 
       <section id="digest" className={styles.digestSection}>
         <div className={`container ${styles.digestInner}`}>
           <div className={styles.digestPitch}>
-            <h2 className={styles.digestTitle}>The Sunday digest.</h2>
+            <h2 className={styles.digestTitle}>Stay in touch.</h2>
             <p className={styles.digestBody}>
-              One short email each Sunday morning. The TL;DR on AI safety
-              this week, three to five things worth your time, and any
-              opportunities you can act on. Funding, fellowships, calls for
-              papers, jobs. Written by the committee.
+              <strong>Sunday digest.</strong> One short email each Sunday
+              morning. The TL;DR on AI safety this week, three to five
+              things worth your time, and any opportunities you can act on.
+              Funding, fellowships, calls for papers, jobs. Written by the
+              committee.
+            </p>
+            <p className={styles.digestBody}>
+              <strong>Event announcements.</strong> A heads-up when we run
+              something on campus, separately from the digest. Tick the
+              boxes for whichever you want.
             </p>
           </div>
           <div className={styles.digestForm}>
             <SubscribeForm
-              channel="newsletter"
-              layout="full"
-              hint="Different list from event announcements. Subscribe to either or both."
+              source="homepage"
+              channels={[
+                {
+                  id: "newsletter",
+                  label: "The Sunday digest",
+                  description:
+                    "One email a week. Skim it on Sunday over coffee.",
+                  defaultChecked: true,
+                },
+                {
+                  id: "events",
+                  label: "Event announcements",
+                  description:
+                    "We email when we publish a new event. Low frequency.",
+                  defaultChecked: false,
+                },
+              ]}
             />
           </div>
         </div>
