@@ -15,32 +15,43 @@ import SubscriptionConfirmEmail from "@/emails/SubscriptionConfirmEmail";
 import SubscriptionAddedEmail from "@/emails/SubscriptionAddedEmail";
 
 /**
- * Subscribe an email to a channel. Used by:
- *  - Public homepage forms (guest path) — anonymous POST, double-opt-in for
- *    first-time emails, single-click for emails that have any prior
+ * Subscribe an email to one or more channels in a single call. Used by:
+ *  - Public homepage forms (guest path) — anonymous POST, double-opt-in
+ *    for first-time emails, single-click for emails that have any prior
  *    confirmed row (i.e. the inbox is already proven).
  *  - Signed-in members hitting the same endpoint, which shortcuts to
  *    confirmed because their session cookie is itself proof of inbox
  *    control. (Member settings UI uses /api/subscriptions/sync instead,
  *    which applies the full prefs object as deltas.)
  *
+ * Body shape (either form is accepted):
+ *  - { email, channel: string, source?, name? }     // legacy single
+ *  - { email, channels: string[], source?, name? }  // multi-channel
+ *
+ * The multi-channel form sends ONE confirmation email listing every
+ * pending channel, so the user does not get N separate emails for one
+ * sign-up that happened to tick N boxes.
+ *
  * Anti-enumeration discipline: every non-validation outcome returns
- * `{ ok: true, status: 200 }`. The caller cannot tell the difference between
- * "fresh signup", "already subscribed", "in cooldown", or "address is on the
- * suppression list" — all return identical bodies. Validation failures still
- * return 400 (so the form can show an inline error), since malformed input
- * isn't an enumeration risk.
+ * `{ ok: true, status: 200 }`. The caller cannot tell the difference
+ * between fresh signup, already-subscribed, in-cooldown, or
+ * suppressed-address — all return identical bodies. Validation failures
+ * still return 400 (so the form can show an inline error), since
+ * malformed input isn't an enumeration risk.
  */
 
 const COOLDOWN_SECONDS = 60;
 const CONFIRM_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
-const UNSUB_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year — public unsub links should be long-lived
+const UNSUB_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year for public unsub links
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const MAX_EMAIL_LEN = 200;
+const NAME_MAX_LEN = 80;
+const MAX_CHANNELS_PER_CALL = 10;
 
 type Body = {
   email?: unknown;
   channel?: unknown;
+  channels?: unknown;
   source?: unknown;
   /**
    * Optional first / preferred name. Stored on the subscription row for
@@ -50,9 +61,11 @@ type Body = {
   name?: unknown;
 };
 
-const NAME_MAX_LEN = 80;
+type ApiResult =
+  | { ok: true; kind?: "confirmation-sent" | "added" }
+  | { error: string };
 
-export async function POST(req: Request) {
+export async function POST(req: Request): Promise<NextResponse<ApiResult>> {
   let parsed: Body;
   try {
     parsed = (await req.json()) as Body;
@@ -76,12 +89,28 @@ export async function POST(req: Request) {
     );
   }
 
-  const channel = typeof parsed.channel === "string" ? parsed.channel : "";
-  if (!isValidChannel(channel)) {
+  // Coerce body's `channels` (preferred) or `channel` (legacy) into a
+  // deduped, validated list. Reject empty / oversize lists.
+  const channels = collectChannels(parsed);
+  if (channels.length === 0) {
     return NextResponse.json(
-      { error: "Invalid subscription channel." },
+      { error: "Pick at least one list to subscribe to." },
       { status: 400 },
     );
+  }
+  if (channels.length > MAX_CHANNELS_PER_CALL) {
+    return NextResponse.json(
+      { error: "Too many channels in one request." },
+      { status: 400 },
+    );
+  }
+  for (const c of channels) {
+    if (!isValidChannel(c)) {
+      return NextResponse.json(
+        { error: `Invalid subscription channel: ${c}` },
+        { status: 400 },
+      );
+    }
   }
 
   const source =
@@ -107,18 +136,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  // Per-email cooldown floor. The subscribe() helper would itself bump the
-  // counter, but checking BEFORE that lets us short-circuit re-sends on
-  // mailbomb-style abuse — same address, repeated POSTs in seconds.
-  const ref = db
-    .collection("subscriptions")
-    .doc(subscriptionDocId({ email, channel }));
-  const before = await ref.get();
-  if (before.exists) {
-    const data = before.data() as { lastAttemptAt?: Timestamp } | undefined;
-    const last = data?.lastAttemptAt;
-    if (last && Timestamp.now().toMillis() - last.toMillis() < COOLDOWN_SECONDS * 1000) {
-      return NextResponse.json({ ok: true });
+  // Per-email cooldown floor across all channels in this call. We treat
+  // any recent attempt on any of the requested rows as cooldown'd; this
+  // stops mailbomb-style abuse where someone repeatedly POSTs the same
+  // email + channel mix.
+  const cooldownCutoffMs = Timestamp.now().toMillis() - COOLDOWN_SECONDS * 1000;
+  for (const channel of channels) {
+    const ref = db
+      .collection("subscriptions")
+      .doc(subscriptionDocId({ email, channel }));
+    const snap = await ref.get();
+    if (snap.exists) {
+      const data = snap.data() as { lastAttemptAt?: Timestamp } | undefined;
+      const last = data?.lastAttemptAt;
+      if (last && last.toMillis() > cooldownCutoffMs) {
+        return NextResponse.json({ ok: true });
+      }
     }
   }
 
@@ -129,51 +162,59 @@ export async function POST(req: Request) {
   const audience = session ? "user" : "guest";
   const audienceId = session ? session.uid : emailDocId(email);
 
-  let result;
-  try {
-    result = await subscribe(db, {
-      email,
-      channel,
-      audience,
-      audienceId,
-      source,
-      name,
-    });
-  } catch (err) {
-    console.error("[/api/subscriptions] subscribe failed", err);
-    return NextResponse.json(
-      { error: "Could not save subscription" },
-      { status: 500 },
-    );
-  }
-
-  // Nothing to do beyond the subscribe() call when the row is already in its
-  // terminal state and no new channel was just attached. Silent success.
-  if (
-    result.status === "confirmed" &&
-    !result.created &&
-    !result.newlyAddedChannel
-  ) {
-    return NextResponse.json({ ok: true });
+  // Run subscribe() for each requested channel. Aggregate the results so
+  // we can decide which emails to send.
+  const channelsNeedingConfirmation: string[] = [];
+  const channelsNewlyAddedConfirmed: string[] = [];
+  for (const channel of channels) {
+    let result;
+    try {
+      result = await subscribe(db, {
+        email,
+        channel,
+        audience,
+        audienceId,
+        source,
+        name,
+      });
+    } catch (err) {
+      console.error("[/api/subscriptions] subscribe failed", email, channel, err);
+      return NextResponse.json(
+        { error: "Could not save subscription" },
+        { status: 500 },
+      );
+    }
+    if (result.requiresConfirmation) {
+      channelsNeedingConfirmation.push(channel);
+    } else if (result.newlyAddedChannel) {
+      channelsNewlyAddedConfirmed.push(channel);
+    }
+    // Otherwise: nothing changed (already-confirmed, already-subscribed),
+    // silent success.
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
   const replyTo = process.env.EMAIL_DEFAULT_REPLY_TO;
 
-  // Pre-mint a per-channel unsubscribe token so the welcome / confirm /
-  // added emails can include a one-click unsub from this exact channel.
-  const unsubToken = signToken(
-    { s: "unsubscribe", email, c: channel },
-    UNSUB_TOKEN_TTL_SECONDS,
-  );
-  const unsubUrl = `${appUrl}/api/unsubscribe?t=${encodeURIComponent(unsubToken)}`;
-
-  if (result.requiresConfirmation) {
+  // Confirmation path: send ONE email listing every channel that needs
+  // confirmation. Once they click, `confirmAllForEmail` flips every
+  // pending row in one go.
+  if (channelsNeedingConfirmation.length > 0) {
     const confirmToken = signToken(
       { s: "public-confirm", e: email },
       CONFIRM_TOKEN_TTL_SECONDS,
     );
     const confirmUrl = `${appUrl}/api/subscriptions/confirm?t=${encodeURIComponent(confirmToken)}`;
+
+    // Use the first pending channel for the RFC 8058 List-Unsubscribe
+    // header. The user can fully drop the address by clicking the per-
+    // channel unsub links once they're confirmed.
+    const headerChannel = channelsNeedingConfirmation[0];
+    const headerUnsubToken = signToken(
+      { s: "unsubscribe", email, c: headerChannel },
+      UNSUB_TOKEN_TTL_SECONDS,
+    );
+    const headerUnsubUrl = `${appUrl}/api/unsubscribe?t=${encodeURIComponent(headerUnsubToken)}`;
 
     try {
       await sendEmail({
@@ -181,19 +222,17 @@ export async function POST(req: Request) {
         subject: "Confirm your NAISI subscription",
         react: SubscriptionConfirmEmail({
           confirmUrl,
-          channels: [channel],
+          channels: channelsNeedingConfirmation,
           expiresInHours: Math.round(CONFIRM_TOKEN_TTL_SECONDS / 3600),
-          unsubUrl,
+          unsubUrl: headerUnsubUrl,
           name,
         }),
         kind: "subscription-confirm",
         referenceId: emailDocId(email),
-        listUnsubscribe: { url: unsubUrl, mailto: replyTo },
+        listUnsubscribe: { url: headerUnsubUrl, mailto: replyTo },
       });
     } catch (err) {
       console.error("[/api/subscriptions] confirm send failed", email, err);
-      // Tell the form to retry — the row is in pending, but no confirm email
-      // landed, so the user is stuck without intervention.
       return NextResponse.json(
         { error: "Couldn't send confirmation. Try again." },
         { status: 502 },
@@ -202,12 +241,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, kind: "confirmation-sent" });
   }
 
-  // Confirmed path. Two sub-cases:
-  //  - newlyAddedChannel: an already-confirmed email just picked up a new
-  //    channel. Send the low-key "added" notice.
-  //  - else: the channel was already confirmed-and-active for this address.
-  //    Stay silent (no extra mail) — covered by the early return above.
-  if (result.newlyAddedChannel) {
+  // No confirmation needed (email already proven). For each channel that
+  // was actually newly attached this call, send a low-key "added" notice.
+  // Multiple sends here are rare in practice (only when a confirmed user
+  // ticks several brand-new channels at once), so the simple per-channel
+  // loop is fine.
+  for (const channel of channelsNewlyAddedConfirmed) {
+    const unsubToken = signToken(
+      { s: "unsubscribe", email, c: channel },
+      UNSUB_TOKEN_TTL_SECONDS,
+    );
+    const unsubUrl = `${appUrl}/api/unsubscribe?t=${encodeURIComponent(unsubToken)}`;
     try {
       await sendEmail({
         to: email,
@@ -218,14 +262,29 @@ export async function POST(req: Request) {
         listUnsubscribe: { url: unsubUrl, mailto: replyTo },
       });
     } catch (err) {
-      // Don't propagate — the row is already saved as confirmed. Worst case
-      // they just don't get a receipt, which is fine.
-      console.warn("[/api/subscriptions] added-notice send failed", email, err);
+      // Don't propagate. The row is already saved as confirmed; missing
+      // a receipt email is acceptable degradation.
+      console.warn("[/api/subscriptions] added-notice send failed", email, channel, err);
     }
-    return NextResponse.json({ ok: true, kind: "added" });
   }
 
+  if (channelsNewlyAddedConfirmed.length > 0) {
+    return NextResponse.json({ ok: true, kind: "added" });
+  }
   return NextResponse.json({ ok: true });
+}
+
+function collectChannels(body: Body): string[] {
+  const out = new Set<string>();
+  if (Array.isArray(body.channels)) {
+    for (const c of body.channels) {
+      if (typeof c === "string" && c.length > 0) out.add(c);
+    }
+  }
+  if (typeof body.channel === "string" && body.channel.length > 0) {
+    out.add(body.channel);
+  }
+  return Array.from(out);
 }
 
 /** Used only as the SubscriptionAddedEmail subject line input. */
