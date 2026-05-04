@@ -1,9 +1,9 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { useState } from "react";
 import type { CommentDoc } from "@/lib/firestore/comments";
 import type { UserDoc } from "@/lib/firestore/users";
-import { tokenizeCommentBody } from "../lib/comments/markdown";
+import RichTextRender from "./RichTextRender";
 import { softDeleteComment } from "../commentMutations";
 
 type Props = {
@@ -159,41 +159,7 @@ export default function CommentItem({
 }
 
 function CommentBody({ body, users }: { body: string; users: UserDoc[] }) {
-  const tokens = tokenizeCommentBody(body);
-  return (
-    <>
-      {tokens.map((t, i) => {
-        if (t.kind === "text") return <Fragment key={i}>{t.value}</Fragment>;
-        if (t.kind === "linebreak") return <br key={i} />;
-        if (t.kind === "paragraph-break") {
-          return (
-            <Fragment key={i}>
-              <br />
-              <br />
-            </Fragment>
-          );
-        }
-        // mention
-        const mentioned = users.find((u) => u.uid === t.uid);
-        const label = mentioned?.displayName ?? mentioned?.email ?? t.displayName;
-        return (
-          <span
-            key={i}
-            title={mentioned?.email ?? undefined}
-            style={{
-              background: "var(--color-accent-soft)",
-              color: "var(--color-accent)",
-              padding: "0 0.3rem",
-              borderRadius: "var(--radius-sm, 4px)",
-              fontWeight: 500,
-            }}
-          >
-            @{label}
-          </span>
-        );
-      })}
-    </>
-  );
+  return <RichTextRender body={body} users={users} />;
 }
 
 function Avatar({ initial, muted }: { initial: string; muted?: boolean }) {

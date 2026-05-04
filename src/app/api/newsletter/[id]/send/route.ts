@@ -13,8 +13,8 @@ import { filterSuppressed } from "@/lib/firestore/suppression";
 import {
   addressesForSend,
   normaliseNotifications,
-  wantsCategory,
 } from "@/lib/firestore/notifications";
+import { findRecipientsForChannel } from "@/lib/firestore/subscriptions";
 import { signToken } from "@/lib/signedTokens";
 
 type Ctx = RouteContext<"/api/newsletter/[id]/send">;
@@ -22,10 +22,16 @@ type Ctx = RouteContext<"/api/newsletter/[id]/send">;
 const UNSUB_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year
 
 type SubscriberRow = {
+  /**
+   * For member rows, the user's uid (used for legacy-shape unsub tokens
+   * `{ uid, c }`). For guest rows, the empty string — guests use email-shape
+   * tokens `{ email, c }` instead.
+   */
   uid: string;
+  audience: "user" | "guest";
   preferredName: string;
-  gmailEmail: string | null;
-  universityEmail: string | null;
+  /** Primary email — Google email for members, the only email for guests. */
+  primaryEmail: string;
   addresses: string[];
 };
 
@@ -79,44 +85,80 @@ export async function POST(_req: Request, ctx: Ctx) {
     );
   }
 
-  // Pull every user; filter client-side. Filtering on the new notifications
-  // shape via where() would miss un-migrated users, and the legacy-shape
-  // where() would miss users saved under the new UI. One query + in-memory
-  // normalise is simplest and stays correct across the migration window.
-  const allUsers = await db.collection("users").get();
+  // Source of truth: the `subscriptions` junction collection. Each
+  // confirmed row for `channel == "newsletter"` becomes one recipient.
+  // For member rows we hydrate the user doc to apply the existing
+  // gmail/uniEmail channel-routing rules; for guest rows we use the row's
+  // email directly (guests have one address, no channel routing).
+  const recipients = await findRecipientsForChannel(db, "newsletter");
 
   const gmailOnly = process.env.EMAIL_GMAIL_ONLY_MODE === "true";
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
 
-  const subscribers: SubscriberRow[] = allUsers.docs.flatMap((d) => {
-    const data = d.data();
-    const profile = (data.profile ?? {}) as Record<string, unknown>;
-    const prefs = normaliseNotifications(profile);
-    if (!wantsCategory(prefs, "newsletter")) return [];
-    const gmailEmail = (data.email as string) ?? null;
-    const universityEmail =
-      (profile.universityEmail as string | undefined) ?? null;
-    const addresses = addressesForSend({
-      prefs,
-      category: "newsletter",
-      gmailEmail,
-      universityEmail,
-      gmailOnlyMode: gmailOnly,
-    });
-    if (addresses.length === 0) return [];
-    return [
-      {
-        uid: d.id,
+  // Hydrate user audience rows once per uid to avoid duplicate user-doc
+  // reads when a member somehow has multiple newsletter rows (shouldn't
+  // happen post-PR-1, but defensive).
+  const userIds = Array.from(
+    new Set(
+      recipients.filter((r) => r.audience === "user").map((r) => r.audienceId),
+    ),
+  );
+  const userDocs = userIds.length
+    ? await db.getAll(...userIds.map((uid) => db.collection("users").doc(uid)))
+    : [];
+  const userById = new Map<string, FirebaseFirestore.DocumentSnapshot>();
+  for (const snap of userDocs) {
+    if (snap.exists) userById.set(snap.id, snap);
+  }
+
+  // Dedup at the recipient level so a user with both a "user" row and an
+  // accidental "guest" row (e.g. before claim ran) doesn't get two emails.
+  const seenAudienceKeys = new Set<string>();
+
+  const subscribers: SubscriberRow[] = [];
+  for (const r of recipients) {
+    const dedupKey = `${r.audience}:${r.audienceId}`;
+    if (seenAudienceKeys.has(dedupKey)) continue;
+    seenAudienceKeys.add(dedupKey);
+
+    if (r.audience === "user") {
+      const userSnap = userById.get(r.audienceId);
+      if (!userSnap) continue;
+      const data = userSnap.data() ?? {};
+      const profile = (data.profile ?? {}) as Record<string, unknown>;
+      const prefs = normaliseNotifications(profile);
+      const gmailEmail = (data.email as string) ?? null;
+      const universityEmail =
+        (profile.universityEmail as string | undefined) ?? null;
+      const addresses = addressesForSend({
+        prefs,
+        category: "newsletter",
+        gmailEmail,
+        universityEmail,
+        gmailOnlyMode: gmailOnly,
+      });
+      if (addresses.length === 0) continue;
+      subscribers.push({
+        uid: userSnap.id,
+        audience: "user",
         preferredName:
           (profile.preferredName as string | undefined) ||
           (data.displayName as string | undefined) ||
           "there",
-        gmailEmail,
-        universityEmail,
+        primaryEmail: gmailEmail ?? r.email,
         addresses,
-      },
-    ];
-  });
+      });
+    } else {
+      // Guest. One address, no preferred name on file.
+      subscribers.push({
+        uid: "",
+        audience: "guest",
+        preferredName: "there",
+        primaryEmail: r.email,
+        addresses: [r.email],
+      });
+    }
+  }
 
   if (subscribers.length === 0) {
     return NextResponse.json(
@@ -139,19 +181,27 @@ export async function POST(_req: Request, ctx: Ctx) {
       preferredName: sub.preferredName,
     });
 
-    // One unsubscribe token per (uid, newsletter). Reusing across recipient
-    // inboxes for the same user is fine — the token targets the user, not
-    // the address, and one-click unsub flips the category pref.
-    const unsubToken = signToken(
-      { s: "unsubscribe", uid: sub.uid, c: "newsletter" },
-      UNSUB_TOKEN_TTL_SECONDS,
-    );
+    // Members: token targets the user — flips the newsletter row(s) for both
+    // their google email and uni email when they click. Guests: token
+    // targets the email, flipping just their single newsletter row.
+    const unsubToken =
+      sub.audience === "user"
+        ? signToken(
+            { s: "unsubscribe", uid: sub.uid, c: "newsletter" },
+            UNSUB_TOKEN_TTL_SECONDS,
+          )
+        : signToken(
+            { s: "unsubscribe", email: sub.primaryEmail, c: "newsletter" },
+            UNSUB_TOKEN_TTL_SECONDS,
+          );
     const unsubscribeUrl = `${appUrl}/api/unsubscribe?t=${encodeURIComponent(unsubToken)}`;
+
+    const reachKey = sub.audience === "user" ? sub.uid : `guest:${sub.primaryEmail}`;
 
     for (const address of sub.addresses) {
       if (suppressedSet.has(address.toLowerCase())) {
         suppressedCount += 1;
-        console.log("[newsletter send] suppressed:", sub.uid, address);
+        console.log("[newsletter send] suppressed:", reachKey, address);
         continue;
       }
       try {
@@ -173,12 +223,12 @@ export async function POST(_req: Request, ctx: Ctx) {
           },
         });
         sentCount += 1;
-        reachedUids.add(sub.uid);
+        reachedUids.add(reachKey);
         await sleep(200);
       } catch (err) {
-        console.error("[newsletter send]", sub.uid, address, err);
+        console.error("[newsletter send]", reachKey, address, err);
         failures.push({
-          uid: sub.uid,
+          uid: reachKey,
           address,
           error: err instanceof Error ? err.message : "unknown",
         });

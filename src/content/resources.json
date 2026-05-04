@@ -5,12 +5,12 @@
       "description": "If you're new to AI safety, begin with these.",
       "items": [
         {
-          "title": "BlueDot Impact — AI Safety Fundamentals",
+          "title": "BlueDot Impact: AI Safety Fundamentals",
           "href": "https://aisafetyfundamentals.com/",
           "description": "The course we base our core curriculum on. Self-paced readings with discussion."
         },
         {
-          "title": "80,000 Hours — AI safety career guide",
+          "title": "80,000 Hours: AI safety career guide",
           "href": "https://80000hours.org/problem-profiles/artificial-intelligence/",
           "description": "A grounding in why this field matters and where your skills might fit."
         }
@@ -21,7 +21,7 @@
       "description": "For those going deeper on the research.",
       "items": [
         {
-          "title": "Anthropic — Core Views on AI Safety",
+          "title": "Anthropic: Core Views on AI Safety",
           "href": "https://www.anthropic.com/news/core-views-on-ai-safety",
           "description": "A framing of the problem from one of the frontier labs."
         },
@@ -37,7 +37,7 @@
       "description": "The non-technical side of the field.",
       "items": [
         {
-          "title": "GovAI — Research agenda",
+          "title": "GovAI: Research agenda",
           "href": "https://www.governance.ai/research",
           "description": "An overview of key open questions in AI governance."
         }

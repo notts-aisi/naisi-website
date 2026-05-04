@@ -77,8 +77,13 @@ function renderActivityCopy(a: ActivityDoc, users: UserDoc[], task: TaskDoc): st
       return `${actor} ticked ${subtaskTitle(pickStr("subtaskId"))} done`;
     case "subtask_blocked_changed":
       return `${actor} changed blockers on ${subtaskTitle(pickStr("subtaskId"))}`;
-    case "attachment_added":
-      return `${actor} attached ${pickStr("filename") ?? "a file"}`;
+    case "attachment_added": {
+      const filename = pickStr("filename") ?? "a file";
+      const subId = pickStr("subtaskId");
+      return subId
+        ? `${actor} attached ${filename} on ${subtaskTitle(subId)}`
+        : `${actor} attached ${filename}`;
+    }
     case "comment_added":
       // Already rendered as the comment itself — we skip this in the hook.
       return `${actor} commented`;
@@ -101,6 +106,15 @@ function renderActivityCopy(a: ActivityDoc, users: UserDoc[], task: TaskDoc): st
       return `${actor} force-sealed block "${pickStr("name") ?? "a block"}"`;
     case "block_unsealed":
       return `${actor} re-opened block "${pickStr("name") ?? "a block"}"`;
+    case "block_setup_finalized":
+      return `${actor} finalized setup on "${pickStr("name") ?? "a block"}" — allocation open`;
+    case "block_review_mode_set": {
+      const mode = pickStr("mode");
+      const name = pickStr("name") ?? "a block";
+      return mode === "skip-review"
+        ? `${actor} set "${name}" to no-review mode`
+        : `${actor} set "${name}" to needs-review mode`;
+    }
     case "subtask_force_sealed":
       return `${actor} sealed subtask ${subtaskTitle(pickStr("subtaskId"))}`;
     case "subtask_unsealed":
@@ -182,6 +196,46 @@ function renderActivityCopy(a: ActivityDoc, users: UserDoc[], task: TaskDoc): st
         return `${actor} removed ${name} from reviewing ${subtaskTitle(pickStr("subtaskId"))}`;
       }
       return `${actor} dropped reviewing ${subtaskTitle(pickStr("subtaskId"))}`;
+    }
+    case "review_outcome_sent": {
+      const blockName = pickStr("blockName") ?? "a block";
+      const recipients = typeof p.recipients === "number" ? p.recipients : null;
+      return recipients !== null
+        ? `${actor} sent the review outcome for "${blockName}" to ${recipients} member${recipients === 1 ? "" : "s"}`
+        : `${actor} sent the review outcome for "${blockName}"`;
+    }
+    case "initial_notifications_sent": {
+      const recipients = typeof p.recipients === "number" ? p.recipients : null;
+      return recipients !== null
+        ? `${actor} sent initial notifications to ${recipients} member${recipients === 1 ? "" : "s"}`
+        : `${actor} sent initial notifications`;
+    }
+    case "member_notified": {
+      const uid = pickStr("uid");
+      if (uid) {
+        const u = users.find((x) => x.uid === uid);
+        const name = u?.displayName ?? u?.email ?? uid;
+        return `${actor} sent the membership email to ${name}`;
+      }
+      return `${actor} sent a membership email`;
+    }
+    case "subtask_deleted": {
+      const title = pickStr("title");
+      const removedComments = typeof p.removedComments === "number" ? p.removedComments : 0;
+      const removedActivity = typeof p.removedActivity === "number" ? p.removedActivity : 0;
+      const removedAttachments =
+        typeof p.removedAttachments === "number" ? p.removedAttachments : 0;
+      const cascadeBits: string[] = [];
+      if (removedComments > 0)
+        cascadeBits.push(`${removedComments} comment${removedComments === 1 ? "" : "s"}`);
+      if (removedAttachments > 0)
+        cascadeBits.push(
+          `${removedAttachments} attachment${removedAttachments === 1 ? "" : "s"}`,
+        );
+      if (removedActivity > 0)
+        cascadeBits.push(`${removedActivity} activity entr${removedActivity === 1 ? "y" : "ies"}`);
+      const tail = cascadeBits.length > 0 ? ` (cascade: ${cascadeBits.join(", ")})` : "";
+      return `${actor} deleted subtask "${title ?? "?"}"${tail}`;
     }
     default:
       return `${actor} updated the task`;

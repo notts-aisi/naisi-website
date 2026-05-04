@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
   TASK_FIELD_LIMITS,
   effectiveReviewerUids,
+  getReviewerBlockCoverage,
   getReviewerGlobalCoverage,
   getReviewerSignoffBlockers,
   getSubtaskApprovalStatus,
@@ -238,11 +239,15 @@ export default function SubtaskRow({
     task.subtasks.some(
       (s) => s.blockId === subtask.blockId && s.roleHint === "reviewer",
     );
+  // Skip-review blocks have no review pass — claiming review scope on a
+  // subtask inside one is a no-op affordance, so hide the +Review button.
+  const parentBlockSkipsReview = parentBlock?.reviewMode === "skip-review";
   const canSelfAddReviewer =
     subtask.roleHint !== "reviewer" &&
     isTaskLevelReviewer &&
     !isReviewerOnSubtask &&
-    !subtaskSealed;
+    !subtaskSealed &&
+    !parentBlockSkipsReview;
   const canSelfRemoveReviewer =
     subtask.roleHint !== "reviewer" &&
     isTaskLevelReviewer &&
@@ -281,6 +286,22 @@ export default function SubtaskRow({
     [subtask, task.reviewerUids],
   );
 
+  // Reviewer-signoff rows can't use approvalStatus for the "X / N approved"
+  // counter — their `approvedByReviewerUids` is always empty (they're
+  // ticked via `done`, not the matrix). Substitute a block-scoped coverage
+  // count for the assigned reviewer so the counter actually moves as they
+  // approve their block-mates.
+  const signoffCoverage = useMemo(() => {
+    if (subtask.roleHint !== "reviewer") return null;
+    if (subtask.blockId === null) return null;
+    if (subtask.reviewerUids.length === 0) return null;
+    return getReviewerBlockCoverage(
+      task,
+      subtask.blockId,
+      subtask.reviewerUids[0],
+    );
+  }, [subtask, task]);
+
   const rowState = subtaskRowState(subtask, task.reviewerUids, isReviewPending);
   const rowPalette = ROW_COLOURS[rowState];
 
@@ -302,13 +323,17 @@ export default function SubtaskRow({
 
   async function handleDelete() {
     const ok = window.confirm(
-      `Delete subtask "${subtask.title}"? This also clears any other subtask's dependency on it.`,
+      `Delete subtask "${subtask.title}"? Its comments, activity history, and attachments will be permanently removed too. Any other subtask blocked on this one will be un-blocked. This cannot be undone.`,
     );
     if (!ok) return;
     try {
-      await removeSubtask(task, subtask.id);
+      const report = await removeSubtask(task, subtask.id);
+      console.info(
+        `[removeSubtask] removed subtask + ${report.comments} comments, ${report.activity} activity entries, ${report.attachments} attachments`,
+      );
     } catch (err) {
       console.error(err);
+      window.alert(err instanceof Error ? err.message : "Delete failed");
     }
   }
 
@@ -388,29 +413,19 @@ export default function SubtaskRow({
   async function submitRejection() {
     const reason = rejectReasonDraft?.trim() ?? "";
     if (!reason || rejectBusy) return;
-    // Mention the specific assignees on this subtask, falling back to the
-    // task-level completers if no one's per-row-assigned. Those uids drive
-    // the /notify route's forceEmailCompleters recipient list.
-    const mentionUids =
-      subtask.assigneeUids.length > 0 ? subtask.assigneeUids : task.completerUids;
     setRejectBusy(true);
     try {
-      const commentId = await addComment({
+      // Comment captures the rejection reason in-app; no email fires here.
+      // Completers learn the outcome via the batched review email when the
+      // reviewer presses "Send review" on the block (Stage 4). Comment
+      // stays task-level so the existing thread surface keeps working
+      // unchanged — only the per-rejection email is what's being removed.
+      await addComment({
         taskId: task.id,
         bodyMarkdown: `**❌ Rejected "${subtask.title}"**\n\n${reason}`,
-        mentions: mentionUids,
+        mentions: [],
       });
       await setSubtaskApproval(task, subtask.id, "reject");
-      // Fire-and-forget; comment + reject already persisted regardless.
-      try {
-        await fetch(`/api/tasks/${task.id}/notify`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ commentId, forceEmailCompleters: true }),
-        });
-      } catch (emailErr) {
-        console.warn("[submitRejection] email dispatch failed", emailErr);
-      }
       setRejectReasonDraft(null);
     } catch (err) {
       console.error(err);
@@ -817,7 +832,18 @@ export default function SubtaskRow({
         />
       )}
 
-      {showMatrix && approvalStatus.required.length > 0 && (
+      {showMatrix && signoffCoverage !== null && signoffCoverage.required > 0 && (
+        <p
+          style={{
+            margin: 0,
+            fontSize: "var(--text-xs)",
+            color: "var(--color-text-muted)",
+          }}
+        >
+          {signoffCoverage.approved} / {signoffCoverage.required} approved
+        </p>
+      )}
+      {showMatrix && signoffCoverage === null && approvalStatus.required.length > 0 && (
         <p
           style={{
             margin: 0,
@@ -1205,6 +1231,7 @@ export default function SubtaskRow({
           viewerUid={viewerUid}
           viewerIsAdmin={isAdmin}
           canEditDescription={canEditStructure}
+          canEditDueDates={isAdmin || isTaskCreator || isTaskLevelReviewer}
           canComment={
             isAdmin ||
             isTaskCreator ||
@@ -1314,32 +1341,105 @@ function InlineAvatars({
   const fg = tone === "warning"
     ? "var(--color-warning, var(--color-text))"
     : "var(--color-accent)";
+  const names = users.map((u) => u.displayName ?? u.email ?? u.uid);
+  return (
+    <HoverTooltip
+      content={
+        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+          <div
+            style={{
+              fontSize: "9px",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              opacity: 0.6,
+            }}
+          >
+            {title}
+          </div>
+          {names.map((n) => (
+            <div key={n}>{n}</div>
+          ))}
+        </div>
+      }
+    >
+      <span style={{ display: "inline-flex", gap: "2px" }}>
+        {users.slice(0, 3).map((u) => (
+          <span
+            key={u.uid}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: "1.25rem",
+              height: "1.25rem",
+              borderRadius: "50%",
+              background: bg,
+              color: fg,
+              fontSize: "10px",
+              fontWeight: 600,
+            }}
+          >
+            {(u.displayName ?? u.email ?? "?").charAt(0).toUpperCase()}
+          </span>
+        ))}
+        {users.length > 3 && (
+          <span style={{ fontSize: "10px", color: "var(--color-text-subtle)" }}>+{users.length - 3}</span>
+        )}
+      </span>
+    </HoverTooltip>
+  );
+}
+
+/**
+ * Small hover-tooltip helper — shows `content` above `children` after a
+ * ~120ms hover delay (short enough to feel responsive, long enough that
+ * you don't get a popover on every cursor transit). Positioned absolutely,
+ * auto-centred over the trigger; falls back to browser `title` if the user
+ * is keyboard-navigating (the content is also reflected via aria-label on
+ * trigger).
+ */
+function HoverTooltip({
+  content,
+  children,
+}: {
+  content: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
   return (
     <span
-      title={`${title}: ${users.map((u) => u.displayName ?? u.email ?? u.uid).join(", ")}`}
-      style={{ display: "inline-flex", gap: "2px" }}
+      style={{ position: "relative", display: "inline-flex" }}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
     >
-      {users.slice(0, 3).map((u) => (
+      {children}
+      {open && (
         <span
-          key={u.uid}
+          role="tooltip"
           style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: "1.25rem",
-            height: "1.25rem",
-            borderRadius: "50%",
-            background: bg,
-            color: fg,
-            fontSize: "10px",
-            fontWeight: 600,
+            position: "absolute",
+            bottom: "calc(100% + 4px)",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 20,
+            padding: "0.4rem 0.6rem",
+            background: "var(--color-text)",
+            color: "var(--color-bg)",
+            border: "1px solid var(--color-border, transparent)",
+            borderRadius: "var(--radius-sm, 4px)",
+            boxShadow: "var(--shadow-md, 0 2px 6px rgba(0,0,0,0.25))",
+            fontSize: "var(--text-xs)",
+            lineHeight: 1.3,
+            pointerEvents: "none",
+            maxWidth: "18rem",
+            wordBreak: "break-word",
           }}
         >
-          {(u.displayName ?? u.email ?? "?").charAt(0).toUpperCase()}
+          {content}
         </span>
-      ))}
-      {users.length > 3 && (
-        <span style={{ fontSize: "10px", color: "var(--color-text-subtle)" }}>+{users.length - 3}</span>
       )}
     </span>
   );
@@ -1617,13 +1717,21 @@ function ApprovalCell({
   };
   if (!isMine) {
     return (
-      <span
-        title={`${label}: ${stateCopy[state]}`}
-        aria-label={`${label} ${state}`}
-        style={{ ...sharedCellStyle, cursor: "default" }}
+      <HoverTooltip
+        content={
+          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+            <div style={{ fontWeight: 600 }}>{label}</div>
+            <div style={{ opacity: 0.75 }}>{stateCopy[state]}</div>
+          </div>
+        }
       >
-        {icon}
-      </span>
+        <span
+          aria-label={`${label} ${state}`}
+          style={{ ...sharedCellStyle, cursor: "default" }}
+        >
+          {icon}
+        </span>
+      </HoverTooltip>
     );
   }
 

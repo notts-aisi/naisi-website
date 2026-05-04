@@ -81,8 +81,8 @@ export default async function VerifyEmailLandingPage({
               We&apos;ve confirmed you own <strong>{result.email}</strong>.
             </p>
             <p style={{ color: "var(--color-text-muted)", margin: "0 0 var(--space-6)" }}>
-              You can close this tab now — your registration tab will update
-              automatically. If you closed it, head back to{" "}
+              You can close this tab now. Your registration tab will
+              update automatically. If you closed it, head back to{" "}
               <Link href="/register" style={{ color: "var(--color-accent)" }}>
                 the sign-up page
               </Link>{" "}
@@ -95,9 +95,9 @@ export default async function VerifyEmailLandingPage({
               Couldn&apos;t verify this link
             </h1>
             <p style={{ color: "var(--color-text-muted)", margin: "0 0 var(--space-6)" }}>
-              {result.message} If your original link expired, head back to your
-              registration tab and click &quot;Resend&quot; — we&apos;ll email a
-              fresh one.
+              {result.message} If your original link expired, head back
+              to your registration tab and click &quot;Resend&quot;.
+              We&apos;ll email a fresh one.
             </p>
             <Link
               href="/register"

@@ -83,15 +83,54 @@ export const TASK_FIELD_LIMITS = {
  */
 export type BlockGatingMode = "previous" | "all-previous" | "none";
 
+/**
+ * Per-block review-needed toggle. Defaults to `"review"` so existing blocks
+ * keep their current spawn-signoff-rows-on-Notify behaviour. Set to
+ * `"skip-review"` for blocks that don't need any review pass — Notify
+ * becomes "Mark block complete", no signoff rows spawn, the block jumps
+ * straight from `"in-progress"` to `"complete"` on all-done. Lets a task
+ * mix review-required blocks with no-review-needed ones (e.g. a "draft
+ * outline" block that's setup-only, then a "final copy" block that needs
+ * a real review).
+ */
+export type BlockReviewMode = "review" | "skip-review";
+
 export type TaskBlock = {
   id: string;
   name: string;
   order: number;
-  sealState: "open" | "sealed";
+  /** Block lifecycle:
+   *   - "setup": task-setter phase — task reviewers (+ admin) are choosing
+   *     which subtasks exist. Completers can't allocate themselves yet.
+   *     Exit via `finalizeBlockSetup` (admin or task-level reviewer).
+   *   - "open": allocation phase — roster being filled, consensus lock-in
+   *     pending. Exit via consent tally reaching N/N (→ sealed).
+   *   - "sealed": work phase — roster locked, subtasks immutable (admin
+   *     override only), reviewer signoffs can be spawned.
+   *
+   * Existing blocks created before the task-setter phase PR have no
+   * "setup" state — they normalize to "open" and keep the old behaviour. */
+  sealState: "setup" | "open" | "sealed";
   sealedAt: Date | null;
   /** Admin UID who force-sealed this block, or null if it sealed via
    *  consensus. Purely informational — doesn't affect gating. */
   forceSealedByUid: string | null;
+  /** When the block's "Mark block complete" / "Notify reviewers" press
+   *  fired. Drives the `complete` phase for blocks that don't go through
+   *  signoff (skip-review mode, or review mode with no effective
+   *  reviewers): without an explicit press, ticking all subtasks done
+   *  leaves the block in `in-progress` so it doesn't quietly ungate
+   *  downstream work. Review-mode blocks with signoff rows ignore this
+   *  field — their `complete` is determined by signoff completion.
+   *  Cleared on `unsealBlock`. Pre-migration blocks normalize to null. */
+  completedAt: Date | null;
+  /** Per-block review-needed toggle. `"review"` (default) keeps the
+   *  existing flow: Notify spawns signoff rows for effective reviewers,
+   *  block phase passes through `"reviewing"` before `"complete"`.
+   *  `"skip-review"` short-circuits — no spawn, button labels as "Mark
+   *  block complete", phase jumps straight to `"complete"` on all-done.
+   *  Pre-migration blocks normalize to `"review"`. */
+  reviewMode: BlockReviewMode;
   /** Phase 3 / 1.9e: declarative upstream-deps mode. Drives whether this
    *  block's completion rows are blocked until upstream block(s) are
    *  complete. Defaults to "previous" for new blocks — gating works out
@@ -99,6 +138,14 @@ export type TaskBlock = {
    *  normalize to "previous". First block (order === 0) ignores this
    *  field — it has no upstream blocks. */
   gatingMode: BlockGatingMode;
+  /** Stage 4 (2026-04-26): timestamp of the most recent batched
+   *  review-outcome email send for this block. Set by the
+   *  `/api/tasks/[id]/send-review-outcome` route when a signed-off
+   *  reviewer presses "Send review" in the block header. Used to
+   *  scope the "questions-resolved" detection to the current review
+   *  pass (anything after this timestamp is the next pass). Null
+   *  until the first send. */
+  reviewPassSentAt: Date | null;
 };
 
 export type BlockConsentMap = Record<string, { consentingCompleterUids: string[] }>;
@@ -198,6 +245,20 @@ export type TaskDoc = {
   createdAt: Date | null;
   updatedAt: Date | null;
   completedAt: Date | null;
+  /** Stage 5 (2026-04-26): timestamp of the one-time "Send initial
+   *  notifications" press. While null, the task is in setup — admins
+   *  can add and remove members freely with zero email risk, and no
+   *  inline Notify buttons render. Once stamped, subsequent member
+   *  adds populate `pendingNotifyUids` and surface optional inline
+   *  Notify buttons. One-way transition; archive the task to halt
+   *  further notifications. */
+  initialNotifyAt: Date | null;
+  /** Stage 5 (2026-04-26): uids that joined the roster after initial
+   *  notifications fired and haven't been individually notified yet.
+   *  Cleared on Notify-press OR on remove-before-notify. Always empty
+   *  while `initialNotifyAt === null` — the gate is initial-send,
+   *  not individual notification per uid. */
+  pendingNotifyUids: string[];
 };
 
 type Raw = Record<string, unknown>;
@@ -253,14 +314,27 @@ function normalizeBlock(raw: unknown): TaskBlock | null {
   const id = typeof b.id === "string" ? b.id : null;
   const name = typeof b.name === "string" ? b.name : null;
   if (!id || !name) return null;
+  // Preserve backward-compat: unknown / missing sealState defaults to
+  // "open" so existing blocks from before the task-setter phase keep
+  // their old behaviour. Only new blocks created after this PR start
+  // in "setup".
   const sealState: TaskBlock["sealState"] =
-    b.sealState === "sealed" ? "sealed" : "open";
+    b.sealState === "sealed"
+      ? "sealed"
+      : b.sealState === "setup"
+        ? "setup"
+        : "open";
   const order = typeof b.order === "number" ? b.order : 0;
   const rawMode = b.gatingMode;
   const gatingMode: BlockGatingMode =
     rawMode === "all-previous" || rawMode === "none"
       ? rawMode
       : "previous";
+  // Pre-migration blocks normalise to "review" so the existing flow is
+  // preserved unchanged. Only blocks explicitly toggled via the new
+  // BlockHeader dropdown carry "skip-review".
+  const reviewMode: BlockReviewMode =
+    b.reviewMode === "skip-review" ? "skip-review" : "review";
   return {
     id,
     name,
@@ -269,7 +343,10 @@ function normalizeBlock(raw: unknown): TaskBlock | null {
     sealedAt: tsToDate(b.sealedAt),
     forceSealedByUid:
       typeof b.forceSealedByUid === "string" ? b.forceSealedByUid : null,
+    completedAt: tsToDate(b.completedAt),
+    reviewMode,
     gatingMode,
+    reviewPassSentAt: tsToDate(b.reviewPassSentAt),
   };
 }
 
@@ -337,6 +414,8 @@ export function normalizeTask(id: string, data: Raw): TaskDoc {
     createdAt: tsToDate(data.createdAt),
     updatedAt: tsToDate(data.updatedAt),
     completedAt: tsToDate(data.completedAt),
+    initialNotifyAt: tsToDate(data.initialNotifyAt),
+    pendingNotifyUids: stringArray(data.pendingNotifyUids),
   };
 }
 
@@ -510,6 +589,67 @@ export function subtaskRowState(
 }
 
 /**
+ * Per-state count of *completion* subtasks (non-reviewer rows). Drives the
+ * task-level breakdown chip and segmented progress bar — replaces the old
+ * flat `done/total` pill, which was meaningless once tasks gained blocks
+ * + review states. Reviewer-signoff rows are workflow infrastructure and
+ * aren't counted here; their progression is reflected via the parent
+ * subtask's "approved" bucket once every required reviewer ticks.
+ *
+ * Buckets are mutually exclusive — every completion row lands in exactly
+ * one. First-match-wins so rejection / question always surface even on a
+ * subtask that's also been ticked done.
+ */
+export type SubtaskBreakdown = {
+  rejected: number;     // any reviewer placed ✗
+  questioned: number;   // any outstanding ❓ (and no rejection)
+  approved: number;     // ticked + every required reviewer approved
+  done: number;         // ticked + no review gate
+  inReview: number;     // ticked + reviewers required but not yet fully approved
+  pending: number;      // not ticked, no flags
+  total: number;        // count of completion rows (excludes signoff rows)
+  /** Count of reviewer-signoff rows that exist but haven't been ticked. These
+   *  are workflow-infra rows (`roleHint: "reviewer"`) — separate from the
+   *  per-state completion buckets above. Surfaced so a task that reads as
+   *  "all approved" but can't be marked Done is no longer mysterious — the
+   *  unticked signoff is the gate. */
+  signoffPending: number;
+  signoffTotal: number;
+};
+
+export function getSubtaskBreakdown(task: TaskDoc): SubtaskBreakdown {
+  const rows = task.subtasks.filter((s) => s.roleHint !== "reviewer");
+  const signoffRows = task.subtasks.filter((s) => s.roleHint === "reviewer");
+  let rejected = 0;
+  let questioned = 0;
+  let approved = 0;
+  let done = 0;
+  let inReview = 0;
+  let pending = 0;
+  for (const s of rows) {
+    const status = getSubtaskApprovalStatus(s, task.reviewerUids);
+    if (status.hasRejection) rejected += 1;
+    else if (status.hasOutstandingQuestion) questioned += 1;
+    else if (s.done) {
+      if (status.required.length === 0) done += 1;
+      else if (status.fullyApproved) approved += 1;
+      else inReview += 1;
+    } else pending += 1;
+  }
+  return {
+    rejected,
+    questioned,
+    approved,
+    done,
+    inReview,
+    pending,
+    total: rows.length,
+    signoffPending: signoffRows.filter((s) => !s.done).length,
+    signoffTotal: signoffRows.length,
+  };
+}
+
+/**
  * Subtasks grouped for render. Each block gets:
  *   - `completion`: the work subtasks (non-reviewer-hint)
  *   - `signoffs`: the auto-spawned reviewer rows (roleHint === "reviewer")
@@ -563,36 +703,38 @@ export function groupSubtasksByBlock(
  *   - `complete`: every signoff row is ticked done — block accepted.
  *     Colour: green.
  */
-export type BlockPhase = "allocating" | "in-progress" | "reviewing" | "complete";
+export type BlockPhase = "setup" | "allocating" | "in-progress" | "reviewing" | "complete";
 
 export function getBlockPhase(task: TaskDoc, block: TaskBlock): BlockPhase {
+  if (block.sealState === "setup") return "setup";
   if (block.sealState !== "sealed") return "allocating";
-  const signoffs = task.subtasks.filter(
-    (s) => s.blockId === block.id && s.roleHint === "reviewer",
-  );
   const completionRows = task.subtasks.filter(
     (s) => s.blockId === block.id && s.roleHint !== "reviewer",
   );
   const allCompletionDone =
     completionRows.length === 0 || completionRows.every((s) => s.done);
-  if (signoffs.length === 0) {
-    // No signoff rows yet. Two cases:
-    //  (a) no reviewers claimed on any subtask → no review gate ever,
-    //      go green as soon as every completion row is ticked done.
-    //  (b) reviewers have claimed scope but Notify hasn't been pressed —
-    //      stay in-progress so the "Notify reviewers" button surfaces.
-    const hasAnyReviewerClaim = completionRows.some(
-      (s) => s.reviewerUids.length > 0,
-    );
-    if (!hasAnyReviewerClaim && allCompletionDone) return "complete";
-    return "in-progress";
+  const signoffs = task.subtasks.filter(
+    (s) => s.blockId === block.id && s.roleHint === "reviewer",
+  );
+  if (signoffs.length > 0) {
+    // Signoffs exist (Notify pressed in review mode). A rejection auto-
+    // unticks its subtask — if any completion row regresses, drop back
+    // to in-progress even with signoff rows present. Otherwise the
+    // signoffs themselves determine the phase.
+    if (!allCompletionDone) return "in-progress";
+    if (signoffs.every((s) => s.done)) return "complete";
+    return "reviewing";
   }
-  // Signoffs exist (Notify has been pressed). A rejection auto-unticks
-  // its subtask → if any completion row isn't done, drop back to
-  // "in-progress" (orange) even with signoff rows spawned.
-  if (!allCompletionDone) return "in-progress";
-  if (signoffs.every((s) => s.done)) return "complete";
-  return "reviewing";
+  // No signoff rows: the block reaches "complete" only when the user has
+  // explicitly pressed "Mark block complete" / "Notify reviewers" (which
+  // stamps `block.completedAt`). Without that press, ticking the last
+  // subtask done leaves the block in "in-progress" so it doesn't quietly
+  // ungate downstream gated blocks. Covers both skip-review mode and
+  // review-mode-with-no-effective-reviewers. Pre-migration blocks have
+  // `completedAt: null` so they need a press to flip green — acceptable
+  // one-off for users who had auto-greened blocks before.
+  if (block.completedAt && allCompletionDone) return "complete";
+  return "in-progress";
 }
 
 /**
@@ -752,6 +894,100 @@ export function hasReviewerSignedOffBlock(
       s.reviewerUids.includes(reviewerUid) &&
       s.done,
   );
+}
+
+/**
+ * Stage 4 gate (2026-04-26) — derives whether a block is in a state where
+ * its batched review-outcome email can fire. The Send review button in
+ * BlockHeader uses this to enable / disable + tooltip itself; the API
+ * route re-checks server-side to defend against stale UI.
+ *
+ * Rules:
+ *   - Block must be sealed AND review-mode (skip-review blocks bypass the
+ *     review pass entirely).
+ *   - Reviewer signoff rows must exist (Notify already pressed).
+ *   - Every completion row must be in a terminal state — no outstanding
+ *     questions, no missing reviews. A "rejected" row is terminal too.
+ *   - Every signoff row in the block must be ticked done.
+ */
+export function canSendReviewOutcome(
+  task: TaskDoc,
+  block: TaskBlock,
+): { ok: boolean; reason: string | null } {
+  if (block.sealState !== "sealed") {
+    return { ok: false, reason: "Block isn't sealed yet — lock in allocation first." };
+  }
+  if (block.reviewMode === "skip-review") {
+    return { ok: false, reason: "Block is in skip-review mode — no outcome to send." };
+  }
+  const signoffs = task.subtasks.filter(
+    (s) => s.blockId === block.id && s.roleHint === "reviewer",
+  );
+  if (signoffs.length === 0) {
+    return {
+      ok: false,
+      reason: "Press Notify reviewers first — there are no signoff rows yet.",
+    };
+  }
+  const completion = task.subtasks.filter(
+    (s) => s.blockId === block.id && s.roleHint !== "reviewer",
+  );
+  for (const s of completion) {
+    if (s.questionedByReviewerUids.length > 0) {
+      return {
+        ok: false,
+        reason: `"${s.title}" still has an outstanding question — resolve before sending.`,
+      };
+    }
+    if (s.reviewerUids.length === 0) continue;
+    const fullyApproved =
+      s.approvedByReviewerUids.length > 0 &&
+      s.reviewerUids.every((u) => s.approvedByReviewerUids.includes(u));
+    const rejected = s.rejectedByReviewerUids.length > 0;
+    if (!fullyApproved && !rejected) {
+      return {
+        ok: false,
+        reason: `"${s.title}" hasn't reached a decision yet — every reviewer must approve or reject.`,
+      };
+    }
+  }
+  if (!signoffs.every((s) => s.done)) {
+    const pending = signoffs.find((s) => !s.done);
+    return {
+      ok: false,
+      reason: pending
+        ? `Reviewer signoff still pending — at least one reviewer hasn't ticked their row.`
+        : "Every reviewer must tick their signoff row before sending.",
+    };
+  }
+  return { ok: true, reason: null };
+}
+
+/**
+ * Block-scoped variant of `getReviewerGlobalCoverage`: how many completion
+ * subtasks in the given block this reviewer is required on, and how many
+ * they've approved via the matrix. Skips reviewer-signoff rows (they're
+ * the audit-trail row, not work to approve). Drives the counter shown
+ * below a signoff row in `SubtaskRow` — using `getSubtaskApprovalStatus`
+ * on the signoff row itself returns 0/N forever because signoff rows are
+ * ticked via `done`, not via matrix cells.
+ */
+export function getReviewerBlockCoverage(
+  task: TaskDoc,
+  blockId: string,
+  reviewerUid: string,
+): { approved: number; required: number } {
+  let approved = 0;
+  let required = 0;
+  for (const s of task.subtasks) {
+    if (s.blockId !== blockId) continue;
+    if (s.roleHint === "reviewer") continue;
+    const effective = effectiveReviewerUids(s, task.reviewerUids);
+    if (!effective.includes(reviewerUid)) continue;
+    required += 1;
+    if (s.approvedByReviewerUids.includes(reviewerUid)) approved += 1;
+  }
+  return { approved, required };
 }
 
 /**

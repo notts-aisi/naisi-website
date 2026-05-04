@@ -13,6 +13,11 @@ type NotifyPayload = {
    *  Used on edit to avoid re-emailing people who were pinged on the original
    *  post. Omit / pass [] for a fresh create. */
   priorMentions?: unknown;
+  /** Optional subtask scope for the notify event. When the comment was
+   *  posted as a subcomment (Phase 3 subcomment thread), the email
+   *  subject + body include the subtask title so recipients land on the
+   *  right context. Omit / null on task-level comments. */
+  subtaskId?: unknown;
 };
 
 type Reason = "mention" | "completer" | "reviewer";
@@ -80,6 +85,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
   const forceEmailCompleters = payload.forceEmailCompleters === true;
   const forceEmailReviewers = payload.forceEmailReviewers === true;
+  const subtaskId =
+    typeof payload.subtaskId === "string" && payload.subtaskId
+      ? payload.subtaskId
+      : null;
   const priorMentionSet = new Set<string>(
     Array.isArray(payload.priorMentions)
       ? (payload.priorMentions as unknown[]).filter((u): u is string => typeof u === "string")
@@ -161,6 +170,22 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const taskTitle = typeof task.title === "string" ? task.title : "a task";
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://naisi.uk";
   const taskLink = `${appUrl}/committee/tasks?task=${encodeURIComponent(taskId)}`;
+
+  // Resolve the subtask title for subject-line context. Subcomment pings
+  // read better as "X commented on subtask Y" than "X commented on Z".
+  // Drops back to task-level wording silently if the subtask can't be
+  // found (admin deleted it between comment + notify).
+  let subtaskTitle: string | null = null;
+  if (subtaskId && Array.isArray(task.subtasks)) {
+    for (const raw of task.subtasks as unknown[]) {
+      if (!raw || typeof raw !== "object") continue;
+      const s = raw as Record<string, unknown>;
+      if (s.id === subtaskId && typeof s.title === "string") {
+        subtaskTitle = s.title;
+        break;
+      }
+    }
+  }
   // Mention tokens render poorly in plain text — strip them down to @Name for the preview.
   const commentPreview = truncate(
     bodyMarkdown.replace(/@\[([^\]]+)\]\(uid:[^)]+\)/g, "@$1"),
@@ -176,13 +201,24 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       continue;
     }
     try {
+      // Subtask pings tag the subject so the recipient lands on the right
+      // context; the body still names the parent task so the existing
+      // template renders cleanly without bespoke subtask-aware copy.
+      const subject =
+        reason === "mention"
+          ? subtaskTitle
+            ? `${authorName} mentioned you on subtask "${subtaskTitle}"`
+            : `${authorName} mentioned you in "${taskTitle}"`
+          : subtaskTitle
+            ? `${authorName} commented on "${subtaskTitle}" (${taskTitle})`
+            : `${authorName} commented on "${taskTitle}"`;
       await sendEmail({
         to: user.email,
-        subject:
-          reason === "mention"
-            ? `${authorName} mentioned you in "${taskTitle}"`
-            : `${authorName} commented on "${taskTitle}"`,
+        subject,
         fromName: "NAISI Tasks",
+        kind: "task",
+        actorUid: authorUid || viewer.uid,
+        referenceId: taskId,
         react: TaskCommentEmail({
           recipientName: user.displayName || "there",
           authorName,

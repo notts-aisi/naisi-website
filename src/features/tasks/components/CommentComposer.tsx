@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Mention from "@tiptap/extension-mention";
+import Underline from "@tiptap/extension-underline";
+import Link from "@tiptap/extension-link";
 import Button from "@/components/ui/Button";
 import type { UserDoc } from "@/lib/firestore/users";
 import type { TaskDoc } from "@/lib/firestore/tasks";
@@ -11,12 +13,13 @@ import type { ActivityDoc } from "@/lib/firestore/taskActivity";
 import { COMMENT_FIELD_LIMITS } from "@/lib/firestore/comments";
 import { isSubtaskBlocked } from "@/lib/firestore/tasks";
 import {
+  bodyToTipTapDoc,
   extractMentionUids,
   serializeTipTapDoc,
-  tokenizeCommentBody,
 } from "../lib/comments/markdown";
 import { buildMentionSuggestion } from "../lib/comments/mentionSuggestion";
 import { addComment, updateComment } from "../commentMutations";
+import CommentToolbar from "./CommentToolbar";
 
 type CommonProps = {
   task: TaskDoc;
@@ -41,28 +44,6 @@ type EditProps = CommonProps & {
 
 type Props = CreateProps | EditProps;
 
-// Initial TipTap content when editing an existing comment. We round-trip
-// our storage format → TipTap JSON so mention pills render instead of raw
-// token text.
-function bodyToTipTapDoc(body: string) {
-  const tokens = tokenizeCommentBody(body);
-  const content: Array<Record<string, unknown>> = [];
-  let para: Array<Record<string, unknown>> = [];
-  const flush = () => {
-    content.push({ type: "paragraph", content: para.length ? para : undefined });
-    para = [];
-  };
-  for (const t of tokens) {
-    if (t.kind === "paragraph-break") flush();
-    else if (t.kind === "linebreak") para.push({ type: "hardBreak" });
-    else if (t.kind === "text") para.push({ type: "text", text: t.value });
-    else if (t.kind === "mention")
-      para.push({ type: "mention", attrs: { id: t.uid, label: t.displayName } });
-  }
-  flush();
-  return { type: "doc", content };
-}
-
 export default function CommentComposer(props: Props) {
   const { task, users, mode } = props;
   const [emailCompleters, setEmailCompleters] = useState(false);
@@ -75,15 +56,39 @@ export default function CommentComposer(props: Props) {
   // won't pick up new names until next edit-session, which is fine. A deeper
   // live-sync would require reconfiguring the extension and cost caret
   // position on every users refresh.
-  const usersSnapshot = useMemo(() => users, [users]);
+  //
+  // The mention pool is scoped to the task's current roster (completers ∪
+  // reviewers) — @-mentioning someone who was removed from the task surfaces
+  // nobody useful, and keeping stale members in the dropdown confuses the
+  // "who's still on this" signal. Historical mentions of now-removed users
+  // still render as pills (CommentItem falls back to the stored displayName).
+  const mentionableSnapshot = useMemo(() => {
+    const roster = new Set<string>([...task.completerUids, ...task.reviewerUids]);
+    return users.filter((u) => roster.has(u.uid));
+  }, [users, task.completerUids, task.reviewerUids]);
 
   const editor = useEditor(
     {
       extensions: [
         StarterKit,
+        Underline,
+        // `openOnClick: false` keeps the editor in edit-mode when the
+        // author drags through their own link — opening the URL while
+        // composing is rarely intended. Validation lives in the
+        // toolbar's prompt + the storage-format sanitizeHref allowlist.
+        Link.configure({
+          openOnClick: false,
+          autolink: false,
+          HTMLAttributes: {
+            rel: "noopener noreferrer",
+            target: "_blank",
+          },
+        }),
         Mention.configure({
           HTMLAttributes: { class: "mention" },
-          suggestion: buildMentionSuggestion(() => usersSnapshot),
+          suggestion: buildMentionSuggestion(() => mentionableSnapshot, {
+            includeAll: true,
+          }),
         }),
       ],
       content:
@@ -93,12 +98,13 @@ export default function CommentComposer(props: Props) {
       editorProps: {
         attributes: {
           class: "naisi-comment-editor",
+          // Border + radius live on the wrapper now (see render below) so
+          // the toolbar visually attaches as a single piece of chrome.
+          // The editor itself only carries padding + base typography.
           style: [
             "min-height: 4.5rem",
             "padding: 0.6rem 0.75rem",
-            "background: var(--color-bg-elevated)",
-            "border: 1px solid var(--color-border)",
-            "border-radius: var(--radius-md)",
+            "background: transparent",
             "color: var(--color-text)",
             "font-size: var(--text-sm)",
             "outline: none",
@@ -106,6 +112,11 @@ export default function CommentComposer(props: Props) {
         },
       },
       immediatelyRender: false,
+      // Re-render on every transaction so `editor.isActive(...)` driven
+      // toolbar buttons reflect the current selection's marks. Default
+      // is false in @tiptap/react v3 for perf; comment composers are
+      // small enough that the per-keystroke render cost is negligible.
+      shouldRerenderOnTransaction: true,
     },
     [mode === "edit" ? props.commentId : "new"],
   );
@@ -256,7 +267,20 @@ export default function CommentComposer(props: Props) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-      <EditorContent editor={editor} />
+      <div
+        style={{
+          background: "var(--color-bg-elevated)",
+          border: "1px solid var(--color-border)",
+          borderRadius: "var(--radius-md)",
+          // No `overflow: hidden` — it would clip the link popover when
+          // it extends past the editor's bottom edge. The toolbar
+          // carries its own top-corner radius to keep the chrome
+          // visually flush.
+        }}
+      >
+        <CommentToolbar editor={editor} />
+        <EditorContent editor={editor} />
+      </div>
 
       {mode === "create" && (
         <div

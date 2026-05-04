@@ -40,7 +40,7 @@ function formatWhen(startAt: Date | null, endAt: Date | null): string {
       hour: "2-digit",
       minute: "2-digit",
     });
-    return `${base} — ${endTime}`;
+    return `${base} → ${endTime}`;
   }
   return `${base} → ${endAt.toLocaleString(undefined, {
     weekday: "short",
@@ -158,7 +158,7 @@ export async function POST(
     try {
       await sendEmail({
         to,
-        subject: `${subject} — ${eventTitle}`,
+        subject: `${subject}: ${eventTitle}`,
         fromName: "NAISI Events",
         react: EventUpdateEmail({
           eventTitle,

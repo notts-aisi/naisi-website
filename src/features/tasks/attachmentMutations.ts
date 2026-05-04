@@ -16,6 +16,7 @@ import {
 } from "firebase/storage";
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import { ATTACHMENT_LIMITS, isMimeAllowed } from "@/lib/firestore/taskAttachments";
+import { slugId } from "@/lib/firestore/slugId";
 import { queueActivity } from "./activityLog";
 
 function actingUid(): string {
@@ -28,6 +29,10 @@ export type UploadAttachmentArgs = {
   taskId: string;
   file: File;
   onProgress?: (fraction: number) => void;
+  /** Scopes the attachment to a specific subtask. Omit / null for task-level
+   *  (the original behaviour). Storage path is unchanged either way — the
+   *  metadata `subtaskId` field is what routes it to the right UI surface. */
+  subtaskId?: string | null;
 };
 
 export type UploadedAttachment = {
@@ -59,7 +64,13 @@ export async function uploadAttachment(
 
   const db = getClientDb();
   const storage = getStorage();
-  const docRef = doc(collection(db, "tasks", args.taskId, "attachments"));
+  // Slug source: filename stem (strip extension) so the Console shows which
+  // file the doc corresponds to.
+  const fileStem = args.file.name.replace(/\.[^.]+$/, "");
+  const docRef = doc(
+    collection(db, "tasks", args.taskId, "attachments"),
+    slugId(fileStem),
+  );
   const safeName = args.file.name.replace(/[^\w.\-]/g, "_");
   const path = `tasks/${args.taskId}/${docRef.id}/${safeName}`;
   const objRef = storageRef(storage, path);
@@ -86,6 +97,7 @@ export async function uploadAttachment(
 
   const downloadURL = await getDownloadURL(objRef);
 
+  const subtaskId = args.subtaskId ?? null;
   const batch = writeBatch(db);
   batch.set(docRef, {
     filename: args.file.name.slice(0, 200),
@@ -94,6 +106,7 @@ export async function uploadAttachment(
     storagePath: path,
     uploadedByUid: uid,
     uploadedAt: serverTimestamp(),
+    subtaskId,
   });
   batch.update(doc(db, "tasks", args.taskId), {
     attachmentCount: increment(1),
@@ -102,6 +115,7 @@ export async function uploadAttachment(
   queueActivity(batch, args.taskId, "attachment_added", uid, {
     attachmentId: docRef.id,
     filename: args.file.name,
+    subtaskId,
   });
   await batch.commit();
 

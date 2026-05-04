@@ -7,9 +7,12 @@ import { uploadAttachment } from "../attachmentMutations";
 
 type Props = {
   taskId: string;
+  /** When set, the uploaded attachment is scoped to this subtask and only
+   *  surfaces in the subtask's detail modal. Omit for task-level uploads. */
+  subtaskId?: string | null;
 };
 
-export default function AttachmentUpload({ taskId }: Props) {
+export default function AttachmentUpload({ taskId, subtaskId }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -25,6 +28,7 @@ export default function AttachmentUpload({ taskId }: Props) {
       await uploadAttachment({
         taskId,
         file,
+        subtaskId: subtaskId ?? null,
         onProgress: (frac) => setProgress(Math.round(frac * 100)),
       });
     } catch (err) {

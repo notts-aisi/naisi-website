@@ -6,7 +6,7 @@ import resources from "@/content/resources.json";
 export const metadata: Metadata = {
   title: "Resources",
   description:
-    "Curated starting points for learning about AI safety — courses, research, governance, and careers.",
+    "Where to start with AI safety: courses, research, governance, and careers worth your time.",
 };
 
 export default function ResourcesPage() {
@@ -17,8 +17,9 @@ export default function ResourcesPage() {
           <Badge>Learn</Badge>
           <h1 style={{ marginTop: "var(--space-4)" }}>AI safety resources</h1>
           <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-3)" }}>
-            A curated list for anyone wanting to go deeper on AI safety. We keep this short on
-            purpose — these are the things we&apos;d actually recommend.
+            A short list for anyone wanting to go deeper on AI safety. We keep
+            it short on purpose. These are the things we&apos;d actually
+            recommend.
           </p>
         </div>
 

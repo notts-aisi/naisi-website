@@ -3,21 +3,26 @@
 import { useState } from "react";
 import {
   TASK_FIELD_LIMITS,
+  canSendReviewOutcome,
   getBlockConsensusState,
   getBlockEffectiveReviewerUids,
   getBlockPhase,
   type BlockGatingMode,
+  type BlockReviewMode,
   type TaskBlock,
   type TaskDoc,
 } from "@/lib/firestore/tasks";
 import { BLOCK_PHASE_PALETTE } from "./SubtaskList";
+import TaskCalendar from "./TaskCalendar";
 import {
   deleteBlock,
   ensureBlockReviewSubtasks,
+  finalizeBlockSetup,
   forceSealBlock,
   renameBlock,
   setBlockDueDate,
   setBlockGatingMode,
+  setBlockReviewMode,
   toggleBlockConsent,
   unsealBlock,
 } from "../taskMutations";
@@ -31,6 +36,11 @@ const GATING_LABELS: Record<BlockGatingMode, string> = {
   previous: "Gated by previous block",
   "all-previous": "Gated by all previous blocks",
   none: "Not gated",
+};
+
+const REVIEW_MODE_LABELS: Record<BlockReviewMode, string> = {
+  review: "Needs review",
+  "skip-review": "No review needed",
 };
 
 type Props = {
@@ -56,11 +66,25 @@ export default function BlockHeader({
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(block.name);
   const [busy, setBusy] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
 
   const consensus = getBlockConsensusState(task, block.id);
   const isCompleter = task.completerUids.includes(viewerUid);
   const hasConsented = consensus.consenting.includes(viewerUid);
   const isSealed = block.sealState === "sealed";
+  const isSetup = block.sealState === "setup";
+  const isTaskReviewer = task.reviewerUids.includes(viewerUid);
+  // Task-setter phase: only admin + task-level reviewers + the task creator
+  // can finalize the block's subtask structure and open it for allocation.
+  // Committee-at-large is deliberately excluded. Creator is included so
+  // reviewer-less tasks (common on committee generics + personal tasks)
+  // aren't stuck in setup forever waiting for a reviewer who doesn't
+  // exist — the person who set it up can move it forward.
+  const canFinalizeSetup = isAdmin || isTaskReviewer || isCreator;
+  // Same trio owns block due-dates — the task setter (admin / creator /
+  // task-level reviewer) decides when the work is due, completers don't.
+  // Tightened from `canEditStructure` 2026-04-25 after user feedback.
+  const canEditDueDates = isAdmin || isTaskReviewer || isCreator;
   const requiredCount = consensus.required.length;
   const consentCount = consensus.consenting.length;
   // Stage 1.5a: lock-in is an ALLOCATION gate, not a submission gate.
@@ -107,6 +131,59 @@ export default function BlockHeader({
   const missingReviewerCount = hasSpawnedRows
     ? effectiveReviewers.filter((u) => !existingReviewerUids.has(u)).length
     : 0;
+
+  // Stage 4 (2026-04-26) — Send review button. Visible whenever the block
+  // is sealed + review-mode + has signoff rows; gate-disabled until every
+  // completion row is decided AND every reviewer has ticked their signoff
+  // row. Press eligibility = admin OR any reviewer who has personally
+  // signed off on this block.
+  const [sendReviewBusy, setSendReviewBusy] = useState(false);
+  const viewerHasSignedOff = task.subtasks.some(
+    (s) =>
+      s.blockId === block.id &&
+      s.roleHint === "reviewer" &&
+      s.reviewerUids.includes(viewerUid) &&
+      s.done,
+  );
+  const showSendReview =
+    isSealed && block.reviewMode === "review" && hasSpawnedRows;
+  const sendReviewGate = canSendReviewOutcome(task, block);
+  const canPressSendReview = isAdmin || viewerHasSignedOff;
+  const sendReviewDisabledReason = !canPressSendReview
+    ? "Only a reviewer who has signed off on this block (or an admin) can send the review outcome."
+    : sendReviewGate.reason;
+  const lastReviewSent = block.reviewPassSentAt;
+
+  async function handleSendReview() {
+    if (sendReviewBusy) return;
+    if (sendReviewDisabledReason) {
+      window.alert(sendReviewDisabledReason);
+      return;
+    }
+    const ok = window.confirm(
+      `Send the review outcome for "${block.name}" to every completer + reviewer? They'll get the approved / questions-resolved / rejected breakdown.`,
+    );
+    if (!ok) return;
+    setSendReviewBusy(true);
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/send-review-outcome`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blockId: block.id }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          (body as { error?: string }).error ?? `Send failed (${res.status})`,
+        );
+      }
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Send failed");
+    } finally {
+      setSendReviewBusy(false);
+    }
+  }
 
   async function saveName() {
     const trimmed = nameDraft.trim();
@@ -197,17 +274,46 @@ export default function BlockHeader({
     }
   }
 
+  async function handleFinalizeSetup() {
+    if (busy) return;
+    const completionCount = task.subtasks.filter(
+      (s) => s.blockId === block.id && s.roleHint !== "reviewer",
+    ).length;
+    if (completionCount === 0) {
+      const ok = window.confirm(
+        `"${block.name}" has no subtasks yet. Finalize anyway? You can still add subtasks post-finalize as admin, but normal users won't be able to.`,
+      );
+      if (!ok) return;
+    }
+    setBusy(true);
+    try {
+      await finalizeBlockSetup(task, block.id);
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Finalize failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDelete() {
     if (busy) return;
+    const subtaskCount = task.subtasks.filter((s) => s.blockId === block.id).length;
     const ok = window.confirm(
-      `Delete block "${block.name}"? Subtasks inside it will be un-grouped, not deleted.`,
+      subtaskCount === 0
+        ? `Delete block "${block.name}"? It has no subtasks — this just removes the empty container.`
+        : `Delete block "${block.name}"? ${subtaskCount} subtask${subtaskCount === 1 ? "" : "s"} inside will be permanently removed, along with their comments, activity history, and attachments. This cannot be undone.`,
     );
     if (!ok) return;
     setBusy(true);
     try {
-      await deleteBlock(task, block.id);
+      const report = await deleteBlock(task, block.id);
+      console.info(
+        `[deleteBlock] removed ${report.subtasks} subtasks, ${report.comments} comments, ${report.activity} activity entries, ${report.attachments} attachments`,
+      );
     } catch (err) {
       console.error(err);
+      window.alert(err instanceof Error ? err.message : "Delete failed");
     } finally {
       setBusy(false);
     }
@@ -302,21 +408,23 @@ export default function BlockHeader({
             fontWeight: 700,
           }}
           title={
-            phase === "allocating"
-              ? "Allocating — completers deciding who does what."
-              : phase === "in-progress"
-                ? block.forceSealedByUid
-                  ? "In progress — work under way. (admin force-sealed allocation)"
-                  : "In progress — allocation locked, work under way."
-                : phase === "reviewing"
-                  ? "Under review — reviewers working through the block."
-                  : "Complete — every reviewer has signed off."
+            phase === "setup"
+              ? "Setup — reviewers defining what subtasks exist. Finalize to start allocation."
+              : phase === "allocating"
+                ? "Allocating — completers deciding who does what."
+                : phase === "in-progress"
+                  ? block.forceSealedByUid
+                    ? "In progress — work under way. (admin force-sealed allocation)"
+                    : "In progress — allocation locked, work under way."
+                  : phase === "reviewing"
+                    ? "Under review — reviewers working through the block."
+                    : "Complete — every reviewer has signed off."
           }
         >
           {phasePalette.label}
         </span>
 
-        {!isSealed && requiredCount > 0 && (
+        {!isSealed && !isSetup && requiredCount > 0 && (
           <span
             style={{
               fontSize: "var(--text-xs)",
@@ -433,23 +541,117 @@ export default function BlockHeader({
           </span>
         )}
 
-        {canEditStructure && completionSubtasksInBlock.length > 0 && (
+        {/* Review-mode dropdown — same edit-trio as due dates + setup
+            finalize. Skip-review blocks short-circuit Notify, hide +Review
+            buttons on rows, and getBlockPhase jumps from "in-progress" to
+            "complete" without passing through "reviewing". */}
+        {canEditDueDates && (
           <label
             style={{
-              position: "relative",
               display: "inline-flex",
               alignItems: "center",
               gap: "var(--space-2)",
               padding: "0.35rem 0.75rem",
-              background: "var(--color-bg-elevated)",
-              border: "1px solid var(--color-border)",
+              background:
+                block.reviewMode === "skip-review"
+                  ? "var(--color-bg-elevated)"
+                  : "var(--color-accent-soft)",
+              border: `1px solid ${
+                block.reviewMode === "skip-review"
+                  ? "var(--color-border)"
+                  : "var(--color-accent)"
+              }`,
               borderRadius: "999px",
               fontSize: "var(--text-xs)",
               fontWeight: 600,
-              color: "var(--color-text-muted)",
+              color:
+                block.reviewMode === "skip-review"
+                  ? "var(--color-text-muted)"
+                  : "var(--color-accent)",
               cursor: "pointer",
             }}
+            title="Whether this block requires a reviewer signoff before it can be marked complete."
+          >
+            <span aria-hidden="true" style={{ fontSize: "14px", lineHeight: 1 }}>
+              {block.reviewMode === "skip-review" ? "⤳" : "👁"}
+            </span>
+            <select
+              value={block.reviewMode}
+              onChange={(e) =>
+                setBlockReviewMode(
+                  task,
+                  block.id,
+                  e.target.value as BlockReviewMode,
+                ).catch(console.error)
+              }
+              aria-label="Review mode for this block"
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "inherit",
+                fontSize: "inherit",
+                fontWeight: "inherit",
+                fontFamily: "inherit",
+                cursor: "pointer",
+                outline: "none",
+                padding: 0,
+                paddingRight: "0.2rem",
+              }}
+            >
+              <option value="review">{REVIEW_MODE_LABELS.review}</option>
+              <option value="skip-review">{REVIEW_MODE_LABELS["skip-review"]}</option>
+            </select>
+          </label>
+        )}
+        {!canEditDueDates && block.reviewMode === "skip-review" && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--space-1)",
+              padding: "0.25rem 0.6rem",
+              borderRadius: "999px",
+              background: "var(--color-bg-elevated)",
+              border: "1px solid var(--color-border)",
+              color: "var(--color-text-muted)",
+              fontSize: "10px",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+            }}
+            title={REVIEW_MODE_LABELS["skip-review"]}
+          >
+            <span aria-hidden="true">⤳</span>
+            No review
+          </span>
+        )}
+
+        {canEditDueDates && completionSubtasksInBlock.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setCalendarOpen((v) => !v)}
+            disabled={busy}
+            aria-expanded={calendarOpen}
+            aria-controls={`block-calendar-${block.id}`}
             title="Set due date for every subtask in this block. Overwrites individual dates."
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              padding: "0.35rem 0.75rem",
+              background: calendarOpen
+                ? "var(--color-accent-soft)"
+                : "var(--color-bg-elevated)",
+              border: `1px solid ${calendarOpen ? "var(--color-accent)" : "var(--color-border)"}`,
+              borderRadius: "999px",
+              fontSize: "var(--text-xs)",
+              fontWeight: 600,
+              color: calendarOpen
+                ? "var(--color-accent)"
+                : "var(--color-text-muted)",
+              cursor: busy ? "not-allowed" : "pointer",
+              fontFamily: "inherit",
+            }}
           >
             <span aria-hidden="true" style={{ fontSize: "14px", lineHeight: 1 }}>
               📅
@@ -461,26 +663,35 @@ export default function BlockHeader({
                   ? commonDue.toLocaleDateString()
                   : "Set all due"}
             </span>
-            <input
-              type="date"
-              value={commonDue ? toDateInputValue(commonDue) : ""}
-              onChange={(e) => handleBlockDueChange(e.target.value).catch(console.error)}
-              disabled={busy}
-              aria-label="Set due date for every subtask in this block"
-              style={{
-                position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: "100%",
-                opacity: 0,
-                cursor: "pointer",
-              }}
-            />
-          </label>
+          </button>
         )}
 
         <div style={{ marginLeft: "auto", display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
-          {!isSealed && isCompleter && (
+          {isSetup && canFinalizeSetup && (
+            <button
+              type="button"
+              onClick={handleFinalizeSetup}
+              disabled={busy}
+              style={{
+                padding: "0.3rem 0.75rem",
+                background: "rgba(124, 58, 237, 0.12)",
+                color: "#7c3aed",
+                border: "none",
+                borderRadius: "var(--radius-sm, 4px)",
+                fontSize: "var(--text-xs)",
+                fontWeight: 600,
+                cursor: busy ? "not-allowed" : "pointer",
+              }}
+              title={
+                isAdmin
+                  ? "Finalize setup: lock which subtasks exist and open this block for allocation."
+                  : "Finalize setup: confirm subtask structure and open this block for completers to allocate."
+              }
+            >
+              Finalize setup
+            </button>
+          )}
+          {!isSealed && !isSetup && isCompleter && (
             <button
               type="button"
               onClick={handleLockInToggle}
@@ -510,7 +721,7 @@ export default function BlockHeader({
               {hasConsented ? "✓ Locked in" : "Lock in"}
             </button>
           )}
-          {!isSealed && isAdmin && requiredCount > 0 && !consensus.allConsented && (
+          {!isSealed && !isSetup && isAdmin && requiredCount > 0 && !consensus.allConsented && (
             <button
               type="button"
               onClick={handleForceSeal}
@@ -543,6 +754,45 @@ export default function BlockHeader({
               Spawn {missingReviewerCount} review{missingReviewerCount === 1 ? "" : "s"}
             </button>
           )}
+          {showSendReview && (
+            <button
+              type="button"
+              onClick={handleSendReview}
+              disabled={sendReviewBusy || sendReviewDisabledReason !== null}
+              style={{
+                padding: "0.3rem 0.75rem",
+                background:
+                  sendReviewDisabledReason !== null
+                    ? "var(--color-bg-elevated)"
+                    : "rgba(22, 163, 74, 0.12)",
+                color:
+                  sendReviewDisabledReason !== null
+                    ? "var(--color-text-muted)"
+                    : "var(--color-success, #16a34a)",
+                border: "none",
+                borderRadius: "var(--radius-sm, 4px)",
+                fontSize: "var(--text-xs)",
+                fontWeight: 600,
+                cursor:
+                  sendReviewBusy || sendReviewDisabledReason !== null
+                    ? "not-allowed"
+                    : "pointer",
+                opacity: sendReviewDisabledReason !== null ? 0.65 : 1,
+              }}
+              title={
+                sendReviewDisabledReason ??
+                (lastReviewSent
+                  ? `Re-send the batched review outcome to every completer + reviewer (last sent ${lastReviewSent.toLocaleString()}).`
+                  : "Send the batched review outcome to every completer + reviewer.")
+              }
+            >
+              {sendReviewBusy
+                ? "Sending…"
+                : lastReviewSent
+                  ? "Re-send review"
+                  : "Send review"}
+            </button>
+          )}
           {canEditStructure && (isAdmin || isCreator) && (
             <button
               type="button"
@@ -558,7 +808,26 @@ export default function BlockHeader({
         </div>
       </div>
 
-      {!isSealed && requiredCount > 0 && (
+      {calendarOpen && canEditDueDates && completionSubtasksInBlock.length > 0 && (
+        <div
+          id={`block-calendar-${block.id}`}
+          style={{ display: "flex", justifyContent: "flex-start" }}
+        >
+          <TaskCalendar
+            mode="edit"
+            value={dueIsMixed ? null : commonDue}
+            disabled={busy}
+            size="sm"
+            onChange={(date) => {
+              const v = date ? toDateInputValue(date) : "";
+              handleBlockDueChange(v).catch(console.error);
+              setCalendarOpen(false);
+            }}
+          />
+        </div>
+      )}
+
+      {!isSealed && !isSetup && requiredCount > 0 && (
         <div
           style={{
             height: "4px",

@@ -23,15 +23,15 @@ export default function VerifyUniEmail({
   return (
     <EmailChrome
       subject={subject}
-      preheader={`Click once to finish joining NAISI — link expires in ${expiresInMinutes} minutes.`}
+      preheader={`Click once to finish joining NAISI. Link expires in ${expiresInMinutes} minutes.`}
     >
       <Text style={{ fontSize: 16, lineHeight: 1.6, margin: "0 0 16px" }}>
         Hi {greetingName},
       </Text>
       <Text style={{ fontSize: 16, lineHeight: 1.6, margin: "0 0 16px" }}>
-        We got a NAISI application asking us to use this email address. Before we
-        review it, we just need to check you actually own this inbox — click the
-        button below to verify.
+        We got a NAISI application asking us to use this email address.
+        Before we review it, we just need to check you actually own this
+        inbox. Click the button below to verify.
       </Text>
       <Section style={{ textAlign: "center", margin: "24px 0" }}>
         <Button
@@ -66,8 +66,9 @@ export default function VerifyUniEmail({
         </Link>
       </Text>
       <Text style={{ fontSize: 13, lineHeight: 1.5, color: "#5b6785", margin: "0 0 8px" }}>
-        The link expires in {expiresInMinutes} minutes. If you didn&apos;t try to
-        join NAISI, you can ignore this email — no account was created.
+        The link expires in {expiresInMinutes} minutes. If you
+        didn&apos;t try to join NAISI, you can ignore this email. No
+        account was created.
       </Text>
     </EmailChrome>
   );

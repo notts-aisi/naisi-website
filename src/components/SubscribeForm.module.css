@@ -1,0 +1,70 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 28rem;
+}
+
+.formFull {
+  max-width: 100%;
+}
+
+.row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+
+.row > :first-child {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.error {
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+.micro {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.success {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  max-width: 28rem;
+}
+
+.successHeading {
+  font-weight: 600;
+  margin: 0;
+  color: var(--color-text);
+}
+
+.successBody {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .success {
+    animation: subscribe-fade 240ms ease-out;
+  }
+}
+
+@keyframes subscribe-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}

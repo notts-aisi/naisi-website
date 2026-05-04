@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Button from "@/components/ui/Button";
 import {
   TASK_FIELD_LIMITS,
@@ -9,13 +9,20 @@ import {
   type Subtask,
   type TaskDoc,
 } from "@/lib/firestore/tasks";
-import { COMMENT_FIELD_LIMITS } from "@/lib/firestore/comments";
 import type { UserDoc } from "@/lib/firestore/users";
 import { updateSubtaskDescription, updateSubtaskDueDate } from "../taskMutations";
 import { addComment, updateComment } from "../commentMutations";
+import { extractMentionUids } from "../lib/comments/markdown";
 import { useSubtaskComments } from "../hooks/useSubtaskComments";
 import { useSubtaskActivity } from "../hooks/useSubtaskActivity";
+import { useTaskAttachments } from "../hooks/useTaskAttachments";
 import CommentItem from "./CommentItem";
+import CommentEditor from "./CommentEditor";
+import AttachmentList from "./AttachmentList";
+import AttachmentUpload from "./AttachmentUpload";
+import DescriptionEditor from "./DescriptionEditor";
+import RichTextRender from "./RichTextRender";
+import TaskCalendar from "./TaskCalendar";
 import type { ActivityDoc } from "@/lib/firestore/taskActivity";
 
 type Props = {
@@ -28,6 +35,10 @@ type Props = {
    *  `canEditStructure` permission on the surrounding task — admin or
    *  committee on committee tasks, or creator on personal tasks. */
   canEditDescription: boolean;
+  /** True when the viewer can edit due dates. Stricter than
+   *  `canEditDescription` — admin / creator / task-level reviewer only.
+   *  Completers (even committee ones) can't move dates. */
+  canEditDueDates: boolean;
   /** True when the viewer can post subcomments. Task participants
    *  (completer/reviewer/admin/creator) can; outside viewers see the
    *  thread read-only. */
@@ -47,6 +58,7 @@ export default function SubtaskDetailModal({
   viewerUid,
   viewerIsAdmin,
   canEditDescription,
+  canEditDueDates,
   canComment,
   onClose,
 }: Props) {
@@ -54,68 +66,72 @@ export default function SubtaskDetailModal({
   const [descDraft, setDescDraft] = useState(subtask.description);
   const [saving, setSaving] = useState(false);
   const [dueBusy, setDueBusy] = useState(false);
-  const [commentDraft, setCommentDraft] = useState("");
-  const [commentBusy, setCommentBusy] = useState(false);
-  const [commentErr, setCommentErr] = useState<string | null>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState("");
-  const [editBusy, setEditBusy] = useState(false);
-  const [editErr, setEditErr] = useState<string | null>(null);
 
-  async function saveEdit() {
-    if (!editingCommentId) return;
-    const body = editDraft.trim();
-    if (!body || editBusy) return;
-    setEditBusy(true);
-    setEditErr(null);
-    try {
-      // Mentions aren't yet parsed in the subtask MVP composer, so pass [].
-      // Upgrading to TipTap + mentions is a follow-up.
-      await updateComment(task.id, editingCommentId, body, []);
-      setEditingCommentId(null);
-      setEditDraft("");
-    } catch (err) {
-      setEditErr(err instanceof Error ? err.message : "Save failed");
-    } finally {
-      setEditBusy(false);
-    }
-  }
+  // Mention pool = the task's current roster. Previous completers / reviewers
+  // who were removed shouldn't surface in the dropdown. See CommentComposer
+  // for the same filter applied to task-level comments.
+  const mentionableUsers = useMemo(() => {
+    const roster = new Set<string>([...task.completerUids, ...task.reviewerUids]);
+    return users.filter((u) => roster.has(u.uid));
+  }, [users, task.completerUids, task.reviewerUids]);
 
-  function beginEdit(commentId: string) {
-    const target = subComments.find((c) => c.id === commentId);
-    if (!target) return;
-    setEditingCommentId(commentId);
-    setEditDraft(target.bodyMarkdown);
-    setEditErr(null);
-  }
   const { comments: subComments, loading: subCommentsLoading } = useSubtaskComments(
     task.id,
     subtask.id,
   );
   const { entries: subActivity } = useSubtaskActivity(task.id, subtask.id);
 
-  async function postSubComment() {
-    const body = commentDraft.trim();
-    if (!body || commentBusy) return;
-    if (body.length > COMMENT_FIELD_LIMITS.bodyMarkdown) {
-      setCommentErr(`Too long (${body.length}/${COMMENT_FIELD_LIMITS.bodyMarkdown}).`);
-      return;
-    }
-    setCommentBusy(true);
-    setCommentErr(null);
-    try {
-      await addComment({
-        taskId: task.id,
-        bodyMarkdown: body,
-        mentions: [],
+  function beginEdit(commentId: string) {
+    setEditingCommentId(commentId);
+  }
+
+  async function postSubComment(body: string, mentions: string[]) {
+    const commentId = await addComment({
+      taskId: task.id,
+      bodyMarkdown: body,
+      mentions,
+      subtaskId: subtask.id,
+    });
+    // Held-back wiring (2026-04-26): subcomment pings now fire through
+    // the same /notify route as task-level mentions, scoped to the
+    // subtask so the email subject reads "commented on subtask X".
+    // Fire-and-forget; the comment doc has already persisted.
+    if (mentions.length > 0) {
+      fireNotify(task.id, {
+        commentId,
         subtaskId: subtask.id,
       });
-      setCommentDraft("");
-    } catch (err) {
-      setCommentErr(err instanceof Error ? err.message : "Post failed");
-    } finally {
-      setCommentBusy(false);
     }
+  }
+
+  async function saveEdit(body: string, mentions: string[]) {
+    if (!editingCommentId) return;
+    const previousBody =
+      subComments.find((c) => c.id === editingCommentId)?.bodyMarkdown ?? "";
+    await updateComment(task.id, editingCommentId, body, mentions);
+    setEditingCommentId(null);
+    // Edit-fires-only-on-newly-added-mentions semantics, mirroring the
+    // task-level CommentComposer. priorMentions stops the route from
+    // re-emailing names that were already pinged in the original.
+    const priorMentions = extractMentionUids(previousBody);
+    const addedMentions = mentions.filter((u) => !priorMentions.includes(u));
+    if (addedMentions.length > 0) {
+      fireNotify(task.id, {
+        commentId: editingCommentId,
+        subtaskId: subtask.id,
+        priorMentions,
+      });
+    }
+  }
+
+  function fireNotify(taskId: string, payload: Record<string, unknown>): void {
+    fetch(`/api/tasks/${taskId}/notify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch((err) => console.warn("subcomment notify failed:", err));
   }
 
   // Sync the draft if the underlying subtask changes (e.g. another writer
@@ -144,6 +160,12 @@ export default function SubtaskDetailModal({
   const approvalStatus = getSubtaskApprovalStatus(subtask, task.reviewerUids);
 
   async function saveDesc() {
+    if (descDraft.length > TASK_FIELD_LIMITS.subtaskDescription) {
+      window.alert(
+        `Description is too long (${descDraft.length}/${TASK_FIELD_LIMITS.subtaskDescription}). Trim before saving.`,
+      );
+      return;
+    }
     if (descDraft === subtask.description) {
       setEditingDesc(false);
       return;
@@ -226,24 +248,13 @@ export default function SubtaskDetailModal({
           <h3 style={sectionLabel}>Description</h3>
           {editingDesc && canEditDescription ? (
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-              <textarea
+              <DescriptionEditor
+                editorKey={`subtask-desc:${task.id}:${subtask.id}`}
+                initialBody={subtask.description}
+                onChange={setDescDraft}
                 autoFocus
-                value={descDraft}
-                onChange={(e) => setDescDraft(e.target.value)}
-                rows={8}
-                maxLength={TASK_FIELD_LIMITS.subtaskDescription}
-                placeholder="What's being asked for on this subtask? Acceptance cues, suggested flow, links to context…"
-                style={{
-                  width: "100%",
-                  padding: "var(--space-3)",
-                  background: "var(--color-bg-elevated)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "var(--radius-md)",
-                  color: "var(--color-text)",
-                  fontSize: "var(--text-sm)",
-                  resize: "vertical",
-                  fontFamily: "inherit",
-                }}
+                minHeightRem={8}
+                disabled={saving}
               />
               <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
                 <Button size="sm" onClick={saveDesc} disabled={saving}>
@@ -263,7 +274,10 @@ export default function SubtaskDetailModal({
                   style={{
                     marginLeft: "auto",
                     fontSize: "var(--text-xs)",
-                    color: "var(--color-text-muted)",
+                    color:
+                      descDraft.length > TASK_FIELD_LIMITS.subtaskDescription
+                        ? "var(--color-danger, #dc2626)"
+                        : "var(--color-text-muted)",
                   }}
                 >
                   {descDraft.length} / {TASK_FIELD_LIMITS.subtaskDescription}
@@ -271,10 +285,9 @@ export default function SubtaskDetailModal({
               </div>
             </div>
           ) : (
-            <p
+            <div
               onClick={() => canEditDescription && setEditingDesc(true)}
               style={{
-                whiteSpace: "pre-wrap",
                 fontSize: "var(--text-sm)",
                 color: subtask.description
                   ? "var(--color-text)"
@@ -285,14 +298,18 @@ export default function SubtaskDetailModal({
                 border: "1px solid var(--color-border)",
                 borderRadius: "var(--radius-md)",
                 minHeight: "4rem",
-                margin: 0,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
               }}
             >
-              {subtask.description ||
-                (canEditDescription
-                  ? "Click to add instructions, suggested flow, or acceptance cues…"
-                  : "No description provided.")}
-            </p>
+              {subtask.description ? (
+                <RichTextRender body={subtask.description} />
+              ) : canEditDescription ? (
+                "Click to add instructions, suggested flow, or acceptance cues…"
+              ) : (
+                "No description provided."
+              )}
+            </div>
           )}
         </section>
 
@@ -302,21 +319,14 @@ export default function SubtaskDetailModal({
         {subtask.roleHint !== "reviewer" && (
           <section>
             <h3 style={sectionLabel}>Due date</h3>
-            {canEditDescription ? (
-              <DueDateEditor
-                value={subtask.dueDate}
-                onChange={(date) => onDueChange(date ? toDateInputValue(date) : "")}
-                disabled={dueBusy}
-                isOverdue={isOverdue}
-              />
-            ) : subtask.dueDate ? (
-              <p style={{ margin: 0, fontSize: "var(--text-md)", color: isOverdue ? "var(--color-danger, #dc2626)" : "var(--color-text)" }}>
-                {subtask.dueDate.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
-                {isOverdue && " — overdue"}
-              </p>
-            ) : (
-              <p style={emptyHint}>No due date set.</p>
-            )}
+            <TaskCalendar
+              mode={canEditDueDates ? "edit" : "view"}
+              value={subtask.dueDate}
+              disabled={dueBusy}
+              isOverdue={isOverdue}
+              collapsible
+              onChange={(date) => onDueChange(date ? toDateInputValue(date) : "")}
+            />
           </section>
         )}
 
@@ -350,12 +360,12 @@ export default function SubtaskDetailModal({
                 const questioned = approvalStatus.questioned.includes(uid);
                 const rejected = approvalStatus.rejected.includes(uid);
                 const label = rejected
-                  ? "✗ rejected"
+                  ? "✗ Rejected"
                   : questioned
-                    ? "? question"
+                    ? "? Question"
                     : approved
-                      ? "✓ approved"
-                      : "pending";
+                      ? "✓ Approved"
+                      : "Pending";
                 const colour = rejected
                   ? "var(--color-danger, #dc2626)"
                   : questioned
@@ -385,6 +395,15 @@ export default function SubtaskDetailModal({
             </div>
           </section>
         )}
+
+        <SubtaskAttachmentsSection
+          task={task}
+          subtaskId={subtask.id}
+          users={users}
+          viewerUid={viewerUid}
+          viewerIsAdmin={viewerIsAdmin}
+          canUpload={canComment}
+        />
 
         <section>
           <h3 style={sectionLabel}>Activity &amp; comments</h3>
@@ -429,49 +448,17 @@ export default function SubtaskDetailModal({
                           borderRadius: "var(--radius-md)",
                         }}
                       >
-                        <textarea
+                        <CommentEditor
+                          users={mentionableUsers}
+                          editorKey={`edit:${row.payload.id}`}
+                          initialBody={row.payload.bodyMarkdown}
+                          submitLabel="Save"
+                          busyLabel="Saving…"
                           autoFocus
-                          value={editDraft}
-                          onChange={(e) => setEditDraft(e.target.value)}
-                          rows={3}
-                          maxLength={COMMENT_FIELD_LIMITS.bodyMarkdown}
-                          style={{
-                            width: "100%",
-                            padding: "var(--space-2) var(--space-3)",
-                            background: "var(--color-bg)",
-                            border: "1px solid var(--color-border)",
-                            borderRadius: "var(--radius-md)",
-                            color: "var(--color-text)",
-                            fontSize: "var(--text-sm)",
-                            fontFamily: "inherit",
-                            resize: "vertical",
-                          }}
+                          clearOnSubmit={false}
+                          onSubmit={saveEdit}
+                          onCancel={() => setEditingCommentId(null)}
                         />
-                        <div style={{ display: "flex", gap: "var(--space-2)" }}>
-                          <Button
-                            size="sm"
-                            onClick={() => void saveEdit()}
-                            disabled={editBusy || !editDraft.trim()}
-                          >
-                            {editBusy ? "Saving…" : "Save"}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setEditingCommentId(null);
-                              setEditDraft("");
-                              setEditErr(null);
-                            }}
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                        {editErr && (
-                          <p style={{ color: "var(--color-danger)", fontSize: "var(--text-xs)", margin: 0 }}>
-                            {editErr}
-                          </p>
-                        )}
                       </div>
                     ) : (
                       <CommentItem
@@ -496,60 +483,58 @@ export default function SubtaskDetailModal({
             );
           })()}
           {canComment && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: "var(--space-2)",
-                marginTop: "var(--space-3)",
-              }}
-            >
-              <textarea
-                value={commentDraft}
-                onChange={(e) => setCommentDraft(e.target.value)}
-                rows={3}
-                maxLength={COMMENT_FIELD_LIMITS.bodyMarkdown}
-                placeholder="Add a comment on this subtask…"
-                style={{
-                  width: "100%",
-                  padding: "var(--space-2) var(--space-3)",
-                  background: "var(--color-bg-elevated)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "var(--radius-md)",
-                  color: "var(--color-text)",
-                  fontSize: "var(--text-sm)",
-                  fontFamily: "inherit",
-                  resize: "vertical",
-                }}
+            <div style={{ marginTop: "var(--space-3)" }}>
+              <CommentEditor
+                users={mentionableUsers}
+                editorKey={`new:${subtask.id}`}
+                onSubmit={postSubComment}
               />
-              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-                <Button
-                  size="sm"
-                  onClick={() => void postSubComment()}
-                  disabled={commentBusy || !commentDraft.trim()}
-                >
-                  {commentBusy ? "Posting…" : "Post comment"}
-                </Button>
-                <span
-                  style={{
-                    marginLeft: "auto",
-                    fontSize: "var(--text-xs)",
-                    color: "var(--color-text-muted)",
-                  }}
-                >
-                  {commentDraft.length} / {COMMENT_FIELD_LIMITS.bodyMarkdown}
-                </span>
-              </div>
-              {commentErr && (
-                <p style={{ color: "var(--color-danger)", fontSize: "var(--text-xs)", margin: 0 }}>
-                  {commentErr}
-                </p>
-              )}
             </div>
           )}
         </section>
       </div>
     </Overlay>
+  );
+}
+
+/**
+ * Subtask-scoped attachments section. Reuses the task-level hook and filters
+ * down to attachments whose `subtaskId` matches this row — task-level
+ * attachments (subtaskId === null) render in `TaskDetailModal` instead, so
+ * the same artefact never double-shows. Upload is gated on `canUpload`
+ * (currently mirrors `canComment`: task participants only).
+ */
+function SubtaskAttachmentsSection({
+  task,
+  subtaskId,
+  users,
+  viewerUid,
+  viewerIsAdmin,
+  canUpload,
+}: {
+  task: TaskDoc;
+  subtaskId: string;
+  users: UserDoc[];
+  viewerUid: string;
+  viewerIsAdmin: boolean;
+  canUpload: boolean;
+}) {
+  const { attachments } = useTaskAttachments(task.id);
+  const scoped = attachments.filter((a) => a.subtaskId === subtaskId);
+  return (
+    <section>
+      <h3 style={sectionLabel}>Attachments</h3>
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+        <AttachmentList
+          taskId={task.id}
+          attachments={scoped}
+          users={users}
+          viewerUid={viewerUid}
+          viewerIsAdmin={viewerIsAdmin}
+        />
+        {canUpload && <AttachmentUpload taskId={task.id} subtaskId={subtaskId} />}
+      </div>
+    </section>
   );
 }
 
@@ -577,132 +562,6 @@ const assigneeChip: React.CSSProperties = {
   fontSize: "var(--text-xs)",
   fontWeight: 500,
 };
-
-/**
- * Stage 2 polish — larger, more discoverable due-date editor. Native
- * `<input type="date">` calendar popup is browser-owned, but the input's
- * own footprint can be scaled up so it's visible at a glance and offers
- * quick-set shortcuts (Today / +1 week / +1 month) so you rarely need
- * the tiny native calendar at all.
- */
-function DueDateEditor({
-  value,
-  onChange,
-  disabled,
-  isOverdue,
-}: {
-  value: Date | null;
-  onChange: (date: Date | null) => void;
-  disabled: boolean;
-  isOverdue: boolean;
-}) {
-  function addDays(days: number): Date {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() + days);
-    return d;
-  }
-  const displayLabel = value
-    ? value.toLocaleDateString(undefined, {
-        weekday: "short",
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      })
-    : "No due date";
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-        <span
-          style={{
-            fontSize: "24px",
-            lineHeight: 1,
-          }}
-          aria-hidden="true"
-        >
-          📅
-        </span>
-        <input
-          type="date"
-          value={value ? toDateInputValue(value) : ""}
-          onChange={(e) => onChange(e.target.value ? new Date(e.target.value) : null)}
-          disabled={disabled}
-          style={{
-            padding: "0.6rem 0.85rem",
-            background: "var(--color-bg-elevated)",
-            border: `1px solid ${isOverdue ? "var(--color-danger, #dc2626)" : "var(--color-border)"}`,
-            borderRadius: "var(--radius-md)",
-            color: isOverdue ? "var(--color-danger, #dc2626)" : "var(--color-text)",
-            fontSize: "var(--text-md)",
-            fontFamily: "inherit",
-            minWidth: "12rem",
-            fontWeight: 500,
-          }}
-        />
-        <span
-          style={{
-            fontSize: "var(--text-sm)",
-            color: isOverdue ? "var(--color-danger, #dc2626)" : "var(--color-text-muted)",
-            fontWeight: 500,
-          }}
-        >
-          {displayLabel}
-          {isOverdue && " — overdue"}
-        </span>
-      </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
-        <DueDateShortcut label="Today" disabled={disabled} onClick={() => onChange(addDays(0))} />
-        <DueDateShortcut label="+1 week" disabled={disabled} onClick={() => onChange(addDays(7))} />
-        <DueDateShortcut label="+2 weeks" disabled={disabled} onClick={() => onChange(addDays(14))} />
-        <DueDateShortcut label="+1 month" disabled={disabled} onClick={() => onChange(addDays(30))} />
-        {value && (
-          <DueDateShortcut
-            label="Clear"
-            disabled={disabled}
-            onClick={() => onChange(null)}
-            variant="danger"
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function DueDateShortcut({
-  label,
-  onClick,
-  disabled,
-  variant,
-}: {
-  label: string;
-  onClick: () => void;
-  disabled: boolean;
-  variant?: "danger";
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        padding: "0.4rem 0.75rem",
-        background: "transparent",
-        border: "1px solid var(--color-border)",
-        borderRadius: "999px",
-        color:
-          variant === "danger"
-            ? "var(--color-danger, #dc2626)"
-            : "var(--color-text)",
-        fontSize: "var(--text-xs)",
-        fontWeight: 500,
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.55 : 1,
-      }}
-    >
-      {label}
-    </button>
-  );
-}
 
 /**
  * Single-line rendering of a subtask-scoped activity entry (self-add, done,

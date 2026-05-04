@@ -15,7 +15,7 @@ export default function TestEmail({ name }: Props) {
   return (
     <Html>
       <Head />
-      <Preview>NAISI email pipeline test — if you see this, it works.</Preview>
+      <Preview>NAISI email pipeline test. If you see this, it works.</Preview>
       <Body style={body}>
         <Container style={container}>
           <Heading style={heading}>Email pipeline test</Heading>
@@ -27,7 +27,7 @@ export default function TestEmail({ name }: Props) {
               Email templating is rendering as expected.
             </Text>
             <Text style={textMuted}>
-              Nothing else — no action needed. You can safely delete this message.
+              Nothing else. No action needed. You can safely delete this message.
             </Text>
           </Section>
         </Container>

@@ -17,6 +17,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   TASK_FIELD_LIMITS,
+  getBlockEffectiveReviewerUids,
   getBlockPhase,
   groupSubtasksByBlock,
   type BlockPhase,
@@ -69,7 +70,14 @@ export default function SubtaskList({
   pendingReviewSubtaskIds,
 }: Props) {
   const isAdmin = viewerRole === "admin";
+  const isTaskReviewer = task.reviewerUids.includes(viewerUid);
   const isCreator = task.creatorUid === viewerUid;
+  // Task-setter phase: during a block's "setup" state, only admin + task-
+  // level reviewers + creator can add subtasks. Committee-at-large and
+  // completers are deliberately locked out — the phase exists to give
+  // reviewers (or the task owner) a clean window to define the work.
+  // Creator-fallback covers reviewer-less tasks so they aren't stuck.
+  const canAddInSetup = isAdmin || isTaskReviewer || isCreator;
 
   // `activationConstraint` prevents accidental drags when the user is just
   // clicking checkboxes or text inputs inside a row.
@@ -232,15 +240,19 @@ export default function SubtaskList({
                   />
                 ))
               )}
-              {/* Stage 2 (2026-04-23): sealed-block add tightened to
-                  admin-only. Rationale: post-lock-in, committee creators
-                  and task reviewers shouldn't add subtasks either — use
-                  a comment for ad-hoc follow-ups so dependency wiring
-                  stays intact. Pre-seal or ungrouped: any completer/
-                  reviewer with canEdit can add. */}
+              {/* Subtask-add gating by block phase:
+                    - setup: admin + task-level reviewers only (task-setter phase)
+                    - sealed: admin only (Stage 2 tightening — post-lock-in,
+                      everyone else files a comment instead so dependency
+                      wiring stays intact)
+                    - open / ungrouped: any completer/reviewer with canEdit */}
               {canEdit &&
                 task.subtasks.length < TASK_FIELD_LIMITS.maxSubtasks &&
-                (group.block?.sealState !== "sealed" || isAdmin) && (
+                (group.block?.sealState === "setup"
+                  ? canAddInSetup
+                  : group.block?.sealState === "sealed"
+                    ? isAdmin
+                    : true) && (
                   <InlineAddSubtask task={task} blockId={group.block?.id ?? null} />
                 )}
               {group.block &&
@@ -249,9 +261,11 @@ export default function SubtaskList({
                 group.completion.length > 0 && (
                   <NotifyReviewersButton
                     task={task}
-                    blockId={group.block.id}
+                    block={group.block}
                     completion={group.completion}
                     viewerIsCompleter={task.completerUids.includes(viewerUid)}
+                    viewerIsAdmin={isAdmin}
+                    viewerIsCreator={isCreator}
                   />
                 )}
             </div>
@@ -288,29 +302,75 @@ export default function SubtaskList({
  * non-reviewer subtask in the block is done. Press spawns reviewer signoff
  * rows server-side and logs a `block_sent_to_reviewers` activity entry.
  *
- * Visible only to listed completers — non-completers don't see the button.
+ * Visible to listed completers + admin + creator. Stage 1.9a originally
+ * gated this to completers only — widened 2026-04-25 because reviewer-less
+ * test tasks (admin testing alone) had no path to advance the block, and
+ * creator-fallback mirrors the same widening on `finalizeBlockSetup`.
  */
 function NotifyReviewersButton({
   task,
-  blockId,
+  block,
   completion,
   viewerIsCompleter,
+  viewerIsAdmin,
+  viewerIsCreator,
 }: {
   task: TaskDoc;
-  blockId: string;
+  block: TaskBlock;
   completion: Subtask[];
   viewerIsCompleter: boolean;
+  viewerIsAdmin: boolean;
+  viewerIsCreator: boolean;
 }) {
+  const blockId = block.id;
   const [busy, setBusy] = useState(false);
-  if (!viewerIsCompleter) return null;
+  if (!viewerIsCompleter && !viewerIsAdmin && !viewerIsCreator) return null;
   const outstanding = completion.filter((s) => !s.done);
-  const canSend = outstanding.length === 0;
-  const helperText = canSend
-    ? "All tasks complete — ready to send to reviewers."
-    : "All tasks must be marked as complete before sending to reviewers.";
+  const allDone = outstanding.length === 0;
+  // Admin / creator can press regardless of completion state — they get a
+  // confirm popup if there are outstanding subtasks. Same escape-hatch
+  // pattern as `forceSealBlock` for the lock-in gate. Completers must
+  // wait for everything to be ticked.
+  const canOverride = viewerIsAdmin || viewerIsCreator;
+  const canSend = allDone || canOverride;
+  // Treat "skip-review" mode the same as "no effective reviewers" for
+  // labelling — both lead to no spawn. Skip-review is the explicit setting,
+  // empty effective-reviewers is the legacy fallback path. Either way,
+  // press = close out the block, not "hand off to reviewers".
+  const skipReview = block.reviewMode === "skip-review";
+  const hasReviewers =
+    !skipReview && getBlockEffectiveReviewerUids(task, blockId).length > 0;
+  const helperText = !allDone
+    ? canOverride
+      ? `${outstanding.length} subtask${outstanding.length === 1 ? "" : "s"} not yet done — admin/creator can force-send anyway.`
+      : hasReviewers
+        ? "All tasks must be marked as complete before sending to reviewers."
+        : "All tasks must be marked as complete before closing out this block."
+    : hasReviewers
+      ? "All tasks complete — ready to send to reviewers."
+      : skipReview
+        ? "All tasks complete — block is set to no-review mode, ready to close out."
+        : "All tasks complete — no reviewers configured, nothing to hand off.";
+  const buttonLabel = busy
+    ? hasReviewers
+      ? "Sending…"
+      : "Closing…"
+    : hasReviewers
+      ? "Notify reviewers"
+      : "Mark block complete";
 
   async function handleSend() {
     if (!canSend || busy) return;
+    if (!allDone && canOverride) {
+      const verb = hasReviewers ? "Send" : "Close out";
+      const tail = hasReviewers
+        ? "The signoff rows will spawn anyway — admin/creator override."
+        : "The block will be closed out anyway — admin/creator override.";
+      const ok = window.confirm(
+        `${verb} "${block.name}" with ${outstanding.length} subtask${outstanding.length === 1 ? "" : "s"} still outstanding? ${tail}`,
+      );
+      if (!ok) return;
+    }
     setBusy(true);
     try {
       await sendBlockToReviewers(task, blockId);
@@ -360,11 +420,13 @@ function NotifyReviewersButton({
         }}
         title={
           canSend
-            ? "Spawn reviewer signoff rows and kick off the review phase."
+            ? hasReviewers
+              ? "Spawn reviewer signoff rows and kick off the review phase."
+              : "Close out this block — no reviewers to spawn signoff rows for."
             : helperText
         }
       >
-        {busy ? "Sending…" : "Notify reviewers"}
+        {buttonLabel}
       </button>
     </div>
   );
@@ -694,6 +756,16 @@ export const BLOCK_PHASE_PALETTE: Record<
   BlockPhase,
   { bg: string; border: string; label: string; labelColor: string }
 > = {
+  setup: {
+    // Violet — picked to sit clearly before red in the phase progression so
+    // a glance down the block stack reads as a gradient (violet → red →
+    // orange → yellow → green) without two adjacent phases fighting for
+    // attention.
+    bg: "rgba(124, 58, 237, 0.08)",
+    border: "#7c3aed",
+    label: "Setup",
+    labelColor: "#7c3aed",
+  },
   allocating: {
     bg: "var(--color-danger-soft, rgba(220, 38, 38, 0.06))",
     border: "var(--color-danger, #dc2626)",

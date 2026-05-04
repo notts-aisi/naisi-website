@@ -57,7 +57,10 @@ export default function TemplateEditor({ template, onDone, onDelete }: Props) {
       subtasks: [
         ...d.subtasks,
         {
-          id: newTemplateSubtaskId(),
+          // New row starts with an empty title — the id is just a
+          // placeholder slug; once the user types a real title, the title
+          // itself becomes the display handle and the id stays stable.
+          id: newTemplateSubtaskId("subtask"),
           title: "",
           blockedBy: [],
         },

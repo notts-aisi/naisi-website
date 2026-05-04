@@ -3,8 +3,7 @@
 import { useEffect, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
-import { Input, Select } from "@/components/ui/Input";
-import ProgressBar from "@/components/ui/ProgressBar";
+import { Select } from "@/components/ui/Input";
 import {
   TASK_FIELD_LIMITS,
   TASK_PRIORITIES,
@@ -13,6 +12,7 @@ import {
   TASK_STATUS_LABELS,
   canMarkTaskDone,
   getSubtaskApprovalStatus,
+  getSubtaskBreakdown,
   type TaskDoc,
   type TaskPriority,
   type TaskStatus,
@@ -33,7 +33,10 @@ import AssigneePicker from "./AssigneePicker";
 import AttachmentList from "./AttachmentList";
 import AttachmentUpload from "./AttachmentUpload";
 import CommentThread from "./CommentThread";
-import DueDateBadge from "./DueDateBadge";
+import DescriptionEditor from "./DescriptionEditor";
+import RichTextRender from "./RichTextRender";
+import TaskCalendar from "./TaskCalendar";
+import SubtaskBreakdown from "./SubtaskBreakdown";
 import SubtaskList from "./SubtaskList";
 import { useCommentsAndActivity } from "../hooks/useCommentsAndActivity";
 import { useTaskAttachments } from "../hooks/useTaskAttachments";
@@ -99,6 +102,13 @@ export default function TaskDetailModal({
   // Completers who aren't also reviewers see the row state colours only, not
   // the per-reviewer columns or the reviewer picker.
   const canSeeReviewerSection = isAdmin || isCreator || isAnyReviewer;
+  // Due dates are owned by whoever set the task up, not the people doing
+  // the work. Admin / creator / task-level reviewer can amend; committee-
+  // at-large completers cannot. Mirrors the `finalizeBlockSetup` gate from
+  // PR #71 — same "task-setter" mental model. Tightened 2026-04-25 after
+  // user feedback that completers were able to move dates.
+  const canEditDueDates = !!task && (isAdmin || isCreator || isTaskReviewer);
+  const now = new Date();
 
   // Pending sent_for_review — derive from activity so SubtaskRow can tint
   // pending rows orange and the composer can gate its own button. Task-level
@@ -123,6 +133,16 @@ export default function TaskDetailModal({
   const [descDraft, setDescDraft] = useState("");
   const [editingTitle, setEditingTitle] = useState(false);
   const [editingDesc, setEditingDesc] = useState(false);
+  // Delete-in-flight state. Declared up here (rather than next to
+  // handleDelete) so the Escape handler useEffect below can read it.
+  const [deleting, setDeleting] = useState(false);
+  const [deleteErr, setDeleteErr] = useState<string | null>(null);
+  // Stage 5 (2026-04-26) — initial-notification + per-uid notify in-flight
+  // sets. Visual hierarchy: the batch button reads as a prominent CTA
+  // (one-time send ceremony); the inline Notify pills read as ghost /
+  // optional opt-in next to each pending chip.
+  const [initialBusy, setInitialBusy] = useState(false);
+  const [notifyBusy, setNotifyBusy] = useState<Set<string>>(new Set());
   // Sync drafts when the loaded task changes. Calling setState during render
   // based on a previous-value ref is React's supported pattern for
   // derived-from-props resets (avoids the react-hooks/set-state-in-effect trap
@@ -136,14 +156,64 @@ export default function TaskDetailModal({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      // Don't let Escape dismiss the modal while the delete request is in
+      // flight — the cascade is already running on the server and the user
+      // pressing Escape mid-delete just leaves them staring at a half-gone
+      // task on the next page render.
+      if (e.key === "Escape" && !deleting) onClose();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, deleting]);
 
   const project = task?.projectId ? projects.find((p) => p.id === task.projectId) : null;
   const creator = task ? users.find((u) => u.uid === task.creatorUid) : null;
+
+  // Delete overlay takes precedence over the null-task fallback — once the
+  // server finishes deleting the parent doc, the client's `useTask`
+  // onSnapshot fires with `task = null`, which would otherwise drop the
+  // modal through to "Task not found or you don't have access." mid-request
+  // and feel like the page crashed. We stay in the deleting state until the
+  // handler resolves and calls onClose().
+  if (deleting) {
+    return (
+      <Overlay onClose={() => {}}>
+        <div
+          role="status"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "var(--space-4)",
+            padding: "var(--space-8)",
+            minHeight: "14rem",
+            textAlign: "center",
+          }}
+        >
+          <Spinner />
+          <div style={{ fontSize: "var(--text-md)", color: "var(--color-text)" }}>
+            Deleting task + history…
+          </div>
+          <div
+            style={{
+              fontSize: "var(--text-xs)",
+              color: "var(--color-text-muted)",
+              maxWidth: "22rem",
+            }}
+          >
+            Clearing comments, activity, and attachments. This can take a few
+            seconds for tasks with a long history — don't close the tab.
+          </div>
+          {deleteErr && (
+            <div style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)" }}>
+              {deleteErr}
+            </div>
+          )}
+        </div>
+      </Overlay>
+    );
+  }
 
   if (loading || !task) {
     return (
@@ -172,6 +242,12 @@ export default function TaskDetailModal({
 
   async function saveDesc() {
     if (!task) return;
+    if (descDraft.length > TASK_FIELD_LIMITS.description) {
+      window.alert(
+        `Description is too long (${descDraft.length}/${TASK_FIELD_LIMITS.description}). Trim before saving.`,
+      );
+      return;
+    }
     if (descDraft === task.description) {
       setEditingDesc(false);
       return;
@@ -243,12 +319,25 @@ export default function TaskDetailModal({
 
   async function handleDelete() {
     if (!task) return;
-    if (!window.confirm("Delete this task? This cannot be undone.")) return;
+    if (
+      !window.confirm(
+        "Delete this task?\n\nAll comments, activity history, and attachments will be permanently removed. This cannot be undone.",
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    setDeleteErr(null);
     try {
-      await deleteTask(task.id);
+      const report = await deleteTask(task.id);
+      console.info(
+        `[deleteTask] removed ${report.comments} comments, ${report.activity} activity entries, ${report.attachments} attachments`,
+      );
       onClose();
     } catch (err) {
       console.error(err);
+      setDeleteErr(err instanceof Error ? err.message : "Delete failed");
+      setDeleting(false); // on success the modal closes; only reset on failure
     }
   }
 
@@ -258,6 +347,66 @@ export default function TaskDetailModal({
       await archiveTask(task.id, !task.archived);
     } catch (err) {
       console.error(err);
+    }
+  }
+
+  async function handleSendInitialNotifications() {
+    if (!task || initialBusy) return;
+    if (task.initialNotifyAt) return; // one-way
+    if (task.completerUids.length === 0 && task.reviewerUids.length === 0) return;
+    const memberCount = task.completerUids.length + task.reviewerUids.length;
+    const ok = window.confirm(
+      `Send membership emails to ${memberCount} member${memberCount === 1 ? "" : "s"}? This is a one-time press — you can't undo it (archive the task to halt further notifications).`,
+    );
+    if (!ok) return;
+    setInitialBusy(true);
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/send-initial-notifications`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          (body as { error?: string }).error ?? `Send failed (${res.status})`,
+        );
+      }
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Send failed");
+    } finally {
+      setInitialBusy(false);
+    }
+  }
+
+  async function handleNotifyMember(uid: string) {
+    if (!task) return;
+    setNotifyBusy((prev) => {
+      const next = new Set(prev);
+      next.add(uid);
+      return next;
+    });
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/notify-member`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uid }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          (body as { error?: string }).error ?? `Notify failed (${res.status})`,
+        );
+      }
+    } catch (err) {
+      console.error(err);
+      window.alert(err instanceof Error ? err.message : "Notify failed");
+    } finally {
+      setNotifyBusy((prev) => {
+        const next = new Set(prev);
+        next.delete(uid);
+        return next;
+      });
     }
   }
 
@@ -387,43 +536,39 @@ export default function TaskDetailModal({
             ) : (
               <Badge tone="neutral">Priority: {TASK_PRIORITY_LABELS[task.priority]}</Badge>
             )}
-            {canEditAll ? (
-              <label style={fieldLabel}>
-                <span>Due date</span>
-                <Input
-                  type="date"
-                  value={toDateInputValue(task.dueDate)}
-                  onChange={(e) => onDueChange(e.target.value)}
-                  aria-label="Due date"
-                />
-              </label>
-            ) : (
-              <DueDateBadge dueDate={task.dueDate} done={task.status === "done"} />
-            )}
           </div>
+
+          {(canEditDueDates || task.dueDate) && (
+            <section>
+              <h3 style={sectionLabel}>Due date</h3>
+              <TaskCalendar
+                mode={canEditDueDates ? "edit" : "view"}
+                value={task.dueDate}
+                isOverdue={
+                  task.dueDate !== null &&
+                  task.status !== "done" &&
+                  task.dueDate.getTime() < now.getTime()
+                }
+                collapsible
+                onChange={(date) =>
+                  onDueChange(date ? toDateInputValue(date) : "")
+                }
+              />
+            </section>
+          )}
 
           <section>
             <h3 style={sectionLabel}>Description</h3>
             {editingDesc && canEditAll ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-                <textarea
+                <DescriptionEditor
+                  editorKey={`task-desc:${task.id}`}
+                  initialBody={task.description}
+                  onChange={setDescDraft}
                   autoFocus
-                  value={descDraft}
-                  onChange={(e) => setDescDraft(e.target.value)}
-                  rows={6}
-                  maxLength={TASK_FIELD_LIMITS.description}
-                  style={{
-                    width: "100%",
-                    padding: "var(--space-3)",
-                    background: "var(--color-bg-elevated)",
-                    border: "1px solid var(--color-border)",
-                    borderRadius: "var(--radius-md)",
-                    color: "var(--color-text)",
-                    fontSize: "var(--text-sm)",
-                    resize: "vertical",
-                  }}
+                  minHeightRem={6}
                 />
-                <div style={{ display: "flex", gap: "var(--space-2)" }}>
+                <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
                   <Button size="sm" onClick={saveDesc}>
                     Save
                   </Button>
@@ -437,13 +582,24 @@ export default function TaskDetailModal({
                   >
                     Cancel
                   </Button>
+                  <span
+                    style={{
+                      marginLeft: "auto",
+                      fontSize: "var(--text-xs)",
+                      color:
+                        descDraft.length > TASK_FIELD_LIMITS.description
+                          ? "var(--color-danger, #dc2626)"
+                          : "var(--color-text-muted)",
+                    }}
+                  >
+                    {descDraft.length} / {TASK_FIELD_LIMITS.description}
+                  </span>
                 </div>
               </div>
             ) : (
-              <p
+              <div
                 onClick={() => canEditAll && setEditingDesc(true)}
                 style={{
-                  whiteSpace: "pre-wrap",
                   fontSize: "var(--text-sm)",
                   color: task.description ? "var(--color-text)" : "var(--color-text-muted)",
                   cursor: canEditAll ? "text" : "default",
@@ -452,29 +608,26 @@ export default function TaskDetailModal({
                   border: "1px solid var(--color-border)",
                   borderRadius: "var(--radius-md)",
                   minHeight: "3rem",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
                 }}
               >
-                {task.description || (canEditAll ? "Click to add a description…" : "No description.")}
-              </p>
+                {task.description ? (
+                  <RichTextRender body={task.description} />
+                ) : canEditAll ? (
+                  "Click to add a description…"
+                ) : (
+                  "No description."
+                )}
+              </div>
             )}
           </section>
 
           <section>
-            <h3 style={sectionLabel}>
-              Subtasks{" "}
-              {task.subtaskStats.total > 0 && (
-                <span style={{ color: "var(--color-text-muted)", fontWeight: 400 }}>
-                  ({task.subtaskStats.done}/{task.subtaskStats.total})
-                </span>
-              )}
-            </h3>
+            <h3 style={sectionLabel}>Subtasks</h3>
             {task.subtaskStats.total > 0 && (
-              <div style={{ marginBottom: "var(--space-2)" }}>
-                <ProgressBar
-                  value={task.subtaskStats.done}
-                  max={task.subtaskStats.total}
-                  tone={task.subtaskStats.done === task.subtaskStats.total ? "success" : "accent"}
-                />
+              <div style={{ marginBottom: "var(--space-3)" }}>
+                <SubtaskBreakdown breakdown={getSubtaskBreakdown(task)} variant="verbose" />
               </div>
             )}
             {canSeeReviewerSection && task.reviewerUids.length > 0 && (
@@ -571,6 +724,9 @@ export default function TaskDetailModal({
                 onChange={onCompletersChange}
                 max={TASK_FIELD_LIMITS.maxCompleters}
                 role="completer"
+                notifyableUids={canEditTaskRoster ? task.pendingNotifyUids : undefined}
+                onNotify={canEditTaskRoster ? handleNotifyMember : undefined}
+                notifyBusyUids={Array.from(notifyBusy)}
               />
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
@@ -604,6 +760,9 @@ export default function TaskDetailModal({
                 onChange={onReviewersChange}
                 max={TASK_FIELD_LIMITS.maxReviewers}
                 role="reviewer"
+                notifyableUids={canEditTaskRoster ? task.pendingNotifyUids : undefined}
+                onNotify={canEditTaskRoster ? handleNotifyMember : undefined}
+                notifyBusyUids={Array.from(notifyBusy)}
               />
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
@@ -623,6 +782,53 @@ export default function TaskDetailModal({
               </div>
             )}
           </div>
+          )}
+
+          {/* Stage 5 (2026-04-26) — "Send initial notifications" CTA, the
+              one-time exit from setup phase. Visible only to roster
+              editors (admin / personal creator) so committee at large
+              don't see a button they can't press. Disabled with a tooltip
+              when there are zero members yet so the affordance is
+              discoverable but inert. Hidden once initialNotifyAt is
+              stamped (one-way transition). */}
+          {canEditTaskRoster && task.initialNotifyAt === null && (
+            <div>
+              {(() => {
+                const memberCount =
+                  task.completerUids.length + task.reviewerUids.length;
+                const disabled = memberCount === 0 || initialBusy;
+                return (
+                  <Button
+                    onClick={handleSendInitialNotifications}
+                    disabled={disabled}
+                    title={
+                      memberCount === 0
+                        ? "Add at least one member first."
+                        : "Send the membership email to every current completer + reviewer. One-time press."
+                    }
+                  >
+                    {initialBusy
+                      ? "Sending…"
+                      : memberCount === 0
+                        ? "Send initial notifications"
+                        : `Send initial notifications (${memberCount})`}
+                  </Button>
+                );
+              })()}
+            </div>
+          )}
+          {canEditTaskRoster && task.initialNotifyAt !== null && (
+            <div
+              style={{
+                fontSize: "var(--text-xs)",
+                color: "var(--color-text-muted)",
+              }}
+              title={`Initial notifications were sent ${task.initialNotifyAt.toLocaleString()}.`}
+            >
+              ✓ Initial notifications sent
+              {task.pendingNotifyUids.length > 0 &&
+                ` · ${task.pendingNotifyUids.length} new member${task.pendingNotifyUids.length === 1 ? "" : "s"} pending`}
+            </div>
           )}
 
           {isAdmin && (
@@ -660,12 +866,33 @@ export default function TaskDetailModal({
               actions require elevated privilege". */}
           {(isAdmin || isCreator) && (
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-              <Button size="sm" variant="secondary" onClick={handleArchiveToggle}>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleArchiveToggle}
+                disabled={deleting}
+              >
                 {task.archived ? "Unarchive" : "Archive"}
               </Button>
-              <Button size="sm" variant="danger" onClick={handleDelete}>
-                Delete task
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={handleDelete}
+                disabled={deleting}
+              >
+                {deleting ? "Deleting task + history…" : "Delete task"}
               </Button>
+              {deleteErr && (
+                <span
+                  role="alert"
+                  style={{
+                    fontSize: "var(--text-xs)",
+                    color: "var(--color-danger, #dc2626)",
+                  }}
+                >
+                  {deleteErr}
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -693,6 +920,11 @@ function AttachmentsSection({
   canParticipate: boolean;
 }) {
   const { attachments } = useTaskAttachments(taskId);
+  // Task-level section only shows task-level attachments — subtask-scoped
+  // attachments render inside each subtask's detail modal instead.
+  // Pre-migration docs have `subtaskId: null` via normalizeAttachment, so
+  // they continue to appear here.
+  const taskLevel = attachments.filter((a) => a.subtaskId === null);
   // Skip the "Loading attachments…" banner — the list is empty for most
   // tasks, and the few that have attachments will see the rows pop in
   // within ~200ms. Loud banners make the modal feel slow even when the
@@ -701,7 +933,7 @@ function AttachmentsSection({
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
       <AttachmentList
         taskId={taskId}
-        attachments={attachments}
+        attachments={taskLevel}
         users={users}
         viewerUid={viewerUid}
         viewerIsAdmin={viewerIsAdmin}
@@ -888,5 +1120,48 @@ function Overlay({ children, onClose }: { children: React.ReactNode; onClose: ()
         {children}
       </div>
     </div>
+  );
+}
+
+/**
+ * Small spinning ring, used in the "Deleting…" overlay. SMIL-animated so we
+ * don't need a CSS keyframe block in this file (the codebase doesn't set up
+ * a shared `@keyframes spin` and inline `<style>` tags render oddly inside
+ * portalled modals).
+ */
+function Spinner() {
+  return (
+    <svg
+      width="32"
+      height="32"
+      viewBox="0 0 32 32"
+      aria-hidden="true"
+      style={{ display: "block" }}
+    >
+      <circle
+        cx="16"
+        cy="16"
+        r="12"
+        fill="none"
+        stroke="var(--color-border)"
+        strokeWidth="3"
+      />
+      <path
+        d="M16 4 A12 12 0 0 1 28 16"
+        fill="none"
+        stroke="var(--color-accent, var(--color-text))"
+        strokeWidth="3"
+        strokeLinecap="round"
+      >
+        <animateTransform
+          attributeName="transform"
+          type="rotate"
+          from="0 16 16"
+          to="360 16 16"
+          dur="0.9s"
+          repeatCount="indefinite"
+        />
+      </path>
+    </svg>
   );
 }

@@ -20,8 +20,9 @@ export default function PendingApprovalPage() {
         Application received
       </h1>
       <p style={{ color: "var(--color-text-muted)", marginBottom: "var(--space-6)" }}>
-        Thanks for signing up. The committee will review your application shortly — you&apos;ll get
-        an email the moment you&apos;re approved.
+        Thanks for signing up. The committee will review your
+        application shortly. You&apos;ll get an email the moment
+        you&apos;re approved.
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
         <Link href="/" style={{ color: "var(--color-accent)", fontSize: "var(--text-sm)" }}>

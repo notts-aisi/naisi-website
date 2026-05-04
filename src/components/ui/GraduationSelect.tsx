@@ -99,7 +99,7 @@ export default function GraduationSelect({
           const m = String(i + 1).padStart(2, "0");
           return (
             <option key={m} value={m}>
-              {i + 1} — {name}
+              {i + 1} · {name}
             </option>
           );
         })}

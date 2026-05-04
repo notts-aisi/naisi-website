@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
@@ -41,7 +41,19 @@ type VerificationState =
   | { status: "error"; message: string };
 
 export default function RegisterPage() {
+  // Next 16 requires `useSearchParams()` consumers to live under a Suspense
+  // boundary so the bailout-to-CSR semantics are explicit at build time.
+  return (
+    <Suspense fallback={null}>
+      <RegisterPageInner />
+    </Suspense>
+  );
+}
+
+function RegisterPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromSubscriber = searchParams.get("from") === "subscriber";
   const { user, role, loading: authLoading } = useAuth();
 
   useEffect(() => {
@@ -223,7 +235,7 @@ export default function RegisterPage() {
     const verified = verification.status === "verified";
     if (!verified && !allowUnverifiedSubmit) {
       setError(
-        "Please verify your university email first — we sent a link to your inbox. If you're stuck, click 'I'm having trouble' below.",
+        "Please verify your university email first. We sent a link to your inbox. If you're stuck, click 'I'm having trouble' below.",
       );
       return;
     }
@@ -262,6 +274,25 @@ export default function RegisterPage() {
           ? "Apply to join the Nottingham AI Safety Initiative. We'll review your application and be in touch."
           : "Tell us a bit about you so the committee can review your application."}
       </p>
+
+      {fromSubscriber && (
+        <div
+          style={{
+            border: "1px solid var(--color-border)",
+            borderRadius: "var(--radius-md)",
+            padding: "var(--space-3) var(--space-4)",
+            marginBottom: "var(--space-5)",
+            background: "var(--color-bg-elevated)",
+            color: "var(--color-text-muted)",
+            fontSize: "var(--text-sm)",
+            lineHeight: 1.5,
+          }}
+        >
+          We noticed you&apos;ve subscribed to NAISI emails before. Completing
+          registration will move your subscription onto your member account so
+          you don&apos;t get duplicate emails.
+        </div>
+      )}
 
       {step === "sign-in" ? (
         <>
@@ -305,6 +336,7 @@ export default function RegisterPage() {
             hint="We accept @nottingham.ac.uk (including subdomains like exmail.nottingham.ac.uk). Staff welcome. If your address is a different format, email ai-safety@uonsu.com and we'll add you manually."
           >
             <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "stretch" }}>
+              {/* TEMPORARY (revert before re-locking registration): pattern + title removed so any email passes the client-side check during a demo. */}
               <Input
                 id="universityEmail"
                 type="email"
@@ -312,8 +344,6 @@ export default function RegisterPage() {
                 onChange={(e) => setUniversityEmail(e.target.value)}
                 placeholder="you@nottingham.ac.uk"
                 maxLength={FIELD_LIMITS.universityEmail}
-                pattern="^[^@\s]+@([a-zA-Z0-9-]+\.)*nottingham\.ac\.uk$"
-                title="Use your University of Nottingham email address"
                 required
                 style={{ flex: 1 }}
               />
@@ -415,7 +445,7 @@ export default function RegisterPage() {
           <Field
             id="interests"
             label="Interests within AI safety (optional)"
-            hint="e.g. interpretability, alignment, governance, evals — anything that draws you in."
+            hint="e.g. interpretability, alignment, governance, evals. Anything that draws you in."
           >
             <CountedTextarea
               id="interests"
@@ -543,7 +573,7 @@ function VerificationPanel({
         }}
       >
         <Badge tone="success">Verified</Badge>
-        <span>You&apos;re all set — this email is confirmed.</span>
+        <span>You&apos;re all set. This email is confirmed.</span>
       </div>
     );
   }
@@ -600,9 +630,9 @@ function VerificationPanel({
       </div>
       {state.status === "sent" && (
         <p style={{ fontSize: "var(--text-xs)", color: "var(--color-text-muted)" }}>
-          We&apos;ve sent a link to your university email. Click it — this page
-          will update automatically when we see the click. Check spam if it
-          doesn&apos;t land in a minute.
+          We&apos;ve sent a link to your university email. Click it and
+          this page will update automatically when we see the click.
+          Check spam if it doesn&apos;t land in a minute.
         </p>
       )}
       {state.status === "error" && (
@@ -627,9 +657,9 @@ function VerificationPanel({
           onChange={onToggleAllowUnverified}
         />
         <span>
-          I&apos;m having trouble with the verification email. Let me submit
-          without verifying — the committee will check my email manually
-          before approving.
+          I&apos;m having trouble with the verification email. Let me
+          submit without verifying. The committee will check my email
+          manually before approving.
         </span>
       </label>
     </div>
