@@ -113,6 +113,26 @@ export async function completeRegistration(profile: {
   // uniEmailVerifiedAt above is the current source of truth.
   void verifiedTokenId;
 
+  // Subscriptions sync — claims any pre-existing guest subscription rows
+  // for this user's email(s) (so a homepage signer-upper who later
+  // registers doesn't end up with a duplicate guest row), and applies the
+  // form's notification prefs as deltas. Fire-and-forget so the register
+  // flow proceeds regardless; the sender already gracefully handles a user
+  // who hasn't been synced yet.
+  fetch("/api/subscriptions/sync", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      prefs: {
+        newsletter: notifications.categories.newsletter,
+        events: notifications.categories.events,
+      },
+      claimUniEmail: true,
+    }),
+  }).catch((err) => {
+    console.warn("[subscriptions sync] fire-and-forget failed", err);
+  });
+
   // Fire-and-forget submission confirmation. User flow proceeds regardless.
   fetch("/api/admin/application-emails/send", {
     method: "POST",

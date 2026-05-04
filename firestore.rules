@@ -354,6 +354,20 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // === subscriptions ===
+    // Junction collection: each row is one (recipient, channel) pair. All
+    // mutations go through server routes (admin SDK) — clients never write.
+    // Reads: admins see everything; signed-in users see only their own rows
+    // (audience == "user" && audienceId == auth.uid), powering the member
+    // settings UI.
+    match /subscriptions/{docId} {
+      allow read: if isAdmin()
+        || (isSignedIn()
+            && resource.data.audience == 'user'
+            && resource.data.audienceId == request.auth.uid);
+      allow write: if false;
+    }
+
     // === eventRsvps ===
     // RSVPs are PII — never public read. All writes go through the server route
     // `/api/events/[id]/rsvp` (admin SDK) so rules are a safety net, not the
