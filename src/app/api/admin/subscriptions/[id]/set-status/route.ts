@@ -11,35 +11,34 @@ import {
  * Admin-only manual override on a single subscription row. Used by the
  * Subscriptions admin tab's per-row Unsubscribe / Re-subscribe buttons.
  *
- * Body: { status: "confirmed" | "unsubscribed" | "pending" }
+ * Body: { subscribed: boolean }
  *
- * Stamps the corresponding timestamp field on transition:
- *  - "confirmed": sets `confirmedAt`, clears `unsubscribedAt`
- *  - "unsubscribed": sets `unsubscribedAt`
- *  - "pending": clears `confirmedAt` and `unsubscribedAt` (admin reset)
+ * - subscribed=true:  sets subscribed=true, stamps subscribedAt. Doesn't
+ *   touch confirmed; if the row was unconfirmed it remains unconfirmed
+ *   (which is the right behaviour for an admin "yes they want this list"
+ *   override on a not-yet-confirmed row).
+ * - subscribed=false: sets subscribed=false, stamps unsubscribedAt.
  *
  * Dual-write to the user doc when the row is owned by a member (audience
- * is "user") and the channel maps to a known legacy NotificationCategory
- * ("newsletter" or "events"). Without this, flipping a member's row from
- * the Subscriptions tab leaves `users/{uid}.profile.notifications.categories.<channel>`
- * stale, so the Members admin tab's toggle UI lies about the actual state
- * until cleanup. Migration window pattern, mirrors the inverse direction
- * already in place via adminMutations.setUserNotificationCategory.
+ * is "user") and the channel maps to a known legacy NotificationCategory.
+ * Without this, flipping a member's row from the Subscriptions tab leaves
+ * `users/{uid}.profile.notifications.categories.<channel>` stale, so the
+ * Members admin tab's toggle UI lies about the actual state. Soft drift
+ * during the migration window. Mirror of the inverse direction already in
+ * place via adminMutations.setUserNotificationCategory.
  *
- * Re-activation is allowed on the principle that admin override is a
- * trust-the-admin operation. The row's own data plus the audit trail in
- * emailSends cover misuse. GDPR mandates honouring an unsubscribe;
- * nothing forbids reversal on an explicit user-or-admin ask.
+ * The route still accepts the legacy `{ status: "confirmed" | "unsubscribed" }`
+ * body for one PR cycle while any cached client code transitions, mapping
+ * confirmed → subscribed=true and unsubscribed → subscribed=false. This
+ * compatibility shim can be dropped after the schema-split rollout settles.
  */
 
-// Inline params shape — see sync-subscriptions/route.ts for the rationale.
 type Ctx = { params: Promise<{ id: string }> };
 
 type Body = {
+  subscribed?: unknown;
   status?: unknown;
 };
-
-const VALID_STATUSES = new Set(["confirmed", "unsubscribed", "pending"]);
 
 export async function POST(req: Request, ctx: Ctx) {
   const session = await getCurrentUser();
@@ -59,10 +58,19 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const status = typeof parsed.status === "string" ? parsed.status : "";
-  if (!VALID_STATUSES.has(status)) {
+  // Prefer the new boolean field; fall back to the legacy status enum if
+  // the client hasn't been updated yet.
+  let subscribed: boolean | null = null;
+  if (typeof parsed.subscribed === "boolean") {
+    subscribed = parsed.subscribed;
+  } else if (parsed.status === "confirmed") {
+    subscribed = true;
+  } else if (parsed.status === "unsubscribed") {
+    subscribed = false;
+  }
+  if (subscribed === null) {
     return NextResponse.json(
-      { error: `status must be one of: ${Array.from(VALID_STATUSES).join(", ")}` },
+      { error: "Body must include `subscribed` (boolean) or legacy `status` ('confirmed'|'unsubscribed')." },
       { status: 400 },
     );
   }
@@ -79,27 +87,19 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   const now = Timestamp.now();
-  const patch: Record<string, unknown> = { status };
-
-  if (status === "confirmed") {
-    patch.confirmedAt = now;
-    // Clear any prior unsubscribed marker so the row reads cleanly. Use
-    // FieldValue.delete via a sentinel — admin SDK's Timestamp module
-    // exports it through a separate import path, so we just write null
-    // here and let the row carry it. Sender + UI both treat
-    // unsubscribedAt as "ignore unless status == 'unsubscribed'".
-    patch.unsubscribedAt = null;
-  } else if (status === "unsubscribed") {
+  const patch: Record<string, unknown> = { subscribed };
+  if (subscribed) {
+    patch.subscribedAt = now;
+    // Don't clear unsubscribedAt; it stays as audit ("they unsubscribed at
+    // time T, then admin re-subscribed them at time U"). UI derives current
+    // state from the boolean, not from the timestamps.
+  } else {
     patch.unsubscribedAt = now;
-  } else if (status === "pending") {
-    patch.confirmedAt = null;
-    patch.unsubscribedAt = null;
   }
 
   await ref.update(patch);
 
-  // Dual-write the user doc legacy field when applicable. Reads the row
-  // we just updated to pick up audience + channel.
+  // Dual-write the user doc legacy notification field when applicable.
   const data = snap.data() ?? {};
   const audience = data.audience;
   const channel = typeof data.channel === "string" ? data.channel : "";
@@ -110,29 +110,22 @@ export async function POST(req: Request, ctx: Ctx) {
     (ALL_CATEGORIES as string[]).includes(channel)
   ) {
     const cat = channel as NotificationCategory;
-    // Map the new status onto the legacy boolean. "pending" is an
-    // admin-reset state with no clear legacy equivalent, so we leave the
-    // legacy field alone in that case.
-    const legacyValue =
-      status === "confirmed" ? true : status === "unsubscribed" ? false : null;
-    if (legacyValue !== null) {
-      const userPatch: Record<string, unknown> = {
-        [`profile.notifications.categories.${cat}`]: legacyValue,
-      };
-      // Newsletter has the older single-bool field; events does not.
-      if (cat === "newsletter") {
-        userPatch["profile.newsletter.subscribed"] = legacyValue;
-      }
-      try {
-        await db.collection("users").doc(audienceId).update(userPatch);
-      } catch (err) {
-        // Don't fail the row update if the user doc write fails; the row
-        // is already correct, and a stale legacy field is a soft drift
-        // we'll correct on the next sync. Log so it's visible in tail.
-        console.warn("[set-status] user-doc legacy sync failed", audienceId, err);
-      }
+    const userPatch: Record<string, unknown> = {
+      [`profile.notifications.categories.${cat}`]: subscribed,
+    };
+    // Newsletter has the older single-bool field; events does not.
+    if (cat === "newsletter") {
+      userPatch["profile.newsletter.subscribed"] = subscribed;
+    }
+    try {
+      await db.collection("users").doc(audienceId).update(userPatch);
+    } catch (err) {
+      // Don't fail the row update if the user doc write fails. The row
+      // is already correct; stale legacy field is a soft drift the next
+      // sync will correct.
+      console.warn("[set-status] user-doc legacy sync failed", audienceId, err);
     }
   }
 
-  return NextResponse.json({ ok: true, id, status });
+  return NextResponse.json({ ok: true, id, subscribed });
 }
