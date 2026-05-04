@@ -10,14 +10,32 @@ import { downloadCSV, toCSV } from "@/lib/csv";
 import {
   useSubscriptions,
   type SubscriptionRow,
+  type SubscriptionDisplayStatus,
 } from "./useSubscriptions";
 import styles from "./SubscriptionsTable.module.css";
 
 type ChannelFilter = "all" | string;
-type StatusFilter = "all" | "pending" | "confirmed" | "unsubscribed";
+type StatusFilter = "all" | SubscriptionDisplayStatus;
 type AudienceFilter = "all" | "user" | "guest";
 
 const PAGE_SIZE = 30;
+
+const STATUS_LABEL: Record<SubscriptionDisplayStatus, string> = {
+  subscribed: "Subscribed",
+  unsubscribed: "Unsubscribed",
+  pending: "Pending",
+  lapsed: "Lapsed",
+};
+
+const STATUS_TONE: Record<
+  SubscriptionDisplayStatus,
+  "success" | "neutral" | "warning"
+> = {
+  subscribed: "success",
+  unsubscribed: "neutral",
+  pending: "warning",
+  lapsed: "neutral",
+};
 
 function formatDate(d: Date | null): string {
   if (!d) return "—";
@@ -39,9 +57,12 @@ function rowsToCSV(rows: SubscriptionRow[]): string {
       "audience",
       "audienceId",
       "status",
+      "confirmed",
+      "subscribed",
       "source",
       "createdAt",
       "confirmedAt",
+      "subscribedAt",
       "unsubscribedAt",
     ],
     rows.map((r) => [
@@ -50,35 +71,36 @@ function rowsToCSV(rows: SubscriptionRow[]): string {
       r.channel,
       r.audience,
       r.audienceId,
-      r.status,
+      r.displayStatus,
+      r.confirmed,
+      r.subscribed,
       r.source,
       r.createdAt?.toISOString() ?? "",
       r.confirmedAt?.toISOString() ?? "",
+      r.subscribedAt?.toISOString() ?? "",
       r.unsubscribedAt?.toISOString() ?? "",
     ]),
   );
 }
 
-async function setRowStatus(
-  id: string,
-  status: "confirmed" | "unsubscribed" | "pending",
-): Promise<void> {
+async function setRowSubscribed(id: string, subscribed: boolean): Promise<void> {
   const res = await fetch(`/api/admin/subscriptions/${id}/set-status`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ subscribed }),
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(body?.error ?? `Set-status failed (${res.status})`);
+    throw new Error(body?.error ?? `Set-subscribed failed (${res.status})`);
   }
 }
 
 type BackfillResult = {
   ok: true;
   usersScanned: number;
-  rowsWritten: number;
   usersWithNoEmail: number;
+  memberRowsWritten: number;
+  legacyRowsMigrated: number;
 };
 
 async function runBackfill(): Promise<BackfillResult> {
@@ -118,7 +140,7 @@ export default function SubscriptionsTable() {
     const needle = search.trim().toLowerCase();
     return rows.filter((r) => {
       if (channelFilter !== "all" && r.channel !== channelFilter) return false;
-      if (statusFilter !== "all" && r.status !== statusFilter) return false;
+      if (statusFilter !== "all" && r.displayStatus !== statusFilter) return false;
       if (audienceFilter !== "all" && r.audience !== audienceFilter) return false;
       if (
         needle &&
@@ -131,10 +153,6 @@ export default function SubscriptionsTable() {
     });
   }, [rows, channelFilter, statusFilter, audienceFilter, search]);
 
-  // Wrap each filter setter so changing a filter also resets to page 0.
-  // Lifting this out of a useEffect avoids the project's set-state-in-effect
-  // lint rule and is functionally identical — every filter change goes
-  // through one of these.
   const onSearch = (v: string) => {
     setSearch(v);
     setPage(0);
@@ -158,19 +176,21 @@ export default function SubscriptionsTable() {
   const pageRows = filtered.slice(pageStart, pageStart + PAGE_SIZE);
 
   const counts = useMemo(() => {
-    let confirmed = 0;
-    let pending = 0;
+    let subscribed = 0;
     let unsubscribed = 0;
+    let pending = 0;
+    let lapsed = 0;
     let guests = 0;
     let members = 0;
     for (const r of rows) {
-      if (r.status === "confirmed") confirmed += 1;
-      else if (r.status === "pending") pending += 1;
-      else unsubscribed += 1;
+      if (r.displayStatus === "subscribed") subscribed += 1;
+      else if (r.displayStatus === "unsubscribed") unsubscribed += 1;
+      else if (r.displayStatus === "pending") pending += 1;
+      else lapsed += 1;
       if (r.audience === "user") members += 1;
       else guests += 1;
     }
-    return { confirmed, pending, unsubscribed, guests, members };
+    return { subscribed, unsubscribed, pending, lapsed, guests, members };
   }, [rows]);
 
   function onDownload() {
@@ -178,13 +198,12 @@ export default function SubscriptionsTable() {
     downloadCSV(`naisi-subscriptions-${stamp}.csv`, rowsToCSV(filtered));
   }
 
-  async function onToggleStatus(row: SubscriptionRow) {
-    const next: "confirmed" | "unsubscribed" =
-      row.status === "unsubscribed" ? "confirmed" : "unsubscribed";
+  async function onToggleSubscribed(row: SubscriptionRow) {
+    const next = !row.subscribed;
     setBusyId(row.id);
     setActionError(null);
     try {
-      await setRowStatus(row.id, next);
+      await setRowSubscribed(row.id, next);
     } catch (err) {
       console.error(err);
       setActionError(err instanceof Error ? err.message : "Action failed");
@@ -197,7 +216,7 @@ export default function SubscriptionsTable() {
     if (backfillState.kind === "running") return;
     if (
       !window.confirm(
-        "Run subscription backfill? Reads every user doc and creates / refreshes a subscription row for each active newsletter or events pref. Idempotent, safe to re-run.",
+        "Run subscription backfill? Two passes: writes a row per (member, channel) for every user, then migrates any legacy-shape rows. Idempotent, safe to re-run.",
       )
     ) {
       return;
@@ -243,8 +262,8 @@ export default function SubscriptionsTable() {
         </div>
         <div className={styles.minis}>
           <div>
-            <div className={styles.miniCount}>{counts.confirmed}</div>
-            <div className={styles.miniLabel}>Confirmed</div>
+            <div className={styles.miniCount}>{counts.subscribed}</div>
+            <div className={styles.miniLabel}>Subscribed</div>
           </div>
           <div>
             <div className={styles.miniCount}>{counts.pending}</div>
@@ -253,6 +272,10 @@ export default function SubscriptionsTable() {
           <div>
             <div className={styles.miniCount}>{counts.unsubscribed}</div>
             <div className={styles.miniLabel}>Unsubscribed</div>
+          </div>
+          <div>
+            <div className={styles.miniCount}>{counts.lapsed}</div>
+            <div className={styles.miniLabel}>Lapsed</div>
           </div>
           <div>
             <div className={styles.miniCount}>{counts.members}</div>
@@ -273,7 +296,7 @@ export default function SubscriptionsTable() {
               type="search"
               value={search}
               onChange={(e) => onSearch(e.target.value)}
-              placeholder="Substring match — case-insensitive"
+              placeholder="Substring match, case-insensitive"
             />
           </Field>
           <label>
@@ -297,9 +320,10 @@ export default function SubscriptionsTable() {
               onChange={(e) => onStatus(e.target.value as StatusFilter)}
             >
               <option value="all">All statuses</option>
-              <option value="confirmed">Confirmed</option>
+              <option value="subscribed">Subscribed</option>
               <option value="pending">Pending</option>
               <option value="unsubscribed">Unsubscribed</option>
+              <option value="lapsed">Lapsed</option>
             </Select>
           </label>
           <label>
@@ -319,7 +343,7 @@ export default function SubscriptionsTable() {
               variant="ghost"
               onClick={onRunBackfill}
               disabled={backfillState.kind === "running"}
-              title="Reads every user doc and ensures their subscription rows match their notification prefs. Idempotent."
+              title="Two-pass migration: writes a row per (member, channel) for every user, then converts any legacy-shape rows to the new schema. Idempotent."
             >
               {backfillState.kind === "running" ? "Running…" : "Run backfill"}
             </Button>
@@ -338,8 +362,10 @@ export default function SubscriptionsTable() {
           >
             Backfill complete. Scanned {backfillState.result.usersScanned} user
             {backfillState.result.usersScanned === 1 ? "" : "s"}, wrote{" "}
-            {backfillState.result.rowsWritten} row
-            {backfillState.result.rowsWritten === 1 ? "" : "s"}
+            {backfillState.result.memberRowsWritten} member row
+            {backfillState.result.memberRowsWritten === 1 ? "" : "s"}, migrated{" "}
+            {backfillState.result.legacyRowsMigrated} legacy row
+            {backfillState.result.legacyRowsMigrated === 1 ? "" : "s"}
             {backfillState.result.usersWithNoEmail > 0
               ? `, skipped ${backfillState.result.usersWithNoEmail} user(s) without email`
               : ""}
@@ -385,7 +411,7 @@ export default function SubscriptionsTable() {
                   <th>Audience</th>
                   <th>Status</th>
                   <th>Source</th>
-                  <th>Created</th>
+                  <th>Subscribed</th>
                   <th>Confirmed</th>
                   <th aria-label="Actions"></th>
                 </tr>
@@ -404,33 +430,25 @@ export default function SubscriptionsTable() {
                       </Badge>
                     </td>
                     <td>
-                      <Badge
-                        tone={
-                          r.status === "confirmed"
-                            ? "success"
-                            : r.status === "pending"
-                              ? "warning"
-                              : "neutral"
-                        }
-                      >
-                        {r.status}
+                      <Badge tone={STATUS_TONE[r.displayStatus]}>
+                        {STATUS_LABEL[r.displayStatus]}
                       </Badge>
                     </td>
                     <td className={styles.muted}>{r.source}</td>
-                    <td className={styles.muted}>{formatDate(r.createdAt)}</td>
+                    <td className={styles.muted}>{formatDate(r.subscribedAt)}</td>
                     <td className={styles.muted}>{formatDate(r.confirmedAt)}</td>
                     <td>
                       <Button
                         size="sm"
-                        variant={r.status === "unsubscribed" ? "primary" : "ghost"}
+                        variant={r.subscribed ? "ghost" : "primary"}
                         disabled={busyId === r.id}
-                        onClick={() => onToggleStatus(r)}
+                        onClick={() => onToggleSubscribed(r)}
                       >
                         {busyId === r.id
                           ? "…"
-                          : r.status === "unsubscribed"
-                            ? "Re-subscribe"
-                            : "Unsubscribe"}
+                          : r.subscribed
+                            ? "Unsubscribe"
+                            : "Re-subscribe"}
                       </Button>
                     </td>
                   </tr>
