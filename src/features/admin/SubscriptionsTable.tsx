@@ -5,6 +5,7 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Select from "@/components/ui/Select";
+import { Field, Input } from "@/components/ui/Input";
 import { downloadCSV, toCSV } from "@/lib/csv";
 import {
   useSubscriptions,
@@ -15,6 +16,8 @@ import styles from "./SubscriptionsTable.module.css";
 type ChannelFilter = "all" | string;
 type StatusFilter = "all" | "pending" | "confirmed" | "unsubscribed";
 type AudienceFilter = "all" | "user" | "guest";
+
+const PAGE_SIZE = 30;
 
 function formatDate(d: Date | null): string {
   if (!d) return "—";
@@ -54,11 +57,30 @@ function rowsToCSV(rows: SubscriptionRow[]): string {
   );
 }
 
+async function setRowStatus(
+  id: string,
+  status: "confirmed" | "unsubscribed" | "pending",
+): Promise<void> {
+  const res = await fetch(`/api/admin/subscriptions/${id}/set-status`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Set-status failed (${res.status})`);
+  }
+}
+
 export default function SubscriptionsTable() {
   const { rows, loading, error } = useSubscriptions();
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [audienceFilter, setAudienceFilter] = useState<AudienceFilter>("all");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const channelOptions = useMemo(() => {
     const set = new Set<string>();
@@ -67,13 +89,41 @@ export default function SubscriptionsTable() {
   }, [rows]);
 
   const filtered = useMemo(() => {
+    const needle = search.trim().toLowerCase();
     return rows.filter((r) => {
       if (channelFilter !== "all" && r.channel !== channelFilter) return false;
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (audienceFilter !== "all" && r.audience !== audienceFilter) return false;
+      if (needle && !r.email.toLowerCase().includes(needle)) return false;
       return true;
     });
-  }, [rows, channelFilter, statusFilter, audienceFilter]);
+  }, [rows, channelFilter, statusFilter, audienceFilter, search]);
+
+  // Wrap each filter setter so changing a filter also resets to page 0.
+  // Lifting this out of a useEffect avoids the project's set-state-in-effect
+  // lint rule and is functionally identical — every filter change goes
+  // through one of these.
+  const onSearch = (v: string) => {
+    setSearch(v);
+    setPage(0);
+  };
+  const onChannel = (v: ChannelFilter) => {
+    setChannelFilter(v);
+    setPage(0);
+  };
+  const onStatus = (v: StatusFilter) => {
+    setStatusFilter(v);
+    setPage(0);
+  };
+  const onAudience = (v: AudienceFilter) => {
+    setAudienceFilter(v);
+    setPage(0);
+  };
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageStart = safePage * PAGE_SIZE;
+  const pageRows = filtered.slice(pageStart, pageStart + PAGE_SIZE);
 
   const counts = useMemo(() => {
     let confirmed = 0;
@@ -94,6 +144,21 @@ export default function SubscriptionsTable() {
   function onDownload() {
     const stamp = new Date().toISOString().slice(0, 10);
     downloadCSV(`naisi-subscriptions-${stamp}.csv`, rowsToCSV(filtered));
+  }
+
+  async function onToggleStatus(row: SubscriptionRow) {
+    const next: "confirmed" | "unsubscribed" =
+      row.status === "unsubscribed" ? "confirmed" : "unsubscribed";
+    setBusyId(row.id);
+    setActionError(null);
+    try {
+      await setRowStatus(row.id, next);
+    } catch (err) {
+      console.error(err);
+      setActionError(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setBusyId(null);
+    }
   }
 
   if (loading) {
@@ -148,11 +213,20 @@ export default function SubscriptionsTable() {
 
       <Card padding="md">
         <div className={styles.toolbar}>
+          <Field id="sub-search" label="Search by email" hint=" ">
+            <Input
+              id="sub-search"
+              type="search"
+              value={search}
+              onChange={(e) => onSearch(e.target.value)}
+              placeholder="Substring match — case-insensitive"
+            />
+          </Field>
           <label>
             Channel
             <Select
               value={channelFilter}
-              onChange={(e) => setChannelFilter(e.target.value)}
+              onChange={(e) => onChannel(e.target.value)}
             >
               <option value="all">All channels</option>
               {channelOptions.map((c) => (
@@ -166,7 +240,7 @@ export default function SubscriptionsTable() {
             Status
             <Select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+              onChange={(e) => onStatus(e.target.value as StatusFilter)}
             >
               <option value="all">All statuses</option>
               <option value="confirmed">Confirmed</option>
@@ -178,7 +252,7 @@ export default function SubscriptionsTable() {
             Audience
             <Select
               value={audienceFilter}
-              onChange={(e) => setAudienceFilter(e.target.value as AudienceFilter)}
+              onChange={(e) => onAudience(e.target.value as AudienceFilter)}
             >
               <option value="all">All audiences</option>
               <option value="user">Members</option>
@@ -193,6 +267,14 @@ export default function SubscriptionsTable() {
         </div>
       </Card>
 
+      {actionError && (
+        <Card padding="sm">
+          <p style={{ color: "var(--color-danger)", margin: 0 }}>
+            {actionError}
+          </p>
+        </Card>
+      )}
+
       {filtered.length === 0 ? (
         <Card padding="md">
           <p style={{ color: "var(--color-text-muted)" }}>
@@ -200,52 +282,99 @@ export default function SubscriptionsTable() {
           </p>
         </Card>
       ) : (
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Email</th>
-                <th>Channel</th>
-                <th>Audience</th>
-                <th>Status</th>
-                <th>Source</th>
-                <th>Created</th>
-                <th>Confirmed</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.email}</td>
-                  <td>
-                    <Badge tone="neutral">{r.channel}</Badge>
-                  </td>
-                  <td>
-                    <Badge tone={r.audience === "user" ? "accent" : "neutral"}>
-                      {r.audience}
-                    </Badge>
-                  </td>
-                  <td>
-                    <Badge
-                      tone={
-                        r.status === "confirmed"
-                          ? "success"
-                          : r.status === "pending"
-                            ? "warning"
-                            : "neutral"
-                      }
-                    >
-                      {r.status}
-                    </Badge>
-                  </td>
-                  <td className={styles.muted}>{r.source}</td>
-                  <td className={styles.muted}>{formatDate(r.createdAt)}</td>
-                  <td className={styles.muted}>{formatDate(r.confirmedAt)}</td>
+        <>
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Channel</th>
+                  <th>Audience</th>
+                  <th>Status</th>
+                  <th>Source</th>
+                  <th>Created</th>
+                  <th>Confirmed</th>
+                  <th aria-label="Actions"></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {pageRows.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.email}</td>
+                    <td>
+                      <Badge tone="neutral">{r.channel}</Badge>
+                    </td>
+                    <td>
+                      <Badge tone={r.audience === "user" ? "accent" : "neutral"}>
+                        {r.audience}
+                      </Badge>
+                    </td>
+                    <td>
+                      <Badge
+                        tone={
+                          r.status === "confirmed"
+                            ? "success"
+                            : r.status === "pending"
+                              ? "warning"
+                              : "neutral"
+                        }
+                      >
+                        {r.status}
+                      </Badge>
+                    </td>
+                    <td className={styles.muted}>{r.source}</td>
+                    <td className={styles.muted}>{formatDate(r.createdAt)}</td>
+                    <td className={styles.muted}>{formatDate(r.confirmedAt)}</td>
+                    <td>
+                      <Button
+                        size="sm"
+                        variant={r.status === "unsubscribed" ? "primary" : "ghost"}
+                        disabled={busyId === r.id}
+                        onClick={() => onToggleStatus(r)}
+                      >
+                        {busyId === r.id
+                          ? "…"
+                          : r.status === "unsubscribed"
+                            ? "Re-activate"
+                            : "Deactivate"}
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className={styles.pagination}>
+            <span className={styles.paginationInfo}>
+              {filtered.length} match{filtered.length === 1 ? "" : "es"} ·{" "}
+              Showing {pageStart + 1}
+              {"–"}
+              {Math.min(pageStart + PAGE_SIZE, filtered.length)}
+            </span>
+            <div className={styles.paginationActions}>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={safePage === 0}
+                onClick={() => setPage(safePage - 1)}
+              >
+                ← Prev
+              </Button>
+              <span className={styles.muted}>
+                Page {safePage + 1} / {pageCount}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={safePage >= pageCount - 1}
+                onClick={() => setPage(safePage + 1)}
+              >
+                Next →
+              </Button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
