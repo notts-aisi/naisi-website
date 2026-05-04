@@ -120,12 +120,16 @@
 
 .panelInner {
   /* The grid-row track does the height; this element clips the content
-     while it is in the closed (0fr) row. Without overflow:hidden the
-     children would still paint outside their track. */
+     while it is in the closed (0fr) row.
+     - `min-height: 0` overrides the default `min-height: auto` on grid
+       items, which is the bit that prevents the track from actually
+       shrinking past content size. Without this, the panel "collapses"
+       visually but a sliver of the first item leaks through.
+     - `overflow: hidden` then clips whatever natural height the inner
+       content has during the transition so it doesn't paint outside the
+       track. */
+  min-height: 0;
   overflow: hidden;
-  /* Tiny padding so the items panel never crashes into the summary row
-     visually when first opening. */
-  padding-bottom: var(--space-5);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -141,9 +145,11 @@
 
 .items {
   list-style: none;
-  padding: 0 0 0 calc(var(--text-xs) * 4 + var(--space-4));
   /* Indent the items so they line up with the summary title (past the
-     numeral column), keeping the same visual rhythm as the closed state. */
+     numeral column), keeping the same visual rhythm as the closed state.
+     Bottom padding lives here (rather than on .panelInner) so it doesn't
+     contribute to the collapsed-state height of the grid-row track. */
+  padding: 0 0 var(--space-5) calc(var(--text-xs) * 4 + var(--space-4));
   margin: 0;
   display: flex;
   flex-direction: column;
