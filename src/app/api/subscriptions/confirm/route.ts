@@ -55,12 +55,35 @@ export async function GET(req: Request) {
     return htmlResponse(invalidPage("Something went wrong confirming your subscription. Try again later."), 500);
   }
 
-  // Welcome email — fire-and-forget so the success page renders even if the
+  // Pull a name off any subscription row for this email so the welcome
+  // greeting can use it. Names live on the rows themselves (the name field
+  // is captured at signup or written through by the sync route). One row
+  // may have it and another may not (signups from different forms across
+  // time), so just take the first non-empty one.
+  let name: string | undefined;
+  try {
+    const rowsSnap = await db
+      .collection("subscriptions")
+      .where("email", "==", email)
+      .get();
+    for (const doc of rowsSnap.docs) {
+      const candidate = doc.data().name;
+      if (typeof candidate === "string" && candidate.trim().length > 0) {
+        name = candidate.trim();
+        break;
+      }
+    }
+  } catch (err) {
+    // Non-fatal. Welcome email just falls back to "Hi there".
+    console.warn("[/api/subscriptions/confirm] name lookup failed", email, err);
+  }
+
+  // Welcome email is fire-and-forget so the success page renders even if the
   // send is slow / fails. Skip if there are no active channels (would mean
   // they were unsubscribed between sign-up and confirm; just render success
   // page so we don't leak signal).
   if (result.channels.length > 0) {
-    void sendWelcomeEmail(email, result.channels).catch((err) => {
+    void sendWelcomeEmail(email, result.channels, name).catch((err) => {
       console.warn("[/api/subscriptions/confirm] welcome send failed", email, err);
     });
   }
@@ -68,7 +91,11 @@ export async function GET(req: Request) {
   return htmlResponse(successPage(result.channels), 200);
 }
 
-async function sendWelcomeEmail(email: string, channels: string[]): Promise<void> {
+async function sendWelcomeEmail(
+  email: string,
+  channels: string[],
+  name: string | undefined,
+): Promise<void> {
   if (channels.length === 0) return;
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
   const replyTo = process.env.EMAIL_DEFAULT_REPLY_TO;
@@ -88,7 +115,7 @@ async function sendWelcomeEmail(email: string, channels: string[]): Promise<void
   const unsubAllUrl = `${appUrl}/api/unsubscribe?t=${encodeURIComponent(allTok)}`;
 
   // Use the first channel's unsub-url for the RFC 8058 header. Inbox UIs
-  // expose this as a single button — so it must drop the user from
+  // expose this as a single button, so it must drop the user from
   // *something* sensible. The footer in the email body offers per-channel
   // links explicitly.
   const headerUnsub = unsubUrls[channels[0]] ?? unsubAllUrl;
@@ -100,6 +127,7 @@ async function sendWelcomeEmail(email: string, channels: string[]): Promise<void
       channels,
       unsubUrls,
       unsubAllUrl,
+      name,
     }),
     kind: "subscription-welcome",
     listUnsubscribe: { url: headerUnsub, mailto: replyTo },

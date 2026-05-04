@@ -32,7 +32,16 @@ export default function PublicFooter() {
       </div>
       <div className={`container ${styles.meta}`}>
         <span>© {new Date().getFullYear()} NAISI</span>
-        <span>Built at Nottingham · Designed to be re-themed easily</span>
+        <span>
+          Built at Nottingham ·{" "}
+          <a
+            href="https://github.com/notts-aisi/naisi-website"
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            Source on GitHub
+          </a>
+        </span>
       </div>
     </footer>
   );

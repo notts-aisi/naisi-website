@@ -15,6 +15,8 @@ type Props = {
   channel: string;
   /** Pre-populates the email field. Useful for re-subscribe links. */
   initialEmail?: string;
+  /** Pre-populates the name field. */
+  initialName?: string;
   /** Optional copy override for the helper text below the input. */
   hint?: string;
   /** Optional override for the success copy. */
@@ -30,6 +32,7 @@ type Status =
   | { kind: "error"; message: string };
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const NAME_MAX_LEN = 80;
 
 function defaultSuccessMessage(channel: string, kind: "added" | "confirmation"): string {
   if (kind === "added") {
@@ -47,22 +50,25 @@ function defaultSuccessMessage(channel: string, kind: "added" | "confirmation"):
 export default function SubscribeForm({
   channel,
   initialEmail = "",
+  initialName = "",
   hint,
   successMessage,
   layout = "auto",
 }: Props) {
   const [email, setEmail] = useState(initialEmail);
+  const [name, setName] = useState(initialName);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (status.kind === "submitting") return;
 
-    const trimmed = email.trim();
-    if (!trimmed || !EMAIL_RE.test(trimmed)) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !EMAIL_RE.test(trimmedEmail)) {
       setStatus({ kind: "error", message: "That doesn't look like a valid email." });
       return;
     }
+    const trimmedName = name.trim().slice(0, NAME_MAX_LEN);
 
     setStatus({ kind: "submitting" });
     try {
@@ -70,9 +76,12 @@ export default function SubscribeForm({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          email: trimmed,
+          email: trimmedEmail,
           channel,
           source: `homepage-${channel}`,
+          // Only send name when there's something to send. Server treats
+          // missing as "leave existing value alone".
+          ...(trimmedName ? { name: trimmedName } : {}),
         }),
       });
       const body = (await res.json().catch(() => null)) as
@@ -106,7 +115,8 @@ export default function SubscribeForm({
   }
 
   const submitting = status.kind === "submitting";
-  const fieldId = `subscribe-${channel}-email`;
+  const emailFieldId = `subscribe-${channel}-email`;
+  const nameFieldId = `subscribe-${channel}-name`;
 
   return (
     <form
@@ -114,10 +124,26 @@ export default function SubscribeForm({
       className={`${styles.form} ${layout === "full" ? styles.formFull : ""}`}
       noValidate
     >
-      <Field id={fieldId} label="Your email" hint={hint ?? " "}>
+      <Field
+        id={nameFieldId}
+        label="Your first name"
+        hint="Just so we can address you properly. Optional."
+      >
+        <Input
+          id={nameFieldId}
+          type="text"
+          autoComplete="given-name"
+          maxLength={NAME_MAX_LEN}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Marie"
+          disabled={submitting}
+        />
+      </Field>
+      <Field id={emailFieldId} label="Your email" hint={hint ?? " "}>
         <div className={styles.row}>
           <Input
-            id={fieldId}
+            id={emailFieldId}
             type="email"
             inputMode="email"
             autoComplete="email"

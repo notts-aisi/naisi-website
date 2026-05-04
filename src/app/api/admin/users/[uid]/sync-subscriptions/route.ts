@@ -77,6 +77,17 @@ export async function POST(req: Request, ctx: Ctx) {
       ? normaliseEmail(uniRaw)
       : null;
 
+  // Pull the member's preferred / display name through to the row so the
+  // admin Subscriptions table shows the human label, and so any future
+  // outbound that personalises by name has it available without an
+  // extra user-doc read at send time.
+  const preferred = profile.preferredName;
+  const display = userData.displayName;
+  const memberName: string | undefined =
+    (typeof preferred === "string" && preferred.trim()) ||
+    (typeof display === "string" && display.trim()) ||
+    undefined;
+
   let parsed: Body = {};
   try {
     parsed = (await req.json()) as Body;
@@ -126,6 +137,7 @@ export async function POST(req: Request, ctx: Ctx) {
         audience: "user",
         audienceId: uid,
         source: "admin",
+        name: memberName,
       });
     } else {
       await unsubscribe(db, { email: googleEmail, channel: cat });
