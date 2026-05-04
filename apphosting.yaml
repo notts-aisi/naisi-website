@@ -83,5 +83,12 @@ env:
   - variable: EMAIL_GMAIL_ONLY_MODE
     value: "true"
     availability: [RUNTIME]
-  # Admin credentials are injected automatically by App Hosting (ADC) —
+  # Behold (https://behold.so) Instagram-feed widget id. Set per-backend via
+  # the Firebase console UI once the @nottsaiai feed is connected on Behold.
+  # When unset, the homepage renders a static "Follow @nottsaiai" link
+  # instead of the embedded grid, so an empty value is a safe interim state.
+  - variable: NEXT_PUBLIC_BEHOLD_FEED_ID
+    value: ""
+    availability: [BUILD, RUNTIME]
+  # Admin credentials are injected automatically by App Hosting (ADC),
   # no FIREBASE_ADMIN_* env vars needed in production.

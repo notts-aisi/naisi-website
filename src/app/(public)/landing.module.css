@@ -1,3 +1,5 @@
+/* === Hero (kept from prior design) === */
+
 .hero {
   position: relative;
   padding-block: var(--space-24) var(--space-20);
@@ -80,31 +82,219 @@
   .heroArt { display: none; }
 }
 
-.section { padding-block: var(--space-20); }
-.sectionAlt {
-  padding-block: var(--space-16);
-  background: var(--color-bg-elevated);
-  border-block: 1px solid var(--color-border);
-}
+/* === Shared section heads === */
 
 .sectionHead {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   margin-bottom: var(--space-10);
-  max-width: 40rem;
+  max-width: 44rem;
 }
 
-.grid {
+.sectionSub {
+  color: var(--color-text-muted);
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
+  margin: 0;
+}
+
+.inlineLink {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.inlineLink:hover {
+  color: var(--color-accent-hover);
+}
+
+/* === Streams section === */
+
+.streamsSection {
+  position: relative;
+  padding-block: var(--space-20);
+  background:
+    radial-gradient(ellipse at 90% -10%, var(--color-accent-soft) 0%, transparent 45%),
+    var(--color-bg-elevated);
+  border-block: 1px solid var(--color-border);
+}
+
+.streamsGrid {
   display: grid;
-  gap: var(--space-4);
-  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--space-5);
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
 }
 
-.cta {
+.streamCard {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-6);
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.streamHead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.streamTitle {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.streamSubtitle {
+  color: var(--color-text-muted);
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
+  margin: 0;
+}
+
+.streamGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.streamGroupLabel {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.streamGroupBody {
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.streamsFooter {
+  margin-top: var(--space-8);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+/* === Editorial prose section (events nod + signup) === */
+
+.proseSection {
+  padding-block: var(--space-20);
+}
+
+.proseInner {
+  max-width: 40rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.proseInner p {
+  color: var(--color-text);
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
+  margin: 0;
+}
+
+.proseSignup {
+  margin-top: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.proseSignupHeading {
+  font-weight: 600;
+  color: var(--color-text);
+  font-size: var(--text-base);
+  margin: 0;
+}
+
+/* === Instagram section === */
+
+.igSection {
+  padding-block: var(--space-20);
+}
+
+.igWrap {
+  position: relative;
+  max-width: 100%;
+  overflow-x: hidden;
+  border-radius: var(--radius-lg);
+}
+
+/* Hard ceiling on whatever the third-party embed renders, so it can't
+   widen the page. Containment is the whole game here. */
+.igWrap > * {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.igFallback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-10) var(--space-6);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  text-align: center;
+}
+
+.igFallbackHeading {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  margin: 0;
+}
+
+.igFallbackBody {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+/* === Digest signup section === */
+
+.digestSection {
+  position: relative;
+  padding-block: var(--space-20);
+  background:
+    radial-gradient(ellipse at 10% 20%, var(--color-accent-soft) 0%, transparent 55%),
+    var(--color-bg-elevated);
+  border-block: 1px solid var(--color-border);
+}
+
+.digestInner {
+  display: grid;
+  gap: var(--space-8);
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+@media (min-width: 48rem) {
+  .digestInner {
+    grid-template-columns: 1.2fr 1fr;
+    align-items: center;
+  }
+}
+
+.digestPitch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.digestBody {
+  color: var(--color-text);
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
+  margin: 0;
+}
+
+.digestForm {
+  width: 100%;
 }
