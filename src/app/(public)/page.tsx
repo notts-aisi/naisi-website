@@ -63,9 +63,9 @@ export default function Landing() {
             <Link href="/register" className={styles.inlineLink}>
               approved by the committee
             </Link>{" "}
-            before joining the community properly. There are three ways in,
-            stacked by commitment: the socials, the fellowships, and the
-            research pathway.
+            before joining the community properly. There are three ways to
+            take part, stacked by commitment: the socials, the fellowships,
+            and the research pathway.
           </p>
         </div>
       </section>
@@ -73,19 +73,24 @@ export default function Landing() {
       <section className={styles.tiersSection}>
         <div className={`container ${styles.tiersInner}`}>
           <header className={styles.tiersHead}>
-            <h2 className={styles.tiersTitle}>Three ways in.</h2>
+            <h2 className={styles.tiersTitle}>Three ways to take part.</h2>
             <p className={styles.tiersBlurb}>
-              Pick the level of commitment that matches where you are. Each
-              tier builds on the one before it, but the entry-level ones
-              stand on their own too.
+              Pick the level of commitment that matches where you are.
+              You&apos;re welcome wherever you feel you fit best.{" "}
+              <a
+                href="https://www.instagram.com/notts.ai.safety/"
+                target="_blank"
+                rel="noreferrer noopener"
+                className={styles.inlineLink}
+              >
+                Message us
+              </a>{" "}
+              if you want to come to an event but you&apos;re unsure.
             </p>
           </header>
           <ol className={styles.tiersList}>
             <li className={styles.tier}>
               <div className={styles.tierHead}>
-                <span className={styles.tierIndex} aria-hidden="true">
-                  01
-                </span>
                 <h3 className={styles.tierName}>Socials</h3>
                 <span className={styles.tierMeta}>
                   No experience needed
@@ -98,6 +103,10 @@ export default function Landing() {
                 to meet the people in this fast-growing community before
                 you commit to anything else. Show up, eat something, leave.
               </p>
+              <p className={styles.tierBody}>
+                Your first social is on us. Come once before you decide
+                whether to pay for membership.
+              </p>
               <p className={styles.tierFooter}>
                 <Link href="/events" className={styles.inlineLink}>
                   See what&apos;s on →
@@ -107,9 +116,6 @@ export default function Landing() {
 
             <li className={styles.tier}>
               <div className={styles.tierHead}>
-                <span className={styles.tierIndex} aria-hidden="true">
-                  02
-                </span>
                 <h3 className={styles.tierName}>Fellowships</h3>
                 <span className={styles.tierMeta}>
                   Six to seven weeks · ~5 hrs/week · certificate
@@ -140,9 +146,6 @@ export default function Landing() {
 
             <li className={styles.tier}>
               <div className={styles.tierHead}>
-                <span className={styles.tierIndex} aria-hidden="true">
-                  03
-                </span>
                 <h3 className={styles.tierName}>Research pathway</h3>
                 <span className={styles.tierMeta}>
                   Upcoming · fellowship-completer level
@@ -173,8 +176,8 @@ export default function Landing() {
             </p>
           </header>
           <div className={styles.readingStack}>
-            {READING_LISTS.map((list, i) => (
-              <ReadingListAccordion key={list.slug} list={list} index={i + 1} />
+            {READING_LISTS.map((list) => (
+              <ReadingListAccordion key={list.slug} list={list} />
             ))}
           </div>
         </div>
