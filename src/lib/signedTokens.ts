@@ -32,8 +32,13 @@ type UnsubscribePayload = PayloadBase & {
   /** Uid if this is for an authed user, else the public subscriber email. */
   uid?: string;
   email?: string;
-  /** Which category the unsubscribe targets (omit to unsubscribe from all). */
-  c?: "newsletter" | "events" | "all";
+  /**
+   * Subscription channel id (or `"all"` for "drop me from everything"). Free
+   * string by design — gives future cohort-channel ids (e.g. `cohort:fall-2026`)
+   * one-click unsub without a code change. Convention enforced by callers
+   * (see `isValidChannel` in `lib/firestore/subscriptions.ts`).
+   */
+  c?: string;
 };
 
 type VerifyPayload = PayloadBase & {
@@ -44,8 +49,14 @@ type VerifyPayload = PayloadBase & {
 
 type PublicConfirmPayload = PayloadBase & {
   s: "public-confirm";
-  /** Firestore doc id in `publicSubscriberConfirmations`. */
-  c: string;
+  /**
+   * Normalised (lowercased, trimmed) email this token confirms. The route
+   * uses it to batch-flip every `pending` subscription row for the address
+   * to `confirmed`. Kept as the email itself rather than a sanitised form
+   * because the sanitiser isn't bijective — recovering the raw email from
+   * a sanitised id requires either an index lookup or storing both.
+   */
+  e: string;
 };
 
 export type TokenPayload =

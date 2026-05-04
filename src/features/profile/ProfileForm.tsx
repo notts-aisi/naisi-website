@@ -154,6 +154,26 @@ export default function ProfileForm() {
         patch["profile.uniEmailVerifiedAt"] = deleteField();
       }
       await updateDoc(doc(db, "users", user.uid), patch);
+
+      // Subscriptions sync — applies the new prefs as deltas onto the
+      // junction collection. Fire-and-forget; the user-doc write above is
+      // the part that the UI confirms with "Saved." If the sync fails, the
+      // legacy `profile.notifications` field still reflects intent and the
+      // next save retries.
+      fetch("/api/subscriptions/sync", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          prefs: {
+            newsletter: prefs.categories.newsletter,
+            events: prefs.categories.events,
+          },
+          claimUniEmail: true,
+        }),
+      }).catch((err) => {
+        console.warn("[profile subscriptions sync] failed", err);
+      });
+
       setSaved(true);
     } catch (err) {
       console.error(err);

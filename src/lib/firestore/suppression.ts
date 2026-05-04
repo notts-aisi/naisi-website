@@ -1,5 +1,6 @@
 import "server-only";
 import type { Firestore } from "firebase-admin/firestore";
+import { emailDocId, normaliseEmail } from "./emailDocId";
 
 export type SuppressionReason = "bounce" | "complaint";
 
@@ -11,18 +12,8 @@ export type SuppressionEntry = {
   addedAt: Date;
 };
 
-function normalize(email: string): string {
-  return email.trim().toLowerCase();
-}
-
-/**
- * Firestore doc id for a normalised email. The collection is keyed by a
- * sanitised form so we can fetch by doc id instead of querying. Characters
- * outside Firestore's safe set are replaced with underscores.
- */
-function docId(email: string): string {
-  return normalize(email).replace(/[^a-z0-9@._+-]/g, "_");
-}
+const normalize = normaliseEmail;
+const docId = emailDocId;
 
 export async function addSuppression(
   db: Firestore,

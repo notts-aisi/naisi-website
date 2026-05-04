@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
@@ -41,7 +41,19 @@ type VerificationState =
   | { status: "error"; message: string };
 
 export default function RegisterPage() {
+  // Next 16 requires `useSearchParams()` consumers to live under a Suspense
+  // boundary so the bailout-to-CSR semantics are explicit at build time.
+  return (
+    <Suspense fallback={null}>
+      <RegisterPageInner />
+    </Suspense>
+  );
+}
+
+function RegisterPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromSubscriber = searchParams.get("from") === "subscriber";
   const { user, role, loading: authLoading } = useAuth();
 
   useEffect(() => {
@@ -262,6 +274,25 @@ export default function RegisterPage() {
           ? "Apply to join the Nottingham AI Safety Initiative. We'll review your application and be in touch."
           : "Tell us a bit about you so the committee can review your application."}
       </p>
+
+      {fromSubscriber && (
+        <div
+          style={{
+            border: "1px solid var(--color-border)",
+            borderRadius: "var(--radius-md)",
+            padding: "var(--space-3) var(--space-4)",
+            marginBottom: "var(--space-5)",
+            background: "var(--color-bg-elevated)",
+            color: "var(--color-text-muted)",
+            fontSize: "var(--text-sm)",
+            lineHeight: 1.5,
+          }}
+        >
+          We noticed you&apos;ve subscribed to NAISI emails before. Completing
+          registration will move your subscription onto your member account so
+          you don&apos;t get duplicate emails.
+        </div>
+      )}
 
       {step === "sign-in" ? (
         <>

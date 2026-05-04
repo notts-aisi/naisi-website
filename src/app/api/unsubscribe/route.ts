@@ -6,6 +6,12 @@ import {
   normaliseNotifications,
   type NotificationCategory,
 } from "@/lib/firestore/notifications";
+import {
+  channelLabel,
+  isValidChannel,
+  unsubscribe as unsubscribeChannel,
+  unsubscribeAll as unsubscribeAllChannels,
+} from "@/lib/firestore/subscriptions";
 
 /**
  * One-click unsubscribe endpoint. Accepts a signed token — no auth needed
@@ -15,10 +21,15 @@ import {
  * Supports both RFC 8058 (`POST` from mail providers with
  * `List-Unsubscribe-Post: List-Unsubscribe=One-Click`) and direct GET from
  * a human-clicked link in an email.
+ *
+ * Token's `c` field carries the channel id (`newsletter`, `events`, future
+ * `cohort:fall-2026`, etc.) or the literal `"all"` for "drop me from
+ * everything". The `c` field is a free string by design so cohort channels
+ * added after PR 1 work without a token-shape change.
  */
 async function unsubscribeFromToken(signed: string | null): Promise<{
   ok: boolean;
-  category?: NotificationCategory | "all";
+  category?: string;
   error?: string;
   status: number;
 }> {
@@ -32,40 +43,70 @@ async function unsubscribeFromToken(signed: string | null): Promise<{
   if (!db) return { ok: false, error: "Server not configured", status: 500 };
 
   const category = payload.c ?? "all";
+  // Allow only valid channels or the literal "all". Tokens minted before this
+  // PR may carry "newsletter"/"events" — both pass `isValidChannel`.
+  if (category !== "all" && !isValidChannel(category)) {
+    return { ok: false, error: "Invalid channel", status: 400 };
+  }
 
   if (payload.uid) {
-    // Authed user unsubscribe — update users/{uid}.profile.notifications.
+    // Authed user unsubscribe — flip the subscription row(s) AND keep the
+    // legacy `users/{uid}.profile.notifications.categories` field in sync
+    // during the migration window. The sender already reads from
+    // `subscriptions`, but other code paths may still consult the user-doc
+    // booleans until the legacy-cleanup PR.
     const ref = db.collection("users").doc(payload.uid);
     const snap = await ref.get();
     if (!snap.exists) {
-      // Swallow as success — a user the token refers to can't confirm the
-      // unsub visually if they don't exist, but exposing "user not found" via
-      // a distinct status is an enumeration signal we don't want.
+      // Swallow as success — exposing "user not found" via a distinct status
+      // is an enumeration signal we don't want.
       return { ok: true, category, status: 200 };
     }
     const profile = (snap.data()?.profile ?? {}) as Record<string, unknown>;
+    const userEmail = (snap.data()?.email as string | undefined) ?? null;
+    const uniEmail =
+      (profile.universityEmail as string | undefined) ?? null;
     const current = normaliseNotifications(profile);
     const nextCategories = { ...current.categories };
-    if (category === "all") {
-      for (const c of ALL_CATEGORIES) nextCategories[c] = false;
-    } else {
-      nextCategories[category] = false;
-    }
+
+    const knownCategoriesToFlip: NotificationCategory[] =
+      category === "all"
+        ? ALL_CATEGORIES.slice()
+        : (ALL_CATEGORIES as NotificationCategory[]).includes(category as NotificationCategory)
+          ? [category as NotificationCategory]
+          : [];
+    for (const c of knownCategoriesToFlip) nextCategories[c] = false;
+
     await ref.update({
       "profile.notifications.categories": nextCategories,
-      // Keep legacy in sync so un-migrated read paths respect the opt-out.
       "profile.newsletter.subscribed":
         category === "all" || category === "newsletter"
           ? false
           : (profile.newsletter as { subscribed?: boolean } | undefined)?.subscribed ??
             false,
     });
+
+    // Subscription rows: members may have rows under their primary (google)
+    // email AND/OR uni email. Flip whichever matches.
+    if (userEmail) {
+      if (category === "all") await unsubscribeAllChannels(db, userEmail);
+      else await unsubscribeChannel(db, { email: userEmail, channel: category });
+    }
+    if (uniEmail && uniEmail !== userEmail) {
+      if (category === "all") await unsubscribeAllChannels(db, uniEmail);
+      else await unsubscribeChannel(db, { email: uniEmail, channel: category });
+    }
+
     return { ok: true, category, status: 200 };
   }
 
   if (payload.email) {
-    // Public subscriber unsubscribe — not built in this PR but the token
-    // shape is ready for it. Treat as no-op for now.
+    // Guest subscriber unsubscribe — directly flip the subscription row(s).
+    if (category === "all") {
+      await unsubscribeAllChannels(db, payload.email);
+    } else {
+      await unsubscribeChannel(db, { email: payload.email, channel: category });
+    }
     return { ok: true, category, status: 200 };
   }
 
@@ -106,14 +147,7 @@ export async function GET(req: Request) {
     );
   }
 
-  const scopeLabel =
-    result.category === "all"
-      ? "all NAISI emails"
-      : result.category === "newsletter"
-        ? "the NAISI newsletter"
-        : result.category === "events"
-          ? "NAISI event announcements"
-          : "these messages";
+  const scopeLabel = result.category ? channelLabel(result.category) : "these messages";
 
   return htmlResponse(
     `<!doctype html><html><head><meta charset="utf-8"><title>Unsubscribed · NAISI</title></head><body style="font-family: ui-sans-serif, system-ui; max-width: 520px; margin: 80px auto; padding: 0 20px; color: #1a2032; line-height: 1.5;">

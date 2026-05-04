@@ -9,6 +9,9 @@ export type EmailSendKind =
   | "application"
   | "application-test"
   | "admin-test"
+  | "subscription-confirm"
+  | "subscription-welcome"
+  | "subscription-added"
   | "unknown";
 
 export type EmailSendStatus = "sent" | "bounced" | "complained";
