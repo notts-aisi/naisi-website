@@ -16,7 +16,7 @@ import styles from "./landing.module.css";
  *  4. "Where to start" reading lists. Four curated lists, collapsible,
  *     closed by default. The page's substance for self-starters.
  *  5. "Stay in touch" signup. One form, name + email + checkboxes for the
- *     two lists (Sunday digest and event announcements).
+ *     two lists (the newsletter and event announcements).
  */
 
 export default function Landing() {
@@ -41,8 +41,8 @@ export default function Landing() {
             <Link href="/register" className={styles.primaryCta}>
               Apply to join
             </Link>
-            <Link href="#digest" className={styles.secondaryCta}>
-              Read the digest →
+            <Link href="#stay-in-touch" className={styles.secondaryCta}>
+              Get the newsletter →
             </Link>
           </div>
           <div className={styles.heroArt} aria-hidden="true">
@@ -183,21 +183,20 @@ export default function Landing() {
         </div>
       </section>
 
-      <section id="digest" className={styles.digestSection}>
+      <section id="stay-in-touch" className={styles.digestSection}>
         <div className={`container ${styles.digestInner}`}>
           <div className={styles.digestPitch}>
             <h2 className={styles.digestTitle}>Stay in touch.</h2>
             <p className={styles.digestBody}>
-              <strong>Sunday digest.</strong> One short email each Sunday
-              morning. The TL;DR on AI safety this week, three to five
-              things worth your time, and any opportunities you can act on.
-              Funding, fellowships, calls for papers, jobs. Written by the
-              committee.
+              <strong>Our newsletter.</strong> A short round-up of what&apos;s
+              moving in AI safety. Three to five things worth your time
+              and any opportunities you can act on. Funding, fellowships,
+              calls for papers, jobs. Written by the committee.
             </p>
             <p className={styles.digestBody}>
               <strong>Event announcements.</strong> A heads-up when we run
-              something on campus, separately from the digest. Tick the
-              boxes for whichever you want.
+              something on campus, separately from the newsletter. Tick
+              the boxes for whichever you want.
             </p>
           </div>
           <div className={styles.digestForm}>
@@ -206,9 +205,9 @@ export default function Landing() {
               channels={[
                 {
                   id: "newsletter",
-                  label: "The Sunday digest",
+                  label: "Our newsletter",
                   description:
-                    "One email a week. Skim it on Sunday over coffee.",
+                    "A round-up of what's moving in AI safety. Low frequency.",
                   defaultChecked: true,
                 },
                 {

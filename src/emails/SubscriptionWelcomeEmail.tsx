@@ -53,9 +53,9 @@ export default function SubscriptionWelcomeEmail({
       </Text>
       {hasNewsletter ? (
         <Text style={{ fontSize: 15, lineHeight: 1.6, margin: "0 0 12px" }}>
-          <strong>The Sunday digest.</strong> A short email each Sunday morning,
-          with the TL;DR on AI safety this week, three to five things worth
-          reading, and any opportunities you can act on.{" "}
+          <strong>The newsletter.</strong> A round-up of what&apos;s moving in
+          AI safety, with three to five things worth reading and any
+          opportunities you can act on.{" "}
           {unsubUrls.newsletter ? (
             <Link href={unsubUrls.newsletter} style={emailLinkStyle}>
               Unsubscribe

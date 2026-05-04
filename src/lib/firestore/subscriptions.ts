@@ -98,7 +98,7 @@ function prettifySlug(slug: string): string {
  */
 export function channelLabel(channel: string): string {
   if (channel === "all") return "all NAISI emails";
-  if (channel === "newsletter") return "the Sunday digest";
+  if (channel === "newsletter") return "our newsletter";
   if (channel === "events") return "event announcements";
   if (channel.startsWith("cohort:")) {
     return `the ${prettifySlug(channel.slice("cohort:".length))} cohort updates`;
