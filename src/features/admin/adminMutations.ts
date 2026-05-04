@@ -122,6 +122,37 @@ export async function updateUserProfile(uid: string, fields: FullProfileUpdate) 
 }
 
 /**
+ * Fire-and-forget sync of the `subscriptions` junction collection for an
+ * arbitrary user. Called after every admin write that touches a member's
+ * notification prefs — keeps the new collection in lockstep with the
+ * legacy `users.profile.notifications` field while both shapes coexist.
+ *
+ * Body-less: the route reads the user doc's current state and reconciles.
+ * That avoids us having to reconstruct prefs in the caller, and makes
+ * "sync to whatever the doc says now" the sensible default after any
+ * partial admin update.
+ */
+async function syncUserSubscriptions(uid: string): Promise<void> {
+  try {
+    const res = await fetch(`/api/admin/users/${uid}/sync-subscriptions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      // Empty body → route falls back to user-doc-derived prefs.
+      body: "{}",
+    });
+    if (!res.ok) {
+      console.warn(
+        "[adminMutations] subscriptions sync non-OK",
+        uid,
+        res.status,
+      );
+    }
+  } catch (err) {
+    console.warn("[adminMutations] subscriptions sync failed", uid, err);
+  }
+}
+
+/**
  * Admin-only manual unsubscribe / re-subscribe. The newsletter preference is
  * a profile subfield, so we use dot-path update to avoid clobbering sibling
  * prefs (deliverToGmail, deliverToUniEmail). Re-subscribing is allowed for
@@ -129,7 +160,9 @@ export async function updateUserProfile(uid: string, fields: FullProfileUpdate) 
  * unsubscribe request promptly, not forbidding reversal on user-facing ask.
  *
  * Dual-writes the new and legacy shapes while the migration window is open
- * so send paths on either shape stay consistent.
+ * so send paths on either shape stay consistent. Also pushes the change to
+ * the `subscriptions` junction collection via the admin sync route — the
+ * Subscriptions admin tab reads from there exclusively.
  */
 export async function setNewsletterSubscribed(uid: string, subscribed: boolean) {
   const db = getClientDb();
@@ -137,6 +170,7 @@ export async function setNewsletterSubscribed(uid: string, subscribed: boolean) 
     "profile.newsletter.subscribed": subscribed,
     "profile.notifications.categories.newsletter": subscribed,
   });
+  await syncUserSubscriptions(uid);
 }
 
 /**
@@ -159,6 +193,7 @@ export async function setUserNotificationCategory(
     patch["profile.newsletter.subscribed"] = enabled;
   }
   await updateDoc(doc(db, "users", uid), patch);
+  await syncUserSubscriptions(uid);
 }
 
 // === Projects ===
