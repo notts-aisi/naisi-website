@@ -289,7 +289,7 @@ function collectChannels(body: Body): string[] {
 
 /** Used only as the SubscriptionAddedEmail subject line input. */
 function friendlyForKind(channel: string): string {
-  if (channel === "newsletter") return "the Sunday digest";
+  if (channel === "newsletter") return "our newsletter";
   if (channel === "events") return "event announcements";
   return channel;
 }

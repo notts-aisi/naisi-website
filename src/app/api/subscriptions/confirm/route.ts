@@ -153,7 +153,7 @@ function invalidPage(message: string): string {
 }
 
 function prettyChannel(channel: string): string {
-  if (channel === "newsletter") return "Sunday digest";
+  if (channel === "newsletter") return "the newsletter";
   if (channel === "events") return "event announcements";
   return channel;
 }

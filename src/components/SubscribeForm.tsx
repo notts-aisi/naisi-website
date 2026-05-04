@@ -56,7 +56,7 @@ function defaultSuccessMessage(
     return "Sent. Check your inbox for a single confirmation link covering both lists.";
   }
   if (selectedChannels[0] === "newsletter") {
-    return "Sent. Check your inbox for a confirmation link before the first Sunday digest.";
+    return "Sent. Check your inbox for a confirmation link before the next newsletter.";
   }
   if (selectedChannels[0] === "events") {
     return "Sent. Check your inbox for a confirmation link before we email about events.";
