@@ -9,7 +9,7 @@ import {
 
 /**
  * Admin-only manual override on a single subscription row. Used by the
- * Subscriptions admin tab's per-row Deactivate / Re-activate buttons.
+ * Subscriptions admin tab's per-row Unsubscribe / Re-subscribe buttons.
  *
  * Body: { status: "confirmed" | "unsubscribed" | "pending" }
  *

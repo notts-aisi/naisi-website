@@ -429,8 +429,8 @@ export default function SubscriptionsTable() {
                         {busyId === r.id
                           ? "…"
                           : r.status === "unsubscribed"
-                            ? "Re-activate"
-                            : "Deactivate"}
+                            ? "Re-subscribe"
+                            : "Unsubscribe"}
                       </Button>
                     </td>
                   </tr>
