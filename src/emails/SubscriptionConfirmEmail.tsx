@@ -12,6 +12,8 @@ type Props = {
   channels: string[];
   expiresInHours: number;
   unsubUrl?: string;
+  /** Optional first / preferred name. When present, used in the greeting. */
+  name?: string;
 };
 
 /**
@@ -24,20 +26,26 @@ export default function SubscriptionConfirmEmail({
   channels,
   expiresInHours,
   unsubUrl,
+  name,
 }: Props) {
   const subject = "Confirm your NAISI subscription";
   const channelList = channels
     .map((c) => channelLabel(c))
     .filter((l) => l && l !== "all NAISI emails");
   const channelPhrase = formatList(channelList);
+  const trimmedName = name?.trim();
+  const greetingName = trimmedName ? trimmedName : "there";
   return (
     <EmailChrome
       subject={subject}
       preheader={`One click to start receiving ${channelPhrase}.`}
     >
+      <Text style={{ fontSize: 16, lineHeight: 1.6, margin: "0 0 12px" }}>
+        Hi {greetingName},
+      </Text>
       <Text style={{ fontSize: 16, lineHeight: 1.6, margin: "0 0 16px" }}>
         You asked to subscribe to {channelPhrase} from the Nottingham AI Safety
-        Initiative. Click below to confirm — once you do, you&apos;ll start
+        Initiative. Click below to confirm. Once you do, you&apos;ll start
         getting them.
       </Text>
       <Section style={{ textAlign: "center", margin: "24px 0" }}>
@@ -74,7 +82,7 @@ export default function SubscriptionConfirmEmail({
       </Text>
       <Text style={emailFooterTextStyle}>
         The link expires in {expiresInHours} hours. If you didn&apos;t sign up,
-        ignore this email — without confirmation, no further mail will be sent
+        ignore this email. Without confirmation, no further mail will be sent
         to this address.
       </Text>
       {unsubUrl ? (

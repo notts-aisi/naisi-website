@@ -33,6 +33,7 @@ function formatDate(d: Date | null): string {
 function rowsToCSV(rows: SubscriptionRow[]): string {
   return toCSV(
     [
+      "name",
       "email",
       "channel",
       "audience",
@@ -44,6 +45,7 @@ function rowsToCSV(rows: SubscriptionRow[]): string {
       "unsubscribedAt",
     ],
     rows.map((r) => [
+      r.name,
       r.email,
       r.channel,
       r.audience,
@@ -118,7 +120,13 @@ export default function SubscriptionsTable() {
       if (channelFilter !== "all" && r.channel !== channelFilter) return false;
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
       if (audienceFilter !== "all" && r.audience !== audienceFilter) return false;
-      if (needle && !r.email.toLowerCase().includes(needle)) return false;
+      if (
+        needle &&
+        !r.email.toLowerCase().includes(needle) &&
+        !r.name.toLowerCase().includes(needle)
+      ) {
+        return false;
+      }
       return true;
     });
   }, [rows, channelFilter, statusFilter, audienceFilter, search]);
@@ -259,7 +267,7 @@ export default function SubscriptionsTable() {
 
       <Card padding="md">
         <div className={styles.toolbar}>
-          <Field id="sub-search" label="Search by email" hint=" ">
+          <Field id="sub-search" label="Search by name or email" hint=" ">
             <Input
               id="sub-search"
               type="search"
@@ -371,6 +379,7 @@ export default function SubscriptionsTable() {
             <table className={styles.table}>
               <thead>
                 <tr>
+                  <th>Name</th>
                   <th>Email</th>
                   <th>Channel</th>
                   <th>Audience</th>
@@ -384,6 +393,7 @@ export default function SubscriptionsTable() {
               <tbody>
                 {pageRows.map((r) => (
                   <tr key={r.id}>
+                    <td>{r.name || <span className={styles.muted}>—</span>}</td>
                     <td>{r.email}</td>
                     <td>
                       <Badge tone="neutral">{r.channel}</Badge>

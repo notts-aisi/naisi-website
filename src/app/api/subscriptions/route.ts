@@ -42,7 +42,15 @@ type Body = {
   email?: unknown;
   channel?: unknown;
   source?: unknown;
+  /**
+   * Optional first / preferred name. Stored on the subscription row for
+   * admin visibility and used by the welcome and "added" emails to greet
+   * the recipient by name. Trimmed and length-capped before storage.
+   */
+  name?: unknown;
 };
+
+const NAME_MAX_LEN = 80;
 
 export async function POST(req: Request) {
   let parsed: Body;
@@ -80,6 +88,9 @@ export async function POST(req: Request) {
     typeof parsed.source === "string" && parsed.source.length > 0 && parsed.source.length <= 80
       ? parsed.source
       : "unknown";
+
+  const rawName = typeof parsed.name === "string" ? parsed.name.trim() : "";
+  const name = rawName.length > 0 && rawName.length <= NAME_MAX_LEN ? rawName : undefined;
 
   const db = getAdminDb();
   if (!db) {
@@ -126,6 +137,7 @@ export async function POST(req: Request) {
       audience,
       audienceId,
       source,
+      name,
     });
   } catch (err) {
     console.error("[/api/subscriptions] subscribe failed", err);
@@ -172,6 +184,7 @@ export async function POST(req: Request) {
           channels: [channel],
           expiresInHours: Math.round(CONFIRM_TOKEN_TTL_SECONDS / 3600),
           unsubUrl,
+          name,
         }),
         kind: "subscription-confirm",
         referenceId: emailDocId(email),
@@ -199,7 +212,7 @@ export async function POST(req: Request) {
       await sendEmail({
         to: email,
         subject: `You're now subscribed to ${friendlyForKind(channel)}`,
-        react: SubscriptionAddedEmail({ channel, unsubUrl }),
+        react: SubscriptionAddedEmail({ channel, unsubUrl, name }),
         kind: "subscription-added",
         referenceId: emailDocId(email),
         listUnsubscribe: { url: unsubUrl, mailto: replyTo },

@@ -68,14 +68,31 @@ export async function POST(req: Request) {
 
   // Optionally claim guest rows for the user's uni email too. Only honoured
   // when the user actually has one on their profile (server-side check —
-  // the client could lie about claimUniEmail).
+  // the client could lie about claimUniEmail). Also pull the user's
+  // preferred name off the profile (or fall back to Google displayName)
+  // so newly-created subscription rows carry the same greeting label the
+  // member uses on the rest of the site.
   let uniEmail: string | null = null;
-  if (wantClaimUni) {
-    const userSnap = await db.collection("users").doc(session.uid).get();
-    const profile = (userSnap.data()?.profile as Record<string, unknown> | undefined) ?? {};
-    const recorded = profile.universityEmail;
-    if (typeof recorded === "string" && recorded.trim().length > 0) {
-      uniEmail = normaliseEmail(recorded);
+  let memberName: string | undefined;
+  // Always read the user doc so we can grab a name even when claimUniEmail
+  // is false. One extra get per sync is cheap relative to the surface
+  // benefit (admin list shows the member's actual name).
+  const userSnap = await db.collection("users").doc(session.uid).get();
+  if (userSnap.exists) {
+    const data = userSnap.data() ?? {};
+    const profile = (data.profile as Record<string, unknown> | undefined) ?? {};
+    const preferred = profile.preferredName;
+    const display = data.displayName;
+    const candidate =
+      (typeof preferred === "string" && preferred.trim()) ||
+      (typeof display === "string" && display.trim()) ||
+      "";
+    if (candidate) memberName = candidate;
+    if (wantClaimUni) {
+      const recorded = profile.universityEmail;
+      if (typeof recorded === "string" && recorded.trim().length > 0) {
+        uniEmail = normaliseEmail(recorded);
+      }
     }
   }
 
@@ -112,6 +129,7 @@ export async function POST(req: Request) {
         audience: "user",
         audienceId: session.uid,
         source: "register-or-settings",
+        name: memberName,
       });
     } else {
       await unsubscribe(db, { email: googleEmail, channel: cat });
