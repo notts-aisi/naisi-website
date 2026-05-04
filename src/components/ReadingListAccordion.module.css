@@ -52,7 +52,9 @@
 .summaryText {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  /* Larger gap between the title and the blurb so the two lines have
+     room to breathe rather than feeling stacked. */
+  gap: var(--space-3);
   min-width: 0; /* allow the blurb to wrap inside the grid cell */
 }
 
@@ -138,20 +140,26 @@
 
 .items {
   list-style: none;
-  /* Bottom padding lives here (rather than on .panelInner) so it doesn't
-     contribute to the collapsed-state height of the grid-row track.
-     Left padding aligns the items with the summary title above them. */
-  padding: 0 0 var(--space-5) var(--space-2);
+  /* Block padding lives on the items list (rather than on .panelInner)
+     so it doesn't contribute to the collapsed-state height of the
+     grid-row track. Top padding gives the first item room above its
+     content; bottom padding does the same below the last item before
+     the divider rule. */
+  padding: var(--space-3) 0 var(--space-7) var(--space-2);
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  /* Generous gap between items so the list of recommendations feels
+     scannable instead of crammed. */
+  gap: var(--space-6);
 }
 
 .item {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  /* Comfortable space between the link, the source line, and the blurb
+     within a single item. */
+  gap: var(--space-2);
 }
 
 .itemLink {
