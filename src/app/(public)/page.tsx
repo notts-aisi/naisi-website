@@ -1,6 +1,7 @@
 import Link from "next/link";
 import BrandMark from "@/components/BrandMark";
 import SubscribeForm from "@/components/SubscribeForm";
+import ReadingListAccordion from "@/components/ReadingListAccordion";
 import { READING_LISTS } from "@/content/readingLists";
 import styles from "./landing.module.css";
 
@@ -86,43 +87,19 @@ export default function Landing() {
       </section>
 
       <section className={styles.readingSection}>
-        <div className="container">
+        <div className={`container ${styles.readingInner}`}>
           <header className={styles.readingHead}>
             <h2 className={styles.readingTitle}>Where to start.</h2>
             <p className={styles.readingBlurb}>
               Four short reading lists curated by the committee. The same
-              things we hand a new fellow on day one. Pick the list that
-              matches what you actually want to know.
+              things we hand a new fellow on day one. Tap a list to expand
+              its contents. Pick the one that matches what you actually
+              want to know.
             </p>
           </header>
-          <div className={styles.readingGrid}>
-            {READING_LISTS.map((list) => (
-              <article key={list.slug} className={styles.readingList}>
-                <h3 className={styles.readingListTitle}>{list.title}</h3>
-                <p className={styles.readingListBlurb}>{list.blurb}</p>
-                <ol className={styles.readingItems}>
-                  {list.items.map((item) => (
-                    <li key={item.href} className={styles.readingItem}>
-                      <a
-                        href={item.href}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        className={styles.readingItemLink}
-                      >
-                        {item.title}
-                      </a>
-                      {item.source ? (
-                        <span className={styles.readingItemSource}>
-                          {item.source}
-                        </span>
-                      ) : null}
-                      {item.blurb ? (
-                        <p className={styles.readingItemBlurb}>{item.blurb}</p>
-                      ) : null}
-                    </li>
-                  ))}
-                </ol>
-              </article>
+          <div className={styles.readingStack}>
+            {READING_LISTS.map((list, i) => (
+              <ReadingListAccordion key={list.slug} list={list} index={i + 1} />
             ))}
           </div>
         </div>
