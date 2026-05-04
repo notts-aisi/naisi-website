@@ -165,12 +165,12 @@ export default function Landing() {
             <p className={styles.sectionSub}>
               Instagram,{" "}
               <a
-                href="https://www.instagram.com/nottsaiai/"
+                href="https://www.instagram.com/notts.ai.safety/"
                 target="_blank"
                 rel="noopener noreferrer"
                 className={styles.inlineLink}
               >
-                @nottsaiai
+                @notts.ai.safety
               </a>
               .
             </p>
@@ -229,12 +229,12 @@ function BeholdFallback() {
       <p className={styles.igFallbackHeading}>
         Follow{" "}
         <a
-          href="https://www.instagram.com/nottsaiai/"
+          href="https://www.instagram.com/notts.ai.safety/"
           target="_blank"
           rel="noopener noreferrer"
           className={styles.inlineLink}
         >
-          @nottsaiai
+          @notts.ai.safety
         </a>{" "}
         on Instagram →
       </p>

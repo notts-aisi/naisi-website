@@ -85,7 +85,7 @@ env:
     availability: [RUNTIME]
   # NEXT_PUBLIC_BEHOLD_FEED_ID is intentionally NOT declared here. The homepage
   # treats absence as "no feed configured yet" and renders a static
-  # "Follow @nottsaiai" fallback. When the @nottsaiai feed is connected on
+  # "Follow @notts.ai.safety" fallback. When the @notts.ai.safety feed is connected on
   # https://behold.so, set the variable per-backend via the Firebase console
   # UI (App Hosting → Settings → Environment variables) with availability:
   # BUILD,RUNTIME. App Hosting rejects empty-string defaults in this file, so
