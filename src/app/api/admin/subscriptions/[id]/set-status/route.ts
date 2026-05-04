@@ -2,23 +2,34 @@ import { NextResponse } from "next/server";
 import { Timestamp } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import {
+  ALL_CATEGORIES,
+  type NotificationCategory,
+} from "@/lib/firestore/notifications";
 
 /**
  * Admin-only manual override on a single subscription row. Used by the
- * Subscriptions admin tab's per-row "Deactivate" / "Re-activate" buttons
- * and the same controls inside the Members admin tab.
+ * Subscriptions admin tab's per-row Deactivate / Re-activate buttons.
  *
  * Body: { status: "confirmed" | "unsubscribed" | "pending" }
  *
  * Stamps the corresponding timestamp field on transition:
- *  - → "confirmed": sets `confirmedAt`, clears `unsubscribedAt`
- *  - → "unsubscribed": sets `unsubscribedAt`
- *  - → "pending": clears `confirmedAt` and `unsubscribedAt` (admin reset)
+ *  - "confirmed": sets `confirmedAt`, clears `unsubscribedAt`
+ *  - "unsubscribed": sets `unsubscribedAt`
+ *  - "pending": clears `confirmedAt` and `unsubscribedAt` (admin reset)
+ *
+ * Dual-write to the user doc when the row is owned by a member (audience
+ * is "user") and the channel maps to a known legacy NotificationCategory
+ * ("newsletter" or "events"). Without this, flipping a member's row from
+ * the Subscriptions tab leaves `users/{uid}.profile.notifications.categories.<channel>`
+ * stale, so the Members admin tab's toggle UI lies about the actual state
+ * until cleanup. Migration window pattern, mirrors the inverse direction
+ * already in place via adminMutations.setUserNotificationCategory.
  *
  * Re-activation is allowed on the principle that admin override is a
- * trust-the-admin operation — the row's own data plus the audit trail in
- * `emailSends` cover misuse. GDPR mandates honouring an unsubscribe;
- * nothing forbids reversal on explicit user-or-admin ask.
+ * trust-the-admin operation. The row's own data plus the audit trail in
+ * emailSends cover misuse. GDPR mandates honouring an unsubscribe;
+ * nothing forbids reversal on an explicit user-or-admin ask.
  */
 
 // Inline params shape — see sync-subscriptions/route.ts for the rationale.
@@ -86,6 +97,42 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   await ref.update(patch);
+
+  // Dual-write the user doc legacy field when applicable. Reads the row
+  // we just updated to pick up audience + channel.
+  const data = snap.data() ?? {};
+  const audience = data.audience;
+  const channel = typeof data.channel === "string" ? data.channel : "";
+  const audienceId = typeof data.audienceId === "string" ? data.audienceId : "";
+  if (
+    audience === "user" &&
+    audienceId &&
+    (ALL_CATEGORIES as string[]).includes(channel)
+  ) {
+    const cat = channel as NotificationCategory;
+    // Map the new status onto the legacy boolean. "pending" is an
+    // admin-reset state with no clear legacy equivalent, so we leave the
+    // legacy field alone in that case.
+    const legacyValue =
+      status === "confirmed" ? true : status === "unsubscribed" ? false : null;
+    if (legacyValue !== null) {
+      const userPatch: Record<string, unknown> = {
+        [`profile.notifications.categories.${cat}`]: legacyValue,
+      };
+      // Newsletter has the older single-bool field; events does not.
+      if (cat === "newsletter") {
+        userPatch["profile.newsletter.subscribed"] = legacyValue;
+      }
+      try {
+        await db.collection("users").doc(audienceId).update(userPatch);
+      } catch (err) {
+        // Don't fail the row update if the user doc write fails; the row
+        // is already correct, and a stale legacy field is a soft drift
+        // we'll correct on the next sync. Log so it's visible in tail.
+        console.warn("[set-status] user-doc legacy sync failed", audienceId, err);
+      }
+    }
+  }
 
   return NextResponse.json({ ok: true, id, status });
 }

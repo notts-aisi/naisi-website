@@ -72,6 +72,24 @@ async function setRowStatus(
   }
 }
 
+type BackfillResult = {
+  ok: true;
+  usersScanned: number;
+  rowsWritten: number;
+  usersWithNoEmail: number;
+};
+
+async function runBackfill(): Promise<BackfillResult> {
+  const res = await fetch("/api/admin/backfill-subscriptions", { method: "POST" });
+  const body = (await res.json().catch(() => null)) as BackfillResult | { error: string } | null;
+  if (!res.ok || !body || "error" in body) {
+    const msg =
+      (body && "error" in body && body.error) || `Backfill failed (${res.status})`;
+    throw new Error(msg);
+  }
+  return body;
+}
+
 export default function SubscriptionsTable() {
   const { rows, loading, error } = useSubscriptions();
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
@@ -81,6 +99,12 @@ export default function SubscriptionsTable() {
   const [page, setPage] = useState(0);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [backfillState, setBackfillState] = useState<
+    | { kind: "idle" }
+    | { kind: "running" }
+    | { kind: "done"; result: BackfillResult }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
 
   const channelOptions = useMemo(() => {
     const set = new Set<string>();
@@ -158,6 +182,28 @@ export default function SubscriptionsTable() {
       setActionError(err instanceof Error ? err.message : "Action failed");
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function onRunBackfill() {
+    if (backfillState.kind === "running") return;
+    if (
+      !window.confirm(
+        "Run subscription backfill? Reads every user doc and creates / refreshes a subscription row for each active newsletter or events pref. Idempotent, safe to re-run.",
+      )
+    ) {
+      return;
+    }
+    setBackfillState({ kind: "running" });
+    try {
+      const result = await runBackfill();
+      setBackfillState({ kind: "done", result });
+    } catch (err) {
+      console.error(err);
+      setBackfillState({
+        kind: "error",
+        message: err instanceof Error ? err.message : "Backfill failed",
+      });
     }
   }
 
@@ -260,11 +306,49 @@ export default function SubscriptionsTable() {
             </Select>
           </label>
           <div className={styles.actions} style={{ marginLeft: "auto" }}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onRunBackfill}
+              disabled={backfillState.kind === "running"}
+              title="Reads every user doc and ensures their subscription rows match their notification prefs. Idempotent."
+            >
+              {backfillState.kind === "running" ? "Running…" : "Run backfill"}
+            </Button>
             <Button size="sm" variant="ghost" onClick={onDownload}>
               Download CSV
             </Button>
           </div>
         </div>
+        {backfillState.kind === "done" && (
+          <p
+            style={{
+              marginTop: "var(--space-3)",
+              color: "var(--color-text-muted)",
+              fontSize: "var(--text-sm)",
+            }}
+          >
+            Backfill complete. Scanned {backfillState.result.usersScanned} user
+            {backfillState.result.usersScanned === 1 ? "" : "s"}, wrote{" "}
+            {backfillState.result.rowsWritten} row
+            {backfillState.result.rowsWritten === 1 ? "" : "s"}
+            {backfillState.result.usersWithNoEmail > 0
+              ? `, skipped ${backfillState.result.usersWithNoEmail} user(s) without email`
+              : ""}
+            .
+          </p>
+        )}
+        {backfillState.kind === "error" && (
+          <p
+            style={{
+              marginTop: "var(--space-3)",
+              color: "var(--color-danger)",
+              fontSize: "var(--text-sm)",
+            }}
+          >
+            {backfillState.message}
+          </p>
+        )}
       </Card>
 
       {actionError && (
