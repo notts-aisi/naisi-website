@@ -9,18 +9,14 @@ import styles from "./landing.module.css";
  * Public landing page. Editorial-first: prose paragraphs and curated lists,
  * not Badge-eyebrow-h2-grid cards. Sections, top to bottom:
  *
- *  1. Hero. Brand statement, lede tightened to set up the rest of the page.
- *     Layered radial gradients kept (atmosphere, no animation).
- *  2. What NAISI is. One paragraph of plain prose, no card frame, two
- *     inline links.
- *  3. "Where to start" reading lists. Four curated lists, collapsible,
- *     closed by default. The page's substance.
- *  4. Events nod. Editorial paragraph + link to /events. No inline form
- *     here — the single subscribe form below covers both newsletter
- *     and event announcements via checkboxes.
+ *  1. Hero. Brand statement + two CTAs.
+ *  2. About. Brief framing + a reference to the three tiers below.
+ *  3. "Three ways in." Socials, fellowships, research pathway. Each tier
+ *     names its commitment level and links to the right next step.
+ *  4. "Where to start" reading lists. Four curated lists, collapsible,
+ *     closed by default. The page's substance for self-starters.
  *  5. "Stay in touch" signup. One form, name + email + checkboxes for the
- *     two lists (Sunday digest and event announcements). Single
- *     confirmation email lists everything they ticked.
+ *     two lists (Sunday digest and event announcements).
  */
 
 export default function Landing() {
@@ -63,25 +59,105 @@ export default function Landing() {
             backgrounds, and there are no strict prerequisites to join.
           </p>
           <p className={styles.aboutBody}>
-            We run two parallel reading-group fellowships, one technical, one
-            governance, both built on{" "}
-            <a
-              href="https://aisafetyfundamentals.com/"
-              target="_blank"
-              rel="noreferrer noopener"
-              className={styles.inlineLink}
-            >
-              BlueDot Impact&apos;s curriculum
-            </a>{" "}
-            and our own additions. Around them sit weekly meetings, projects,
-            and the occasional talk. New members are{" "}
+            New members are{" "}
             <Link href="/register" className={styles.inlineLink}>
               approved by the committee
             </Link>{" "}
-            before joining the community properly. If you want a slower
-            on-ramp, the reading lists below and the Sunday digest are where
-            most people start.
+            before joining the community properly. There are three ways in,
+            stacked by commitment: the socials, the fellowships, and the
+            research pathway.
           </p>
+        </div>
+      </section>
+
+      <section className={styles.tiersSection}>
+        <div className={`container ${styles.tiersInner}`}>
+          <header className={styles.tiersHead}>
+            <h2 className={styles.tiersTitle}>Three ways in.</h2>
+            <p className={styles.tiersBlurb}>
+              Pick the level of commitment that matches where you are. Each
+              tier builds on the one before it, but the entry-level ones
+              stand on their own too.
+            </p>
+          </header>
+          <ol className={styles.tiersList}>
+            <li className={styles.tier}>
+              <div className={styles.tierHead}>
+                <span className={styles.tierIndex} aria-hidden="true">
+                  01
+                </span>
+                <h3 className={styles.tierName}>Socials</h3>
+                <span className={styles.tierMeta}>
+                  No experience needed
+                </span>
+              </div>
+              <p className={styles.tierBody}>
+                Game nights, movie nights with AI-safety-flavoured
+                discussion built around the films, basic jailbreaking
+                demonstrations, the occasional themed quiz. The point is
+                to meet the people in this fast-growing community before
+                you commit to anything else. Show up, eat something, leave.
+              </p>
+              <p className={styles.tierFooter}>
+                <Link href="/events" className={styles.inlineLink}>
+                  See what&apos;s on →
+                </Link>
+              </p>
+            </li>
+
+            <li className={styles.tier}>
+              <div className={styles.tierHead}>
+                <span className={styles.tierIndex} aria-hidden="true">
+                  02
+                </span>
+                <h3 className={styles.tierName}>Fellowships</h3>
+                <span className={styles.tierMeta}>
+                  Six to seven weeks · ~5 hrs/week · certificate
+                </span>
+              </div>
+              <p className={styles.tierBody}>
+                Two parallel cohorts, technical and governance, built on{" "}
+                <a
+                  href="https://aisafetyfundamentals.com/"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className={styles.inlineLink}
+                >
+                  BlueDot Impact&apos;s curriculum
+                </a>{" "}
+                and our own additions. Small groups, AI-safety-trained
+                facilitators, new content each week, around three hours of
+                reading and two hours in person. No prior experience
+                required. You leave with a certificate and a finished
+                project to point at.
+              </p>
+              <p className={styles.tierFooter}>
+                <Link href="/register" className={styles.inlineLink}>
+                  Apply for the next cohort →
+                </Link>
+              </p>
+            </li>
+
+            <li className={styles.tier}>
+              <div className={styles.tierHead}>
+                <span className={styles.tierIndex} aria-hidden="true">
+                  03
+                </span>
+                <h3 className={styles.tierName}>Research pathway</h3>
+                <span className={styles.tierMeta}>
+                  Upcoming · fellowship-completer level
+                </span>
+              </div>
+              <p className={styles.tierBody}>
+                For anyone who has finished a fellowship (ours or
+                comparable self-study). A guided research pipeline:
+                ideation, grouping, supervised research, writeup. The aim
+                is to walk you from &ldquo;I have a question&rdquo; to a piece of work
+                you could submit, present, or build on. We&apos;re standing
+                this up; expressions of interest are welcome now.
+              </p>
+            </li>
+          </ol>
         </div>
       </section>
 
@@ -101,20 +177,6 @@ export default function Landing() {
               <ReadingListAccordion key={list.slug} list={list} index={i + 1} />
             ))}
           </div>
-        </div>
-      </section>
-
-      <section className={styles.eventsSection}>
-        <div className={`container ${styles.eventsInner}`}>
-          <h2 className={styles.eventsTitle}>On campus.</h2>
-          <p className={styles.eventsBody}>
-            Talks, socials, reading sessions, the occasional workshop. Events
-            are how we make a mostly-online field feel real on campus, and
-            how new people meet us before they commit to the fellowship.{" "}
-            <Link href="/events" className={styles.inlineLink}>
-              See what&apos;s on →
-            </Link>
-          </p>
         </div>
       </section>
 
