@@ -6,8 +6,6 @@ import styles from "./ReadingListAccordion.module.css";
 
 type Props = {
   list: ReadingList;
-  /** Order index for the small numeral shown next to the title (1-based). */
-  index: number;
 };
 
 /**
@@ -24,7 +22,7 @@ type Props = {
  * `aria-controls`, panel uses `role="region"` and is hidden from a11y
  * tree when collapsed. Honors `prefers-reduced-motion` (animation off).
  */
-export default function ReadingListAccordion({ list, index }: Props) {
+export default function ReadingListAccordion({ list }: Props) {
   const [open, setOpen] = useState(false);
   const reactId = useId();
   const panelId = `reading-list-${list.slug}-${reactId}`;
@@ -38,9 +36,6 @@ export default function ReadingListAccordion({ list, index }: Props) {
         aria-controls={panelId}
         onClick={() => setOpen((v) => !v)}
       >
-        <span className={styles.summaryIndex} aria-hidden="true">
-          {String(index).padStart(2, "0")}
-        </span>
         <span className={styles.summaryText}>
           <span className={styles.summaryTitle}>{list.title}</span>
           <span className={styles.summaryBlurb}>{list.blurb}</span>
@@ -69,7 +64,7 @@ export default function ReadingListAccordion({ list, index }: Props) {
         className={`${styles.panel} ${open ? styles.panelOpen : ""}`}
       >
         <div className={styles.panelInner}>
-          <ol className={styles.items}>
+          <ul className={styles.items}>
             {list.items.map((item) => (
               <li key={item.href} className={styles.item}>
                 <a
@@ -92,7 +87,7 @@ export default function ReadingListAccordion({ list, index }: Props) {
                 ) : null}
               </li>
             ))}
-          </ol>
+          </ul>
         </div>
       </div>
     </article>
