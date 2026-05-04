@@ -10,6 +10,12 @@ export type SubscriptionRow = {
   channel: string;
   audience: "user" | "guest";
   audienceId: string;
+  /**
+   * Optional first / preferred name on the row. Empty string when the
+   * signup didn't capture a name (older rows + opt-in form sometimes leaves
+   * blank). Rendered as a fallback dash in the table.
+   */
+  name: string;
   status: "pending" | "confirmed" | "unsubscribed";
   source: string;
   createdAt: Date | null;
@@ -38,6 +44,7 @@ function normaliseRow(id: string, data: Record<string, unknown>): SubscriptionRo
     channel: String(data.channel ?? ""),
     audience: data.audience === "user" ? "user" : "guest",
     audienceId: String(data.audienceId ?? ""),
+    name: typeof data.name === "string" ? data.name : "",
     status:
       data.status === "confirmed"
         ? "confirmed"

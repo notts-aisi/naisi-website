@@ -47,6 +47,14 @@ export type SubscriptionDoc = {
   audience: SubscriptionAudience;
   audienceId: string;
 
+  /**
+   * Optional first name / preferred name captured at signup. Used to greet
+   * the recipient in transactional emails ("Hi Marie,") and to give admins
+   * a human label in the Subscriptions table. Optional because guests may
+   * decline to provide it and pre-name-capture rows pre-date the field.
+   */
+  name?: string;
+
   status: SubscriptionStatus;
   source: string;
 
@@ -135,6 +143,12 @@ export type SubscribeArgs = {
   audience: SubscriptionAudience;
   audienceId: string;
   source: string;
+  /**
+   * Optional human name to store on the row. Only written if non-empty after
+   * trim, so leaving the form's name field blank does not stamp an empty
+   * string. On re-subscribe with a new value, the more-recent one wins.
+   */
+  name?: string;
 };
 
 export type SubscribeResult = {
@@ -189,6 +203,8 @@ export async function subscribe(
   const inboxAlreadyProven =
     memberShortcut || (await hasAnyConfirmedRowForEmail(db, email));
 
+  const trimmedName = args.name?.trim();
+
   if (!snap.exists) {
     const initialStatus: SubscriptionStatus = inboxAlreadyProven
       ? "confirmed"
@@ -205,6 +221,7 @@ export async function subscribe(
       attemptCount: 1,
     };
     if (initialStatus === "confirmed") doc.confirmedAt = now;
+    if (trimmedName) doc.name = trimmedName;
     await ref.set(doc);
     return {
       created: true,
@@ -230,6 +247,9 @@ export async function subscribe(
     patch.audience = "user";
     patch.audienceId = args.audienceId;
   }
+  // More-recent name wins. Only patch when the caller actually supplied one,
+  // so a sync call without a name does not wipe a previously-stored value.
+  if (trimmedName) patch.name = trimmedName;
 
   let nextStatus: SubscriptionStatus = data?.status ?? "pending";
   let requiresConfirmation = false;

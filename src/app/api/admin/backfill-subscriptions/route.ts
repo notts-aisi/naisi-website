@@ -64,6 +64,15 @@ export async function POST() {
     const prefs = normaliseNotifications(profile);
     const now = Timestamp.now();
 
+    // Pull a name (preferredName, then displayName) so backfilled rows show
+    // a human label in the admin Subscriptions tab instead of just "—".
+    const preferred = profile.preferredName;
+    const display = data.displayName;
+    const memberName: string | undefined =
+      (typeof preferred === "string" && preferred.trim()) ||
+      (typeof display === "string" && display.trim()) ||
+      undefined;
+
     for (const cat of ALL_CATEGORIES) {
       if (!prefs.categories[cat]) continue;
       const ref = db
@@ -82,6 +91,7 @@ export async function POST() {
         createdAt: now,
         confirmedAt: now,
       };
+      if (memberName) row.name = memberName;
       batch.set(ref, row, { merge: true });
       batchOps += 1;
       rowsWritten += 1;
