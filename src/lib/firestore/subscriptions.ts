@@ -98,15 +98,16 @@ export type SubscriptionDoc = {
 
   lastAttemptAt?: Timestamp;
   attemptCount?: number;
-
-  // === Legacy field, kept temporarily during the schema-split migration ===
-  // The `status` enum was the prior single-axis way of expressing the same
-  // information. Migration code in the backfill route translates old rows
-  // to the new shape. Once both prod and dev rows have been migrated and
-  // verified, a follow-up PR drops this field everywhere.
-  /** @deprecated migrated to (confirmed, subscribed); will be removed post-rollout. */
-  status?: "pending" | "confirmed" | "unsubscribed";
 };
+
+/**
+ * Legacy single-axis enum used before the (confirmed, subscribed) split.
+ * Only referenced by the migration helper below, which translates rows
+ * still carrying it. Backfill nukes the field from the doc once the new
+ * fields are in place. Type kept exported for the helper signature; no
+ * code path reads this off a `SubscriptionDoc` anymore.
+ */
+export type LegacyStatus = "pending" | "confirmed" | "unsubscribed";
 
 const COLLECTION = "subscriptions";
 
@@ -510,48 +511,77 @@ export async function findRecipientsForChannel(
 
 /**
  * Convert an old-shape row (one that uses the legacy `status` enum, no
- * `confirmed` / `subscribed` booleans) into the new shape. Used by the
- * backfill route to migrate existing rows in place. Returns the patch to
- * apply (callers `update()` with this), or null if the row already has
- * the new fields and doesn't need migrating.
+ * `confirmed` / `subscribed` booleans) into the new shape, AND mark the
+ * legacy `status` field for deletion. Used by the backfill route to
+ * migrate any pre-existing rows. Returns the patch to apply (callers
+ * `update()` with it via the admin SDK), or null if the row already has
+ * the new fields AND no legacy field, i.e. nothing to do.
+ *
+ * The returned patch always includes `status: FieldValue.delete()` if
+ * the legacy field is present on the row, so even rows that already have
+ * the new booleans get their dead-byte legacy field removed in the same
+ * pass.
  */
 export function migrationPatchFromLegacyStatus(
   row: Record<string, unknown>,
+  fieldDelete: FirebaseFirestore.FieldValue,
 ): Record<string, unknown> | null {
-  // If both new fields are already present, the row is already migrated.
-  if (typeof row.confirmed === "boolean" && typeof row.subscribed === "boolean") {
+  const hasNew =
+    typeof row.confirmed === "boolean" && typeof row.subscribed === "boolean";
+  const legacyStatus = row.status;
+  const hasLegacyStatus = legacyStatus !== undefined;
+
+  if (hasNew && !hasLegacyStatus) {
+    // Already migrated and clean. No-op.
     return null;
   }
-  const status = row.status;
-  if (status !== "pending" && status !== "confirmed" && status !== "unsubscribed") {
-    // Old row with neither new fields nor a recognisable legacy status:
-    // treat as a no-op (leave it alone). Should not happen in practice.
-    return null;
-  }
-  const confirmedAt = row.confirmedAt;
-  const unsubscribedAt = row.unsubscribedAt;
-  const createdAt = row.createdAt;
+
   const patch: Record<string, unknown> = {};
-  if (status === "pending") {
-    patch.confirmed = false;
-    patch.subscribed = true;
-    patch.subscribedAt = createdAt ?? null;
-  } else if (status === "confirmed") {
-    patch.confirmed = true;
-    patch.subscribed = true;
-    patch.confirmedAt = confirmedAt ?? createdAt ?? null;
-    patch.subscribedAt = confirmedAt ?? createdAt ?? null;
-  } else {
-    // unsubscribed: they were on the list and dropped. Preserve confirmed-ness.
-    const wasConfirmed = Boolean(confirmedAt);
-    patch.confirmed = wasConfirmed;
-    patch.subscribed = false;
-    if (wasConfirmed) patch.confirmedAt = confirmedAt;
-    if (unsubscribedAt) patch.unsubscribedAt = unsubscribedAt;
+
+  if (!hasNew) {
+    if (
+      legacyStatus !== "pending" &&
+      legacyStatus !== "confirmed" &&
+      legacyStatus !== "unsubscribed"
+    ) {
+      // Row missing new fields AND missing recognisable legacy status.
+      // Defensive default: treat as lapsed so the row at least carries
+      // the booleans without lying about state. Shouldn't happen in
+      // practice; logged for posterity if it does.
+      patch.confirmed = false;
+      patch.subscribed = false;
+    } else {
+      const confirmedAt = row.confirmedAt;
+      const unsubscribedAt = row.unsubscribedAt;
+      const createdAt = row.createdAt;
+      if (legacyStatus === "pending") {
+        patch.confirmed = false;
+        patch.subscribed = true;
+        if (createdAt !== undefined) patch.subscribedAt = createdAt;
+      } else if (legacyStatus === "confirmed") {
+        patch.confirmed = true;
+        patch.subscribed = true;
+        const ts = confirmedAt ?? createdAt;
+        if (ts !== undefined) {
+          patch.confirmedAt = ts;
+          patch.subscribedAt = ts;
+        }
+      } else {
+        // unsubscribed
+        const wasConfirmed = Boolean(confirmedAt);
+        patch.confirmed = wasConfirmed;
+        patch.subscribed = false;
+        if (wasConfirmed) patch.confirmedAt = confirmedAt;
+        if (unsubscribedAt !== undefined) patch.unsubscribedAt = unsubscribedAt;
+      }
+    }
   }
-  // Strip nulls before returning so we don't write them.
-  for (const k of Object.keys(patch)) {
-    if (patch[k] === null) delete patch[k];
+
+  // Always nuke the legacy field if it's present. Cleans up dead bytes
+  // on already-migrated rows in the same pass.
+  if (hasLegacyStatus) {
+    patch.status = fieldDelete;
   }
+
   return patch;
 }

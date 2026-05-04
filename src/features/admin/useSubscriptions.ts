@@ -65,39 +65,13 @@ function deriveDisplayStatus(
   return "lapsed";
 }
 
-/**
- * Backwards-compat: old rows wrote `status: "pending" | "confirmed" |
- * "unsubscribed"` and didn't have the boolean fields. Detect those and
- * derive both booleans inline so the UI doesn't break before the backfill
- * has migrated everything. Once migration is verified, this branch can
- * go away (callers can rely on the booleans existing on every row).
- */
-function readBooleanState(data: Record<string, unknown>): {
-  confirmed: boolean;
-  subscribed: boolean;
-} {
-  const hasNew =
-    typeof data.confirmed === "boolean" && typeof data.subscribed === "boolean";
-  if (hasNew) {
-    return {
-      confirmed: data.confirmed as boolean,
-      subscribed: data.subscribed as boolean,
-    };
-  }
-  // Legacy fall-through.
-  const status = data.status;
-  if (status === "confirmed") return { confirmed: true, subscribed: true };
-  if (status === "pending") return { confirmed: false, subscribed: true };
-  if (status === "unsubscribed") {
-    // We don't know if they were ever confirmed without confirmedAt.
-    return { confirmed: Boolean(data.confirmedAt), subscribed: false };
-  }
-  // Unknown state: treat as lapsed so the row at least renders.
-  return { confirmed: false, subscribed: false };
-}
-
 function normaliseRow(id: string, data: Record<string, unknown>): SubscriptionRow {
-  const { confirmed, subscribed } = readBooleanState(data);
+  // After the schema split + cleanup migration, every row has the new
+  // booleans. If a row somehow doesn't (a write path we missed, a
+  // hand-edit in the Firestore console), default to a benign "lapsed"
+  // state so the row still renders rather than crashing the table.
+  const confirmed = typeof data.confirmed === "boolean" ? data.confirmed : false;
+  const subscribed = typeof data.subscribed === "boolean" ? data.subscribed : false;
   return {
     id,
     email: String(data.email ?? ""),
