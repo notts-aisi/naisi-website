@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
@@ -8,21 +8,40 @@ import {
 } from "@/lib/firestore/notifications";
 import { normaliseEmail } from "@/lib/firestore/emailDocId";
 import {
+  migrationPatchFromLegacyStatus,
   subscriptionDocId,
-  type SubscriptionDoc,
 } from "@/lib/firestore/subscriptions";
 
 /**
- * One-shot backfill: walk every `users` doc, read its notification prefs
- * (tolerating both the modern `profile.notifications` shape and the legacy
- * `profile.newsletter` shape via `normaliseNotifications`), and write a
- * matching `subscriptions/{id}` row for each active category.
+ * Two-pass admin backfill / migration. Idempotent.
  *
- * Idempotent: doc id is `sub_<sanitisedEmail>__<channel>`, so re-running
- * just touches the same rows. Writes use `set({ merge: true })` to keep
- * any existing fields (like `lastSentAt` from a sender run) intact.
+ * Pass A — write a row per (member, channel) for EVERY user, regardless of
+ * their current notification preference. Members get one row per known
+ * channel (newsletter, events) with:
+ *  - confirmed: true (members are inherently confirmed by their session)
+ *  - confirmedAt: now (or preserved if a row already exists)
+ *  - subscribed: legacy_value (true iff their user-doc has the category on)
+ *  - subscribedAt: now if subscribed, omitted otherwise
+ *  - unsubscribedAt: now if unsubscribed, omitted otherwise
+ *  - audience: "user", audienceId: uid
+ *  - source: "backfill" (or kept on existing rows)
  *
- * Admin-only. POST with no body — returns counts for the operator.
+ * That answers the user's "backfill doesn't catch people" gap. Currently-
+ * unsubscribed members appear in the Subscriptions admin tab as
+ * subscribed=false rather than being absent.
+ *
+ * Pass B — migrate any pre-existing rows that still use the legacy `status`
+ * enum (pending / confirmed / unsubscribed) into the new (confirmed,
+ * subscribed) shape. Translation:
+ *   pending      → confirmed=false, subscribed=true
+ *   confirmed    → confirmed=true,  subscribed=true,  confirmedAt preserved
+ *   unsubscribed → confirmed=(was confirmedAt set?), subscribed=false,
+ *                  unsubscribedAt preserved
+ * The legacy `status` field is left in place; a follow-up cleanup PR drops
+ * it after both prod and dev have been migrated and the new code paths
+ * have been observed for a few days.
+ *
+ * Admin-only. POST with no body. Returns counts for the operator.
  */
 
 export async function POST() {
@@ -35,25 +54,25 @@ export async function POST() {
   if (!maybeDb) {
     return NextResponse.json({ error: "Server not configured" }, { status: 500 });
   }
-  // Capture as const with narrowed type so the inner loop's closure-free
-  // batch reassign keeps the non-undefined type.
   const db = maybeDb;
 
-  const allUsers = await db.collection("users").get();
-
   let usersScanned = 0;
-  let rowsWritten = 0;
   let usersWithNoEmail = 0;
+  let memberRowsWritten = 0;
+  let legacyRowsMigrated = 0;
 
-  // Use a single batch per ~400 writes (Firestore caps at 500). For NAISI's
-  // size (~hundreds of members) one or two batches will cover everything.
+  // Use a single batch per ~400 writes (Firestore caps at 500).
   const BATCH_LIMIT = 400;
   let batch = db.batch();
   let batchOps = 0;
 
-  for (const doc of allUsers.docs) {
+  // === Pass A: write a row per (member, channel) for every user ===
+
+  const allUsers = await db.collection("users").get();
+
+  for (const userDoc of allUsers.docs) {
     usersScanned += 1;
-    const data = doc.data();
+    const data = userDoc.data();
     const email = typeof data.email === "string" ? data.email : "";
     const normalised = normaliseEmail(email);
     if (!normalised) {
@@ -64,8 +83,7 @@ export async function POST() {
     const prefs = normaliseNotifications(profile);
     const now = Timestamp.now();
 
-    // Pull a name (preferredName, then displayName) so backfilled rows show
-    // a human label in the admin Subscriptions tab instead of just "—".
+    // Pull a name (preferredName, then displayName).
     const preferred = profile.preferredName;
     const display = data.displayName;
     const memberName: string | undefined =
@@ -74,27 +92,38 @@ export async function POST() {
       undefined;
 
     for (const cat of ALL_CATEGORIES) {
-      if (!prefs.categories[cat]) continue;
+      const wantsThis = Boolean(prefs.categories[cat]);
       const ref = db
         .collection("subscriptions")
         .doc(subscriptionDocId({ email: normalised, channel: cat }));
-      const row: Partial<SubscriptionDoc> & {
-        // Allow extra fields for `set({ merge: true })`.
-        [key: string]: unknown;
-      } = {
+
+      // Use set({ merge: true }) so existing rows keep their current
+      // confirmedAt / subscribedAt timestamps and we just upsert the
+      // current intent. New rows pick up everything below.
+      // The legacy `status` field gets nuked on this same write so a
+      // member row that pre-dates the schema split sheds its dead byte.
+      const row: Record<string, unknown> = {
         email: normalised,
         channel: cat,
         audience: "user",
-        audienceId: doc.id,
-        status: "confirmed",
+        audienceId: userDoc.id,
+        confirmed: true,
+        confirmedAt: now,
+        subscribed: wantsThis,
         source: "backfill",
         createdAt: now,
-        confirmedAt: now,
+        status: FieldValue.delete(),
       };
+      if (wantsThis) {
+        row.subscribedAt = now;
+      } else {
+        row.unsubscribedAt = now;
+      }
       if (memberName) row.name = memberName;
+
       batch.set(ref, row, { merge: true });
       batchOps += 1;
-      rowsWritten += 1;
+      memberRowsWritten += 1;
       if (batchOps >= BATCH_LIMIT) {
         await batch.commit();
         batch = db.batch();
@@ -105,12 +134,44 @@ export async function POST() {
 
   if (batchOps > 0) {
     await batch.commit();
+    batch = db.batch();
+    batchOps = 0;
+  }
+
+  // === Pass B: migrate legacy `status`-only rows + nuke dead status fields ===
+  //
+  // Walks every subscription row. For rows still on the legacy single-axis
+  // shape, derives the new (confirmed, subscribed) booleans from `status`.
+  // For rows already migrated but still carrying a stale `status` field,
+  // deletes the field. Both behaviours rolled into one helper call so a
+  // single update() per row does the right thing regardless of state.
+
+  const allSubs = await db.collection("subscriptions").get();
+  for (const subDoc of allSubs.docs) {
+    const patch = migrationPatchFromLegacyStatus(
+      subDoc.data() as Record<string, unknown>,
+      FieldValue.delete(),
+    );
+    if (!patch) continue;
+    batch.update(subDoc.ref, patch);
+    batchOps += 1;
+    legacyRowsMigrated += 1;
+    if (batchOps >= BATCH_LIMIT) {
+      await batch.commit();
+      batch = db.batch();
+      batchOps = 0;
+    }
+  }
+
+  if (batchOps > 0) {
+    await batch.commit();
   }
 
   return NextResponse.json({
     ok: true,
     usersScanned,
-    rowsWritten,
     usersWithNoEmail,
+    memberRowsWritten,
+    legacyRowsMigrated,
   });
 }

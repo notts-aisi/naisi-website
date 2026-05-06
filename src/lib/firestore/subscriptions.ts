@@ -14,32 +14,62 @@ import { emailDocId, normaliseEmail } from "./emailDocId";
  *
  * Why a junction table:
  *  - Adding a new channel (e.g. `cohort:fall-2026`) is data, not schema.
- *  - "Who's subscribed to channel X?" is a single indexed query on
- *    `(channel, status)` — no full-collection scans of users.
+ *  - "Who is subscribed to channel X right now?" is a single indexed query
+ *    on `(channel, confirmed, subscribed)`.
  *  - Member-migration on register is a row-level audience flip
  *    (`guest` → `user`), no merge / delete / duplicate-up risk.
  *
  * Doc-id convention: `sub_<sanitisedEmail>__<channel>`. The slug prefix keeps
- * Firestore browseable (project-wide cleanup-sweep memory). The
- * (sanitisedEmail, channel) suffix is deterministic, so the same pair always
- * maps to the same doc — `set({ merge: true })` gives idempotent upserts.
+ * Firestore browseable. The (sanitisedEmail, channel) suffix is deterministic,
+ * so the same pair always maps to the same doc — `set({ merge: true })` gives
+ * idempotent upserts.
  *
  * Channel-string convention:
  *  - Top-level lists: lowercase, no prefix. `newsletter`, `events`.
  *  - Scoped lists: `<scope>:<id>`, lowercase kebab after the colon.
- *    Examples: `cohort:fall-2026`, `track:technical`. The colon is purely
- *    informational here — nothing in PR 1 parses it. PR 3 introduces a
- *    `channels/{channelId}` registry collection if/when cohort metadata is
- *    needed.
+ *    Examples: `cohort:fall-2026`, `track:technical`.
+ *
+ * STATE MODEL (the orthogonal-axes thing):
+ *
+ * Two separate, orthogonal axes per row, instead of one collapsed enum:
+ *
+ *   confirmed: boolean             // has this email proven inbox control?
+ *   confirmedAt: Timestamp?        // when first confirmed (audit + lifetime stamp)
+ *   subscribed: boolean            // does the recipient currently want this channel?
+ *   subscribedAt: Timestamp?       // last time it became true (audit)
+ *   unsubscribedAt: Timestamp?     // last time it became false (audit, never wiped)
+ *
+ * Rationale: previously a single `status: pending | confirmed | unsubscribed`
+ * collapsed both axes, so re-subscribing after unsubscribing wiped the
+ * "they were once confirmed" signal and lost the unsub history. The split
+ * keeps a complete audit trail and makes the sender query a clean two-
+ * predicate filter (`confirmed && subscribed`).
+ *
+ * `confirmed` is a sticky-once-true boolean: after a row's confirmedAt is
+ * stamped, the boolean never flips back to false. Toggling subscribed
+ * doesn't touch confirmed. Re-subscribe is a one-step "set subscribed=true",
+ * not a re-confirmation flow, because the inbox is already proven.
  *
  * Confirmation is per-EMAIL, not per-channel: once any one row for an email
- * is `confirmed`, subsequent subscriptions for that email mint as
- * `confirmed` directly. The confirmation flow is the inbox-control gate; we
- * gate it once per address, not once per channel.
+ * is confirmed, subsequent subscriptions for that email mint as confirmed
+ * directly. The confirmation flow is the inbox-control gate; we gate it
+ * once per address, not once per channel.
  */
 
 export type SubscriptionAudience = "user" | "guest";
-export type SubscriptionStatus = "pending" | "confirmed" | "unsubscribed";
+
+/**
+ * Display state derived from the (confirmed, subscribed) pair. Not stored.
+ *  - "subscribed":          confirmed && subscribed                  (delivers email)
+ *  - "unsubscribed":        confirmed && !subscribed                 (no email, was confirmed once)
+ *  - "pending":             !confirmed && subscribed                 (waiting on click)
+ *  - "lapsed":              !confirmed && !subscribed                (signed up, never confirmed, then dropped)
+ */
+export type SubscriptionDisplayStatus =
+  | "subscribed"
+  | "unsubscribed"
+  | "pending"
+  | "lapsed";
 
 export type SubscriptionDoc = {
   email: string;
@@ -47,25 +77,37 @@ export type SubscriptionDoc = {
   audience: SubscriptionAudience;
   audienceId: string;
 
-  /**
-   * Optional first name / preferred name captured at signup. Used to greet
-   * the recipient in transactional emails ("Hi Marie,") and to give admins
-   * a human label in the Subscriptions table. Optional because guests may
-   * decline to provide it and pre-name-capture rows pre-date the field.
-   */
+  /** Optional first / preferred name. Used to greet in transactional emails. */
   name?: string;
 
-  status: SubscriptionStatus;
-  source: string;
-
-  createdAt: Timestamp;
+  /** Sticky once true. Set on first confirmation; never reset. */
+  confirmed: boolean;
+  /** When confirmed first became true. */
   confirmedAt?: Timestamp;
+
+  /** Current state. Toggleable forever. */
+  subscribed: boolean;
+  /** When subscribed last became true. */
+  subscribedAt?: Timestamp;
+  /** When subscribed last became false. Never wiped. */
   unsubscribedAt?: Timestamp;
+
+  source: string;
+  createdAt: Timestamp;
   lastSentAt?: Timestamp;
 
   lastAttemptAt?: Timestamp;
   attemptCount?: number;
 };
+
+/**
+ * Legacy single-axis enum used before the (confirmed, subscribed) split.
+ * Only referenced by the migration helper below, which translates rows
+ * still carrying it. Backfill nukes the field from the doc once the new
+ * fields are in place. Type kept exported for the helper signature; no
+ * code path reads this off a `SubscriptionDoc` anymore.
+ */
+export type LegacyStatus = "pending" | "confirmed" | "unsubscribed";
 
 const COLLECTION = "subscriptions";
 
@@ -94,7 +136,7 @@ function prettifySlug(slug: string): string {
  * Human-readable label for a channel id, used in emails and the unsubscribe
  * confirmation page. Top-level channels get hand-written labels; scoped
  * channels (`cohort:*`, `track:*`) fall through to a slug-prettify so
- * channels added in PR 3 / later read sensibly without code changes here.
+ * channels added later read sensibly without code changes here.
  */
 export function channelLabel(channel: string): string {
   if (channel === "all") return "all NAISI emails";
@@ -117,10 +159,24 @@ export function subscriptionDocId(args: {
 }
 
 /**
- * Has any row for this email reached `confirmed` status? Used by `subscribe`
- * to decide whether a new row should mint as `pending` (first-time
- * confirmation needed) or shortcut to `confirmed` (the inbox already proved
- * itself on a previous channel).
+ * Derive the four-state display label from a row. Used by the admin UI
+ * (Subscriptions table status pill) and other read sites that want a
+ * single-string label.
+ */
+export function displayStatusOf(row: {
+  confirmed: boolean;
+  subscribed: boolean;
+}): SubscriptionDisplayStatus {
+  if (row.confirmed && row.subscribed) return "subscribed";
+  if (row.confirmed && !row.subscribed) return "unsubscribed";
+  if (!row.confirmed && row.subscribed) return "pending";
+  return "lapsed";
+}
+
+/**
+ * Has any row for this email been confirmed at any point? Used by `subscribe`
+ * to decide whether a fresh row should mint as confirmed (the inbox already
+ * proved itself on a previous channel) or pending (first-time signup).
  */
 export async function hasAnyConfirmedRowForEmail(
   db: Firestore,
@@ -131,7 +187,7 @@ export async function hasAnyConfirmedRowForEmail(
   const snap = await db
     .collection(COLLECTION)
     .where("email", "==", e)
-    .where("status", "==", "confirmed")
+    .where("confirmed", "==", true)
     .limit(1)
     .get();
   return !snap.empty;
@@ -145,8 +201,7 @@ export type SubscribeArgs = {
   source: string;
   /**
    * Optional human name to store on the row. Only written if non-empty after
-   * trim, so leaving the form's name field blank does not stamp an empty
-   * string. On re-subscribe with a new value, the more-recent one wins.
+   * trim. On re-subscribe with a new value, the more-recent one wins.
    */
   name?: string;
 };
@@ -155,28 +210,29 @@ export type SubscribeResult = {
   /** True iff a brand-new doc was created for this (email, channel). */
   created: boolean;
   /**
-   * True iff this row is now `pending` and a confirmation email should be
-   * sent. False if it shortcut to `confirmed` (because another row for the
-   * same email is already confirmed) — no opt-in click needed.
+   * True iff this row is now `subscribed && !confirmed` and a confirmation
+   * email should be sent. False if it shortcut to confirmed (member or any
+   * prior confirmed row for the email).
    */
   requiresConfirmation: boolean;
-  /** True iff the caller-requested channel was newly added in this call. */
+  /**
+   * True iff `subscribed` was newly set to true on this call (either
+   * creating a fresh row, or re-subscribing an existing row that was
+   * unsubscribed). Used by callers to decide whether to send the
+   * "you're now subscribed" notice.
+   */
   newlyAddedChannel: boolean;
-  /** Final status of the row after this call. */
-  status: SubscriptionStatus;
 };
 
 /**
- * Idempotent upsert. Sets the row's status:
- *  - `pending` if creating fresh and no other row for this email is confirmed
- *  - `confirmed` otherwise (existing row was already confirmed; OR another
- *    row for the same email is confirmed and this one rides on it; OR the
- *    caller is a signed-in member, in which case the caller passes
- *    `audience: "user"` and the route enforces the auth check before getting
- *    here, so we trust the caller and skip the click-confirm)
+ * Idempotent upsert. Sets `subscribed = true` and stamps `subscribedAt`.
+ * Sets `confirmed = true` and stamps `confirmedAt` iff the row's email has
+ * any prior confirmation, OR the caller is a signed-in member (`audience:
+ * "user"`, trusted by the route).
  *
- * The `lastAttemptAt` / `attemptCount` fields are bumped on every call as a
- * cheap per-email cooldown floor (used by the API route).
+ * Re-subscribe path: an existing row whose subscribed is currently false
+ * just flips back to true. confirmedAt and confirmed are unchanged.
+ * unsubscribedAt is left intact as audit history.
  */
 export async function subscribe(
   db: Firestore,
@@ -196,9 +252,9 @@ export async function subscribe(
   const snap = await ref.get();
   const data = snap.data() as SubscriptionDoc | undefined;
 
-  // Members come in already-trusted (the route checked their session). Their
-  // rows skip the click-confirm flow entirely — same as if any other row for
-  // this email were already confirmed.
+  // Members come in already-trusted (the route checked their session).
+  // Their rows skip the click-confirm flow entirely, same as if any other
+  // row for this email were already confirmed.
   const memberShortcut = args.audience === "user";
   const inboxAlreadyProven =
     memberShortcut || (await hasAnyConfirmedRowForEmail(db, email));
@@ -206,77 +262,71 @@ export async function subscribe(
   const trimmedName = args.name?.trim();
 
   if (!snap.exists) {
-    const initialStatus: SubscriptionStatus = inboxAlreadyProven
-      ? "confirmed"
-      : "pending";
+    const confirmed = inboxAlreadyProven;
     const doc: Record<string, unknown> = {
       email,
       channel: args.channel,
       audience: args.audience,
       audienceId: args.audienceId,
-      status: initialStatus,
+      confirmed,
+      subscribed: true,
+      subscribedAt: now,
       source: args.source,
       createdAt: now,
       lastAttemptAt: now,
       attemptCount: 1,
     };
-    if (initialStatus === "confirmed") doc.confirmedAt = now;
+    if (confirmed) doc.confirmedAt = now;
     if (trimmedName) doc.name = trimmedName;
     await ref.set(doc);
     return {
       created: true,
-      requiresConfirmation: initialStatus === "pending",
+      requiresConfirmation: !confirmed,
       newlyAddedChannel: true,
-      status: initialStatus,
     };
   }
 
-  // Existing row. Possible states:
-  //  - confirmed: nothing to do beyond touching attempt counters.
-  //  - pending: re-send confirmation (caller decides via requiresConfirmation).
-  //  - unsubscribed: resurrect — flip back to pending unless inbox-already-
-  //    proven (member shortcut), in which case go straight to confirmed.
+  // Existing row. Three meaningful prior states:
+  //  - subscribed: already on the list, possibly already confirmed.
+  //  - !subscribed: unsubscribed previously; flip back on.
+  //  - !confirmed: pending confirmation. Either flip to confirmed if the
+  //    email has been proven elsewhere, or re-send confirmation.
+  const prevSubscribed = Boolean(data?.subscribed);
+  const prevConfirmed = Boolean(data?.confirmed);
+
   const patch: Record<string, unknown> = {
     lastAttemptAt: now,
     attemptCount: FieldValue.increment(1),
-    // Audience can change over a row's lifetime: a guest signs up, then later
-    // registers and the row is claimed. We don't downgrade user→guest here;
-    // that would only happen via an explicit admin action.
   };
+
+  // Audience can change over a row's lifetime: a guest signs up, then later
+  // registers and the row is claimed. Don't downgrade user→guest here.
   if (data?.audience === "guest" && args.audience === "user") {
     patch.audience = "user";
     patch.audienceId = args.audienceId;
   }
-  // More-recent name wins. Only patch when the caller actually supplied one,
-  // so a sync call without a name does not wipe a previously-stored value.
+  // More-recent name wins. Only patch when the caller actually supplied one.
   if (trimmedName) patch.name = trimmedName;
 
-  let nextStatus: SubscriptionStatus = data?.status ?? "pending";
   let requiresConfirmation = false;
   let newlyAddedChannel = false;
 
-  if (data?.status === "unsubscribed") {
-    newlyAddedChannel = true; // re-adding a channel they previously dropped
-    if (inboxAlreadyProven) {
-      nextStatus = "confirmed";
-      patch.status = "confirmed";
-      patch.confirmedAt = data?.confirmedAt ?? now;
-      patch.unsubscribedAt = FieldValue.delete();
-    } else {
-      nextStatus = "pending";
-      patch.status = "pending";
-      patch.unsubscribedAt = FieldValue.delete();
-      requiresConfirmation = true;
-    }
-  } else if (data?.status === "pending") {
+  // Subscribed-axis flip: turn it on (it was off, or it stays on).
+  if (!prevSubscribed) {
+    patch.subscribed = true;
+    patch.subscribedAt = now;
+    newlyAddedChannel = true;
+  }
+
+  // Confirmed-axis flip: turn it on iff inbox is now proven and it wasn't
+  // already.
+  if (!prevConfirmed && inboxAlreadyProven) {
+    patch.confirmed = true;
+    patch.confirmedAt = data?.confirmedAt ?? now;
+  } else if (!prevConfirmed && !inboxAlreadyProven) {
+    // Pending row, still not proven elsewhere: caller should re-send the
+    // confirmation email.
     requiresConfirmation = true;
-    if (inboxAlreadyProven) {
-      // A second channel just got confirmed elsewhere; promote this one too.
-      nextStatus = "confirmed";
-      patch.status = "confirmed";
-      patch.confirmedAt = now;
-      requiresConfirmation = false;
-    }
   }
 
   await ref.update(patch);
@@ -285,13 +335,14 @@ export async function subscribe(
     created: false,
     requiresConfirmation,
     newlyAddedChannel,
-    status: nextStatus,
   };
 }
 
 /**
- * Stamp every `pending` row for this email as `confirmed`. Idempotent — safe
- * to run after the user is already confirmed (no-op).
+ * Stamp every unconfirmed row for this email as confirmed. Idempotent: rows
+ * that are already confirmed are left alone. Returns the full list of
+ * channels currently confirmed for the email so callers can build a
+ * personalised welcome email.
  */
 export async function confirmAllForEmail(
   db: Firestore,
@@ -299,52 +350,44 @@ export async function confirmAllForEmail(
 ): Promise<{ updated: number; channels: string[] }> {
   const e = normaliseEmail(email);
   if (!e) return { updated: 0, channels: [] };
-  const snap = await db
+
+  // All rows for this email, so we can both flip the unconfirmed ones and
+  // gather every confirmed channel for the welcome email's body.
+  const allSnap = await db
     .collection(COLLECTION)
     .where("email", "==", e)
-    .where("status", "==", "pending")
     .get();
-  if (snap.empty) {
-    // Already confirmed (or no rows). Return the active channel list anyway
-    // so the welcome email can name them.
-    const active = await db
-      .collection(COLLECTION)
-      .where("email", "==", e)
-      .where("status", "==", "confirmed")
-      .get();
-    return {
-      updated: 0,
-      channels: active.docs.map((d) => (d.data() as SubscriptionDoc).channel),
-    };
-  }
+  if (allSnap.empty) return { updated: 0, channels: [] };
+
   const batch = db.batch();
   const now = Timestamp.now();
-  const channels: string[] = [];
-  for (const doc of snap.docs) {
-    batch.update(doc.ref, { status: "confirmed", confirmedAt: now });
-    channels.push((doc.data() as SubscriptionDoc).channel);
+  let updated = 0;
+  for (const doc of allSnap.docs) {
+    const data = doc.data() as SubscriptionDoc;
+    if (!data.confirmed) {
+      batch.update(doc.ref, { confirmed: true, confirmedAt: now });
+      updated += 1;
+    }
   }
-  await batch.commit();
-  // Return all currently-confirmed channels (the freshly-confirmed batch plus
-  // any pre-existing ones), so the welcome email can name everything they're
-  // signed up to.
-  const after = await db
-    .collection(COLLECTION)
-    .where("email", "==", e)
-    .where("status", "==", "confirmed")
-    .get();
-  const allChannels = Array.from(
+  if (updated > 0) await batch.commit();
+
+  // Build the channel list from the post-update state. We just confirmed
+  // every previously-unconfirmed row, so any row whose `subscribed` is true
+  // is now confirmed-and-active.
+  const channels = Array.from(
     new Set(
-      after.docs.map((d) => (d.data() as SubscriptionDoc).channel),
+      allSnap.docs
+        .map((d) => d.data() as SubscriptionDoc)
+        .filter((d) => d.subscribed)
+        .map((d) => d.channel),
     ),
   );
-  return { updated: snap.size, channels: allChannels };
+  return { updated, channels };
 }
 
 /**
- * Flip one row to `unsubscribed`. Idempotent — repeated calls just touch the
- * timestamp. Returns true if a row existed (regardless of prior status), so
- * the caller can distinguish "found and updated" from "no such row".
+ * Flip one row to subscribed=false. Idempotent. Returns true if a row
+ * existed (regardless of prior state).
  */
 export async function unsubscribe(
   db: Firestore,
@@ -358,15 +401,15 @@ export async function unsubscribe(
   const snap = await ref.get();
   if (!snap.exists) return false;
   await ref.update({
-    status: "unsubscribed",
+    subscribed: false,
     unsubscribedAt: Timestamp.now(),
   });
   return true;
 }
 
 /**
- * Flip every active row for this email to `unsubscribed`. Used by the
- * "unsubscribe from all" path (token with `c: "all"`).
+ * Flip every currently-subscribed row for this email to subscribed=false.
+ * Used by the "unsubscribe from all" path (token with `c: "all"`).
  */
 export async function unsubscribeAll(
   db: Firestore,
@@ -383,9 +426,9 @@ export async function unsubscribeAll(
   const now = Timestamp.now();
   let count = 0;
   for (const doc of snap.docs) {
-    const status = (doc.data() as SubscriptionDoc).status;
-    if (status === "unsubscribed") continue;
-    batch.update(doc.ref, { status: "unsubscribed", unsubscribedAt: now });
+    const data = doc.data() as SubscriptionDoc;
+    if (!data.subscribed) continue;
+    batch.update(doc.ref, { subscribed: false, unsubscribedAt: now });
     count += 1;
   }
   if (count > 0) await batch.commit();
@@ -393,10 +436,7 @@ export async function unsubscribeAll(
 }
 
 /**
- * Migrate rows from guest → user audience. Run when a guest signs up for a
- * full account: any `subscriptions` rows tied to their email get re-pointed
- * at their uid. Idempotent — running on an email with no guest rows is a
- * no-op. Running twice is a no-op (rows are already user-audience).
+ * Migrate rows from guest → user audience. Idempotent.
  */
 export async function claimGuestSubscriptions(
   db: Firestore,
@@ -420,7 +460,8 @@ export async function claimGuestSubscriptions(
 
 /**
  * Read-side helper for member settings UI: which channels does this user
- * (audienceId === uid) currently have an active subscription on?
+ * (audienceId === uid) currently have subscribed = true on? Excludes any
+ * that are currently subscribed=false even if confirmed.
  */
 export async function findActiveSubscriptions(
   db: Firestore,
@@ -430,10 +471,9 @@ export async function findActiveSubscriptions(
   const snap = await db
     .collection(COLLECTION)
     .where("audienceId", "==", args.audienceId)
+    .where("subscribed", "==", true)
     .get();
-  return snap.docs
-    .map((d) => d.data() as SubscriptionDoc)
-    .filter((d) => d.status !== "unsubscribed");
+  return snap.docs.map((d) => d.data() as SubscriptionDoc);
 }
 
 export type ChannelRecipient = {
@@ -443,9 +483,9 @@ export type ChannelRecipient = {
 };
 
 /**
- * Read-side helper for the digest sender: every confirmed recipient on a
- * given channel. The sender uses `email` directly for guest rows; for user
- * rows it can optionally hydrate the user doc to apply gmail/uniEmail
+ * Read-side helper for the digest sender: every confirmed-AND-subscribed
+ * recipient on a given channel. The sender uses `email` directly for guest
+ * rows; for user rows it can hydrate the user doc to apply gmail/uniEmail
  * channel-routing rules (existing `addressesForSend` logic).
  */
 export async function findRecipientsForChannel(
@@ -456,7 +496,8 @@ export async function findRecipientsForChannel(
   const snap = await db
     .collection(COLLECTION)
     .where("channel", "==", channel)
-    .where("status", "==", "confirmed")
+    .where("confirmed", "==", true)
+    .where("subscribed", "==", true)
     .get();
   return snap.docs.map((d) => {
     const data = d.data() as SubscriptionDoc;
@@ -466,4 +507,81 @@ export async function findRecipientsForChannel(
       audienceId: data.audienceId,
     };
   });
+}
+
+/**
+ * Convert an old-shape row (one that uses the legacy `status` enum, no
+ * `confirmed` / `subscribed` booleans) into the new shape, AND mark the
+ * legacy `status` field for deletion. Used by the backfill route to
+ * migrate any pre-existing rows. Returns the patch to apply (callers
+ * `update()` with it via the admin SDK), or null if the row already has
+ * the new fields AND no legacy field, i.e. nothing to do.
+ *
+ * The returned patch always includes `status: FieldValue.delete()` if
+ * the legacy field is present on the row, so even rows that already have
+ * the new booleans get their dead-byte legacy field removed in the same
+ * pass.
+ */
+export function migrationPatchFromLegacyStatus(
+  row: Record<string, unknown>,
+  fieldDelete: FirebaseFirestore.FieldValue,
+): Record<string, unknown> | null {
+  const hasNew =
+    typeof row.confirmed === "boolean" && typeof row.subscribed === "boolean";
+  const legacyStatus = row.status;
+  const hasLegacyStatus = legacyStatus !== undefined;
+
+  if (hasNew && !hasLegacyStatus) {
+    // Already migrated and clean. No-op.
+    return null;
+  }
+
+  const patch: Record<string, unknown> = {};
+
+  if (!hasNew) {
+    if (
+      legacyStatus !== "pending" &&
+      legacyStatus !== "confirmed" &&
+      legacyStatus !== "unsubscribed"
+    ) {
+      // Row missing new fields AND missing recognisable legacy status.
+      // Defensive default: treat as lapsed so the row at least carries
+      // the booleans without lying about state. Shouldn't happen in
+      // practice; logged for posterity if it does.
+      patch.confirmed = false;
+      patch.subscribed = false;
+    } else {
+      const confirmedAt = row.confirmedAt;
+      const unsubscribedAt = row.unsubscribedAt;
+      const createdAt = row.createdAt;
+      if (legacyStatus === "pending") {
+        patch.confirmed = false;
+        patch.subscribed = true;
+        if (createdAt !== undefined) patch.subscribedAt = createdAt;
+      } else if (legacyStatus === "confirmed") {
+        patch.confirmed = true;
+        patch.subscribed = true;
+        const ts = confirmedAt ?? createdAt;
+        if (ts !== undefined) {
+          patch.confirmedAt = ts;
+          patch.subscribedAt = ts;
+        }
+      } else {
+        // unsubscribed
+        const wasConfirmed = Boolean(confirmedAt);
+        patch.confirmed = wasConfirmed;
+        patch.subscribed = false;
+        if (wasConfirmed) patch.confirmedAt = confirmedAt;
+        if (unsubscribedAt !== undefined) patch.unsubscribedAt = unsubscribedAt;
+      }
+    }
+  }
+
+  // Always nuke the legacy field if it's present. Cleans up dead bytes
+  // on already-migrated rows in the same pass.
+  if (hasLegacyStatus) {
+    patch.status = fieldDelete;
+  }
+
+  return patch;
 }
