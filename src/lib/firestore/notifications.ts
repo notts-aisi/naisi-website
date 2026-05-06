@@ -172,3 +172,61 @@ export function serialiseNotifications(prefs: NotificationPrefs): NotificationPr
     },
   };
 }
+
+/**
+ * One verified email address on a user. The list is the single extension
+ * point for the per-(email, channel) subscription model: callers iterate
+ * the result, write a row per email per channel.
+ *
+ * Today's slots: the Google account email (always counted as verified —
+ * it's the auth identity), and the university email when
+ * `profile.uniEmailVerifiedAt` is set on the user doc. Adding more slots
+ * later (a personal-email field, a parent-email field, etc.) is a
+ * one-place edit here.
+ */
+export type VerifiedEmail = {
+  email: string;
+  /** Discriminator for the UI so it can label "Google" vs "Uni". */
+  kind: "google" | "uni";
+};
+
+type UserShapeForVerifiedEmails = {
+  email?: string | null;
+  profile?:
+    | {
+        universityEmail?: unknown;
+        uniEmailVerifiedAt?: unknown;
+      }
+    | undefined;
+};
+
+/**
+ * Return the user's verified email addresses, deduped, lowercase, trimmed.
+ * Order is stable (`google`, then `uni`) so UI columns render predictably.
+ *
+ * Inline `.trim().toLowerCase()` rather than importing `normaliseEmail`
+ * from `lib/firestore/emailDocId` — that module is `server-only`, and this
+ * helper needs to run in client components (the /profile matrix and the
+ * admin Subscriptions table both use it to know what columns to draw).
+ */
+export function getVerifiedEmails(user: UserShapeForVerifiedEmails): VerifiedEmail[] {
+  const out: VerifiedEmail[] = [];
+  const googleRaw = typeof user.email === "string" ? user.email.trim().toLowerCase() : "";
+  if (googleRaw) {
+    out.push({ email: googleRaw, kind: "google" });
+  }
+  const profile = user.profile ?? {};
+  const uniRaw = profile.universityEmail;
+  const uniVerifiedAt = profile.uniEmailVerifiedAt;
+  if (
+    typeof uniRaw === "string" &&
+    uniRaw.trim().length > 0 &&
+    uniVerifiedAt
+  ) {
+    const uni = uniRaw.trim().toLowerCase();
+    if (uni && uni !== googleRaw) {
+      out.push({ email: uni, kind: "uni" });
+    }
+  }
+  return out;
+}

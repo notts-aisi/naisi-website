@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/lib/firebase/session";
 import { normaliseEmail } from "@/lib/firestore/emailDocId";
 import {
   ALL_CATEGORIES,
+  getVerifiedEmails,
   type NotificationCategory,
 } from "@/lib/firestore/notifications";
 import {
@@ -13,33 +14,37 @@ import {
 } from "@/lib/firestore/subscriptions";
 
 /**
- * Apply a member's notification-category prefs as deltas against the
- * subscriptions collection. Used by:
+ * Apply a member's per-(email, channel) subscription matrix as deltas
+ * against the subscriptions collection. Used by:
  *  - The register flow (after `completeRegistration` writes the user doc):
- *    claims any guest rows for the new user's email(s), then applies the
- *    form's chosen categories.
- *  - The profile settings UI (after the existing `updateDoc` to keep the
- *    legacy fields in sync): applies the same deltas without the claim
- *    side-effect (which is a no-op for an already-claimed user anyway).
+ *    claims any guest rows for the new user's verified email(s), then
+ *    applies the form's chosen matrix.
+ *  - The profile settings UI (after the existing user-doc write to keep the
+ *    legacy notifications field in sync): applies the same matrix.
  *
  * Body shape:
  *   {
- *     prefs: { newsletter: boolean, events: boolean },
- *     // Optional secondary email to also claim (uni email). Only honoured if
- *     // the user has a verified-or-recorded uni email on their profile —
- *     // arbitrary email-claim would let any user drag a guest's
- *     // subscription onto their own account.
- *     claimUniEmail?: boolean
+ *     matrix: {
+ *       "[email]": { newsletter: boolean, events: boolean },
+ *       ...
+ *     }
  *   }
  *
- * Source-of-truth rule: most-recent-action wins. The form's choices are
- * authoritative — if newsletter is unticked here, we unsubscribe regardless
- * of any prior guest-row state (which the claim has just absorbed).
+ * Source-of-truth rule: the server pulls the session user's verified emails
+ * via `getVerifiedEmails()` and only writes / unsubscribes rows for those.
+ * Any matrix entry for an email the helper doesn't return is silently
+ * dropped. This stops a client from claiming arbitrary email-channel rows
+ * and aligns the write set with the matrix UI's columns.
+ *
+ * For each (verified email, channel) pair: subscribe if `matrix[email][channel]`
+ * is true, unsubscribe otherwise. Most-recent-action wins, so flipping a
+ * checkbox off in the UI promptly drops the row's subscribed flag.
  */
 
+type MatrixCell = { newsletter?: unknown; events?: unknown };
+
 type Body = {
-  prefs?: { newsletter?: unknown; events?: unknown };
-  claimUniEmail?: unknown;
+  matrix?: Record<string, MatrixCell>;
 };
 
 export async function POST(req: Request) {
@@ -55,86 +60,78 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const wantsNewsletter = Boolean(parsed.prefs?.newsletter);
-  const wantsEvents = Boolean(parsed.prefs?.events);
-  const wantClaimUni = Boolean(parsed.claimUniEmail);
+  const matrix = parsed.matrix ?? {};
 
   const db = getAdminDb();
   if (!db) {
     return NextResponse.json({ error: "Server not configured" }, { status: 500 });
   }
 
-  const googleEmail = normaliseEmail(session.email);
-
-  // Optionally claim guest rows for the user's uni email too. Only honoured
-  // when the user actually has one on their profile (server-side check —
-  // the client could lie about claimUniEmail). Also pull the user's
-  // preferred name off the profile (or fall back to Google displayName)
-  // so newly-created subscription rows carry the same greeting label the
-  // member uses on the rest of the site.
-  let uniEmail: string | null = null;
-  let memberName: string | undefined;
-  // Always read the user doc so we can grab a name even when claimUniEmail
-  // is false. One extra get per sync is cheap relative to the surface
-  // benefit (admin list shows the member's actual name).
+  // Pull the user doc once — the verified-email helper reads
+  // profile.universityEmail + profile.uniEmailVerifiedAt off it, and we
+  // also pull a member name to stamp on each row.
   const userSnap = await db.collection("users").doc(session.uid).get();
-  if (userSnap.exists) {
-    const data = userSnap.data() ?? {};
-    const profile = (data.profile as Record<string, unknown> | undefined) ?? {};
-    const preferred = profile.preferredName;
-    const display = data.displayName;
-    const candidate =
-      (typeof preferred === "string" && preferred.trim()) ||
-      (typeof display === "string" && display.trim()) ||
-      "";
-    if (candidate) memberName = candidate;
-    if (wantClaimUni) {
-      const recorded = profile.universityEmail;
-      if (typeof recorded === "string" && recorded.trim().length > 0) {
-        uniEmail = normaliseEmail(recorded);
+  if (!userSnap.exists) {
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+  const userData = userSnap.data() ?? {};
+  const profile = (userData.profile as Record<string, unknown> | undefined) ?? {};
+  const preferred = profile.preferredName;
+  const display = userData.displayName;
+  const memberName: string | undefined =
+    (typeof preferred === "string" && preferred.trim()) ||
+    (typeof display === "string" && display.trim()) ||
+    undefined;
+
+  const verifiedEmails = getVerifiedEmails({
+    email: typeof userData.email === "string" ? userData.email : session.email,
+    profile: profile as { universityEmail?: unknown; uniEmailVerifiedAt?: unknown },
+  });
+
+  // Claim any guest rows for each verified email. Idempotent — no-op when
+  // already claimed in a prior run.
+  for (const ve of verifiedEmails) {
+    try {
+      await claimGuestSubscriptions(db, {
+        email: ve.email,
+        uid: session.uid,
+        name: memberName,
+      });
+    } catch (err) {
+      console.warn("[/api/subscriptions/sync] claim failed", session.uid, ve.email, err);
+      // Don't bail — the deltas below should still run.
+    }
+  }
+
+  // Apply per-(email, channel) deltas. Iterate verified emails server-side
+  // so the client can't write rows for unverified addresses.
+  for (const ve of verifiedEmails) {
+    const cell = matrix[ve.email] ?? matrix[normaliseEmail(ve.email)];
+    for (const cat of ALL_CATEGORIES) {
+      const wants = readMatrixCell(cell, cat);
+      if (wants) {
+        await subscribe(db, {
+          email: ve.email,
+          channel: cat,
+          audience: "user",
+          audienceId: session.uid,
+          source: "register-or-settings",
+          name: memberName,
+        });
+      } else {
+        await unsubscribe(db, { email: ve.email, channel: cat });
       }
     }
   }
 
-  // Claim any guest rows for these addresses. Idempotent — no-op when the
-  // user has already had their guest rows claimed in a prior run.
-  try {
-    await claimGuestSubscriptions(db, { email: googleEmail, uid: session.uid });
-    if (uniEmail && uniEmail !== googleEmail) {
-      await claimGuestSubscriptions(db, { email: uniEmail, uid: session.uid });
-    }
-  } catch (err) {
-    console.warn("[/api/subscriptions/sync] claim failed", session.uid, err);
-    // Don't bail — the deltas below should still run. Worst case: a guest
-    // row isn't claimed yet and ends up duplicate-feeling for one send,
-    // which the next sync run cleans up.
-  }
-
-  const wantedByCategory: Record<NotificationCategory, boolean> = {
-    newsletter: wantsNewsletter,
-    events: wantsEvents,
-  };
-
-  // Apply deltas. Each category becomes one row scoped to the user's primary
-  // (Google) email — that's the address the existing newsletter sender uses
-  // for member-shape sends. Uni-email channel routing for member sends is
-  // still handled by the existing `addressesForSend()` helper based on the
-  // user doc's `notifications.channels.uniEmail` flag, so we don't need a
-  // second subscription row for the uni email.
-  for (const cat of ALL_CATEGORIES) {
-    if (wantedByCategory[cat]) {
-      await subscribe(db, {
-        email: googleEmail,
-        channel: cat,
-        audience: "user",
-        audienceId: session.uid,
-        source: "register-or-settings",
-        name: memberName,
-      });
-    } else {
-      await unsubscribe(db, { email: googleEmail, channel: cat });
-    }
-  }
-
   return NextResponse.json({ ok: true });
+}
+
+function readMatrixCell(
+  cell: MatrixCell | undefined,
+  cat: NotificationCategory,
+): boolean {
+  if (!cell) return false;
+  if (cat === "newsletter") return Boolean(cell.newsletter);
+  return Boolean(cell.events);
 }

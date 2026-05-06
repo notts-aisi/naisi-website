@@ -21,12 +21,11 @@ import {
  *
  * Dual-write to the user doc when the row is owned by a member (audience
  * is "user") and the channel maps to a known legacy NotificationCategory.
- * Without this, flipping a member's row from the Subscriptions tab leaves
- * `users/{uid}.profile.notifications.categories.<channel>` stale, so the
- * Members admin tab's toggle UI lies about the actual state. Soft drift
- * during the migration window. Mirror of the inverse direction already in
- * place via adminMutations.setUserNotificationCategory.
- *
+ * `profile.notifications.categories.<channel>` is the field the legacy
+ * sender + useNewsletterSubscribers + bounce webhooks still consult. Soft
+ * drift on a multi-email user when only one row is flipped is accepted
+ * for this PR; the follow-up cleanup PR moves the sender to row-level
+ * addressing and drops the legacy field with no replacement here.
  */
 
 type Ctx = { params: Promise<{ id: string }> };

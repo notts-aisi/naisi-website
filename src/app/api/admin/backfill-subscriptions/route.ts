@@ -4,9 +4,11 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
   ALL_CATEGORIES,
+  getVerifiedEmails,
   normaliseNotifications,
+  type NotificationCategory,
+  type VerifiedEmail,
 } from "@/lib/firestore/notifications";
-import { normaliseEmail } from "@/lib/firestore/emailDocId";
 import {
   migrationPatchFromLegacyStatus,
   subscriptionDocId,
@@ -15,31 +17,33 @@ import {
 /**
  * Two-pass admin backfill / migration. Idempotent.
  *
- * Pass A — write a row per (member, channel) for EVERY user, regardless of
- * their current notification preference. Members get one row per known
- * channel (newsletter, events) with:
+ * Pass A — write a row per (verified email, channel) for EVERY user. The
+ * verified-email set comes from `getVerifiedEmails(userDoc)`: the Google
+ * account email is always counted; the university email is only counted
+ * when `profile.uniEmailVerifiedAt` is set. Members get one row per
+ * (email × channel) pair with:
  *  - confirmed: true (members are inherently confirmed by their session)
  *  - confirmedAt: now (or preserved if a row already exists)
- *  - subscribed: legacy_value (true iff their user-doc has the category on)
+ *  - subscribed: legacy_value (true iff the user-doc has the category on
+ *    AND the channel-routing flag for that specific email is on)
  *  - subscribedAt: now if subscribed, omitted otherwise
  *  - unsubscribedAt: now if unsubscribed, omitted otherwise
  *  - audience: "user", audienceId: uid
  *  - source: "backfill" (or kept on existing rows)
  *
- * That answers the user's "backfill doesn't catch people" gap. Currently-
- * unsubscribed members appear in the Subscriptions admin tab as
- * subscribed=false rather than being absent.
+ * Channel-routing: the legacy `notifications.channels.{gmail, uniEmail}`
+ * flags decide which addresses got which categories pre-migration. The
+ * backfill carries that intent forward into per-(email, channel) rows so
+ * existing users don't see their settings flipped on first run. The flags
+ * themselves stay on the user doc as legacy fields for now; a follow-up
+ * cleanup PR drops them once the new code paths have settled.
  *
- * Pass B — migrate any pre-existing rows that still use the legacy `status`
- * enum (pending / confirmed / unsubscribed) into the new (confirmed,
- * subscribed) shape. Translation:
- *   pending      → confirmed=false, subscribed=true
- *   confirmed    → confirmed=true,  subscribed=true,  confirmedAt preserved
- *   unsubscribed → confirmed=(was confirmedAt set?), subscribed=false,
- *                  unsubscribedAt preserved
- * The legacy `status` field is left in place; a follow-up cleanup PR drops
- * it after both prod and dev have been migrated and the new code paths
- * have been observed for a few days.
+ * Currently-unsubscribed members appear in the Subscriptions admin tab
+ * as subscribed=false rather than being absent.
+ *
+ * Pass B — migrate any pre-existing rows that still use the legacy
+ * `status` enum into the new (confirmed, subscribed) shape, and nuke
+ * stale `status` fields on already-migrated rows in the same pass.
  *
  * Admin-only. POST with no body. Returns counts for the operator.
  */
@@ -61,29 +65,29 @@ export async function POST() {
   let memberRowsWritten = 0;
   let legacyRowsMigrated = 0;
 
-  // Use a single batch per ~400 writes (Firestore caps at 500).
   const BATCH_LIMIT = 400;
   let batch = db.batch();
   let batchOps = 0;
 
-  // === Pass A: write a row per (member, channel) for every user ===
+  // === Pass A: write a row per (verified email, channel) for every user ===
 
   const allUsers = await db.collection("users").get();
 
   for (const userDoc of allUsers.docs) {
     usersScanned += 1;
     const data = userDoc.data();
-    const email = typeof data.email === "string" ? data.email : "";
-    const normalised = normaliseEmail(email);
-    if (!normalised) {
+    const profile = (data.profile ?? {}) as Record<string, unknown>;
+    const verifiedEmails = getVerifiedEmails({
+      email: typeof data.email === "string" ? data.email : null,
+      profile: profile as { universityEmail?: unknown; uniEmailVerifiedAt?: unknown },
+    });
+    if (verifiedEmails.length === 0) {
       usersWithNoEmail += 1;
       continue;
     }
-    const profile = (data.profile ?? {}) as Record<string, unknown>;
     const prefs = normaliseNotifications(profile);
     const now = Timestamp.now();
 
-    // Pull a name (preferredName, then displayName).
     const preferred = profile.preferredName;
     const display = data.displayName;
     const memberName: string | undefined =
@@ -91,43 +95,40 @@ export async function POST() {
       (typeof display === "string" && display.trim()) ||
       undefined;
 
-    for (const cat of ALL_CATEGORIES) {
-      const wantsThis = Boolean(prefs.categories[cat]);
-      const ref = db
-        .collection("subscriptions")
-        .doc(subscriptionDocId({ email: normalised, channel: cat }));
+    for (const ve of verifiedEmails) {
+      for (const cat of ALL_CATEGORIES) {
+        const wantsThis = wantsChannelForEmail(prefs, ve, cat);
+        const ref = db
+          .collection("subscriptions")
+          .doc(subscriptionDocId({ email: ve.email, channel: cat }));
 
-      // Use set({ merge: true }) so existing rows keep their current
-      // confirmedAt / subscribedAt timestamps and we just upsert the
-      // current intent. New rows pick up everything below.
-      // The legacy `status` field gets nuked on this same write so a
-      // member row that pre-dates the schema split sheds its dead byte.
-      const row: Record<string, unknown> = {
-        email: normalised,
-        channel: cat,
-        audience: "user",
-        audienceId: userDoc.id,
-        confirmed: true,
-        confirmedAt: now,
-        subscribed: wantsThis,
-        source: "backfill",
-        createdAt: now,
-        status: FieldValue.delete(),
-      };
-      if (wantsThis) {
-        row.subscribedAt = now;
-      } else {
-        row.unsubscribedAt = now;
-      }
-      if (memberName) row.name = memberName;
+        const row: Record<string, unknown> = {
+          email: ve.email,
+          channel: cat,
+          audience: "user",
+          audienceId: userDoc.id,
+          confirmed: true,
+          confirmedAt: now,
+          subscribed: wantsThis,
+          source: "backfill",
+          createdAt: now,
+          status: FieldValue.delete(),
+        };
+        if (wantsThis) {
+          row.subscribedAt = now;
+        } else {
+          row.unsubscribedAt = now;
+        }
+        if (memberName) row.name = memberName;
 
-      batch.set(ref, row, { merge: true });
-      batchOps += 1;
-      memberRowsWritten += 1;
-      if (batchOps >= BATCH_LIMIT) {
-        await batch.commit();
-        batch = db.batch();
-        batchOps = 0;
+        batch.set(ref, row, { merge: true });
+        batchOps += 1;
+        memberRowsWritten += 1;
+        if (batchOps >= BATCH_LIMIT) {
+          await batch.commit();
+          batch = db.batch();
+          batchOps = 0;
+        }
       }
     }
   }
@@ -139,12 +140,6 @@ export async function POST() {
   }
 
   // === Pass B: migrate legacy `status`-only rows + nuke dead status fields ===
-  //
-  // Walks every subscription row. For rows still on the legacy single-axis
-  // shape, derives the new (confirmed, subscribed) booleans from `status`.
-  // For rows already migrated but still carrying a stale `status` field,
-  // deletes the field. Both behaviours rolled into one helper call so a
-  // single update() per row does the right thing regardless of state.
 
   const allSubs = await db.collection("subscriptions").get();
   for (const subDoc of allSubs.docs) {
@@ -174,4 +169,24 @@ export async function POST() {
     memberRowsWritten,
     legacyRowsMigrated,
   });
+}
+
+/**
+ * Should a row exist subscribed=true for this (email, channel) given the
+ * user's legacy notification prefs? Combines the category flag (do they
+ * want this channel at all) with the per-email channel-routing flag
+ * (does this specific address get the category).
+ *
+ * The Google email defaults to receiving categories when the channels
+ * map is missing — it's the auth identity, and pre-existing prefs that
+ * predate the channels concept should keep delivering there.
+ */
+function wantsChannelForEmail(
+  prefs: ReturnType<typeof normaliseNotifications>,
+  verified: VerifiedEmail,
+  cat: NotificationCategory,
+): boolean {
+  if (!prefs.categories[cat]) return false;
+  if (verified.kind === "google") return prefs.channels.gmail !== false;
+  return Boolean(prefs.channels.uniEmail);
 }

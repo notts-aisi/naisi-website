@@ -437,10 +437,17 @@ export async function unsubscribeAll(
 
 /**
  * Migrate rows from guest → user audience. Idempotent.
+ *
+ * If `name` is provided and non-empty, also overwrites the row's `name`
+ * with that authoritative value. Most-recent-action-wins: a guest who
+ * signed up as "Marie" then registers as "Marie J. Smith" gets the new
+ * full name on their rows from the moment of claim. The user-doc-derived
+ * name is the canonical greeting label across the rest of the site, so
+ * it wins over a hand-typed homepage form value here.
  */
 export async function claimGuestSubscriptions(
   db: Firestore,
-  args: { email: string; uid: string },
+  args: { email: string; uid: string; name?: string },
 ): Promise<number> {
   const email = normaliseEmail(args.email);
   if (!email || !args.uid) return 0;
@@ -450,9 +457,15 @@ export async function claimGuestSubscriptions(
     .where("audience", "==", "guest")
     .get();
   if (snap.empty) return 0;
+  const trimmedName = args.name?.trim();
   const batch = db.batch();
   for (const doc of snap.docs) {
-    batch.update(doc.ref, { audience: "user", audienceId: args.uid });
+    const patch: Record<string, unknown> = {
+      audience: "user",
+      audienceId: args.uid,
+    };
+    if (trimmedName) patch.name = trimmedName;
+    batch.update(doc.ref, patch);
   }
   await batch.commit();
   return snap.size;
