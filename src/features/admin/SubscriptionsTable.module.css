@@ -53,47 +53,364 @@
   font-size: var(--text-sm);
 }
 
-.tableWrap {
-  overflow-x: auto;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-}
-
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--text-sm);
-}
-
-.table th,
-.table td {
-  text-align: left;
-  padding: var(--space-3) var(--space-3);
-  border-bottom: 1px solid var(--color-border);
-  vertical-align: top;
-}
-
-.table th {
-  font-weight: 600;
-  color: var(--color-text-muted);
-  background: var(--color-bg-elevated);
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.table tr:last-child td {
-  border-bottom: none;
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
 }
 
 .muted {
   color: var(--color-text-muted);
 }
 
-.actions {
+.pinnedFilter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.4rem 0.7rem;
+  font-size: var(--text-sm);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+}
+
+.pinnedFilterClear {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--text-base);
+  line-height: 1;
+  padding: 0;
+}
+
+/* === Recipient list ===
+   Each top-level row is a button-like recipient summary; clicking expands
+   inline to a per-email matrix. */
+
+.recipientList {
   display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.recipient {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  transition: border-color var(--transition-fast);
+}
+
+.recipient:hover {
+  border-color: var(--color-border-strong);
+}
+
+.recipientExpanded {
+  border-color: var(--color-accent);
+}
+
+.recipientExpanded:hover {
+  border-color: var(--color-accent);
+}
+
+.summaryButton {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 2fr) minmax(0, 2fr) auto;
+  gap: var(--space-3) var(--space-4);
+  align-items: center;
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  background: transparent;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  border-radius: var(--radius-md);
+}
+
+.summaryButton:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.recipientIdentity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.recipientName {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recipientNameMuted {
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+.recipientAudience {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.recipientEmails {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  font-size: var(--text-xs);
+}
+
+.recipientEmail {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+.recipientEmailVerified {
+  color: var(--color-success);
+}
+
+.recipientEmailUnverified {
+  color: var(--color-text-muted);
+}
+
+.recipientPills {
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
   align-items: center;
+  min-width: 0;
+}
+
+.statePill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  border: 1px solid transparent;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.statePillSubscribed {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.statePillPending {
+  background: var(--color-warning-soft, var(--color-bg-elevated));
+  color: var(--color-warning);
+  border-color: var(--color-warning);
+}
+
+.statePillUnsubscribed {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+}
+
+.statePillMatched {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.chevron {
+  color: var(--color-text-muted);
+  transition: transform var(--transition-fast);
+  font-size: var(--text-base);
+  line-height: 1;
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+  color: var(--color-accent);
+}
+
+/* === Expanding panel (grid-template-rows trick) === */
+
+.panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 240ms ease;
+}
+
+.panelOpen {
+  grid-template-rows: 1fr;
+}
+
+.panelInner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panelBody {
+  padding: var(--space-2) var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  margin-top: var(--space-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    transition: none;
+  }
+  .chevron {
+    transition: none;
+  }
+}
+
+/* === Matrix in the expanded view === */
+
+.matrixWrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.matrix {
+  display: grid;
+  /* gridTemplateColumns set inline (depends on email count). */
+  gap: var(--space-3) var(--space-4);
+  align-items: stretch;
+}
+
+.matrixHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.matrixHeaderEmail {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.matrixHeaderMeta {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.matrixChannel {
+  padding: var(--space-3) 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  border-bottom: 1px solid var(--color-border);
+  align-self: start;
+}
+
+.matrixCell {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  background: var(--color-bg-elevated);
+}
+
+.matrixCellMatched {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.matrixCellAudit {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+}
+
+.matrixCellMissing {
+  padding: var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+/* Mobile: matrix becomes a vertical stack of email-headed mini-tables. */
+
+.matrixStacked {
+  display: none;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.matrixStackedEmail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.matrixStackedEmailHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+}
+
+.matrixStackedRow {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.matrixStackedRow:first-of-type {
+  border-top: 0;
+}
+
+.matrixStackedRowLabel {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  align-self: center;
+}
+
+@media (max-width: 48rem) {
+  .matrix {
+    display: none;
+  }
+  .matrixStacked {
+    display: flex;
+  }
+  .summaryButton {
+    grid-template-columns: 1fr auto;
+    grid-auto-rows: auto;
+  }
+  .recipientEmails,
+  .recipientPills {
+    grid-column: 1 / -1;
+  }
 }
 
 .pagination {

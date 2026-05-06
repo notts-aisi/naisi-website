@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
@@ -16,18 +17,12 @@ import {
   type UserDoc,
   type UserPermissions,
 } from "@/lib/firestore/users";
-import {
-  CATEGORY_LABELS,
-  normaliseNotifications,
-  type NotificationCategory,
-} from "@/lib/firestore/notifications";
 import MemberEditForm from "./MemberEditForm";
 import {
   deleteUser,
   setPermissions,
   setRole,
   setTracks,
-  setUserNotificationCategory,
   unrejectUser,
   updateMember,
 } from "./adminMutations";
@@ -146,7 +141,6 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
   const isAdminRole = user.role === "admin";
   const displayName =
     user.displayName ?? user.profile?.preferredName ?? user.email ?? "Unnamed";
-  const prefs = normaliseNotifications(user.profile ?? {});
 
   async function onRoleChange(next: Role) {
     if (next === user.role) return;
@@ -174,19 +168,6 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
     } catch (err) {
       console.error(err);
       alert("Failed to update visibility");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onToggleCategory(category: NotificationCategory) {
-    const current = prefs.categories[category];
-    setBusy(true);
-    try {
-      await setUserNotificationCategory(user.uid, category, !current);
-    } catch (err) {
-      console.error(err);
-      alert(`Failed to toggle ${category}`);
     } finally {
       setBusy(false);
     }
@@ -439,20 +420,12 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
 
               <div className={styles.controlBlock}>
                 <span className={styles.controlLabel}>Email subscriptions</span>
-                <div className={styles.switchColumn}>
-                  <Switch
-                    checked={prefs.categories.newsletter}
-                    onChange={() => onToggleCategory("newsletter")}
-                    disabled={busy}
-                    label={CATEGORY_LABELS.newsletter}
-                  />
-                  <Switch
-                    checked={prefs.categories.events}
-                    onChange={() => onToggleCategory("events")}
-                    disabled={busy}
-                    label={CATEGORY_LABELS.events}
-                  />
-                </div>
+                <Link
+                  href={`/admin/subscriptions?audienceId=${encodeURIComponent(user.uid)}`}
+                  className={styles.subscriptionsLink}
+                >
+                  Manage subscriptions →
+                </Link>
               </div>
 
               <div className={styles.controlBlock}>
