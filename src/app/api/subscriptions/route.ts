@@ -11,18 +11,22 @@ import {
   subscribe,
   subscriptionDocId,
 } from "@/lib/firestore/subscriptions";
+import { getVerifiedEmails } from "@/lib/firestore/notifications";
 import SubscriptionConfirmEmail from "@/emails/SubscriptionConfirmEmail";
 import SubscriptionAddedEmail from "@/emails/SubscriptionAddedEmail";
 
 /**
  * Subscribe an email to one or more channels in a single call. Used by:
- *  - Public homepage forms (guest path) — anonymous POST, double-opt-in
- *    for first-time emails, single-click for emails that have any prior
- *    confirmed row (i.e. the inbox is already proven).
- *  - Signed-in members hitting the same endpoint, which shortcuts to
- *    confirmed because their session cookie is itself proof of inbox
- *    control. (Member settings UI uses /api/subscriptions/sync instead,
- *    which applies the full prefs object as deltas.)
+ *  - Public homepage forms: anonymous POST, always double-opt-in. Every
+ *    address earns its own confirmation click. There is no shortcut off a
+ *    prior confirmed row: a logged-out caller typing an address has not
+ *    proven they control it.
+ *  - Signed-in members hitting the same endpoint: the row skips
+ *    confirmation ONLY when the posted email is one of that member's own
+ *    verified emails. A member subscribing any other address goes through
+ *    the same double-opt-in as a guest. (Member settings UI uses
+ *    /api/subscriptions/sync instead, which applies the prefs matrix as
+ *    deltas over the member's verified emails.)
  *
  * Body shape (either form is accepted):
  *  - { email, channel: string, source?, name? }     // legacy single
@@ -35,7 +39,7 @@ import SubscriptionAddedEmail from "@/emails/SubscriptionAddedEmail";
  * Anti-enumeration discipline: every non-validation outcome returns
  * `{ ok: true, status: 200 }`. The caller cannot tell the difference
  * between fresh signup, already-subscribed, in-cooldown, or
- * suppressed-address — all return identical bodies. Validation failures
+ * suppressed-address, all return identical bodies. Validation failures
  * still return 400 (so the form can show an inline error), since
  * malformed input isn't an enumeration risk.
  */
@@ -129,7 +133,7 @@ export async function POST(req: Request): Promise<NextResponse<ApiResult>> {
     );
   }
 
-  // Suppression list — silently succeed. We do NOT differentiate this case;
+  // Suppression list: silently succeed. We do NOT differentiate this case;
   // exposing "your address bounced previously" via a distinct status would
   // leak which addresses have prior interaction history with us.
   if (await isSuppressed(db, email)) {
@@ -155,12 +159,31 @@ export async function POST(req: Request): Promise<NextResponse<ApiResult>> {
     }
   }
 
-  // Signed-in caller? Shortcut to confirmed, audience=user. Anonymous caller?
-  // Guest flow with double-opt-in (or one-click if the email has any prior
-  // confirmed row).
+  // Decide whether this caller has proven control of THIS email. True only
+  // when a signed-in user is subscribing one of their own verified emails.
+  // A logged-out caller, or a signed-in member subscribing some other
+  // address, falls through to the guest double-opt-in flow. This is what
+  // stops anyone confirming an address they don't control, and stops the
+  // homepage form minting `audience: "user"` rows for emails that aren't
+  // the user's (the source of stale "ghost" rows in the admin tab).
   const session = await getCurrentUser();
-  const audience = session ? "user" : "guest";
-  const audienceId = session ? session.uid : emailDocId(email);
+  let inboxProven = false;
+  if (session) {
+    const userSnap = await db.collection("users").doc(session.uid).get();
+    const userData = userSnap.data() ?? {};
+    const verified = getVerifiedEmails({
+      email:
+        typeof userData.email === "string" ? userData.email : session.email,
+      profile: (userData.profile ?? {}) as {
+        universityEmail?: unknown;
+        uniEmailVerifiedAt?: unknown;
+      },
+    }).map((v) => v.email);
+    inboxProven = verified.includes(email);
+  }
+  const audience: "user" | "guest" = inboxProven ? "user" : "guest";
+  const audienceId =
+    inboxProven && session ? session.uid : emailDocId(email);
 
   // Run subscribe() for each requested channel. Aggregate the results so
   // we can decide which emails to send.
@@ -174,6 +197,7 @@ export async function POST(req: Request): Promise<NextResponse<ApiResult>> {
         channel,
         audience,
         audienceId,
+        inboxProven,
         source,
         name,
       });

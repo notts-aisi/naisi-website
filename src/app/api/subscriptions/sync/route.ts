@@ -67,7 +67,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Server not configured" }, { status: 500 });
   }
 
-  // Pull the user doc once — the verified-email helper reads
+  // Pull the user doc once. The verified-email helper reads
   // profile.universityEmail + profile.uniEmailVerifiedAt off it, and we
   // also pull a member name to stamp on each row.
   const userSnap = await db.collection("users").doc(session.uid).get();
@@ -88,7 +88,7 @@ export async function POST(req: Request) {
     profile: profile as { universityEmail?: unknown; uniEmailVerifiedAt?: unknown },
   });
 
-  // Claim any guest rows for each verified email. Idempotent — no-op when
+  // Claim any guest rows for each verified email. Idempotent, a no-op when
   // already claimed in a prior run.
   for (const ve of verifiedEmails) {
     try {
@@ -99,7 +99,7 @@ export async function POST(req: Request) {
       });
     } catch (err) {
       console.warn("[/api/subscriptions/sync] claim failed", session.uid, ve.email, err);
-      // Don't bail — the deltas below should still run.
+      // Don't bail, the deltas below should still run.
     }
   }
 
@@ -115,6 +115,9 @@ export async function POST(req: Request) {
           channel: cat,
           audience: "user",
           audienceId: session.uid,
+          // This route iterates only the member's own verified emails, so
+          // every row here is genuinely their inbox: skip the click flow.
+          inboxProven: true,
           source: "register-or-settings",
           name: memberName,
         });

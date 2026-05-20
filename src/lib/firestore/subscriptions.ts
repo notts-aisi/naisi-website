@@ -21,7 +21,7 @@ import { emailDocId, normaliseEmail } from "./emailDocId";
  *
  * Doc-id convention: `sub_<sanitisedEmail>__<channel>`. The slug prefix keeps
  * Firestore browseable. The (sanitisedEmail, channel) suffix is deterministic,
- * so the same pair always maps to the same doc — `set({ merge: true })` gives
+ * so the same pair always maps to the same doc, so `set({ merge: true })` gives
  * idempotent upserts.
  *
  * Channel-string convention:
@@ -50,10 +50,13 @@ import { emailDocId, normaliseEmail } from "./emailDocId";
  * doesn't touch confirmed. Re-subscribe is a one-step "set subscribed=true",
  * not a re-confirmation flow, because the inbox is already proven.
  *
- * Confirmation is per-EMAIL, not per-channel: once any one row for an email
- * is confirmed, subsequent subscriptions for that email mint as confirmed
- * directly. The confirmation flow is the inbox-control gate; we gate it
- * once per address, not once per channel.
+ * Confirmation gate: a row mints as confirmed only when the caller passes
+ * `inboxProven` (a signed-in user subscribing one of their own verified
+ * emails). Every other row is pending until the recipient clicks the
+ * confirm link. One click flips every pending row for that address at once
+ * (`confirmAllForEmail`), so the click is still gathered once per address,
+ * not once per channel. `subscribe()` never infers proof from a sibling
+ * confirmed row; that let an unproven caller confirm an address silently.
  */
 
 export type SubscriptionAudience = "user" | "guest";
@@ -111,7 +114,7 @@ export type LegacyStatus = "pending" | "confirmed" | "unsubscribed";
 
 const COLLECTION = "subscriptions";
 
-/** `^[a-z0-9:_-]+$` — kept loose enough for `cohort:fall-2026`-style ids. */
+/** `^[a-z0-9:_-]+$`, kept loose enough for `cohort:fall-2026`-style ids. */
 const CHANNEL_RE = /^[a-z0-9:_-]+$/;
 const CHANNEL_MAX_LEN = 80;
 
@@ -173,32 +176,21 @@ export function displayStatusOf(row: {
   return "lapsed";
 }
 
-/**
- * Has any row for this email been confirmed at any point? Used by `subscribe`
- * to decide whether a fresh row should mint as confirmed (the inbox already
- * proved itself on a previous channel) or pending (first-time signup).
- */
-export async function hasAnyConfirmedRowForEmail(
-  db: Firestore,
-  email: string,
-): Promise<boolean> {
-  const e = normaliseEmail(email);
-  if (!e) return false;
-  const snap = await db
-    .collection(COLLECTION)
-    .where("email", "==", e)
-    .where("confirmed", "==", true)
-    .limit(1)
-    .get();
-  return !snap.empty;
-}
-
 export type SubscribeArgs = {
   email: string;
   channel: string;
   audience: SubscriptionAudience;
   audienceId: string;
   source: string;
+  /**
+   * Whether the inbox is proven to belong to whoever is making this call,
+   * i.e. whether the click-confirm flow can be skipped. The CALLER decides
+   * this and must be honest: true only when a signed-in user is
+   * subscribing one of their own verified emails. A logged-out caller, or
+   * a signed-in caller subscribing some other address, passes false so the
+   * row goes through double-opt-in. subscribe() never infers proof itself.
+   */
+  inboxProven: boolean;
   /**
    * Optional human name to store on the row. Only written if non-empty after
    * trim. On re-subscribe with a new value, the more-recent one wins.
@@ -211,8 +203,8 @@ export type SubscribeResult = {
   created: boolean;
   /**
    * True iff this row is now `subscribed && !confirmed` and a confirmation
-   * email should be sent. False if it shortcut to confirmed (member or any
-   * prior confirmed row for the email).
+   * email should be sent. False when the caller passed `inboxProven` and
+   * the row minted (or flipped) straight to confirmed.
    */
   requiresConfirmation: boolean;
   /**
@@ -226,9 +218,9 @@ export type SubscribeResult = {
 
 /**
  * Idempotent upsert. Sets `subscribed = true` and stamps `subscribedAt`.
- * Sets `confirmed = true` and stamps `confirmedAt` iff the row's email has
- * any prior confirmation, OR the caller is a signed-in member (`audience:
- * "user"`, trusted by the route).
+ * Sets `confirmed = true` and stamps `confirmedAt` only when the caller
+ * passes `inboxProven` (see SubscribeArgs). Otherwise the row is left
+ * pending and the caller should send a confirmation email.
  *
  * Re-subscribe path: an existing row whose subscribed is currently false
  * just flips back to true. confirmedAt and confirmed are unchanged.
@@ -252,12 +244,10 @@ export async function subscribe(
   const snap = await ref.get();
   const data = snap.data() as SubscriptionDoc | undefined;
 
-  // Members come in already-trusted (the route checked their session).
-  // Their rows skip the click-confirm flow entirely, same as if any other
-  // row for this email were already confirmed.
-  const memberShortcut = args.audience === "user";
-  const inboxAlreadyProven =
-    memberShortcut || (await hasAnyConfirmedRowForEmail(db, email));
+  // Proof is the caller's call, passed explicitly. subscribe() never
+  // infers it from the audience field or a sibling confirmed row: doing
+  // so let a logged-out caller confirm any known address with no click.
+  const inboxAlreadyProven = args.inboxProven;
 
   const trimmedName = args.name?.trim();
 

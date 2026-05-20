@@ -981,7 +981,9 @@ function RecipientMatrix({
                   cell && cellMatchesActiveFilters(cell, channelFilter, statusFilter);
                 return (
                   <div key={ch} className={styles.matrixStackedRow}>
-                    <span className={styles.matrixStackedRowLabel}>{ch}</span>
+                    <span className={styles.matrixStackedRowLabel}>
+                    {titleCase(ch)}
+                  </span>
                     {cell ? (
                       <CellContents
                         cell={cell}
@@ -1084,7 +1086,7 @@ function RecipientMatrixChannelRow({
 }) {
   return (
     <>
-      <div className={styles.matrixChannel}>{channel}</div>
+      <div className={styles.matrixChannel}>{titleCase(channel)}</div>
       {recipient.emails.map((email) => {
         const cell = recipient.cells[email]?.[channel];
         const stale = staleEmails.has(email);
@@ -1140,6 +1142,7 @@ function CellContents({
         {matched && <span className={styles.matchTag}>match</span>}
       </div>
       <div className={styles.matrixCellAudit}>
+        <span>Source: {cell.source || "unknown"}</span>
         <span>Created: {formatDate(cell.createdAt)}</span>
         <span>Confirmed: {formatDate(cell.confirmedAt)}</span>
         <span>Subscribed: {formatDate(cell.subscribedAt)}</span>
