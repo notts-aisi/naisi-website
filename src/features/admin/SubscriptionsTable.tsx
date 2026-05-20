@@ -42,6 +42,9 @@ const EVENT_LABEL: Record<SubscriptionEventEntry["type"], string> = {
 /** Shared empty array so cells with no events don't churn a new ref. */
 const NO_EVENTS: SubscriptionEventEntry[] = [];
 
+/** Per-cell history shows this many events before the "Show all" toggle. */
+const EVENT_PREVIEW_COUNT = 5;
+
 function eventTypeClass(type: SubscriptionEventEntry["type"]): string {
   if (type === "confirmed") return styles.eventTypeConfirmed;
   if (type === "subscribed") return styles.eventTypeSubscribed;
@@ -1164,6 +1167,13 @@ function CellContents({
   events: SubscriptionEventEntry[];
   onToggleSubscribed: (cell: SubscriptionRow) => void;
 }) {
+  const [showAllEvents, setShowAllEvents] = useState(false);
+  const hasMoreEvents = events.length > EVENT_PREVIEW_COUNT;
+  // History is sorted oldest-first; the preview keeps the most recent few.
+  const visibleEvents =
+    showAllEvents || !hasMoreEvents
+      ? events
+      : events.slice(-EVENT_PREVIEW_COUNT);
   const tone =
     cell.displayStatus === "subscribed"
       ? "success"
@@ -1194,15 +1204,32 @@ function CellContents({
       {events.length > 0 && (
         <div className={styles.eventLog}>
           <span className={styles.eventLogTitle}>History</span>
-          {events.map((e) => (
-            <div key={e.id} className={styles.eventLine}>
-              <span className={`${styles.eventType} ${eventTypeClass(e.type)}`}>
-                {EVENT_LABEL[e.type]}
-              </span>
-              <span className={styles.eventActor}>{e.actorLabel}</span>
-              <span className={styles.eventAt}>{formatDate(e.at)}</span>
-            </div>
-          ))}
+          <div
+            className={`${styles.eventLogList} ${
+              showAllEvents ? styles.eventLogScroll : ""
+            }`}
+          >
+            {visibleEvents.map((e) => (
+              <div key={e.id} className={styles.eventLine}>
+                <span
+                  className={`${styles.eventType} ${eventTypeClass(e.type)}`}
+                >
+                  {EVENT_LABEL[e.type]}
+                </span>
+                <span className={styles.eventActor}>{e.actorLabel}</span>
+                <span className={styles.eventAt}>{formatDate(e.at)}</span>
+              </div>
+            ))}
+          </div>
+          {hasMoreEvents && (
+            <button
+              type="button"
+              className={styles.eventLogToggle}
+              onClick={() => setShowAllEvents((s) => !s)}
+            >
+              {showAllEvents ? "Show fewer" : `Show all ${events.length}`}
+            </button>
+          )}
         </div>
       )}
     </>
