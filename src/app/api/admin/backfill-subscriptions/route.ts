@@ -17,19 +17,23 @@ import {
 /**
  * Two-pass admin backfill / migration. Idempotent.
  *
- * Pass A — write a row per (verified email, channel) for EVERY user. The
+ * Pass A: write a row per (verified email, channel) for EVERY user. The
  * verified-email set comes from `getVerifiedEmails(userDoc)`: the Google
  * account email is always counted; the university email is only counted
  * when `profile.uniEmailVerifiedAt` is set. Members get one row per
  * (email × channel) pair with:
  *  - confirmed: true (members are inherently confirmed by their session)
- *  - confirmedAt: now (or preserved if a row already exists)
  *  - subscribed: legacy_value (true iff the user-doc has the category on
  *    AND the channel-routing flag for that specific email is on)
- *  - subscribedAt: now if subscribed, omitted otherwise
- *  - unsubscribedAt: now if unsubscribed, omitted otherwise
  *  - audience: "user", audienceId: uid
  *  - source: "backfill" (or kept on existing rows)
+ *
+ * Audit timestamps (createdAt, confirmedAt, subscribedAt,
+ * unsubscribedAt) are write-once: an existing row keeps whatever it
+ * already has, and a field is only stamped the first time it applies.
+ * subscribedAt and unsubscribedAt both persist once set, so a row keeps
+ * its full history rather than losing the opposite timestamp on a flip.
+ * This is what makes a re-run genuinely free: nothing drifts.
  *
  * Channel-routing: the legacy `notifications.channels.{gmail, uniEmail}`
  * flags decide which addresses got which categories pre-migration. The
@@ -41,7 +45,7 @@ import {
  * Currently-unsubscribed members appear in the Subscriptions admin tab
  * as subscribed=false rather than being absent.
  *
- * Pass B — migrate any pre-existing rows that still use the legacy
+ * Pass B: migrate any pre-existing rows that still use the legacy
  * `status` enum into the new (confirmed, subscribed) shape, and nuke
  * stale `status` fields on already-migrated rows in the same pass.
  *
@@ -71,6 +75,16 @@ export async function POST() {
 
   // === Pass A: write a row per (verified email, channel) for every user ===
 
+  // Preload existing subscription docs so Pass A can preserve write-once
+  // audit timestamps instead of restamping them on every run. Without
+  // this the backfill is not truly idempotent: createdAt / confirmedAt
+  // drift forward each time it runs.
+  const existingSubsSnap = await db.collection("subscriptions").get();
+  const existingSubById = new Map<string, Record<string, unknown>>();
+  for (const d of existingSubsSnap.docs) {
+    existingSubById.set(d.id, d.data() as Record<string, unknown>);
+  }
+
   const allUsers = await db.collection("users").get();
 
   for (const userDoc of allUsers.docs) {
@@ -98,25 +112,30 @@ export async function POST() {
     for (const ve of verifiedEmails) {
       for (const cat of ALL_CATEGORIES) {
         const wantsThis = wantsChannelForEmail(prefs, ve, cat);
-        const ref = db
-          .collection("subscriptions")
-          .doc(subscriptionDocId({ email: ve.email, channel: cat }));
+        const docId = subscriptionDocId({ email: ve.email, channel: cat });
+        const ref = db.collection("subscriptions").doc(docId);
+        const existing = existingSubById.get(docId);
 
+        // Audit timestamps are write-once: keep whatever the row already
+        // has, stamp a field only the first time it applies. subscribedAt
+        // and unsubscribedAt both persist once set, so a row that has
+        // flipped state keeps its full history.
         const row: Record<string, unknown> = {
           email: ve.email,
           channel: cat,
           audience: "user",
           audienceId: userDoc.id,
           confirmed: true,
-          confirmedAt: now,
+          confirmedAt: existing?.confirmedAt ?? now,
           subscribed: wantsThis,
-          source: "backfill",
-          createdAt: now,
+          source: existing?.source ?? "backfill",
+          createdAt: existing?.createdAt ?? now,
           status: FieldValue.delete(),
         };
-        if (wantsThis) {
+        if (wantsThis && !existing?.subscribedAt) {
           row.subscribedAt = now;
-        } else {
+        }
+        if (!wantsThis && !existing?.unsubscribedAt) {
           row.unsubscribedAt = now;
         }
         if (memberName) row.name = memberName;
@@ -178,7 +197,7 @@ export async function POST() {
  * (does this specific address get the category).
  *
  * The Google email defaults to receiving categories when the channels
- * map is missing — it's the auth identity, and pre-existing prefs that
+ * map is missing, it's the auth identity, and pre-existing prefs that
  * predate the channels concept should keep delivering there.
  */
 function wantsChannelForEmail(
