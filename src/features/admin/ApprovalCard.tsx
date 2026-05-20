@@ -16,6 +16,7 @@ import {
 } from "@/lib/firestore/applicationEmails";
 import { approveUser, deleteUser, rejectUser } from "./adminMutations";
 import RejectReasonPicker from "./emailDesigns/RejectReasonPicker";
+import type { UniEmailHolder } from "./useUniEmailIndex";
 
 function sendApplicationEmail(body: {
   templateId: string;
@@ -46,7 +47,14 @@ function formatNewsletter(prefs: NewsletterPrefs): string {
   return channels.length ? `Subscribed — ${channels.join(" + ")}` : "Subscribed";
 }
 
-export default function ApprovalCard({ user }: { user: UserDoc }) {
+export default function ApprovalCard({
+  user,
+  uniEmailConflicts = [],
+}: {
+  user: UserDoc;
+  /** Other accounts already holding this applicant's university email. */
+  uniEmailConflicts?: UniEmailHolder[];
+}) {
   const [busy, setBusy] = useState<"approve" | "reject" | "delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showRejectPicker, setShowRejectPicker] = useState(false);
@@ -136,6 +144,36 @@ export default function ApprovalCard({ user }: { user: UserDoc }) {
             </div>
             <Badge>Signed up {signedUp}</Badge>
           </div>
+
+          {uniEmailConflicts.length > 0 && (
+            <div
+              style={{
+                marginTop: "var(--space-4)",
+                padding: "var(--space-3) var(--space-4)",
+                background: "var(--color-danger-soft)",
+                border: "1px solid var(--color-danger)",
+                borderRadius: "var(--radius-md)",
+                fontSize: "var(--text-sm)",
+              }}
+            >
+              <strong style={{ color: "var(--color-danger)" }}>
+                University email already in use
+              </strong>
+              <ul style={{ margin: "var(--space-2) 0", paddingLeft: "1.2em" }}>
+                {uniEmailConflicts.map((c) => (
+                  <li key={c.uid}>
+                    {c.displayName || "Unnamed"} ({c.role})
+                    {c.verified ? " · verified" : " · not verified"}
+                  </li>
+                ))}
+              </ul>
+              <span style={{ color: "var(--color-text-muted)" }}>
+                A university email belongs to one account. Approving this
+                creates a duplicate. Reject it, or delete the older account if
+                this person is re-registering.
+              </span>
+            </div>
+          )}
 
           {user.profile && (
             <dl
