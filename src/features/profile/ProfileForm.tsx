@@ -125,16 +125,42 @@ export default function ProfileForm() {
     return unsub;
   }, [user]);
 
+  const verifiedEmails = useMemo<VerifiedEmail[]>(() => {
+    if (!me) return [];
+    return getVerifiedEmails({
+      email: me.email,
+      profile: me.profile as
+        | { universityEmail?: unknown; uniEmailVerifiedAt?: unknown }
+        | undefined,
+    });
+  }, [me]);
+
+  // Stable join of the verified addresses — drives the subscriptions
+  // query dependency without re-firing the listener on every render.
+  const verifiedEmailKey = verifiedEmails.map((v) => v.email).join(",");
+
   // Subscriptions collection snapshot for this user. Source of truth for
   // the matrix cell values: an admin flipping a row in /admin/subscriptions
   // shows up here within one Firestore tick, so a subsequent /profile save
   // doesn't overwrite the admin's intent with stale state.
+  //
+  // Query by email, not audienceId: the subscription row is keyed per
+  // (email, channel), and `audienceId` only records whichever account
+  // touched the row last. Reading by the user's own verified addresses
+  // means the matrix reflects the true state of those inboxes even if a
+  // row's audienceId points elsewhere (e.g. a duplicate-email account
+  // that pre-dates uniqueness enforcement).
   useEffect(() => {
     if (!user) return;
+    const emails = verifiedEmailKey ? verifiedEmailKey.split(",") : [];
+    if (emails.length === 0) {
+      setMatrix({});
+      return;
+    }
     const db = getClientDb();
     const q = query(
       collection(db, "subscriptions"),
-      where("audienceId", "==", user.uid),
+      where("email", "in", emails),
     );
     const unsub = onSnapshot(q, (snap) => {
       const next: Matrix = {};
@@ -152,17 +178,7 @@ export default function ProfileForm() {
       setMatrix(next);
     });
     return unsub;
-  }, [user]);
-
-  const verifiedEmails = useMemo<VerifiedEmail[]>(() => {
-    if (!me) return [];
-    return getVerifiedEmails({
-      email: me.email,
-      profile: me.profile as
-        | { universityEmail?: unknown; uniEmailVerifiedAt?: unknown }
-        | undefined,
-    });
-  }, [me]);
+  }, [user, verifiedEmailKey]);
 
   const anyChecked = useMemo(
     () =>
