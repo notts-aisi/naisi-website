@@ -49,7 +49,10 @@ export async function GET(req: Request) {
 
   let result;
   try {
-    result = await confirmAllForEmail(db, email);
+    result = await confirmAllForEmail(db, email, {
+      kind: "guest",
+      label: "email confirmation link",
+    });
   } catch (err) {
     console.error("[/api/subscriptions/confirm] flip failed", email, err);
     return htmlResponse(invalidPage("Something went wrong confirming your subscription. Try again later."), 500);

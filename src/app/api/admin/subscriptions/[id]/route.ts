@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { getVerifiedEmails } from "@/lib/firestore/notifications";
+import { deleteEventsForSubscriptions } from "@/lib/firestore/subscriptions";
 
 /**
  * Admin-only hard-delete of a single subscription row.
@@ -85,5 +86,14 @@ export async function DELETE(_req: Request, ctx: Ctx) {
   // safe to delete.
 
   await ref.delete();
+
+  // Drop the row's event-log entries with it: the history lives exactly
+  // as long as the row. Best-effort; the row itself is already gone.
+  try {
+    await deleteEventsForSubscriptions(db, [id]);
+  } catch (err) {
+    console.warn("[admin delete subscription] event cleanup failed", id, err);
+  }
+
   return NextResponse.json({ ok: true, id });
 }

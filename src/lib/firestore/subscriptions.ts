@@ -3,6 +3,7 @@ import {
   FieldValue,
   Timestamp,
   type Firestore,
+  type WriteBatch,
 } from "firebase-admin/firestore";
 import { emailDocId, normaliseEmail } from "./emailDocId";
 
@@ -176,12 +177,139 @@ export function displayStatusOf(row: {
   return "lapsed";
 }
 
+/* === Event log ===
+ * Append-only audit trail. One doc per subscription action, in a flat
+ * top-level collection (same philosophy as `subscriptions`). The admin
+ * Subscriptions tab streams it and shows a per-row history. Events live
+ * exactly as long as the row they describe: deleting a row deletes its
+ * events (deleteEventsForSubscriptions), which also keeps the log
+ * GDPR-clean. All writes are server-side; clients only read (admin-only).
+ */
+
+const EVENTS_COLLECTION = "subscriptionEvents";
+
+export type SubscriptionEventType =
+  | "created"
+  | "confirmed"
+  | "subscribed"
+  | "unsubscribed";
+
+/**
+ * Who performed an action, for the event log.
+ *  - "member": a signed-in member acted (homepage form while logged in,
+ *    or their own profile settings). `uid` is set.
+ *  - "guest": a sessionless action (the public form logged out, or an
+ *    email-link click, which carries no session).
+ *  - "admin": an admin acted on a row from the admin tab. `uid` is the
+ *    admin; `label` is their name.
+ *  - "system": an automated path (the backfill migration).
+ * `label` is the human-readable description shown in the log line.
+ */
+export type SubscriptionActor = {
+  kind: "member" | "guest" | "admin" | "system";
+  uid?: string;
+  label: string;
+};
+
+export type SubscriptionEventInput = {
+  subscriptionId: string;
+  email: string;
+  channel: string;
+  type: SubscriptionEventType;
+  actor: SubscriptionActor;
+  note?: string;
+};
+
+function buildEventData(input: SubscriptionEventInput): Record<string, unknown> {
+  const actor: Record<string, unknown> = {
+    kind: input.actor.kind,
+    label: input.actor.label,
+  };
+  if (input.actor.uid) actor.uid = input.actor.uid;
+  const data: Record<string, unknown> = {
+    subscriptionId: input.subscriptionId,
+    email: input.email,
+    channel: input.channel,
+    type: input.type,
+    actor,
+    at: Timestamp.now(),
+  };
+  if (input.note) data.note = input.note;
+  return data;
+}
+
+/** Append one event to the log. */
+export async function recordSubscriptionEvent(
+  db: Firestore,
+  input: SubscriptionEventInput,
+): Promise<void> {
+  await db.collection(EVENTS_COLLECTION).add(buildEventData(input));
+}
+
+/** Batch-mode variant: queues the event write onto an existing batch. */
+export function addSubscriptionEventToBatch(
+  db: Firestore,
+  batch: WriteBatch,
+  input: SubscriptionEventInput,
+): void {
+  batch.set(db.collection(EVENTS_COLLECTION).doc(), buildEventData(input));
+}
+
+/**
+ * Record an event without letting a logging failure break the caller's
+ * mutation: the row write has already succeeded, so a missing log line is
+ * acceptable degradation.
+ */
+async function safeRecordEvent(
+  db: Firestore,
+  input: SubscriptionEventInput,
+): Promise<void> {
+  try {
+    await recordSubscriptionEvent(db, input);
+  } catch (err) {
+    console.warn(
+      "[subscriptions] event log write failed",
+      input.type,
+      input.subscriptionId,
+      err,
+    );
+  }
+}
+
+/**
+ * Delete every event for the given subscription ids. Called when a row is
+ * removed (admin ghost-column cleanup, or user cascade-delete) so the log
+ * lives exactly as long as the row. Chunks the `in` query at 30 ids.
+ */
+export async function deleteEventsForSubscriptions(
+  db: Firestore,
+  subscriptionIds: string[],
+): Promise<number> {
+  if (subscriptionIds.length === 0) return 0;
+  let deleted = 0;
+  for (let i = 0; i < subscriptionIds.length; i += 30) {
+    const chunk = subscriptionIds.slice(i, i + 30);
+    const snap = await db
+      .collection(EVENTS_COLLECTION)
+      .where("subscriptionId", "in", chunk)
+      .get();
+    if (snap.empty) continue;
+    const batch = db.batch();
+    for (const doc of snap.docs) batch.delete(doc.ref);
+    await batch.commit();
+    deleted += snap.size;
+  }
+  return deleted;
+}
+
 export type SubscribeArgs = {
   email: string;
   channel: string;
   audience: SubscriptionAudience;
   audienceId: string;
   source: string;
+  /** Who is performing this subscribe, recorded on the event log. */
+  actor: SubscriptionActor;
   /**
    * Whether the inbox is proven to belong to whoever is making this call,
    * i.e. whether the click-confirm flow can be skipped. The CALLER decides
@@ -269,6 +397,13 @@ export async function subscribe(
     if (confirmed) doc.confirmedAt = now;
     if (trimmedName) doc.name = trimmedName;
     await ref.set(doc);
+    await safeRecordEvent(db, {
+      subscriptionId: ref.id,
+      email,
+      channel: args.channel,
+      type: "created",
+      actor: args.actor,
+    });
     return {
       created: true,
       requiresConfirmation: !confirmed,
@@ -321,6 +456,25 @@ export async function subscribe(
 
   await ref.update(patch);
 
+  if (newlyAddedChannel) {
+    await safeRecordEvent(db, {
+      subscriptionId: ref.id,
+      email,
+      channel: args.channel,
+      type: "subscribed",
+      actor: args.actor,
+    });
+  }
+  if (patch.confirmed === true) {
+    await safeRecordEvent(db, {
+      subscriptionId: ref.id,
+      email,
+      channel: args.channel,
+      type: "confirmed",
+      actor: args.actor,
+    });
+  }
+
   return {
     created: false,
     requiresConfirmation,
@@ -337,6 +491,7 @@ export async function subscribe(
 export async function confirmAllForEmail(
   db: Firestore,
   email: string,
+  actor: SubscriptionActor,
 ): Promise<{ updated: number; channels: string[] }> {
   const e = normaliseEmail(email);
   if (!e) return { updated: 0, channels: [] };
@@ -356,6 +511,13 @@ export async function confirmAllForEmail(
     const data = doc.data() as SubscriptionDoc;
     if (!data.confirmed) {
       batch.update(doc.ref, { confirmed: true, confirmedAt: now });
+      addSubscriptionEventToBatch(db, batch, {
+        subscriptionId: doc.id,
+        email: data.email,
+        channel: data.channel,
+        type: "confirmed",
+        actor,
+      });
       updated += 1;
     }
   }
@@ -381,7 +543,7 @@ export async function confirmAllForEmail(
  */
 export async function unsubscribe(
   db: Firestore,
-  args: { email: string; channel: string },
+  args: { email: string; channel: string; actor: SubscriptionActor },
 ): Promise<boolean> {
   const email = normaliseEmail(args.email);
   if (!email || !isValidChannel(args.channel)) return false;
@@ -390,10 +552,24 @@ export async function unsubscribe(
     .doc(subscriptionDocId({ email, channel: args.channel }));
   const snap = await ref.get();
   if (!snap.exists) return false;
+  const wasSubscribed = Boolean(
+    (snap.data() as SubscriptionDoc | undefined)?.subscribed,
+  );
   await ref.update({
     subscribed: false,
     unsubscribedAt: Timestamp.now(),
   });
+  // Only log a real state change, so a profile save that leaves a box
+  // unchecked doesn't append a no-op "unsubscribed" line every time.
+  if (wasSubscribed) {
+    await safeRecordEvent(db, {
+      subscriptionId: ref.id,
+      email,
+      channel: args.channel,
+      type: "unsubscribed",
+      actor: args.actor,
+    });
+  }
   return true;
 }
 
@@ -404,6 +580,7 @@ export async function unsubscribe(
 export async function unsubscribeAll(
   db: Firestore,
   email: string,
+  actor: SubscriptionActor,
 ): Promise<number> {
   const e = normaliseEmail(email);
   if (!e) return 0;
@@ -419,6 +596,13 @@ export async function unsubscribeAll(
     const data = doc.data() as SubscriptionDoc;
     if (!data.subscribed) continue;
     batch.update(doc.ref, { subscribed: false, unsubscribedAt: now });
+    addSubscriptionEventToBatch(db, batch, {
+      subscriptionId: doc.id,
+      email: data.email,
+      channel: data.channel,
+      type: "unsubscribed",
+      actor,
+    });
     count += 1;
   }
   if (count > 0) await batch.commit();

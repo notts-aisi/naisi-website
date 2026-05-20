@@ -11,6 +11,7 @@ import {
   isValidChannel,
   unsubscribe as unsubscribeChannel,
   unsubscribeAll as unsubscribeAllChannels,
+  type SubscriptionActor,
 } from "@/lib/firestore/subscriptions";
 
 /**
@@ -127,6 +128,12 @@ async function performUnsubscribe(signed: string | null): Promise<{
     return { ok: false, error: "Invalid channel", status: 400 };
   }
 
+  // An email-link click is sessionless; the signed token is the credential.
+  const actor: SubscriptionActor = {
+    kind: "guest",
+    label: "unsubscribe email link",
+  };
+
   if (payload.uid) {
     const ref = db.collection("users").doc(payload.uid);
     const snap = await ref.get();
@@ -160,12 +167,22 @@ async function performUnsubscribe(signed: string | null): Promise<{
     });
 
     if (userEmail) {
-      if (category === "all") await unsubscribeAllChannels(db, userEmail);
-      else await unsubscribeChannel(db, { email: userEmail, channel: category });
+      if (category === "all") await unsubscribeAllChannels(db, userEmail, actor);
+      else
+        await unsubscribeChannel(db, {
+          email: userEmail,
+          channel: category,
+          actor,
+        });
     }
     if (uniEmail && uniEmail !== userEmail) {
-      if (category === "all") await unsubscribeAllChannels(db, uniEmail);
-      else await unsubscribeChannel(db, { email: uniEmail, channel: category });
+      if (category === "all") await unsubscribeAllChannels(db, uniEmail, actor);
+      else
+        await unsubscribeChannel(db, {
+          email: uniEmail,
+          channel: category,
+          actor,
+        });
     }
 
     return { ok: true, category, status: 200 };
@@ -173,9 +190,13 @@ async function performUnsubscribe(signed: string | null): Promise<{
 
   if (payload.email) {
     if (category === "all") {
-      await unsubscribeAllChannels(db, payload.email);
+      await unsubscribeAllChannels(db, payload.email, actor);
     } else {
-      await unsubscribeChannel(db, { email: payload.email, channel: category });
+      await unsubscribeChannel(db, {
+        email: payload.email,
+        channel: category,
+        actor,
+      });
     }
     return { ok: true, category, status: 200 };
   }

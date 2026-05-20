@@ -10,6 +10,7 @@ import {
   isValidChannel,
   subscribe,
   subscriptionDocId,
+  type SubscriptionActor,
 } from "@/lib/firestore/subscriptions";
 import { getVerifiedEmails } from "@/lib/firestore/notifications";
 import SubscriptionConfirmEmail from "@/emails/SubscriptionConfirmEmail";
@@ -184,6 +185,9 @@ export async function POST(req: Request): Promise<NextResponse<ApiResult>> {
   const audience: "user" | "guest" = inboxProven ? "user" : "guest";
   const audienceId =
     inboxProven && session ? session.uid : emailDocId(email);
+  const actor: SubscriptionActor = session
+    ? { kind: "member", uid: session.uid, label: "homepage signup form" }
+    : { kind: "guest", label: "homepage signup form" };
 
   // Run subscribe() for each requested channel. Aggregate the results so
   // we can decide which emails to send.
@@ -198,6 +202,7 @@ export async function POST(req: Request): Promise<NextResponse<ApiResult>> {
         audience,
         audienceId,
         inboxProven,
+        actor,
         source,
         name,
       });
