@@ -398,6 +398,10 @@
   color: var(--color-text-muted);
 }
 
+.matrixHeaderAction {
+  margin-top: var(--space-2);
+}
+
 .staleNote {
   display: flex;
   flex-direction: column;

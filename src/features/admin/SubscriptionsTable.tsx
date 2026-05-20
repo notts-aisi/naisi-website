@@ -474,17 +474,14 @@ export default function SubscriptionsTable() {
     }
   }
 
-  async function onDeleteStaleEmail(recipient: Recipient, email: string) {
+  async function onDeleteEmailRows(recipient: Recipient, email: string) {
     const ids = Object.values(recipient.cells[email] ?? {}).map((c) => c.id);
     if (ids.length === 0) return;
-    if (
-      !window.confirm(
-        `Delete ${ids.length} stale subscription row(s) for ${email}? ` +
-          `This removes the ghost column. It does not touch any live subscription.`,
-      )
-    ) {
-      return;
-    }
+    const message =
+      recipient.audience === "guest"
+        ? `Delete this guest subscriber (${email})? Removes their ${ids.length} subscription row(s) and history. They can sign up again later.`
+        : `Delete ${ids.length} stale subscription row(s) for ${email}? This removes the ghost column. It does not touch any live subscription.`;
+    if (!window.confirm(message)) return;
     setDeletingEmail(`${recipient.key}::${email}`);
     setActionError(null);
     try {
@@ -716,7 +713,7 @@ export default function SubscriptionsTable() {
                     onToggleSubscribed={onToggleSubscribed}
                     staleEmails={staleByKey.get(r.key) ?? new Set()}
                     deletingEmail={deletingEmail}
-                    onDeleteStaleEmail={onDeleteStaleEmail}
+                    onDeleteEmailRows={onDeleteEmailRows}
                     gridTemplate={gridTemplate}
                     eventsBySubId={eventsBySubId}
                   />
@@ -791,7 +788,7 @@ function RecipientRow({
   onToggleSubscribed,
   staleEmails,
   deletingEmail,
-  onDeleteStaleEmail,
+  onDeleteEmailRows,
   gridTemplate,
   eventsBySubId,
 }: {
@@ -805,7 +802,7 @@ function RecipientRow({
   onToggleSubscribed: (cell: SubscriptionRow) => void;
   staleEmails: Set<string>;
   deletingEmail: string | null;
-  onDeleteStaleEmail: (recipient: Recipient, email: string) => void;
+  onDeleteEmailRows: (recipient: Recipient, email: string) => void;
   gridTemplate: string;
   eventsBySubId: Map<string, SubscriptionEventEntry[]>;
 }) {
@@ -918,7 +915,7 @@ function RecipientRow({
               onToggleSubscribed={onToggleSubscribed}
               staleEmails={staleEmails}
               deletingEmail={deletingEmail}
-              onDeleteStaleEmail={onDeleteStaleEmail}
+              onDeleteEmailRows={onDeleteEmailRows}
               eventsBySubId={eventsBySubId}
             />
           </div>
@@ -936,7 +933,7 @@ function RecipientMatrix({
   onToggleSubscribed,
   staleEmails,
   deletingEmail,
-  onDeleteStaleEmail,
+  onDeleteEmailRows,
   eventsBySubId,
 }: {
   recipient: Recipient;
@@ -946,7 +943,7 @@ function RecipientMatrix({
   onToggleSubscribed: (cell: SubscriptionRow) => void;
   staleEmails: Set<string>;
   deletingEmail: string | null;
-  onDeleteStaleEmail: (recipient: Recipient, email: string) => void;
+  onDeleteEmailRows: (recipient: Recipient, email: string) => void;
   eventsBySubId: Map<string, SubscriptionEventEntry[]>;
 }) {
   const gridStyle = {
@@ -964,7 +961,7 @@ function RecipientMatrix({
             email={email}
             stale={staleEmails.has(email)}
             deleting={deletingEmail === `${recipient.key}::${email}`}
-            onDeleteStaleEmail={onDeleteStaleEmail}
+            onDeleteEmailRows={onDeleteEmailRows}
           />
         ))}
 
@@ -1003,7 +1000,15 @@ function RecipientMatrix({
                     recipient={recipient}
                     email={email}
                     deleting={deletingEmail === `${recipient.key}::${email}`}
-                    onDeleteStaleEmail={onDeleteStaleEmail}
+                    onDeleteEmailRows={onDeleteEmailRows}
+                  />
+                )}
+                {recipient.audience === "guest" && (
+                  <GuestDeleteButton
+                    recipient={recipient}
+                    email={email}
+                    deleting={deletingEmail === `${recipient.key}::${email}`}
+                    onDeleteEmailRows={onDeleteEmailRows}
                   />
                 )}
               </div>
@@ -1038,18 +1043,43 @@ function RecipientMatrix({
   );
 }
 
+function GuestDeleteButton({
+  recipient,
+  email,
+  deleting,
+  onDeleteEmailRows,
+}: {
+  recipient: Recipient;
+  email: string;
+  deleting: boolean;
+  onDeleteEmailRows: (recipient: Recipient, email: string) => void;
+}) {
+  return (
+    <div className={styles.matrixHeaderAction}>
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={deleting}
+        onClick={() => onDeleteEmailRows(recipient, email)}
+      >
+        {deleting ? "Deleting…" : "Delete subscriber"}
+      </Button>
+    </div>
+  );
+}
+
 function EmailHeader({
   recipient,
   email,
   stale,
   deleting,
-  onDeleteStaleEmail,
+  onDeleteEmailRows,
 }: {
   recipient: Recipient;
   email: string;
   stale: boolean;
   deleting: boolean;
-  onDeleteStaleEmail: (recipient: Recipient, email: string) => void;
+  onDeleteEmailRows: (recipient: Recipient, email: string) => void;
 }) {
   return (
     <div
@@ -1064,7 +1094,15 @@ function EmailHeader({
           recipient={recipient}
           email={email}
           deleting={deleting}
-          onDeleteStaleEmail={onDeleteStaleEmail}
+          onDeleteEmailRows={onDeleteEmailRows}
+        />
+      )}
+      {recipient.audience === "guest" && (
+        <GuestDeleteButton
+          recipient={recipient}
+          email={email}
+          deleting={deleting}
+          onDeleteEmailRows={onDeleteEmailRows}
         />
       )}
     </div>
@@ -1075,12 +1113,12 @@ function StaleHeaderNote({
   recipient,
   email,
   deleting,
-  onDeleteStaleEmail,
+  onDeleteEmailRows,
 }: {
   recipient: Recipient;
   email: string;
   deleting: boolean;
-  onDeleteStaleEmail: (recipient: Recipient, email: string) => void;
+  onDeleteEmailRows: (recipient: Recipient, email: string) => void;
 }) {
   return (
     <div className={styles.staleNote}>
@@ -1092,7 +1130,7 @@ function StaleHeaderNote({
         size="sm"
         variant="ghost"
         disabled={deleting}
-        onClick={() => onDeleteStaleEmail(recipient, email)}
+        onClick={() => onDeleteEmailRows(recipient, email)}
       >
         {deleting ? "Removing…" : "Remove ghost column"}
       </Button>
