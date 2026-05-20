@@ -44,9 +44,12 @@ export function useVerifiedEmails() {
         setVerifiedByUid(next);
         setVerifiedLoaded(true);
       },
-      // On error, mark loaded so the table renders without stale flags
-      // rather than hanging. Worst case: stale rows just aren't flagged.
-      () => setVerifiedLoaded(true),
+      // On error, leave verifiedLoaded false so stale detection stays
+      // off. The table still renders (it doesn't gate on this hook).
+      // Marking it loaded here would leave an empty index, which would
+      // false-flag every member row as stale.
+      (err) =>
+        console.error("[useVerifiedEmails] users snapshot failed", err),
     );
     return unsub;
   }, []);
