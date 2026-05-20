@@ -5,14 +5,14 @@ import { useSearchParams, useRouter } from "next/navigation";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
-import Select from "@/components/ui/Select";
-import { Field, Input } from "@/components/ui/Input";
+import { Input, Select } from "@/components/ui/Input";
 import { downloadCSV, toCSV } from "@/lib/csv";
 import {
   useSubscriptions,
   type SubscriptionRow,
   type SubscriptionDisplayStatus,
 } from "./useSubscriptions";
+import { useVerifiedEmails } from "./useVerifiedEmails";
 import styles from "./SubscriptionsTable.module.css";
 
 type ChannelFilter = "all" | string;
@@ -28,8 +28,16 @@ const STATUS_LABEL: Record<SubscriptionDisplayStatus, string> = {
   lapsed: "Lapsed",
 };
 
+/** Newsletter first, events second, anything else after, alphabetic. */
+const channelRank = (c: string) =>
+  c === "newsletter" ? 0 : c === "events" ? 1 : 2;
+
+function titleCase(s: string): string {
+  return s.length ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
 function formatDate(d: Date | null): string {
-  if (!d) return "—";
+  if (!d) return "Not set";
   return d.toLocaleString("en-GB", {
     day: "2-digit",
     month: "short",
@@ -86,6 +94,14 @@ async function setRowSubscribed(id: string, subscribed: boolean): Promise<void> 
   }
 }
 
+async function deleteRow(id: string): Promise<void> {
+  const res = await fetch(`/api/admin/subscriptions/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Delete failed (${res.status})`);
+  }
+}
+
 type BackfillResult = {
   ok: true;
   usersScanned: number;
@@ -117,9 +133,9 @@ type Recipient = {
   audienceId: string;
   name: string;
   emails: string[];
-  /** True iff at least one row for that email is confirmed (sticky once-true on the row schema, so any-row-confirmed === email-verified). */
+  /** True iff at least one row for that email is confirmed. */
   emailConfirmed: Record<string, boolean>;
-  /** [email][channel] → row */
+  /** [email][channel] -> row */
   cells: Record<string, Record<string, SubscriptionRow>>;
   /** Distinct channels seen across the group's rows. */
   channels: string[];
@@ -153,17 +169,35 @@ function groupRows(rows: SubscriptionRow[]): Recipient[] {
     if (!group.cells[r.email]) group.cells[r.email] = {};
     group.cells[r.email][r.channel] = r;
   }
-  // Sort channels deterministically (newsletter, events, then alphabetic).
-  const channelOrder = (c: string) =>
-    c === "newsletter" ? 0 : c === "events" ? 1 : 2;
   for (const g of map.values()) {
     g.channels.sort((a, b) => {
-      const ord = channelOrder(a) - channelOrder(b);
+      const ord = channelRank(a) - channelRank(b);
       return ord !== 0 ? ord : a.localeCompare(b);
     });
     g.emails.sort();
   }
   return Array.from(map.values());
+}
+
+/**
+ * Emails on a recipient that are no longer valid: a member row whose
+ * email is not in the owning user's current verified-email set, or any
+ * member row whose owning user doc is gone. Guests are never stale (a
+ * guest IS their email). Returns an empty set until the verified-email
+ * index has loaded, so nothing is wrongly flagged mid-load.
+ */
+function getStaleEmails(
+  recipient: Recipient,
+  verifiedByUid: Map<string, Set<string>>,
+  verifiedLoaded: boolean,
+): Set<string> {
+  const stale = new Set<string>();
+  if (!verifiedLoaded || recipient.audience !== "user") return stale;
+  const verified = verifiedByUid.get(recipient.audienceId);
+  for (const email of recipient.emails) {
+    if (!verified || !verified.has(email)) stale.add(email);
+  }
+  return stale;
 }
 
 function recipientHasMatchingCell(
@@ -181,6 +215,7 @@ function recipientHasMatchingCell(
   ) {
     return false;
   }
+  if (channelFilter === "all" && statusFilter === "all") return true;
   for (const email of recipient.emails) {
     for (const channel of recipient.channels) {
       const cell = recipient.cells[email]?.[channel];
@@ -207,16 +242,15 @@ function cellMatchesActiveFilters(
 /**
  * Aggregate cell statuses across a recipient's emails on one channel.
  * Returns the dominant state for the closed-row pill.
- *  - `subscribed` if any row is subscribed
- *  - `pending` if any row is pending and none subscribed
- *  - `unsubscribed` otherwise (covers unsubscribed and lapsed)
- *  - `none` if no rows exist for this channel (rare for members,
- *    common for guests who only signed up to one channel)
  */
 function rollupChannelState(
   recipient: Recipient,
   channel: string,
-): { state: "subscribed" | "pending" | "unsubscribed" | "none"; numerator: number; denominator: number } {
+): {
+  state: "subscribed" | "pending" | "unsubscribed" | "none";
+  numerator: number;
+  denominator: number;
+} {
   let subscribed = 0;
   let pending = 0;
   let total = 0;
@@ -233,8 +267,21 @@ function rollupChannelState(
   return { state: "unsubscribed", numerator: 0, denominator: total };
 }
 
+function pillTitle(
+  channel: string,
+  roll: ReturnType<typeof rollupChannelState>,
+): string {
+  if (roll.state === "none") return `${channel}: no rows on file`;
+  if (roll.state === "subscribed")
+    return `${channel}: ${roll.numerator} of ${roll.denominator} address(es) subscribed`;
+  if (roll.state === "pending")
+    return `${channel}: ${roll.numerator} of ${roll.denominator} pending confirmation`;
+  return `${channel}: unsubscribed on all ${roll.denominator} address(es)`;
+}
+
 export default function SubscriptionsTable() {
   const { rows, loading, error } = useSubscriptions();
+  const { verifiedByUid, verifiedLoaded } = useVerifiedEmails();
   const router = useRouter();
   const searchParams = useSearchParams();
   const pinnedAudienceId = searchParams?.get("audienceId") ?? null;
@@ -246,6 +293,8 @@ export default function SubscriptionsTable() {
   const [page, setPage] = useState(0);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [busyId, setBusyId] = useState<string | null>(null);
+  /** `${recipientKey}::${email}` while that stale column is being removed. */
+  const [deletingEmail, setDeletingEmail] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [backfillState, setBackfillState] = useState<
     | { kind: "idle" }
@@ -256,8 +305,27 @@ export default function SubscriptionsTable() {
 
   const recipients = useMemo(() => groupRows(rows), [rows]);
 
-  // Auto-expand the pinned recipient (deep-link from members tab) so the
-  // admin lands directly on the matrix view for that user.
+  // Channel columns: every distinct channel across all rows, ordered.
+  const channelColumns = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of rows) set.add(r.channel);
+    return Array.from(set).sort((a, b) => {
+      const ord = channelRank(a) - channelRank(b);
+      return ord !== 0 ? ord : a.localeCompare(b);
+    });
+  }, [rows]);
+
+  // Stale email set per recipient, recomputed when rows or the verified
+  // index change.
+  const staleByKey = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    for (const r of recipients) {
+      m.set(r.key, getStaleEmails(r, verifiedByUid, verifiedLoaded));
+    }
+    return m;
+  }, [recipients, verifiedByUid, verifiedLoaded]);
+
+  // Auto-expand the pinned recipient (deep-link from members tab).
   useEffect(() => {
     if (!pinnedAudienceId) return;
     const target = recipients.find(
@@ -272,12 +340,6 @@ export default function SubscriptionsTable() {
       });
     }
   }, [pinnedAudienceId, recipients]);
-
-  const channelOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of rows) set.add(r.channel);
-    return Array.from(set).sort();
-  }, [rows]);
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -332,8 +394,16 @@ export default function SubscriptionsTable() {
       if (r.audience === "user") members += 1;
       else guests += 1;
     }
-    return { subscribed, unsubscribed, pending, lapsed, guests, members };
-  }, [rows]);
+    let stale = 0;
+    for (const r of recipients) {
+      const staleEmails = staleByKey.get(r.key);
+      if (!staleEmails) continue;
+      for (const email of staleEmails) {
+        stale += Object.keys(r.cells[email] ?? {}).length;
+      }
+    }
+    return { subscribed, unsubscribed, pending, lapsed, guests, members, stale };
+  }, [rows, recipients, staleByKey]);
 
   function clearPin() {
     router.replace("/admin/subscriptions");
@@ -379,6 +449,29 @@ export default function SubscriptionsTable() {
     }
   }
 
+  async function onDeleteStaleEmail(recipient: Recipient, email: string) {
+    const ids = Object.values(recipient.cells[email] ?? {}).map((c) => c.id);
+    if (ids.length === 0) return;
+    if (
+      !window.confirm(
+        `Delete ${ids.length} stale subscription row(s) for ${email}? ` +
+          `This removes the ghost column. It does not touch any live subscription.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingEmail(`${recipient.key}::${email}`);
+    setActionError(null);
+    try {
+      await Promise.all(ids.map((id) => deleteRow(id)));
+    } catch (err) {
+      console.error(err);
+      setActionError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setDeletingEmail(null);
+    }
+  }
+
   async function onRunBackfill() {
     if (backfillState.kind === "running") return;
     if (
@@ -418,6 +511,10 @@ export default function SubscriptionsTable() {
     );
   }
 
+  // Header + every collapsed row share this template so columns line up.
+  const gridTemplate = `minmax(11rem, 1.7fr) 6rem 7rem repeat(${channelColumns.length}, minmax(8rem, 1fr)) 2.75rem`;
+  const tableMinWidth = `${11 + 6 + 7 + channelColumns.length * 8 + 2.75 + 3}rem`;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>
       <div className={styles.summary}>
@@ -428,61 +525,53 @@ export default function SubscriptionsTable() {
           </div>
         </div>
         <div className={styles.minis}>
-          <div>
-            <div className={styles.miniCount}>{counts.subscribed}</div>
-            <div className={styles.miniLabel}>Subscribed rows</div>
-          </div>
-          <div>
-            <div className={styles.miniCount}>{counts.pending}</div>
-            <div className={styles.miniLabel}>Pending rows</div>
-          </div>
-          <div>
-            <div className={styles.miniCount}>{counts.unsubscribed}</div>
-            <div className={styles.miniLabel}>Unsubscribed rows</div>
-          </div>
-          <div>
-            <div className={styles.miniCount}>{counts.lapsed}</div>
-            <div className={styles.miniLabel}>Lapsed rows</div>
-          </div>
-          <div>
-            <div className={styles.miniCount}>{counts.members}</div>
-            <div className={styles.miniLabel}>Member rows</div>
-          </div>
-          <div>
-            <div className={styles.miniCount}>{counts.guests}</div>
-            <div className={styles.miniLabel}>Guest rows</div>
-          </div>
+          <Mini count={counts.subscribed} label="Subscribed rows" />
+          <Mini count={counts.pending} label="Pending rows" />
+          <Mini count={counts.unsubscribed} label="Unsubscribed rows" />
+          <Mini count={counts.lapsed} label="Lapsed rows" />
+          <Mini count={counts.members} label="Member rows" />
+          <Mini count={counts.guests} label="Guest rows" />
+          <Mini count={counts.stale} label="Stale rows" warn={counts.stale > 0} />
         </div>
       </div>
 
       <Card padding="md">
         <div className={styles.toolbar}>
-          <Field id="sub-search" label="Search by name or email" hint=" ">
+          <div className={`${styles.filterField} ${styles.filterFieldGrow}`}>
+            <label className={styles.filterLabel} htmlFor="sub-search">
+              Search
+            </label>
             <Input
               id="sub-search"
               type="search"
               value={search}
               onChange={(e) => onSearch(e.target.value)}
-              placeholder="Substring match, case-insensitive"
+              placeholder="Name or email, case-insensitive"
             />
-          </Field>
-          <label>
-            Channel
+          </div>
+          <div className={styles.filterField}>
+            <label className={styles.filterLabel} htmlFor="sub-channel">
+              Channel
+            </label>
             <Select
+              id="sub-channel"
               value={channelFilter}
               onChange={(e) => onChannel(e.target.value)}
             >
               <option value="all">All channels</option>
-              {channelOptions.map((c) => (
+              {channelColumns.map((c) => (
                 <option key={c} value={c}>
-                  {c}
+                  {titleCase(c)}
                 </option>
               ))}
             </Select>
-          </label>
-          <label>
-            Status
+          </div>
+          <div className={styles.filterField}>
+            <label className={styles.filterLabel} htmlFor="sub-status">
+              Status
+            </label>
             <Select
+              id="sub-status"
               value={statusFilter}
               onChange={(e) => onStatus(e.target.value as StatusFilter)}
             >
@@ -492,10 +581,13 @@ export default function SubscriptionsTable() {
               <option value="unsubscribed">Unsubscribed</option>
               <option value="lapsed">Lapsed</option>
             </Select>
-          </label>
-          <label>
-            Audience
+          </div>
+          <div className={styles.filterField}>
+            <label className={styles.filterLabel} htmlFor="sub-audience">
+              Audience
+            </label>
             <Select
+              id="sub-audience"
               value={audienceFilter}
               onChange={(e) => onAudience(e.target.value as AudienceFilter)}
             >
@@ -503,21 +595,8 @@ export default function SubscriptionsTable() {
               <option value="user">Members</option>
               <option value="guest">Guests</option>
             </Select>
-          </label>
-          {pinnedAudienceId && (
-            <span className={styles.pinnedFilter}>
-              Pinned to one user
-              <button
-                type="button"
-                className={styles.pinnedFilterClear}
-                onClick={clearPin}
-                aria-label="Clear pinned filter"
-              >
-                ×
-              </button>
-            </span>
-          )}
-          <div className={styles.actions} style={{ marginLeft: "auto" }}>
+          </div>
+          <div className={styles.toolbarActions}>
             <Button
               size="sm"
               variant="ghost"
@@ -532,14 +611,25 @@ export default function SubscriptionsTable() {
             </Button>
           </div>
         </div>
+
+        {pinnedAudienceId && (
+          <div className={styles.pinnedRow}>
+            <span className={styles.pinnedFilter}>
+              Pinned to one user
+              <button
+                type="button"
+                className={styles.pinnedFilterClear}
+                onClick={clearPin}
+                aria-label="Clear pinned filter"
+              >
+                ×
+              </button>
+            </span>
+          </div>
+        )}
+
         {backfillState.kind === "done" && (
-          <p
-            style={{
-              marginTop: "var(--space-3)",
-              color: "var(--color-text-muted)",
-              fontSize: "var(--text-sm)",
-            }}
-          >
+          <p className={styles.toolbarNote}>
             Backfill complete. Scanned {backfillState.result.usersScanned} user
             {backfillState.result.usersScanned === 1 ? "" : "s"}, wrote{" "}
             {backfillState.result.memberRowsWritten} member row
@@ -553,13 +643,7 @@ export default function SubscriptionsTable() {
           </p>
         )}
         {backfillState.kind === "error" && (
-          <p
-            style={{
-              marginTop: "var(--space-3)",
-              color: "var(--color-danger)",
-              fontSize: "var(--text-sm)",
-            }}
-          >
+          <p className={`${styles.toolbarNote} ${styles.toolbarNoteError}`}>
             {backfillState.message}
           </p>
         )}
@@ -567,9 +651,7 @@ export default function SubscriptionsTable() {
 
       {actionError && (
         <Card padding="sm">
-          <p style={{ color: "var(--color-danger)", margin: 0 }}>
-            {actionError}
-          </p>
+          <p style={{ color: "var(--color-danger)", margin: 0 }}>{actionError}</p>
         </Card>
       )}
 
@@ -581,26 +663,46 @@ export default function SubscriptionsTable() {
         </Card>
       ) : (
         <>
-          <div className={styles.recipientList}>
-            {pageRecipients.map((r) => (
-              <RecipientRow
-                key={r.key}
-                recipient={r}
-                expanded={expanded.has(r.key)}
-                onToggle={() => toggleExpand(r.key)}
-                channelFilter={channelFilter}
-                statusFilter={statusFilter}
-                busyId={busyId}
-                onToggleSubscribed={onToggleSubscribed}
-              />
-            ))}
+          <div className={styles.tableScroll}>
+            <div className={styles.tableInner} style={{ minWidth: tableMinWidth }}>
+              <div
+                className={styles.tableHeader}
+                style={{ gridTemplateColumns: gridTemplate }}
+              >
+                <span>Recipient</span>
+                <span>Audience</span>
+                <span>Emails</span>
+                {channelColumns.map((c) => (
+                  <span key={c}>{titleCase(c)}</span>
+                ))}
+                <span aria-hidden />
+              </div>
+              <div className={styles.recipientList}>
+                {pageRecipients.map((r) => (
+                  <RecipientRow
+                    key={r.key}
+                    recipient={r}
+                    expanded={expanded.has(r.key)}
+                    onToggle={() => toggleExpand(r.key)}
+                    channelColumns={channelColumns}
+                    channelFilter={channelFilter}
+                    statusFilter={statusFilter}
+                    busyId={busyId}
+                    onToggleSubscribed={onToggleSubscribed}
+                    staleEmails={staleByKey.get(r.key) ?? new Set()}
+                    deletingEmail={deletingEmail}
+                    onDeleteStaleEmail={onDeleteStaleEmail}
+                    gridTemplate={gridTemplate}
+                  />
+                ))}
+              </div>
+            </div>
           </div>
 
           <div className={styles.pagination}>
             <span className={styles.paginationInfo}>
-              {filtered.length} recipient{filtered.length === 1 ? "" : "s"} ·{" "}
-              Showing {pageStart + 1}
-              {"–"}
+              {filtered.length} recipient{filtered.length === 1 ? "" : "s"} ·
+              Showing {pageStart + 1} to{" "}
               {Math.min(pageStart + PAGE_SIZE, filtered.length)}
             </span>
             <div className={styles.paginationActions}>
@@ -610,7 +712,7 @@ export default function SubscriptionsTable() {
                 disabled={safePage === 0}
                 onClick={() => setPage(safePage - 1)}
               >
-                ← Prev
+                Prev
               </Button>
               <span className={styles.muted}>
                 Page {safePage + 1} / {pageCount}
@@ -621,7 +723,7 @@ export default function SubscriptionsTable() {
                 disabled={safePage >= pageCount - 1}
                 onClick={() => setPage(safePage + 1)}
               >
-                Next →
+                Next
               </Button>
             </div>
           </div>
@@ -631,36 +733,71 @@ export default function SubscriptionsTable() {
   );
 }
 
+function Mini({
+  count,
+  label,
+  warn,
+}: {
+  count: number;
+  label: string;
+  warn?: boolean;
+}) {
+  return (
+    <div>
+      <div
+        className={`${styles.miniCount} ${warn ? styles.miniCountWarn : ""}`}
+      >
+        {count}
+      </div>
+      <div className={styles.miniLabel}>{label}</div>
+    </div>
+  );
+}
+
 function RecipientRow({
   recipient,
   expanded,
   onToggle,
+  channelColumns,
   channelFilter,
   statusFilter,
   busyId,
   onToggleSubscribed,
+  staleEmails,
+  deletingEmail,
+  onDeleteStaleEmail,
+  gridTemplate,
 }: {
   recipient: Recipient;
   expanded: boolean;
   onToggle: () => void;
+  channelColumns: string[];
   channelFilter: ChannelFilter;
   statusFilter: StatusFilter;
   busyId: string | null;
   onToggleSubscribed: (cell: SubscriptionRow) => void;
+  staleEmails: Set<string>;
+  deletingEmail: string | null;
+  onDeleteStaleEmail: (recipient: Recipient, email: string) => void;
+  gridTemplate: string;
 }) {
   const filtersActive = channelFilter !== "all" || statusFilter !== "all";
+  const hasStale = staleEmails.size > 0;
 
   return (
     <div
-      className={`${styles.recipient} ${expanded ? styles.recipientExpanded : ""}`}
+      className={`${styles.recipient} ${expanded ? styles.recipientExpanded : ""} ${
+        hasStale ? styles.recipientStale : ""
+      }`}
     >
       <button
         type="button"
         className={styles.summaryButton}
+        style={{ gridTemplateColumns: gridTemplate }}
         aria-expanded={expanded}
         onClick={onToggle}
       >
-        <div className={styles.recipientIdentity}>
+        <span className={styles.cellName}>
           <span
             className={`${styles.recipientName} ${
               recipient.name ? "" : styles.recipientNameMuted
@@ -668,79 +805,72 @@ function RecipientRow({
           >
             {recipient.name || "(no name on file)"}
           </span>
-          <span className={styles.recipientAudience}>
-            <Badge tone={recipient.audience === "user" ? "accent" : "neutral"}>
-              {recipient.audience}
-            </Badge>
-            {recipient.emails.length} email{recipient.emails.length === 1 ? "" : "s"}
-          </span>
-        </div>
-        <div className={styles.recipientEmails}>
-          {recipient.emails.map((email) => {
-            const verified = recipient.emailConfirmed[email];
+          {hasStale && (
+            <span className={styles.staleChip} title="Has a stale orphan row">
+              stale
+            </span>
+          )}
+        </span>
+
+        <span className={styles.cellAudience}>
+          <Badge tone={recipient.audience === "user" ? "accent" : "neutral"}>
+            {recipient.audience}
+          </Badge>
+        </span>
+
+        <span className={styles.cellEmails}>
+          {recipient.emails.length} email{recipient.emails.length === 1 ? "" : "s"}
+          {hasStale && (
+            <span className={styles.cellEmailsStale}>
+              {staleEmails.size} stale
+            </span>
+          )}
+        </span>
+
+        {channelColumns.map((ch) => {
+          const roll = rollupChannelState(recipient, ch);
+          if (roll.state === "none") {
             return (
-              <span key={email} className={styles.recipientEmail}>
-                <span>{email}</span>
-                <span
-                  className={
-                    verified
-                      ? styles.recipientEmailVerified
-                      : styles.recipientEmailUnverified
-                  }
-                  aria-label={verified ? "Verified" : "Not verified"}
-                  title={verified ? "Verified" : "Not verified"}
-                >
-                  {verified ? "✓" : "·"}
-                </span>
+              <span key={ch} className={styles.cellChannelEmpty} title={`${ch}: no rows`}>
+                ·
               </span>
             );
-          })}
-        </div>
-        <div className={styles.recipientPills}>
-          {recipient.channels.map((ch) => {
-            const roll = rollupChannelState(recipient, ch);
-            const matched =
-              filtersActive &&
-              (channelFilter === "all" || channelFilter === ch) &&
-              (statusFilter === "all" ||
-                statusFilter === roll.state ||
-                (statusFilter === "lapsed" && roll.state === "unsubscribed"));
-            const stateClass =
-              roll.state === "subscribed"
-                ? styles.statePillSubscribed
-                : roll.state === "pending"
-                  ? styles.statePillPending
-                  : roll.state === "unsubscribed"
-                    ? styles.statePillUnsubscribed
-                    : "";
-            const symbol =
-              roll.state === "subscribed"
-                ? "✓"
-                : roll.state === "pending"
-                  ? "•"
-                  : roll.state === "unsubscribed"
-                    ? "✗"
-                    : "—";
-            return (
+          }
+          const matched =
+            filtersActive &&
+            (channelFilter === "all" || channelFilter === ch) &&
+            (statusFilter === "all" ||
+              statusFilter === roll.state ||
+              (statusFilter === "lapsed" && roll.state === "unsubscribed"));
+          const stateClass =
+            roll.state === "subscribed"
+              ? styles.statePillSubscribed
+              : roll.state === "pending"
+                ? styles.statePillPending
+                : styles.statePillUnsubscribed;
+          const symbol =
+            roll.state === "subscribed"
+              ? "✓"
+              : roll.state === "pending"
+                ? "•"
+                : "✗";
+          return (
+            <span key={ch} className={styles.cellChannel}>
               <span
-                key={ch}
                 className={`${styles.statePill} ${stateClass} ${
                   matched ? styles.statePillMatched : ""
                 }`}
                 title={pillTitle(ch, roll)}
               >
                 <span aria-hidden>{symbol}</span>
-                {ch}
-                {roll.denominator > 1 && (
-                  <span className={styles.muted}>
-                    {" "}
-                    {roll.numerator}/{roll.denominator}
-                  </span>
-                )}
+                {roll.denominator > 1
+                  ? `${roll.numerator}/${roll.denominator}`
+                  : STATUS_LABEL[roll.state]}
               </span>
-            );
-          })}
-        </div>
+            </span>
+          );
+        })}
+
         <span
           aria-hidden
           className={`${styles.chevron} ${expanded ? styles.chevronOpen : ""}`}
@@ -758,6 +888,9 @@ function RecipientRow({
               statusFilter={statusFilter}
               busyId={busyId}
               onToggleSubscribed={onToggleSubscribed}
+              staleEmails={staleEmails}
+              deletingEmail={deletingEmail}
+              onDeleteStaleEmail={onDeleteStaleEmail}
             />
           </div>
         </div>
@@ -766,33 +899,27 @@ function RecipientRow({
   );
 }
 
-function pillTitle(
-  channel: string,
-  roll: ReturnType<typeof rollupChannelState>,
-): string {
-  if (roll.state === "none") return `${channel}: no rows on file`;
-  if (roll.state === "subscribed")
-    return `${channel}: ${roll.numerator} of ${roll.denominator} address(es) subscribed`;
-  if (roll.state === "pending")
-    return `${channel}: ${roll.numerator} of ${roll.denominator} pending confirmation`;
-  return `${channel}: unsubscribed on all ${roll.denominator} address(es)`;
-}
-
 function RecipientMatrix({
   recipient,
   channelFilter,
   statusFilter,
   busyId,
   onToggleSubscribed,
+  staleEmails,
+  deletingEmail,
+  onDeleteStaleEmail,
 }: {
   recipient: Recipient;
   channelFilter: ChannelFilter;
   statusFilter: StatusFilter;
   busyId: string | null;
   onToggleSubscribed: (cell: SubscriptionRow) => void;
+  staleEmails: Set<string>;
+  deletingEmail: string | null;
+  onDeleteStaleEmail: (recipient: Recipient, email: string) => void;
 }) {
   const gridStyle = {
-    gridTemplateColumns: `minmax(7rem, max-content) repeat(${recipient.emails.length}, minmax(11rem, 1fr))`,
+    gridTemplateColumns: `minmax(7rem, max-content) repeat(${recipient.emails.length}, minmax(12rem, 1fr))`,
   };
 
   return (
@@ -800,12 +927,14 @@ function RecipientMatrix({
       <div className={styles.matrix} style={gridStyle}>
         <div />
         {recipient.emails.map((email) => (
-          <div key={email} className={styles.matrixHeader}>
-            <span className={styles.matrixHeaderEmail}>{email}</span>
-            <span className={styles.matrixHeaderMeta}>
-              {recipient.emailConfirmed[email] ? "Verified" : "Not verified"}
-            </span>
-          </div>
+          <EmailHeader
+            key={email}
+            recipient={recipient}
+            email={email}
+            stale={staleEmails.has(email)}
+            deleting={deletingEmail === `${recipient.key}::${email}`}
+            onDeleteStaleEmail={onDeleteStaleEmail}
+          />
         ))}
 
         {recipient.channels.map((ch) => (
@@ -817,42 +946,121 @@ function RecipientMatrix({
             statusFilter={statusFilter}
             busyId={busyId}
             onToggleSubscribed={onToggleSubscribed}
+            staleEmails={staleEmails}
           />
         ))}
       </div>
 
       <div className={styles.matrixStacked}>
-        {recipient.emails.map((email) => (
-          <div key={email} className={styles.matrixStackedEmail}>
-            <div className={styles.matrixStackedEmailHeader}>
-              <strong>{email}</strong>
-              <span className={styles.muted}>
-                {recipient.emailConfirmed[email] ? "Verified" : "Not verified"}
-              </span>
+        {recipient.emails.map((email) => {
+          const stale = staleEmails.has(email);
+          return (
+            <div
+              key={email}
+              className={`${styles.matrixStackedEmail} ${
+                stale ? styles.matrixStackedEmailStale : ""
+              }`}
+            >
+              <div className={styles.matrixStackedEmailHeader}>
+                <strong>{email}</strong>
+                <span className={styles.muted}>
+                  {recipient.emailConfirmed[email] ? "Verified" : "Not verified"}
+                </span>
+                {stale && (
+                  <StaleHeaderNote
+                    recipient={recipient}
+                    email={email}
+                    deleting={deletingEmail === `${recipient.key}::${email}`}
+                    onDeleteStaleEmail={onDeleteStaleEmail}
+                  />
+                )}
+              </div>
+              {recipient.channels.map((ch) => {
+                const cell = recipient.cells[email]?.[ch];
+                const matched =
+                  cell && cellMatchesActiveFilters(cell, channelFilter, statusFilter);
+                return (
+                  <div key={ch} className={styles.matrixStackedRow}>
+                    <span className={styles.matrixStackedRowLabel}>{ch}</span>
+                    {cell ? (
+                      <CellContents
+                        cell={cell}
+                        matched={Boolean(matched)}
+                        busy={busyId === cell.id}
+                        onToggleSubscribed={onToggleSubscribed}
+                      />
+                    ) : (
+                      <span className={styles.matrixCellMissing}>No row</span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            {recipient.channels.map((ch) => {
-              const cell = recipient.cells[email]?.[ch];
-              const matched =
-                cell && cellMatchesActiveFilters(cell, channelFilter, statusFilter);
-              return (
-                <div key={ch} className={styles.matrixStackedRow}>
-                  <span className={styles.matrixStackedRowLabel}>{ch}</span>
-                  {cell ? (
-                    <CellContents
-                      cell={cell}
-                      matched={Boolean(matched)}
-                      busy={busyId === cell.id}
-                      onToggleSubscribed={onToggleSubscribed}
-                    />
-                  ) : (
-                    <span className={styles.matrixCellMissing}>No row</span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        ))}
+          );
+        })}
       </div>
+    </div>
+  );
+}
+
+function EmailHeader({
+  recipient,
+  email,
+  stale,
+  deleting,
+  onDeleteStaleEmail,
+}: {
+  recipient: Recipient;
+  email: string;
+  stale: boolean;
+  deleting: boolean;
+  onDeleteStaleEmail: (recipient: Recipient, email: string) => void;
+}) {
+  return (
+    <div
+      className={`${styles.matrixHeader} ${stale ? styles.matrixHeaderStale : ""}`}
+    >
+      <span className={styles.matrixHeaderEmail}>{email}</span>
+      <span className={styles.matrixHeaderMeta}>
+        {recipient.emailConfirmed[email] ? "Verified" : "Not verified"}
+      </span>
+      {stale && (
+        <StaleHeaderNote
+          recipient={recipient}
+          email={email}
+          deleting={deleting}
+          onDeleteStaleEmail={onDeleteStaleEmail}
+        />
+      )}
+    </div>
+  );
+}
+
+function StaleHeaderNote({
+  recipient,
+  email,
+  deleting,
+  onDeleteStaleEmail,
+}: {
+  recipient: Recipient;
+  email: string;
+  deleting: boolean;
+  onDeleteStaleEmail: (recipient: Recipient, email: string) => void;
+}) {
+  return (
+    <div className={styles.staleNote}>
+      <span className={styles.staleNoteText}>
+        Not a verified email for this account. This column is a ghost left
+        behind by an email change.
+      </span>
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={deleting}
+        onClick={() => onDeleteStaleEmail(recipient, email)}
+      >
+        {deleting ? "Removing…" : "Remove ghost column"}
+      </Button>
     </div>
   );
 }
@@ -864,6 +1072,7 @@ function RecipientMatrixChannelRow({
   statusFilter,
   busyId,
   onToggleSubscribed,
+  staleEmails,
 }: {
   recipient: Recipient;
   channel: string;
@@ -871,12 +1080,14 @@ function RecipientMatrixChannelRow({
   statusFilter: StatusFilter;
   busyId: string | null;
   onToggleSubscribed: (cell: SubscriptionRow) => void;
+  staleEmails: Set<string>;
 }) {
   return (
     <>
       <div className={styles.matrixChannel}>{channel}</div>
       {recipient.emails.map((email) => {
         const cell = recipient.cells[email]?.[channel];
+        const stale = staleEmails.has(email);
         if (!cell) {
           return (
             <div key={email} className={styles.matrixCellMissing}>
@@ -888,7 +1099,9 @@ function RecipientMatrixChannelRow({
         return (
           <div
             key={email}
-            className={`${styles.matrixCell} ${matched ? styles.matrixCellMatched : ""}`}
+            className={`${styles.matrixCell} ${matched ? styles.matrixCellMatched : ""} ${
+              stale ? styles.matrixCellStale : ""
+            }`}
           >
             <CellContents
               cell={cell}
@@ -924,13 +1137,10 @@ function CellContents({
     <>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
         <Badge tone={tone}>{STATUS_LABEL[cell.displayStatus]}</Badge>
-        {matched && (
-          <span style={{ fontSize: "var(--text-xs)", color: "var(--color-accent)" }}>
-            match
-          </span>
-        )}
+        {matched && <span className={styles.matchTag}>match</span>}
       </div>
       <div className={styles.matrixCellAudit}>
+        <span>Created: {formatDate(cell.createdAt)}</span>
         <span>Confirmed: {formatDate(cell.confirmedAt)}</span>
         <span>Subscribed: {formatDate(cell.subscribedAt)}</span>
         <span>Unsubscribed: {formatDate(cell.unsubscribedAt)}</span>
