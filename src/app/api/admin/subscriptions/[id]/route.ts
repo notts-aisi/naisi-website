@@ -5,17 +5,15 @@ import { getVerifiedEmails } from "@/lib/firestore/notifications";
 import { deleteEventsForSubscriptions } from "@/lib/firestore/subscriptions";
 
 /**
- * Admin-only hard-delete of a single subscription row.
+ * Admin-only hard-delete of a single subscription row, plus its event log.
  *
- * Scoped deliberately to STALE rows only: a member-audience row whose
- * email is no longer in the owning user's verified-email set (a ghost
- * left behind when a uni email changed, was un-verified, or a guest row
- * was claimed onto the account), or a row whose owning user doc is gone.
+ * Deletable: guest rows (a guest is just an email, no account behind it),
+ * and stale member rows (a member-audience row whose email is no longer
+ * in the owning user's verified set, or whose owning user doc is gone).
  *
- * It refuses to delete a row that is still live, so an admin can't
- * accidentally nuke a real subscription from the table. To stop delivery
- * on a live row, use the Unsubscribe action instead, which keeps the row
- * and its audit trail.
+ * Protected: a LIVE member row, one for an email the owning user still
+ * has verified. That must be unsubscribed, not deleted, so an admin can't
+ * accidentally drop a real member subscription. Returns 409 in that case.
  */
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -49,41 +47,32 @@ export async function DELETE(_req: Request, ctx: Ctx) {
   const audienceId =
     typeof data.audienceId === "string" ? data.audienceId : "";
 
-  // Only member-audience rows are "stale" in the orphan sense. A guest
-  // row is identified by its email and is a genuine subscriber record,
-  // not a ghost; it isn't deletable through this path.
-  if (audience !== "user" || !audienceId) {
-    return NextResponse.json(
-      {
-        error:
-          "Only stale member rows can be deleted here. Guest rows are not removable from this view.",
-      },
-      { status: 409 },
-    );
-  }
-
-  const userSnap = await db.collection("users").doc(audienceId).get();
-  if (userSnap.exists) {
-    const u = userSnap.data() ?? {};
-    const verified = getVerifiedEmails({
-      email: typeof u.email === "string" ? u.email : null,
-      profile: (u.profile ?? {}) as {
-        universityEmail?: unknown;
-        uniEmailVerifiedAt?: unknown;
-      },
-    }).map((e) => e.email);
-    if (email && verified.includes(email)) {
-      return NextResponse.json(
-        {
-          error:
-            "This row is for a currently-verified email and is still live. Unsubscribe it instead of deleting.",
+  // A live member row is protected: deleting it would silently drop a
+  // real member's subscription, so it must be unsubscribed instead. Guest
+  // rows, and stale member rows (de-verified email, or owning user gone),
+  // fall through and are deletable.
+  if (audience === "user" && audienceId) {
+    const userSnap = await db.collection("users").doc(audienceId).get();
+    if (userSnap.exists) {
+      const u = userSnap.data() ?? {};
+      const verified = getVerifiedEmails({
+        email: typeof u.email === "string" ? u.email : null,
+        profile: (u.profile ?? {}) as {
+          universityEmail?: unknown;
+          uniEmailVerifiedAt?: unknown;
         },
-        { status: 409 },
-      );
+      }).map((e) => e.email);
+      if (email && verified.includes(email)) {
+        return NextResponse.json(
+          {
+            error:
+              "This row is for a currently-verified email and is still live. Unsubscribe it instead of deleting.",
+          },
+          { status: 409 },
+        );
+      }
     }
   }
-  // userSnap missing => the owning user is gone; the row is orphaned and
-  // safe to delete.
 
   await ref.delete();
 
