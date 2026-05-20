@@ -10,6 +10,7 @@ import {
   type VerifiedEmail,
 } from "@/lib/firestore/notifications";
 import {
+  addSubscriptionEventToBatch,
   migrationPatchFromLegacyStatus,
   subscriptionDocId,
 } from "@/lib/firestore/subscriptions";
@@ -143,6 +144,18 @@ export async function POST() {
         batch.set(ref, row, { merge: true });
         batchOps += 1;
         memberRowsWritten += 1;
+        // Log a `created` event for genuinely new rows only, so re-runs
+        // of the backfill don't append duplicate history.
+        if (!existing) {
+          addSubscriptionEventToBatch(db, batch, {
+            subscriptionId: docId,
+            email: ve.email,
+            channel: cat,
+            type: "created",
+            actor: { kind: "system", label: "backfill migration" },
+          });
+          batchOps += 1;
+        }
         if (batchOps >= BATCH_LIMIT) {
           await batch.commit();
           batch = db.batch();

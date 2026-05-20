@@ -540,3 +540,64 @@
   align-items: center;
   gap: var(--space-3);
 }
+
+/* === Event log (per-cell history) === */
+
+.eventLog {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--color-border);
+}
+
+.eventLogTitle {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.eventLine {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.eventType {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.eventTypeCreated {
+  color: var(--color-text);
+}
+
+.eventTypeConfirmed {
+  color: var(--color-accent);
+}
+
+.eventTypeSubscribed {
+  color: var(--color-success);
+}
+
+.eventTypeUnsubscribed {
+  color: var(--color-text-muted);
+}
+
+.eventActor {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eventAt {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}

@@ -13,6 +13,10 @@ import {
   type SubscriptionDisplayStatus,
 } from "./useSubscriptions";
 import { useVerifiedEmails } from "./useVerifiedEmails";
+import {
+  useSubscriptionEvents,
+  type SubscriptionEventEntry,
+} from "./useSubscriptionEvents";
 import styles from "./SubscriptionsTable.module.css";
 
 type ChannelFilter = "all" | string;
@@ -27,6 +31,23 @@ const STATUS_LABEL: Record<SubscriptionDisplayStatus, string> = {
   pending: "Pending",
   lapsed: "Lapsed",
 };
+
+const EVENT_LABEL: Record<SubscriptionEventEntry["type"], string> = {
+  created: "Created",
+  confirmed: "Confirmed",
+  subscribed: "Subscribed",
+  unsubscribed: "Unsubscribed",
+};
+
+/** Shared empty array so cells with no events don't churn a new ref. */
+const NO_EVENTS: SubscriptionEventEntry[] = [];
+
+function eventTypeClass(type: SubscriptionEventEntry["type"]): string {
+  if (type === "confirmed") return styles.eventTypeConfirmed;
+  if (type === "subscribed") return styles.eventTypeSubscribed;
+  if (type === "unsubscribed") return styles.eventTypeUnsubscribed;
+  return styles.eventTypeCreated;
+}
 
 /** Newsletter first, events second, anything else after, alphabetic. */
 const channelRank = (c: string) =>
@@ -282,6 +303,7 @@ function pillTitle(
 export default function SubscriptionsTable() {
   const { rows, loading, error } = useSubscriptions();
   const { verifiedByUid, verifiedLoaded } = useVerifiedEmails();
+  const { eventsBySubId } = useSubscriptionEvents();
   const router = useRouter();
   const searchParams = useSearchParams();
   const pinnedAudienceId = searchParams?.get("audienceId") ?? null;
@@ -693,6 +715,7 @@ export default function SubscriptionsTable() {
                     deletingEmail={deletingEmail}
                     onDeleteStaleEmail={onDeleteStaleEmail}
                     gridTemplate={gridTemplate}
+                    eventsBySubId={eventsBySubId}
                   />
                 ))}
               </div>
@@ -767,6 +790,7 @@ function RecipientRow({
   deletingEmail,
   onDeleteStaleEmail,
   gridTemplate,
+  eventsBySubId,
 }: {
   recipient: Recipient;
   expanded: boolean;
@@ -780,6 +804,7 @@ function RecipientRow({
   deletingEmail: string | null;
   onDeleteStaleEmail: (recipient: Recipient, email: string) => void;
   gridTemplate: string;
+  eventsBySubId: Map<string, SubscriptionEventEntry[]>;
 }) {
   const filtersActive = channelFilter !== "all" || statusFilter !== "all";
   const hasStale = staleEmails.size > 0;
@@ -891,6 +916,7 @@ function RecipientRow({
               staleEmails={staleEmails}
               deletingEmail={deletingEmail}
               onDeleteStaleEmail={onDeleteStaleEmail}
+              eventsBySubId={eventsBySubId}
             />
           </div>
         </div>
@@ -908,6 +934,7 @@ function RecipientMatrix({
   staleEmails,
   deletingEmail,
   onDeleteStaleEmail,
+  eventsBySubId,
 }: {
   recipient: Recipient;
   channelFilter: ChannelFilter;
@@ -917,6 +944,7 @@ function RecipientMatrix({
   staleEmails: Set<string>;
   deletingEmail: string | null;
   onDeleteStaleEmail: (recipient: Recipient, email: string) => void;
+  eventsBySubId: Map<string, SubscriptionEventEntry[]>;
 }) {
   const gridStyle = {
     gridTemplateColumns: `minmax(7rem, max-content) repeat(${recipient.emails.length}, minmax(12rem, 1fr))`,
@@ -947,6 +975,7 @@ function RecipientMatrix({
             busyId={busyId}
             onToggleSubscribed={onToggleSubscribed}
             staleEmails={staleEmails}
+            eventsBySubId={eventsBySubId}
           />
         ))}
       </div>
@@ -989,6 +1018,7 @@ function RecipientMatrix({
                         cell={cell}
                         matched={Boolean(matched)}
                         busy={busyId === cell.id}
+                        events={eventsBySubId.get(cell.id) ?? NO_EVENTS}
                         onToggleSubscribed={onToggleSubscribed}
                       />
                     ) : (
@@ -1075,6 +1105,7 @@ function RecipientMatrixChannelRow({
   busyId,
   onToggleSubscribed,
   staleEmails,
+  eventsBySubId,
 }: {
   recipient: Recipient;
   channel: string;
@@ -1083,6 +1114,7 @@ function RecipientMatrixChannelRow({
   busyId: string | null;
   onToggleSubscribed: (cell: SubscriptionRow) => void;
   staleEmails: Set<string>;
+  eventsBySubId: Map<string, SubscriptionEventEntry[]>;
 }) {
   return (
     <>
@@ -1109,6 +1141,7 @@ function RecipientMatrixChannelRow({
               cell={cell}
               matched={matched}
               busy={busyId === cell.id}
+              events={eventsBySubId.get(cell.id) ?? NO_EVENTS}
               onToggleSubscribed={onToggleSubscribed}
             />
           </div>
@@ -1122,11 +1155,13 @@ function CellContents({
   cell,
   matched,
   busy,
+  events,
   onToggleSubscribed,
 }: {
   cell: SubscriptionRow;
   matched: boolean;
   busy: boolean;
+  events: SubscriptionEventEntry[];
   onToggleSubscribed: (cell: SubscriptionRow) => void;
 }) {
   const tone =
@@ -1156,6 +1191,20 @@ function CellContents({
       >
         {busy ? "…" : cell.subscribed ? "Unsubscribe" : "Re-subscribe"}
       </Button>
+      {events.length > 0 && (
+        <div className={styles.eventLog}>
+          <span className={styles.eventLogTitle}>History</span>
+          {events.map((e) => (
+            <div key={e.id} className={styles.eventLine}>
+              <span className={`${styles.eventType} ${eventTypeClass(e.type)}`}>
+                {EVENT_LABEL[e.type]}
+              </span>
+              <span className={styles.eventActor}>{e.actorLabel}</span>
+              <span className={styles.eventAt}>{formatDate(e.at)}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }

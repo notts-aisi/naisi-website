@@ -11,6 +11,7 @@ import {
   claimGuestSubscriptions,
   subscribe,
   unsubscribe,
+  type SubscriptionActor,
 } from "@/lib/firestore/subscriptions";
 
 /**
@@ -103,6 +104,13 @@ export async function POST(req: Request) {
     }
   }
 
+  // Every write below is the member acting on their own settings.
+  const actor: SubscriptionActor = {
+    kind: "member",
+    uid: session.uid,
+    label: "profile settings",
+  };
+
   // Apply per-(email, channel) deltas. Iterate verified emails server-side
   // so the client can't write rows for unverified addresses.
   for (const ve of verifiedEmails) {
@@ -118,11 +126,12 @@ export async function POST(req: Request) {
           // This route iterates only the member's own verified emails, so
           // every row here is genuinely their inbox: skip the click flow.
           inboxProven: true,
+          actor,
           source: "register-or-settings",
           name: memberName,
         });
       } else {
-        await unsubscribe(db, { email: ve.email, channel: cat });
+        await unsubscribe(db, { email: ve.email, channel: cat, actor });
       }
     }
   }
