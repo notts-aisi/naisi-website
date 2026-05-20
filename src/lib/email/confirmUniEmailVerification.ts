@@ -2,6 +2,7 @@ import "server-only";
 import type { Firestore } from "firebase-admin/firestore";
 import { Timestamp } from "firebase-admin/firestore";
 import { verifyToken } from "@/lib/signedTokens";
+import { findVerifiedUniEmailOwner } from "@/lib/firestore/uniEmailOwnership";
 
 export type ConfirmUniEmailResult =
   | { ok: true; email: string }
@@ -46,6 +47,32 @@ export async function confirmUniEmailVerification(
     return { ok: false, error: "Link has expired", status: 410 };
   }
 
+  const authUid = data.authUid as string | undefined;
+  const verifiedEmail = (data.email as string | undefined)?.trim().toLowerCase() ?? "";
+
+  // A uni email belongs to at most one NAISI account. The send route
+  // already branches duplicates to the "already registered" email, but
+  // re-check here to catch the race where two people requested verification
+  // of the same address before either confirmed. Reject the second click.
+  // Excludes authUid so an idempotent re-click of an already-verified link
+  // does not flag the caller's own row.
+  if (verifiedEmail && authUid) {
+    const owner = await findVerifiedUniEmailOwner(db, verifiedEmail, authUid);
+    if (owner) {
+      console.warn("[confirmUniEmail] uni email already verified elsewhere", {
+        tokenId: payload.v,
+        verifiedEmail,
+        ownerUid: owner.uid,
+      });
+      return {
+        ok: false,
+        error:
+          "This university email is already linked to another NAISI account. Sign in with that account, or email accounts@naisi.uk if you have lost access to it.",
+        status: 409,
+      };
+    }
+  }
+
   if (!data.verifiedAt) {
     const now = Timestamp.now();
     const batch = db.batch();
@@ -57,8 +84,6 @@ export async function confirmUniEmailVerification(
     // the address that was just verified — if they changed it in the meantime,
     // the old verification doesn't apply to the new address and we'd be
     // falsely marking them verified.
-    const authUid = data.authUid as string | undefined;
-    const verifiedEmail = (data.email as string | undefined)?.trim().toLowerCase() ?? "";
     if (authUid && verifiedEmail) {
       const userRef = db.collection("users").doc(authUid);
       const userSnap = await userRef.get();

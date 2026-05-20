@@ -3,9 +3,11 @@
 import Card from "@/components/ui/Card";
 import ApprovalCard from "@/features/admin/ApprovalCard";
 import { useApprovals } from "@/features/admin/useApprovals";
+import { useUniEmailIndex } from "@/features/admin/useUniEmailIndex";
 
 export default function ApprovalsPage() {
   const { users, loading, error } = useApprovals();
+  const uniEmailIndex = useUniEmailIndex();
 
   if (loading) {
     return (
@@ -45,9 +47,15 @@ export default function ApprovalsPage() {
         {users.length} application{users.length === 1 ? "" : "s"} waiting for review.
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
-        {users.map((u) => (
-          <ApprovalCard key={u.uid} user={u} />
-        ))}
+        {users.map((u) => {
+          const uniEmail = u.profile?.universityEmail?.trim().toLowerCase();
+          const conflicts = uniEmail
+            ? (uniEmailIndex.get(uniEmail) ?? []).filter((h) => h.uid !== u.uid)
+            : [];
+          return (
+            <ApprovalCard key={u.uid} user={u} uniEmailConflicts={conflicts} />
+          );
+        })}
       </div>
     </div>
   );

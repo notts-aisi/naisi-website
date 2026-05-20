@@ -5,7 +5,10 @@ import { getCurrentUser } from "@/lib/firebase/session";
 import { sendEmail } from "@/lib/email/send";
 import { randomOpaqueId, signToken } from "@/lib/signedTokens";
 import { FIELD_LIMITS } from "@/lib/firestore/users";
+import { findVerifiedUniEmailOwner } from "@/lib/firestore/uniEmailOwnership";
+import { obfuscateEmail } from "@/lib/obfuscateEmail";
 import VerifyUniEmail from "@/emails/VerifyUniEmail";
+import AlreadyRegisteredEmail from "@/emails/AlreadyRegisteredEmail";
 
 const COOLDOWN_SECONDS = 60;
 const TOKEN_TTL_SECONDS = 60 * 30; // 30 minutes
@@ -121,23 +124,48 @@ export async function POST(req: Request) {
       });
   }
 
+  // A uni email belongs to at most one NAISI account. If this address is
+  // already verified on a different account, the person already has an
+  // account — send the "you already have an account" email (no verify
+  // link) instead of the verification email. The response below is
+  // byte-identical either way, so the frontend stays generic ("check your
+  // inbox") and there is no enumeration signal; the differentiated
+  // content only reaches the inbox the caller is trying to prove control
+  // of. The emailVerifications token is still minted so the register
+  // tab's onSnapshot has a doc to watch; it simply never gets verified.
+  const existingOwner = await findVerifiedUniEmailOwner(db, email, actor.uid);
+
   const signed = signToken({ s: "verify-uni-email", v: tokenId }, TOKEN_TTL_SECONDS);
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
   const verifyUrl = `${appUrl}/verify-email/${tokenId}?t=${encodeURIComponent(signed)}`;
 
   try {
-    await sendEmail({
-      to: email,
-      subject: "Verify your university email for NAISI",
-      react: VerifyUniEmail({
-        preferredName: body.preferredName ?? "",
-        verifyUrl,
-        expiresInMinutes: Math.floor(TOKEN_TTL_SECONDS / 60),
-      }),
-      kind: "unknown",
-      actorUid: actor.uid,
-      referenceId: tokenId,
-    });
+    if (existingOwner) {
+      await sendEmail({
+        to: email,
+        subject: "You already have a NAISI account",
+        react: AlreadyRegisteredEmail({
+          preferredName: body.preferredName ?? "",
+          maskedAccountEmail: obfuscateEmail(existingOwner.googleEmail),
+        }),
+        kind: "unknown",
+        actorUid: actor.uid,
+        referenceId: tokenId,
+      });
+    } else {
+      await sendEmail({
+        to: email,
+        subject: "Verify your university email for NAISI",
+        react: VerifyUniEmail({
+          preferredName: body.preferredName ?? "",
+          verifyUrl,
+          expiresInMinutes: Math.floor(TOKEN_TTL_SECONDS / 60),
+        }),
+        kind: "unknown",
+        actorUid: actor.uid,
+        referenceId: tokenId,
+      });
+    }
   } catch (err) {
     console.error("[verify-email send] email dispatch failed", err);
     return NextResponse.json(
