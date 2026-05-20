@@ -3,6 +3,7 @@ import {
   FieldValue,
   Timestamp,
   type Firestore,
+  type WriteBatch,
 } from "firebase-admin/firestore";
 import { emailDocId, normaliseEmail } from "./emailDocId";
 
@@ -21,7 +22,7 @@ import { emailDocId, normaliseEmail } from "./emailDocId";
  *
  * Doc-id convention: `sub_<sanitisedEmail>__<channel>`. The slug prefix keeps
  * Firestore browseable. The (sanitisedEmail, channel) suffix is deterministic,
- * so the same pair always maps to the same doc — `set({ merge: true })` gives
+ * so the same pair always maps to the same doc, so `set({ merge: true })` gives
  * idempotent upserts.
  *
  * Channel-string convention:
@@ -50,10 +51,13 @@ import { emailDocId, normaliseEmail } from "./emailDocId";
  * doesn't touch confirmed. Re-subscribe is a one-step "set subscribed=true",
  * not a re-confirmation flow, because the inbox is already proven.
  *
- * Confirmation is per-EMAIL, not per-channel: once any one row for an email
- * is confirmed, subsequent subscriptions for that email mint as confirmed
- * directly. The confirmation flow is the inbox-control gate; we gate it
- * once per address, not once per channel.
+ * Confirmation gate: a row mints as confirmed only when the caller passes
+ * `inboxProven` (a signed-in user subscribing one of their own verified
+ * emails). Every other row is pending until the recipient clicks the
+ * confirm link. One click flips every pending row for that address at once
+ * (`confirmAllForEmail`), so the click is still gathered once per address,
+ * not once per channel. `subscribe()` never infers proof from a sibling
+ * confirmed row; that let an unproven caller confirm an address silently.
  */
 
 export type SubscriptionAudience = "user" | "guest";
@@ -111,7 +115,7 @@ export type LegacyStatus = "pending" | "confirmed" | "unsubscribed";
 
 const COLLECTION = "subscriptions";
 
-/** `^[a-z0-9:_-]+$` — kept loose enough for `cohort:fall-2026`-style ids. */
+/** `^[a-z0-9:_-]+$`, kept loose enough for `cohort:fall-2026`-style ids. */
 const CHANNEL_RE = /^[a-z0-9:_-]+$/;
 const CHANNEL_MAX_LEN = 80;
 
@@ -173,24 +177,129 @@ export function displayStatusOf(row: {
   return "lapsed";
 }
 
-/**
- * Has any row for this email been confirmed at any point? Used by `subscribe`
- * to decide whether a fresh row should mint as confirmed (the inbox already
- * proved itself on a previous channel) or pending (first-time signup).
+/* === Event log ===
+ * Append-only audit trail. One doc per subscription action, in a flat
+ * top-level collection (same philosophy as `subscriptions`). The admin
+ * Subscriptions tab streams it and shows a per-row history. Events live
+ * exactly as long as the row they describe: deleting a row deletes its
+ * events (deleteEventsForSubscriptions), which also keeps the log
+ * GDPR-clean. All writes are server-side; clients only read (admin-only).
  */
-export async function hasAnyConfirmedRowForEmail(
+
+const EVENTS_COLLECTION = "subscriptionEvents";
+
+export type SubscriptionEventType =
+  | "created"
+  | "confirmed"
+  | "subscribed"
+  | "unsubscribed";
+
+/**
+ * Who performed an action, for the event log.
+ *  - "member": a signed-in member acted (homepage form while logged in,
+ *    or their own profile settings). `uid` is set.
+ *  - "guest": a sessionless action (the public form logged out, or an
+ *    email-link click, which carries no session).
+ *  - "admin": an admin acted on a row from the admin tab. `uid` is the
+ *    admin; `label` is their name.
+ *  - "system": an automated path (the backfill migration).
+ * `label` is the human-readable description shown in the log line.
+ */
+export type SubscriptionActor = {
+  kind: "member" | "guest" | "admin" | "system";
+  uid?: string;
+  label: string;
+};
+
+export type SubscriptionEventInput = {
+  subscriptionId: string;
+  email: string;
+  channel: string;
+  type: SubscriptionEventType;
+  actor: SubscriptionActor;
+  note?: string;
+};
+
+function buildEventData(input: SubscriptionEventInput): Record<string, unknown> {
+  const actor: Record<string, unknown> = {
+    kind: input.actor.kind,
+    label: input.actor.label,
+  };
+  if (input.actor.uid) actor.uid = input.actor.uid;
+  const data: Record<string, unknown> = {
+    subscriptionId: input.subscriptionId,
+    email: input.email,
+    channel: input.channel,
+    type: input.type,
+    actor,
+    at: Timestamp.now(),
+  };
+  if (input.note) data.note = input.note;
+  return data;
+}
+
+/** Append one event to the log. */
+export async function recordSubscriptionEvent(
   db: Firestore,
-  email: string,
-): Promise<boolean> {
-  const e = normaliseEmail(email);
-  if (!e) return false;
-  const snap = await db
-    .collection(COLLECTION)
-    .where("email", "==", e)
-    .where("confirmed", "==", true)
-    .limit(1)
-    .get();
-  return !snap.empty;
+  input: SubscriptionEventInput,
+): Promise<void> {
+  await db.collection(EVENTS_COLLECTION).add(buildEventData(input));
+}
+
+/** Batch-mode variant: queues the event write onto an existing batch. */
+export function addSubscriptionEventToBatch(
+  db: Firestore,
+  batch: WriteBatch,
+  input: SubscriptionEventInput,
+): void {
+  batch.set(db.collection(EVENTS_COLLECTION).doc(), buildEventData(input));
+}
+
+/**
+ * Record an event without letting a logging failure break the caller's
+ * mutation: the row write has already succeeded, so a missing log line is
+ * acceptable degradation.
+ */
+async function safeRecordEvent(
+  db: Firestore,
+  input: SubscriptionEventInput,
+): Promise<void> {
+  try {
+    await recordSubscriptionEvent(db, input);
+  } catch (err) {
+    console.warn(
+      "[subscriptions] event log write failed",
+      input.type,
+      input.subscriptionId,
+      err,
+    );
+  }
+}
+
+/**
+ * Delete every event for the given subscription ids. Called when a row is
+ * removed (admin ghost-column cleanup, or user cascade-delete) so the log
+ * lives exactly as long as the row. Chunks the `in` query at 30 ids.
+ */
+export async function deleteEventsForSubscriptions(
+  db: Firestore,
+  subscriptionIds: string[],
+): Promise<number> {
+  if (subscriptionIds.length === 0) return 0;
+  let deleted = 0;
+  for (let i = 0; i < subscriptionIds.length; i += 30) {
+    const chunk = subscriptionIds.slice(i, i + 30);
+    const snap = await db
+      .collection(EVENTS_COLLECTION)
+      .where("subscriptionId", "in", chunk)
+      .get();
+    if (snap.empty) continue;
+    const batch = db.batch();
+    for (const doc of snap.docs) batch.delete(doc.ref);
+    await batch.commit();
+    deleted += snap.size;
+  }
+  return deleted;
 }
 
 export type SubscribeArgs = {
@@ -199,6 +308,17 @@ export type SubscribeArgs = {
   audience: SubscriptionAudience;
   audienceId: string;
   source: string;
+  /** Who is performing this subscribe, recorded on the event log. */
+  actor: SubscriptionActor;
+  /**
+   * Whether the inbox is proven to belong to whoever is making this call,
+   * i.e. whether the click-confirm flow can be skipped. The CALLER decides
+   * this and must be honest: true only when a signed-in user is
+   * subscribing one of their own verified emails. A logged-out caller, or
+   * a signed-in caller subscribing some other address, passes false so the
+   * row goes through double-opt-in. subscribe() never infers proof itself.
+   */
+  inboxProven: boolean;
   /**
    * Optional human name to store on the row. Only written if non-empty after
    * trim. On re-subscribe with a new value, the more-recent one wins.
@@ -211,8 +331,8 @@ export type SubscribeResult = {
   created: boolean;
   /**
    * True iff this row is now `subscribed && !confirmed` and a confirmation
-   * email should be sent. False if it shortcut to confirmed (member or any
-   * prior confirmed row for the email).
+   * email should be sent. False when the caller passed `inboxProven` and
+   * the row minted (or flipped) straight to confirmed.
    */
   requiresConfirmation: boolean;
   /**
@@ -226,9 +346,9 @@ export type SubscribeResult = {
 
 /**
  * Idempotent upsert. Sets `subscribed = true` and stamps `subscribedAt`.
- * Sets `confirmed = true` and stamps `confirmedAt` iff the row's email has
- * any prior confirmation, OR the caller is a signed-in member (`audience:
- * "user"`, trusted by the route).
+ * Sets `confirmed = true` and stamps `confirmedAt` only when the caller
+ * passes `inboxProven` (see SubscribeArgs). Otherwise the row is left
+ * pending and the caller should send a confirmation email.
  *
  * Re-subscribe path: an existing row whose subscribed is currently false
  * just flips back to true. confirmedAt and confirmed are unchanged.
@@ -252,12 +372,10 @@ export async function subscribe(
   const snap = await ref.get();
   const data = snap.data() as SubscriptionDoc | undefined;
 
-  // Members come in already-trusted (the route checked their session).
-  // Their rows skip the click-confirm flow entirely, same as if any other
-  // row for this email were already confirmed.
-  const memberShortcut = args.audience === "user";
-  const inboxAlreadyProven =
-    memberShortcut || (await hasAnyConfirmedRowForEmail(db, email));
+  // Proof is the caller's call, passed explicitly. subscribe() never
+  // infers it from the audience field or a sibling confirmed row: doing
+  // so let a logged-out caller confirm any known address with no click.
+  const inboxAlreadyProven = args.inboxProven;
 
   const trimmedName = args.name?.trim();
 
@@ -279,6 +397,13 @@ export async function subscribe(
     if (confirmed) doc.confirmedAt = now;
     if (trimmedName) doc.name = trimmedName;
     await ref.set(doc);
+    await safeRecordEvent(db, {
+      subscriptionId: ref.id,
+      email,
+      channel: args.channel,
+      type: "created",
+      actor: args.actor,
+    });
     return {
       created: true,
       requiresConfirmation: !confirmed,
@@ -331,6 +456,25 @@ export async function subscribe(
 
   await ref.update(patch);
 
+  if (newlyAddedChannel) {
+    await safeRecordEvent(db, {
+      subscriptionId: ref.id,
+      email,
+      channel: args.channel,
+      type: "subscribed",
+      actor: args.actor,
+    });
+  }
+  if (patch.confirmed === true) {
+    await safeRecordEvent(db, {
+      subscriptionId: ref.id,
+      email,
+      channel: args.channel,
+      type: "confirmed",
+      actor: args.actor,
+    });
+  }
+
   return {
     created: false,
     requiresConfirmation,
@@ -347,6 +491,7 @@ export async function subscribe(
 export async function confirmAllForEmail(
   db: Firestore,
   email: string,
+  actor: SubscriptionActor,
 ): Promise<{ updated: number; channels: string[] }> {
   const e = normaliseEmail(email);
   if (!e) return { updated: 0, channels: [] };
@@ -366,6 +511,13 @@ export async function confirmAllForEmail(
     const data = doc.data() as SubscriptionDoc;
     if (!data.confirmed) {
       batch.update(doc.ref, { confirmed: true, confirmedAt: now });
+      addSubscriptionEventToBatch(db, batch, {
+        subscriptionId: doc.id,
+        email: data.email,
+        channel: data.channel,
+        type: "confirmed",
+        actor,
+      });
       updated += 1;
     }
   }
@@ -391,7 +543,7 @@ export async function confirmAllForEmail(
  */
 export async function unsubscribe(
   db: Firestore,
-  args: { email: string; channel: string },
+  args: { email: string; channel: string; actor: SubscriptionActor },
 ): Promise<boolean> {
   const email = normaliseEmail(args.email);
   if (!email || !isValidChannel(args.channel)) return false;
@@ -400,10 +552,24 @@ export async function unsubscribe(
     .doc(subscriptionDocId({ email, channel: args.channel }));
   const snap = await ref.get();
   if (!snap.exists) return false;
+  const wasSubscribed = Boolean(
+    (snap.data() as SubscriptionDoc | undefined)?.subscribed,
+  );
   await ref.update({
     subscribed: false,
     unsubscribedAt: Timestamp.now(),
   });
+  // Only log a real state change, so a profile save that leaves a box
+  // unchecked doesn't append a no-op "unsubscribed" line every time.
+  if (wasSubscribed) {
+    await safeRecordEvent(db, {
+      subscriptionId: ref.id,
+      email,
+      channel: args.channel,
+      type: "unsubscribed",
+      actor: args.actor,
+    });
+  }
   return true;
 }
 
@@ -414,6 +580,7 @@ export async function unsubscribe(
 export async function unsubscribeAll(
   db: Firestore,
   email: string,
+  actor: SubscriptionActor,
 ): Promise<number> {
   const e = normaliseEmail(email);
   if (!e) return 0;
@@ -429,6 +596,13 @@ export async function unsubscribeAll(
     const data = doc.data() as SubscriptionDoc;
     if (!data.subscribed) continue;
     batch.update(doc.ref, { subscribed: false, unsubscribedAt: now });
+    addSubscriptionEventToBatch(db, batch, {
+      subscriptionId: doc.id,
+      email: data.email,
+      channel: data.channel,
+      type: "unsubscribed",
+      actor,
+    });
     count += 1;
   }
   if (count > 0) await batch.commit();
@@ -437,10 +611,17 @@ export async function unsubscribeAll(
 
 /**
  * Migrate rows from guest → user audience. Idempotent.
+ *
+ * If `name` is provided and non-empty, also overwrites the row's `name`
+ * with that authoritative value. Most-recent-action-wins: a guest who
+ * signed up as "Marie" then registers as "Marie J. Smith" gets the new
+ * full name on their rows from the moment of claim. The user-doc-derived
+ * name is the canonical greeting label across the rest of the site, so
+ * it wins over a hand-typed homepage form value here.
  */
 export async function claimGuestSubscriptions(
   db: Firestore,
-  args: { email: string; uid: string },
+  args: { email: string; uid: string; name?: string },
 ): Promise<number> {
   const email = normaliseEmail(args.email);
   if (!email || !args.uid) return 0;
@@ -450,9 +631,15 @@ export async function claimGuestSubscriptions(
     .where("audience", "==", "guest")
     .get();
   if (snap.empty) return 0;
+  const trimmedName = args.name?.trim();
   const batch = db.batch();
   for (const doc of snap.docs) {
-    batch.update(doc.ref, { audience: "user", audienceId: args.uid });
+    const patch: Record<string, unknown> = {
+      audience: "user",
+      audienceId: args.uid,
+    };
+    if (trimmedName) patch.name = trimmedName;
+    batch.update(doc.ref, patch);
   }
   await batch.commit();
   return snap.size;

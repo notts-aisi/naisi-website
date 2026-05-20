@@ -114,21 +114,40 @@ export async function completeRegistration(profile: {
   void verifiedTokenId;
 
   // Subscriptions sync — claims any pre-existing guest subscription rows
-  // for this user's email(s) (so a homepage signer-upper who later
+  // for this user's verified email(s) (so a homepage signer-upper who later
   // registers doesn't end up with a duplicate guest row), and applies the
-  // form's notification prefs as deltas. Fire-and-forget so the register
-  // flow proceeds regardless; the sender already gracefully handles a user
-  // who hasn't been synced yet.
+  // form's notification prefs as a per-(email, channel) matrix. Fire-and-
+  // forget so the register flow proceeds regardless; the sender already
+  // gracefully handles a user who hasn't been synced yet.
+  //
+  // Derive the matrix from the legacy register-form shape: a category is
+  // delivered to a given email iff the form ticked both the category and
+  // that email's channel-routing flag. The /profile UI (post-register)
+  // sends the matrix directly without this translation.
+  const matrix: Record<string, { newsletter: boolean; events: boolean }> = {};
+  const googleEmail = (user.email ?? "").trim().toLowerCase();
+  if (googleEmail) {
+    matrix[googleEmail] = {
+      newsletter:
+        notifications.categories.newsletter && notifications.channels.gmail,
+      events: notifications.categories.events && notifications.channels.gmail,
+    };
+  }
+  // Only include the uni email if the form recorded it as verified — the
+  // sync route's helper double-checks this server-side, but matching the
+  // gate here keeps payloads minimal.
+  const uniEmailNorm = profile.universityEmail.trim().toLowerCase();
+  if (uniEmailNorm && uniEmailVerifiedAt) {
+    matrix[uniEmailNorm] = {
+      newsletter:
+        notifications.categories.newsletter && notifications.channels.uniEmail,
+      events: notifications.categories.events && notifications.channels.uniEmail,
+    };
+  }
   fetch("/api/subscriptions/sync", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      prefs: {
-        newsletter: notifications.categories.newsletter,
-        events: notifications.categories.events,
-      },
-      claimUniEmail: true,
-    }),
+    body: JSON.stringify({ matrix }),
   }).catch((err) => {
     console.warn("[subscriptions sync] fire-and-forget failed", err);
   });

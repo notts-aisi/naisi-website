@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { deleteEventsForSubscriptions } from "@/lib/firestore/subscriptions";
 
 type Ctx = RouteContext<"/api/admin/users/[uid]">;
 
@@ -83,12 +84,18 @@ export async function DELETE(_req: Request, ctx: Ctx) {
       if (ownedDocs.length > 0) {
         await batch.commit();
         subscriptionsDeleted = ownedDocs.length;
+        // Drop the deleted rows' event-log entries too, so no PII lingers
+        // in subscriptionEvents after the user is gone.
+        await deleteEventsForSubscriptions(
+          db,
+          ownedDocs.map((d) => d.id),
+        );
       }
     }
   } catch (err) {
     console.error("[admin delete] subscription cascade failed:", uid, err);
     return NextResponse.json(
-      { error: "Failed to delete user's subscription rows. User doc and Auth account were NOT deleted." },
+      { error: "Failed to delete user's subscription rows or event log. User doc and Auth account were NOT deleted." },
       { status: 500 },
     );
   }

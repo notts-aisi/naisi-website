@@ -1,11 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { deleteField, doc, onSnapshot, Timestamp, updateDoc } from "firebase/firestore";
+import {
+  collection,
+  deleteField,
+  doc,
+  onSnapshot,
+  query,
+  Timestamp,
+  updateDoc,
+  where,
+} from "firebase/firestore";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
-import Switch from "@/components/ui/Switch";
 import { Field, Input } from "@/components/ui/Input";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
@@ -19,13 +27,12 @@ import {
   ALL_CATEGORIES,
   CATEGORY_DESCRIPTIONS,
   CATEGORY_LABELS,
-  DEFAULT_NOTIFICATION_PREFS,
+  getVerifiedEmails,
   isSubscribedToAnything,
-  normaliseNotifications,
   serialiseNotifications,
-  setCategory,
-  setChannel,
+  type NotificationCategory,
   type NotificationPrefs,
+  type VerifiedEmail,
 } from "@/lib/firestore/notifications";
 import styles from "./ProfileForm.module.css";
 
@@ -33,6 +40,13 @@ const UNI_EMAIL_LOCK_MS = 24 * 60 * 60 * 1000;
 
 const LOCK_MESSAGE =
   "To prevent abuse, we've temporarily locked email changes on this account. If you need to update your university email before it unlocks, email ai-safety@uonsu.com from the address you'd like us to use and we'll verify and make the change manually.";
+
+const KIND_LABEL: Record<VerifiedEmail["kind"], string> = {
+  google: "Google",
+  uni: "Uni",
+};
+
+type Matrix = Record<string, { newsletter: boolean; events: boolean }>;
 
 function asDate(v: unknown): Date | null {
   if (!v) return null;
@@ -48,6 +62,36 @@ function asDate(v: unknown): Date | null {
   return null;
 }
 
+/**
+ * Aggregate the matrix back into the legacy notification shape so we can
+ * keep `profile.notifications` and `profile.newsletter` roughly in sync
+ * for any read paths that still consult them. Both sides will be cleaned
+ * up in the follow-up PR after the new code paths settle.
+ */
+function legacyPrefsFromMatrix(
+  matrix: Matrix,
+  verifiedEmails: VerifiedEmail[],
+): NotificationPrefs {
+  const newsletter = verifiedEmails.some(
+    (ve) => matrix[ve.email]?.newsletter,
+  );
+  const events = verifiedEmails.some((ve) => matrix[ve.email]?.events);
+  const google = verifiedEmails.find((ve) => ve.kind === "google");
+  const uni = verifiedEmails.find((ve) => ve.kind === "uni");
+  const gmailGetsAnything = google
+    ? Boolean(
+        matrix[google.email]?.newsletter || matrix[google.email]?.events,
+      )
+    : true;
+  const uniEmailGetsAnything = uni
+    ? Boolean(matrix[uni.email]?.newsletter || matrix[uni.email]?.events)
+    : false;
+  return {
+    categories: { newsletter, events },
+    channels: { gmail: gmailGetsAnything, uniEmail: uniEmailGetsAnything },
+  };
+}
+
 export default function ProfileForm() {
   const { user } = useAuth();
   const [me, setMe] = useState<UserDoc | null>(null);
@@ -55,12 +99,15 @@ export default function ProfileForm() {
 
   const [preferredName, setPreferredName] = useState("");
   const [universityEmail, setUniversityEmail] = useState("");
-  const [prefs, setPrefs] = useState<NotificationPrefs>(DEFAULT_NOTIFICATION_PREFS);
+  const [matrix, setMatrix] = useState<Matrix>({});
 
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // User doc snapshot. Drives identity (name, uni email, verified
+  // status). The matrix reads from the subscriptions collection
+  // separately so admin-side row flips show up live in /profile.
   useEffect(() => {
     if (!user) return;
     const db = getClientDb();
@@ -73,18 +120,74 @@ export default function ProfileForm() {
       setMe(normalized);
       setPreferredName(normalized.profile?.preferredName ?? "");
       setUniversityEmail(normalized.profile?.universityEmail ?? "");
-      setPrefs(normaliseNotifications(normalized.profile ?? {}));
       setLoading(false);
     });
     return unsub;
   }, [user]);
 
-  const anyCategoryOn = useMemo(() => isSubscribedToAnything(prefs), [prefs]);
+  // Subscriptions collection snapshot for this user. Source of truth for
+  // the matrix cell values: an admin flipping a row in /admin/subscriptions
+  // shows up here within one Firestore tick, so a subsequent /profile save
+  // doesn't overwrite the admin's intent with stale state.
+  useEffect(() => {
+    if (!user) return;
+    const db = getClientDb();
+    const q = query(
+      collection(db, "subscriptions"),
+      where("audienceId", "==", user.uid),
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const next: Matrix = {};
+      for (const docSnap of snap.docs) {
+        const data = docSnap.data();
+        const email = typeof data.email === "string" ? data.email : "";
+        const channel = typeof data.channel === "string" ? data.channel : "";
+        const subscribed = data.subscribed === true;
+        if (!email || !channel) continue;
+        if (channel !== "newsletter" && channel !== "events") continue;
+        const cell = next[email] ?? { newsletter: false, events: false };
+        cell[channel as NotificationCategory] = subscribed;
+        next[email] = cell;
+      }
+      setMatrix(next);
+    });
+    return unsub;
+  }, [user]);
+
+  const verifiedEmails = useMemo<VerifiedEmail[]>(() => {
+    if (!me) return [];
+    return getVerifiedEmails({
+      email: me.email,
+      profile: me.profile as
+        | { universityEmail?: unknown; uniEmailVerifiedAt?: unknown }
+        | undefined,
+    });
+  }, [me]);
+
+  const anyChecked = useMemo(
+    () =>
+      Object.values(matrix).some(
+        (cell) => cell?.newsletter || cell?.events,
+      ),
+    [matrix],
+  );
+
   const hasUniEmail = universityEmail.trim().length > 0;
   const uniEmailVerified = Boolean(
     (me?.profile as { uniEmailVerifiedAt?: unknown } | undefined)?.uniEmailVerifiedAt,
   );
   const uniEmailChanged = universityEmail.trim() !== (me?.profile?.universityEmail ?? "");
+
+  function setCell(
+    email: string,
+    cat: NotificationCategory,
+    next: boolean,
+  ) {
+    setMatrix((prev) => {
+      const cur = prev[email] ?? { newsletter: false, events: false };
+      return { ...prev, [email]: { ...cur, [cat]: next } };
+    });
+  }
 
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
@@ -98,14 +201,6 @@ export default function ProfileForm() {
         setError(emailError);
         return;
       }
-    }
-    if (anyCategoryOn && !prefs.channels.gmail && !prefs.channels.uniEmail) {
-      setError("Pick at least one inbox to deliver to, or turn off all subscriptions.");
-      return;
-    }
-    if (anyCategoryOn && prefs.channels.uniEmail && !hasUniEmail) {
-      setError("Add your university email above, or turn off 'University email' delivery.");
-      return;
     }
 
     const previousUniEmail = me?.profile?.universityEmail ?? "";
@@ -125,17 +220,18 @@ export default function ProfileForm() {
     try {
       if (!user) throw new Error("Not signed in");
       const db = getClientDb();
+      const legacy = legacyPrefsFromMatrix(matrix, verifiedEmails);
       const patch: Record<string, unknown> = {
         "profile.preferredName": preferredName.trim(),
         "profile.universityEmail": uniEmailTrimmed,
-        "profile.notifications": serialiseNotifications(prefs),
-        // Keep the legacy field roughly in sync for any code still reading it
-        // pre-migration. This is belt + braces — the normaliser prefers
-        // `notifications` — but avoids surprise drift on a partial rollout.
+        "profile.notifications": serialiseNotifications(legacy),
+        // Older legacy field — kept roughly in sync for any code still
+        // reading it pre-migration. Both legacy fields are dropped in the
+        // follow-up cleanup PR after the new paths settle.
         "profile.newsletter": {
-          subscribed: anyCategoryOn,
-          deliverToGmail: prefs.channels.gmail,
-          deliverToUniEmail: prefs.channels.uniEmail,
+          subscribed: isSubscribedToAnything(legacy),
+          deliverToGmail: legacy.channels.gmail,
+          deliverToUniEmail: legacy.channels.uniEmail,
         },
       };
       const wasSuppressed = Boolean(
@@ -155,21 +251,23 @@ export default function ProfileForm() {
       }
       await updateDoc(doc(db, "users", user.uid), patch);
 
-      // Subscriptions sync — applies the new prefs as deltas onto the
-      // junction collection. Fire-and-forget; the user-doc write above is
-      // the part that the UI confirms with "Saved." If the sync fails, the
-      // legacy `profile.notifications` field still reflects intent and the
-      // next save retries.
+      // Subscriptions sync — applies the matrix as deltas onto the
+      // junction collection. Fire-and-forget; the user-doc write above
+      // is the part the UI confirms with "Saved." If the sync fails,
+      // the legacy fields still carry intent and the next save retries.
+      // Build a lean payload restricted to the addresses the user can
+      // actually act on. Server-side helper double-checks regardless.
+      const payloadMatrix: Matrix = {};
+      for (const ve of verifiedEmails) {
+        payloadMatrix[ve.email] = matrix[ve.email] ?? {
+          newsletter: false,
+          events: false,
+        };
+      }
       fetch("/api/subscriptions/sync", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          prefs: {
-            newsletter: prefs.categories.newsletter,
-            events: prefs.categories.events,
-          },
-          claimUniEmail: true,
-        }),
+        body: JSON.stringify({ matrix: payloadMatrix }),
       }).catch((err) => {
         console.warn("[profile subscriptions sync] failed", err);
       });
@@ -234,8 +332,6 @@ export default function ProfileForm() {
     );
   }
 
-  const uniChannelDisabled = !hasUniEmail;
-
   return (
     <form onSubmit={onSave} style={{ display: "flex", flexDirection: "column", gap: "var(--space-6)" }}>
       <Card padding="lg">
@@ -260,7 +356,7 @@ export default function ProfileForm() {
             hint={
               uniEmailVerified && !uniEmailChanged
                 ? "Verified. If you change it, you'll need to verify the new address."
-                : "Any @nottingham.ac.uk address (subdomains like exmail.nottingham.ac.uk included). Required if you want events/newsletter delivered to your uni inbox."
+                : "Any @nottingham.ac.uk address (subdomains like exmail.nottingham.ac.uk included). Verify it to deliver email there."
             }
           >
             <Input
@@ -295,49 +391,81 @@ export default function ProfileForm() {
       <Card padding="lg">
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-1)" }}>
           <h2 style={{ fontSize: "var(--text-xl)" }}>Email preferences</h2>
-          <Badge tone={anyCategoryOn ? "success" : "neutral"}>
-            {anyCategoryOn ? "Getting emails" : "No emails"}
+          <Badge tone={anyChecked ? "success" : "neutral"}>
+            {anyChecked ? "Getting emails" : "No emails"}
           </Badge>
         </div>
         <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)", marginBottom: "var(--space-5)" }}>
-          Pick what you want us to email you about. You can unsubscribe from any
+          Pick which inbox should receive each kind of email. You can unsubscribe from any
           email with one click.
         </p>
 
-        <div className={styles.categoryList}>
-          {ALL_CATEGORIES.map((cat) => (
-            <div key={cat} className={styles.categoryRow}>
-              <Switch
-                checked={prefs.categories[cat]}
-                onChange={(next) => setPrefs((p) => setCategory(p, cat, next))}
-                label={CATEGORY_LABELS[cat]}
-                description={CATEGORY_DESCRIPTIONS[cat]}
-                size="lg"
-                tone="accent"
-              />
-            </div>
-          ))}
-        </div>
+        {verifiedEmails.length === 0 ? (
+          <div className={styles.matrixEmpty}>
+            We don&apos;t have a verified email address on file for you yet. Sign in
+            should always provide one — try signing out and back in.
+          </div>
+        ) : (
+          <div className={styles.matrix}>
+            <div
+              className={styles.matrixGrid}
+              style={{
+                gridTemplateColumns: `minmax(10rem, 1fr) repeat(${verifiedEmails.length}, minmax(8rem, auto))`,
+              }}
+            >
+              <div />
+              {verifiedEmails.map((ve) => (
+                <div key={ve.email} className={styles.matrixHeaderEmail}>
+                  <span className={styles.matrixHeaderEmailAddress}>{ve.email}</span>
+                  <span className={styles.matrixHeaderEmailMeta}>
+                    <span className={styles.matrixHeaderKindLabel}>
+                      {KIND_LABEL[ve.kind]}
+                    </span>
+                    <span className={styles.matrixVerifiedTick} aria-label="Verified">
+                      <span aria-hidden>✓</span> Verified
+                    </span>
+                  </span>
+                </div>
+              ))}
 
-        {anyCategoryOn && (
-          <div className={styles.deliveryBlock}>
-            <p className={styles.deliveryLabel}>Deliver to</p>
-            <div className={styles.channelList}>
-              <Switch
-                checked={prefs.channels.gmail}
-                onChange={(next) => setPrefs((p) => setChannel(p, "gmail", next))}
-                label={`Google account email${me.email ? ` (${me.email})` : ""}`}
-              />
-              <Switch
-                checked={prefs.channels.uniEmail}
-                onChange={(next) => setPrefs((p) => setChannel(p, "uniEmail", next))}
-                disabled={uniChannelDisabled}
-                label={
-                  hasUniEmail
-                    ? `University email (${universityEmail.trim()})`
-                    : "University email (add one above first)"
-                }
-              />
+              {ALL_CATEGORIES.map((cat) => (
+                <MatrixChannelRow
+                  key={cat}
+                  cat={cat}
+                  emails={verifiedEmails}
+                  matrix={matrix}
+                  onChange={setCell}
+                />
+              ))}
+            </div>
+
+            <div className={styles.matrixStacked}>
+              {ALL_CATEGORIES.map((cat) => (
+                <section key={cat} className={styles.matrixStackedSection}>
+                  <div className={styles.matrixChannelTitle}>{CATEGORY_LABELS[cat]}</div>
+                  <div className={styles.matrixChannelDescription}>
+                    {CATEGORY_DESCRIPTIONS[cat]}
+                  </div>
+                  <div className={styles.matrixStackedRows}>
+                    {verifiedEmails.map((ve) => (
+                      <label key={ve.email} className={styles.matrixStackedRow}>
+                        <span className={styles.matrixStackedEmail}>
+                          <span className={styles.matrixStackedEmailAddress}>{ve.email}</span>
+                          <span className={styles.matrixStackedEmailMeta}>
+                            {KIND_LABEL[ve.kind]} · Verified
+                          </span>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(matrix[ve.email]?.[cat])}
+                          onChange={(e) => setCell(ve.email, cat, e.target.checked)}
+                          aria-label={`${CATEGORY_LABELS[cat]} to ${ve.email}`}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </section>
+              ))}
             </div>
           </div>
         )}
@@ -354,5 +482,41 @@ export default function ProfileForm() {
         </Button>
       </div>
     </form>
+  );
+}
+
+function MatrixChannelRow({
+  cat,
+  emails,
+  matrix,
+  onChange,
+}: {
+  cat: NotificationCategory;
+  emails: VerifiedEmail[];
+  matrix: Matrix;
+  onChange: (email: string, cat: NotificationCategory, next: boolean) => void;
+}) {
+  return (
+    <>
+      <div className={styles.matrixChannelLabel}>
+        <span className={styles.matrixChannelTitle}>{CATEGORY_LABELS[cat]}</span>
+        <span className={styles.matrixChannelDescription}>
+          {CATEGORY_DESCRIPTIONS[cat]}
+        </span>
+      </div>
+      {emails.map((ve) => (
+        <div key={ve.email} className={styles.matrixCell}>
+          <label className={styles.matrixCheckboxLabel}>
+            <input
+              type="checkbox"
+              checked={Boolean(matrix[ve.email]?.[cat])}
+              onChange={(e) => onChange(ve.email, cat, e.target.checked)}
+              aria-label={`${CATEGORY_LABELS[cat]} to ${ve.email}`}
+            />
+            <span>Deliver here</span>
+          </label>
+        </div>
+      ))}
+    </>
   );
 }

@@ -1,3 +1,5 @@
+/* === Summary strip === */
+
 .summary {
   display: flex;
   flex-wrap: wrap;
@@ -32,69 +34,489 @@
   line-height: 1;
 }
 
+.miniCountWarn {
+  color: var(--color-warning);
+}
+
 .miniLabel {
   color: var(--color-text-muted);
   font-size: var(--text-xs);
   margin-top: var(--space-1);
 }
 
+/* === Toolbar ===
+   One row of equal-height controls. Each field is a label stacked over
+   its control; the search field grows, the selects stay fixed, the
+   actions push to the right. Search Input and Select share Input's
+   `.control` base so they are the same height with no overrides. */
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-end;
   gap: var(--space-3);
-  align-items: center;
 }
 
-.toolbar label {
+.filterField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 9rem;
+}
+
+.filterFieldGrow {
+  flex: 1 1 16rem;
+}
+
+.filterLabel {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.toolbarActions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin-left: auto;
+  align-self: flex-end;
+}
+
+.toolbarNote {
+  margin: var(--space-3) 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.toolbarNoteError {
+  color: var(--color-danger);
+}
+
+.pinnedRow {
+  margin-top: var(--space-3);
+}
+
+.pinnedFilter {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  color: var(--color-text-muted);
+  padding: 0.4rem 0.7rem;
   font-size: var(--text-sm);
-}
-
-.tableWrap {
-  overflow-x: auto;
-  border: 1px solid var(--color-border);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border: 1px solid var(--color-accent);
   border-radius: var(--radius-md);
 }
 
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--text-sm);
-}
-
-.table th,
-.table td {
-  text-align: left;
-  padding: var(--space-3) var(--space-3);
-  border-bottom: 1px solid var(--color-border);
-  vertical-align: top;
-}
-
-.table th {
-  font-weight: 600;
-  color: var(--color-text-muted);
-  background: var(--color-bg-elevated);
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.table tr:last-child td {
-  border-bottom: none;
+.pinnedFilterClear {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--text-base);
+  line-height: 1;
+  padding: 0;
 }
 
 .muted {
   color: var(--color-text-muted);
 }
 
-.actions {
+/* === Spreadsheet table ===
+   A header row plus one collapsed row per recipient, sharing a grid
+   template (set inline, depends on channel count). The whole thing
+   scrolls horizontally inside its own container so a wide channel set
+   never overflows the page. */
+
+.tableScroll {
+  overflow-x: auto;
+}
+
+.tableInner {
   display: flex;
+  flex-direction: column;
   gap: var(--space-2);
+}
+
+.tableHeader {
+  display: grid;
+  gap: var(--space-3) var(--space-4);
+  align-items: center;
+  padding: 0 var(--space-4);
+  /* Transparent border so header cells line up with the bordered rows. */
+  border: 1px solid transparent;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.recipientList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.recipient {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  transition: border-color var(--transition-fast);
+}
+
+.recipient:hover {
+  border-color: var(--color-border-strong);
+}
+
+.recipientExpanded {
+  border-color: var(--color-accent);
+}
+
+.recipientExpanded:hover {
+  border-color: var(--color-accent);
+}
+
+.recipientStale {
+  background: color-mix(in srgb, var(--color-warning) 7%, var(--color-surface));
+  box-shadow: inset 3px 0 0 0 var(--color-warning);
+}
+
+.summaryButton {
+  display: grid;
+  gap: var(--space-3) var(--space-4);
+  align-items: center;
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  background: transparent;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  border-radius: var(--radius-md);
+}
+
+.summaryButton:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+/* --- collapsed-row cells --- */
+
+.cellName {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.recipientName {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recipientNameMuted {
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+.staleChip {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-pill);
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  border: 1px solid var(--color-warning);
+}
+
+.cellAudience {
+  display: flex;
   align-items: center;
 }
+
+.cellEmails {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+
+.cellEmailsStale {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-warning);
+}
+
+.cellChannel {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.cellChannelEmpty {
+  color: var(--color-text-subtle);
+  font-size: var(--text-sm);
+}
+
+.statePill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  border: 1px solid transparent;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statePillSubscribed {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.statePillPending {
+  background: var(--color-warning-soft, var(--color-bg-elevated));
+  color: var(--color-warning);
+  border-color: var(--color-warning);
+}
+
+.statePillUnsubscribed {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+}
+
+.statePillMatched {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.chevron {
+  justify-self: end;
+  color: var(--color-text-muted);
+  transition: transform var(--transition-fast);
+  font-size: var(--text-base);
+  line-height: 1;
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+  color: var(--color-accent);
+}
+
+/* === Expanding panel (grid-template-rows trick) === */
+
+.panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 240ms ease;
+}
+
+.panelOpen {
+  grid-template-rows: 1fr;
+}
+
+.panelInner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panelBody {
+  padding: var(--space-2) var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  margin-top: var(--space-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    transition: none;
+  }
+  .chevron {
+    transition: none;
+  }
+}
+
+/* === Matrix in the expanded view === */
+
+.matrixWrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.matrix {
+  display: grid;
+  /* gridTemplateColumns set inline (depends on email count). */
+  gap: var(--space-3) var(--space-4);
+  align-items: stretch;
+}
+
+.matrixHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.matrixHeaderStale {
+  background: color-mix(in srgb, var(--color-warning) 9%, var(--color-bg-elevated));
+  border-bottom-color: var(--color-warning);
+}
+
+.matrixHeaderEmail {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.matrixHeaderMeta {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.staleNote {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.staleNoteText {
+  font-size: var(--text-xs);
+  color: var(--color-warning);
+}
+
+.matrixChannel {
+  padding: var(--space-3) 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  border-bottom: 1px solid var(--color-border);
+  align-self: start;
+}
+
+.matrixCell {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  background: var(--color-bg-elevated);
+}
+
+.matrixCellStale {
+  background: color-mix(in srgb, var(--color-warning) 9%, var(--color-bg-elevated));
+  border-color: var(--color-warning);
+}
+
+.matrixCellMatched {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.matrixCellAudit {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+}
+
+.matrixCellMissing {
+  padding: var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.matchTag {
+  font-size: var(--text-xs);
+  color: var(--color-accent);
+}
+
+/* Mobile: matrix becomes a vertical stack of email-headed mini-tables. */
+
+.matrixStacked {
+  display: none;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.matrixStackedEmail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.matrixStackedEmailStale {
+  background: color-mix(in srgb, var(--color-warning) 9%, var(--color-bg-elevated));
+  border-color: var(--color-warning);
+}
+
+.matrixStackedEmailHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+}
+
+.matrixStackedRow {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.matrixStackedRow:first-of-type {
+  border-top: 0;
+}
+
+.matrixStackedRowLabel {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  align-self: center;
+}
+
+@media (max-width: 48rem) {
+  .matrix {
+    display: none;
+  }
+  .matrixStacked {
+    display: flex;
+  }
+}
+
+/* === Pagination === */
 
 .pagination {
   display: flex;
@@ -117,4 +539,95 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
+}
+
+/* === Event log (per-cell history) === */
+
+.eventLog {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--color-border);
+}
+
+.eventLogTitle {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.eventLogList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+/* Applied only when expanded: cap the height so a long log scrolls
+   inside the cell instead of stretching it. */
+.eventLogScroll {
+  max-height: 11rem;
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+
+.eventLogToggle {
+  align-self: flex-start;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-accent);
+  cursor: pointer;
+}
+
+.eventLogToggle:hover {
+  text-decoration: underline;
+}
+
+.eventLine {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.eventType {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.eventTypeCreated {
+  color: var(--color-text);
+}
+
+.eventTypeConfirmed {
+  color: var(--color-accent);
+}
+
+.eventTypeSubscribed {
+  color: var(--color-success);
+}
+
+.eventTypeUnsubscribed {
+  color: var(--color-text-muted);
+}
+
+.eventActor {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eventAt {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
