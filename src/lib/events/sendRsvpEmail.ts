@@ -7,11 +7,14 @@ import { sendEmail } from "@/lib/email/send";
 import {
   DIETARY_ALLERGIES,
   FOOD_PROVENANCE_BADGE,
+  FOOD_TAG_LABEL,
   sanitizeSignupForm,
   type FoodProvenance,
+  type FoodTag,
   type FormQuestion,
   type RsvpAnswer,
 } from "@/lib/firestore/events";
+import { buildEventIcs } from "./ics";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isSuppressed } from "@/lib/firestore/suppression";
 import {
@@ -32,7 +35,11 @@ type EventLike = {
   locationPublicText?: string | null;
   startAt?: Date | null;
   endAt?: Date | null;
+  foodText?: string | null;
+  dietaryTags?: FoodTag[] | null;
+  /** @deprecated Legacy food fields, still read as a fallback for old events. */
   foodProvenance?: FoodProvenance | null;
+  /** @deprecated See `foodProvenance`. */
   foodProvenanceNote?: string | null;
   /** Raw unknown-typed signup questions (sanitized internally). */
   signupForm?: unknown;
@@ -99,11 +106,20 @@ function locationFor(
 }
 
 function foodLineFor(event: EventLike): string | undefined {
+  const text = (event.foodText ?? "").trim();
+  const tags = (Array.isArray(event.dietaryTags) ? event.dietaryTags : [])
+    .map((t) => FOOD_TAG_LABEL[t as FoodTag])
+    .filter(Boolean);
+  if (text) {
+    return tags.length ? `${text} (${tags.join(", ")})` : text;
+  }
+  if (tags.length) return tags.join(", ");
+  // Legacy fallback for events created before the free-text food field.
   const fp = event.foodProvenance;
   if (!fp || fp === "none") return undefined;
   const badge = FOOD_PROVENANCE_BADGE[fp as Exclude<FoodProvenance, "none">];
   const note = (event.foodProvenanceNote ?? "").trim();
-  return note ? `${badge} — ${note}` : badge;
+  return note ? `${badge}: ${note}` : badge;
 }
 
 type Args = {
@@ -192,6 +208,32 @@ export async function sendRsvpEmail({
     const questions = sanitizeSignupForm(event.signupForm);
     const answersLine = buildAnswersLine(questions, answers);
 
+    // Confirmed / promoted attendees get a calendar invite attached. These
+    // variants always disclose the exact location, so the .ics carries it too.
+    let attachments:
+      | { filename: string; content: string; contentType: string }[]
+      | undefined;
+    if ((variant === "approved" || variant === "promoted") && event.startAt) {
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
+      const eventUrl = appUrl && event.id ? `${appUrl}/events/${event.id}` : undefined;
+      const ics = buildEventIcs({
+        uid: event.id ?? "event",
+        title,
+        description: eventUrl,
+        location: (event.location ?? "").trim() || undefined,
+        url: eventUrl,
+        startAt: event.startAt,
+        endAt: event.endAt ?? null,
+      });
+      attachments = [
+        {
+          filename: "naisi-event.ics",
+          content: ics,
+          contentType: "text/calendar; charset=utf-8; method=PUBLISH",
+        },
+      ];
+    }
+
     await sendEmail({
       to,
       subject: subjectFor(variant, title),
@@ -217,6 +259,7 @@ export async function sendRsvpEmail({
       }),
       kind: "rsvp",
       referenceId: rsvpId ?? event.id ?? undefined,
+      attachments,
     });
   } catch (err) {
     console.error(`[rsvp email:${variant}] send failed`, err);

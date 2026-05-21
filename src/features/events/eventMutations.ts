@@ -15,6 +15,7 @@ import type { Block } from "@/lib/firestore/newsletterBlocks";
 import type {
   EventVisibility,
   FoodProvenance,
+  FoodTag,
   FormQuestion,
 } from "@/lib/firestore/events";
 
@@ -74,6 +75,8 @@ type EditableEventFields = Partial<{
   signupForm: FormQuestion[];
   foodProvenance: FoodProvenance;
   foodProvenanceNote: string | null;
+  foodText: string | null;
+  dietaryTags: FoodTag[];
   posterUrl: string | null;
 }>;
 
@@ -104,6 +107,12 @@ export async function updateEvent(id: string, fields: EditableEventFields) {
       fields.foodProvenanceNote === null || fields.foodProvenanceNote.trim() === ""
         ? deleteField()
         : fields.foodProvenanceNote.trim();
+  if (fields.foodText !== undefined)
+    patch.foodText =
+      fields.foodText === null || fields.foodText.trim() === ""
+        ? deleteField()
+        : fields.foodText.trim();
+  if (fields.dietaryTags !== undefined) patch.dietaryTags = fields.dietaryTags;
   if (fields.posterUrl !== undefined)
     patch.posterUrl = fields.posterUrl === null ? deleteField() : fields.posterUrl;
   await updateDoc(doc(db, "events", id), patch);

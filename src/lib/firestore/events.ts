@@ -56,6 +56,25 @@ export const FOOD_PROVENANCE_BADGE: Record<Exclude<FoodProvenance, "none">, stri
   other: "Special kitchen",
 };
 
+/**
+ * Optional dietary classifiers for an event's food. Orthogonal to the
+ * free-text `foodText` description: the tags drive the badges, the text is the
+ * plain-language announcement (e.g. "Pizza ordered from Domino's Beeston").
+ */
+export type FoodTag = "halal" | "kosher" | "vegan" | "vegetarian";
+
+export const FOOD_TAGS: FoodTag[] = ["halal", "kosher", "vegan", "vegetarian"];
+
+export const FOOD_TAG_LABEL: Record<FoodTag, string> = {
+  halal: "Halal",
+  kosher: "Kosher",
+  vegan: "Vegan",
+  vegetarian: "Vegetarian",
+};
+
+/** Max length of the free-text food description shown on the event page. */
+export const FOOD_TEXT_MAX = 280;
+
 // ---- Modular signup form ----
 
 export type FormQuestionType =
@@ -199,8 +218,17 @@ export type EventDoc = {
   capacity: number | null;
   waitlistEnabled: boolean;
   signupForm: FormQuestion[];
+  /**
+   * @deprecated Legacy food classification. New and edited events use
+   * `foodText` + `dietaryTags`; kept so older published events still render.
+   */
   foodProvenance: FoodProvenance;
+  /** @deprecated See `foodProvenance`. */
   foodProvenanceNote?: string | null;
+  /** Free-text food description, shown prominently on the event page. */
+  foodText?: string | null;
+  /** Optional dietary classifiers, rendered as badges. */
+  dietaryTags?: FoodTag[];
   posterUrl?: string | null;
   status: EventStatus;
   authorUid: string;
@@ -246,6 +274,15 @@ function asFoodProvenance(v: unknown): FoodProvenance {
   return ok.includes(v as FoodProvenance) ? (v as FoodProvenance) : "none";
 }
 
+function asFoodTags(v: unknown): FoodTag[] {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set<FoodTag>();
+  for (const t of v) {
+    if (FOOD_TAGS.includes(t as FoodTag)) seen.add(t as FoodTag);
+  }
+  return Array.from(seen);
+}
+
 export function normalizeEvent(id: string, data: Raw): EventDoc {
   const capacityRaw = data.capacity;
   const capacity =
@@ -268,6 +305,8 @@ export function normalizeEvent(id: string, data: Raw): EventDoc {
     signupForm: sanitizeSignupForm(data.signupForm),
     foodProvenance: asFoodProvenance(data.foodProvenance),
     foodProvenanceNote: (data.foodProvenanceNote as string | null | undefined) ?? null,
+    foodText: (data.foodText as string | null | undefined) ?? null,
+    dietaryTags: asFoodTags(data.dietaryTags),
     posterUrl: (data.posterUrl as string | null | undefined) ?? null,
     status: asStatus(data.status),
     authorUid: (data.authorUid as string) ?? "",

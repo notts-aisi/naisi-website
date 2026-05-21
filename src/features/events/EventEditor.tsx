@@ -7,26 +7,29 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import DateTimePopover from "@/components/ui/DateTimePopover";
-import { Field, Input } from "@/components/ui/Input";
+import { Field, Input, Textarea } from "@/components/ui/Input";
 import Link from "next/link";
 import Select from "@/components/ui/Select";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
 import {
   EVENT_STATUS_LABEL,
-  FOOD_PROVENANCE_LABEL,
+  FOOD_TAGS,
+  FOOD_TAG_LABEL,
+  FOOD_TEXT_MAX,
   LOCATION_MAX,
   TITLE_MAX,
   normalizeEvent,
   type EventDoc,
   type EventStatus,
   type EventVisibility,
-  type FoodProvenance,
+  type FoodTag,
   type FormQuestion,
 } from "@/lib/firestore/events";
 import type { Block } from "@/lib/firestore/newsletterBlocks";
 import { canApproveEvent, canDraftEvent } from "@/lib/firestore/users";
 import BlockEditor from "@/features/newsletter/editor/BlockEditor";
+import ImageUpload from "@/features/newsletter/editor/ImageUpload";
 import {
   approveEvent,
   cancelEvent,
@@ -77,8 +80,9 @@ export default function EventEditor({ eventId }: Props) {
   const [capacity, setCapacity] = useState<number | null>(null);
   const [waitlistEnabled, setWaitlistEnabled] = useState(true);
   const [signupForm, setSignupForm] = useState<FormQuestion[]>([]);
-  const [foodProvenance, setFoodProvenance] = useState<FoodProvenance>("none");
-  const [foodProvenanceNote, setFoodProvenanceNote] = useState("");
+  const [foodText, setFoodText] = useState("");
+  const [dietaryTags, setDietaryTags] = useState<FoodTag[]>([]);
+  const [posterUrl, setPosterUrl] = useState<string | null>(null);
 
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -113,8 +117,9 @@ export default function EventEditor({ eventId }: Props) {
         setCapacity((cur) => (dirty ? cur : next.capacity));
         setWaitlistEnabled((cur) => (dirty ? cur : next.waitlistEnabled));
         setSignupForm((cur) => (dirty ? cur : next.signupForm));
-        setFoodProvenance((cur) => (dirty ? cur : next.foodProvenance));
-        setFoodProvenanceNote((cur) => (dirty ? cur : next.foodProvenanceNote ?? ""));
+        setFoodText((cur) => (dirty ? cur : next.foodText ?? ""));
+        setDietaryTags((cur) => (dirty ? cur : next.dietaryTags ?? []));
+        setPosterUrl((cur) => (dirty ? cur : next.posterUrl ?? null));
         setLoading(false);
       },
       (err) => {
@@ -163,11 +168,9 @@ export default function EventEditor({ eventId }: Props) {
       capacity,
       waitlistEnabled: capacity === null ? false : waitlistEnabled,
       signupForm,
-      foodProvenance,
-      foodProvenanceNote:
-        foodProvenance === "other" || foodProvenanceNote.trim()
-          ? foodProvenanceNote
-          : null,
+      foodText: foodText.trim() ? foodText : null,
+      dietaryTags,
+      posterUrl,
     });
     setDirty(false);
   }
@@ -195,9 +198,6 @@ export default function EventEditor({ eventId }: Props) {
       return "You've hidden the exact location — add a fuzzy label to show publicly (e.g. 'somewhere on campus').";
     }
     if (capacity !== null && capacity <= 0) return "Capacity must be at least 1 (or blank for unlimited).";
-    if (foodProvenance === "other" && !foodProvenanceNote.trim()) {
-      return 'Food provenance is set to "Other" — add a short note explaining.';
-    }
     for (const q of signupForm) {
       if (!q.label.trim()) return "Every signup question needs a label.";
       if ((q.type === "singleSelect" || q.type === "multiSelect")) {
@@ -568,6 +568,23 @@ export default function EventEditor({ eventId }: Props) {
       </Card>
 
       <section>
+        <h2 className={styles.sectionTitle}>Cover image</h2>
+        <p className={styles.sectionHint}>
+          Optional. Shown as a banner across the top of the public event page.
+        </p>
+        <ImageUpload
+          draftId={event.id}
+          storagePrefix="event-images"
+          currentUrl={posterUrl ?? undefined}
+          onChange={({ url }) => {
+            setPosterUrl(url || null);
+            markDirty();
+          }}
+          disabled={!editable || busy}
+        />
+      </section>
+
+      <section>
         <h2 className={styles.sectionTitle}>Description</h2>
         <BlockEditor
           draftId={event.id}
@@ -582,71 +599,58 @@ export default function EventEditor({ eventId }: Props) {
       </section>
 
       <section>
-        <h2 className={styles.sectionTitle}>Food & dietary</h2>
+        <h2 className={styles.sectionTitle}>Food</h2>
         <p className={styles.sectionHint}>
-          Tell attendees up front if the food comes from a restaurant with a specific
-          religious or dietary standard — saves them having to ask.
+          If there&apos;s food, say what it is in plain language. This shows
+          prominently on the public event page so attendees can&apos;t miss it.
         </p>
         <Card padding="lg">
           <div className={styles.fields}>
-            <Field id="food-provenance" label="Food provenance">
-              <Select
-                id="food-provenance"
-                value={foodProvenance}
+            <Field
+              id="food-text"
+              label="What's the food?"
+              hint="Leave blank if there's no food at this event."
+            >
+              <Textarea
+                id="food-text"
+                value={foodText}
                 onChange={(e) => {
-                  setFoodProvenance(e.target.value as FoodProvenance);
+                  setFoodText(e.target.value);
                   markDirty();
                 }}
+                rows={2}
+                maxLength={FOOD_TEXT_MAX}
                 disabled={!editable || busy}
-              >
-                {(
-                  [
-                    "none",
-                    "halal",
-                    "kosher",
-                    "vegetarian",
-                    "vegan",
-                    "other",
-                  ] as FoodProvenance[]
-                ).map((fp) => (
-                  <option key={fp} value={fp}>
-                    {FOOD_PROVENANCE_LABEL[fp]}
-                  </option>
-                ))}
-              </Select>
+                placeholder="e.g. Pizza ordered from Domino's Beeston, collected at 6pm"
+              />
             </Field>
 
-            {foodProvenance !== "none" && (
-              <Field
-                id="food-provenance-note"
-                label={
-                  foodProvenance === "other"
-                    ? "Describe the kitchen / restaurant"
-                    : "Extra note (optional)"
-                }
-                hint={
-                  foodProvenance === "other"
-                    ? 'Required when set to "Other".'
-                    : "e.g. the restaurant's name, or anything attendees should know."
-                }
-              >
-                <Input
-                  id="food-provenance-note"
-                  value={foodProvenanceNote}
-                  onChange={(e) => {
-                    setFoodProvenanceNote(e.target.value);
-                    markDirty();
-                  }}
-                  disabled={!editable || busy}
-                  maxLength={200}
-                  placeholder={
-                    foodProvenance === "other"
-                      ? "e.g. fully plant-based kitchen"
-                      : "e.g. from Alif Halal Kitchen on Derby Rd"
-                  }
-                />
-              </Field>
-            )}
+            <div>
+              <span className={styles.checkboxGroupLabel}>Dietary tags (optional)</span>
+              <p className={styles.checkboxGroupHint}>
+                Tick any that genuinely apply. Shown as badges on the event page.
+              </p>
+              <div className={styles.tagRow}>
+                {FOOD_TAGS.map((tag) => (
+                  <label key={tag} className={styles.checkboxLabel}>
+                    <input
+                      type="checkbox"
+                      checked={dietaryTags.includes(tag)}
+                      onChange={(e) => {
+                        setDietaryTags((cur) =>
+                          e.target.checked
+                            ? [...cur, tag]
+                            : cur.filter((t) => t !== tag),
+                        );
+                        markDirty();
+                      }}
+                      disabled={!editable || busy}
+                    />
+                    {FOOD_TAG_LABEL[tag]}
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
         </Card>
       </section>

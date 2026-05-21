@@ -90,6 +90,8 @@ export async function POST(
           locationPublicText: result.event.locationPublicText,
           startAt: result.event.startAt?.toDate?.() ?? null,
           endAt: result.event.endAt?.toDate?.() ?? null,
+          foodText: result.event.foodText,
+          dietaryTags: result.event.dietaryTags,
           foodProvenance: result.event.foodProvenance,
           foodProvenanceNote: result.event.foodProvenanceNote,
           signupForm: result.event.signupForm,

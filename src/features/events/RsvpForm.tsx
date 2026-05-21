@@ -32,6 +32,8 @@ export default function RsvpForm({ event, previewMode }: Props) {
   const [anonName, setAnonName] = useState("");
   const [anonEmail, setAnonEmail] = useState("");
   const [answers, setAnswers] = useState<Record<string, RsvpAnswer>>({});
+  const [joinEvents, setJoinEvents] = useState(false);
+  const [joinNewsletter, setJoinNewsletter] = useState(false);
   const [state, setState] = useState<SubmitState>({ kind: "idle" });
 
   const questions: FormQuestion[] = event.signupForm;
@@ -67,6 +69,20 @@ export default function RsvpForm({ event, previewMode }: Props) {
         });
         return;
       }
+
+      // RSVP saved. Fire-and-forget the optional mailing-list opt-in — it must
+      // never block the RSVP or surface its own errors to the attendee.
+      const channels: string[] = [];
+      if (joinEvents) channels.push("events");
+      if (joinNewsletter) channels.push("newsletter");
+      if (channels.length > 0) {
+        void fetch("/api/subscriptions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email, channels, source: "event-rsvp", name }),
+        }).catch(() => {});
+      }
+
       setState({ kind: "success" });
     } catch (err) {
       setState({
@@ -168,6 +184,38 @@ export default function RsvpForm({ event, previewMode }: Props) {
             disabled={state.kind === "submitting"}
           />
         )}
+
+        <fieldset className={styles.channels} disabled={state.kind === "submitting"}>
+          <legend className={styles.channelsLegend}>Stay in the loop (optional)</legend>
+          <label className={styles.channelLabel}>
+            <input
+              type="checkbox"
+              className={styles.channelCheckbox}
+              checked={joinEvents}
+              onChange={(e) => setJoinEvents(e.target.checked)}
+            />
+            <span className={styles.channelText}>
+              <span className={styles.channelName}>Email me about future events</span>
+              <span className={styles.channelDescription}>
+                Get an email when we announce a new event.
+              </span>
+            </span>
+          </label>
+          <label className={styles.channelLabel}>
+            <input
+              type="checkbox"
+              className={styles.channelCheckbox}
+              checked={joinNewsletter}
+              onChange={(e) => setJoinNewsletter(e.target.checked)}
+            />
+            <span className={styles.channelText}>
+              <span className={styles.channelName}>NAISI newsletter</span>
+              <span className={styles.channelDescription}>
+                Occasional society updates and what we&apos;re working on.
+              </span>
+            </span>
+          </label>
+        </fieldset>
 
         {state.kind === "error" && <p className={styles.danger}>{state.message}</p>}
 
