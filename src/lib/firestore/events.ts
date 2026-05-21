@@ -440,6 +440,8 @@ export type RsvpDoc = {
   email: string;
   answers: Record<string, RsvpAnswer>;
   status: RsvpStatus;
+  /** True for organiser-generated test RSVPs (see /api/events/[id]/test-rsvps). */
+  synthetic: boolean;
   /** Organiser-facing note on why an RSVP was denied (optional). */
   decisionNote: string | null;
   decidedBy: string | null;
@@ -464,6 +466,7 @@ export function normalizeRsvp(id: string, data: Raw): RsvpDoc {
     email: (data.email as string) ?? "",
     answers: (data.answers as Record<string, RsvpAnswer>) ?? {},
     status: asRsvpStatus(data.status),
+    synthetic: data.synthetic === true,
     decisionNote: (data.decisionNote as string | null | undefined) ?? null,
     decidedBy: (data.decidedBy as string | null | undefined) ?? null,
     decidedAt: tsToDate(data.decidedAt),

@@ -7,6 +7,7 @@ import Card from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import { copyToClipboard, downloadCSV, toCSV } from "@/lib/csv";
+import { useAuth } from "@/auth/AuthProvider";
 import {
   FOOD_PROVENANCE_BADGE,
   RSVP_STATUS_LABEL,
@@ -19,6 +20,7 @@ import {
 } from "@/lib/firestore/events";
 import { useEventRsvps } from "./useEventRsvps";
 import OrderHelper from "./OrderHelper";
+import TestRsvpPanel from "./TestRsvpPanel";
 import Pie, { pickColor, type PieSlice } from "./Pie";
 import styles from "./AttendeeDashboard.module.css";
 
@@ -58,6 +60,7 @@ function renderAnswer(a: RsvpAnswer | undefined): string {
 }
 
 export default function AttendeeDashboard({ event }: Props) {
+  const { role } = useAuth();
   const { rsvps, loading, error } = useEventRsvps(event.id);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null);
@@ -82,6 +85,7 @@ export default function AttendeeDashboard({ event }: Props) {
   const waitlisted = useMemo(() => rsvps.filter((r) => r.status === "waitlisted"), [rsvps]);
   const denied = useMemo(() => rsvps.filter((r) => r.status === "denied"), [rsvps]);
   const cancelled = useMemo(() => rsvps.filter((r) => r.status === "cancelled"), [rsvps]);
+  const syntheticCount = useMemo(() => rsvps.filter((r) => r.synthetic).length, [rsvps]);
   const pendingChanges = useMemo(
     () => rsvps.filter((r) => r.pendingAnswers),
     [rsvps],
@@ -529,6 +533,11 @@ export default function AttendeeDashboard({ event }: Props) {
         <Card padding="md">
           <p style={{ color: "var(--color-danger)", margin: 0 }}>{actionErr}</p>
         </Card>
+      )}
+
+      {/* Test data (admin) ---------------------------------------------- */}
+      {role === "admin" && (
+        <TestRsvpPanel event={event} syntheticCount={syntheticCount} />
       )}
 
       {/* Pizza order helper --------------------------------------------- */}
