@@ -15,6 +15,7 @@ import {
   type RsvpAnswer,
 } from "@/lib/firestore/events";
 import { buildEventIcs, googleCalendarUrl } from "./ics";
+import type { EventChange } from "@/lib/events/changeSummary";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isSuppressed } from "@/lib/firestore/suppression";
 import {
@@ -133,6 +134,8 @@ type Args = {
   rsvpId?: string;
   /** Raw answers — used to render the "what you told us" block. */
   answers?: Record<string, RsvpAnswer> | null;
+  /** Schedule/location changes since the attendee signed up (acceptance email). */
+  changesSinceSignup?: EventChange[];
 };
 
 function renderAnswerValue(a: RsvpAnswer | undefined): string {
@@ -179,6 +182,7 @@ export async function sendRsvpEmail({
   decisionNote,
   rsvpId,
   answers,
+  changesSinceSignup,
 }: Args): Promise<void> {
   try {
     const db = getAdminDb();
@@ -262,6 +266,7 @@ export async function sendRsvpEmail({
         foodLine,
         decisionNote: decisionNote ?? undefined,
         answersLine: answersLine || undefined,
+        changesSinceSignup,
         googleCalUrl,
         icsUrl,
         cancelUrl,

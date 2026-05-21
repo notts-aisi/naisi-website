@@ -125,7 +125,8 @@ events/{id}             { title, blocks[], startAt, endAt, location,
 
 eventRsvps/{id}         { eventId, uid?, name, email, answers, status
                           (pending|confirmed|waitlisted|denied|cancelled),
-                          synthetic, pendingAnswers?, decidedBy?, … }
+                          synthetic, pendingAnswers?, decidedBy?,
+                          signupSnapshot?, … }
                         PII — no public read; all writes via the server route.
 
 subscriptions/{id}      Junction collection — one row per (email, channel).

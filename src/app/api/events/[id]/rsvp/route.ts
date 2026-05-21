@@ -11,6 +11,7 @@ import {
 } from "@/lib/firestore/events";
 import { sendRsvpEmail } from "@/lib/events/sendRsvpEmail";
 import { validateAnswers } from "@/lib/events/validateAnswers";
+import { formatEventWhen } from "@/lib/events/changeSummary";
 
 type RsvpPayload = {
   name?: unknown;
@@ -104,6 +105,16 @@ export async function POST(
     return NextResponse.json({ error: validated.error }, { status: 400 });
   }
 
+  // Snapshot the schedule/location the attendee is signing up against, so the
+  // approve route can later flag anything the organiser changed in between.
+  const signupSnapshot = {
+    scheduleLabel: formatEventWhen(
+      event.startAt?.toDate?.() ?? null,
+      event.endAt?.toDate?.() ?? null,
+    ),
+    locationLabel: typeof event.location === "string" ? event.location : "",
+  };
+
   const rsvpRef = db.collection("eventRsvps").doc(rsvpDocId(eventId, email));
 
   try {
@@ -141,6 +152,7 @@ export async function POST(
         decisionNote: null,
         decidedBy: null,
         decidedAt: null,
+        signupSnapshot,
         createdAt: FieldValue.serverTimestamp(),
         cancelledAt: null,
       };

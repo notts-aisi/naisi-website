@@ -467,6 +467,27 @@ export type RsvpAnswer =
   | boolean
   | { checked: string[]; other: string };
 
+/**
+ * The schedule and location an attendee saw when they signed up. Lets the
+ * approve route diff against the live event and flag what changed since.
+ * Absent on RSVPs created before this was introduced.
+ */
+export type SignupSnapshot = {
+  /** Event date/time as shown at signup (see formatEventWhen). */
+  scheduleLabel: string;
+  /** Exact event location as it stood at signup. */
+  locationLabel: string;
+};
+
+export function asSignupSnapshot(v: unknown): SignupSnapshot | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.scheduleLabel !== "string" || typeof o.locationLabel !== "string") {
+    return null;
+  }
+  return { scheduleLabel: o.scheduleLabel, locationLabel: o.locationLabel };
+}
+
 export type RsvpDoc = {
   id: string;
   eventId: string;
@@ -484,6 +505,8 @@ export type RsvpDoc = {
   /** Pending attendee-proposed changes to their answers, awaiting approval. */
   pendingAnswers: Record<string, RsvpAnswer> | null;
   pendingAnswersRequestedAt: Date | null;
+  /** Schedule/location as the attendee saw them at signup; null for older RSVPs. */
+  signupSnapshot: SignupSnapshot | null;
   createdAt: Date | null;
   cancelledAt: Date | null;
 };
@@ -508,6 +531,7 @@ export function normalizeRsvp(id: string, data: Raw): RsvpDoc {
     pendingAnswers:
       (data.pendingAnswers as Record<string, RsvpAnswer> | null | undefined) ?? null,
     pendingAnswersRequestedAt: tsToDate(data.pendingAnswersRequestedAt),
+    signupSnapshot: asSignupSnapshot(data.signupSnapshot),
     createdAt: tsToDate(data.createdAt),
     cancelledAt: tsToDate(data.cancelledAt),
   };
