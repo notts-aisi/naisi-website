@@ -200,6 +200,15 @@ export default function EventEditor({ eventId }: Props) {
     return isAuthor || canApprove;
   }, [event, status, canApprove, isAuthor]);
 
+  // An event can't end before (or exactly when) it starts. This blocks Save and
+  // Submit, but never the date fields themselves — an event that somehow holds
+  // an invalid end must always be editable back to valid.
+  const endBeforeStart = !!(
+    startAt &&
+    endAt &&
+    endAt.getTime() <= startAt.getTime()
+  );
+
   function markDirty() {
     setDirty(true);
   }
@@ -308,7 +317,7 @@ export default function EventEditor({ eventId }: Props) {
     if (blocks.length === 0) return "Add a description block before submitting.";
     if (!startAt) return "Pick a start date/time.";
     if (endAt && endAt.getTime() <= startAt.getTime()) {
-      return "The end time can't be before the start time.";
+      return "An event can't end before it starts.";
     }
     if (!location.trim()) return "Add a location (room, venue, or link).";
     if (locationHidden && !locationPublicText.trim()) {
@@ -640,7 +649,12 @@ export default function EventEditor({ eventId }: Props) {
                 placeholder="Pick a start date & time…"
               />
             </Field>
-            <Field id="end" label="Ends (optional)" hint="Leave blank if you're not sure yet.">
+            <Field
+              id="end"
+              label="Ends (optional)"
+              hint="Leave blank if you're not sure yet."
+              error={endBeforeStart ? "An event can't end before it starts" : undefined}
+            >
               <DateTimePopover
                 value={endAt}
                 onChange={(next) => {
@@ -650,6 +664,7 @@ export default function EventEditor({ eventId }: Props) {
                 disabled={!editable || busy}
                 placeholder="Pick an end date & time…"
                 minDate={startAt ? ymd(startAt) : undefined}
+                invalid={endBeforeStart}
               />
             </Field>
           </div>
@@ -885,13 +900,17 @@ export default function EventEditor({ eventId }: Props) {
 
       <div className={styles.editorActions}>
         {editable && (
-          <Button onClick={onSave} disabled={busy || !dirty}>
+          <Button onClick={onSave} disabled={busy || !dirty || endBeforeStart}>
             {busy ? "Saving…" : "Save"}
           </Button>
         )}
 
         {canDraft && (status === "draft" || status === "rejected") && isAuthor && (
-          <Button variant="ghost" onClick={onSubmitForReview} disabled={busy}>
+          <Button
+            variant="ghost"
+            onClick={onSubmitForReview}
+            disabled={busy || endBeforeStart}
+          >
             Submit for review
           </Button>
         )}

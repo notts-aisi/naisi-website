@@ -11,6 +11,11 @@ type Props = {
   placeholder?: string;
   /** Optional earliest allowed day in YYYY-MM-DD. */
   minDate?: string;
+  /**
+   * When true, the trigger gets a red outline and the open popover shows a
+   * short red note. The caller owns the validation; this is display only.
+   */
+  invalid?: boolean;
 };
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -78,6 +83,7 @@ export default function DateTimePopover({
   disabled,
   placeholder = "Pick date & time…",
   minDate,
+  invalid,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState(() => {
@@ -140,7 +146,7 @@ export default function DateTimePopover({
     <div className={styles.root} ref={rootRef}>
       <button
         type="button"
-        className={styles.trigger}
+        className={`${styles.trigger}${invalid ? ` ${styles.triggerInvalid}` : ""}`}
         onClick={onTriggerClick}
         disabled={disabled}
         aria-expanded={open}
@@ -223,6 +229,10 @@ export default function DateTimePopover({
               disabled={disabled || !value}
             />
           </div>
+
+          {invalid && (
+            <p className={styles.invalidNote}>This date and time isn&apos;t valid.</p>
+          )}
 
           <div className={styles.panelActions}>
             <button

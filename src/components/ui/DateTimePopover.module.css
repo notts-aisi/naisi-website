@@ -34,6 +34,21 @@
   cursor: not-allowed;
 }
 
+.trigger.triggerInvalid {
+  border-color: var(--color-danger);
+}
+
+.trigger.triggerInvalid:hover:not(:disabled),
+.trigger.triggerInvalid:focus-visible {
+  border-color: var(--color-danger);
+}
+
+.invalidNote {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+}
+
 .placeholder {
   color: var(--color-text-muted);
 }
