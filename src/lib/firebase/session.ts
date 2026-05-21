@@ -12,6 +12,9 @@ export type SessionUser = {
   email: string | null;
   role: Role;
   displayName?: string;
+  /** True only for committee members the SU formally recognises. Admin-set;
+   *  gates member-PII access and the committee task board. */
+  suRecognised: boolean;
   permissions: {
     draftNewsletter: boolean;
     approveNewsletter: boolean;
@@ -64,6 +67,7 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
       email: decoded.email ?? null,
       role: (data.role as Role) ?? "pending",
       displayName: data.displayName ?? data.profile?.preferredName,
+      suRecognised: Boolean(data.suRecognised),
       permissions: {
         draftNewsletter: Boolean(perms.draftNewsletter),
         approveNewsletter: Boolean(perms.approveNewsletter),

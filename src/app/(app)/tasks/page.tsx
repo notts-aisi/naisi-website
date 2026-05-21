@@ -7,10 +7,10 @@ import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { useAuth } from "@/auth/AuthProvider";
-import { useMembers } from "@/features/admin/useMembers";
 import { useProjects } from "@/features/admin/useProjects";
 import TaskDetailModal from "@/features/tasks/components/TaskDetailModal";
 import TaskList from "@/features/tasks/components/TaskList";
+import { useTaskRoster } from "@/features/tasks/hooks/useTaskRoster";
 import { useTasks } from "@/features/tasks/hooks/useTasks";
 import { createTask } from "@/features/tasks/taskMutations";
 import { isOverdue } from "@/lib/firestore/tasks";
@@ -25,7 +25,9 @@ export default function MyWorkPage() {
   const { user, role } = useAuth();
   const { tasks, loading } = useTasks(user ? { completerUid: user.uid, includeArchived: false } : {});
   const { projects } = useProjects();
-  const { users } = useMembers();
+  // Names of people on the viewer's own tasks. Members + non-SU committee
+  // cannot read the `users` collection, so this comes from a scoped route.
+  const { users } = useTaskRoster();
 
   const [tab, setTab] = useState<Tab>("due-soon");
   const [quickTitle, setQuickTitle] = useState("");

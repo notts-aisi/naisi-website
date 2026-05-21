@@ -176,6 +176,13 @@ export type UserDoc = {
   showOnMembers?: boolean;
   tracks?: Track[];
   permissions?: UserPermissions;
+  /**
+   * True only for committee members the Students' Union formally recognises.
+   * Admin-set (locked against self-edits in Firestore rules). Gates access to
+   * member PII (the users collection) and the committee task board; non-SU
+   * committee are scoped to the tasks they are on.
+   */
+  suRecognised?: boolean;
   approvedAt?: Date | null;
   approvedBy?: string | null;
   rejectedAt?: Date | null;
@@ -216,6 +223,7 @@ export function normalizeUser(id: string, data: Raw): UserDoc {
     showOnMembers: Boolean(data.showOnMembers),
     tracks,
     permissions,
+    suRecognised: Boolean(data.suRecognised),
     approvedAt: tsToDate(data.approvedAt),
     approvedBy: (data.approvedBy as string) ?? null,
     rejectedAt: tsToDate(data.rejectedAt),
