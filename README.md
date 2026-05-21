@@ -1,6 +1,6 @@
 # NAISI — Nottingham AI Safety Initiative
 
-The NAISI website. Public marketing site + authed committee tooling (tasks, credentials store, 1-1 booking calendar, admin approvals).
+The NAISI website. Public marketing site + authed committee tooling (task manager, newsletter, events + RSVPs, subscriptions, admin approvals).
 
 ## Stack
 
@@ -9,12 +9,16 @@ The NAISI website. Public marketing site + authed committee tooling (tasks, cred
 - **Firebase** — Auth (Google Sign-In), Firestore, App Hosting
 - **No UI framework** — CSS modules + theme tokens in `src/theme/tokens.css` so re-theming is a one-file swap
 
-## v1 scope
+## What's built
 
-- Public: Landing, Members, Resources, News digest
-- Auth: `/login`, `/register` (Google + profile form), `/pending-approval`
-- Authed: Dashboard shell (tasks/credentials/calendar/admin pages coming next session)
-- Admin approval flow via `users/{uid}.role` transitions
+- Public: landing page, Members, Resources, News, Events + public RSVP flow
+- Auth: `/login`, `/register` (Google + profile form + uni-email verification), `/pending-approval`
+- Member area: dashboard, My Work tasks, profile + notification preferences
+- Committee tooling: task manager, newsletter editor, event management
+- Admin: approvals, members, projects, subscriptions, email designs, deliverability
+- Email: transactional + newsletter sending via Resend
+
+See [CLAUDE.md](./CLAUDE.md) for the full feature map and Firestore data model.
 
 ## Getting started (local dev)
 
@@ -45,7 +49,7 @@ Open http://localhost:3000.
 
 ### 4. Seed the first admin
 
-The first admin can't promote themselves from the UI (no admin UI yet), so set it manually in Firestore:
+The first admin has no existing admin to promote them, so set the role manually in Firestore:
 
 1. Sign in once via `/register` and complete the profile form — this creates `users/{yourUid}` with `role: "pending"`.
 2. In the Firebase console, open Firestore → `users/{yourUid}` → change `role` to `"admin"`.
@@ -91,10 +95,11 @@ The key folders:
   - `(app)/` — authed area, server-side role-gated in its `layout.tsx`
   - `api/auth/session/` — session cookie mint/clear
 - `src/theme/tokens.css` — **one file** to swap the entire colour palette
-- `src/components/BrandMark.tsx` — placeholder logo; replace this one file when the real brand asset arrives
+- `src/components/BrandMark.tsx` — renders the real NAISI emblem (castle + shield + head)
 - `src/lib/firebase/` — `client.ts` (browser), `admin.ts` (server), `session.ts` (cookie + `getCurrentUser()`)
+- `src/lib/firestore/` — typed per-collection read/write helpers
 - `src/auth/` — `AuthProvider`, `signInWithGoogle`, `completeRegistration`
-- `src/features/` — feature-scoped data + hooks (news, members so far)
+- `src/features/` — feature-scoped data + hooks (admin, events, members, news, newsletter, profile, tasks)
 - `src/proxy.ts` — Next 16's middleware (renamed). Fast session-cookie presence check; the real role gate is in `(app)/layout.tsx`
 
 ## Theming
@@ -103,17 +108,12 @@ Edit `src/theme/tokens.css`. Every component reads `var(--color-*)` so changes p
 
 Light theme: change `data-theme="dark"` to `"light"` in [src/app/layout.tsx](src/app/layout.tsx).
 
-## Brand asset placeholder
+## Not built yet
 
-[src/components/BrandMark.tsx](src/components/BrandMark.tsx) is an inline SVG placeholder. When the real Nottingham castle + shield + human head design arrives, replace just this file and `public/favicon.svg`.
-
-## What's next (not in v1)
-
-- Task manager (board view, progress bars)
-- Credentials store (client-side AES-GCM, PBKDF2-derived key)
+- Credentials store (committee-only, client-side AES-GCM with a PBKDF2-derived key)
 - 1-1 booking calendar (Firestore availability + transactions)
-- Admin dashboard (Approvals / Members / Projects tabs)
 - Course & homework viewer (BlueDot-style)
+- Track-lead sub-role (admin-assigned heads of a reading group / project)
 
 ## Upcoming housekeeping
 
