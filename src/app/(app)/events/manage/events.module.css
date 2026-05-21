@@ -87,3 +87,32 @@
   font-size: var(--text-sm);
   border-radius: var(--radius-md);
 }
+
+.archivedSummary {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.archivedSummary::-webkit-details-marker {
+  display: none;
+}
+
+.archivedSummary::before {
+  content: "▸";
+  font-size: var(--text-sm);
+  transition: transform var(--transition-fast);
+}
+
+.archived[open] .archivedSummary::before {
+  transform: rotate(90deg);
+}
+
+.archivedBody {
+  margin-top: var(--space-3);
+}

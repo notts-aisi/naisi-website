@@ -308,6 +308,8 @@ export type EventDoc = {
   coverLogoColor: CoverLogoColor;
   /** Gradient-strip height as a percent of the cover, for the strip treatment. */
   coverStripSize: number;
+  /** Archived events drop out of the normal manage sections. Orthogonal to status. */
+  archived: boolean;
   status: EventStatus;
   authorUid: string;
   authorDisplayName?: string | null;
@@ -405,6 +407,7 @@ export function normalizeEvent(id: string, data: Raw): EventDoc {
     coverBranding: asCoverBranding(data.coverBranding),
     coverLogoColor: asCoverLogoColor(data.coverLogoColor),
     coverStripSize: asCoverStripSize(data.coverStripSize),
+    archived: data.archived === true,
     status: asStatus(data.status),
     authorUid: (data.authorUid as string) ?? "",
     authorDisplayName: (data.authorDisplayName as string | null | undefined) ?? null,

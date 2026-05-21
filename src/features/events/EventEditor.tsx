@@ -449,6 +449,31 @@ export default function EventEditor({ eventId }: Props) {
     }
   }
 
+  async function onArchive() {
+    if (!event) return;
+    const next = !event.archived;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/events/${event.id}/archive`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ archived: next }),
+      });
+      const body = (await res.json().catch(() => null)) as
+        | { ok?: true; error?: string }
+        | null;
+      if (!res.ok || !body?.ok) {
+        throw new Error(body?.error ?? `Archive failed (${res.status})`);
+      }
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Archive failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onDelete() {
     if (!event) return;
     if (!window.confirm("Permanently delete this event? This can't be undone.")) return;
@@ -490,6 +515,7 @@ export default function EventEditor({ eventId }: Props) {
       <div className={styles.statusBar}>
         <div className={styles.statusMeta}>
           <Badge tone={statusTone(status)}>{EVENT_STATUS_LABEL[status]}</Badge>
+          {event.archived && <Badge tone="neutral">Archived</Badge>}
           <span className={styles.muted}>by {event.authorDisplayName ?? "unknown"}</span>
           {event.publishedAt && (
             <span className={styles.muted}>
@@ -962,6 +988,12 @@ export default function EventEditor({ eventId }: Props) {
         )}
 
         <div className={styles.spacer} />
+
+        {(isAuthor || role === "admin") && (
+          <Button variant="ghost" onClick={onArchive} disabled={busy}>
+            {event.archived ? "Unarchive" : "Archive"}
+          </Button>
+        )}
 
         {(isAuthor || role === "admin") && status !== "published" && (
           <button

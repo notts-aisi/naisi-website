@@ -56,14 +56,17 @@ export default function EventsListPage() {
   const canDraft = viewer ? canDraftEvent(viewer) : false;
   const canApprove = viewer ? canApproveEvent(viewer) : false;
 
+  // Archived events leave their normal section and collect in the collapsed
+  // "Archived" group below.
   const pending = useMemo(
-    () => events.filter((e) => e.status === "pending"),
+    () => events.filter((e) => !e.archived && e.status === "pending"),
     [events],
   );
   const mine = useMemo(
     () =>
       events.filter(
         (e) =>
+          !e.archived &&
           e.authorUid === user?.uid &&
           e.status !== "published" &&
           e.status !== "cancelled",
@@ -74,6 +77,7 @@ export default function EventsListPage() {
     () =>
       events.filter(
         (e) =>
+          !e.archived &&
           e.authorUid !== user?.uid &&
           e.status !== "published" &&
           e.status !== "cancelled",
@@ -81,13 +85,14 @@ export default function EventsListPage() {
     [events, user],
   );
   const published = useMemo(
-    () => events.filter((e) => e.status === "published"),
+    () => events.filter((e) => !e.archived && e.status === "published"),
     [events],
   );
   const cancelled = useMemo(
-    () => events.filter((e) => e.status === "cancelled"),
+    () => events.filter((e) => !e.archived && e.status === "cancelled"),
     [events],
   );
+  const archived = useMemo(() => events.filter((e) => e.archived), [events]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-6)" }}>
@@ -156,6 +161,17 @@ export default function EventsListPage() {
             <Section title="Cancelled">
               <EventList rows={cancelled.slice(0, 10)} currentUid={user?.uid ?? null} />
             </Section>
+          )}
+
+          {archived.length > 0 && (
+            <details className={styles.archived}>
+              <summary className={styles.archivedSummary}>
+                Archived ({archived.length})
+              </summary>
+              <div className={styles.archivedBody}>
+                <EventList rows={archived} currentUid={user?.uid ?? null} />
+              </div>
+            </details>
           )}
         </>
       )}

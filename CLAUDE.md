@@ -119,7 +119,7 @@ events/{id}             { title, blocks[], startAt, endAt, location,
                           ("public" | "members"), capacity, waitlistEnabled,
                           signupForm[], foodText?, dietaryTags?, posterUrl?,
                           coverBranding, coverLogoColor, coverStripSize,
-                          status (draft|pending|approved|
+                          archived, status (draft|pending|approved|
                           published|rejected|cancelled), authorUid,
                           rsvpCount{Pending,Confirmed,Waitlisted}, … }
 
@@ -286,7 +286,7 @@ Two separate Firebase projects, each with its own App Hosting backend (both back
 - **Member area**: Dashboard with a My Work summary, `/tasks` (personal + assigned tasks, quick-add), `/profile` (profile edit + per-category notification preferences).
 - **Task manager** (`/committee/tasks` + `/tasks`): kanban board, subtasks grouped into ordered blocks with sequential gating, per-block reviewer signoff (lock-in ritual + review matrix), task templates, calendar view, activity feed, threaded comments with @mentions, attachments, My Work, email notifications. Visibility is `committee` vs `assignees-only`; the committee board is gated to SU-recognised committee.
 - **Newsletter**: block-based editor (rich text, images with crop), per-user draft/approve permissions, draft → pending → approved → sent pipeline, server-side send, test send.
-- **Events**: modular signup-form builder, RSVP system (pending / confirmed / waitlisted / denied / cancelled), capacity + waitlist, approve / deny / change-request flow, ICS export + calendar email links, cover-image crop + emblem branding overlay, food declaration + dietary tags, pizza order helper, post-publish editing, admin test-RSVP generation, draft/approve permissions parallel to the newsletter.
+- **Events**: modular signup-form builder, RSVP system (pending / confirmed / waitlisted / denied / cancelled), capacity + waitlist, approve / deny / change-request flow, ICS export + calendar email links, cover-image crop + emblem branding overlay, food declaration + dietary tags, pizza order helper, post-publish editing, event archiving, admin test-RSVP generation, draft/approve permissions parallel to the newsletter.
 - **Subscriptions**: junction-collection architecture (one row per email + channel, orthogonal `confirmed` / `subscribed` axes), append-only event log, admin Subscriptions tab (spreadsheet-style table, guest delete, history cap).
 - **Admin dashboard tabs**: Approvals, Members (role / title / bio / `suRecognised` / `permissions` / `tracks` edit + full profile edit + hard delete), Projects (CRUD + archive), Newsletter, Subscriptions, Email designs (application email templates), Deliverability (send log + suppression list), Task templates, Danger zone.
 - **Email infrastructure**: Resend send pipeline, deliverability dashboard, bounce/complaint webhook, application lifecycle emails, transactional emails as JSX templates in `src/emails/`.
