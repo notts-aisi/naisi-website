@@ -58,7 +58,12 @@ export async function unrejectUser(uid: string) {
 
 export async function setRole(uid: string, role: Role) {
   const db = getClientDb();
-  await updateDoc(doc(db, "users", uid), { role });
+  const patch: Record<string, unknown> = { role };
+  // SU recognition only applies while role === 'committee'. Clear it on any
+  // move off committee so a later re-promotion starts non-SU (an explicit
+  // admin decision), not silently SU again from a stale flag.
+  if (role !== "committee") patch.suRecognised = false;
+  await updateDoc(doc(db, "users", uid), patch);
 }
 
 /** Admin-only: assign technical/governance tracks (both/either/none). */
