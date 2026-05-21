@@ -8,6 +8,9 @@ import {
 } from "@/lib/firestore/events";
 import styles from "./FormRenderer.module.css";
 
+/** Stored in `checked` when an attendee explicitly confirms they have none. */
+const NO_REQUIREMENTS = "No dietary requirements";
+
 type Props = {
   questions: FormQuestion[];
   answers: Record<string, RsvpAnswer>;
@@ -214,6 +217,10 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
               raw && typeof raw === "object" && !Array.isArray(raw)
                 ? (raw as { checked: string[]; other: string })
                 : { checked: [], other: "" };
+            const noneSelected = current.checked.includes(NO_REQUIREMENTS);
+            const realChecked = current.checked.filter((c) => c !== NO_REQUIREMENTS);
+            const hasRequirement =
+              realChecked.length > 0 || current.other.trim() !== "";
             return (
               <fieldset key={q.id} className={styles.field}>
                 <legend className={styles.legend}>
@@ -225,25 +232,22 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                   better we can cater for you.
                 </p>
                 <div className={styles.checkGrid}>
-                  {DIETARY_ALLERGIES.map((a) => {
-                    const checked = current.checked.includes(a);
-                    return (
-                      <label key={a} className={styles.checkRow}>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={disabled}
-                          onChange={(e) => {
-                            const nextChecked = e.target.checked
-                              ? [...current.checked, a]
-                              : current.checked.filter((v) => v !== a);
-                            set(q.id, { checked: nextChecked, other: current.other });
-                          }}
-                        />
-                        <span>{a}</span>
-                      </label>
-                    );
-                  })}
+                  {DIETARY_ALLERGIES.map((a) => (
+                    <label key={a} className={styles.checkRow}>
+                      <input
+                        type="checkbox"
+                        checked={realChecked.includes(a)}
+                        disabled={disabled || noneSelected}
+                        onChange={(e) => {
+                          const nextChecked = e.target.checked
+                            ? [...realChecked, a]
+                            : realChecked.filter((v) => v !== a);
+                          set(q.id, { checked: nextChecked, other: current.other });
+                        }}
+                      />
+                      <span>{a}</span>
+                    </label>
+                  ))}
                 </div>
                 <label className={styles.otherRow}>
                   <span className={styles.otherLabel}>Other (optional)</span>
@@ -252,12 +256,28 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                     className={styles.input}
                     value={current.other}
                     onChange={(e) =>
-                      set(q.id, { checked: current.checked, other: e.target.value })
+                      set(q.id, { checked: realChecked, other: e.target.value })
                     }
-                    disabled={disabled}
+                    disabled={disabled || noneSelected}
                     placeholder="e.g. coeliac, low-FODMAP, a severe nut allergy"
                     maxLength={500}
                   />
+                </label>
+                <label className={styles.noneRow}>
+                  <input
+                    type="checkbox"
+                    checked={noneSelected}
+                    disabled={disabled || hasRequirement}
+                    onChange={(e) =>
+                      set(
+                        q.id,
+                        e.target.checked
+                          ? { checked: [NO_REQUIREMENTS], other: "" }
+                          : { checked: [], other: "" },
+                      )
+                    }
+                  />
+                  <span>No dietary requirements</span>
                 </label>
               </fieldset>
             );

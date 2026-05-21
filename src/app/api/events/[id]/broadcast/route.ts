@@ -116,9 +116,11 @@ export async function POST(
   const locationLine = (event.location ?? "Location to be confirmed").toString();
   const instagramHandle =
     process.env.NAISI_INSTAGRAM_HANDLE || "notts.ai.safety";
+  // Fall back to the monitored Reply-To inbox, never the send-only
+  // SMTP_FROM_EMAIL (newsletter@naisi.uk has no receiving MX).
   const contactEmail =
     process.env.NAISI_CONTACT_EMAIL ||
-    process.env.SMTP_FROM_EMAIL ||
+    process.env.EMAIL_DEFAULT_REPLY_TO ||
     "ai-safety@uonsu.com";
   const eventTitle = (event.title ?? "NAISI event").toString();
 

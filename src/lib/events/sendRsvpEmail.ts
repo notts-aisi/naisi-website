@@ -268,9 +268,11 @@ export async function sendRsvpEmail({
         changeUrl,
         instagramHandle:
           process.env.NAISI_INSTAGRAM_HANDLE || "notts.ai.safety",
+        // Fall back to the monitored Reply-To inbox, never the send-only
+        // SMTP_FROM_EMAIL (newsletter@naisi.uk has no receiving MX).
         contactEmail:
           process.env.NAISI_CONTACT_EMAIL ||
-          process.env.SMTP_FROM_EMAIL ||
+          process.env.EMAIL_DEFAULT_REPLY_TO ||
           "ai-safety@uonsu.com",
       }),
       kind: "rsvp",

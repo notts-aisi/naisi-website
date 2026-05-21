@@ -11,13 +11,10 @@ import {
 import styles from "./EventDetailView.module.css";
 
 /**
- * Shared event detail layout used by both the public /events/[id] page and the
- * authed preview page. The preview variant passes `previewMode` so the RSVP
- * form can flag test submissions and show a banner.
- *
- * Layout: an optional cover banner, then a two-column grid — event info and
- * description on the left, a sticky details + RSVP panel on the right. The
- * grid collapses to a single column below 880px.
+ * Shared event detail layout for the public /events/[id] page and the authed
+ * preview page. An optional cover banner, then a two-column grid: a single
+ * details card (title, when, where, capacity) followed by the food callout and
+ * description on the left, with a sticky RSVP panel on the right.
  */
 export default function EventDetailView({
   event,
@@ -40,34 +37,22 @@ export default function EventDetailView({
       ) : null}
 
       <div className={styles.layout}>
-        <div className={styles.info}>
-          <div className={styles.badgeRow}>
-            {event.visibility === "members" && <Badge tone="neutral">Members only</Badge>}
-            {isCancelled && <Badge tone="danger">Cancelled</Badge>}
-            {dietaryTags.map((tag) => (
-              <Badge key={tag} tone="accent">
-                {FOOD_TAG_LABEL[tag]}
-              </Badge>
-            ))}
-          </div>
-
-          <h1 className={styles.title}>{event.title || "(no title)"}</h1>
-
-          {event.startAt && (
-            <p className={styles.titleDate}>{formatShortDate(event.startAt)}</p>
-          )}
-
-          {foodDisplay && (
-            <div className={styles.foodCallout}>
-              <span className={styles.foodCalloutLabel}>Food</span>
-              <p className={styles.foodCalloutText}>{foodDisplay}</p>
-            </div>
-          )}
-        </div>
-
-        <div className={styles.aside}>
+        <div className={styles.main}>
           <Card padding="lg">
-            <p className={styles.detailsTitle}>Details</p>
+            <div className={styles.badgeRow}>
+              {event.visibility === "members" && (
+                <Badge tone="neutral">Members only</Badge>
+              )}
+              {isCancelled && <Badge tone="danger">Cancelled</Badge>}
+              {dietaryTags.map((tag) => (
+                <Badge key={tag} tone="accent">
+                  {FOOD_TAG_LABEL[tag]}
+                </Badge>
+              ))}
+            </div>
+
+            <h1 className={styles.title}>{event.title || "(no title)"}</h1>
+
             <div className={styles.factList}>
               <div className={styles.fact}>
                 <span className={styles.factIcon}>
@@ -122,10 +107,13 @@ export default function EventDetailView({
                   <span className={styles.factBody}>
                     <span className={styles.factLabel}>Capacity</span>
                     <span className={styles.factValue}>
-                      {event.capacity} places · {event.rsvpCountConfirmed ?? 0} confirmed
+                      {event.capacity} places · {event.rsvpCountConfirmed ?? 0}{" "}
+                      confirmed
                     </span>
                     {event.waitlistEnabled && (
-                      <span className={styles.factNote}>Waitlist opens once full.</span>
+                      <span className={styles.factNote}>
+                        Waitlist opens once full.
+                      </span>
                     )}
                   </span>
                 </div>
@@ -141,6 +129,23 @@ export default function EventDetailView({
             )}
           </Card>
 
+          {foodDisplay && (
+            <div className={styles.foodCallout}>
+              <span className={styles.foodCalloutLabel}>Food</span>
+              <p className={styles.foodCalloutText}>{foodDisplay}</p>
+            </div>
+          )}
+
+          <Card padding="lg">
+            {event.blocks.length > 0 ? (
+              <BlockView blocks={event.blocks} />
+            ) : (
+              <p className={styles.descriptionEmpty}>No description yet.</p>
+            )}
+          </Card>
+        </div>
+
+        <div className={styles.aside}>
           {isCancelled ? (
             <Card padding="lg">
               <h2 className={styles.cancelledTitle}>This event has been cancelled.</h2>
@@ -152,16 +157,6 @@ export default function EventDetailView({
           ) : (
             <RsvpForm event={event} previewMode={previewMode} />
           )}
-        </div>
-
-        <div className={styles.description}>
-          <Card padding="lg">
-            {event.blocks.length > 0 ? (
-              <BlockView blocks={event.blocks} />
-            ) : (
-              <p className={styles.descriptionEmpty}>No description yet.</p>
-            )}
-          </Card>
         </div>
       </div>
     </div>
@@ -182,16 +177,6 @@ function formatDateTime(d: Date): string {
     day: "numeric",
     month: "long",
     year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatShortDate(d: Date): string {
-  return d.toLocaleString(undefined, {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
     hour: "2-digit",
     minute: "2-digit",
   });
