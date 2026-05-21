@@ -1,0 +1,60 @@
+.frame {
+  position: relative;
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+}
+
+.poster {
+  display: block;
+  width: 100%;
+  /* Cover images are framed in the editor's crop tool, so the page shows them
+     at their true shape rather than re-cropping with object-fit. */
+  height: auto;
+}
+
+/* strip: the emblem fades into a soft shadow band along the bottom edge. */
+.strip {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 40%;
+  min-height: 90px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: var(--space-4) var(--space-6);
+  background: linear-gradient(to top, rgba(5, 8, 14, 0.85), rgba(5, 8, 14, 0));
+  pointer-events: none;
+}
+
+.stripEmblem {
+  display: block;
+  height: 54px;
+  width: auto;
+}
+
+/* corner: a small emblem on a frosted chip so it reads on any cover photo. */
+.cornerEmblem {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  display: block;
+  height: 40px;
+  width: auto;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: rgba(5, 8, 14, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+}
+
+@media (max-width: 600px) {
+  .stripEmblem {
+    height: 42px;
+  }
+  .cornerEmblem {
+    height: 32px;
+  }
+}

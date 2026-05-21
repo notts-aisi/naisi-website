@@ -26,6 +26,42 @@ export const EVENT_STATUS_LABEL: Record<EventStatus, string> = {
 export type EventVisibility = "public" | "members";
 
 /**
+ * How the NAISI emblem is composited onto an event's cover image on the
+ * detail page. Chosen per event by the organiser, in a popup shown after they
+ * crop the cover. `none` leaves the cover untouched.
+ */
+export type CoverBranding = "none" | "strip" | "corner";
+
+export const COVER_BRANDING_LABEL: Record<CoverBranding, string> = {
+  none: "No logo",
+  strip: "Gradient strip",
+  corner: "Corner badge",
+};
+
+/** Ordered choices for the cover-branding picker (default first). */
+export const COVER_BRANDING_OPTIONS: {
+  id: CoverBranding;
+  label: string;
+  description: string;
+}[] = [
+  {
+    id: "corner",
+    label: "Corner badge",
+    description: "A small white emblem tucked into the bottom-right corner.",
+  },
+  {
+    id: "strip",
+    label: "Gradient strip",
+    description: "The emblem fades into a soft shadow band along the bottom edge.",
+  },
+  {
+    id: "none",
+    label: "No logo",
+    description: "Show the cover image on its own, with no NAISI mark.",
+  },
+];
+
+/**
  * Event-level declaration about where/how the food is sourced. Lets organizers
  * proactively notify attendees of religious/dietary-only kitchens (e.g. "food
  * is from a halal restaurant") so attendees don't have to ask.
@@ -253,6 +289,8 @@ export type EventDoc = {
   /** Optional dietary classifiers, rendered as badges. */
   dietaryTags?: FoodTag[];
   posterUrl?: string | null;
+  /** How the NAISI emblem is overlaid on the cover image. Defaults to none. */
+  coverBranding: CoverBranding;
   status: EventStatus;
   authorUid: string;
   authorDisplayName?: string | null;
@@ -290,6 +328,10 @@ function asStatus(v: unknown): EventStatus {
 
 function asVisibility(v: unknown): EventVisibility {
   return v === "public" ? "public" : "members";
+}
+
+export function asCoverBranding(v: unknown): CoverBranding {
+  return v === "strip" || v === "corner" || v === "none" ? v : "none";
 }
 
 function asFoodProvenance(v: unknown): FoodProvenance {
@@ -331,6 +373,7 @@ export function normalizeEvent(id: string, data: Raw): EventDoc {
     foodText: (data.foodText as string | null | undefined) ?? null,
     dietaryTags: asFoodTags(data.dietaryTags),
     posterUrl: (data.posterUrl as string | null | undefined) ?? null,
+    coverBranding: asCoverBranding(data.coverBranding),
     status: asStatus(data.status),
     authorUid: (data.authorUid as string) ?? "",
     authorDisplayName: (data.authorDisplayName as string | null | undefined) ?? null,

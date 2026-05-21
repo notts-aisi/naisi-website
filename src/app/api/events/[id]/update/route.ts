@@ -3,7 +3,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { sanitizeBlocks } from "@/lib/firestore/newsletterBlocks";
-import { FOOD_TAGS, sanitizeSignupForm } from "@/lib/firestore/events";
+import { FOOD_TAGS, asCoverBranding, sanitizeSignupForm } from "@/lib/firestore/events";
 
 /**
  * Server-side edit of an event. Firestore rules block client writes once an
@@ -101,6 +101,7 @@ export async function POST(
     foodText: foodText ? foodText : FieldValue.delete(),
     dietaryTags,
     posterUrl: posterUrl ?? FieldValue.delete(),
+    coverBranding: asCoverBranding(body.coverBranding),
   };
 
   // Flag the changes confirmed attendees would want an email about.

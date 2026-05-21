@@ -13,6 +13,7 @@ import Select from "@/components/ui/Select";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
 import {
+  COVER_BRANDING_LABEL,
   EVENT_STATUS_LABEL,
   FOOD_TAGS,
   FOOD_TAG_LABEL,
@@ -20,6 +21,7 @@ import {
   LOCATION_MAX,
   TITLE_MAX,
   normalizeEvent,
+  type CoverBranding,
   type EventDoc,
   type EventStatus,
   type EventVisibility,
@@ -39,6 +41,7 @@ import {
   submitEventForReview,
   updateEvent,
 } from "./eventMutations";
+import CoverBrandingModal from "./CoverBrandingModal";
 import FormBuilder from "./FormBuilder";
 import styles from "./EventEditor.module.css";
 
@@ -107,6 +110,8 @@ export default function EventEditor({ eventId }: Props) {
   const [foodText, setFoodText] = useState("");
   const [dietaryTags, setDietaryTags] = useState<FoodTag[]>([]);
   const [posterUrl, setPosterUrl] = useState<string | null>(null);
+  const [coverBranding, setCoverBranding] = useState<CoverBranding>("none");
+  const [brandingModalOpen, setBrandingModalOpen] = useState(false);
 
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -156,6 +161,7 @@ export default function EventEditor({ eventId }: Props) {
         setFoodText((cur) => (dirty ? cur : next.foodText ?? ""));
         setDietaryTags((cur) => (dirty ? cur : next.dietaryTags ?? []));
         setPosterUrl((cur) => (dirty ? cur : next.posterUrl ?? null));
+        setCoverBranding((cur) => (dirty ? cur : next.coverBranding));
         setLoading(false);
       },
       (err) => {
@@ -209,6 +215,7 @@ export default function EventEditor({ eventId }: Props) {
       foodText: foodText.trim() ? foodText : null,
       dietaryTags,
       posterUrl,
+      coverBranding,
     };
     if (status === "published") {
       // Firestore rules block client writes to published events — go through
@@ -743,11 +750,26 @@ export default function EventEditor({ eventId }: Props) {
           enableCrop
           currentUrl={posterUrl ?? undefined}
           onChange={({ url }) => {
-            setPosterUrl(url || null);
+            const next = url || null;
+            // A freshly uploaded or replaced cover — open the branding picker.
+            if (next && next !== posterUrl) setBrandingModalOpen(true);
+            setPosterUrl(next);
             markDirty();
           }}
           disabled={!editable || busy}
         />
+        {posterUrl && (
+          <button
+            type="button"
+            className={styles.coverBrandingChip}
+            onClick={() => setBrandingModalOpen(true)}
+            disabled={!editable || busy}
+          >
+            NAISI logo:{" "}
+            <strong>{COVER_BRANDING_LABEL[coverBranding]}</strong>
+            <span className={styles.coverBrandingChange}>Change</span>
+          </button>
+        )}
       </section>
 
       <section>
@@ -908,6 +930,18 @@ export default function EventEditor({ eventId }: Props) {
           </button>
         )}
       </div>
+
+      {brandingModalOpen && posterUrl && (
+        <CoverBrandingModal
+          posterUrl={posterUrl}
+          value={coverBranding}
+          onSelect={(b) => {
+            setCoverBranding(b);
+            markDirty();
+          }}
+          onClose={() => setBrandingModalOpen(false)}
+        />
+      )}
     </div>
   );
 }
