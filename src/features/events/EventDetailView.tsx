@@ -38,6 +38,8 @@ export default function EventDetailView({
           url={event.posterUrl}
           alt={event.title}
           branding={event.coverBranding}
+          logoColor={event.coverLogoColor}
+          stripSize={event.coverStripSize}
         />
       ) : null}
 

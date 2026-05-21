@@ -14,6 +14,7 @@ import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import type { Block } from "@/lib/firestore/newsletterBlocks";
 import type {
   CoverBranding,
+  CoverLogoColor,
   EventVisibility,
   FoodProvenance,
   FoodTag,
@@ -81,6 +82,8 @@ type EditableEventFields = Partial<{
   dietaryTags: FoodTag[];
   posterUrl: string | null;
   coverBranding: CoverBranding;
+  coverLogoColor: CoverLogoColor;
+  coverStripSize: number;
 }>;
 
 export async function updateEvent(id: string, fields: EditableEventFields) {
@@ -119,6 +122,8 @@ export async function updateEvent(id: string, fields: EditableEventFields) {
   if (fields.posterUrl !== undefined)
     patch.posterUrl = fields.posterUrl === null ? deleteField() : fields.posterUrl;
   if (fields.coverBranding !== undefined) patch.coverBranding = fields.coverBranding;
+  if (fields.coverLogoColor !== undefined) patch.coverLogoColor = fields.coverLogoColor;
+  if (fields.coverStripSize !== undefined) patch.coverStripSize = fields.coverStripSize;
   await updateDoc(doc(db, "events", id), patch);
 }
 

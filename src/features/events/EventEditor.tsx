@@ -14,6 +14,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
 import {
   COVER_BRANDING_LABEL,
+  COVER_STRIP_SIZE_DEFAULT,
   EVENT_STATUS_LABEL,
   FOOD_TAGS,
   FOOD_TAG_LABEL,
@@ -22,6 +23,7 @@ import {
   TITLE_MAX,
   normalizeEvent,
   type CoverBranding,
+  type CoverLogoColor,
   type EventDoc,
   type EventStatus,
   type EventVisibility,
@@ -118,6 +120,8 @@ export default function EventEditor({ eventId }: Props) {
   const [dietaryTags, setDietaryTags] = useState<FoodTag[]>([]);
   const [posterUrl, setPosterUrl] = useState<string | null>(null);
   const [coverBranding, setCoverBranding] = useState<CoverBranding>("none");
+  const [coverLogoColor, setCoverLogoColor] = useState<CoverLogoColor>("white");
+  const [coverStripSize, setCoverStripSize] = useState(COVER_STRIP_SIZE_DEFAULT);
   const [brandingModalOpen, setBrandingModalOpen] = useState(false);
 
   const [dirty, setDirty] = useState(false);
@@ -169,6 +173,8 @@ export default function EventEditor({ eventId }: Props) {
         setDietaryTags((cur) => (dirty ? cur : next.dietaryTags ?? []));
         setPosterUrl((cur) => (dirty ? cur : next.posterUrl ?? null));
         setCoverBranding((cur) => (dirty ? cur : next.coverBranding));
+        setCoverLogoColor((cur) => (dirty ? cur : next.coverLogoColor));
+        setCoverStripSize((cur) => (dirty ? cur : next.coverStripSize));
         setLoading(false);
       },
       (err) => {
@@ -232,6 +238,8 @@ export default function EventEditor({ eventId }: Props) {
       dietaryTags,
       posterUrl,
       coverBranding,
+      coverLogoColor,
+      coverStripSize,
     };
     if (status === "published") {
       // Firestore rules block client writes to published events — go through
@@ -971,8 +979,12 @@ export default function EventEditor({ eventId }: Props) {
         <CoverBrandingModal
           posterUrl={posterUrl}
           value={coverBranding}
-          onSelect={(b) => {
-            setCoverBranding(b);
+          logoColor={coverLogoColor}
+          stripSize={coverStripSize}
+          onSelect={(choice) => {
+            setCoverBranding(choice.branding);
+            setCoverLogoColor(choice.logoColor);
+            setCoverStripSize(choice.stripSize);
             markDirty();
           }}
           onClose={() => setBrandingModalOpen(false)}

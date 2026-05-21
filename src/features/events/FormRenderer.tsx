@@ -109,7 +109,10 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
               const hasPick =
                 realChecked.length > 0 || current.other.trim() !== "";
               return (
-                <fieldset key={q.id} className={styles.field}>
+                <fieldset
+                  key={q.id}
+                  className={`${styles.field} ${styles.choiceField}`}
+                >
                   <legend className={styles.legend}>
                     {q.label}
                     {q.required && <span className={styles.required}> *</span>}
@@ -136,48 +139,57 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                     ))}
                   </div>
                   {q.allowOther && (
-                    <label className={styles.otherRow}>
-                      <span className={styles.otherLabel}>Other</span>
-                      <input
-                        type="text"
-                        className={styles.input}
-                        value={current.other}
-                        onChange={(e) =>
-                          set(q.id, {
-                            checked: realChecked,
-                            other: e.target.value,
-                          })
-                        }
-                        disabled={disabled || noneSelected}
-                        placeholder="Anything else not listed above"
-                        maxLength={500}
-                      />
-                    </label>
+                    <>
+                      <hr className={styles.divider} />
+                      <div className={styles.subBlock}>
+                        <span className={styles.subLabel}>Other</span>
+                        <input
+                          type="text"
+                          className={styles.input}
+                          value={current.other}
+                          onChange={(e) =>
+                            set(q.id, {
+                              checked: realChecked,
+                              other: e.target.value,
+                            })
+                          }
+                          disabled={disabled || noneSelected}
+                          placeholder="Anything else not listed above"
+                          maxLength={500}
+                        />
+                      </div>
+                    </>
                   )}
                   {noneLabel && (
-                    <label className={styles.noneRow}>
-                      <input
-                        type="checkbox"
-                        checked={noneSelected}
-                        disabled={disabled || hasPick}
-                        onChange={(e) =>
-                          set(
-                            q.id,
-                            e.target.checked
-                              ? { checked: [noneLabel], other: "" }
-                              : { checked: [], other: "" },
-                          )
-                        }
-                      />
-                      <span>{noneLabel}</span>
-                    </label>
+                    <>
+                      <hr className={styles.divider} />
+                      <label className={styles.noneRow}>
+                        <input
+                          type="checkbox"
+                          checked={noneSelected}
+                          disabled={disabled || hasPick}
+                          onChange={(e) =>
+                            set(
+                              q.id,
+                              e.target.checked
+                                ? { checked: [noneLabel], other: "" }
+                                : { checked: [], other: "" },
+                            )
+                          }
+                        />
+                        <span>{noneLabel}</span>
+                      </label>
+                    </>
                   )}
                 </fieldset>
               );
             }
             const value = (answers[q.id] as string[] | undefined) ?? [];
             return (
-              <fieldset key={q.id} className={styles.field}>
+              <fieldset
+                key={q.id}
+                className={`${styles.field} ${styles.choiceField}`}
+              >
                 <legend className={styles.legend}>
                   {q.label}
                   {q.required && <span className={styles.required}> *</span>}
@@ -251,7 +263,10 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
             const hasRequirement =
               realChecked.length > 0 || current.other.trim() !== "";
             return (
-              <fieldset key={q.id} className={styles.field}>
+              <fieldset
+                key={q.id}
+                className={`${styles.field} ${styles.choiceField}`}
+              >
                 <legend className={styles.legend}>
                   {q.label}
                   {q.required && <span className={styles.required}> *</span>}
@@ -279,8 +294,15 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                     </label>
                   ))}
                 </div>
-                <label className={styles.otherRow}>
-                  <span className={styles.otherLabel}>Anything else?</span>
+
+                <hr className={styles.divider} />
+
+                <div className={styles.subBlock}>
+                  <span className={styles.subLabel}>Anything else?</span>
+                  <p className={styles.subHint}>
+                    Other needs, or strict religious requirements not met by
+                    vegetarian or vegan.
+                  </p>
                   <input
                     type="text"
                     className={styles.input}
@@ -289,10 +311,19 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                       set(q.id, { checked: realChecked, other: e.target.value })
                     }
                     disabled={disabled || noneSelected}
-                    placeholder="Other needs, or strict religious requirements not met by vegetarian or vegan"
+                    placeholder="e.g. strict halal, no shellfish"
                     maxLength={500}
                   />
-                </label>
+                </div>
+
+                <p className={styles.accommodationNote}>
+                  We do our best to accommodate dietary requirements, but
+                  can&apos;t promise a suitable meal at every event. If that
+                  happens, we&apos;ll do our best to let you know beforehand.
+                </p>
+
+                <hr className={styles.divider} />
+
                 <label className={styles.noneRow}>
                   <input
                     type="checkbox"

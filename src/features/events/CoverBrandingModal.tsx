@@ -2,22 +2,39 @@
 
 import { useState } from "react";
 import Button from "@/components/ui/Button";
+import SegmentedControl from "@/components/ui/SegmentedControl";
 import {
   COVER_BRANDING_OPTIONS,
+  COVER_STRIP_SIZE_MAX,
+  COVER_STRIP_SIZE_MIN,
   type CoverBranding,
+  type CoverLogoColor,
 } from "@/lib/firestore/events";
 import CoverImage from "./CoverImage";
 import styles from "./CoverBrandingModal.module.css";
 
+export type CoverBrandingChoice = {
+  branding: CoverBranding;
+  logoColor: CoverLogoColor;
+  stripSize: number;
+};
+
 type Props = {
   /** The just-cropped cover image to preview the treatment on. */
   posterUrl: string;
-  /** Currently saved choice. */
+  /** Currently saved branding choice. */
   value: CoverBranding;
+  logoColor: CoverLogoColor;
+  stripSize: number;
   /** Called with the chosen treatment when the organiser confirms. */
-  onSelect: (branding: CoverBranding) => void;
+  onSelect: (choice: CoverBrandingChoice) => void;
   onClose: () => void;
 };
+
+const LOGO_COLOR_OPTIONS = [
+  { value: "white" as const, label: "White" },
+  { value: "colour" as const, label: "Full colour" },
+];
 
 /**
  * Shown after an organiser uploads (or replaces) an event cover image. Lets
@@ -27,10 +44,14 @@ type Props = {
 export default function CoverBrandingModal({
   posterUrl,
   value,
+  logoColor,
+  stripSize,
   onSelect,
   onClose,
 }: Props) {
   const [selected, setSelected] = useState<CoverBranding>(value);
+  const [selectedColor, setSelectedColor] = useState<CoverLogoColor>(logoColor);
+  const [selectedStrip, setSelectedStrip] = useState(stripSize);
 
   return (
     <div className={styles.overlay} role="dialog" aria-modal="true">
@@ -42,7 +63,13 @@ export default function CoverBrandingModal({
         </p>
 
         <div className={styles.preview}>
-          <CoverImage url={posterUrl} alt="" branding={selected} />
+          <CoverImage
+            url={posterUrl}
+            alt=""
+            branding={selected}
+            logoColor={selectedColor}
+            stripSize={selectedStrip}
+          />
         </div>
 
         <div className={styles.options}>
@@ -60,10 +87,47 @@ export default function CoverBrandingModal({
           ))}
         </div>
 
+        {selected !== "none" && (
+          <div className={styles.control}>
+            <span className={styles.controlLabel}>Logo colour</span>
+            <SegmentedControl
+              value={selectedColor}
+              onChange={setSelectedColor}
+              options={LOGO_COLOR_OPTIONS}
+              ariaLabel="Logo colour"
+              size="sm"
+            />
+          </div>
+        )}
+
+        {selected === "strip" && (
+          <div className={styles.control}>
+            <label className={styles.controlLabel} htmlFor="cover-strip-size">
+              Gradient strip size
+            </label>
+            <div className={styles.sliderRow}>
+              <input
+                id="cover-strip-size"
+                type="range"
+                className={styles.slider}
+                min={COVER_STRIP_SIZE_MIN}
+                max={COVER_STRIP_SIZE_MAX}
+                value={selectedStrip}
+                onChange={(e) => setSelectedStrip(Number(e.target.value))}
+              />
+              <span className={styles.sliderValue}>{selectedStrip}%</span>
+            </div>
+          </div>
+        )}
+
         <div className={styles.actions}>
           <Button
             onClick={() => {
-              onSelect(selected);
+              onSelect({
+                branding: selected,
+                logoColor: selectedColor,
+                stripSize: selectedStrip,
+              });
               onClose();
             }}
           >

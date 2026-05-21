@@ -46,13 +46,12 @@ export default function EmailChrome({
         <Container style={container}>
           <Section>
             <Img
-              src={`${APP_URL}/brand/naisi-emblem.png`}
-              alt="NAISI"
-              width={39}
-              height={48}
+              src={`${APP_URL}/brand/naisi-lockup.png`}
+              alt="Nottingham AI Safety Initiative"
+              width={72}
+              height={134}
               style={logo}
             />
-            <Text style={eyebrow}>Nottingham AI Safety Initiative</Text>
             <Heading style={heading}>{subject}</Heading>
             {greeting ? <Text style={greetingStyle}>{greeting}</Text> : null}
           </Section>
@@ -89,15 +88,7 @@ const container: React.CSSProperties = {
 
 const logo: React.CSSProperties = {
   display: "block",
-  margin: "0 0 14px",
-};
-
-const eyebrow: React.CSSProperties = {
-  color: "#71717a",
-  fontSize: "12px",
-  textTransform: "uppercase",
-  letterSpacing: "0.08em",
-  margin: "0 0 8px",
+  margin: "0 0 18px",
 };
 
 const heading: React.CSSProperties = {

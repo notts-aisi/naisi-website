@@ -118,7 +118,8 @@ events/{id}             { title, blocks[], startAt, endAt, location,
                           locationHidden, locationPublicText, visibility
                           ("public" | "members"), capacity, waitlistEnabled,
                           signupForm[], foodText?, dietaryTags?, posterUrl?,
-                          coverBranding, status (draft|pending|approved|
+                          coverBranding, coverLogoColor, coverStripSize,
+                          status (draft|pending|approved|
                           published|rejected|cancelled), authorUid,
                           rsvpCount{Pending,Confirmed,Waitlisted}, … }
 

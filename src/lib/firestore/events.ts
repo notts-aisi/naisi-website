@@ -62,6 +62,20 @@ export const COVER_BRANDING_OPTIONS: {
 ];
 
 /**
+ * Which emblem asset sits on the cover. The white emblem is built for dark
+ * overlays; the full-colour emblem suits lighter cover images.
+ */
+export type CoverLogoColor = "white" | "colour";
+
+/**
+ * The gradient strip's height as a percentage of the cover, for the "strip"
+ * branding treatment. Clamped to [MIN, MAX]; absent falls back to DEFAULT.
+ */
+export const COVER_STRIP_SIZE_MIN = 15;
+export const COVER_STRIP_SIZE_MAX = 70;
+export const COVER_STRIP_SIZE_DEFAULT = 40;
+
+/**
  * Event-level declaration about where/how the food is sourced. Lets organizers
  * proactively notify attendees of religious/dietary-only kitchens (e.g. "food
  * is from a halal restaurant") so attendees don't have to ask.
@@ -290,6 +304,10 @@ export type EventDoc = {
   posterUrl?: string | null;
   /** How the NAISI emblem is overlaid on the cover image. Defaults to none. */
   coverBranding: CoverBranding;
+  /** Which emblem asset (white or full colour) is overlaid on the cover. */
+  coverLogoColor: CoverLogoColor;
+  /** Gradient-strip height as a percent of the cover, for the strip treatment. */
+  coverStripSize: number;
   status: EventStatus;
   authorUid: string;
   authorDisplayName?: string | null;
@@ -333,6 +351,18 @@ export function asCoverBranding(v: unknown): CoverBranding {
   return v === "strip" || v === "corner" || v === "none" ? v : "none";
 }
 
+export function asCoverLogoColor(v: unknown): CoverLogoColor {
+  return v === "colour" ? "colour" : "white";
+}
+
+export function asCoverStripSize(v: unknown): number {
+  if (typeof v !== "number" || !Number.isFinite(v)) return COVER_STRIP_SIZE_DEFAULT;
+  return Math.min(
+    COVER_STRIP_SIZE_MAX,
+    Math.max(COVER_STRIP_SIZE_MIN, Math.round(v)),
+  );
+}
+
 function asFoodProvenance(v: unknown): FoodProvenance {
   const ok: FoodProvenance[] = ["none", "halal", "kosher", "vegetarian", "vegan", "other"];
   return ok.includes(v as FoodProvenance) ? (v as FoodProvenance) : "none";
@@ -373,6 +403,8 @@ export function normalizeEvent(id: string, data: Raw): EventDoc {
     dietaryTags: asFoodTags(data.dietaryTags),
     posterUrl: (data.posterUrl as string | null | undefined) ?? null,
     coverBranding: asCoverBranding(data.coverBranding),
+    coverLogoColor: asCoverLogoColor(data.coverLogoColor),
+    coverStripSize: asCoverStripSize(data.coverStripSize),
     status: asStatus(data.status),
     authorUid: (data.authorUid as string) ?? "",
     authorDisplayName: (data.authorDisplayName as string | null | undefined) ?? null,

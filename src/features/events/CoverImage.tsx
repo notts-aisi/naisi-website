@@ -1,5 +1,14 @@
-import type { CoverBranding } from "@/lib/firestore/events";
+import {
+  COVER_STRIP_SIZE_DEFAULT,
+  type CoverBranding,
+  type CoverLogoColor,
+} from "@/lib/firestore/events";
 import styles from "./CoverImage.module.css";
+
+const EMBLEM_SRC: Record<CoverLogoColor, string> = {
+  white: "/brand/naisi-emblem-white.png",
+  colour: "/brand/naisi-emblem.png",
+};
 
 /**
  * An event cover image with the optional NAISI emblem treatment overlaid.
@@ -10,11 +19,19 @@ export default function CoverImage({
   url,
   alt,
   branding,
+  logoColor = "white",
+  stripSize = COVER_STRIP_SIZE_DEFAULT,
 }: {
   url: string;
   alt: string;
   branding: CoverBranding;
+  /** Emblem asset to overlay. Defaults to the white emblem. */
+  logoColor?: CoverLogoColor;
+  /** Gradient-strip height as a percent of the cover. Strip treatment only. */
+  stripSize?: number;
 }) {
+  const emblemSrc = EMBLEM_SRC[logoColor];
+
   return (
     <div className={styles.frame}>
       {/* User-uploaded Firebase Storage image — next/image optimization isn't
@@ -23,23 +40,25 @@ export default function CoverImage({
       <img src={url} alt={alt} className={styles.poster} />
 
       {branding === "strip" && (
-        <div className={styles.strip} aria-hidden="true">
+        <div
+          className={styles.strip}
+          style={{ height: `${stripSize}%` }}
+          aria-hidden="true"
+        >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/brand/naisi-emblem-white.png"
-            alt=""
-            className={styles.stripEmblem}
-          />
+          <img src={emblemSrc} alt="" className={styles.stripEmblem} />
         </div>
       )}
 
       {branding === "corner" && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src="/brand/naisi-emblem-white.png"
+          src={emblemSrc}
           alt=""
           aria-hidden="true"
-          className={styles.cornerEmblem}
+          className={`${styles.cornerEmblem}${
+            logoColor === "colour" ? ` ${styles.cornerEmblemLight}` : ""
+          }`}
         />
       )}
     </div>
