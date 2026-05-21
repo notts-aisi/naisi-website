@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Input";
@@ -28,6 +29,7 @@ type SubmitState =
   | { kind: "error"; message: string };
 
 export default function RsvpForm({ event, previewMode }: Props) {
+  const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const [anonName, setAnonName] = useState("");
   const [anonEmail, setAnonEmail] = useState("");
@@ -83,7 +85,13 @@ export default function RsvpForm({ event, previewMode }: Props) {
         }).catch(() => {});
       }
 
-      setState({ kind: "success" });
+      // Real submissions get a dedicated confirmation page so the "we've got
+      // it" message can't be missed. The preview/test flow stays in place.
+      if (previewMode) {
+        setState({ kind: "success" });
+      } else {
+        router.push(`/events/${event.id}/rsvp/submitted`);
+      }
     } catch (err) {
       setState({
         kind: "error",

@@ -8,7 +8,6 @@ import { Field, Input } from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import { copyToClipboard, downloadCSV, toCSV } from "@/lib/csv";
 import {
-  DIETARY_ALLERGIES,
   FOOD_PROVENANCE_BADGE,
   RSVP_STATUS_LABEL,
   RSVP_STATUSES,
@@ -19,6 +18,7 @@ import {
   type RsvpStatus,
 } from "@/lib/firestore/events";
 import { useEventRsvps } from "./useEventRsvps";
+import OrderHelper from "./OrderHelper";
 import Pie, { pickColor, type PieSlice } from "./Pie";
 import styles from "./AttendeeDashboard.module.css";
 
@@ -531,6 +531,11 @@ export default function AttendeeDashboard({ event }: Props) {
         </Card>
       )}
 
+      {/* Pizza order helper --------------------------------------------- */}
+      {event.signupForm.some((q) => q.type === "multiSelect") && (
+        <OrderHelper event={event} rsvps={confirmed} />
+      )}
+
       {/* Charts --------------------------------------------------------- */}
       {active.length > 0 && (
         <section>
@@ -782,6 +787,14 @@ function QuestionChart({
         for (const v of a) {
           if (typeof v === "string" && v) counts.set(v, (counts.get(v) ?? 0) + 1);
         }
+      } else if (a && typeof a === "object") {
+        const obj = a as { checked?: string[]; other?: string };
+        if (Array.isArray(obj.checked)) {
+          for (const v of obj.checked) {
+            if (typeof v === "string" && v) counts.set(v, (counts.get(v) ?? 0) + 1);
+          }
+        }
+        if (obj.other) counts.set("Other", (counts.get("Other") ?? 0) + 1);
       }
     } else if (question.type === "dietaryAllergies") {
       if (a && typeof a === "object" && !Array.isArray(a)) {
@@ -789,37 +802,36 @@ function QuestionChart({
         if (Array.isArray(obj.checked)) {
           for (const v of obj.checked) counts.set(v, (counts.get(v) ?? 0) + 1);
         }
-        if (obj.other) counts.set("Other (see details)", (counts.get("Other (see details)") ?? 0) + 1);
+        if (obj.other) counts.set("Other", (counts.get("Other") ?? 0) + 1);
       }
     }
   }
 
-  // For dietary allergies, also include zero-count common allergies so the pie
-  // signals "nobody reported nuts" vs "never asked about nuts".
-  if (question.type === "dietaryAllergies") {
-    for (const a of DIETARY_ALLERGIES) {
-      if (!counts.has(a)) counts.set(a, 0);
-    }
-  }
-
-  // For multiSelect + dietary, responses are per-person-with-multiple-picks, so
-  // the pie's denominator is the sum of all picks (not the number of people).
+  // Only chart what people actually picked — an all-zero pie is just noise.
   const slices: PieSlice[] = Array.from(counts.entries())
+    .filter(([, count]) => count > 0)
     .sort((a, b) => b[1] - a[1])
     .map(([label, count], i) => ({ label, count, color: pickColor(i) }));
 
   const totalResponses = rsvps.filter((r) => r.answers[question.id] !== undefined).length;
+  const multiPick =
+    question.type === "multiSelect" || question.type === "dietaryAllergies";
 
   return (
     <Card padding="md">
       <h3 className={styles.chartTitle}>{question.label}</h3>
-      <p className={styles.muted}>
-        {totalResponses} response{totalResponses === 1 ? "" : "s"}
-        {question.type === "multiSelect" || question.type === "dietaryAllergies"
-          ? " (multiple picks per person)"
-          : ""}
-      </p>
-      <Pie slices={slices} />
+      {slices.length === 0 ? (
+        <p className={styles.muted}>No responses yet.</p>
+      ) : (
+        <>
+          <p className={styles.muted}>
+            {totalResponses} response{totalResponses === 1 ? "" : "s"}
+            {multiPick ? " · multiple picks per person" : ""} · hover a slice for
+            detail
+          </p>
+          <Pie slices={slices} />
+        </>
+      )}
     </Card>
   );
 }

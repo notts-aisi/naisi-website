@@ -61,3 +61,29 @@ export function buildEventIcs(args: IcsArgs): string {
   // RFC 5545 requires CRLF line endings.
   return lines.join("\r\n") + "\r\n";
 }
+
+/**
+ * Build an "Add to Google Calendar" link (the TEMPLATE render form). Opens
+ * Google Calendar with the event pre-filled — one tap, no file download.
+ */
+export function googleCalendarUrl(args: {
+  title: string;
+  description?: string;
+  location?: string;
+  startAt: Date;
+  endAt?: Date | null;
+}): string {
+  const start = args.startAt;
+  const end =
+    args.endAt && args.endAt.getTime() > start.getTime()
+      ? args.endAt
+      : new Date(start.getTime() + DEFAULT_DURATION_MS);
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: args.title,
+    dates: `${formatUtc(start)}/${formatUtc(end)}`,
+  });
+  if (args.description) params.set("details", args.description);
+  if (args.location) params.set("location", args.location);
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}

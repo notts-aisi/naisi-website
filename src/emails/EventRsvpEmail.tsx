@@ -38,6 +38,10 @@ type Props = {
   decisionNote?: string;
   /** Pretty-printed summary of the attendee's answers ("Burger: Beef · Allergies: Peanuts"). */
   answersLine?: string;
+  /** "Add to Google Calendar" link, shown on the approved / promoted emails. */
+  googleCalUrl?: string;
+  /** Link to the .ics download, for Apple Calendar / Outlook. */
+  icsUrl?: string;
   /** Absolute URL letting the attendee self-cancel. */
   cancelUrl?: string;
   /** Absolute URL letting the attendee request a dietary / answer change. */
@@ -106,6 +110,8 @@ export default function EventRsvpEmail({
   foodLine,
   decisionNote,
   answersLine,
+  googleCalUrl,
+  icsUrl,
   cancelUrl,
   changeUrl,
   instagramHandle,
@@ -154,6 +160,28 @@ export default function EventRsvpEmail({
                   <strong>Food:</strong> {foodLine}
                 </Text>
               )}
+            </Section>
+          )}
+
+          {(googleCalUrl || icsUrl) && (
+            <Section style={{ margin: "16px 0 0" }}>
+              <Text style={detailLine}>
+                <strong>Add it to your calendar:</strong>{" "}
+                {googleCalUrl && (
+                  <EmailLink href={googleCalUrl} style={link}>
+                    Google Calendar
+                  </EmailLink>
+                )}
+                {googleCalUrl && icsUrl ? "  ·  " : null}
+                {icsUrl && (
+                  <EmailLink href={icsUrl} style={link}>
+                    Apple or Outlook
+                  </EmailLink>
+                )}
+              </Text>
+              <Text style={detailMuted}>
+                The event is also attached to this email as a calendar file.
+              </Text>
             </Section>
           )}
 

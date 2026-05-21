@@ -14,7 +14,7 @@ import {
   type FormQuestion,
   type RsvpAnswer,
 } from "@/lib/firestore/events";
-import { buildEventIcs } from "./ics";
+import { buildEventIcs, googleCalendarUrl } from "./ics";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isSuppressed } from "@/lib/firestore/suppression";
 import {
@@ -208,19 +208,23 @@ export async function sendRsvpEmail({
     const questions = sanitizeSignupForm(event.signupForm);
     const answersLine = buildAnswersLine(questions, answers);
 
-    // Confirmed / promoted attendees get a calendar invite attached. These
+    // Confirmed / promoted attendees get the event for their calendar: a .ics
+    // attachment plus one-tap "add to calendar" links in the body. These
     // variants always disclose the exact location, so the .ics carries it too.
     let attachments:
       | { filename: string; content: string; contentType: string }[]
       | undefined;
+    let googleCalUrl: string | undefined;
+    let icsUrl: string | undefined;
     if ((variant === "approved" || variant === "promoted") && event.startAt) {
       const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
       const eventUrl = appUrl && event.id ? `${appUrl}/events/${event.id}` : undefined;
+      const exactLocation = (event.location ?? "").trim() || undefined;
       const ics = buildEventIcs({
         uid: event.id ?? "event",
         title,
         description: eventUrl,
-        location: (event.location ?? "").trim() || undefined,
+        location: exactLocation,
         url: eventUrl,
         startAt: event.startAt,
         endAt: event.endAt ?? null,
@@ -232,6 +236,16 @@ export async function sendRsvpEmail({
           contentType: "text/calendar; charset=utf-8; method=PUBLISH",
         },
       ];
+      googleCalUrl = googleCalendarUrl({
+        title,
+        description: eventUrl,
+        location: exactLocation,
+        startAt: event.startAt,
+        endAt: event.endAt ?? null,
+      });
+      if (appUrl && event.id) {
+        icsUrl = `${appUrl}/api/events/${event.id}/calendar.ics`;
+      }
     }
 
     await sendEmail({
@@ -248,6 +262,8 @@ export async function sendRsvpEmail({
         foodLine,
         decisionNote: decisionNote ?? undefined,
         answersLine: answersLine || undefined,
+        googleCalUrl,
+        icsUrl,
         cancelUrl,
         changeUrl,
         instagramHandle:
