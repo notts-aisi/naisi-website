@@ -167,3 +167,47 @@
   font-weight: 700;
   color: var(--color-accent);
 }
+
+.planIntro {
+  margin: var(--space-4) 0 var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.planList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.planRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-accent-soft);
+  border-radius: var(--radius-md);
+}
+
+.planQty {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--color-accent);
+  min-width: 2.5rem;
+}
+
+.planDesc {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--color-text);
+}
+
+.planFeeds {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
