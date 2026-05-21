@@ -43,7 +43,7 @@ src/
 ├── components/                       # BrandMark, SubscribeForm, ReadingListAccordion
 │   └── ui/                           # Button, Card, Badge, Input, Select, Switch,
 │                                     #   SegmentedControl, ProgressBar, DateTimePopover,
-│                                     #   StatusSelect, GraduationSelect, CountedTextarea
+│                                     #   TimeField, StatusSelect, GraduationSelect, CountedTextarea
 ├── emails/                           # JSX email templates (newsletter, RSVP, task, application, …)
 ├── features/                         # admin, events, members, news, newsletter, profile, tasks
 ├── layout/                           # PublicHeader, PublicFooter, AppShell

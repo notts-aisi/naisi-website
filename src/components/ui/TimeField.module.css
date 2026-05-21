@@ -1,0 +1,125 @@
+.root {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.input {
+  width: 4.25rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-right: 0;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--text-md, 1rem);
+  font-family: inherit;
+  text-align: center;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.stepper {
+  display: flex;
+  flex-direction: column;
+}
+
+.stepBtn {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  padding: 0;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-right: 0;
+  color: var(--color-text-muted);
+  font-size: 0.55rem;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.stepBtn:first-child {
+  border-bottom: 0;
+}
+
+.stepBtn:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.stepBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.caret {
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.caret:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.caret:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 7rem;
+  max-height: 12rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--space-1);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 60;
+}
+
+.option {
+  padding: 0.35rem 0.5rem;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.option:hover {
+  background: var(--color-surface-hover);
+}
+
+.optionActive,
+.optionActive:hover {
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-weight: 600;
+}

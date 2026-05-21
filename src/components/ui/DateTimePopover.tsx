@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import TimeField from "./TimeField";
 import styles from "./DateTimePopover.module.css";
 
 type Props = {
@@ -221,11 +222,9 @@ export default function DateTimePopover({
 
           <div className={styles.timeRow}>
             <span className={styles.timeLabel}>Time</span>
-            <input
-              type="time"
-              className={styles.timeInput}
+            <TimeField
               value={timeInput(value)}
-              onChange={(e) => onTimeInput(e.target.value)}
+              onChange={onTimeInput}
               disabled={disabled || !value}
             />
           </div>

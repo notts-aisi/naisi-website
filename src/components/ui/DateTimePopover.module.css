@@ -199,27 +199,6 @@
   color: var(--color-text);
 }
 
-.timeInput {
-  padding: 0.5rem 0.7rem;
-  font-size: var(--text-md, 1rem);
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  color: var(--color-text);
-  font-family: inherit;
-  color-scheme: dark;
-}
-
-.timeInput:focus {
-  outline: none;
-  border-color: var(--color-accent);
-}
-
-.timeInput:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 .panelActions {
   display: flex;
   gap: var(--space-2);
