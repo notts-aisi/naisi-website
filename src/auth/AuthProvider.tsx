@@ -18,6 +18,8 @@ type AuthState = {
   user: User | null;
   role: Role | null;
   permissions: UserPermissions;
+  /** True only for committee members the SU formally recognises (admin-set). */
+  suRecognised: boolean;
   loading: boolean;
 };
 
@@ -25,6 +27,7 @@ const AuthContext = createContext<AuthState>({
   user: null,
   role: null,
   permissions: {},
+  suRecognised: false,
   loading: true,
 });
 
@@ -32,6 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<Role | null>(null);
   const [permissions, setPermissions] = useState<UserPermissions>({});
+  const [suRecognised, setSuRecognised] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -50,6 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!u) {
         setRole(null);
         setPermissions({});
+        setSuRecognised(false);
       }
       // Auth state is resolved — UI can render regardless of whether the
       // Firestore user-doc snapshot has arrived yet. Previously we waited
@@ -84,6 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           draftEvent: Boolean(raw.draftEvent),
           approveEvent: Boolean(raw.approveEvent),
         });
+        setSuRecognised(Boolean(data?.suRecognised));
       },
       () => {
         // Snapshot errored (permission-denied, offline, etc). Clear role so
@@ -91,14 +97,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // state, and let AuthProvider's server-session-aware callers re-auth.
         setRole(null);
         setPermissions({});
+        setSuRecognised(false);
       },
     );
     return unsub;
   }, [user]);
 
   const value = useMemo(
-    () => ({ user, role, permissions, loading }),
-    [user, role, permissions, loading],
+    () => ({ user, role, permissions, suRecognised, loading }),
+    [user, role, permissions, suRecognised, loading],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

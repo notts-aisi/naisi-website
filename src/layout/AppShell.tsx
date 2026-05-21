@@ -10,7 +10,11 @@ import { usePendingCount } from "@/features/admin/usePendingCount";
 import type { UserPermissions } from "@/lib/firestore/users";
 import styles from "./AppShell.module.css";
 
-type Viewer = { role: "member" | "committee" | "admin"; permissions: UserPermissions };
+type Viewer = {
+  role: "member" | "committee" | "admin";
+  permissions: UserPermissions;
+  suRecognised: boolean;
+};
 type NavItem = {
   label: string;
   href: string;
@@ -24,6 +28,11 @@ type NavGroup = {
 const MEMBER_AND_UP = (v: Viewer) =>
   v.role === "member" || v.role === "committee" || v.role === "admin";
 const COMMITTEE_AND_UP = (v: Viewer) => v.role === "committee" || v.role === "admin";
+// The committee task board is for SU-recognised committee and admins only: it
+// shows every committee task and the full member roster. Non-SU committee work
+// from My Work and would only be redirected if they followed this link.
+const SU_COMMITTEE_AND_UP = (v: Viewer) =>
+  v.role === "admin" || (v.role === "committee" && v.suRecognised);
 const ADMIN_ONLY = (v: Viewer) => v.role === "admin";
 const NEWSLETTER_ACCESS = (v: Viewer) =>
   v.role === "admin" ||
@@ -46,7 +55,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Committee",
     items: [
-      { label: "Task board", href: "/committee/tasks", visible: COMMITTEE_AND_UP },
+      { label: "Task board", href: "/committee/tasks", visible: SU_COMMITTEE_AND_UP },
       { label: "Credentials", href: "/credentials", visible: COMMITTEE_AND_UP },
       { label: "Newsletter", href: "/newsletter", visible: NEWSLETTER_ACCESS },
       { label: "Events", href: "/events/manage", visible: EVENTS_ACCESS },
@@ -61,14 +70,16 @@ const NAV_GROUPS: NavGroup[] = [
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, role, permissions, loading } = useAuth();
+  const { user, role, permissions, suRecognised, loading } = useAuth();
   const pendingCount = usePendingCount();
 
   const visibleGroups =
     role === "admin" || role === "committee" || role === "member"
       ? NAV_GROUPS.map((g) => ({
           ...g,
-          items: g.items.filter((item) => item.visible({ role, permissions })),
+          items: g.items.filter((item) =>
+            item.visible({ role, permissions, suRecognised }),
+          ),
         })).filter((g) => g.items.length > 0)
       : [];
 

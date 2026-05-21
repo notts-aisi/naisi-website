@@ -58,13 +58,29 @@ export async function unrejectUser(uid: string) {
 
 export async function setRole(uid: string, role: Role) {
   const db = getClientDb();
-  await updateDoc(doc(db, "users", uid), { role });
+  const patch: Record<string, unknown> = { role };
+  // SU recognition only applies while role === 'committee'. Clear it on any
+  // move off committee so a later re-promotion starts non-SU (an explicit
+  // admin decision), not silently SU again from a stale flag.
+  if (role !== "committee") patch.suRecognised = false;
+  await updateDoc(doc(db, "users", uid), patch);
 }
 
 /** Admin-only: assign technical/governance tracks (both/either/none). */
 export async function setTracks(uid: string, tracks: Track[]) {
   const db = getClientDb();
   await updateDoc(doc(db, "users", uid), { tracks });
+}
+
+/**
+ * Admin-only: mark a committee member as recognised by the SU. SU-recognised
+ * committee may read member PII (the users collection) and the committee task
+ * board; non-SU committee are scoped to the tasks they are on. The Firestore
+ * rules lock this field against self-service edits.
+ */
+export async function setSuRecognised(uid: string, suRecognised: boolean) {
+  const db = getClientDb();
+  await updateDoc(doc(db, "users", uid), { suRecognised });
 }
 
 /** Admin-only: grant/revoke orthogonal permissions (draft/approve newsletter, draft/approve event). */
