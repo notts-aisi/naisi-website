@@ -92,8 +92,58 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
             );
           }
           case "multiSelect": {
-            const value = (answers[q.id] as string[] | undefined) ?? [];
             const opts = q.options.map((o) => o.trim()).filter(Boolean);
+            if (q.allowOther) {
+              const raw = answers[q.id];
+              const current =
+                raw && typeof raw === "object" && !Array.isArray(raw)
+                  ? (raw as { checked: string[]; other: string })
+                  : { checked: [], other: "" };
+              return (
+                <fieldset key={q.id} className={styles.field}>
+                  <legend className={styles.legend}>
+                    {q.label}
+                    {q.required && <span className={styles.required}> *</span>}
+                  </legend>
+                  <div className={styles.checkGrid}>
+                    {opts.map((opt) => {
+                      const checked = current.checked.includes(opt);
+                      return (
+                        <label key={opt} className={styles.checkRow}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={disabled}
+                            onChange={(e) => {
+                              const nextChecked = e.target.checked
+                                ? [...current.checked, opt]
+                                : current.checked.filter((v) => v !== opt);
+                              set(q.id, { checked: nextChecked, other: current.other });
+                            }}
+                          />
+                          <span>{opt}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <label className={styles.otherRow}>
+                    <span className={styles.otherLabel}>Other</span>
+                    <input
+                      type="text"
+                      className={styles.input}
+                      value={current.other}
+                      onChange={(e) =>
+                        set(q.id, { checked: current.checked, other: e.target.value })
+                      }
+                      disabled={disabled}
+                      placeholder="Anything else not listed above"
+                      maxLength={500}
+                    />
+                  </label>
+                </fieldset>
+              );
+            }
+            const value = (answers[q.id] as string[] | undefined) ?? [];
             return (
               <fieldset key={q.id} className={styles.field}>
                 <legend className={styles.legend}>
@@ -170,6 +220,10 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                   {q.label}
                   {q.required && <span className={styles.required}> *</span>}
                 </legend>
+                <p className={styles.helper}>
+                  Tick anything that applies, however minor. The more we know, the
+                  better we can cater for you.
+                </p>
                 <div className={styles.checkGrid}>
                   {DIETARY_ALLERGIES.map((a) => {
                     const checked = current.checked.includes(a);
@@ -201,7 +255,7 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                       set(q.id, { checked: current.checked, other: e.target.value })
                     }
                     disabled={disabled}
-                    placeholder="e.g. celiac, severe lactose"
+                    placeholder="e.g. coeliac, low-FODMAP, a severe nut allergy"
                     maxLength={500}
                   />
                 </label>

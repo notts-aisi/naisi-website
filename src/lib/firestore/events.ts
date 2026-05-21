@@ -109,6 +109,8 @@ export type SingleSelectQuestion = BaseQuestion & {
 export type MultiSelectQuestion = BaseQuestion & {
   type: "multiSelect";
   options: string[];
+  /** When true, attendees also get a free-text "Other" box. */
+  allowOther?: boolean;
 };
 
 export type YesNoQuestion = BaseQuestion & {
@@ -116,24 +118,40 @@ export type YesNoQuestion = BaseQuestion & {
 };
 
 /**
- * A fixed checklist for common allergies. Lives as its own question type so the
- * dashboard can aggregate it consistently across events without the organizer
- * having to recreate the same list each time.
+ * A fixed checklist covering both dietary requirements and the common allergens.
+ * Lives as its own question type so the dashboard can aggregate it consistently
+ * across events without the organizer having to recreate the same list.
  */
 export type DietaryAllergiesQuestion = BaseQuestion & {
   type: "dietaryAllergies";
 };
 
+/**
+ * Checklist for the combined "allergies or dietary requirements" question.
+ * Deliberately broad: it covers religious and lifestyle requirements as well as
+ * the major UK allergens, so attendees can disclose everything in one place.
+ */
 export const DIETARY_ALLERGIES: string[] = [
+  "Vegetarian",
+  "Vegan",
+  "Pescatarian",
+  "Halal",
+  "Kosher",
+  "No pork",
+  "No beef",
+  "No alcohol",
+  "Gluten / wheat",
+  "Dairy / lactose",
+  "Eggs",
   "Peanuts",
   "Tree nuts",
-  "Gluten",
-  "Dairy",
-  "Eggs",
-  "Soy",
+  "Soya",
   "Fish",
   "Shellfish",
   "Sesame",
+  "Celery",
+  "Mustard",
+  "Sulphites",
 ];
 
 export type FormQuestion =
@@ -162,7 +180,7 @@ export function emptyQuestion(type: FormQuestionType): FormQuestion {
     case "yesNo":
       return { id, type, label: "", required: false };
     case "dietaryAllergies":
-      return { id, type, label: "Any food allergies we should know about?", required: false };
+      return { id, type, label: "Any allergies or dietary requirements?", required: false };
   }
 }
 

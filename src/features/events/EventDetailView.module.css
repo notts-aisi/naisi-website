@@ -9,8 +9,9 @@
 .poster {
   display: block;
   width: 100%;
-  max-height: 22rem;
-  object-fit: cover;
+  /* Cover images are framed in the editor's crop tool, so the hero shows them
+     at their true shape rather than re-cropping with object-fit. */
+  height: auto;
   border-radius: var(--radius-xl);
   border: 1px solid var(--color-border);
 }

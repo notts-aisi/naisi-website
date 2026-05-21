@@ -61,6 +61,30 @@ function statusTone(status: EventStatus): "neutral" | "accent" | "success" | "da
   }
 }
 
+/** Pre-fill the attendee-notification draft from what an edit changed. */
+function buildNotifyDraft(changes: { time: boolean; location: boolean }): {
+  subject: string;
+  body: string;
+} {
+  const subject =
+    changes.time && changes.location
+      ? "Update: new time and location"
+      : changes.time
+        ? "Update: new time"
+        : "Update: new location";
+  const what =
+    changes.time && changes.location
+      ? "the time and location"
+      : changes.time
+        ? "the time"
+        : "the location";
+  const body =
+    `Quick heads-up: we've updated ${what} for this event. ` +
+    `The latest details are shown below. ` +
+    `Apologies for any inconvenience, and let us know if you can no longer make it.`;
+  return { subject, body };
+}
+
 export default function EventEditor({ eventId }: Props) {
   const router = useRouter();
   const { user, role, permissions } = useAuth();
@@ -91,6 +115,18 @@ export default function EventEditor({ eventId }: Props) {
   const [publishStatus, setPublishStatus] = useState<
     | { kind: "idle" }
     | { kind: "publishing" }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  // After editing a published event, offer to email confirmed attendees.
+  const [notifyDraft, setNotifyDraft] = useState<{
+    subject: string;
+    body: string;
+  } | null>(null);
+  const [notifyState, setNotifyState] = useState<
+    | { kind: "idle" }
+    | { kind: "sending" }
+    | { kind: "sent"; sent: number }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
 
@@ -143,7 +179,9 @@ export default function EventEditor({ eventId }: Props) {
   const status = event?.status ?? "draft";
   const editable = useMemo(() => {
     if (!event) return false;
-    if (status === "published" || status === "cancelled") return false;
+    if (status === "cancelled") return false;
+    // Published events stay editable for approvers via the server update route.
+    if (status === "published") return canApprove;
     if (status === "pending") return canApprove;
     if (status === "approved") return canApprove;
     return isAuthor || canApprove;
@@ -156,7 +194,7 @@ export default function EventEditor({ eventId }: Props) {
   async function flush() {
     if (!event) return;
     if (!dirty) return;
-    await updateEvent(event.id, {
+    const fields = {
       title,
       blocks,
       startAt,
@@ -171,7 +209,37 @@ export default function EventEditor({ eventId }: Props) {
       foodText: foodText.trim() ? foodText : null,
       dietaryTags,
       posterUrl,
-    });
+    };
+    if (status === "published") {
+      // Firestore rules block client writes to published events — go through
+      // the server route, which also reports what changed.
+      const res = await fetch(`/api/events/${event.id}/update`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...fields,
+          startAt: startAt ? startAt.toISOString() : null,
+          endAt: endAt ? endAt.toISOString() : null,
+        }),
+      });
+      const resBody = (await res.json().catch(() => null)) as
+        | {
+            ok?: true;
+            changes?: { time: boolean; location: boolean; title: boolean };
+            error?: string;
+          }
+        | null;
+      if (!res.ok || !resBody?.ok) {
+        throw new Error(resBody?.error ?? `Save failed (${res.status})`);
+      }
+      const ch = resBody.changes;
+      if (ch && (ch.time || ch.location)) {
+        setNotifyDraft(buildNotifyDraft(ch));
+        setNotifyState({ kind: "idle" });
+      }
+    } else {
+      await updateEvent(event.id, fields);
+    }
     setDirty(false);
   }
 
@@ -186,6 +254,38 @@ export default function EventEditor({ eventId }: Props) {
       setError(err instanceof Error ? err.message : "Save failed");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function onSendNotify() {
+    if (!event || !notifyDraft) return;
+    if (!notifyDraft.subject.trim() || !notifyDraft.body.trim()) {
+      setNotifyState({ kind: "error", message: "Add a subject and message before sending." });
+      return;
+    }
+    setNotifyState({ kind: "sending" });
+    try {
+      const res = await fetch(`/api/events/${event.id}/broadcast`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ subject: notifyDraft.subject, body: notifyDraft.body }),
+      });
+      const resBody = (await res.json().catch(() => null)) as
+        | { ok?: true; sent?: number; error?: string }
+        | null;
+      if (!res.ok || !resBody?.ok) {
+        setNotifyState({
+          kind: "error",
+          message: resBody?.error ?? `Send failed (${res.status})`,
+        });
+        return;
+      }
+      setNotifyState({ kind: "sent", sent: resBody.sent ?? 0 });
+    } catch (err) {
+      setNotifyState({
+        kind: "error",
+        message: err instanceof Error ? err.message : "Send failed",
+      });
     }
   }
 
@@ -410,8 +510,73 @@ export default function EventEditor({ eventId }: Props) {
             >
               /events/{event.id}
             </Link>
-            . Share the link.
+            . Share the link. Edits you save here go live immediately.
           </p>
+        </Card>
+      )}
+
+      {notifyDraft && (
+        <Card padding="lg">
+          <h2 className={styles.sectionTitle}>Notify attendees</h2>
+          <p className={styles.sectionHint}>
+            You changed details on a published event. Send confirmed attendees an
+            update, or dismiss this if it doesn&apos;t need an email.
+          </p>
+          <div className={styles.fields}>
+            <Field id="notify-subject" label="Subject">
+              <Input
+                id="notify-subject"
+                value={notifyDraft.subject}
+                onChange={(e) =>
+                  setNotifyDraft({ ...notifyDraft, subject: e.target.value })
+                }
+                maxLength={150}
+                disabled={notifyState.kind === "sending"}
+              />
+            </Field>
+            <Field id="notify-body" label="Message">
+              <Textarea
+                id="notify-body"
+                value={notifyDraft.body}
+                onChange={(e) =>
+                  setNotifyDraft({ ...notifyDraft, body: e.target.value })
+                }
+                rows={5}
+                maxLength={8000}
+                disabled={notifyState.kind === "sending"}
+              />
+            </Field>
+          </div>
+          {notifyState.kind === "error" && (
+            <p className={styles.danger} style={{ marginTop: "var(--space-2)" }}>
+              {notifyState.message}
+            </p>
+          )}
+          {notifyState.kind === "sent" && (
+            <p className={styles.muted} style={{ marginTop: "var(--space-2)" }}>
+              Sent to {notifyState.sent} attendee{notifyState.sent === 1 ? "" : "s"}.
+            </p>
+          )}
+          <div
+            className={styles.editorActions}
+            style={{ marginTop: "var(--space-3)" }}
+          >
+            {notifyState.kind !== "sent" && (
+              <Button onClick={onSendNotify} disabled={notifyState.kind === "sending"}>
+                {notifyState.kind === "sending" ? "Sending…" : "Send to attendees"}
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setNotifyDraft(null);
+                setNotifyState({ kind: "idle" });
+              }}
+              disabled={notifyState.kind === "sending"}
+            >
+              {notifyState.kind === "sent" ? "Close" : "Dismiss"}
+            </Button>
+          </div>
         </Card>
       )}
 
@@ -575,6 +740,7 @@ export default function EventEditor({ eventId }: Props) {
         <ImageUpload
           draftId={event.id}
           storagePrefix="event-images"
+          enableCrop
           currentUrl={posterUrl ?? undefined}
           onChange={({ url }) => {
             setPosterUrl(url || null);

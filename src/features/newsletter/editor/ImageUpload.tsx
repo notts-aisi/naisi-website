@@ -5,6 +5,7 @@ import imageCompression from "browser-image-compression";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import Button from "@/components/ui/Button";
 import { getClientStorage } from "@/lib/firebase/client";
+import ImageCropModal from "./ImageCropModal";
 import styles from "./ImageUpload.module.css";
 
 type Props = {
@@ -16,6 +17,8 @@ type Props = {
   currentCaption?: string;
   onChange: (next: { url: string; alt: string; caption?: string; storagePath?: string }) => void;
   disabled?: boolean;
+  /** When true, the organiser frames the image in a crop modal before upload. */
+  enableCrop?: boolean;
 };
 
 type UploadState =
@@ -43,21 +46,15 @@ export default function ImageUpload({
   currentCaption = "",
   onChange,
   disabled,
+  enableCrop,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<UploadState>({ kind: "idle" });
   const [alt, setAlt] = useState(currentAlt);
   const [caption, setCaption] = useState(currentCaption);
+  const [pending, setPending] = useState<{ src: string; file: File } | null>(null);
 
-  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!file.type.startsWith("image/")) {
-      setState({ kind: "error", message: "Please pick an image file." });
-      return;
-    }
-
+  async function processFile(file: File) {
     try {
       setState({ kind: "compressing" });
       const compressed = await imageCompression(file, {
@@ -85,8 +82,48 @@ export default function ImageUpload({
         kind: "error",
         message: err instanceof Error ? err.message : "Upload failed",
       });
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    // Clear the input straight away so re-picking the same file still fires.
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setState({ kind: "error", message: "Please pick an image file." });
+      return;
+    }
+
+    if (enableCrop) {
+      // Defer compress + upload until the organiser confirms a crop.
+      setPending({ src: URL.createObjectURL(file), file });
+      return;
+    }
+    await processFile(file);
+  }
+
+  function discardPending() {
+    setPending((p) => {
+      if (p) URL.revokeObjectURL(p.src);
+      return null;
+    });
+  }
+
+  async function onCropConfirmed(file: File) {
+    const prev = pending;
+    setPending(null);
+    await processFile(file);
+    if (prev) URL.revokeObjectURL(prev.src);
+  }
+
+  async function onCropSkipped() {
+    const prev = pending;
+    setPending(null);
+    if (prev) {
+      await processFile(prev.file);
+      URL.revokeObjectURL(prev.src);
     }
   }
 
@@ -203,6 +240,16 @@ export default function ImageUpload({
             />
           </label>
         </div>
+      )}
+
+      {pending && (
+        <ImageCropModal
+          src={pending.src}
+          fileName={pending.file.name}
+          onCropped={onCropConfirmed}
+          onSkip={onCropSkipped}
+          onCancel={discardPending}
+        />
       )}
     </div>
   );
