@@ -258,7 +258,7 @@ If asked to "commit and push" a change, default to creating a branch + PR unless
 Two separate Firebase projects, each with its own App Hosting backend (both backends happen to be named `naisi-website` — not a bug, disambiguated by project):
 
 - **Production** — push to `main` → project `naisi-website` → `https://naisi.uk`
-- **Dev / staging** — push to `dev` → project `naisi-website-dev` → `https://naisi-website--naisi-website-dev.europe-west4.hosted.app`. Separate Firestore / Auth / Storage / Secret Manager — fully isolated from prod data.
+- **Dev / staging** — push to `dev` → project `naisi-website-dev` → `https://dev.naisi.uk`. Separate Firestore / Auth / Storage / Secret Manager — fully isolated from prod data.
 
 **How env vars resolve:**
 

@@ -77,7 +77,7 @@ Admin SDK credentials are provided automatically via Application Default Credent
 Separate from prod so test data, test emails, and test sign-ins never touch real members.
 
 - **Firebase project**: `naisi-website-dev` (Blaze plan) — its own Firestore, Auth, Storage, Secret Manager.
-- **App Hosting backend**: `naisi-website` (same name as prod's backend, different project). URL: `https://naisi-website--naisi-website-dev.europe-west4.hosted.app`.
+- **App Hosting backend**: `naisi-website` (same name as prod's backend, different project). URL: `https://dev.naisi.uk`.
 - **Branch**: push to `dev` → auto-deploys.
 - **Env vars**: base values come from [`apphosting.yaml`](./apphosting.yaml) (prod-shaped). The dev backend overrides the values that differ via the Firebase console → App Hosting → `naisi-website` backend → Settings → Environment variables. Current overrides: `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`, `SMTP_FROM_NAME`, `NEXT_PUBLIC_APP_URL`. Secrets resolve by name against the dev project's Secret Manager.
 - **SMTP**: same `ai-safety@uonsu.com` sender as prod, display name overridden to `NAISI (dev)` so recipients can tell real mail from test.
@@ -115,12 +115,13 @@ Light theme: change `data-theme="dark"` to `"light"` in [src/app/layout.tsx](src
 - Course & homework viewer (BlueDot-style)
 - Track-lead sub-role (admin-assigned heads of a reading group / project)
 
-## Upcoming housekeeping
+## Housekeeping
 
-- **2026-05-06 — legacy-URL cleanup** (two weeks after the Safari auth fix / custom-domain migration landed 2026-04-22). By this date, confirm the new domains (`naisi.uk` + `auth.naisi.uk` on prod, `dev.naisi.uk` + `auth-dev.naisi.uk` on dev) have been stable. Then:
-  - Add a 301 redirect in `src/proxy.ts` that bounces `Host: naisi-website--naisi-website-dev.europe-west4.hosted.app` → `https://dev.naisi.uk` (same path)
-  - Remove `naisi-website--naisi-website-dev.europe-west4.hosted.app` from Firebase Auth → Authorized domains on the dev project
-  - Remove any committee bookmarks / internal docs still referencing the old hosted.app URL
+The custom domains are live and stable: `naisi.uk` + `auth.naisi.uk` on prod, `dev.naisi.uk` + `auth-website-dev.naisi.uk` on dev. Outstanding legacy-URL cleanup:
+
+- Add a 301 redirect in `src/proxy.ts` that bounces `Host: naisi-website--naisi-website-dev.europe-west4.hosted.app` to `https://dev.naisi.uk` (same path)
+- Remove `naisi-website--naisi-website-dev.europe-west4.hosted.app` from Firebase Auth → Authorized domains on the dev project
+- Remove any committee bookmarks or internal docs still referencing the old hosted.app URL
 
 ## License
 
