@@ -3,13 +3,11 @@
 import Select from "@/components/ui/Select";
 import {
   DIETARY_ALLERGIES,
+  DIETARY_NONE,
   type FormQuestion,
   type RsvpAnswer,
 } from "@/lib/firestore/events";
 import styles from "./FormRenderer.module.css";
-
-/** Stored in `checked` when an attendee explicitly confirms they have none. */
-const NO_REQUIREMENTS = "No dietary requirements";
 
 type Props = {
   questions: FormQuestion[];
@@ -96,12 +94,20 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
           }
           case "multiSelect": {
             const opts = q.options.map((o) => o.trim()).filter(Boolean);
-            if (q.allowOther) {
+
+            if (q.allowOther || q.noneOption) {
+              const noneLabel = q.noneOption;
               const raw = answers[q.id];
               const current =
                 raw && typeof raw === "object" && !Array.isArray(raw)
                   ? (raw as { checked: string[]; other: string })
                   : { checked: [], other: "" };
+              const noneSelected = noneLabel
+                ? current.checked.includes(noneLabel)
+                : false;
+              const realChecked = current.checked.filter((c) => c !== noneLabel);
+              const hasPick =
+                realChecked.length > 0 || current.other.trim() !== "";
               return (
                 <fieldset key={q.id} className={styles.field}>
                   <legend className={styles.legend}>
@@ -109,40 +115,63 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                     {q.required && <span className={styles.required}> *</span>}
                   </legend>
                   <div className={styles.checkGrid}>
-                    {opts.map((opt) => {
-                      const checked = current.checked.includes(opt);
-                      return (
-                        <label key={opt} className={styles.checkRow}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={disabled}
-                            onChange={(e) => {
-                              const nextChecked = e.target.checked
-                                ? [...current.checked, opt]
-                                : current.checked.filter((v) => v !== opt);
-                              set(q.id, { checked: nextChecked, other: current.other });
-                            }}
-                          />
-                          <span>{opt}</span>
-                        </label>
-                      );
-                    })}
+                    {opts.map((opt) => (
+                      <label key={opt} className={styles.checkRow}>
+                        <input
+                          type="checkbox"
+                          checked={realChecked.includes(opt)}
+                          disabled={disabled || noneSelected}
+                          onChange={(e) => {
+                            const nextChecked = e.target.checked
+                              ? [...realChecked, opt]
+                              : realChecked.filter((v) => v !== opt);
+                            set(q.id, {
+                              checked: nextChecked,
+                              other: current.other,
+                            });
+                          }}
+                        />
+                        <span>{opt}</span>
+                      </label>
+                    ))}
                   </div>
-                  <label className={styles.otherRow}>
-                    <span className={styles.otherLabel}>Other</span>
-                    <input
-                      type="text"
-                      className={styles.input}
-                      value={current.other}
-                      onChange={(e) =>
-                        set(q.id, { checked: current.checked, other: e.target.value })
-                      }
-                      disabled={disabled}
-                      placeholder="Anything else not listed above"
-                      maxLength={500}
-                    />
-                  </label>
+                  {q.allowOther && (
+                    <label className={styles.otherRow}>
+                      <span className={styles.otherLabel}>Other</span>
+                      <input
+                        type="text"
+                        className={styles.input}
+                        value={current.other}
+                        onChange={(e) =>
+                          set(q.id, {
+                            checked: realChecked,
+                            other: e.target.value,
+                          })
+                        }
+                        disabled={disabled || noneSelected}
+                        placeholder="Anything else not listed above"
+                        maxLength={500}
+                      />
+                    </label>
+                  )}
+                  {noneLabel && (
+                    <label className={styles.noneRow}>
+                      <input
+                        type="checkbox"
+                        checked={noneSelected}
+                        disabled={disabled || hasPick}
+                        onChange={(e) =>
+                          set(
+                            q.id,
+                            e.target.checked
+                              ? { checked: [noneLabel], other: "" }
+                              : { checked: [], other: "" },
+                          )
+                        }
+                      />
+                      <span>{noneLabel}</span>
+                    </label>
+                  )}
                 </fieldset>
               );
             }
@@ -217,8 +246,8 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
               raw && typeof raw === "object" && !Array.isArray(raw)
                 ? (raw as { checked: string[]; other: string })
                 : { checked: [], other: "" };
-            const noneSelected = current.checked.includes(NO_REQUIREMENTS);
-            const realChecked = current.checked.filter((c) => c !== NO_REQUIREMENTS);
+            const noneSelected = current.checked.includes(DIETARY_NONE);
+            const realChecked = current.checked.filter((c) => c !== DIETARY_NONE);
             const hasRequirement =
               realChecked.length > 0 || current.other.trim() !== "";
             return (
@@ -250,7 +279,7 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                   ))}
                 </div>
                 <label className={styles.otherRow}>
-                  <span className={styles.otherLabel}>Other (optional)</span>
+                  <span className={styles.otherLabel}>Anything else?</span>
                   <input
                     type="text"
                     className={styles.input}
@@ -259,7 +288,7 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                       set(q.id, { checked: realChecked, other: e.target.value })
                     }
                     disabled={disabled || noneSelected}
-                    placeholder="e.g. coeliac, low-FODMAP, a severe nut allergy"
+                    placeholder="Other needs, or strict religious requirements not met by vegetarian or vegan"
                     maxLength={500}
                   />
                 </label>
@@ -272,7 +301,7 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                       set(
                         q.id,
                         e.target.checked
-                          ? { checked: [NO_REQUIREMENTS], other: "" }
+                          ? { checked: [DIETARY_NONE], other: "" }
                           : { checked: [], other: "" },
                       )
                     }

@@ -193,24 +193,42 @@ export default function FormBuilder({ questions, onChange, disabled }: Props) {
             )}
 
             {q.type === "multiSelect" && (
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(q.allowOther)}
-                  onChange={(e) =>
-                    patch(i, { allowOther: e.target.checked } as Partial<FormQuestion>)
-                  }
-                  disabled={disabled}
-                />
-                Include an &quot;Other&quot; box people can type into
-              </label>
+              <>
+                <label className={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(q.allowOther)}
+                    onChange={(e) =>
+                      patch(i, { allowOther: e.target.checked } as Partial<FormQuestion>)
+                    }
+                    disabled={disabled}
+                  />
+                  Include an &quot;Other&quot; box people can type into
+                </label>
+                <label className={styles.fieldLabel}>
+                  <span>&quot;None of these&quot; option (optional)</span>
+                  <input
+                    type="text"
+                    className={styles.fieldInput}
+                    value={q.noneOption ?? ""}
+                    onChange={(e) =>
+                      patch(i, {
+                        noneOption: e.target.value || undefined,
+                      } as Partial<FormQuestion>)
+                    }
+                    disabled={disabled}
+                    placeholder="e.g. No, I'm happy with any toppings"
+                  />
+                </label>
+              </>
             )}
 
             {q.type === "dietaryAllergies" && (
               <p className={styles.helper}>
                 Attendees see a checklist of common allergies and dietary
-                requirements (vegetarian, vegan, halal, kosher, and the major
-                allergens), plus a free-text &quot;other&quot; box.
+                requirements (vegetarian, vegan, and the major allergens), a
+                &quot;no requirements&quot; option, and a free-text box for
+                anything else.
               </p>
             )}
 

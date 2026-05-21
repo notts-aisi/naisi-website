@@ -70,6 +70,7 @@ export const FORM_PRESETS: FormPreset[] = [
           "Anchovies",
         ],
         allowOther: true,
+        noneOption: "No, I'm happy with any toppings",
       },
     ],
   },

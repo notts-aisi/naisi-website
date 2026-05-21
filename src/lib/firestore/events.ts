@@ -111,6 +111,8 @@ export type MultiSelectQuestion = BaseQuestion & {
   options: string[];
   /** When true, attendees also get a free-text "Other" box. */
   allowOther?: boolean;
+  /** When set, a mutually-exclusive "none of these" choice shown with this label. */
+  noneOption?: string;
 };
 
 export type YesNoQuestion = BaseQuestion & {
@@ -128,15 +130,15 @@ export type DietaryAllergiesQuestion = BaseQuestion & {
 
 /**
  * Checklist for the combined "allergies or dietary requirements" question.
- * Deliberately broad: it covers religious and lifestyle requirements as well as
- * the major UK allergens, so attendees can disclose everything in one place.
+ * Covers lifestyle diets and the major UK allergens. Halal/kosher are
+ * deliberately NOT here: most observers eat vegetarian, so a hard halal/kosher
+ * checkbox over-constrains catering. A strict religious need goes in the free
+ * text "Other" box instead.
  */
 export const DIETARY_ALLERGIES: string[] = [
   "Vegetarian",
   "Vegan",
   "Pescatarian",
-  "Halal",
-  "Kosher",
   "No pork",
   "No beef",
   "No alcohol",
@@ -153,6 +155,9 @@ export const DIETARY_ALLERGIES: string[] = [
   "Mustard",
   "Sulphites",
 ];
+
+/** Stored in a dietary answer's `checked` when an attendee confirms they have none. */
+export const DIETARY_NONE = "No dietary requirements";
 
 export type FormQuestion =
   | ShortTextQuestion
