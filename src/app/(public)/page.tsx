@@ -47,9 +47,9 @@ export default function Landing() {
           <div className={styles.heroArt} aria-hidden="true">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/brand/naisi-emblem-white.png"
+              src="/brand/naisi-emblem.png"
               alt=""
-              width={179}
+              width={180}
               height={220}
             />
           </div>

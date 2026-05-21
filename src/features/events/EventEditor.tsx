@@ -64,6 +64,13 @@ function statusTone(status: EventStatus): "neutral" | "accent" | "success" | "da
   }
 }
 
+/** Local YYYY-MM-DD — used to keep the end-date picker on or after the start day. */
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
+}
+
 /** Pre-fill the attendee-notification draft from what an edit changed. */
 function buildNotifyDraft(changes: { time: boolean; location: boolean }): {
   subject: string;
@@ -300,6 +307,9 @@ export default function EventEditor({ eventId }: Props) {
     if (!title.trim()) return "Give the event a title before submitting.";
     if (blocks.length === 0) return "Add a description block before submitting.";
     if (!startAt) return "Pick a start date/time.";
+    if (endAt && endAt.getTime() <= startAt.getTime()) {
+      return "The end time can't be before the start time.";
+    }
     if (!location.trim()) return "Add a location (room, venue, or link).";
     if (locationHidden && !locationPublicText.trim()) {
       return "You've hidden the exact location — add a fuzzy label to show publicly (e.g. 'somewhere on campus').";
@@ -633,6 +643,7 @@ export default function EventEditor({ eventId }: Props) {
                 }}
                 disabled={!editable || busy}
                 placeholder="Pick an end date & time…"
+                minDate={startAt ? ymd(startAt) : undefined}
               />
             </Field>
           </div>
