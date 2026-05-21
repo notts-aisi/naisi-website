@@ -9,6 +9,7 @@ import {
   FOOD_TAG_LABEL,
   type EventDoc,
 } from "@/lib/firestore/events";
+import { googleCalendarUrl } from "@/lib/events/ics";
 import styles from "./EventDetailView.module.css";
 
 /**
@@ -28,7 +29,7 @@ export default function EventDetailView({
   const dietaryTags = event.dietaryTags ?? [];
   const foodDisplay = event.foodText?.trim() || legacyFoodLine(event);
   const whereText = event.locationHidden ? event.locationPublicText : event.location;
-  const showCalendar = !isCancelled && !!event.startAt;
+  const calendarStart = isCancelled ? null : event.startAt;
 
   return (
     <div className={styles.page}>
@@ -124,11 +125,27 @@ export default function EventDetailView({
               )}
             </div>
 
-            {showCalendar && (
-              <div className={styles.calendarButton}>
-                <a href={`/api/events/${event.id}/calendar.ics`} download>
-                  <Button variant="ghost">Add to calendar</Button>
-                </a>
+            {calendarStart && (
+              <div className={styles.calendar}>
+                <span className={styles.calendarLabel}>Add to calendar</span>
+                <div className={styles.calendarLinks}>
+                  <a
+                    href={googleCalendarUrl({
+                      title: event.title || "NAISI event",
+                      description: calendarDescription(event),
+                      location: whereText || undefined,
+                      startAt: calendarStart,
+                      endAt: event.endAt,
+                    })}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    <Button variant="ghost">Google Calendar</Button>
+                  </a>
+                  <a href={`/api/events/${event.id}/calendar.ics`} download>
+                    <Button variant="ghost">Apple, Outlook (.ics)</Button>
+                  </a>
+                </div>
               </div>
             )}
           </Card>
@@ -165,6 +182,15 @@ export default function EventDetailView({
       </div>
     </div>
   );
+}
+
+/** Calendar-entry notes: the food line, if any, and a link back to the event. */
+function calendarDescription(event: EventDoc): string | undefined {
+  const parts: string[] = [];
+  if (event.foodText?.trim()) parts.push(`Food: ${event.foodText.trim()}`);
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (appUrl) parts.push(`${appUrl}/events/${event.id}`);
+  return parts.length > 0 ? parts.join("\n") : undefined;
 }
 
 /** foodText is the primary description; fall back to the legacy provenance for old events. */

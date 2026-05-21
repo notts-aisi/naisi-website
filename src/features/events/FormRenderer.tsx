@@ -257,8 +257,9 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                   {q.required && <span className={styles.required}> *</span>}
                 </legend>
                 <p className={styles.helper}>
-                  Tick anything that applies, however minor. The more we know, the
-                  better we can cater for you.
+                  Tick anything we need to keep off your plate, whether a diet
+                  you follow or an allergy. Tick only genuine requirements, not
+                  mild preferences.
                 </p>
                 <div className={styles.checkGrid}>
                   {DIETARY_ALLERGIES.map((a) => (

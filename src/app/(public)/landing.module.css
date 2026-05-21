@@ -96,8 +96,6 @@
   right: var(--space-6);
   top: 50%;
   transform: translateY(-50%);
-  opacity: 0.35;
-  filter: blur(0.5px);
   pointer-events: none;
 }
 

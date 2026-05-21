@@ -61,6 +61,12 @@ export async function POST(
     );
   }
   const endDate = parseDate(body.endAt);
+  if (endDate && endDate.getTime() <= startDate.getTime()) {
+    return NextResponse.json(
+      { error: "The end time can't be before the start time." },
+      { status: 400 },
+    );
+  }
 
   const location = typeof body.location === "string" ? body.location.trim() : "";
   const locationHidden = body.locationHidden === true;

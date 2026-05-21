@@ -177,7 +177,6 @@ export const DIETARY_ALLERGIES: string[] = [
   "Pescatarian",
   "No pork",
   "No beef",
-  "No alcohol",
   "Gluten / wheat",
   "Dairy / lactose",
   "Eggs",
