@@ -37,7 +37,6 @@ import BlockEditor from "@/features/newsletter/editor/BlockEditor";
 import ImageUpload from "@/features/newsletter/editor/ImageUpload";
 import {
   approveEvent,
-  cancelEvent,
   deleteEvent,
   rejectEvent,
   revertEventToDraft,
@@ -145,6 +144,18 @@ export default function EventEditor({ eventId }: Props) {
     | { kind: "idle" }
     | { kind: "sending" }
     | { kind: "sent"; sent: number }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  // Cancel-with-notify modal. Cancelling sets the event to "cancelled" and,
+  // when the tick is on, emails confirmed + waitlisted attendees.
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelNotify, setCancelNotify] = useState(true);
+  const [cancelNote, setCancelNote] = useState("");
+  const [cancelState, setCancelState] = useState<
+    | { kind: "idle" }
+    | { kind: "cancelling" }
+    | { kind: "done"; notified: boolean; sent: number }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
 
@@ -439,18 +450,42 @@ export default function EventEditor({ eventId }: Props) {
     }
   }
 
-  async function onCancel() {
+  function openCancelModal() {
+    setCancelNotify(true);
+    setCancelNote("");
+    setCancelState({ kind: "idle" });
+    setCancelOpen(true);
+  }
+
+  async function onConfirmCancel() {
     if (!event) return;
-    if (!window.confirm("Mark this event as cancelled? Attendees won't be notified automatically.")) return;
-    setBusy(true);
-    setError(null);
+    setCancelState({ kind: "cancelling" });
     try {
-      await cancelEvent(event.id);
+      const res = await fetch(`/api/events/${event.id}/cancel`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ notify: cancelNotify, note: cancelNote }),
+      });
+      const body = (await res.json().catch(() => null)) as
+        | { ok?: true; notified?: boolean; sent?: number; error?: string }
+        | null;
+      if (!res.ok || !body?.ok) {
+        setCancelState({
+          kind: "error",
+          message: body?.error ?? `Cancel failed (${res.status})`,
+        });
+        return;
+      }
+      setCancelState({
+        kind: "done",
+        notified: body.notified ?? false,
+        sent: body.sent ?? 0,
+      });
     } catch (err) {
-      console.error(err);
-      setError(err instanceof Error ? err.message : "Cancel failed");
-    } finally {
-      setBusy(false);
+      setCancelState({
+        kind: "error",
+        message: err instanceof Error ? err.message : "Cancel failed",
+      });
     }
   }
 
@@ -1012,7 +1047,7 @@ export default function EventEditor({ eventId }: Props) {
         )}
 
         {canApprove && status === "published" && (
-          <Button variant="ghost" onClick={onCancel} disabled={busy}>
+          <Button variant="ghost" onClick={openCancelModal} disabled={busy}>
             Mark cancelled
           </Button>
         )}
@@ -1036,6 +1071,87 @@ export default function EventEditor({ eventId }: Props) {
           </button>
         )}
       </div>
+
+      {cancelOpen && (
+        <div className={styles.modalOverlay} role="dialog" aria-modal="true">
+          <div className={styles.modal}>
+            {cancelState.kind === "done" ? (
+              <>
+                <p className={styles.modalTitle}>Event cancelled</p>
+                <p className={styles.modalHint}>
+                  {cancelState.notified
+                    ? cancelState.sent > 0
+                      ? `Emailed ${cancelState.sent} attendee${
+                          cancelState.sent === 1 ? "" : "s"
+                        } about the cancellation.`
+                      : "No confirmed or waitlisted attendees to email."
+                    : "Attendees were not emailed."}
+                </p>
+                <div className={styles.modalActions}>
+                  <Button onClick={() => setCancelOpen(false)}>Close</Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className={styles.modalTitle}>Cancel this event?</p>
+                <p className={styles.modalHint}>
+                  This marks the event as cancelled. It stays visible at its
+                  link, clearly labelled as cancelled.
+                </p>
+                <label className={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={cancelNotify}
+                    onChange={(e) => setCancelNotify(e.target.checked)}
+                    disabled={cancelState.kind === "cancelling"}
+                  />
+                  Email confirmed and waitlisted attendees that it&apos;s
+                  cancelled
+                </label>
+                <Field
+                  id="cancel-note"
+                  label="Note to attendees (optional)"
+                  hint={
+                    cancelNotify
+                      ? "Included in the cancellation email - e.g. why it's off, or whether it'll be rescheduled."
+                      : "Only sent if you email attendees above."
+                  }
+                >
+                  <Textarea
+                    id="cancel-note"
+                    value={cancelNote}
+                    onChange={(e) => setCancelNote(e.target.value)}
+                    rows={3}
+                    maxLength={1000}
+                    disabled={cancelState.kind === "cancelling"}
+                    placeholder="e.g. The venue fell through. We're sorry, and we'll try to reschedule soon."
+                  />
+                </Field>
+                {cancelState.kind === "error" && (
+                  <p className={styles.danger}>{cancelState.message}</p>
+                )}
+                <div className={styles.modalActions}>
+                  <Button
+                    onClick={onConfirmCancel}
+                    disabled={cancelState.kind === "cancelling"}
+                  >
+                    {cancelState.kind === "cancelling"
+                      ? "Cancelling…"
+                      : "Cancel event"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => setCancelOpen(false)}
+                    disabled={cancelState.kind === "cancelling"}
+                  >
+                    Keep event
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {brandingModalOpen && posterUrl && (
         <CoverBrandingModal
