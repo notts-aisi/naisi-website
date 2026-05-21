@@ -11,7 +11,7 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://naisi.org.uk"),
+  metadataBase: new URL("https://naisi.uk"),
   title: {
     default: "Nottingham AI Safety Initiative",
     template: "%s · NAISI",
