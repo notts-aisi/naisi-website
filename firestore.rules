@@ -8,6 +8,17 @@ service cloud.firestore {
     function hasRole(roles) { return isSignedIn() && userRole() in roles; }
     function isAdmin()      { return hasRole(['admin']); }
 
+    // SU-recognised committee: committee members the Students' Union formally
+    // recognises. They are trusted with member PII (the users collection) and
+    // full committee task powers. Non-SU committee are scoped to the tasks
+    // they are explicitly added to. `suRecognised` is admin-set and locked
+    // against self-service edits in the users create/update rules below.
+    function isSuCommittee() {
+      return hasRole(['committee'])
+        && get(/databases/$(database)/documents/users/$(request.auth.uid))
+             .data.get('suRecognised', false) == true;
+    }
+
     // Keep the user doc under a reasonable size cap as a DoS guard;
     // detailed shape validation happens in the React forms.
     function smallEnough() {
@@ -18,17 +29,32 @@ service cloud.firestore {
 
     // === users ===
     match /users/{uid} {
-      allow read: if isSignedIn();
+      // Member PII: emails, university email, application motivation, roles.
+      // Readable only by SU-recognised committee and admins, plus each user
+      // reading their own doc. A plain signed-in account (including one that
+      // has signed in but not yet registered) can no longer enumerate the
+      // membership. Non-admin task views resolve names via a server route.
+      allow read: if isAdmin() || isSuCommittee()
+        || (isSignedIn() && request.auth.uid == uid);
 
-      // Self-create: must use own uid and start as 'pending'.
+      // Self-create: must use own uid and start as 'pending'. `tracks`,
+      // `permissions` and `suRecognised` are all admin-controlled. A
+      // self-created doc must not seed any of them (the signup flow writes
+      // none). Without these guards a user could self-grant drafter
+      // permissions or SU-committee trust at create time.
       allow create: if isSignedIn()
         && request.auth.uid == uid
         && request.resource.data.role == 'pending'
+        && !('tracks' in request.resource.data)
+        && !('permissions' in request.resource.data)
+        && !('suRecognised' in request.resource.data)
         && smallEnough();
 
-      // Self-update: role, tracks, and permissions all unchanged.
+      // Self-update: role, tracks, permissions and suRecognised all unchanged.
       // (These are admin-only; a user editing their own profile must not be able
-      //  to flip or clear any of them.)
+      //  to flip or clear any of them. suRecognised in particular is a trust
+      //  boundary; leaving it unlocked would let a non-SU committee member
+      //  self-grant access to all member PII.)
       // Also: self-changes to `profile.universityEmail` are rate-limited if
       // the address was previously suppressed — the webhook stamps a lock
       // timestamp on the user doc, and this rule rejects further changes
@@ -38,6 +64,7 @@ service cloud.firestore {
             && request.resource.data.role == resource.data.role
             && request.resource.data.get('tracks', []) == resource.data.get('tracks', [])
             && request.resource.data.get('permissions', {}) == resource.data.get('permissions', {})
+            && request.resource.data.get('suRecognised', false) == resource.data.get('suRecognised', false)
             && (
               request.resource.data.get(['profile', 'universityEmail'], '')
                 == resource.data.get(['profile', 'universityEmail'], '')
@@ -58,11 +85,14 @@ service cloud.firestore {
     // === tasks ===
     //
     // Visibility model:
-    // - 'committee' visibility: every committee/admin sees the task on the board.
+    // - 'committee' visibility: every SU-recognised committee member + admin
+    //   sees the task on the board. Non-SU committee see it only if they are
+    //   on it (completer/reviewer).
     // - 'assignees-only': only the listed completers/reviewers + admins see it.
     //   Admins-only toggle (committee cannot create OR flip to assignees-only).
-    // - Members can create tasks ONLY for themselves with source='personal'
-    //   and visibility='assignees-only' (powers the "quick add" on My Work).
+    // - Members (and non-SU committee) can create tasks ONLY for themselves
+    //   with source='personal' and visibility='assignees-only' (powers the
+    //   "quick add" on My Work).
     //
     // Sequential subtask gating (blockedBy) is enforced client-side, not here —
     // evaluating it would mean scanning two arrays on every write. Inside a
@@ -78,7 +108,11 @@ service cloud.firestore {
       function isTaskCreator() {
         return isSignedIn() && request.auth.uid == taskData().creatorUid;
       }
-      function isCommittee() { return hasRole(['committee', 'admin']); }
+      // Committee powers on tasks (seeing every committee-visibility task and
+      // creating/managing them) are limited to SU-recognised committee plus
+      // admins. Non-SU committee collaborate only on tasks they are explicitly
+      // added to, via the isCompleter()/isReviewer() branches.
+      function isCommittee() { return isAdmin() || isSuCommittee(); }
       function visibleToMe() {
         return isAdmin()
           || (isCommittee() && taskData().visibility == 'committee')
@@ -108,8 +142,8 @@ service cloud.firestore {
         );
 
       // Admin = full control (incl. flipping visibility).
-      // Committee = full control on committee-visibility tasks but CANNOT flip
-      // visibility to 'assignees-only' (admin-only).
+      // SU committee = full control on committee-visibility tasks but CANNOT
+      // flip visibility to 'assignees-only' (admin-only).
       // Completers + reviewers = narrow field-level writes (status/subtasks/
       // counters/blocks/blockConsents). Including reviewers here lets a
       // reviewer tick their review subtask even if they're not on the
@@ -159,7 +193,7 @@ service cloud.firestore {
         }
         function canAccessParent() {
           return isAdmin()
-            || (hasRole(['committee', 'admin']) && parent().visibility == 'committee')
+            || (isSuCommittee() && parent().visibility == 'committee')
             || request.auth.uid in parent().completerUids
             || request.auth.uid in parent().reviewerUids;
         }
@@ -183,7 +217,7 @@ service cloud.firestore {
         }
         function canAccessParent() {
           return isAdmin()
-            || (hasRole(['committee', 'admin']) && parent().visibility == 'committee')
+            || (isSuCommittee() && parent().visibility == 'committee')
             || request.auth.uid in parent().completerUids
             || request.auth.uid in parent().reviewerUids;
         }
@@ -200,7 +234,7 @@ service cloud.firestore {
         }
         function canAccessParent() {
           return isAdmin()
-            || (hasRole(['committee', 'admin']) && parent().visibility == 'committee')
+            || (isSuCommittee() && parent().visibility == 'committee')
             || request.auth.uid in parent().completerUids
             || request.auth.uid in parent().reviewerUids;
         }
@@ -238,16 +272,18 @@ service cloud.firestore {
     }
 
     // === bookings ===
+    // No booking feature writes from the client yet. The old
+    // `create: if isSignedIn()` was unvalidated: any signed-in user could
+    // forge booking docs (arbitrary host/guest uids, no size cap, naming
+    // someone else as host so it surfaced in their view). All client writes
+    // are locked; when the booking feature lands its writes go through the
+    // Admin SDK (which bypasses rules) and a validated create rule is added
+    // here alongside it.
     match /bookings/{bookingId} {
       allow read: if isAdmin()
         || (isSignedIn() && (request.auth.uid == resource.data.hostUid
                           || request.auth.uid == resource.data.guestUid));
-      allow create: if isSignedIn();
-      allow update: if isSignedIn()
-        && (request.auth.uid == resource.data.hostUid
-            || request.auth.uid == resource.data.guestUid
-            || isAdmin());
-      allow delete: if isAdmin();
+      allow create, update, delete: if false;
     }
 
     // === news (public read, admin write) ===

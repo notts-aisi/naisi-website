@@ -22,6 +22,7 @@ import {
   deleteUser,
   setPermissions,
   setRole,
+  setSuRecognised,
   setTracks,
   unrejectUser,
   updateMember,
@@ -184,6 +185,18 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
     } catch (err) {
       console.error(err);
       alert("Failed to update tracks");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onToggleSuRecognised() {
+    setBusy(true);
+    try {
+      await setSuRecognised(user.uid, !user.suRecognised);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update SU recognition");
     } finally {
       setBusy(false);
     }
@@ -375,6 +388,18 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                   })}
                 </div>
               </div>
+
+              {user.role === "committee" && (
+                <div className={styles.controlBlock}>
+                  <span className={styles.controlLabel}>SU recognition</span>
+                  <Switch
+                    checked={Boolean(user.suRecognised)}
+                    onChange={onToggleSuRecognised}
+                    disabled={busy}
+                    label="Recognised by the SU (can see member directory and task board)"
+                  />
+                </div>
+              )}
 
               <div className={styles.controlBlock}>
                 <span className={styles.controlLabel}>

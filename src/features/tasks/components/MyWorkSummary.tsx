@@ -5,9 +5,9 @@ import Link from "next/link";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import { useAuth } from "@/auth/AuthProvider";
-import { useMembers } from "@/features/admin/useMembers";
 import { useProjects } from "@/features/admin/useProjects";
 import { isOverdue, type TaskDoc } from "@/lib/firestore/tasks";
+import { useTaskRoster } from "../hooks/useTaskRoster";
 import { useTasks } from "../hooks/useTasks";
 import TaskDetailModal from "./TaskDetailModal";
 import DueDateBadge from "./DueDateBadge";
@@ -16,7 +16,9 @@ export default function MyWorkSummary() {
   const { user, role } = useAuth();
   const { tasks } = useTasks(user ? { completerUid: user.uid } : {});
   const { projects } = useProjects();
-  const { users } = useMembers();
+  // Names of people on the viewer's own tasks, via a scoped route. Members and
+  // non-SU committee cannot read the `users` collection directly.
+  const { users } = useTaskRoster();
   const [openId, setOpenId] = useState<string | null>(null);
 
   const open = useMemo(() => tasks.filter((t) => t.status !== "done"), [tasks]);
