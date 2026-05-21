@@ -3,7 +3,14 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { sanitizeBlocks } from "@/lib/firestore/newsletterBlocks";
-import { FOOD_TAGS, asCoverBranding, sanitizeSignupForm } from "@/lib/firestore/events";
+import {
+  FOOD_TAGS,
+  asCoverBranding,
+  asCoverLogoColor,
+  asCoverStripSize,
+  sanitizeSignupForm,
+} from "@/lib/firestore/events";
+import { formatEventWhen, type EventChange } from "@/lib/events/changeSummary";
 
 /**
  * Server-side edit of an event. Firestore rules block client writes once an
@@ -63,7 +70,7 @@ export async function POST(
   const endDate = parseDate(body.endAt);
   if (endDate && endDate.getTime() <= startDate.getTime()) {
     return NextResponse.json(
-      { error: "The end time can't be before the start time." },
+      { error: "An event can't end before it starts." },
       { status: 400 },
     );
   }
@@ -108,18 +115,39 @@ export async function POST(
     dietaryTags,
     posterUrl: posterUrl ?? FieldValue.delete(),
     coverBranding: asCoverBranding(body.coverBranding),
+    coverLogoColor: asCoverLogoColor(body.coverLogoColor),
+    coverStripSize: asCoverStripSize(body.coverStripSize),
   };
 
-  // Flag the changes confirmed attendees would want an email about.
-  const oldStart = old.startAt?.toMillis?.() ?? null;
-  const oldEnd = old.endAt?.toMillis?.() ?? null;
-  const changes = {
-    time: oldStart !== startDate.getTime() || oldEnd !== (endDate ? endDate.getTime() : null),
-    location: (typeof old.location === "string" ? old.location : "") !== location,
-    title: (typeof old.title === "string" ? old.title : "") !== title,
-  };
+  // Build a human-readable diff of the changes confirmed attendees would want
+  // an email about (time and place). The editor uses this to pre-fill the
+  // notify composer.
+  const oldStart: Date | null = old.startAt?.toDate?.() ?? null;
+  const oldEnd: Date | null = old.endAt?.toDate?.() ?? null;
+  const oldLocation = typeof old.location === "string" ? old.location : "";
+
+  const timeChanged =
+    (oldStart?.getTime() ?? null) !== startDate.getTime() ||
+    (oldEnd?.getTime() ?? null) !== (endDate ? endDate.getTime() : null);
+  const locationChanged = oldLocation !== location;
+
+  const changeSummary: EventChange[] = [];
+  if (timeChanged) {
+    changeSummary.push({
+      label: "When",
+      from: formatEventWhen(oldStart, oldEnd),
+      to: formatEventWhen(startDate, endDate),
+    });
+  }
+  if (locationChanged) {
+    changeSummary.push({
+      label: "Where",
+      from: oldLocation || "(not set)",
+      to: location || "(not set)",
+    });
+  }
 
   await ref.update(patch);
 
-  return NextResponse.json({ ok: true, changes });
+  return NextResponse.json({ ok: true, changeSummary });
 }

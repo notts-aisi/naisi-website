@@ -107,6 +107,35 @@
   margin: 0 0 var(--space-3);
 }
 
+.changeSummary {
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.changeRow {
+  margin: var(--space-1) 0;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+.changeOld {
+  text-decoration: line-through;
+  color: var(--color-text-muted);
+}
+
+.changeArrow {
+  color: var(--color-text-muted);
+}
+
+.changeNew {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
 .editorActions {
   display: flex;
   gap: var(--space-3);

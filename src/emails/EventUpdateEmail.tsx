@@ -10,6 +10,8 @@ import {
   Section,
   Text,
 } from "@react-email/components";
+import EventChangeSummary from "./EventChangeSummary";
+import type { EventChange } from "@/lib/events/changeSummary";
 
 type Props = {
   eventTitle: string;
@@ -19,6 +21,8 @@ type Props = {
   subject: string;
   /** Organiser-written plain-text body. Rendered with paragraph breaks preserved. */
   body: string;
+  /** Optional notify-worthy change diff, rendered as a struck-through summary. */
+  changes?: EventChange[];
   cancelUrl?: string;
   changeUrl?: string;
   instagramHandle?: string;
@@ -37,6 +41,7 @@ export default function EventUpdateEmail({
   locationLine,
   subject,
   body,
+  changes,
   cancelUrl,
   changeUrl,
   instagramHandle,
@@ -67,6 +72,8 @@ export default function EventUpdateEmail({
               </Text>
             ))}
           </Section>
+
+          <EventChangeSummary changes={changes ?? []} />
 
           <Section style={style.details}>
             <Text style={style.detailLine}>

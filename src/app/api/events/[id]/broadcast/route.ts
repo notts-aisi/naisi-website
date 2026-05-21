@@ -9,47 +9,19 @@ import {
   signRsvpToken,
 } from "@/lib/events/rsvpToken";
 import { filterSuppressed } from "@/lib/firestore/suppression";
+import { formatEventWhen, parseEventChanges } from "@/lib/events/changeSummary";
 
 type BroadcastPayload = {
   subject?: unknown;
   body?: unknown;
   /** Whether to include waitlisted attendees in addition to confirmed. Default true. */
   includeWaitlisted?: unknown;
+  /** Optional notify-worthy change diff, rendered as a struck-through summary. */
+  changes?: unknown;
 };
 
 const SUBJECT_MAX = 150;
 const BODY_MAX = 8000;
-
-function formatWhen(startAt: Date | null, endAt: Date | null): string {
-  if (!startAt) return "Date to be confirmed";
-  const base = startAt.toLocaleString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  if (!endAt) return base;
-  const sameDay =
-    startAt.getFullYear() === endAt.getFullYear() &&
-    startAt.getMonth() === endAt.getMonth() &&
-    startAt.getDate() === endAt.getDate();
-  if (sameDay) {
-    const endTime = endAt.toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    return `${base} → ${endTime}`;
-  }
-  return `${base} → ${endAt.toLocaleString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "long",
-    hour: "2-digit",
-    minute: "2-digit",
-  })}`;
-}
 
 /**
  * Organiser broadcast — send a one-off update email (room change, reminder,
@@ -80,6 +52,7 @@ export async function POST(
   const body =
     typeof payload.body === "string" ? payload.body.trim().slice(0, BODY_MAX) : "";
   const includeWaitlisted = payload.includeWaitlisted !== false;
+  const changes = parseEventChanges(payload.changes);
 
   if (!subject) return NextResponse.json({ error: "Subject is required." }, { status: 400 });
   if (!body) return NextResponse.json({ error: "Message body is required." }, { status: 400 });
@@ -107,7 +80,7 @@ export async function POST(
     return NextResponse.json({ ok: true, sent: 0, failed: 0, suppressed: 0 });
   }
 
-  const whenLine = formatWhen(
+  const whenLine = formatEventWhen(
     event.startAt?.toDate?.() ?? null,
     event.endAt?.toDate?.() ?? null,
   );
@@ -169,6 +142,7 @@ export async function POST(
           locationLine,
           subject,
           body,
+          changes,
           cancelUrl,
           changeUrl,
           instagramHandle,

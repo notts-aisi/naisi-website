@@ -31,6 +31,7 @@ import {
   type FormQuestion,
 } from "@/lib/firestore/events";
 import type { Block } from "@/lib/firestore/newsletterBlocks";
+import type { EventChange } from "@/lib/events/changeSummary";
 import { canApproveEvent, canDraftEvent } from "@/lib/firestore/users";
 import BlockEditor from "@/features/newsletter/editor/BlockEditor";
 import ImageUpload from "@/features/newsletter/editor/ImageUpload";
@@ -74,26 +75,24 @@ function ymd(d: Date): string {
 }
 
 /** Pre-fill the attendee-notification draft from what an edit changed. */
-function buildNotifyDraft(changes: { time: boolean; location: boolean }): {
+function buildNotifyDraft(changes: EventChange[]): {
   subject: string;
   body: string;
 } {
+  const hasWhen = changes.some((c) => c.label === "When");
+  const hasWhere = changes.some((c) => c.label === "Where");
   const subject =
-    changes.time && changes.location
-      ? "Update: new time and location"
-      : changes.time
+    hasWhen && hasWhere
+      ? "Update: new time and place"
+      : hasWhen
         ? "Update: new time"
-        : "Update: new location";
-  const what =
-    changes.time && changes.location
-      ? "the time and location"
-      : changes.time
-        ? "the time"
-        : "the location";
+        : hasWhere
+          ? "Update: new location"
+          : "Event update";
   const body =
-    `Quick heads-up: we've updated ${what} for this event. ` +
-    `The latest details are shown below. ` +
-    `Apologies for any inconvenience, and let us know if you can no longer make it.`;
+    "Quick heads-up: we've updated some details for this event. " +
+    "What changed is shown below, with the latest full details underneath. " +
+    "Apologies for any inconvenience, and let us know if you can no longer make it.";
   return { subject, body };
 }
 
@@ -135,9 +134,12 @@ export default function EventEditor({ eventId }: Props) {
   >({ kind: "idle" });
 
   // After editing a published event, offer to email confirmed attendees.
+  // The opt-in checkbox by Save gates whether the composer opens at all.
+  const [notifyOnSave, setNotifyOnSave] = useState(false);
   const [notifyDraft, setNotifyDraft] = useState<{
     subject: string;
     body: string;
+    changes: EventChange[];
   } | null>(null);
   const [notifyState, setNotifyState] = useState<
     | { kind: "idle" }
@@ -254,20 +256,19 @@ export default function EventEditor({ eventId }: Props) {
         }),
       });
       const resBody = (await res.json().catch(() => null)) as
-        | {
-            ok?: true;
-            changes?: { time: boolean; location: boolean; title: boolean };
-            error?: string;
-          }
+        | { ok?: true; changeSummary?: EventChange[]; error?: string }
         | null;
       if (!res.ok || !resBody?.ok) {
         throw new Error(resBody?.error ?? `Save failed (${res.status})`);
       }
-      const ch = resBody.changes;
-      if (ch && (ch.time || ch.location)) {
-        setNotifyDraft(buildNotifyDraft(ch));
+      // Only open the notify composer when the organiser opted in and there
+      // was a notify-worthy change. Otherwise the save is silent.
+      const summary = resBody.changeSummary ?? [];
+      if (notifyOnSave && summary.length > 0) {
+        setNotifyDraft({ ...buildNotifyDraft(summary), changes: summary });
         setNotifyState({ kind: "idle" });
       }
+      setNotifyOnSave(false);
     } else {
       await updateEvent(event.id, fields);
     }
@@ -299,7 +300,11 @@ export default function EventEditor({ eventId }: Props) {
       const res = await fetch(`/api/events/${event.id}/broadcast`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ subject: notifyDraft.subject, body: notifyDraft.body }),
+        body: JSON.stringify({
+          subject: notifyDraft.subject,
+          body: notifyDraft.body,
+          changes: notifyDraft.changes,
+        }),
       });
       const resBody = (await res.json().catch(() => null)) as
         | { ok?: true; sent?: number; error?: string }
@@ -585,9 +590,22 @@ export default function EventEditor({ eventId }: Props) {
         <Card padding="lg">
           <h2 className={styles.sectionTitle}>Notify attendees</h2>
           <p className={styles.sectionHint}>
-            You changed details on a published event. Send confirmed attendees an
-            update, or dismiss this if it doesn&apos;t need an email.
+            You changed details on a published event. The summary below is
+            included in the email automatically; the message is your own note
+            alongside it.
           </p>
+          {notifyDraft.changes.length > 0 && (
+            <div className={styles.changeSummary}>
+              {notifyDraft.changes.map((c) => (
+                <p key={c.label} className={styles.changeRow}>
+                  <strong>{c.label}: </strong>
+                  <span className={styles.changeOld}>{c.from}</span>
+                  <span className={styles.changeArrow}> → </span>
+                  <span className={styles.changeNew}>{c.to}</span>
+                </p>
+              ))}
+            </div>
+          )}
           <div className={styles.fields}>
             <Field id="notify-subject" label="Subject">
               <Input
@@ -937,6 +955,18 @@ export default function EventEditor({ eventId }: Props) {
           <Button onClick={onSave} disabled={busy || !dirty || endBeforeStart}>
             {busy ? "Saving…" : "Save"}
           </Button>
+        )}
+
+        {editable && status === "published" && (
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={notifyOnSave}
+              onChange={(e) => setNotifyOnSave(e.target.checked)}
+              disabled={busy}
+            />
+            Email confirmed attendees about this change
+          </label>
         )}
 
         {canDraft && (status === "draft" || status === "rejected") && isAuthor && (
