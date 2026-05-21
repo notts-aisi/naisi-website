@@ -12,8 +12,9 @@ import {
  * route; every doc it produces is tagged `synthetic: true`.
  *
  * Roughly one in three generated attendees has nothing to flag; the rest
- * carry a random mix, so both the empty and the populated displays (catering
- * notes, charts, the pizza helper) get exercised.
+ * carry a mix that clusters like real signups - popular toppings are avoided
+ * by many people, rarer ones by a few - so the charts and the pizza helper
+ * get a realistic spread of overlapping groups to work with.
  */
 
 const FIRST_NAMES = [
@@ -45,6 +46,19 @@ function pick<T>(arr: T[]): T {
 
 function chance(p: number): boolean {
   return Math.random() < p;
+}
+
+/**
+ * Dislike rate for the multi-select option at `index` of `total`. It steps
+ * down the list - the first option is widely avoided, the last only rarely -
+ * so independent per-option rolls produce overlapping clusters of varying
+ * size rather than a scatter of one-off picks.
+ */
+function optionDislikeRate(index: number, total: number): number {
+  const HIGH = 0.45;
+  const LOW = 0.1;
+  if (total <= 1) return HIGH;
+  return HIGH - (index / (total - 1)) * (HIGH - LOW);
 }
 
 /** A random selection of between `min` and `max` distinct items from `arr`. */
@@ -89,17 +103,23 @@ export function buildSyntheticRsvp(questions: FormQuestion[]): SyntheticRsvp {
       }
       case "multiSelect": {
         const opts = q.options.map((o) => o.trim()).filter(Boolean);
-        const checked =
+        // Roll each option independently against its own dislike rate, so the
+        // popular options cluster (many people share them) while the rare ones
+        // form small groups - the spread the pizza helper is built to handle.
+        const checked: string[] =
           hasRequirements && opts.length > 0
-            ? randomSubset(opts, 1, Math.min(3, opts.length))
+            ? opts.filter((_, i) => chance(optionDislikeRate(i, opts.length)))
             : [];
         if (q.allowOther || q.noneOption) {
-          const finalChecked =
-            checked.length === 0 && q.noneOption ? [q.noneOption] : checked;
           const other =
             hasRequirements && q.allowOther && chance(0.15)
               ? pick(OTHER_TOPPINGS)
               : "";
+          // Mark "none" only when there is genuinely nothing flagged.
+          const finalChecked =
+            checked.length === 0 && other === "" && q.noneOption
+              ? [q.noneOption]
+              : checked;
           answers[q.id] = { checked: finalChecked, other };
         } else if (checked.length > 0) {
           answers[q.id] = checked;

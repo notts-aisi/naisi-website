@@ -59,7 +59,7 @@ export const FORM_PRESETS: FormPreset[] = [
       {
         id: newQuestionId(),
         type: "multiSelect",
-        label: "Any toppings you'd rather avoid?",
+        label: "Any toppings to avoid?",
         required: false,
         options: [
           "Bacon / pork",

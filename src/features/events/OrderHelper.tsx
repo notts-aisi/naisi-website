@@ -154,60 +154,60 @@ export default function OrderHelper({ event, rsvps }: Props) {
               </label>
             </div>
 
-            {plan.pizzas.length === 0 ? (
+            {plan.types.length === 1 && plan.types[0].avoid.length === 0 ? (
               <p className={styles.recommend}>
                 Nobody flagged a topping to avoid. Order{" "}
-                <strong>{plan.freePizzas}</strong> pizza
-                {plan.freePizzas === 1 ? "" : "s"} of whatever you like.
+                <strong>{plan.totalPizzas}</strong> pizza
+                {plan.totalPizzas === 1 ? "" : "s"} of whatever you like.
               </p>
             ) : (
               <>
                 <p className={styles.planIntro}>
-                  A covering order — every attendee has at least one pizza with
-                  none of their flagged toppings:
+                  Every attendee is grouped into one pizza type. Order the
+                  counts below, then choose the real toppings yourself, keeping
+                  each pizza clear of its avoid list.
                 </p>
                 <ul className={styles.planList}>
-                  {plan.pizzas.map((p) => (
-                    <li key={p.avoid.join("|")} className={styles.planRow}>
-                      <span className={styles.planQty}>{p.quantity}×</span>
+                  {plan.types.map((t) => (
+                    <li
+                      key={t.avoid.join("|") || "any"}
+                      className={styles.planRow}
+                    >
+                      <span className={styles.planQty}>{t.quantity}×</span>
                       <span className={styles.planDesc}>
-                        <strong>avoid {p.avoid.join(", ")}</strong>
+                        <strong>
+                          {t.avoid.length === 0
+                            ? "Any toppings"
+                            : `Avoid ${t.avoid.join(", ")}`}
+                        </strong>
                         <span className={styles.planFeeds}>
-                          for {p.feeds} attendee{p.feeds === 1 ? "" : "s"}
+                          {t.avoid.length === 0
+                            ? `for ${t.headcount} with nothing to avoid`
+                            : `for ${t.headcount} attendee${
+                                t.headcount === 1 ? "" : "s"
+                              }`}
                         </span>
                       </span>
                     </li>
                   ))}
-                  {plan.freePizzas > 0 && (
-                    <li className={styles.planRow}>
-                      <span className={styles.planQty}>{plan.freePizzas}×</span>
-                      <span className={styles.planDesc}>
-                        <strong>any toppings</strong>
-                        <span className={styles.planFeeds}>
-                          for the {plan.flexibleCount} with no restrictions
-                        </span>
-                      </span>
-                    </li>
-                  )}
                 </ul>
+                <p className={styles.result}>
+                  <span className={styles.resultBig}>{plan.totalPizzas}</span>{" "}
+                  pizza{plan.totalPizzas === 1 ? "" : "s"} total.
+                </p>
+                {plan.flexibleCount > 0 && (
+                  <p className={styles.muted}>
+                    The {plan.flexibleCount} with nothing to avoid can eat any
+                    pizza here, so if a topping-limited pizza has spare slices
+                    you may not need every &quot;any toppings&quot; one.
+                  </p>
+                )}
+                <p className={styles.muted}>
+                  An estimate. Adjust the slice counts to match your plan; any
+                  free-text notes below still need a check.
+                </p>
               </>
             )}
-
-            <p className={styles.result}>
-              <span className={styles.resultBig}>{plan.totalPizzas}</span>{" "}
-              pizza{plan.totalPizzas === 1 ? "" : "s"} total.
-            </p>
-            {plan.flexibleCount > 0 && plan.freePizzas === 0 && plan.pizzas.length > 0 && (
-              <p className={styles.muted}>
-                The {plan.flexibleCount} attendee
-                {plan.flexibleCount === 1 ? "" : "s"} with no restrictions can
-                eat any pizza above, so they need no extra pizzas.
-              </p>
-            )}
-            <p className={styles.muted}>
-              An estimate from a greedy set-cover. Adjust the slice counts to
-              match your plan; any free-text notes below still need a check.
-            </p>
           </Card>
 
           {analysis.freeTextNotes.length > 0 && (
