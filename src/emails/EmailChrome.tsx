@@ -6,10 +6,17 @@ import {
   Heading,
   Hr,
   Html,
+  Img,
   Preview,
   Section,
   Text,
 } from "@react-email/components";
+
+/**
+ * Email images must be referenced by absolute URL — inbox clients cannot
+ * resolve a bundled/relative asset. The logo is the served PNG in public/.
+ */
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://naisi.uk";
 
 type Props = {
   subject: string;
@@ -38,6 +45,13 @@ export default function EmailChrome({
       <Body style={body}>
         <Container style={container}>
           <Section>
+            <Img
+              src={`${APP_URL}/brand/naisi-emblem.png`}
+              alt="NAISI"
+              width={39}
+              height={48}
+              style={logo}
+            />
             <Text style={eyebrow}>Nottingham AI Safety Initiative</Text>
             <Heading style={heading}>{subject}</Heading>
             {greeting ? <Text style={greetingStyle}>{greeting}</Text> : null}
@@ -71,6 +85,11 @@ const container: React.CSSProperties = {
   backgroundColor: "#ffffff",
   borderRadius: "12px",
   border: "1px solid #e4e4e7",
+};
+
+const logo: React.CSSProperties = {
+  display: "block",
+  margin: "0 0 14px",
 };
 
 const eyebrow: React.CSSProperties = {

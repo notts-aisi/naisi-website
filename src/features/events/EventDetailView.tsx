@@ -2,6 +2,7 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import BlockView from "./BlockView";
+import CoverImage from "./CoverImage";
 import RsvpForm from "./RsvpForm";
 import {
   FOOD_PROVENANCE_BADGE,
@@ -32,8 +33,11 @@ export default function EventDetailView({
   return (
     <div className={styles.page}>
       {event.posterUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={event.posterUrl} alt={event.title} className={styles.poster} />
+        <CoverImage
+          url={event.posterUrl}
+          alt={event.title}
+          branding={event.coverBranding}
+        />
       ) : null}
 
       <div className={styles.layout}>

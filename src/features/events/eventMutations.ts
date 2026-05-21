@@ -13,6 +13,7 @@ import {
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import type { Block } from "@/lib/firestore/newsletterBlocks";
 import type {
+  CoverBranding,
   EventVisibility,
   FoodProvenance,
   FoodTag,
@@ -39,6 +40,7 @@ export async function createEvent(params: {
     waitlistEnabled: false,
     signupForm: [],
     foodProvenance: "none" satisfies FoodProvenance,
+    coverBranding: "corner" satisfies CoverBranding,
     status: "draft",
     authorUid: actingUid(),
     authorDisplayName: params.authorDisplayName,
@@ -78,6 +80,7 @@ type EditableEventFields = Partial<{
   foodText: string | null;
   dietaryTags: FoodTag[];
   posterUrl: string | null;
+  coverBranding: CoverBranding;
 }>;
 
 export async function updateEvent(id: string, fields: EditableEventFields) {
@@ -115,6 +118,7 @@ export async function updateEvent(id: string, fields: EditableEventFields) {
   if (fields.dietaryTags !== undefined) patch.dietaryTags = fields.dietaryTags;
   if (fields.posterUrl !== undefined)
     patch.posterUrl = fields.posterUrl === null ? deleteField() : fields.posterUrl;
+  if (fields.coverBranding !== undefined) patch.coverBranding = fields.coverBranding;
   await updateDoc(doc(db, "events", id), patch);
 }
 

@@ -47,7 +47,7 @@ src/
 ## Conventions
 
 - **Theming**: every colour/spacing/radius reads from a CSS var in `src/theme/tokens.css`. Swapping palette = editing one file. `data-theme="light"` on `<html>` flips to light mode.
-- **Brand mark**: `src/components/BrandMark.tsx` is a placeholder SVG. When real castle+shield asset lands, swap just that file + `public/favicon.svg`.
+- **Brand mark**: `src/components/BrandMark.tsx` renders the real castle + shield + head emblem. All site surfaces sit on the dark theme, so it uses the monochrome white export. Favicon lives at `src/app/icon.png` + `src/app/apple-icon.png` (Next 16 app-router convention). The master logos live in `brand-source/` (not served); `scripts/generate-brand-assets.mjs` regenerates every derivative in `public/brand/` + `src/app/` — re-run it if a master logo changes.
 - **Client vs server components**: public pages lean server-side (SSR + `generateMetadata` for OG tags). Authed pages are client components so real-time Firestore `onSnapshot` works. `(app)/layout.tsx` is a Server Component that role-gates with `getCurrentUser()`.
 - **Two-layer auth gate**: `src/proxy.ts` does a fast session-cookie presence check on protected routes. Real role enforcement happens in `(app)/layout.tsx` via `getCurrentUser()` (Admin SDK, reliable).
 - **No `orderBy` on sparse fields**: Firestore drops docs missing the ordered field. Query without orderBy, sort client-side, or only orderBy on fields that are *always* present.

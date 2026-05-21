@@ -6,16 +6,6 @@
   gap: var(--space-8);
 }
 
-.poster {
-  display: block;
-  width: 100%;
-  /* Cover images are framed in the editor's crop tool, so the hero shows them
-     at their true shape rather than re-cropping with object-fit. */
-  height: auto;
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--color-border);
-}
-
 .layout {
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
