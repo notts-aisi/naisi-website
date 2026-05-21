@@ -121,13 +121,15 @@ events/{id}             { title, blocks[], startAt, endAt, location,
                           coverBranding, coverLogoColor, coverStripSize,
                           archived, status (draft|pending|approved|
                           published|rejected|cancelled), authorUid,
+                          collaboratorUids[],
                           rsvpCount{Pending,Confirmed,Waitlisted}, … }
 
 eventRsvps/{id}         { eventId, uid?, name, email, answers, status
                           (pending|confirmed|waitlisted|denied|cancelled),
                           synthetic, pendingAnswers?, decidedBy?,
                           signupSnapshot?, … }
-                        PII — no public read; all writes via the server route.
+                        Attendee PII - readable only by SU-recognised
+                        committee + admins; all writes via the server route.
 
 subscriptions/{id}      Junction collection — one row per (email, channel).
                         { email, channel, audience ("user" | "guest"),
@@ -287,7 +289,7 @@ Two separate Firebase projects, each with its own App Hosting backend (both back
 - **Member area**: Dashboard with a My Work summary, `/tasks` (personal + assigned tasks, quick-add), `/profile` (profile edit + per-category notification preferences).
 - **Task manager** (`/committee/tasks` + `/tasks`): kanban board, subtasks grouped into ordered blocks with sequential gating, per-block reviewer signoff (lock-in ritual + review matrix), task templates, calendar view, activity feed, threaded comments with @mentions, attachments, My Work, email notifications. Visibility is `committee` vs `assignees-only`; the committee board is gated to SU-recognised committee.
 - **Newsletter**: block-based editor (rich text, images with crop), per-user draft/approve permissions, draft → pending → approved → sent pipeline, server-side send, test send.
-- **Events**: modular signup-form builder, RSVP system (pending / confirmed / waitlisted / denied / cancelled), capacity + waitlist, approve / deny / change-request flow, ICS export + calendar email links, cover-image crop + emblem branding overlay, food declaration + dietary tags, pizza order helper, post-publish editing, event archiving, admin test-RSVP generation, draft/approve permissions parallel to the newsletter.
+- **Events**: modular signup-form builder, RSVP system (pending / confirmed / waitlisted / denied / cancelled), capacity + waitlist, approve / deny / change-request flow, ICS export + calendar email links, cover-image crop + emblem branding overlay, food declaration + dietary tags, pizza order helper, post-publish editing with change notifications, event cancellation with an optional attendee notice, event archiving, admin test-RSVP generation. The events area is open to the whole committee; `draftEvent` gates creating an event and `approveEvent` gates publishing it; an author or admin can add committee members to a single event's `collaboratorUids` so they can edit just that event. Attendee PII (the RSVP list, CSV export, broadcast send) is restricted to SU-recognised committee and admins.
 - **Subscriptions**: junction-collection architecture (one row per email + channel, orthogonal `confirmed` / `subscribed` axes), append-only event log, admin Subscriptions tab (spreadsheet-style table, guest delete, history cap).
 - **Admin dashboard tabs**: Approvals, Members (role / title / bio / `suRecognised` / `permissions` / `tracks` edit + full profile edit + hard delete), Projects (CRUD + archive), Newsletter, Subscriptions, Email designs (application email templates), Deliverability (send log + suppression list), Task templates, Danger zone.
 - **Email infrastructure**: Resend send pipeline, deliverability dashboard, bounce/complaint webhook, application lifecycle emails, transactional emails as JSX templates in `src/emails/`.

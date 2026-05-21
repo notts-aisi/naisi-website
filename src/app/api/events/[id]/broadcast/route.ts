@@ -57,15 +57,16 @@ export async function POST(
   if (!subject) return NextResponse.json({ error: "Subject is required." }, { status: 400 });
   if (!body) return NextResponse.json({ error: "Message body is required." }, { status: 400 });
 
+  // Emailing attendees touches their PII, so it is gated to SU-recognised
+  // committee and admins, matching the eventRsvps read rule.
+  const canBroadcast =
+    viewer.role === "admin" ||
+    (viewer.role === "committee" && viewer.suRecognised);
+  if (!canBroadcast) return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+
   const eventSnap = await db.collection("events").doc(eventId).get();
   if (!eventSnap.exists) return NextResponse.json({ error: "Event not found." }, { status: 404 });
   const event = eventSnap.data() ?? {};
-
-  const isOrganiser =
-    viewer.role === "admin" ||
-    viewer.permissions.approveEvent ||
-    (viewer.permissions.draftEvent && event.authorUid === viewer.uid);
-  if (!isOrganiser) return NextResponse.json({ error: "Forbidden." }, { status: 403 });
 
   // Pull active recipients. Waitlisted attendees get the same email by default
   // (they're just one cancellation away from being confirmed).

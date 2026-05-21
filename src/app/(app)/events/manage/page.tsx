@@ -73,12 +73,28 @@ export default function EventsListPage() {
       ),
     [events, user],
   );
+  // Events someone else authored that the current user was added to as a
+  // collaborator - their own working group, kept apart from the wider list.
+  const iCollaborate = useMemo(
+    () =>
+      events.filter(
+        (e) =>
+          !e.archived &&
+          !!user &&
+          e.authorUid !== user.uid &&
+          e.collaboratorUids.includes(user.uid) &&
+          e.status !== "published" &&
+          e.status !== "cancelled",
+      ),
+    [events, user],
+  );
   const othersActive = useMemo(
     () =>
       events.filter(
         (e) =>
           !e.archived &&
           e.authorUid !== user?.uid &&
+          !(user && e.collaboratorUids.includes(user.uid)) &&
           e.status !== "published" &&
           e.status !== "cancelled",
       ),
@@ -103,7 +119,7 @@ export default function EventsListPage() {
               ? "You can draft, review, and publish events."
               : canDraft
                 ? "You can draft events and submit them for admin review."
-                : "Read-only view of published events."}
+                : "You can view events and help plan the ones you're added to."}
           </p>
         </div>
         {canDraft && (
@@ -144,6 +160,12 @@ export default function EventsListPage() {
               <EventList rows={mine} currentUid={user?.uid ?? null} />
             )}
           </Section>
+
+          {iCollaborate.length > 0 && (
+            <Section title="Events I help plan">
+              <EventList rows={iCollaborate} currentUid={user?.uid ?? null} />
+            </Section>
+          )}
 
           {othersActive.length > 0 && (
             <Section title={canApprove ? "Other drafts in progress" : "Committee drafts in progress"}>

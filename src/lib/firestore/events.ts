@@ -313,6 +313,12 @@ export type EventDoc = {
   status: EventStatus;
   authorUid: string;
   authorDisplayName?: string | null;
+  /**
+   * Committee members the author or an admin explicitly granted edit access to
+   * this specific event. They can edit it (while it is not published) without
+   * holding the draft/approve permissions. Empty/absent on older events.
+   */
+  collaboratorUids: string[];
   reviewerNotes?: string | null;
   approvedBy?: string | null;
   approvedAt?: Date | null;
@@ -370,6 +376,16 @@ function asFoodProvenance(v: unknown): FoodProvenance {
   return ok.includes(v as FoodProvenance) ? (v as FoodProvenance) : "none";
 }
 
+/** Normalize an unknown value into a de-duplicated list of uid strings. */
+export function asUidList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set<string>();
+  for (const u of v) {
+    if (typeof u === "string" && u) seen.add(u);
+  }
+  return Array.from(seen);
+}
+
 function asFoodTags(v: unknown): FoodTag[] {
   if (!Array.isArray(v)) return [];
   const seen = new Set<FoodTag>();
@@ -411,6 +427,7 @@ export function normalizeEvent(id: string, data: Raw): EventDoc {
     status: asStatus(data.status),
     authorUid: (data.authorUid as string) ?? "",
     authorDisplayName: (data.authorDisplayName as string | null | undefined) ?? null,
+    collaboratorUids: asUidList(data.collaboratorUids),
     reviewerNotes: (data.reviewerNotes as string | null | undefined) ?? null,
     approvedBy: (data.approvedBy as string | null | undefined) ?? null,
     approvedAt: tsToDate(data.approvedAt),

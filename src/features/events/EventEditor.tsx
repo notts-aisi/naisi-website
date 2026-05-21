@@ -43,6 +43,7 @@ import {
   submitEventForReview,
   updateEvent,
 } from "./eventMutations";
+import CollaboratorPicker from "./CollaboratorPicker";
 import CoverBrandingModal from "./CoverBrandingModal";
 import FormBuilder from "./FormBuilder";
 import styles from "./EventEditor.module.css";
@@ -97,7 +98,7 @@ function buildNotifyDraft(changes: EventChange[]): {
 
 export default function EventEditor({ eventId }: Props) {
   const router = useRouter();
-  const { user, role, permissions } = useAuth();
+  const { user, role, permissions, suRecognised } = useAuth();
 
   const [event, setEvent] = useState<EventDoc | null>(null);
   const [loading, setLoading] = useState(true);
@@ -208,16 +209,27 @@ export default function EventEditor({ eventId }: Props) {
   const canApprove = viewer ? canApproveEvent(viewer) : false;
 
   const isAuthor = !!user && !!event && event.authorUid === user.uid;
+  // A collaborator was explicitly added (by the author or an admin) so they
+  // can edit this specific event, even without draft/approve permissions.
+  const isCollaborator =
+    !!user && !!event && (event.collaboratorUids ?? []).includes(user.uid);
+  // The "Who can edit this" picker is managed by the author or an admin.
+  const canManageCollaborators = isAuthor || role === "admin";
+  // Attendee PII is for SU-recognised committee and admins only.
+  const canSeeAttendees =
+    role === "admin" || (role === "committee" && suRecognised);
   const status = event?.status ?? "draft";
   const editable = useMemo(() => {
     if (!event) return false;
     if (status === "cancelled") return false;
     // Published events stay editable for approvers via the server update route.
     if (status === "published") return canApprove;
+    // While an event is under review or approved, only approvers touch it.
     if (status === "pending") return canApprove;
     if (status === "approved") return canApprove;
-    return isAuthor || canApprove;
-  }, [event, status, canApprove, isAuthor]);
+    // Drafts and returned events: the author, a collaborator, or an approver.
+    return isAuthor || isCollaborator || canApprove;
+  }, [event, status, canApprove, isAuthor, isCollaborator]);
 
   // An event can't end before (or exactly when) it starts. This blocks Save and
   // Submit, but never the date fields themselves — an event that somehow holds
@@ -572,12 +584,14 @@ export default function EventEditor({ eventId }: Props) {
         >
           <Button variant="ghost">Preview ↗</Button>
         </Link>
-        <Link href={`/events/manage/${event.id}/attendees`}>
-          <Button variant="ghost">
-            Attendees
-            {(event.rsvpCountPending ?? 0) > 0 && ` · ${event.rsvpCountPending} pending`}
-          </Button>
-        </Link>
+        {canSeeAttendees && (
+          <Link href={`/events/manage/${event.id}/attendees`}>
+            <Button variant="ghost">
+              Attendees
+              {(event.rsvpCountPending ?? 0) > 0 && ` · ${event.rsvpCountPending} pending`}
+            </Button>
+          </Link>
+        )}
       </div>
 
       {(status === "pending" || status === "approved") && (
@@ -977,6 +991,20 @@ export default function EventEditor({ eventId }: Props) {
           disabled={!editable || busy}
         />
       </section>
+
+      {canManageCollaborators && (
+        <section>
+          <h2 className={styles.sectionTitle}>Who can edit this</h2>
+          <p className={styles.sectionHint}>
+            Add committee members as collaborators so they can help plan and
+            edit this event. They can edit it up until it&apos;s published;
+            after that only approvers manage it.
+          </p>
+          <Card padding="lg">
+            <CollaboratorPicker eventId={event.id} />
+          </Card>
+        </section>
+      )}
 
       {error && <p className={styles.danger}>{error}</p>}
       {publishStatus.kind === "error" && (

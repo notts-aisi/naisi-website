@@ -17,8 +17,11 @@ export default async function EventPreviewPage({
   const { id } = await params;
   const viewer = await getCurrentUser();
   if (!viewer) redirect("/login");
+  // The preview shows the public event view (no attendee PII), so it matches
+  // the events-area gate: the whole committee, plus draft/approve holders.
   const allowed =
     viewer.role === "admin" ||
+    viewer.role === "committee" ||
     viewer.permissions.draftEvent ||
     viewer.permissions.approveEvent;
   if (!allowed) redirect("/dashboard");

@@ -321,10 +321,12 @@ service cloud.firestore {
     // === events ===
     // Parallel to newsletterDrafts — orthogonal permissions.
     // Drafters can create/read/update; approvers can read/update; admins always in.
-    // Published events are readable by any signed-in user (members see them on
-    // the authed events list). Public visibility for unauthenticated readers is
-    // served via a server route using the admin SDK, so rules stay tight.
-    // 'published' transitions only happen via the admin SDK.
+    // The whole committee can read every event: the events area is open to all
+    // committee members, who plan and collaborate there even without the
+    // draft/approve permissions. Published events are also readable by any
+    // signed-in user (members see them on the authed events list). Public
+    // visibility for unauthenticated readers is served via a server route
+    // using the admin SDK. 'published' transitions only happen via the admin SDK.
     match /events/{eventId} {
       function me() {
         return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
@@ -335,13 +337,20 @@ service cloud.firestore {
       }
       function canDraft()   { return hasPerm('draftEvent');   }
       function canApprove() { return hasPerm('approveEvent'); }
+      // A per-event collaborator: a committee member the author or an admin
+      // explicitly added so they can edit this specific event.
+      function isCollaborator() {
+        return isSignedIn()
+          && request.auth.uid in resource.data.get('collaboratorUids', []);
+      }
 
       allow read: if canDraft() || canApprove()
+        || hasRole(['committee', 'admin'])
         || (isSignedIn() && resource.data.status == 'published');
       allow create: if canDraft()
         && request.resource.data.authorUid == request.auth.uid
         && request.resource.data.status == 'draft';
-      allow update: if (canDraft() || canApprove())
+      allow update: if (canDraft() || canApprove() || isCollaborator())
         && request.resource.data.status != 'published';
       allow delete: if isAdmin()
         || (canDraft() && resource.data.authorUid == request.auth.uid
@@ -415,30 +424,13 @@ service cloud.firestore {
     }
 
     // === eventRsvps ===
-    // RSVPs are PII — never public read. All writes go through the server route
-    // `/api/events/[id]/rsvp` (admin SDK) so rules are a safety net, not the
-    // main gate. Reads: approvers + admins see all; drafters see RSVPs only for
-    // events they authored (we get() the parent event to check).
+    // RSVPs are attendee PII - never public read. All writes go through the
+    // server route `/api/events/[id]/rsvp` (admin SDK), so rules are a safety
+    // net, not the main gate. Reads: SU-recognised committee and admins only -
+    // the same trust boundary as member PII and the committee task board. A
+    // non-SU event author can plan the event but cannot see who signed up.
     match /eventRsvps/{rsvpId} {
-      function me() {
-        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-      }
-      function isEventApprover() {
-        return isSignedIn()
-          && (me().role == 'admin'
-              || me().get(['permissions', 'approveEvent'], false) == true);
-      }
-      function isEventDrafter() {
-        return isSignedIn()
-          && (me().role == 'admin'
-              || me().get(['permissions', 'draftEvent'], false) == true);
-      }
-      function parentEvent() {
-        return get(/databases/$(database)/documents/events/$(resource.data.eventId)).data;
-      }
-
-      allow read: if isEventApprover()
-        || (isEventDrafter() && parentEvent().authorUid == request.auth.uid);
+      allow read: if isAdmin() || isSuCommittee();
       // No direct client writes; the API route uses the admin SDK.
       allow create, update, delete: if false;
     }
