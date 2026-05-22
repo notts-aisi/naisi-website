@@ -13,7 +13,7 @@ import styles from "./OrderHelper.module.css";
 
 type Props = {
   event: EventDoc;
-  /** Confirmed RSVPs — the people the food is being ordered for. */
+  /** Confirmed RSVPs - the people the food is being ordered for. */
   rsvps: RsvpDoc[];
 };
 
@@ -197,9 +197,9 @@ export default function OrderHelper({ event, rsvps }: Props) {
                 </p>
                 {plan.flexibleCount > 0 && (
                   <p className={styles.muted}>
-                    The {plan.flexibleCount} with nothing to avoid can eat any
-                    pizza here, so if a topping-limited pizza has spare slices
-                    you may not need every &quot;any toppings&quot; one.
+                    {`The ${plan.flexibleCount} with nothing to avoid can eat ` +
+                      `any pizza here, so if a topping-limited pizza has spare ` +
+                      `slices you may not need every "any toppings" one.`}
                   </p>
                 )}
                 <p className={styles.muted}>
@@ -213,6 +213,11 @@ export default function OrderHelper({ event, rsvps }: Props) {
           {analysis.freeTextNotes.length > 0 && (
             <Card padding="md">
               <h3 className={styles.cardTitle}>Notes to check by hand</h3>
+              <p className={styles.noteHint}>
+                Free-text from the &quot;Other&quot; box on the
+                toppings-to-avoid question, so read each as a topping that
+                attendee wants to avoid. Work them into the order by hand.
+              </p>
               <ul className={styles.noteList}>
                 {analysis.freeTextNotes.map((n, i) => (
                   <li key={i}>
