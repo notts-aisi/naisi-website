@@ -6,8 +6,13 @@ import { sanitizeBlocks } from "@/lib/firestore/newsletterBlocks";
 import {
   FOOD_TAGS,
   asCoverBranding,
+  asCoverLogoBackdrop,
   asCoverLogoColor,
   asCoverLogoPosition,
+  asCoverLogoScale,
+  asCoverLogoShadow,
+  asCoverLogoX,
+  asCoverLogoY,
   asCoverStripSize,
   sanitizeSignupForm,
 } from "@/lib/firestore/events";
@@ -140,6 +145,11 @@ export async function POST(
     coverLogoColor: asCoverLogoColor(body.coverLogoColor),
     coverStripSize: asCoverStripSize(body.coverStripSize),
     coverLogoPosition: asCoverLogoPosition(body.coverLogoPosition),
+    coverLogoScale: asCoverLogoScale(body.coverLogoScale),
+    coverLogoX: asCoverLogoX(body.coverLogoX),
+    coverLogoY: asCoverLogoY(body.coverLogoY),
+    coverLogoBackdrop: asCoverLogoBackdrop(body.coverLogoBackdrop),
+    coverLogoShadow: asCoverLogoShadow(body.coverLogoShadow),
   };
 
   // Build a human-readable diff of the changes confirmed attendees would want

@@ -14,6 +14,9 @@ import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
 import {
   COVER_BRANDING_LABEL,
+  COVER_LOGO_SCALE_DEFAULT,
+  COVER_LOGO_X_DEFAULT,
+  COVER_LOGO_Y_DEFAULT,
   COVER_STRIP_SIZE_DEFAULT,
   EVENT_STATUS_LABEL,
   FOOD_TAGS,
@@ -137,6 +140,11 @@ export default function EventEditor({ eventId }: Props) {
   const [coverStripSize, setCoverStripSize] = useState(COVER_STRIP_SIZE_DEFAULT);
   const [coverLogoPosition, setCoverLogoPosition] =
     useState<CoverLogoPosition>("bottom");
+  const [coverLogoScale, setCoverLogoScale] = useState(COVER_LOGO_SCALE_DEFAULT);
+  const [coverLogoX, setCoverLogoX] = useState(COVER_LOGO_X_DEFAULT);
+  const [coverLogoY, setCoverLogoY] = useState(COVER_LOGO_Y_DEFAULT);
+  const [coverLogoBackdrop, setCoverLogoBackdrop] = useState(true);
+  const [coverLogoShadow, setCoverLogoShadow] = useState(true);
   const [brandingModalOpen, setBrandingModalOpen] = useState(false);
 
   const [dirty, setDirty] = useState(false);
@@ -207,6 +215,11 @@ export default function EventEditor({ eventId }: Props) {
         setCoverLogoColor((cur) => (dirty ? cur : next.coverLogoColor));
         setCoverStripSize((cur) => (dirty ? cur : next.coverStripSize));
         setCoverLogoPosition((cur) => (dirty ? cur : next.coverLogoPosition));
+        setCoverLogoScale((cur) => (dirty ? cur : next.coverLogoScale));
+        setCoverLogoX((cur) => (dirty ? cur : next.coverLogoX));
+        setCoverLogoY((cur) => (dirty ? cur : next.coverLogoY));
+        setCoverLogoBackdrop((cur) => (dirty ? cur : next.coverLogoBackdrop));
+        setCoverLogoShadow((cur) => (dirty ? cur : next.coverLogoShadow));
         setLoading(false);
       },
       (err) => {
@@ -284,6 +297,11 @@ export default function EventEditor({ eventId }: Props) {
       coverLogoColor,
       coverStripSize,
       coverLogoPosition,
+      coverLogoScale,
+      coverLogoX,
+      coverLogoY,
+      coverLogoBackdrop,
+      coverLogoShadow,
     };
     if (status === "published") {
       // Firestore rules block client writes to published events — go through
@@ -1227,11 +1245,21 @@ export default function EventEditor({ eventId }: Props) {
           logoColor={coverLogoColor}
           stripSize={coverStripSize}
           logoPosition={coverLogoPosition}
+          logoScale={coverLogoScale}
+          logoX={coverLogoX}
+          logoY={coverLogoY}
+          logoBackdrop={coverLogoBackdrop}
+          logoShadow={coverLogoShadow}
           onSelect={(choice) => {
             setCoverBranding(choice.branding);
             setCoverLogoColor(choice.logoColor);
             setCoverStripSize(choice.stripSize);
             setCoverLogoPosition(choice.logoPosition);
+            setCoverLogoScale(choice.logoScale);
+            setCoverLogoX(choice.logoX);
+            setCoverLogoY(choice.logoY);
+            setCoverLogoBackdrop(choice.logoBackdrop);
+            setCoverLogoShadow(choice.logoShadow);
             markDirty();
           }}
           onClose={() => setBrandingModalOpen(false)}

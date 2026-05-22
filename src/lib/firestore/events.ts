@@ -76,11 +76,28 @@ export const COVER_STRIP_SIZE_MAX = 70;
 export const COVER_STRIP_SIZE_DEFAULT = 40;
 
 /**
- * Which edge the cover emblem treatment (strip or corner badge) sits against.
- * Some cover images read better with the mark up top. Absent falls back to
+ * Which edge the gradient-strip treatment sits against. The corner badge is
+ * placed freely via coverLogoX/coverLogoY instead. Absent falls back to
  * "bottom", the original behaviour.
  */
 export type CoverLogoPosition = "top" | "bottom";
+
+/**
+ * Logo size as a percentage of its default footprint, applied to both the
+ * strip and corner treatments. Clamped to [MIN, MAX]; absent falls back to
+ * DEFAULT.
+ */
+export const COVER_LOGO_SCALE_MIN = 50;
+export const COVER_LOGO_SCALE_MAX = 200;
+export const COVER_LOGO_SCALE_DEFAULT = 100;
+
+/**
+ * The corner badge is positioned freely by dragging it on the cover. X/Y are
+ * the badge centre as a percent of the cover, defaulting to the bottom-right
+ * (where the badge used to be fixed).
+ */
+export const COVER_LOGO_X_DEFAULT = 90;
+export const COVER_LOGO_Y_DEFAULT = 86;
 
 /**
  * Event-level declaration about where/how the food is sourced. Lets organizers
@@ -315,8 +332,18 @@ export type EventDoc = {
   coverLogoColor: CoverLogoColor;
   /** Gradient-strip height as a percent of the cover, for the strip treatment. */
   coverStripSize: number;
-  /** Which edge the emblem treatment sits against. Defaults to bottom. */
+  /** Which edge the gradient strip sits against. Defaults to bottom. */
   coverLogoPosition: CoverLogoPosition;
+  /** Logo size as a percent of its default footprint (strip + corner). */
+  coverLogoScale: number;
+  /** Corner-badge centre X, as a percent of the cover width. */
+  coverLogoX: number;
+  /** Corner-badge centre Y, as a percent of the cover height. */
+  coverLogoY: number;
+  /** Corner badge: whether the emblem sits on a frosted backing box. */
+  coverLogoBackdrop: boolean;
+  /** Corner badge: whether the logo (or its box) carries a drop shadow. */
+  coverLogoShadow: boolean;
   /** Archived events drop out of the normal manage sections. Orthogonal to status. */
   archived: boolean;
   status: EventStatus;
@@ -384,6 +411,37 @@ export function asCoverLogoPosition(v: unknown): CoverLogoPosition {
   return v === "top" ? "top" : "bottom";
 }
 
+/** Clamp an unknown to an integer percent in [0, 100], else the fallback. */
+function asPercent(v: unknown, fallback: number): number {
+  if (typeof v !== "number" || !Number.isFinite(v)) return fallback;
+  return Math.min(100, Math.max(0, Math.round(v)));
+}
+
+export function asCoverLogoScale(v: unknown): number {
+  if (typeof v !== "number" || !Number.isFinite(v)) return COVER_LOGO_SCALE_DEFAULT;
+  return Math.min(
+    COVER_LOGO_SCALE_MAX,
+    Math.max(COVER_LOGO_SCALE_MIN, Math.round(v)),
+  );
+}
+
+export function asCoverLogoX(v: unknown): number {
+  return asPercent(v, COVER_LOGO_X_DEFAULT);
+}
+
+export function asCoverLogoY(v: unknown): number {
+  return asPercent(v, COVER_LOGO_Y_DEFAULT);
+}
+
+/** Corner-badge box + shadow both default on, matching the original badge. */
+export function asCoverLogoBackdrop(v: unknown): boolean {
+  return v !== false;
+}
+
+export function asCoverLogoShadow(v: unknown): boolean {
+  return v !== false;
+}
+
 function asFoodProvenance(v: unknown): FoodProvenance {
   const ok: FoodProvenance[] = ["none", "halal", "kosher", "vegetarian", "vegan", "other"];
   return ok.includes(v as FoodProvenance) ? (v as FoodProvenance) : "none";
@@ -437,6 +495,11 @@ export function normalizeEvent(id: string, data: Raw): EventDoc {
     coverLogoColor: asCoverLogoColor(data.coverLogoColor),
     coverStripSize: asCoverStripSize(data.coverStripSize),
     coverLogoPosition: asCoverLogoPosition(data.coverLogoPosition),
+    coverLogoScale: asCoverLogoScale(data.coverLogoScale),
+    coverLogoX: asCoverLogoX(data.coverLogoX),
+    coverLogoY: asCoverLogoY(data.coverLogoY),
+    coverLogoBackdrop: asCoverLogoBackdrop(data.coverLogoBackdrop),
+    coverLogoShadow: asCoverLogoShadow(data.coverLogoShadow),
     archived: data.archived === true,
     status: asStatus(data.status),
     authorUid: (data.authorUid as string) ?? "",

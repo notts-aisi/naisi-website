@@ -3,8 +3,11 @@
 import { useState } from "react";
 import Button from "@/components/ui/Button";
 import SegmentedControl from "@/components/ui/SegmentedControl";
+import Switch from "@/components/ui/Switch";
 import {
   COVER_BRANDING_OPTIONS,
+  COVER_LOGO_SCALE_MAX,
+  COVER_LOGO_SCALE_MIN,
   COVER_STRIP_SIZE_MAX,
   COVER_STRIP_SIZE_MIN,
   type CoverBranding,
@@ -19,6 +22,11 @@ export type CoverBrandingChoice = {
   logoColor: CoverLogoColor;
   stripSize: number;
   logoPosition: CoverLogoPosition;
+  logoScale: number;
+  logoX: number;
+  logoY: number;
+  logoBackdrop: boolean;
+  logoShadow: boolean;
 };
 
 type Props = {
@@ -29,6 +37,11 @@ type Props = {
   logoColor: CoverLogoColor;
   stripSize: number;
   logoPosition: CoverLogoPosition;
+  logoScale: number;
+  logoX: number;
+  logoY: number;
+  logoBackdrop: boolean;
+  logoShadow: boolean;
   /** Called with the chosen treatment when the organiser confirms. */
   onSelect: (choice: CoverBrandingChoice) => void;
   onClose: () => void;
@@ -47,7 +60,8 @@ const LOGO_POSITION_OPTIONS = [
 /**
  * Shown after an organiser uploads (or replaces) an event cover image. Lets
  * them pick how the NAISI emblem sits on the cover, with a live preview that
- * is the exact treatment the public event page renders.
+ * is the exact treatment the public event page renders. The corner badge is
+ * dragged directly on the preview to position it.
  */
 export default function CoverBrandingModal({
   posterUrl,
@@ -55,6 +69,11 @@ export default function CoverBrandingModal({
   logoColor,
   stripSize,
   logoPosition,
+  logoScale,
+  logoX,
+  logoY,
+  logoBackdrop,
+  logoShadow,
   onSelect,
   onClose,
 }: Props) {
@@ -63,6 +82,11 @@ export default function CoverBrandingModal({
   const [selectedStrip, setSelectedStrip] = useState(stripSize);
   const [selectedPosition, setSelectedPosition] =
     useState<CoverLogoPosition>(logoPosition);
+  const [selectedScale, setSelectedScale] = useState(logoScale);
+  const [selectedX, setSelectedX] = useState(logoX);
+  const [selectedY, setSelectedY] = useState(logoY);
+  const [selectedBackdrop, setSelectedBackdrop] = useState(logoBackdrop);
+  const [selectedShadow, setSelectedShadow] = useState(logoShadow);
 
   return (
     <div className={styles.overlay} role="dialog" aria-modal="true">
@@ -81,6 +105,19 @@ export default function CoverBrandingModal({
             logoColor={selectedColor}
             stripSize={selectedStrip}
             logoPosition={selectedPosition}
+            logoScale={selectedScale}
+            logoX={selectedX}
+            logoY={selectedY}
+            logoBackdrop={selectedBackdrop}
+            logoShadow={selectedShadow}
+            onPositionChange={
+              selected === "corner"
+                ? (x, y) => {
+                    setSelectedX(x);
+                    setSelectedY(y);
+                  }
+                : undefined
+            }
           />
         </div>
 
@@ -114,12 +151,32 @@ export default function CoverBrandingModal({
 
         {selected !== "none" && (
           <div className={styles.control}>
-            <span className={styles.controlLabel}>Logo position</span>
+            <label className={styles.controlLabel} htmlFor="cover-logo-size">
+              Logo size
+            </label>
+            <div className={styles.sliderRow}>
+              <input
+                id="cover-logo-size"
+                type="range"
+                className={styles.slider}
+                min={COVER_LOGO_SCALE_MIN}
+                max={COVER_LOGO_SCALE_MAX}
+                value={selectedScale}
+                onChange={(e) => setSelectedScale(Number(e.target.value))}
+              />
+              <span className={styles.sliderValue}>{selectedScale}%</span>
+            </div>
+          </div>
+        )}
+
+        {selected === "strip" && (
+          <div className={styles.control}>
+            <span className={styles.controlLabel}>Strip position</span>
             <SegmentedControl
               value={selectedPosition}
               onChange={setSelectedPosition}
               options={LOGO_POSITION_OPTIONS}
-              ariaLabel="Logo position"
+              ariaLabel="Strip position"
               size="sm"
             />
           </div>
@@ -145,6 +202,27 @@ export default function CoverBrandingModal({
           </div>
         )}
 
+        {selected === "corner" && (
+          <div className={styles.control}>
+            <p className={styles.hint}>
+              Drag the logo on the preview above to place it anywhere on the
+              cover.
+            </p>
+            <Switch
+              checked={selectedBackdrop}
+              onChange={setSelectedBackdrop}
+              label="Background box"
+              description="A frosted panel behind the logo so it reads on any photo."
+            />
+            <Switch
+              checked={selectedShadow}
+              onChange={setSelectedShadow}
+              label="Drop shadow"
+              description="A soft shadow so the logo lifts off the image."
+            />
+          </div>
+        )}
+
         <div className={styles.actions}>
           <Button
             onClick={() => {
@@ -153,6 +231,11 @@ export default function CoverBrandingModal({
                 logoColor: selectedColor,
                 stripSize: selectedStrip,
                 logoPosition: selectedPosition,
+                logoScale: selectedScale,
+                logoX: selectedX,
+                logoY: selectedY,
+                logoBackdrop: selectedBackdrop,
+                logoShadow: selectedShadow,
               });
               onClose();
             }}

@@ -41,6 +41,11 @@ export default function EventDetailView({
           logoColor={event.coverLogoColor}
           stripSize={event.coverStripSize}
           logoPosition={event.coverLogoPosition}
+          logoScale={event.coverLogoScale}
+          logoX={event.coverLogoX}
+          logoY={event.coverLogoY}
+          logoBackdrop={event.coverLogoBackdrop}
+          logoShadow={event.coverLogoShadow}
         />
       ) : null}
 

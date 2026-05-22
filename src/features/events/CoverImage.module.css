@@ -36,25 +36,32 @@
 
 .stripEmblem {
   display: block;
-  height: 54px;
+  height: calc(54px * var(--logo-scale, 1));
   width: auto;
 }
 
-/* corner: a small emblem on a frosted chip so it reads on any cover photo. */
+/* corner: an emblem placed freely on the cover (dragged in the editor),
+   optionally on a frosted backing box. Position and size come from the
+   --logo-x / --logo-y / --logo-scale custom properties set on .frame. */
 .cornerEmblem {
   position: absolute;
-  right: var(--space-4);
-  bottom: var(--space-4);
+  left: var(--logo-x, 90%);
+  top: var(--logo-y, 86%);
+  transform: translate(-50%, -50%);
   display: block;
-  height: 40px;
+  height: calc(40px * var(--logo-scale, 1));
   width: auto;
-  padding: var(--space-2) var(--space-3);
+  pointer-events: none;
+}
+
+/* boxed: the frosted chip behind the emblem. Padding is deliberately tight
+   so the box hugs the logo. */
+.cornerEmblemBoxed {
+  padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-md);
   background: rgba(5, 8, 14, 0.55);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
-  box-shadow: var(--shadow-md);
-  pointer-events: none;
 }
 
 /* The full-colour emblem needs a pale chip to read against. */
@@ -62,17 +69,31 @@
   background: rgba(255, 255, 255, 0.9);
 }
 
-/* cornerEmblemTop: the same chip, moved to the top-right corner. */
-.cornerEmblemTop {
-  top: var(--space-4);
-  bottom: auto;
+/* shadow: a drop shadow on the box, or on a bare emblem when the box is off. */
+.cornerEmblemShadowBox {
+  box-shadow: var(--shadow-md);
+}
+
+.cornerEmblemShadowBare {
+  filter: drop-shadow(0 2px 6px rgba(5, 8, 14, 0.55));
+}
+
+/* draggable: editor-only. The emblem becomes a grab handle. */
+.cornerEmblemDraggable {
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+}
+
+.cornerEmblemDraggable:active {
+  cursor: grabbing;
 }
 
 @media (max-width: 600px) {
   .stripEmblem {
-    height: 42px;
+    height: calc(42px * var(--logo-scale, 1));
   }
   .cornerEmblem {
-    height: 32px;
+    height: calc(32px * var(--logo-scale, 1));
   }
 }

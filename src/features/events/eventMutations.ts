@@ -86,6 +86,11 @@ type EditableEventFields = Partial<{
   coverLogoColor: CoverLogoColor;
   coverStripSize: number;
   coverLogoPosition: CoverLogoPosition;
+  coverLogoScale: number;
+  coverLogoX: number;
+  coverLogoY: number;
+  coverLogoBackdrop: boolean;
+  coverLogoShadow: boolean;
 }>;
 
 export async function updateEvent(id: string, fields: EditableEventFields) {
@@ -128,6 +133,14 @@ export async function updateEvent(id: string, fields: EditableEventFields) {
   if (fields.coverStripSize !== undefined) patch.coverStripSize = fields.coverStripSize;
   if (fields.coverLogoPosition !== undefined)
     patch.coverLogoPosition = fields.coverLogoPosition;
+  if (fields.coverLogoScale !== undefined)
+    patch.coverLogoScale = fields.coverLogoScale;
+  if (fields.coverLogoX !== undefined) patch.coverLogoX = fields.coverLogoX;
+  if (fields.coverLogoY !== undefined) patch.coverLogoY = fields.coverLogoY;
+  if (fields.coverLogoBackdrop !== undefined)
+    patch.coverLogoBackdrop = fields.coverLogoBackdrop;
+  if (fields.coverLogoShadow !== undefined)
+    patch.coverLogoShadow = fields.coverLogoShadow;
   await updateDoc(doc(db, "events", id), patch);
 }
 
