@@ -20,9 +20,12 @@ type State =
 export default function TestRsvpPanel({
   event,
   syntheticCount,
+  onChanged,
 }: {
   event: EventDoc;
   syntheticCount: number;
+  /** Re-sync the dashboard after test RSVPs are generated or removed. */
+  onChanged: () => Promise<void>;
 }) {
   const [count, setCount] = useState(12);
   const [state, setState] = useState<State>({ kind: "idle" });
@@ -46,6 +49,9 @@ export default function TestRsvpPanel({
         return;
       }
       const n = body.created ?? 0;
+      // Server-side write: re-pull so the dashboard reflects it without a
+      // wait on the realtime listener (or a manual reload).
+      await onChanged().catch(() => {});
       setState({ kind: "done", message: `Added ${n} test signup${n === 1 ? "" : "s"}.` });
     } catch (err) {
       setState({
@@ -74,6 +80,9 @@ export default function TestRsvpPanel({
         return;
       }
       const n = body.deleted ?? 0;
+      // Server-side write: re-pull so the dashboard reflects it without a
+      // wait on the realtime listener (or a manual reload).
+      await onChanged().catch(() => {});
       setState({ kind: "done", message: `Removed ${n} test signup${n === 1 ? "" : "s"}.` });
     } catch (err) {
       setState({

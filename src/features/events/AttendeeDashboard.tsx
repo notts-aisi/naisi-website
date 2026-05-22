@@ -542,7 +542,11 @@ export default function AttendeeDashboard({ event }: Props) {
 
       {/* Test data (admin) ---------------------------------------------- */}
       {role === "admin" && (
-        <TestRsvpPanel event={event} syntheticCount={syntheticCount} />
+        <TestRsvpPanel
+          event={event}
+          syntheticCount={syntheticCount}
+          onChanged={refresh}
+        />
       )}
 
       {/* Pizza order helper --------------------------------------------- */}

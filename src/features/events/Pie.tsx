@@ -1,3 +1,6 @@
+"use client";
+
+import { useRef, useState } from "react";
 import styles from "./Pie.module.css";
 
 export type PieSlice = {
@@ -12,11 +15,18 @@ type Props = {
 };
 
 /**
- * Minimalist SVG pie chart. No printed legend — each slice carries a hover
- * tooltip (native SVG <title>) so the chart stays compact. Renders nothing when
- * there is no data; callers show their own empty state.
+ * Minimalist SVG pie chart. Each slice shows a styled tooltip on hover; the
+ * whole chart carries an aria-label listing every slice for screen readers.
+ * Renders nothing when there is no data; callers show their own empty state.
  */
 export default function Pie({ slices, size = 140 }: Props) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<{
+    index: number;
+    x: number;
+    y: number;
+  } | null>(null);
+
   const total = slices.reduce((acc, s) => acc + s.count, 0);
   if (total === 0) return null;
 
@@ -51,20 +61,44 @@ export default function Pie({ slices, size = 140 }: Props) {
     };
   });
 
+  function trackHover(index: number, e: React.MouseEvent) {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    setHover({ index, x: e.clientX - rect.left, y: e.clientY - rect.top });
+  }
+
+  const active = hover ? arcs[hover.index] : null;
+
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox={`0 0 ${size} ${size}`}
-      role="img"
-      className={styles.pie}
-    >
-      {arcs.map((a) => (
-        <path key={a.label} d={a.d} fill={a.color}>
-          <title>{`${a.label}: ${a.count} (${a.pct}%)`}</title>
-        </path>
-      ))}
-    </svg>
+    <div ref={wrapRef} className={styles.wrap}>
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        role="img"
+        aria-label={arcs
+          .map((a) => `${a.label}: ${a.count} (${a.pct}%)`)
+          .join(", ")}
+        className={styles.pie}
+        onMouseLeave={() => setHover(null)}
+      >
+        {arcs.map((a, i) => (
+          <path
+            key={a.label}
+            d={a.d}
+            fill={a.color}
+            className={styles.slice}
+            onMouseMove={(e) => trackHover(i, e)}
+          />
+        ))}
+      </svg>
+      {hover && active && (
+        <div className={styles.tooltip} style={{ left: hover.x, top: hover.y }}>
+          {`${active.label}: ${active.count} (${active.pct}%)`}
+        </div>
+      )}
+    </div>
   );
 }
 
