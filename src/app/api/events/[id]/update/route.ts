@@ -28,6 +28,25 @@ function parseDate(v: unknown): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+/**
+ * Deterministic JSON with object keys sorted, so two block arrays compare
+ * equal regardless of key order. The stored blocks come back from Firestore
+ * with their own key ordering; the incoming ones are freshly serialised.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  const obj = value as Record<string, unknown>;
+  return `{${Object.keys(obj)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`)
+    .join(",")}}`;
+}
+
 export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
@@ -97,10 +116,12 @@ export async function POST(
   const posterUrl =
     typeof body.posterUrl === "string" && body.posterUrl ? body.posterUrl : null;
 
+  const newBlocks = sanitizeBlocks(body.blocks);
+
   const patch: Record<string, unknown> = {
     updatedAt: FieldValue.serverTimestamp(),
     title,
-    blocks: sanitizeBlocks(body.blocks),
+    blocks: newBlocks,
     startAt: Timestamp.fromDate(startDate),
     endAt: endDate ? Timestamp.fromDate(endDate) : FieldValue.delete(),
     location,
@@ -120,8 +141,10 @@ export async function POST(
   };
 
   // Build a human-readable diff of the changes confirmed attendees would want
-  // an email about (time and place). The editor uses this to pre-fill the
-  // notify composer.
+  // an email about. The notify-worthy set is exactly date/time, location, and
+  // description; everything else saves silently. Time and location render as
+  // struck-through old -> new lines; the description is rich blocks that can't
+  // be diffed inline, so it surfaces only as a boolean flag.
   const oldStart: Date | null = old.startAt?.toDate?.() ?? null;
   const oldEnd: Date | null = old.endAt?.toDate?.() ?? null;
   const oldLocation = typeof old.location === "string" ? old.location : "";
@@ -130,6 +153,8 @@ export async function POST(
     (oldStart?.getTime() ?? null) !== startDate.getTime() ||
     (oldEnd?.getTime() ?? null) !== (endDate ? endDate.getTime() : null);
   const locationChanged = oldLocation !== location;
+  const descriptionChanged =
+    stableStringify(sanitizeBlocks(old.blocks)) !== stableStringify(newBlocks);
 
   const changeSummary: EventChange[] = [];
   if (timeChanged) {
@@ -149,5 +174,5 @@ export async function POST(
 
   await ref.update(patch);
 
-  return NextResponse.json({ ok: true, changeSummary });
+  return NextResponse.json({ ok: true, changeSummary, descriptionChanged });
 }

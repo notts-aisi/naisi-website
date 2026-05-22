@@ -61,7 +61,7 @@ function renderAnswer(a: RsvpAnswer | undefined): string {
 
 export default function AttendeeDashboard({ event }: Props) {
   const { role } = useAuth();
-  const { rsvps, loading, error } = useEventRsvps(event.id);
+  const { rsvps, loading, error, refresh } = useEventRsvps(event.id);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [denyFor, setDenyFor] = useState<string | null>(null);
@@ -122,7 +122,12 @@ export default function AttendeeDashboard({ event }: Props) {
         | null;
       if (!res.ok || !body?.ok) {
         setActionErr(body?.error ?? `Action failed (${res.status})`);
+        return;
       }
+      // This was a server-side mutation, so the onSnapshot listener has no
+      // local echo for it; re-pull so the organiser sees their action land
+      // without waiting on the realtime channel (or a manual reload).
+      await refresh().catch(() => {});
     } catch (err) {
       setActionErr(err instanceof Error ? err.message : "Action failed");
     } finally {

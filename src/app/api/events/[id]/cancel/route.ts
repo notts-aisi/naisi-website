@@ -118,7 +118,7 @@ export async function POST(
     try {
       await sendEmail({
         to,
-        subject: `Cancelled: ${eventTitle}`,
+        subject: `Event cancelled: ${eventTitle}`,
         fromName: "NAISI Events",
         react: EventCancelledEmail({
           eventTitle,

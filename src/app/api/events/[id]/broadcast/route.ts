@@ -4,6 +4,7 @@ import { sendEmail } from "@/lib/email/send";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
+  baseUrl,
   cancelUrl as buildCancelUrl,
   changeUrl as buildChangeUrl,
   signRsvpToken,
@@ -18,6 +19,8 @@ type BroadcastPayload = {
   includeWaitlisted?: unknown;
   /** Optional notify-worthy change diff, rendered as a struck-through summary. */
   changes?: unknown;
+  /** Whether the rich-text description changed (can't be diffed inline). */
+  descriptionChanged?: unknown;
 };
 
 const SUBJECT_MAX = 150;
@@ -53,6 +56,7 @@ export async function POST(
     typeof payload.body === "string" ? payload.body.trim().slice(0, BODY_MAX) : "";
   const includeWaitlisted = payload.includeWaitlisted !== false;
   const changes = parseEventChanges(payload.changes);
+  const descriptionChanged = payload.descriptionChanged === true;
 
   if (!subject) return NextResponse.json({ error: "Subject is required." }, { status: 400 });
   if (!body) return NextResponse.json({ error: "Message body is required." }, { status: 400 });
@@ -97,6 +101,8 @@ export async function POST(
     process.env.EMAIL_DEFAULT_REPLY_TO ||
     "ai-safety@uonsu.com";
   const eventTitle = (event.title ?? "NAISI event").toString();
+  // Public event page, linked from the "description has been updated" line.
+  const eventUrl = `${baseUrl()}/events/${eventId}`;
 
   const plannedAddresses = snap.docs
     .map((d) => (typeof d.data()?.email === "string" ? (d.data().email as string) : ""))
@@ -144,6 +150,8 @@ export async function POST(
           subject,
           body,
           changes,
+          descriptionChanged,
+          eventUrl,
           cancelUrl,
           changeUrl,
           instagramHandle,

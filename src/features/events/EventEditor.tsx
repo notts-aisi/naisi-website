@@ -74,25 +74,38 @@ function ymd(d: Date): string {
   ).padStart(2, "0")}`;
 }
 
-/** Pre-fill the attendee-notification draft from what an edit changed. */
-function buildNotifyDraft(changes: EventChange[]): {
+/** Join label fragments as "a", "a and b", or "a, b and c". */
+function joinList(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? "";
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+/**
+ * Pre-fill the attendee-notification draft from what an edit changed. The
+ * notify-worthy set is date/time, location, and the description, so the
+ * pre-filled subject and body reflect any combination of those.
+ */
+function buildNotifyDraft(
+  changes: EventChange[],
+  descriptionChanged: boolean,
+): {
   subject: string;
   body: string;
 } {
-  const hasWhen = changes.some((c) => c.label === "When");
-  const hasWhere = changes.some((c) => c.label === "Where");
-  const subject =
-    hasWhen && hasWhere
-      ? "Update: new time and place"
-      : hasWhen
-        ? "Update: new time"
-        : hasWhere
-          ? "Update: new location"
-          : "Event update";
-  const body =
+  const parts: string[] = [];
+  if (changes.some((c) => c.label === "When")) parts.push("time");
+  if (changes.some((c) => c.label === "Where")) parts.push("location");
+  if (descriptionChanged) parts.push("description");
+  const subject = parts.length > 0 ? `Update: ${joinList(parts)}` : "Event update";
+  let body =
     "Quick heads-up: we've updated some details for this event. " +
-    "What changed is shown below, with the latest full details underneath. " +
-    "Apologies for any inconvenience, and let us know if you can no longer make it.";
+    "What changed is summarised below, with the latest full details underneath.";
+  if (descriptionChanged) {
+    body +=
+      " The event description has changed too, so it's worth a fresh read.";
+  }
+  body +=
+    " Apologies for any inconvenience, and let us know if you can no longer make it.";
   return { subject, body };
 }
 
@@ -140,6 +153,7 @@ export default function EventEditor({ eventId }: Props) {
     subject: string;
     body: string;
     changes: EventChange[];
+    descriptionChanged: boolean;
   } | null>(null);
   const [notifyState, setNotifyState] = useState<
     | { kind: "idle" }
@@ -279,16 +293,27 @@ export default function EventEditor({ eventId }: Props) {
         }),
       });
       const resBody = (await res.json().catch(() => null)) as
-        | { ok?: true; changeSummary?: EventChange[]; error?: string }
+        | {
+            ok?: true;
+            changeSummary?: EventChange[];
+            descriptionChanged?: boolean;
+            error?: string;
+          }
         | null;
       if (!res.ok || !resBody?.ok) {
         throw new Error(resBody?.error ?? `Save failed (${res.status})`);
       }
       // Only open the notify composer when the organiser opted in and there
-      // was a notify-worthy change. Otherwise the save is silent.
+      // was a notify-worthy change (time, location, or description).
+      // Otherwise the save is silent.
       const summary = resBody.changeSummary ?? [];
-      if (notifyOnSave && summary.length > 0) {
-        setNotifyDraft({ ...buildNotifyDraft(summary), changes: summary });
+      const descriptionChanged = resBody.descriptionChanged === true;
+      if (notifyOnSave && (summary.length > 0 || descriptionChanged)) {
+        setNotifyDraft({
+          ...buildNotifyDraft(summary, descriptionChanged),
+          changes: summary,
+          descriptionChanged,
+        });
         setNotifyState({ kind: "idle" });
       }
       setNotifyOnSave(false);
@@ -327,6 +352,7 @@ export default function EventEditor({ eventId }: Props) {
           subject: notifyDraft.subject,
           body: notifyDraft.body,
           changes: notifyDraft.changes,
+          descriptionChanged: notifyDraft.descriptionChanged,
         }),
       });
       const resBody = (await res.json().catch(() => null)) as
@@ -643,7 +669,7 @@ export default function EventEditor({ eventId }: Props) {
             included in the email automatically; the message is your own note
             alongside it.
           </p>
-          {notifyDraft.changes.length > 0 && (
+          {(notifyDraft.changes.length > 0 || notifyDraft.descriptionChanged) && (
             <div className={styles.changeSummary}>
               {notifyDraft.changes.map((c) => (
                 <p key={c.label} className={styles.changeRow}>
@@ -653,6 +679,14 @@ export default function EventEditor({ eventId }: Props) {
                   <span className={styles.changeNew}>{c.to}</span>
                 </p>
               ))}
+              {notifyDraft.descriptionChanged && (
+                <p className={styles.changeRow}>
+                  <strong>Description: </strong>
+                  <span className={styles.changeNew}>
+                    the event description has been updated
+                  </span>
+                </p>
+              )}
             </div>
           )}
           <div className={styles.fields}>

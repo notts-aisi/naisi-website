@@ -23,6 +23,10 @@ type Props = {
   body: string;
   /** Optional notify-worthy change diff, rendered as a struck-through summary. */
   changes?: EventChange[];
+  /** The rich-text description changed; can't be diffed inline, so flag it. */
+  descriptionChanged?: boolean;
+  /** Public event page, linked from the description-changed line. */
+  eventUrl?: string;
   cancelUrl?: string;
   changeUrl?: string;
   instagramHandle?: string;
@@ -42,6 +46,8 @@ export default function EventUpdateEmail({
   subject,
   body,
   changes,
+  descriptionChanged,
+  eventUrl,
   cancelUrl,
   changeUrl,
   instagramHandle,
@@ -55,7 +61,7 @@ export default function EventUpdateEmail({
       <Body style={style.body}>
         <Container style={style.container}>
           <Section>
-            <Text style={style.eyebrow}>Event update</Text>
+            <Text style={style.eyebrow}>Event details update</Text>
             <Heading style={style.heading}>{eventTitle}</Heading>
             <Text style={style.greeting}>Hi {recipientName},</Text>
           </Section>
@@ -74,6 +80,20 @@ export default function EventUpdateEmail({
           </Section>
 
           <EventChangeSummary changes={changes ?? []} />
+
+          {descriptionChanged && (
+            <Section>
+              <Text style={style.descriptionLine}>
+                The event description has been updated.{" "}
+                {eventUrl ? (
+                  <EmailLink href={eventUrl} style={style.link}>
+                    Read the latest details on the event page
+                  </EmailLink>
+                ) : null}
+                {eventUrl ? "." : ""}
+              </Text>
+            </Section>
+          )}
 
           <Section style={style.details}>
             <Text style={style.detailLine}>
@@ -180,6 +200,12 @@ const style = {
     lineHeight: 1.7,
     color: "#27272a",
     margin: "0 0 14px",
+  } as React.CSSProperties,
+  descriptionLine: {
+    fontSize: "15px",
+    lineHeight: 1.7,
+    color: "#27272a",
+    margin: "16px 0 0",
   } as React.CSSProperties,
   details: {
     backgroundColor: "#fafafa",
