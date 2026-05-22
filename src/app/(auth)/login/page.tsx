@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import { signInWithGoogle } from "@/auth/signInWithGoogle";
@@ -37,6 +37,12 @@ function LoginInner() {
   // cookie POST. See the bounce-effect block below for the why.
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // Set true once handleSignIn's own router.push has fired. After that
+  // the bounce effect should stay quiet for the rest of this LoginInner
+  // lifetime — otherwise it re-runs when `loading` flips false in the
+  // finally and emits a redundant router.replace to the same path. Ref
+  // (not state) because we don't need a re-render when it flips.
+  const handledNavRef = useRef(false);
 
   // [monitor] Page-mount + auth-state snapshot. Logged on every render so
   // we can see exactly what useAuth() reported each time the bounce effect
@@ -65,6 +71,10 @@ function LoginInner() {
       mark("[login] bounce-effect skipped: signin in flight");
       return;
     }
+    if (handledNavRef.current) {
+      mark("[login] bounce-effect skipped: handleSignIn already navigated");
+      return;
+    }
     if (role === "member" || role === "committee" || role === "admin") {
       mark(`[login] bounce-effect → ${next} (role=${role})`);
       router.replace(next);
@@ -91,12 +101,14 @@ function LoginInner() {
       if (result.isNew) {
         mark("[login] router.push → /register (new user)");
         router.push("/register");
+        handledNavRef.current = true;
         return;
       }
       // Server-side (app)/layout.tsx routes pending/rejected users onward
       // based on the freshly-minted session cookie.
       mark(`[login] router.push → ${next}`);
       router.push(next);
+      handledNavRef.current = true;
       // [monitor] Smoking-gun watchdog: if pathname is still /login 6s
       // after a successful signin, the navigation never landed (likely
       // a cookie-propagation race in (app)/layout.tsx, a double-push
