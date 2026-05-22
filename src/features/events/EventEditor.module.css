@@ -74,6 +74,26 @@
   cursor: pointer;
 }
 
+.checkboxGroupLabel {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: var(--space-1);
+}
+
+.checkboxGroupHint {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--space-2);
+}
+
+.tagRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
 .sectionTitle {
   font-size: var(--text-lg);
   font-weight: 600;
@@ -85,6 +105,35 @@
   color: var(--color-text-muted);
   font-size: var(--text-sm);
   margin: 0 0 var(--space-3);
+}
+
+.changeSummary {
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.changeRow {
+  margin: var(--space-1) 0;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+.changeOld {
+  text-decoration: line-through;
+  color: var(--color-text-muted);
+}
+
+.changeArrow {
+  color: var(--color-text-muted);
+}
+
+.changeNew {
+  font-weight: 600;
+  color: var(--color-text);
 }
 
 .editorActions {
@@ -118,4 +167,84 @@
 .deleteBtn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.coverBrandingChip {
+  margin-top: var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.4rem 0.55rem 0.4rem 0.8rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.coverBrandingChip:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.coverBrandingChip:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.coverBrandingChip strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.coverBrandingChange {
+  padding: 0.1rem 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: var(--text-xs);
+}
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.65);
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+}
+
+.modal {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  width: min(34rem, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.modalTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.modalHint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.modalActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
 }

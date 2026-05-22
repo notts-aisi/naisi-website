@@ -7,11 +7,15 @@ import { sendEmail } from "@/lib/email/send";
 import {
   DIETARY_ALLERGIES,
   FOOD_PROVENANCE_BADGE,
+  FOOD_TAG_LABEL,
   sanitizeSignupForm,
   type FoodProvenance,
+  type FoodTag,
   type FormQuestion,
   type RsvpAnswer,
 } from "@/lib/firestore/events";
+import { buildEventIcs, googleCalendarUrl } from "./ics";
+import type { EventChange } from "@/lib/events/changeSummary";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isSuppressed } from "@/lib/firestore/suppression";
 import {
@@ -32,7 +36,11 @@ type EventLike = {
   locationPublicText?: string | null;
   startAt?: Date | null;
   endAt?: Date | null;
+  foodText?: string | null;
+  dietaryTags?: FoodTag[] | null;
+  /** @deprecated Legacy food fields, still read as a fallback for old events. */
   foodProvenance?: FoodProvenance | null;
+  /** @deprecated See `foodProvenance`. */
   foodProvenanceNote?: string | null;
   /** Raw unknown-typed signup questions (sanitized internally). */
   signupForm?: unknown;
@@ -99,11 +107,20 @@ function locationFor(
 }
 
 function foodLineFor(event: EventLike): string | undefined {
+  const text = (event.foodText ?? "").trim();
+  const tags = (Array.isArray(event.dietaryTags) ? event.dietaryTags : [])
+    .map((t) => FOOD_TAG_LABEL[t as FoodTag])
+    .filter(Boolean);
+  if (text) {
+    return tags.length ? `${text} (${tags.join(", ")})` : text;
+  }
+  if (tags.length) return tags.join(", ");
+  // Legacy fallback for events created before the free-text food field.
   const fp = event.foodProvenance;
   if (!fp || fp === "none") return undefined;
   const badge = FOOD_PROVENANCE_BADGE[fp as Exclude<FoodProvenance, "none">];
   const note = (event.foodProvenanceNote ?? "").trim();
-  return note ? `${badge} — ${note}` : badge;
+  return note ? `${badge}: ${note}` : badge;
 }
 
 type Args = {
@@ -117,6 +134,8 @@ type Args = {
   rsvpId?: string;
   /** Raw answers — used to render the "what you told us" block. */
   answers?: Record<string, RsvpAnswer> | null;
+  /** Schedule/location changes since the attendee signed up (acceptance email). */
+  changesSinceSignup?: EventChange[];
 };
 
 function renderAnswerValue(a: RsvpAnswer | undefined): string {
@@ -163,6 +182,7 @@ export async function sendRsvpEmail({
   decisionNote,
   rsvpId,
   answers,
+  changesSinceSignup,
 }: Args): Promise<void> {
   try {
     const db = getAdminDb();
@@ -192,6 +212,46 @@ export async function sendRsvpEmail({
     const questions = sanitizeSignupForm(event.signupForm);
     const answersLine = buildAnswersLine(questions, answers);
 
+    // Confirmed / promoted attendees get the event for their calendar: a .ics
+    // attachment plus one-tap "add to calendar" links in the body. These
+    // variants always disclose the exact location, so the .ics carries it too.
+    let attachments:
+      | { filename: string; content: string; contentType: string }[]
+      | undefined;
+    let googleCalUrl: string | undefined;
+    let icsUrl: string | undefined;
+    if ((variant === "approved" || variant === "promoted") && event.startAt) {
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
+      const eventUrl = appUrl && event.id ? `${appUrl}/events/${event.id}` : undefined;
+      const exactLocation = (event.location ?? "").trim() || undefined;
+      const ics = buildEventIcs({
+        uid: event.id ?? "event",
+        title,
+        description: eventUrl,
+        location: exactLocation,
+        url: eventUrl,
+        startAt: event.startAt,
+        endAt: event.endAt ?? null,
+      });
+      attachments = [
+        {
+          filename: "naisi-event.ics",
+          content: ics,
+          contentType: "text/calendar; charset=utf-8; method=PUBLISH",
+        },
+      ];
+      googleCalUrl = googleCalendarUrl({
+        title,
+        description: eventUrl,
+        location: exactLocation,
+        startAt: event.startAt,
+        endAt: event.endAt ?? null,
+      });
+      if (appUrl && event.id) {
+        icsUrl = `${appUrl}/api/events/${event.id}/calendar.ics`;
+      }
+    }
+
     await sendEmail({
       to,
       subject: subjectFor(variant, title),
@@ -206,17 +266,23 @@ export async function sendRsvpEmail({
         foodLine,
         decisionNote: decisionNote ?? undefined,
         answersLine: answersLine || undefined,
+        changesSinceSignup,
+        googleCalUrl,
+        icsUrl,
         cancelUrl,
         changeUrl,
         instagramHandle:
           process.env.NAISI_INSTAGRAM_HANDLE || "notts.ai.safety",
+        // Fall back to the monitored Reply-To inbox, never the send-only
+        // SMTP_FROM_EMAIL (newsletter@naisi.uk has no receiving MX).
         contactEmail:
           process.env.NAISI_CONTACT_EMAIL ||
-          process.env.SMTP_FROM_EMAIL ||
+          process.env.EMAIL_DEFAULT_REPLY_TO ||
           "ai-safety@uonsu.com",
       }),
       kind: "rsvp",
       referenceId: rsvpId ?? event.id ?? undefined,
+      attachments,
     });
   } catch (err) {
     console.error(`[rsvp email:${variant}] send failed`, err);

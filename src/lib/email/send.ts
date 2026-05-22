@@ -35,6 +35,12 @@ type SendArgs = {
     /** Optional mailto fallback for inbox clients that don't do one-click. */
     mailto?: string;
   };
+  /** File attachments passed straight through to nodemailer (e.g. a calendar .ics). */
+  attachments?: Array<{
+    filename: string;
+    content: string | Buffer;
+    contentType?: string;
+  }>;
 };
 
 let cached: Transporter | null = null;
@@ -70,6 +76,7 @@ export async function sendEmail({
   actorUid,
   referenceId,
   listUnsubscribe,
+  attachments,
 }: SendArgs) {
   const [html, text] = await Promise.all([render(react), render(react, { plainText: true })]);
   const displayName = fromName ?? process.env.SMTP_FROM_NAME ?? "NAISI";
@@ -97,6 +104,7 @@ export async function sendEmail({
     html,
     text,
     headers: extraHeaders,
+    attachments,
   });
 
   // Pull the provider's own message id out of the 250 response so later

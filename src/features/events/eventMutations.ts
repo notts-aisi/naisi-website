@@ -13,8 +13,12 @@ import {
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import type { Block } from "@/lib/firestore/newsletterBlocks";
 import type {
+  CoverBranding,
+  CoverLogoColor,
+  CoverLogoPosition,
   EventVisibility,
   FoodProvenance,
+  FoodTag,
   FormQuestion,
 } from "@/lib/firestore/events";
 
@@ -38,6 +42,7 @@ export async function createEvent(params: {
     waitlistEnabled: false,
     signupForm: [],
     foodProvenance: "none" satisfies FoodProvenance,
+    coverBranding: "corner" satisfies CoverBranding,
     status: "draft",
     authorUid: actingUid(),
     authorDisplayName: params.authorDisplayName,
@@ -74,7 +79,18 @@ type EditableEventFields = Partial<{
   signupForm: FormQuestion[];
   foodProvenance: FoodProvenance;
   foodProvenanceNote: string | null;
+  foodText: string | null;
+  dietaryTags: FoodTag[];
   posterUrl: string | null;
+  coverBranding: CoverBranding;
+  coverLogoColor: CoverLogoColor;
+  coverStripSize: number;
+  coverLogoPosition: CoverLogoPosition;
+  coverLogoScale: number;
+  coverLogoX: number;
+  coverLogoY: number;
+  coverLogoBackdrop: boolean;
+  coverLogoShadow: boolean;
 }>;
 
 export async function updateEvent(id: string, fields: EditableEventFields) {
@@ -104,8 +120,27 @@ export async function updateEvent(id: string, fields: EditableEventFields) {
       fields.foodProvenanceNote === null || fields.foodProvenanceNote.trim() === ""
         ? deleteField()
         : fields.foodProvenanceNote.trim();
+  if (fields.foodText !== undefined)
+    patch.foodText =
+      fields.foodText === null || fields.foodText.trim() === ""
+        ? deleteField()
+        : fields.foodText.trim();
+  if (fields.dietaryTags !== undefined) patch.dietaryTags = fields.dietaryTags;
   if (fields.posterUrl !== undefined)
     patch.posterUrl = fields.posterUrl === null ? deleteField() : fields.posterUrl;
+  if (fields.coverBranding !== undefined) patch.coverBranding = fields.coverBranding;
+  if (fields.coverLogoColor !== undefined) patch.coverLogoColor = fields.coverLogoColor;
+  if (fields.coverStripSize !== undefined) patch.coverStripSize = fields.coverStripSize;
+  if (fields.coverLogoPosition !== undefined)
+    patch.coverLogoPosition = fields.coverLogoPosition;
+  if (fields.coverLogoScale !== undefined)
+    patch.coverLogoScale = fields.coverLogoScale;
+  if (fields.coverLogoX !== undefined) patch.coverLogoX = fields.coverLogoX;
+  if (fields.coverLogoY !== undefined) patch.coverLogoY = fields.coverLogoY;
+  if (fields.coverLogoBackdrop !== undefined)
+    patch.coverLogoBackdrop = fields.coverLogoBackdrop;
+  if (fields.coverLogoShadow !== undefined)
+    patch.coverLogoShadow = fields.coverLogoShadow;
   await updateDoc(doc(db, "events", id), patch);
 }
 

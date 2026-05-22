@@ -3,6 +3,8 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { sendRsvpEmail } from "@/lib/events/sendRsvpEmail";
+import { asSignupSnapshot } from "@/lib/firestore/events";
+import { formatEventWhen, type EventChange } from "@/lib/events/changeSummary";
 
 /**
  * Organiser action: approve a pending RSVP.
@@ -91,11 +93,34 @@ export async function POST(
         email: typeof rsvp.email === "string" ? rsvp.email : "",
         name: typeof rsvp.name === "string" ? rsvp.name : "",
         answers: (rsvp.answers ?? {}) as Record<string, unknown>,
+        signupSnapshot: asSignupSnapshot(rsvp.signupSnapshot),
         event,
       };
     });
 
     const { event: evt } = outcome;
+
+    // For a confirmed acceptance, flag anything the organiser changed between
+    // signup and approval. Scoped to confirmed: a waitlisted attendee must not
+    // be shown an exact (possibly hidden) location in the diff.
+    let changesSinceSignup: EventChange[] | undefined;
+    if (outcome.signupSnapshot && outcome.status === "confirmed") {
+      const snap = outcome.signupSnapshot;
+      const liveSchedule = formatEventWhen(
+        evt.startAt?.toDate?.() ?? null,
+        evt.endAt?.toDate?.() ?? null,
+      );
+      const liveLocation = typeof evt.location === "string" ? evt.location : "";
+      const diff: EventChange[] = [];
+      if (snap.scheduleLabel !== liveSchedule) {
+        diff.push({ label: "When", from: snap.scheduleLabel, to: liveSchedule });
+      }
+      if (snap.locationLabel !== liveLocation) {
+        diff.push({ label: "Where", from: snap.locationLabel, to: liveLocation });
+      }
+      if (diff.length > 0) changesSinceSignup = diff;
+    }
+
     if (outcome.email) {
       void sendRsvpEmail({
         variant: outcome.status === "confirmed" ? "approved" : "waitlisted",
@@ -103,6 +128,7 @@ export async function POST(
         recipientName: outcome.name,
         rsvpId,
         answers: outcome.answers as Record<string, import("@/lib/firestore/events").RsvpAnswer>,
+        changesSinceSignup,
         event: {
           id: eventId,
           title: evt.title,
@@ -111,6 +137,8 @@ export async function POST(
           locationPublicText: evt.locationPublicText,
           startAt: evt.startAt?.toDate?.() ?? null,
           endAt: evt.endAt?.toDate?.() ?? null,
+          foodText: evt.foodText,
+          dietaryTags: evt.dietaryTags,
           foodProvenance: evt.foodProvenance,
           foodProvenanceNote: evt.foodProvenanceNote,
           signupForm: evt.signupForm,

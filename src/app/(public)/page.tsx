@@ -1,5 +1,4 @@
 import Link from "next/link";
-import BrandMark from "@/components/BrandMark";
 import SubscribeForm from "@/components/SubscribeForm";
 import ReadingListAccordion from "@/components/ReadingListAccordion";
 import { READING_LISTS } from "@/content/readingLists";
@@ -46,7 +45,13 @@ export default function Landing() {
             </Link>
           </div>
           <div className={styles.heroArt} aria-hidden="true">
-            <BrandMark size={120} showWordmark={false} />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/brand/naisi-emblem.png"
+              alt=""
+              width={180}
+              height={220}
+            />
           </div>
         </div>
       </section>

@@ -33,7 +33,7 @@ export const FORM_PRESETS: FormPreset[] = [
       {
         id: newQuestionId(),
         type: "dietaryAllergies",
-        label: "Any allergies we should know about?",
+        label: "Any allergies or dietary requirements?",
         required: false,
       },
       {
@@ -48,26 +48,29 @@ export const FORM_PRESETS: FormPreset[] = [
   {
     id: "pizza",
     label: "Pizza event",
-    description: "Toppings to avoid + allergies.",
+    description: "Allergies and dietary needs first, then toppings to avoid.",
     build: () => [
       {
         id: newQuestionId(),
-        type: "multiSelect",
-        label: "Toppings to avoid",
-        required: false,
-        options: ["Bacon / pork", "Olives", "Mushrooms", "Peppers", "Pineapple"],
-      },
-      {
-        id: newQuestionId(),
-        type: "yesNo",
-        label: "Do you need a vegetarian option?",
-        required: true,
-      },
-      {
-        id: newQuestionId(),
         type: "dietaryAllergies",
-        label: "Any allergies we should know about?",
+        label: "Any allergies or dietary requirements?",
         required: false,
+      },
+      {
+        id: newQuestionId(),
+        type: "multiSelect",
+        label: "Any toppings to avoid?",
+        required: false,
+        options: [
+          "Bacon / pork",
+          "Olives",
+          "Mushrooms",
+          "Peppers",
+          "Pineapple",
+          "Anchovies",
+        ],
+        allowOther: true,
+        noneOption: "No, I'm happy with any toppings",
       },
     ],
   },

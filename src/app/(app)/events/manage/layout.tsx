@@ -8,8 +8,12 @@ export default async function EventsLayout({
 }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
+  // The events area is open to the whole committee, who plan and collaborate
+  // here. Creating a new event still needs the draftEvent permission, and the
+  // attendee list still needs SU recognition - both gated further in.
   const allowed =
     user.role === "admin" ||
+    user.role === "committee" ||
     user.permissions.draftEvent ||
     user.permissions.approveEvent;
   if (!allowed) redirect("/dashboard");

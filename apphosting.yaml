@@ -14,8 +14,8 @@ env:
   # Firebase Hosting custom domain serving the OAuth handler at
   # /__/auth/handler/*. Serving from auth.naisi.uk (same eTLD+1 as naisi.uk)
   # keeps Firebase auth cookies first-party → Safari ITP doesn't block them →
-  # popup sign-in works reliably. Dev overrides this to auth-dev.naisi.uk via
-  # the App Hosting console UI.
+  # popup sign-in works reliably. Dev overrides this to auth-website-dev.naisi.uk
+  # via the App Hosting console UI.
   - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
     value: auth.naisi.uk
     availability: [BUILD, RUNTIME]

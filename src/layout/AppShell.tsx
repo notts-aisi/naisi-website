@@ -38,8 +38,11 @@ const NEWSLETTER_ACCESS = (v: Viewer) =>
   v.role === "admin" ||
   Boolean(v.permissions.draftNewsletter) ||
   Boolean(v.permissions.approveNewsletter);
+// The events area is open to the whole committee, plus any member granted the
+// draft or approve permission directly.
 const EVENTS_ACCESS = (v: Viewer) =>
   v.role === "admin" ||
+  v.role === "committee" ||
   Boolean(v.permissions.draftEvent) ||
   Boolean(v.permissions.approveEvent);
 

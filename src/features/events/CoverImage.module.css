@@ -1,0 +1,99 @@
+.frame {
+  position: relative;
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+}
+
+.poster {
+  display: block;
+  width: 100%;
+  /* Cover images are framed in the editor's crop tool, so the page shows them
+     at their true shape rather than re-cropping with object-fit. */
+  height: auto;
+}
+
+/* strip: the emblem fades into a soft shadow band along one edge.
+   The band height is set inline from the event's coverStripSize. */
+.strip {
+  position: absolute;
+  inset: auto 0 0 0;
+  min-height: 90px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: var(--space-4) var(--space-6);
+  background: linear-gradient(to top, rgba(5, 8, 14, 0.85), rgba(5, 8, 14, 0));
+  pointer-events: none;
+}
+
+/* stripTop: the same band, flipped to the top edge. */
+.stripTop {
+  inset: 0 0 auto 0;
+  align-items: flex-start;
+  background: linear-gradient(to bottom, rgba(5, 8, 14, 0.85), rgba(5, 8, 14, 0));
+}
+
+.stripEmblem {
+  display: block;
+  height: calc(54px * var(--logo-scale, 1));
+  width: auto;
+}
+
+/* corner: an emblem placed freely on the cover (dragged in the editor),
+   optionally on a frosted backing box. Position and size come from the
+   --logo-x / --logo-y / --logo-scale custom properties set on .frame. */
+.cornerEmblem {
+  position: absolute;
+  left: var(--logo-x, 90%);
+  top: var(--logo-y, 86%);
+  transform: translate(-50%, -50%);
+  display: block;
+  height: calc(40px * var(--logo-scale, 1));
+  width: auto;
+  pointer-events: none;
+}
+
+/* boxed: the frosted chip behind the emblem. Padding is deliberately tight
+   so the box hugs the logo. */
+.cornerEmblemBoxed {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  background: rgba(5, 8, 14, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* The full-colour emblem needs a pale chip to read against. */
+.cornerEmblemLight {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+/* shadow: a drop shadow on the box, or on a bare emblem when the box is off. */
+.cornerEmblemShadowBox {
+  box-shadow: var(--shadow-md);
+}
+
+.cornerEmblemShadowBare {
+  filter: drop-shadow(0 2px 6px rgba(5, 8, 14, 0.55));
+}
+
+/* draggable: editor-only. The emblem becomes a grab handle. */
+.cornerEmblemDraggable {
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+}
+
+.cornerEmblemDraggable:active {
+  cursor: grabbing;
+}
+
+@media (max-width: 600px) {
+  .stripEmblem {
+    height: calc(42px * var(--logo-scale, 1));
+  }
+  .cornerEmblem {
+    height: calc(32px * var(--logo-scale, 1));
+  }
+}

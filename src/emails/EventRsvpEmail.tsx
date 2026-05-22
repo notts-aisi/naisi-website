@@ -10,6 +10,8 @@ import {
   Section,
   Text,
 } from "@react-email/components";
+import EventChangeSummary from "./EventChangeSummary";
+import type { EventChange } from "@/lib/events/changeSummary";
 
 export type EventRsvpEmailVariant =
   | "requested"
@@ -38,6 +40,12 @@ type Props = {
   decisionNote?: string;
   /** Pretty-printed summary of the attendee's answers ("Burger: Beef · Allergies: Peanuts"). */
   answersLine?: string;
+  /** Schedule/location changes since the attendee signed up — shown on acceptance. */
+  changesSinceSignup?: EventChange[];
+  /** "Add to Google Calendar" link, shown on the approved / promoted emails. */
+  googleCalUrl?: string;
+  /** Link to the .ics download, for Apple Calendar / Outlook. */
+  icsUrl?: string;
   /** Absolute URL letting the attendee self-cancel. */
   cancelUrl?: string;
   /** Absolute URL letting the attendee request a dietary / answer change. */
@@ -106,6 +114,9 @@ export default function EventRsvpEmail({
   foodLine,
   decisionNote,
   answersLine,
+  changesSinceSignup,
+  googleCalUrl,
+  icsUrl,
   cancelUrl,
   changeUrl,
   instagramHandle,
@@ -154,6 +165,35 @@ export default function EventRsvpEmail({
                   <strong>Food:</strong> {foodLine}
                 </Text>
               )}
+            </Section>
+          )}
+
+          {showDetails && changesSinceSignup && changesSinceSignup.length > 0 && (
+            <Section style={{ margin: "16px 0 0" }}>
+              <Text style={changeHeading}>This changed since you signed up:</Text>
+              <EventChangeSummary changes={changesSinceSignup} />
+            </Section>
+          )}
+
+          {(googleCalUrl || icsUrl) && (
+            <Section style={{ margin: "16px 0 0" }}>
+              <Text style={detailLine}>
+                <strong>Add it to your calendar:</strong>{" "}
+                {googleCalUrl && (
+                  <EmailLink href={googleCalUrl} style={link}>
+                    Google Calendar
+                  </EmailLink>
+                )}
+                {googleCalUrl && icsUrl ? "  ·  " : null}
+                {icsUrl && (
+                  <EmailLink href={icsUrl} style={link}>
+                    Apple or Outlook
+                  </EmailLink>
+                )}
+              </Text>
+              <Text style={detailMuted}>
+                The event is also attached to this email as a calendar file.
+              </Text>
             </Section>
           )}
 
@@ -315,6 +355,13 @@ const detailMuted: React.CSSProperties = {
   color: "#71717a",
   margin: "4px 0 0",
   fontStyle: "italic",
+};
+
+const changeHeading: React.CSSProperties = {
+  fontSize: "15px",
+  fontWeight: 600,
+  color: "#18181b",
+  margin: "0 0 4px",
 };
 
 const hr: React.CSSProperties = {

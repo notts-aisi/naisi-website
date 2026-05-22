@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Input";
@@ -28,10 +29,13 @@ type SubmitState =
   | { kind: "error"; message: string };
 
 export default function RsvpForm({ event, previewMode }: Props) {
+  const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const [anonName, setAnonName] = useState("");
   const [anonEmail, setAnonEmail] = useState("");
   const [answers, setAnswers] = useState<Record<string, RsvpAnswer>>({});
+  const [joinEvents, setJoinEvents] = useState(false);
+  const [joinNewsletter, setJoinNewsletter] = useState(false);
   const [state, setState] = useState<SubmitState>({ kind: "idle" });
 
   const questions: FormQuestion[] = event.signupForm;
@@ -67,7 +71,27 @@ export default function RsvpForm({ event, previewMode }: Props) {
         });
         return;
       }
-      setState({ kind: "success" });
+
+      // RSVP saved. Fire-and-forget the optional mailing-list opt-in — it must
+      // never block the RSVP or surface its own errors to the attendee.
+      const channels: string[] = [];
+      if (joinEvents) channels.push("events");
+      if (joinNewsletter) channels.push("newsletter");
+      if (channels.length > 0) {
+        void fetch("/api/subscriptions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email, channels, source: "event-rsvp", name }),
+        }).catch(() => {});
+      }
+
+      // Real submissions get a dedicated confirmation page so the "we've got
+      // it" message can't be missed. The preview/test flow stays in place.
+      if (previewMode) {
+        setState({ kind: "success" });
+      } else {
+        router.push(`/events/${event.id}/rsvp/submitted`);
+      }
     } catch (err) {
       setState({
         kind: "error",
@@ -168,6 +192,38 @@ export default function RsvpForm({ event, previewMode }: Props) {
             disabled={state.kind === "submitting"}
           />
         )}
+
+        <fieldset className={styles.channels} disabled={state.kind === "submitting"}>
+          <legend className={styles.channelsLegend}>Stay in the loop (optional)</legend>
+          <label className={styles.channelLabel}>
+            <input
+              type="checkbox"
+              className={styles.channelCheckbox}
+              checked={joinEvents}
+              onChange={(e) => setJoinEvents(e.target.checked)}
+            />
+            <span className={styles.channelText}>
+              <span className={styles.channelName}>Email me about future events</span>
+              <span className={styles.channelDescription}>
+                Get an email when we announce a new event.
+              </span>
+            </span>
+          </label>
+          <label className={styles.channelLabel}>
+            <input
+              type="checkbox"
+              className={styles.channelCheckbox}
+              checked={joinNewsletter}
+              onChange={(e) => setJoinNewsletter(e.target.checked)}
+            />
+            <span className={styles.channelText}>
+              <span className={styles.channelName}>NAISI newsletter</span>
+              <span className={styles.channelDescription}>
+                Occasional society updates and what we&apos;re working on.
+              </span>
+            </span>
+          </label>
+        </fieldset>
 
         {state.kind === "error" && <p className={styles.danger}>{state.message}</p>}
 
