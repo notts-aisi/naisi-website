@@ -423,6 +423,16 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // === impersonations ===
+    // Audit log of admin "view as" sessions. One doc per (start, end) pair,
+    // written entirely by the /api/admin/impersonate* routes via Admin SDK.
+    // Clients never write here; admins can read the log for a future
+    // impersonations review tab.
+    match /impersonations/{docId} {
+      allow read:  if isAdmin();
+      allow write: if false;
+    }
+
     // === eventRsvps ===
     // RSVPs are attendee PII - never public read. All writes go through the
     // server route `/api/events/[id]/rsvp` (admin SDK), so rules are a safety

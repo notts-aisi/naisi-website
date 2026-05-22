@@ -3,12 +3,23 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import BrandMark from "@/components/BrandMark";
 import { useAuth } from "@/auth/AuthProvider";
+import { exitImpersonation } from "@/auth/impersonation";
 import { signOut } from "@/auth/signInWithGoogle";
 import { usePendingCount } from "@/features/admin/usePendingCount";
 import type { UserPermissions } from "@/lib/firestore/users";
 import styles from "./AppShell.module.css";
+
+/** Banner state supplied by (app)/layout.tsx when a view-as session is live.
+ *  `actorName` is who the real admin is; the target's identity is whatever
+ *  `useAuth()` reports, so we only carry the actor side here. */
+type Impersonation = {
+  actorName: string;
+  targetName: string;
+  targetRole: string;
+};
 
 type Viewer = {
   role: "member" | "committee" | "admin";
@@ -70,11 +81,30 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-export default function AppShell({ children }: { children: React.ReactNode }) {
+export default function AppShell({
+  children,
+  impersonation,
+}: {
+  children: React.ReactNode;
+  impersonation?: Impersonation | null;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, role, permissions, suRecognised, loading } = useAuth();
   const pendingCount = usePendingCount();
+  const [exiting, setExiting] = useState(false);
+
+  async function handleExitImpersonation() {
+    setExiting(true);
+    try {
+      await exitImpersonation();
+      // No setExiting(false) on success — full-page nav to /login.
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : "Exit failed");
+      setExiting(false);
+    }
+  }
 
   const visibleGroups =
     role === "admin" || role === "committee" || role === "member"
@@ -179,7 +209,34 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </button>
         </div>
       </aside>
-      <main className={styles.main}>{children}</main>
+      <main className={styles.main}>
+        {impersonation && (
+          <div
+            className={styles.impersonationBanner}
+            role="status"
+            aria-live="polite"
+          >
+            <span className={styles.impersonationText}>
+              <strong>Viewing as {impersonation.targetName}</strong>{" "}
+              <span className={styles.impersonationRole}>
+                ({impersonation.targetRole})
+              </span>
+              <span className={styles.impersonationWarn}>
+                {" — "}any actions you take will be recorded as this member.
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={handleExitImpersonation}
+              disabled={exiting}
+              className={styles.impersonationExit}
+            >
+              {exiting ? "Exiting…" : "Exit view-as"}
+            </button>
+          </div>
+        )}
+        {children}
+      </main>
     </div>
   );
 }

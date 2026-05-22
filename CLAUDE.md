@@ -156,6 +156,13 @@ Server-only collections (Admin SDK writes, client rules fully locked):
 emailSends/{id}         Append-only delivery log (powers the deliverability tab).
 suppressedEmails/{id}   Bounce + complaint suppression list.
 config/{doc}            Runtime config — task-email copy lives here.
+impersonations/{id}     Audit log of admin "view as" sessions:
+                          { actorUid, actorEmail, actorName,
+                            targetUid, targetEmail, targetName, targetRole,
+                            startedAt, endedAt, failed? }
+                        One doc per (start, end) pair. Written by
+                        /api/admin/impersonate{,/exit} via Admin SDK;
+                        rules give admin read, all writes locked.
 ```
 
 ### Rules exist, feature not built
@@ -204,6 +211,62 @@ tools and the matching Firestore rules, so a plain `member` can be granted
 `users/{uid}.tracks` is an admin-set array of `"technical" | "governance"` tags
 noting which side(s) of the course programme a user aligns with. Private
 (admin-only in rules), not a permission and not a leadership role.
+
+### Admin "view as" (impersonation, shipped)
+
+A debug tool on the admin Members page: each non-admin row has a "View as
+{name}" button that signs the admin in as that member so the site renders
+*exactly* what the member sees (sidebar tabs, page redirects, role-gated
+content). Useful for reproducing reports like "the Events tab isn't showing
+for me." **Full impersonation**: `request.auth.uid` becomes the target's,
+so Firestore rules and every gate behave identically to the target signing
+in themselves.
+
+Trust + safety properties:
+- Start gate (`POST /api/admin/impersonate`) uses `getCurrentUser()` and
+  requires `role === "admin"`, same pattern as the existing admin
+  delete-user route. Refuses self / admin / pending / rejected targets,
+  and refuses nested impersonation if an `__impersonator` cookie is
+  already set.
+- Audit-first: writes the `impersonations/{id}` doc BEFORE minting the
+  custom token, so a mint failure can't leave an untracked session
+  in flight (mint-fail path closes the doc with `failed: true`).
+- `__impersonator` cookie is httpOnly + secure-in-prod + sameSite=lax,
+  carries `{ actorUid, actorName, actorEmail, auditId }`. Exit verifies
+  `actorUid` matches and `endedAt === null` before closing the audit
+  doc — a tampered cookie can't overwrite an unrelated record.
+- Exit (`POST /api/admin/impersonate/exit`) clears the marker and the
+  borrowed `__session` cookie via `clearSessionCookieOnly()`. It
+  deliberately **does not** revoke the target's refresh tokens — the
+  target may have real sessions on their own devices that must keep
+  working.
+- Stale-cookie guard: the layout suppresses the banner when
+  `marker.actorUid === user.uid` (admin re-signed in as themselves
+  without the marker being cleared) so the banner can't lie.
+
+Operational caveats (by design with full impersonation):
+- Writes during a view-as session are recorded by Firestore as the
+  target performing them (`createdAt`/`updatedAt`/`actorUid` fields look
+  identical to a real target write). The banner copy warns; the
+  `impersonations` log records the start/end window for after-the-fact
+  correlation, but per-write attribution to "admin acting as X" is not
+  reconstructable.
+- Exit requires re-authentication: `signInWithCustomToken` on start
+  replaced the admin's Firebase Auth client state with the target's,
+  and Firebase Auth client SDK has no way to "restore" the previous
+  session. Exit signs out of Firebase Auth and redirects to
+  `/login?from=impersonation-exit`.
+- A persistent yellow banner sits sticky at the top of `<main>` for the
+  duration of any view-as session ("Viewing as {name} ({role}) — any
+  actions you take will be recorded as this member") with an
+  Exit view-as button.
+
+Files: [src/lib/firebase/impersonation.ts](src/lib/firebase/impersonation.ts),
+[src/auth/impersonation.ts](src/auth/impersonation.ts),
+[src/app/api/admin/impersonate/route.ts](src/app/api/admin/impersonate/route.ts),
+[src/app/api/admin/impersonate/exit/route.ts](src/app/api/admin/impersonate/exit/route.ts),
+banner in [src/layout/AppShell.tsx](src/layout/AppShell.tsx),
+entry button in [src/features/admin/MemberItem.tsx](src/features/admin/MemberItem.tsx).
 
 ## Task visibility model (shipped)
 
@@ -293,7 +356,8 @@ Two separate Firebase projects, each with its own App Hosting backend (both back
 - **Newsletter**: block-based editor (rich text, images with crop), per-user draft/approve permissions, draft → pending → approved → sent pipeline, server-side send, test send.
 - **Events**: modular signup-form builder, RSVP system (pending / confirmed / waitlisted / denied / cancelled), capacity + waitlist, approve / deny / change-request flow, ICS export + calendar email links, cover-image crop + emblem branding overlay, food declaration + dietary tags, pizza order helper, post-publish editing with opt-in change-notification emails (date, time, location, or description), event cancellation with an optional attendee notice, event archiving, admin test-RSVP generation. The events area is open to the whole committee; `draftEvent` gates creating an event and `approveEvent` gates publishing it; an author or admin can add committee members to a single event's `collaboratorUids` so they can edit just that event. Attendee PII (the RSVP list, CSV export, broadcast send) is restricted to SU-recognised committee and admins.
 - **Subscriptions**: junction-collection architecture (one row per email + channel, orthogonal `confirmed` / `subscribed` axes), append-only event log, admin Subscriptions tab (spreadsheet-style table, guest delete, history cap).
-- **Admin dashboard tabs**: Approvals, Members (role / title / bio / `suRecognised` / `permissions` / `tracks` edit + full profile edit + hard delete), Projects (CRUD + archive), Newsletter, Subscriptions, Email designs (application email templates), Deliverability (send log + suppression list), Task templates, Danger zone.
+- **Admin dashboard tabs**: Approvals, Members (role / title / bio / `suRecognised` / `permissions` / `tracks` edit + full profile edit + hard delete + "View as" debug impersonation), Projects (CRUD + archive), Newsletter, Subscriptions, Email designs (application email templates), Deliverability (send log + suppression list), Task templates, Danger zone.
+- **Admin "view as" debug tool**: per-member "View as" button on the admin Members page does a full impersonation (Firebase custom token → target session cookie) so the admin sees exactly what the member sees, with a sticky banner and audit log (`impersonations` collection). See Roles and access → Admin "view as" for trust properties and operational caveats.
 - **Email infrastructure**: Resend send pipeline, deliverability dashboard, bounce/complaint webhook, application lifecycle emails, transactional emails as JSX templates in `src/emails/`.
 - **Users-collection lockdown**: member PII is readable only by SU-recognised committee + admins (and each user's own doc); `suRecognised` enforced as a trust boundary in Firestore rules.
 - **Brand**: real NAISI emblem integrated across the site, favicon, and email logo.
