@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
@@ -72,31 +72,44 @@ export default function DeliverabilityDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [unsuppressing, setUnsuppressing] = useState<string | null>(null);
-
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [sendsRes, suppRes] = await Promise.all([
-        fetch("/api/admin/deliverability/sends"),
-        fetch("/api/admin/deliverability/suppressed"),
-      ]);
-      if (!sendsRes.ok) throw new Error(`Sends fetch ${sendsRes.status}`);
-      if (!suppRes.ok) throw new Error(`Suppressed fetch ${suppRes.status}`);
-      const sendsBody = (await sendsRes.json()) as { items: Send[] };
-      const suppBody = (await suppRes.json()) as { items: Suppression[] };
-      setSends(sendsBody.items ?? []);
-      setSuppressions(suppBody.items ?? []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // Bump to re-run the load effect (driven by the Refresh button).
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    void fetchAll();
-  }, [fetchAll]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [sendsRes, suppRes] = await Promise.all([
+          fetch("/api/admin/deliverability/sends"),
+          fetch("/api/admin/deliverability/suppressed"),
+        ]);
+        if (!sendsRes.ok) throw new Error(`Sends fetch ${sendsRes.status}`);
+        if (!suppRes.ok) throw new Error(`Suppressed fetch ${suppRes.status}`);
+        const sendsBody = (await sendsRes.json()) as { items: Send[] };
+        const suppBody = (await suppRes.json()) as { items: Suppression[] };
+        if (cancelled) return;
+        setSends(sendsBody.items ?? []);
+        setSuppressions(suppBody.items ?? []);
+        setError(null);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
+
+  // Refresh button: surface the loading state, then re-run the load effect.
+  function refresh() {
+    setLoading(true);
+    setError(null);
+    setReloadKey((k) => k + 1);
+  }
 
   async function onUnsuppress(id: string) {
     setUnsuppressing(id);
@@ -133,7 +146,7 @@ export default function DeliverabilityDashboard() {
             Recent sends and the suppression list fed by email provider bounce + complaint events.
           </p>
         </div>
-        <Button size="sm" variant="secondary" onClick={() => void fetchAll()} disabled={loading}>
+        <Button size="sm" variant="secondary" onClick={refresh} disabled={loading}>
           {loading ? "Refreshing…" : "Refresh"}
         </Button>
       </header>
@@ -268,22 +281,31 @@ function TaskEmailKillSwitch() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/config/task-emails");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { enabled: boolean; updatedAt: string | null };
-      setEnabled(data.enabled);
-      setUpdatedAt(data.updatedAt);
-      setErr(null);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Load failed");
-    }
-  }, []);
+  // Bump to re-run the load effect (after a successful toggle).
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/admin/config/task-emails");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as {
+          enabled: boolean;
+          updatedAt: string | null;
+        };
+        if (cancelled) return;
+        setEnabled(data.enabled);
+        setUpdatedAt(data.updatedAt);
+        setErr(null);
+      } catch (e) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : "Load failed");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
 
   async function toggle() {
     if (enabled === null || busy) return;
@@ -297,7 +319,7 @@ function TaskEmailKillSwitch() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setEnabled(next);
-      await load();
+      setReloadKey((k) => k + 1);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Toggle failed");
     } finally {
@@ -319,7 +341,7 @@ function TaskEmailKillSwitch() {
         >
           <div style={{ flex: 1, minWidth: "16rem" }}>
             <p style={{ margin: 0, fontSize: "var(--text-sm)" }}>
-              When <strong>off</strong>, the task manager's comment-notify and
+              When <strong>off</strong>, the task manager&apos;s comment-notify and
               send-for-review endpoints short-circuit before calling the mail
               provider. Comments still post in-app. Other pipelines (newsletter,
               auth, deliverability webhooks) are unaffected.

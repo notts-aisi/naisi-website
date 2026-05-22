@@ -14,10 +14,7 @@ export function usePendingCount() {
   const [count, setCount] = useState(0);
 
   useEffect(() => {
-    if (role !== "admin") {
-      setCount(0);
-      return;
-    }
+    if (role !== "admin") return;
     const db = getClientDb();
     const q = query(collection(db, "users"), where("role", "==", "pending"));
     const unsub = onSnapshot(
@@ -28,5 +25,7 @@ export function usePendingCount() {
     return unsub;
   }, [role]);
 
-  return count;
+  // Non-admins never subscribe; mask any count left over from a prior admin
+  // session so they always read 0.
+  return role === "admin" ? count : 0;
 }

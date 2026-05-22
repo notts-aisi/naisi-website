@@ -47,7 +47,7 @@ export default async function EventPreviewPage({
               <p style={{ margin: "var(--space-1) 0 0", color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
                 This is how the event looks to a visitor. Current status:{" "}
                 <strong>{EVENT_STATUS_LABEL[event.status]}</strong>. RSVPs submitted here
-                are saved for real, so it's useful for end-to-end testing before publish.
+                are saved for real, so it&apos;s useful for end-to-end testing before publish.
               </p>
             </div>
             <Link href={`/events/manage/${event.id}`}>

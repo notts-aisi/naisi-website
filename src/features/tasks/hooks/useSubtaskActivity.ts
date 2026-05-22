@@ -22,16 +22,18 @@ export function useSubtaskActivity(
   taskId: string | null,
   subtaskId: string | null,
 ) {
-  const [entries, setEntries] = useState<ActivityDoc[]>([]);
-  const [loading, setLoading] = useState(true);
+  const key = taskId && subtaskId ? `${taskId}/${subtaskId}` : "";
+  // The latest delivered snapshot, tagged with the (taskId, subtaskId) it
+  // belongs to. `loading` is derived from whether that tag is current, so the
+  // effect never has to setState synchronously to reset on an id change.
+  const [state, setState] = useState<{ key: string; entries: ActivityDoc[] }>({
+    key: "",
+    entries: [],
+  });
 
   useEffect(() => {
-    if (!taskId || !subtaskId) {
-      setEntries([]);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
+    if (!taskId || !subtaskId) return;
+    const subKey = `${taskId}/${subtaskId}`;
     const db = getClientDb();
     const q = query(
       collection(db, "tasks", taskId, "activity"),
@@ -41,21 +43,23 @@ export function useSubtaskActivity(
       q,
       (snap) => {
         const all = snap.docs.map((d) => normalizeActivity(d.id, d.data()));
-        setEntries(
-          all.filter((a) => {
+        setState({
+          key: subKey,
+          entries: all.filter((a) => {
             const id = a.payload?.subtaskId;
             return typeof id === "string" && id === subtaskId;
           }),
-        );
-        setLoading(false);
+        });
       },
       (err) => {
         console.error("useSubtaskActivity:", err);
-        setLoading(false);
+        setState({ key: subKey, entries: [] });
       },
     );
     return unsub;
   }, [taskId, subtaskId]);
 
-  return { entries, loading };
+  if (!key) return { entries: [], loading: false };
+  if (state.key !== key) return { entries: [], loading: true };
+  return { entries: state.entries, loading: false };
 }

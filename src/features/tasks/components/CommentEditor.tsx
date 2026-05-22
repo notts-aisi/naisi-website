@@ -117,12 +117,16 @@ export default function CommentEditor({
     if (editor && autoFocus) editor.commands.focus("end");
   }, [editor, autoFocus]);
 
-  // Reset local length counter when the editor rebuilds for a different key
-  // (e.g. opening the edit composer for a different comment).
-  useEffect(() => {
+  // Reset the local length counter and any error when the editor rebuilds
+  // for a different comment (e.g. opening the edit composer for a different
+  // one). Done during render with a previous-value guard rather than a
+  // prop-sync effect, avoiding a synchronous-setState cascade.
+  const [resetSig, setResetSig] = useState({ editorKey, initialBody });
+  if (resetSig.editorKey !== editorKey || resetSig.initialBody !== initialBody) {
+    setResetSig({ editorKey, initialBody });
     setLength(initialBody?.length ?? 0);
     setError(null);
-  }, [editorKey, initialBody]);
+  }
 
   async function handleSubmit() {
     if (!editor || busy) return;

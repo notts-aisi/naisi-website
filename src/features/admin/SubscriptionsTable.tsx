@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
@@ -350,13 +350,17 @@ export default function SubscriptionsTable() {
     return m;
   }, [recipients, verifiedByUid, verifiedLoaded]);
 
-  // Auto-expand the pinned recipient (deep-link from members tab).
-  useEffect(() => {
-    if (!pinnedAudienceId) return;
+  // Auto-expand the pinned recipient (deep-link from the members tab). Run
+  // during render once the pinned row appears in the loaded data, with a
+  // guard so it fires only once per pin - the user can still collapse it
+  // afterwards. Avoids a synchronous setState inside an effect.
+  const [autoExpandedPin, setAutoExpandedPin] = useState<string | null>(null);
+  if (pinnedAudienceId && pinnedAudienceId !== autoExpandedPin) {
     const target = recipients.find(
       (r) => r.audience === "user" && r.audienceId === pinnedAudienceId,
     );
     if (target) {
+      setAutoExpandedPin(pinnedAudienceId);
       setExpanded((prev) => {
         if (prev.has(target.key)) return prev;
         const next = new Set(prev);
@@ -364,7 +368,7 @@ export default function SubscriptionsTable() {
         return next;
       });
     }
-  }, [pinnedAudienceId, recipients]);
+  }
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();

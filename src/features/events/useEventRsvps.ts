@@ -40,10 +40,7 @@ export function useEventRsvps(eventId: string) {
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    if (!eventId) {
-      setLoading(false);
-      return;
-    }
+    if (!eventId) return;
     const db = getClientDb();
     const q = query(collection(db, "eventRsvps"), where("eventId", "==", eventId));
     const unsub = onSnapshot(
@@ -68,5 +65,7 @@ export function useEventRsvps(eventId: string) {
     setRsvps(toRows(snap.docs));
   }, [eventId]);
 
-  return { rsvps, loading, error, refresh };
+  // With no eventId the effect never subscribes, so `loading` would stay
+  // stuck at its initial true; report not-loading in that case.
+  return { rsvps, loading: eventId ? loading : false, error, refresh };
 }
