@@ -42,8 +42,32 @@ export async function createSessionCookie(idToken: string): Promise<void> {
   });
 }
 
-export async function clearSessionCookie(): Promise<void> {
+/**
+ * Revoke every session for the signed-in user, then clear the cookie.
+ *
+ * Deleting the cookie alone only forgets the session on the current device;
+ * the session-cookie JWT itself stays valid until its expiry, so a copied
+ * cookie would survive "logout". revokeRefreshTokens invalidates it
+ * everywhere - getCurrentUser already verifies with checkRevoked=true, so the
+ * revocation takes effect on the very next request. This makes logout a real
+ * logout rather than a per-device forget.
+ */
+export async function revokeAndClearSession(): Promise<void> {
   const store = await cookies();
+  const cookie = store.get(SESSION_COOKIE);
+  if (cookie?.value) {
+    const auth = getAdminAuth();
+    if (auth) {
+      try {
+        // No checkRevoked here: we only need the uid, and an already-revoked
+        // cookie should still resolve so the revoke stays idempotent.
+        const decoded = await auth.verifySessionCookie(cookie.value);
+        await auth.revokeRefreshTokens(decoded.uid);
+      } catch {
+        // Cookie missing, malformed, or expired - nothing to revoke.
+      }
+    }
+  }
   store.delete(SESSION_COOKIE);
 }
 

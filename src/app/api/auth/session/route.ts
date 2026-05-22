@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
-import { clearSessionCookie, createSessionCookie } from "@/lib/firebase/session";
+import { createSessionCookie, revokeAndClearSession } from "@/lib/firebase/session";
 
 export async function POST(request: NextRequest) {
   try {
@@ -34,6 +34,6 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE() {
-  await clearSessionCookie();
+  await revokeAndClearSession();
   return NextResponse.json({ ok: true });
 }
