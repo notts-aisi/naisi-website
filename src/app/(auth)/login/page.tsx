@@ -32,6 +32,12 @@ function LoginInner() {
   const next = params.get("next") ?? "/dashboard";
   const { user, role, loading: authLoading } = useAuth();
 
+  // Hoisted above the bounce effect because the effect's guard reads
+  // `loading` (the signing-in flag) to avoid racing handleSignIn's own
+  // cookie POST. See the bounce-effect block below for the why.
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
   // [monitor] Page-mount + auth-state snapshot. Logged on every render so
   // we can see exactly what useAuth() reported each time the bounce effect
   // below re-evaluated. The "stays on /login" failure mode is almost
@@ -43,8 +49,22 @@ function LoginInner() {
   }, [authLoading, user, role, next, pathname]);
 
   // Already signed in? Bounce away based on role.
+  //
+  // The `loading` guard is load-bearing. Without it the effect races the
+  // active signInWithGoogle handoff: signInWithPopup updates Firebase Auth
+  // client state (so useAuth() reports user+role) BEFORE the cookie POST
+  // to /api/auth/session completes. The effect then fires
+  // router.replace(next), the server-side (app)/layout.tsx reads the (not
+  // yet set) __session cookie, sees no session, and redirects back to
+  // /login. handleSignIn drives its own navigation post-cookie-set, so
+  // skipping the bounce while a sign-in is in flight is safe — and
+  // necessary.
   useEffect(() => {
     if (authLoading || !user) return;
+    if (loading) {
+      mark("[login] bounce-effect skipped: signin in flight");
+      return;
+    }
     if (role === "member" || role === "committee" || role === "admin") {
       mark(`[login] bounce-effect → ${next} (role=${role})`);
       router.replace(next);
@@ -59,9 +79,7 @@ function LoginInner() {
       // fired. Effect will re-run when role lands; no navigation here.
       mark("[login] bounce-effect: user but no role yet — waiting", { role });
     }
-  }, [authLoading, user, role, next, router]);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  }, [authLoading, user, role, next, router, loading]);
 
   async function handleSignIn() {
     mark("[login] handleSignIn start");
