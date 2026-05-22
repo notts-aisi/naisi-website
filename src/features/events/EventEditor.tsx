@@ -113,6 +113,11 @@ function buildNotifyDraft(
   return { subject, body };
 }
 
+// TEMP rt-debug: per-listener instance counter for the event-doc listener.
+// Remove with the rest of the [rt-debug] instrumentation once the
+// realtime-staleness root cause is found.
+let rtDebugSeq = 0;
+
 export default function EventEditor({ eventId }: Props) {
   const router = useRouter();
   const { user, role, permissions, suRecognised } = useAuth();
@@ -187,9 +192,36 @@ export default function EventEditor({ eventId }: Props) {
 
   useEffect(() => {
     const db = getClientDb();
+
+    // TEMP rt-debug instrumentation -------------------------------------
+    const instId = ++rtDebugSeq;
+    const attachedAt = Date.now();
+    let firstSnapAt = 0;
+    let snapCount = 0;
+    console.info(`[rt-debug] event#${instId} attach eventId=${eventId}`);
+    const watchdog = window.setTimeout(() => {
+      if (firstSnapAt === 0) {
+        console.warn(
+          `[rt-debug] event#${instId} NO FIRST SNAPSHOT after 10s -` +
+            ` listener appears stuck (editor will hold the loading screen)`,
+        );
+      }
+    }, 10000);
+    // -------------------------------------------------------------------
+
     const unsub = onSnapshot(
       doc(db, "events", eventId),
       (snap) => {
+        // TEMP rt-debug
+        snapCount += 1;
+        if (firstSnapAt === 0) firstSnapAt = Date.now();
+        console.info(
+          `[rt-debug] event#${instId} snapshot #${snapCount}` +
+            ` exists=${snap.exists()} fromCache=${snap.metadata.fromCache}` +
+            ` pendingWrites=${snap.metadata.hasPendingWrites}` +
+            ` dirty=${dirty} +${Date.now() - attachedAt}ms`,
+        );
+        // ---
         if (!snap.exists()) {
           setNotFound(true);
           setLoading(false);
@@ -223,12 +255,24 @@ export default function EventEditor({ eventId }: Props) {
         setLoading(false);
       },
       (err) => {
+        // TEMP rt-debug
+        console.error(`[rt-debug] event#${instId} error`, err);
+        // ---
         console.error(err);
         setError(err.message);
         setLoading(false);
       },
     );
-    return unsub;
+    return () => {
+      // TEMP rt-debug
+      window.clearTimeout(watchdog);
+      console.info(
+        `[rt-debug] event#${instId} detach after ${Date.now() - attachedAt}ms,` +
+          ` ${snapCount} snapshot(s) received`,
+      );
+      // ---
+      unsub();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventId]);
 
