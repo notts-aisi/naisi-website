@@ -370,8 +370,16 @@ Two separate Firebase projects, each with its own App Hosting backend (both back
 4. **Track-lead sub-role** — admins designating a member or committee member as head of a specific reading group / fellowship track / project, orthogonal to the governance role. No data field, UI, or rules exist. (The existing `users.tracks` field is unrelated: it is an admin `technical` / `governance` tag, not a leadership role.)
 5. **Cohort channels** — the subscriptions junction collection already accepts `cohort:<id>`-style channel strings as data, but no cohort feature creates or sends to them yet.
 
+## Debug instrumentation
+
+Two console-tagged probes exist for live debugging, both gated so they only emit when explicitly turned on:
+
+- **`[monitor]` — auth + nav lifecycle** ([src/lib/devMonitor.ts](src/lib/devMonitor.ts)). Logs the sign-in handoff (popup → idToken → `/api/auth/session` → router push), AuthProvider lifecycle (`onAuthStateChanged`, the user-doc snapshot's first fire / metadata), and AppShell mounts + pathname + loading transitions. Includes watchdogs that warn when expected events don't fire — most usefully the "still on /login 6s after a successful signin" alarm. Built to chase the intermittent "sign-in completes but stays on /login" symptom and similar nav hangs. **Enable** by setting `NEXT_PUBLIC_DEBUG_MONITOR=true` on the dev backend's UI env vars in the Firebase console (UI env vars override `apphosting.yaml` per Deploy). Don't set it on prod — even though it's just console noise, it's employer-visible. Filter the devtools console on `[monitor` to read just these lines.
+- **`[rt-debug]` — events realtime listeners** (parked on branch `fix/events-realtime-listener`, commits 522a7cb + 116733f, **unmerged**). Logs attach/detach, per-instance ids, snapshot metadata, timing, and a 10s no-first-snapshot watchdog on `useEventRsvps`, the EventEditor event-doc listener, and `useEvents`. Built for the events listener staleness investigation; can be revived if that bug resurfaces. Different tag from `[monitor]` so the two can coexist.
+
 ## Known gotchas
 
 - Firestore composite indexes on users took ~2-10 min to build; queries fail until they finish
 - Hot reload sometimes leaves CSS Module hashes stale — restart `npm run dev` if styling looks broken
 - Service account key rotation: remember to delete the old key in Google Cloud IAM after generating a new one
+- **`createCustomToken` needs an IAM role grant on App Hosting.** The Admin SDK signs custom tokens by calling IAM's `signBlob` API; the runtime service account (`firebase-app-hosting-compute@<project>.iam.gserviceaccount.com`) needs `roles/iam.serviceAccountTokenCreator` granted *on itself*. Without it, `auth.createCustomToken()` throws `Permission 'iam.serviceAccounts.signBlob' denied`. Granted on dev + prod for the view-as feature; needs to be granted again for any future feature that mints custom tokens on a new backend. One-liner: `gcloud iam service-accounts add-iam-policy-binding <SA_EMAIL> --member="serviceAccount:<SA_EMAIL>" --role="roles/iam.serviceAccountTokenCreator" --project=<PROJECT_ID>`.

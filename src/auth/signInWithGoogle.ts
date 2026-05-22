@@ -7,6 +7,7 @@ import {
   getClientDb,
   getGoogleProvider,
 } from "@/lib/firebase/client";
+import { mark, warn, watchdog } from "@/lib/devMonitor";
 
 export type SignInResult = {
   uid: string;
@@ -22,24 +23,45 @@ export type SignInResult = {
  * Role-based routing happens in (app)/layout.tsx, not here.
  */
 export async function signInWithGoogle(): Promise<SignInResult> {
-  const auth = getClientAuth();
-  const cred = await signInWithPopup(auth, getGoogleProvider());
-  const user = cred.user;
+  mark("[signin] start");
+  // [monitor] Wraps the slowest realistic happy-path leg (popup → cookie
+  // mint). If this watchdog ever fires, something stalled mid-handoff —
+  // most often Firebase popup blocked, slow network, or our /api/auth/session
+  // wedged waiting on the Admin SDK init.
+  const clear = watchdog("signInWithGoogle full flow", 15000);
+  try {
+    const auth = getClientAuth();
+    const cred = await signInWithPopup(auth, getGoogleProvider());
+    const user = cred.user;
+    mark("[signin] popup resolved", { uid: user.uid, email: user.email });
 
-  const idToken = await user.getIdToken();
-  const res = await fetch("/api/auth/session", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ idToken }),
-  });
-  if (!res.ok) throw new Error("Failed to establish session");
-  const body = (await res.json()) as { ok: boolean; exists: boolean };
+    const idToken = await user.getIdToken();
+    mark("[signin] getIdToken done", { length: idToken.length });
 
-  return {
-    uid: user.uid,
-    email: user.email,
-    isNew: !body.exists,
-  };
+    const res = await fetch("/api/auth/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken }),
+    });
+    mark("[signin] /api/auth/session POST returned", {
+      status: res.status,
+      ok: res.ok,
+    });
+    if (!res.ok) throw new Error("Failed to establish session");
+    const body = (await res.json()) as { ok: boolean; exists: boolean };
+    mark("[signin] session cookie established", { exists: body.exists });
+
+    return {
+      uid: user.uid,
+      email: user.email,
+      isNew: !body.exists,
+    };
+  } catch (err) {
+    warn("[signin] threw", err);
+    throw err;
+  } finally {
+    clear();
+  }
 }
 
 /**
@@ -163,6 +185,9 @@ export async function completeRegistration(profile: {
 }
 
 export async function signOut() {
+  mark("[signout] start");
   await fbSignOut(getClientAuth());
+  mark("[signout] firebase signOut done");
   await fetch("/api/auth/session", { method: "DELETE" });
+  mark("[signout] /api/auth/session DELETE done");
 }
