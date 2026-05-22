@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import BrandMark from "@/components/BrandMark";
 import { useAuth } from "@/auth/AuthProvider";
 import { exitImpersonation } from "@/auth/impersonation";
 import { signOut } from "@/auth/signInWithGoogle";
 import { usePendingCount } from "@/features/admin/usePendingCount";
 import type { UserPermissions } from "@/lib/firestore/users";
+import { mark, warn } from "@/lib/devMonitor";
 import styles from "./AppShell.module.css";
 
 /** Banner state supplied by (app)/layout.tsx when a view-as session is live.
@@ -93,6 +94,41 @@ export default function AppShell({
   const { user, role, permissions, suRecognised, loading } = useAuth();
   const pendingCount = usePendingCount();
   const [exiting, setExiting] = useState(false);
+
+  // [monitor] Track AppShell lifecycle. The "stays-on-/login" symptom can
+  // show up here as either (a) AppShell mounts on the destination but
+  // loading never flips to false, or (b) AppShell never mounts at all
+  // because the server-side layout redirected back to /login. Both are
+  // distinguishable from these logs combined with the login page's own.
+  const prevPathname = useRef(pathname);
+  const prevLoading = useRef(loading);
+  useEffect(() => {
+    mark("[shell] mount/render", { pathname, loading, role });
+  }, [pathname, loading, role]);
+
+  useEffect(() => {
+    if (prevPathname.current !== pathname) {
+      mark(`[shell] pathname ${prevPathname.current} → ${pathname}`);
+      prevPathname.current = pathname;
+    }
+  }, [pathname]);
+
+  useEffect(() => {
+    if (prevLoading.current !== loading) {
+      mark(`[shell] loading ${prevLoading.current} → ${loading}`);
+      prevLoading.current = loading;
+    }
+  }, [loading]);
+
+  // Watchdog: if the skeleton sits up for >5s on this pathname, something
+  // upstream (AuthProvider failsafe, Firestore snapshot) is wedged.
+  useEffect(() => {
+    if (!loading) return;
+    const t = setTimeout(() => {
+      warn("[shell] still loading after 5s", { pathname, hasUser: !!user, role });
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [loading, pathname, user, role]);
 
   async function handleExitImpersonation() {
     setExiting(true);
