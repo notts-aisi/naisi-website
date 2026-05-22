@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 /**
  * Two-dropdown month/year picker that emits an ISO "YYYY-MM" string.
@@ -71,12 +71,16 @@ export default function GraduationSelect({
   const [month, setMonth] = useState(initialMonth);
 
   // Sync local state if the parent feeds in a new value (e.g. edit form opens
-  // with existing data, or the field is reset).
-  useEffect(() => {
+  // with existing data, or the field is reset). Done during render with a
+  // previous-value guard - the React-recommended alternative to a prop-sync
+  // effect, which avoids the synchronous-setState-in-effect cascade.
+  const [syncedValue, setSyncedValue] = useState(value);
+  if (value !== syncedValue) {
+    setSyncedValue(value);
     const [y, m] = split(value);
     setYear(y);
     setMonth(m);
-  }, [value]);
+  }
 
   function emit(nextYear: string, nextMonth: string) {
     setYear(nextYear);

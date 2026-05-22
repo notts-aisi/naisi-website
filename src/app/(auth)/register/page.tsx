@@ -26,7 +26,6 @@ import {
   ALL_CATEGORIES,
   CATEGORY_DESCRIPTIONS,
   CATEGORY_LABELS,
-  DEFAULT_NOTIFICATION_PREFS,
   isSubscribedToAnything,
   setCategory,
   setChannel,
@@ -123,21 +122,15 @@ function RegisterPageInner() {
     return unsub;
   }, [verification, user, universityEmail]);
 
-  // Cooldown ticker — drives the resend button countdown.
+  // Cooldown ticker - drives the resend button countdown. The initial value
+  // is seeded in sendVerification when the "sent" state is set; this effect
+  // only keeps it ticking, so it never has to setState synchronously.
   useEffect(() => {
-    if (verification.status !== "sent") {
-      setCooldown(0);
-      return;
-    }
-    const tick = () => {
-      const remaining = Math.max(
-        0,
-        Math.ceil((verification.nextSendAt - Date.now()) / 1000),
-      );
-      setCooldown(remaining);
-    };
-    tick();
-    const id = setInterval(tick, 500);
+    if (verification.status !== "sent") return;
+    const { nextSendAt } = verification;
+    const id = setInterval(() => {
+      setCooldown(Math.max(0, Math.ceil((nextSendAt - Date.now()) / 1000)));
+    }, 500);
     return () => clearInterval(id);
   }, [verification]);
 
@@ -179,6 +172,7 @@ function RegisterPageInner() {
         throw new Error(msg);
       }
       const nextSendAt = Date.now() + body.cooldownRemaining * 1000;
+      setCooldown(body.cooldownRemaining);
       setVerification({ status: "sent", tokenId: body.tokenId, nextSendAt });
     } catch (err) {
       console.error(err);

@@ -23,13 +23,22 @@ function formatWhen(d: Date | null): string {
   });
 }
 
+// Split published events into upcoming and past against the request-time
+// clock. Kept in a plain helper so the component render body stays free of
+// the impure Date read.
+function splitByStart<T extends { startAt: Date | null }>(
+  events: T[],
+): { upcoming: T[]; past: T[] } {
+  const now = Date.now();
+  return {
+    upcoming: events.filter((e) => !e.startAt || e.startAt.getTime() >= now),
+    past: events.filter((e) => e.startAt && e.startAt.getTime() < now),
+  };
+}
+
 export default async function PublicEventsIndex() {
   const events = await listPublishedEvents();
-  const now = Date.now();
-  const upcoming = events.filter(
-    (e) => !e.startAt || e.startAt.getTime() >= now,
-  );
-  const past = events.filter((e) => e.startAt && e.startAt.getTime() < now);
+  const { upcoming, past } = splitByStart(events);
 
   return (
     <section style={{ padding: "var(--space-16) 0" }}>
