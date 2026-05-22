@@ -88,7 +88,7 @@ export type CoverLogoPosition = "top" | "bottom";
  * DEFAULT.
  */
 export const COVER_LOGO_SCALE_MIN = 50;
-export const COVER_LOGO_SCALE_MAX = 200;
+export const COVER_LOGO_SCALE_MAX = 400;
 export const COVER_LOGO_SCALE_DEFAULT = 100;
 
 /**
