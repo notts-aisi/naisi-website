@@ -9,6 +9,7 @@ import {
   COVER_STRIP_SIZE_MIN,
   type CoverBranding,
   type CoverLogoColor,
+  type CoverLogoPosition,
 } from "@/lib/firestore/events";
 import CoverImage from "./CoverImage";
 import styles from "./CoverBrandingModal.module.css";
@@ -17,6 +18,7 @@ export type CoverBrandingChoice = {
   branding: CoverBranding;
   logoColor: CoverLogoColor;
   stripSize: number;
+  logoPosition: CoverLogoPosition;
 };
 
 type Props = {
@@ -26,6 +28,7 @@ type Props = {
   value: CoverBranding;
   logoColor: CoverLogoColor;
   stripSize: number;
+  logoPosition: CoverLogoPosition;
   /** Called with the chosen treatment when the organiser confirms. */
   onSelect: (choice: CoverBrandingChoice) => void;
   onClose: () => void;
@@ -34,6 +37,11 @@ type Props = {
 const LOGO_COLOR_OPTIONS = [
   { value: "white" as const, label: "White" },
   { value: "colour" as const, label: "Full colour" },
+];
+
+const LOGO_POSITION_OPTIONS = [
+  { value: "bottom" as const, label: "Bottom" },
+  { value: "top" as const, label: "Top" },
 ];
 
 /**
@@ -46,12 +54,15 @@ export default function CoverBrandingModal({
   value,
   logoColor,
   stripSize,
+  logoPosition,
   onSelect,
   onClose,
 }: Props) {
   const [selected, setSelected] = useState<CoverBranding>(value);
   const [selectedColor, setSelectedColor] = useState<CoverLogoColor>(logoColor);
   const [selectedStrip, setSelectedStrip] = useState(stripSize);
+  const [selectedPosition, setSelectedPosition] =
+    useState<CoverLogoPosition>(logoPosition);
 
   return (
     <div className={styles.overlay} role="dialog" aria-modal="true">
@@ -69,6 +80,7 @@ export default function CoverBrandingModal({
             branding={selected}
             logoColor={selectedColor}
             stripSize={selectedStrip}
+            logoPosition={selectedPosition}
           />
         </div>
 
@@ -95,6 +107,19 @@ export default function CoverBrandingModal({
               onChange={setSelectedColor}
               options={LOGO_COLOR_OPTIONS}
               ariaLabel="Logo colour"
+              size="sm"
+            />
+          </div>
+        )}
+
+        {selected !== "none" && (
+          <div className={styles.control}>
+            <span className={styles.controlLabel}>Logo position</span>
+            <SegmentedControl
+              value={selectedPosition}
+              onChange={setSelectedPosition}
+              options={LOGO_POSITION_OPTIONS}
+              ariaLabel="Logo position"
               size="sm"
             />
           </div>
@@ -127,6 +152,7 @@ export default function CoverBrandingModal({
                 branding: selected,
                 logoColor: selectedColor,
                 stripSize: selectedStrip,
+                logoPosition: selectedPosition,
               });
               onClose();
             }}

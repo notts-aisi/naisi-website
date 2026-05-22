@@ -2,6 +2,7 @@ import {
   COVER_STRIP_SIZE_DEFAULT,
   type CoverBranding,
   type CoverLogoColor,
+  type CoverLogoPosition,
 } from "@/lib/firestore/events";
 import styles from "./CoverImage.module.css";
 
@@ -21,6 +22,7 @@ export default function CoverImage({
   branding,
   logoColor = "white",
   stripSize = COVER_STRIP_SIZE_DEFAULT,
+  logoPosition = "bottom",
 }: {
   url: string;
   alt: string;
@@ -29,8 +31,11 @@ export default function CoverImage({
   logoColor?: CoverLogoColor;
   /** Gradient-strip height as a percent of the cover. Strip treatment only. */
   stripSize?: number;
+  /** Which edge the treatment sits against. Defaults to the bottom. */
+  logoPosition?: CoverLogoPosition;
 }) {
   const emblemSrc = EMBLEM_SRC[logoColor];
+  const atTop = logoPosition === "top";
 
   return (
     <div className={styles.frame}>
@@ -41,7 +46,7 @@ export default function CoverImage({
 
       {branding === "strip" && (
         <div
-          className={styles.strip}
+          className={`${styles.strip}${atTop ? ` ${styles.stripTop}` : ""}`}
           style={{ height: `${stripSize}%` }}
           aria-hidden="true"
         >
@@ -56,9 +61,13 @@ export default function CoverImage({
           src={emblemSrc}
           alt=""
           aria-hidden="true"
-          className={`${styles.cornerEmblem}${
-            logoColor === "colour" ? ` ${styles.cornerEmblemLight}` : ""
-          }`}
+          className={[
+            styles.cornerEmblem,
+            logoColor === "colour" ? styles.cornerEmblemLight : "",
+            atTop ? styles.cornerEmblemTop : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
         />
       )}
     </div>

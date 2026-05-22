@@ -7,6 +7,7 @@ import {
   FOOD_TAGS,
   asCoverBranding,
   asCoverLogoColor,
+  asCoverLogoPosition,
   asCoverStripSize,
   sanitizeSignupForm,
 } from "@/lib/firestore/events";
@@ -138,6 +139,7 @@ export async function POST(
     coverBranding: asCoverBranding(body.coverBranding),
     coverLogoColor: asCoverLogoColor(body.coverLogoColor),
     coverStripSize: asCoverStripSize(body.coverStripSize),
+    coverLogoPosition: asCoverLogoPosition(body.coverLogoPosition),
   };
 
   // Build a human-readable diff of the changes confirmed attendees would want

@@ -40,6 +40,7 @@ export default function EventDetailView({
           branding={event.coverBranding}
           logoColor={event.coverLogoColor}
           stripSize={event.coverStripSize}
+          logoPosition={event.coverLogoPosition}
         />
       ) : null}
 

@@ -13,7 +13,7 @@
   height: auto;
 }
 
-/* strip: the emblem fades into a soft shadow band along the bottom edge.
+/* strip: the emblem fades into a soft shadow band along one edge.
    The band height is set inline from the event's coverStripSize. */
 .strip {
   position: absolute;
@@ -25,6 +25,13 @@
   padding: var(--space-4) var(--space-6);
   background: linear-gradient(to top, rgba(5, 8, 14, 0.85), rgba(5, 8, 14, 0));
   pointer-events: none;
+}
+
+/* stripTop: the same band, flipped to the top edge. */
+.stripTop {
+  inset: 0 0 auto 0;
+  align-items: flex-start;
+  background: linear-gradient(to bottom, rgba(5, 8, 14, 0.85), rgba(5, 8, 14, 0));
 }
 
 .stripEmblem {
@@ -53,6 +60,12 @@
 /* The full-colour emblem needs a pale chip to read against. */
 .cornerEmblemLight {
   background: rgba(255, 255, 255, 0.9);
+}
+
+/* cornerEmblemTop: the same chip, moved to the top-right corner. */
+.cornerEmblemTop {
+  top: var(--space-4);
+  bottom: auto;
 }
 
 @media (max-width: 600px) {

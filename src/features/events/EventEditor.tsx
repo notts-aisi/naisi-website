@@ -24,6 +24,7 @@ import {
   normalizeEvent,
   type CoverBranding,
   type CoverLogoColor,
+  type CoverLogoPosition,
   type EventDoc,
   type EventStatus,
   type EventVisibility,
@@ -134,6 +135,8 @@ export default function EventEditor({ eventId }: Props) {
   const [coverBranding, setCoverBranding] = useState<CoverBranding>("none");
   const [coverLogoColor, setCoverLogoColor] = useState<CoverLogoColor>("white");
   const [coverStripSize, setCoverStripSize] = useState(COVER_STRIP_SIZE_DEFAULT);
+  const [coverLogoPosition, setCoverLogoPosition] =
+    useState<CoverLogoPosition>("bottom");
   const [brandingModalOpen, setBrandingModalOpen] = useState(false);
 
   const [dirty, setDirty] = useState(false);
@@ -203,6 +206,7 @@ export default function EventEditor({ eventId }: Props) {
         setCoverBranding((cur) => (dirty ? cur : next.coverBranding));
         setCoverLogoColor((cur) => (dirty ? cur : next.coverLogoColor));
         setCoverStripSize((cur) => (dirty ? cur : next.coverStripSize));
+        setCoverLogoPosition((cur) => (dirty ? cur : next.coverLogoPosition));
         setLoading(false);
       },
       (err) => {
@@ -279,6 +283,7 @@ export default function EventEditor({ eventId }: Props) {
       coverBranding,
       coverLogoColor,
       coverStripSize,
+      coverLogoPosition,
     };
     if (status === "published") {
       // Firestore rules block client writes to published events — go through
@@ -1221,10 +1226,12 @@ export default function EventEditor({ eventId }: Props) {
           value={coverBranding}
           logoColor={coverLogoColor}
           stripSize={coverStripSize}
+          logoPosition={coverLogoPosition}
           onSelect={(choice) => {
             setCoverBranding(choice.branding);
             setCoverLogoColor(choice.logoColor);
             setCoverStripSize(choice.stripSize);
+            setCoverLogoPosition(choice.logoPosition);
             markDirty();
           }}
           onClose={() => setBrandingModalOpen(false)}

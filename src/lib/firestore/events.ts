@@ -47,12 +47,12 @@ export const COVER_BRANDING_OPTIONS: {
   {
     id: "corner",
     label: "Corner badge",
-    description: "A small white emblem tucked into the bottom-right corner.",
+    description: "A small white emblem tucked into a corner.",
   },
   {
     id: "strip",
     label: "Gradient strip",
-    description: "The emblem fades into a soft shadow band along the bottom edge.",
+    description: "The emblem fades into a soft shadow band along one edge.",
   },
   {
     id: "none",
@@ -74,6 +74,13 @@ export type CoverLogoColor = "white" | "colour";
 export const COVER_STRIP_SIZE_MIN = 15;
 export const COVER_STRIP_SIZE_MAX = 70;
 export const COVER_STRIP_SIZE_DEFAULT = 40;
+
+/**
+ * Which edge the cover emblem treatment (strip or corner badge) sits against.
+ * Some cover images read better with the mark up top. Absent falls back to
+ * "bottom", the original behaviour.
+ */
+export type CoverLogoPosition = "top" | "bottom";
 
 /**
  * Event-level declaration about where/how the food is sourced. Lets organizers
@@ -308,6 +315,8 @@ export type EventDoc = {
   coverLogoColor: CoverLogoColor;
   /** Gradient-strip height as a percent of the cover, for the strip treatment. */
   coverStripSize: number;
+  /** Which edge the emblem treatment sits against. Defaults to bottom. */
+  coverLogoPosition: CoverLogoPosition;
   /** Archived events drop out of the normal manage sections. Orthogonal to status. */
   archived: boolean;
   status: EventStatus;
@@ -371,6 +380,10 @@ export function asCoverStripSize(v: unknown): number {
   );
 }
 
+export function asCoverLogoPosition(v: unknown): CoverLogoPosition {
+  return v === "top" ? "top" : "bottom";
+}
+
 function asFoodProvenance(v: unknown): FoodProvenance {
   const ok: FoodProvenance[] = ["none", "halal", "kosher", "vegetarian", "vegan", "other"];
   return ok.includes(v as FoodProvenance) ? (v as FoodProvenance) : "none";
@@ -423,6 +436,7 @@ export function normalizeEvent(id: string, data: Raw): EventDoc {
     coverBranding: asCoverBranding(data.coverBranding),
     coverLogoColor: asCoverLogoColor(data.coverLogoColor),
     coverStripSize: asCoverStripSize(data.coverStripSize),
+    coverLogoPosition: asCoverLogoPosition(data.coverLogoPosition),
     archived: data.archived === true,
     status: asStatus(data.status),
     authorUid: (data.authorUid as string) ?? "",

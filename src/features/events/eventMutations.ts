@@ -15,6 +15,7 @@ import type { Block } from "@/lib/firestore/newsletterBlocks";
 import type {
   CoverBranding,
   CoverLogoColor,
+  CoverLogoPosition,
   EventVisibility,
   FoodProvenance,
   FoodTag,
@@ -84,6 +85,7 @@ type EditableEventFields = Partial<{
   coverBranding: CoverBranding;
   coverLogoColor: CoverLogoColor;
   coverStripSize: number;
+  coverLogoPosition: CoverLogoPosition;
 }>;
 
 export async function updateEvent(id: string, fields: EditableEventFields) {
@@ -124,6 +126,8 @@ export async function updateEvent(id: string, fields: EditableEventFields) {
   if (fields.coverBranding !== undefined) patch.coverBranding = fields.coverBranding;
   if (fields.coverLogoColor !== undefined) patch.coverLogoColor = fields.coverLogoColor;
   if (fields.coverStripSize !== undefined) patch.coverStripSize = fields.coverStripSize;
+  if (fields.coverLogoPosition !== undefined)
+    patch.coverLogoPosition = fields.coverLogoPosition;
   await updateDoc(doc(db, "events", id), patch);
 }
 

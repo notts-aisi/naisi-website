@@ -119,6 +119,7 @@ events/{id}             { title, blocks[], startAt, endAt, location,
                           ("public" | "members"), capacity, waitlistEnabled,
                           signupForm[], foodText?, dietaryTags?, posterUrl?,
                           coverBranding, coverLogoColor, coverStripSize,
+                          coverLogoPosition,
                           archived, status (draft|pending|approved|
                           published|rejected|cancelled), authorUid,
                           collaboratorUids[],
