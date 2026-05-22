@@ -17,6 +17,7 @@ import {
   type UserDoc,
   type UserPermissions,
 } from "@/lib/firestore/users";
+import { startImpersonation } from "@/auth/impersonation";
 import MemberEditForm from "./MemberEditForm";
 import {
   deleteUser,
@@ -227,6 +228,28 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
       console.error(err);
       alert("Failed to un-reject");
     } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onViewAs() {
+    // Plain-language warning because writes during view-as look like the
+    // target performed them (full impersonation: request.auth is theirs).
+    const ok = window.confirm(
+      `View the site as ${displayName}?\n\n`
+        + `You'll see exactly what they see — sidebar, tabs, page access.\n\n`
+        + `Heads up:\n`
+        + `• Anything you click that writes data will be recorded as ${displayName} doing it.\n`
+        + `• Exiting signs you out — you'll need to log back in as yourself.`,
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await startImpersonation(user.uid);
+      // No setBusy(false) on success — the page is navigating away.
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : "View as failed");
       setBusy(false);
     }
   }
@@ -461,6 +484,29 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                   disabled={busy}
                   label="Show on public /members page"
                 />
+              </div>
+
+              <div className={styles.controlBlock}>
+                <span className={styles.controlLabel}>Debug</span>
+                {isSelf ? (
+                  <span className={styles.hint} style={{ marginLeft: 0 }}>
+                    Can&apos;t view as yourself.
+                  </span>
+                ) : isAdminRole ? (
+                  <span className={styles.hint} style={{ marginLeft: 0 }}>
+                    Can&apos;t view as another admin.
+                  </span>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={onViewAs}
+                    disabled={busy}
+                    title="Sign in as this member to see exactly what they see (writes during the session look like they did them)"
+                  >
+                    View as {displayName}
+                  </Button>
+                )}
               </div>
 
               {!isSelf && (

@@ -71,6 +71,22 @@ export async function revokeAndClearSession(): Promise<void> {
   store.delete(SESSION_COOKIE);
 }
 
+/**
+ * Drop the session cookie on this device WITHOUT revoking refresh tokens.
+ *
+ * Use only when exiting an admin "view as" impersonation: the __session
+ * cookie holds the target's session, but the target may have real signed-in
+ * devices of their own. revokeAndClearSession would kick them out of those
+ * sessions too, which is a side-effect of a debug feature acting on the
+ * admin's browser - unacceptable. This helper just forgets the cookie here.
+ *
+ * For real sign-out always use revokeAndClearSession.
+ */
+export async function clearSessionCookieOnly(): Promise<void> {
+  const store = await cookies();
+  store.delete(SESSION_COOKIE);
+}
+
 /** Read + verify the session cookie, returning { uid, email, role }. Null if no/invalid session. */
 export async function getCurrentUser(): Promise<SessionUser | null> {
   const store = await cookies();
