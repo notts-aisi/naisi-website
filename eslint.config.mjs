@@ -13,6 +13,22 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  {
+    rules: {
+      // Honour the leading-underscore convention for intentionally-unused
+      // bindings (e.g. a parameter kept only so a shared function signature
+      // stays stable for existing callers). eslint-config-next leaves these
+      // ignore patterns unset, so without this the `_`-prefix is meaningless.
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;

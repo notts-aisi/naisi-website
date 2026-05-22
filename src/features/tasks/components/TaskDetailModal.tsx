@@ -203,7 +203,7 @@ export default function TaskDetailModal({
             }}
           >
             Clearing comments, activity, and attachments. This can take a few
-            seconds for tasks with a long history — don't close the tab.
+            seconds for tasks with a long history - don&apos;t close the tab.
           </div>
           {deleteErr && (
             <div style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)" }}>

@@ -70,6 +70,16 @@ type Props = {
   dragHandle?: React.ReactNode;
 };
 
+// Whether a subtask's due date has passed. The clock read lives in this
+// plain helper so the component render body stays free of the impure call.
+function isSubtaskOverdue(subtask: Subtask): boolean {
+  return (
+    !subtask.done &&
+    subtask.dueDate != null &&
+    subtask.dueDate.getTime() < Date.now()
+  );
+}
+
 const selfBtn: React.CSSProperties = {
   padding: "2px 8px",
   background: "var(--color-accent-soft)",
@@ -591,7 +601,7 @@ export default function SubtaskRow({
         >
           {subtask.title}
           {subtask.dueDate && (() => {
-            const overdue = !subtask.done && subtask.dueDate.getTime() < Date.now();
+            const overdue = isSubtaskOverdue(subtask);
             return (
               <span
                 title={`Due ${subtask.dueDate.toLocaleDateString()}${overdue ? " — overdue" : ""}`}
@@ -1502,7 +1512,7 @@ function CompositeSignoffItems({
           fontStyle: "italic",
         }}
       >
-        No subtasks claimed — use "+ Review" on a completion row to add scope.
+        No subtasks claimed - use &quot;+ Review&quot; on a completion row to add scope.
       </p>
     );
   }
