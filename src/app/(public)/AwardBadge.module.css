@@ -7,6 +7,10 @@
   static styles + shimmer here.
 */
 .badge {
+  /* position: relative so the ::after shimmer sweep stays inside the
+     badge instead of positioning against the nearest positioned
+     ancestor (the .hero section) and rushing across the whole screen. */
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);

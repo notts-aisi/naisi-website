@@ -19,14 +19,15 @@
 
 .hero {
   position: relative;
-  padding-block: var(--space-24) var(--space-20);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  padding-block: var(--space-12);
   overflow: hidden;
-  /* Static radial gradient remains as the fallback layer; the WebGL shader
-     paints over it on top when present. */
-  background:
-    radial-gradient(ellipse at 20% -20%, var(--color-accent-soft) 0%, transparent 55%),
-    radial-gradient(ellipse at 100% 0%, rgba(106, 130, 255, 0.06) 0%, transparent 50%),
-    var(--color-bg);
+  /* The dark radial backdrop now ships from HeroAtmosphere as an
+     absolutely-positioned div; this CSS fallback only shows if the
+     atmosphere fails to mount. */
+  background: var(--color-bg);
   isolation: isolate;
 }
 
@@ -38,7 +39,16 @@
   pointer-events: none;
 }
 .heroLayerShader { z-index: 1; opacity: 0; transition: opacity 1200ms ease 600ms; }
-.heroLayerField { z-index: 2; opacity: 0; transition: opacity 1200ms ease 800ms; }
+.heroLayerField {
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 1200ms ease 800ms;
+  /* Receive cursor events so the field's mouse attractor + spawn fire.
+     .heroInner sits above at z-index 10, so badge / link / button hits
+     still win priority — this layer only catches events on the empty
+     atmosphere area. */
+  pointer-events: auto;
+}
 .heroLayerSparkles { z-index: 3; opacity: 0; transition: opacity 1500ms ease 1000ms; }
 
 .hero[data-atmosphere-on="true"] .heroLayerShader,
@@ -61,6 +71,27 @@
   z-index: 10;
   display: flex;
   flex-direction: column;
+  gap: var(--space-6);
+  max-width: 56rem;
+}
+
+/* Award badge sits as a small accent below the headline, separated by
+   generous space rather than crammed under CTAs (which now live in
+   their own section). */
+.heroBadge {
+  margin-top: var(--space-4);
+}
+
+/* Intro section directly below the hero — the lede + CTAs that used
+   to sit inside the hero. Revealed via the existing blur-rise on
+   scroll, so the hero stays minimal and this content lands as a
+   second beat. */
+.introSection {
+  padding-block: var(--space-16) var(--space-12);
+}
+.introInner {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-5);
   max-width: 56rem;
 }
@@ -78,11 +109,27 @@
 }
 
 .eyebrowLogo {
-  height: 2.2rem;
+  /* 2.5x the previous size — the lockup is the hero identity beat now,
+     leave it real visual weight above the headline. Scales from
+     ~140px on mobile to ~220px on wide desktop. */
+  height: clamp(8.75rem, 15vw, 13.75rem);
   width: auto;
   object-fit: contain;
   /* Soft drop shadow so the white-on-shader logo holds shape */
   filter: drop-shadow(0 1px 6px rgba(0, 0, 0, 0.55));
+}
+
+/* At the breakpoint where the neural network rotates to vertical
+   (width < 600px in HeroFieldStaggerCore), centre the logo and bump
+   it 1.5x. Headline + badge stay left-aligned; only the lockup
+   centres so it dominates the mobile hero. */
+@media (max-width: 37.5rem) {
+  .eyebrow {
+    align-self: center;
+  }
+  .eyebrowLogo {
+    height: 13.125rem;
+  }
 }
 
 /*

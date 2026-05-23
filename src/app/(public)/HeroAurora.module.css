@@ -1,8 +1,11 @@
 .canvas {
+  /* Absolute so this can sit underneath a layered NN canvas in the
+     same container without pushing it vertically (Option 5 stacks both). */
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
-  /* Sits behind everything else in the hero via z-index from landing.module.css */
 }
 
 /* === Mobile === */
