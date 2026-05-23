@@ -1,6 +1,9 @@
 "use client";
 
 import { Select } from "@/components/ui/Input";
+import ResponsiveSelect, {
+  type ResponsiveSelectOption,
+} from "@/components/ui/ResponsiveSelect";
 import type { ProjectDoc } from "@/lib/firestore/projects";
 import type { UserDoc } from "@/lib/firestore/users";
 import { TASK_KINDS, TASK_KIND_LABELS, type TaskKind } from "@/lib/firestore/tasks";
@@ -22,20 +25,18 @@ type Props = {
 };
 
 export default function TaskFilters({ value, onChange, projects, users }: Props) {
+  const projectOptions: ResponsiveSelectOption<TaskFilterState["projectId"]>[] = [
+    { value: "all", label: "All projects" },
+    ...projects.map((p) => ({ value: p.id, label: p.name })),
+  ];
   return (
     <div className={styles.grid}>
-      <Select
+      <ResponsiveSelect<TaskFilterState["projectId"]>
         value={value.projectId}
-        onChange={(e) => onChange({ ...value, projectId: e.target.value as TaskFilterState["projectId"] })}
-        aria-label="Filter by project"
-      >
-        <option value="all">All projects</option>
-        {projects.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-          </option>
-        ))}
-      </Select>
+        onChange={(next) => onChange({ ...value, projectId: next })}
+        options={projectOptions}
+        ariaLabel="Filter by project"
+      />
       <Select
         value={value.personUid}
         onChange={(e) => onChange({ ...value, personUid: e.target.value as TaskFilterState["personUid"] })}

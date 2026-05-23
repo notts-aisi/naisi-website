@@ -122,6 +122,7 @@ export default function TaskCard({
                 onChange={onChangeStatus}
                 disabled={!canChangeStatus}
                 size="sm"
+                sheetBreakpoint="lg"
                 ariaLabel="Change status"
                 title={
                   canChangeStatus

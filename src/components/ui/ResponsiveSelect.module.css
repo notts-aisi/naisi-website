@@ -1,0 +1,18 @@
+/*
+ * ResponsiveSelect — desktop-first toggle.
+ *
+ * `display: contents` so the wrapper <span>s drop out of layout and the
+ * inner Select / Dropdown participates directly in the parent's flex /
+ * grid (otherwise width: 100% and gap rules break). Modern browsers keep
+ * `display: contents` children in the a11y tree, and only the visible
+ * shape is reachable since the other is `display: none`.
+ */
+
+.desktopShape { display: contents; }
+.mobileShape { display: none; }
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .desktopShape { display: none; }
+  .mobileShape { display: contents; }
+}
