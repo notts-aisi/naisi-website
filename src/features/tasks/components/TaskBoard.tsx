@@ -39,13 +39,18 @@ type Props = {
 };
 
 /**
- * `useSyncExternalStore` over a matchMedia query. SSR returns `false` so the
- * first paint is always the desktop kanban — on phone, a single re-render
- * flips to the pill view within a tick. Rendering both trees and CSS-toggling
- * is rejected because the kanban hosts a `DndContext` with N `useSortable`
- * hooks per task; keeping it mounted on phone doubles the dnd-kit surface
- * for no benefit (drag is desktop-only). One visible flash on first phone
- * load is the accepted trade.
+ * `useSyncExternalStore` over a matchMedia query. Used to GATE mounting of
+ * the kanban tree — the visibility flip itself is CSS-driven so the initial
+ * SSR paint on phone never shows the wide kanban (5x17rem columns would push
+ * past the viewport before hydration completes, causing body-level
+ * horizontal scroll for as long as JS takes to load + parse + hydrate).
+ *
+ * Plan revision after PR #145 landed and the flash was unacceptable on real
+ * phones: render both trees, CSS hides the wrong one always (including
+ * during SSR), and this hook gates whether the heavy `DndContext` +
+ * `useSortable` hook surface actually mounts. The original plan's cost
+ * concern was the dnd-kit hooks, not duplicate DOM — duplicate DOM is cheap;
+ * the hooks aren't.
  *
  * Same shape as `Drawer.tsx`'s `isClient` check.
  */
@@ -351,5 +356,19 @@ function TaskBoardPhone({ tasks, projects, users, onOpenTask }: Props) {
 
 export default function TaskBoard(props: Props) {
   const narrow = useIsNarrow();
-  return narrow ? <TaskBoardPhone {...props} /> : <TaskBoardKanban {...props} />;
+  // Both trees are always rendered structurally so the initial SSR paint is
+  // correct regardless of viewport (CSS decides which is visible). The
+  // kanban tree only mounts its DndContext + useSortable hooks when the
+  // client-side matchMedia hook confirms a desktop viewport, so phone never
+  // pays the dnd-kit cost.
+  return (
+    <>
+      <div className={styles.kanbanOnly}>
+        {!narrow && <TaskBoardKanban {...props} />}
+      </div>
+      <div className={styles.phoneOnly}>
+        <TaskBoardPhone {...props} />
+      </div>
+    </>
+  );
 }
