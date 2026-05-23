@@ -23,7 +23,7 @@ import type { UserDoc } from "@/lib/firestore/users";
 import type { TaskTemplate } from "@/lib/firestore/taskTemplates";
 import { createTask, type CreateSubtaskInput } from "../taskMutations";
 import { materialiseTemplate } from "../templateMutations";
-import AssigneePicker from "./AssigneePicker";
+import PersonSelector from "@/components/ui/PersonSelector";
 import TemplatePicker from "./TemplatePicker";
 import styles from "./TaskForm.module.css";
 
@@ -243,7 +243,7 @@ export default function TaskForm({
         {isCommittee && (
           <div className={styles.row2}>
             <Field id="task-completers" label="Completers">
-              <AssigneePicker
+              <PersonSelector
                 users={users}
                 selected={completerUids}
                 onChange={setCompleterUids}
@@ -257,7 +257,7 @@ export default function TaskForm({
               label="Reviewers"
               hint="Final review gate. Leave empty if none."
             >
-              <AssigneePicker
+              <PersonSelector
                 users={users}
                 selected={reviewerUids}
                 onChange={setReviewerUids}

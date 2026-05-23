@@ -31,7 +31,7 @@ import {
   setTaskVisibility,
   updateTask,
 } from "../taskMutations";
-import AssigneePicker from "./AssigneePicker";
+import PersonSelector from "@/components/ui/PersonSelector";
 import AttachmentList from "./AttachmentList";
 import AttachmentUpload from "./AttachmentUpload";
 import CommentThread from "./CommentThread";
@@ -625,7 +625,7 @@ export default function TaskDetailModal({
                 service for SUBTASK-level membership still works via the
                 +Me / −Me buttons on each row. */}
             {canEditTaskRoster ? (
-              <AssigneePicker
+              <PersonSelector
                 users={users}
                 selected={task.completerUids}
                 onChange={onCompletersChange}
@@ -659,7 +659,7 @@ export default function TaskDetailModal({
           <div>
             <h4 className={styles.sectionLabel}>Reviewers</h4>
             {canEditTaskRoster ? (
-              <AssigneePicker
+              <PersonSelector
                 users={users}
                 selected={task.reviewerUids}
                 onChange={onReviewersChange}

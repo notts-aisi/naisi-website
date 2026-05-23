@@ -339,9 +339,20 @@ export default function Dropdown<T extends string = string>({
         onKeyDown={handleKeyDown}
       >
         <span className={styles.triggerLabel}>{triggerLabel}</span>
-        <span className={styles.chevron} aria-hidden>
-          ▾
-        </span>
+        <svg
+          className={styles.chevron}
+          viewBox="0 0 12 8"
+          aria-hidden="true"
+        >
+          <path
+            d="M1 1.5L6 6.5L11 1.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       </button>
 
       {isClient &&
