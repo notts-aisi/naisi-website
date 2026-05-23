@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
+import Dropdown, { type DropdownOption } from "@/components/ui/Dropdown";
 import {
   TASK_KIND_LABELS,
   TASK_STATUSES,
@@ -116,46 +117,27 @@ export default function TaskCard({
             {task.archived && <Badge tone="neutral">Archived</Badge>}
             {task.priority === "urgent" && <Badge tone="danger">Urgent</Badge>}
             {onChangeStatus && (
-              <select
+              <Dropdown<TaskStatus>
                 value={effectiveStatus}
+                onChange={onChangeStatus}
                 disabled={!canChangeStatus}
-                onClick={(e) => {
-                  // Don't let opening the picker bubble up to Card's onClick
-                  // (which opens the full-screen modal).
-                  e.stopPropagation();
-                }}
-                onChange={(e) => onChangeStatus(e.target.value as TaskStatus)}
-                aria-label="Change status"
-                title={canChangeStatus ? "Change status" : "You don't have permission to change this task's status"}
-                style={{
-                  fontSize: "var(--text-xs)",
-                  fontWeight: 500,
-                  padding: "0.2rem 0.4rem",
-                  background: "var(--color-bg-elevated)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "var(--radius-md)",
-                  color: "var(--color-text)",
-                  cursor: canChangeStatus ? "pointer" : "not-allowed",
-                  maxWidth: "9rem",
-                }}
-              >
-                {TASK_STATUSES.map((s) => (
-                  <option
-                    key={s}
-                    value={s}
-                    // Mirror the modal: block "done" when (a) viewer can't
-                    // mark done, AND the task isn't already done. Always
-                    // allow the current value so the picker renders cleanly.
-                    disabled={
-                      s === "done" &&
-                      effectiveStatus !== "done" &&
-                      !canMarkDone
-                    }
-                  >
-                    {TASK_STATUS_LABELS[s]}
-                  </option>
-                ))}
-              </select>
+                size="sm"
+                ariaLabel="Change status"
+                title={
+                  canChangeStatus
+                    ? "Change status"
+                    : "You don't have permission to change this task's status"
+                }
+                options={TASK_STATUSES.map<DropdownOption<TaskStatus>>((s) => ({
+                  value: s,
+                  label: TASK_STATUS_LABELS[s],
+                  // Mirror the modal: block "done" when (a) viewer can't
+                  // mark done, AND the task isn't already done. Always
+                  // allow the current value so the picker renders cleanly.
+                  disabled:
+                    s === "done" && effectiveStatus !== "done" && !canMarkDone,
+                }))}
+              />
             )}
             {dragHandleProps && (
               <button

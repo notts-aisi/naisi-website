@@ -18,7 +18,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Select } from "@/components/ui/Input";
+import Dropdown, { type DropdownOption } from "@/components/ui/Dropdown";
 import { canMarkTaskDone } from "@/lib/firestore/tasks";
 import {
   TASK_STATUSES,
@@ -333,20 +333,21 @@ function TaskBoardPhone({
     [tasks, activePending, activeStatus],
   );
 
+  const filterOptions: DropdownOption<TaskStatus>[] = TASK_STATUSES.map((s) => ({
+    value: s,
+    label: `${TASK_STATUS_LABELS[s]} (${counts.get(s) ?? 0})`,
+  }));
+
   return (
     <div>
       <div className={styles.statusFilter}>
-        <Select
+        <Dropdown<TaskStatus>
           value={activeStatus}
-          onChange={(e) => setActiveStatus(e.target.value as TaskStatus)}
-          aria-label="View tasks by status"
-        >
-          {TASK_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {TASK_STATUS_LABELS[s]} ({counts.get(s) ?? 0})
-            </option>
-          ))}
-        </Select>
+          onChange={setActiveStatus}
+          options={filterOptions}
+          ariaLabel="View tasks by status"
+          triggerPrefix="View"
+        />
       </div>
       <div className={styles.phoneList}>
         {filtered.length === 0 ? (
