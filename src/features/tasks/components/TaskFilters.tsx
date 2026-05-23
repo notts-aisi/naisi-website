@@ -4,6 +4,7 @@ import { Select } from "@/components/ui/Input";
 import type { ProjectDoc } from "@/lib/firestore/projects";
 import type { UserDoc } from "@/lib/firestore/users";
 import { TASK_KINDS, TASK_KIND_LABELS, type TaskKind } from "@/lib/firestore/tasks";
+import styles from "./TaskFilters.module.css";
 
 export type TaskFilterState = {
   projectId: string | "all";
@@ -22,14 +23,7 @@ type Props = {
 
 export default function TaskFilters({ value, onChange, projects, users }: Props) {
   return (
-    <div
-      style={{
-        display: "grid",
-        gap: "var(--space-3)",
-        gridTemplateColumns: "repeat(auto-fit, minmax(12rem, 1fr))",
-        alignItems: "center",
-      }}
-    >
+    <div className={styles.grid}>
       <Select
         value={value.projectId}
         onChange={(e) => onChange({ ...value, projectId: e.target.value as TaskFilterState["projectId"] })}

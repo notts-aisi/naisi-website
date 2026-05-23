@@ -12,6 +12,12 @@
 
 .control {
   width: 100%;
+  /* Native form controls have intrinsic min-content widths — most relevant
+     for <select>, whose min-content equals its longest <option>. In a
+     flex/grid container (where children default to min-width: auto =
+     min-content), that can push the track wider than 1fr and prevent the
+     layout from scoping down on narrow viewports. */
+  min-width: 0;
   /* 44px touch-target floor on form controls — see docs/touch-targets.md.
      Textarea overrides via its own min-height below. */
   min-height: 2.75rem;

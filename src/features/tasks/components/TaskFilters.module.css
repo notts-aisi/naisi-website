@@ -1,0 +1,24 @@
+.grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  align-items: center;
+}
+
+/* Each grid item gets its own min-width: 0 so the Select inside can shrink
+   below its native min-content width (longest <option>). Without this the
+   tracks expand to fit the longest project / user name and the layout
+   refuses to scope down on narrow viewports. */
+.grid > * {
+  min-width: 0;
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* Single column on phone so each filter takes a full row. minmax(12rem,
+     1fr) auto-fit can only collapse so far; below this breakpoint we
+     prefer one-control-per-row legibility over packing them in. */
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

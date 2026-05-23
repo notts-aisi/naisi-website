@@ -97,7 +97,7 @@ export default function CommitteeTasksPage() {
           flexWrap: "wrap",
         }}
       >
-        <div style={{ flex: 1, minWidth: "16rem" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <TaskFilters value={filters} onChange={setFilters} projects={projects} users={users} />
         </div>
         <label
