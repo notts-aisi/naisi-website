@@ -240,7 +240,7 @@
      squashed into a hyphenated mess on mobile. */
 }
 
-@media (max-width: 38rem) {
+@media (max-width: 36rem) { /* --bp-sm (normalised from 38rem) */
   .tierMeta {
     margin-left: 0;
     flex-basis: 100%;
@@ -355,7 +355,7 @@
   max-width: 60rem;
 }
 
-@media (min-width: 48rem) {
+@media (min-width: 48rem) { /* --bp-md */
   .digestInner {
     grid-template-columns: 1fr 1fr;
     gap: var(--space-10);

@@ -52,7 +52,7 @@ input, textarea, select {
   padding-inline: var(--space-6);
 }
 
-@media (max-width: 48rem) {
+@media (max-width: 48rem) { /* --bp-md */
   .container { padding-inline: var(--space-4); }
 }
 

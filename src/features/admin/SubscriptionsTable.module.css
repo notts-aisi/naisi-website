@@ -511,7 +511,7 @@
   align-self: center;
 }
 
-@media (max-width: 48rem) {
+@media (max-width: 48rem) { /* --bp-md */
   .matrix {
     display: none;
   }

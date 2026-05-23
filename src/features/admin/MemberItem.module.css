@@ -270,7 +270,7 @@
   flex-wrap: wrap;
 }
 
-@media (max-width: 48rem) {
+@media (max-width: 48rem) { /* --bp-md */
   .summary {
     flex-wrap: wrap;
   }

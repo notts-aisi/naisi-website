@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint && node scripts/check-breakpoints.mjs",
+    "lint:bp": "node scripts/check-breakpoints.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
