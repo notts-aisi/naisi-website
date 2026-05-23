@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   DndContext,
   PointerSensor,
@@ -18,6 +18,8 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { Select } from "@/components/ui/Input";
+import { canMarkTaskDone } from "@/lib/firestore/tasks";
 import {
   TASK_STATUSES,
   TASK_STATUS_LABELS,
@@ -26,6 +28,7 @@ import {
 } from "@/lib/firestore/tasks";
 import type { ProjectDoc } from "@/lib/firestore/projects";
 import type { UserDoc } from "@/lib/firestore/users";
+import type { Role } from "@/lib/firebase/session";
 import { setTaskStatus } from "../taskMutations";
 import TaskCard from "./TaskCard";
 import styles from "./TaskBoard.module.css";
@@ -35,18 +38,60 @@ type Props = {
   projects: ProjectDoc[];
   users: UserDoc[];
   onOpenTask: (taskId: string) => void;
+  viewerUid: string;
+  viewerRole: Role;
 };
+
+type TaskPerms = { canChangeStatus: boolean; canMarkDone: boolean };
+
+/**
+ * Per-card permission gates for the move-dropdown. Mirrors
+ * `canEditProgressFields` and the `canMarkDone` derivation in
+ * TaskDetailModal so the dropdown's enabled states agree with the modal's
+ * Status select.
+ */
+function computePerms(
+  task: TaskDoc,
+  viewerUid: string,
+  viewerRole: Role,
+): TaskPerms {
+  const isAdmin = viewerRole === "admin";
+  const isCommittee = viewerRole === "committee" || viewerRole === "admin";
+  const isCompleter = task.completerUids.includes(viewerUid);
+  const isTaskReviewer = task.reviewerUids.includes(viewerUid);
+  const isAnyReviewer =
+    isTaskReviewer ||
+    task.subtasks.some((s) => s.reviewerUids.includes(viewerUid));
+  const isCreator = task.creatorUid === viewerUid;
+  const canEditAll =
+    isAdmin ||
+    (isCommittee && task.visibility === "committee") ||
+    (task.source === "personal" && isCreator);
+  const canChangeStatus = canEditAll || isCompleter || isAnyReviewer;
+  const canMarkDoneViewer =
+    task.reviewerUids.length > 0
+      ? isAdmin || isTaskReviewer || isCreator
+      : isAdmin || isCreator;
+  const canMarkDone = canMarkDoneViewer && canMarkTaskDone(task).ok;
+  return { canChangeStatus, canMarkDone };
+}
 
 function SortableTaskCard({
   task,
   projects,
   users,
   onOpen,
+  perms,
+  pendingStatus,
+  onChangeStatus,
 }: {
   task: TaskDoc;
   projects: ProjectDoc[];
   users: UserDoc[];
   onOpen: (id: string) => void;
+  perms?: TaskPerms;
+  pendingStatus?: TaskStatus | null;
+  onChangeStatus: (task: TaskDoc, status: TaskStatus) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
@@ -66,6 +111,10 @@ function SortableTaskCard({
         dense
         dragHandleProps={{ ...attributes, ...listeners } as React.HTMLAttributes<HTMLDivElement>}
         isDragging={isDragging}
+        pendingStatus={pendingStatus}
+        onChangeStatus={(s) => onChangeStatus(task, s)}
+        canChangeStatus={perms?.canChangeStatus}
+        canMarkDone={perms?.canMarkDone}
       />
     </div>
   );
@@ -77,12 +126,18 @@ function BoardColumn({
   projects,
   users,
   onOpenTask,
+  permsByTask,
+  activePending,
+  onStatusChange,
 }: {
   status: TaskStatus;
   tasks: TaskDoc[];
   projects: ProjectDoc[];
   users: UserDoc[];
   onOpenTask: (id: string) => void;
+  permsByTask: Map<string, TaskPerms>;
+  activePending: Record<string, TaskStatus>;
+  onStatusChange: (task: TaskDoc, status: TaskStatus) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: `column-${status}`,
@@ -128,6 +183,9 @@ function BoardColumn({
               projects={projects}
               users={users}
               onOpen={onOpenTask}
+              perms={permsByTask.get(task.id)}
+              pendingStatus={activePending[task.id]}
+              onChangeStatus={onStatusChange}
             />
           ))}
         </SortableContext>
@@ -148,30 +206,27 @@ function BoardColumn({
   );
 }
 
-function TaskBoardKanban({ tasks, projects, users, onOpenTask }: Props) {
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  // Optimistic status overrides: set on drop, cleared once Firestore catches up.
-  // Without this, the card snaps back to its origin column for the duration of
-  // the Firestore round-trip (~100–400ms) before the onSnapshot re-derives.
-  const [pendingStatus, setPendingStatus] = useState<Record<string, TaskStatus>>({});
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+type SharedProps = {
+  tasks: TaskDoc[];
+  projects: ProjectDoc[];
+  users: UserDoc[];
+  onOpenTask: (taskId: string) => void;
+  activePending: Record<string, TaskStatus>;
+  permsByTask: Map<string, TaskPerms>;
+  onStatusChange: (task: TaskDoc, status: TaskStatus) => void;
+};
 
-  // Prune any pending entries that the snapshot has already caught up to.
-  // Derived per-render rather than via effect to avoid the set-state-in-effect
-  // trap; memoized so downstream consumers get stable references.
-  const activePending = useMemo(() => {
-    const out: Record<string, TaskStatus> = {};
-    let changed = false;
-    for (const [id, status] of Object.entries(pendingStatus)) {
-      const t = tasks.find((x) => x.id === id);
-      if (t && t.status !== status) {
-        out[id] = status;
-      } else {
-        changed = true;
-      }
-    }
-    return changed ? out : pendingStatus;
-  }, [tasks, pendingStatus]);
+function TaskBoardKanban({
+  tasks,
+  projects,
+  users,
+  onOpenTask,
+  activePending,
+  permsByTask,
+  onStatusChange,
+}: SharedProps) {
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const byStatus = useMemo(() => {
     const map = new Map<TaskStatus, TaskDoc[]>();
@@ -189,7 +244,7 @@ function TaskBoardKanban({ tasks, projects, users, onOpenTask }: Props) {
     setDraggingId(String(e.active.id));
   }
 
-  async function handleDragEnd(e: DragEndEvent) {
+  function handleDragEnd(e: DragEndEvent) {
     setDraggingId(null);
     const { active, over } = e;
     if (!over) return;
@@ -206,20 +261,7 @@ function TaskBoardKanban({ tasks, projects, users, onOpenTask }: Props) {
     const currentStatus = activePending[task.id] ?? task.status;
     if (!targetStatus || targetStatus === currentStatus) return;
 
-    // Apply optimistic override BEFORE awaiting the Firestore write.
-    setPendingStatus((p) => ({ ...p, [task.id]: targetStatus as TaskStatus }));
-
-    try {
-      await setTaskStatus(task, targetStatus);
-    } catch (err) {
-      console.error("Failed to update status", err);
-      // Roll back on failure.
-      setPendingStatus((p) => {
-        const next = { ...p };
-        delete next[task.id];
-        return next;
-      });
-    }
+    onStatusChange(task, targetStatus);
   }
 
   return (
@@ -238,6 +280,9 @@ function TaskBoardKanban({ tasks, projects, users, onOpenTask }: Props) {
             projects={projects}
             users={users}
             onOpenTask={onOpenTask}
+            permsByTask={permsByTask}
+            activePending={activePending}
+            onStatusChange={onStatusChange}
           />
         ))}
       </div>
@@ -251,72 +296,169 @@ function TaskBoardKanban({ tasks, projects, users, onOpenTask }: Props) {
 }
 
 /**
- * Phone-shaped board: a vertical kanban. The desktop columns become stacked
- * sections, each a labelled box containing its tasks. No drag (desktop-only;
- * the modal is the status-change UX on phone). Empty sections render with a
- * muted placeholder so the user sees the full board shape at a glance.
+ * Phone-shaped board: a status-filter dropdown at the top + a single-column
+ * list of cards for the selected status. The per-card move-dropdown (rendered
+ * by TaskCard when `onChangeStatus` is provided) is how the user reallocates
+ * cards between statuses on phone — drag is desktop-only.
  *
- * Visual treatment mirrors `BoardColumn` above — same header strip and same
- * boxed content area — so the two views feel consistent.
+ * The status filter mirrors the modal's status select; the per-card dropdown
+ * mirrors its option-disabled rules via the `permsByTask` map.
  */
-function TaskBoardPhone({ tasks, projects, users, onOpenTask }: Props) {
-  const byStatus = useMemo(() => {
-    const map = new Map<TaskStatus, TaskDoc[]>();
-    TASK_STATUSES.forEach((s) => map.set(s, []));
+function TaskBoardPhone({
+  tasks,
+  projects,
+  users,
+  onOpenTask,
+  activePending,
+  permsByTask,
+  onStatusChange,
+}: SharedProps) {
+  const [activeStatus, setActiveStatus] = useState<TaskStatus>(TASK_STATUSES[0]);
+
+  // Counts honour optimistic overrides so the filter label updates the
+  // instant the user changes a card's status.
+  const counts = useMemo(() => {
+    const map = new Map<TaskStatus, number>();
+    TASK_STATUSES.forEach((s) => map.set(s, 0));
     for (const t of tasks) {
-      map.get(t.status)?.push(t);
+      const status = activePending[t.id] ?? t.status;
+      map.set(status, (map.get(status) ?? 0) + 1);
     }
     return map;
-  }, [tasks]);
+  }, [tasks, activePending]);
+
+  const filtered = useMemo(
+    () =>
+      tasks.filter((t) => (activePending[t.id] ?? t.status) === activeStatus),
+    [tasks, activePending, activeStatus],
+  );
 
   return (
-    <div className={styles.phoneList}>
-      {TASK_STATUSES.map((status) => {
-        const sectionTasks = byStatus.get(status) ?? [];
-        return (
-          <section key={status} className={styles.phoneSection}>
-            <div className={styles.phoneSectionHeader}>
-              <span className={styles.phoneSectionTitle}>{TASK_STATUS_LABELS[status]}</span>
-              <span className={styles.phoneSectionCount}>{sectionTasks.length}</span>
-            </div>
-            <div className={styles.phoneSectionBody}>
-              {sectionTasks.length === 0 ? (
-                <p className={styles.phoneSectionEmpty}>No tasks</p>
-              ) : (
-                sectionTasks.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    projects={projects}
-                    users={users}
-                    onOpen={onOpenTask}
-                  />
-                ))
-              )}
-            </div>
-          </section>
-        );
-      })}
+    <div>
+      <div className={styles.statusFilter}>
+        <Select
+          value={activeStatus}
+          onChange={(e) => setActiveStatus(e.target.value as TaskStatus)}
+          aria-label="View tasks by status"
+        >
+          {TASK_STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {TASK_STATUS_LABELS[s]} ({counts.get(s) ?? 0})
+            </option>
+          ))}
+        </Select>
+      </div>
+      <div className={styles.phoneList}>
+        {filtered.length === 0 ? (
+          <p className={styles.phoneEmpty}>
+            No tasks in {TASK_STATUS_LABELS[activeStatus].toLowerCase()}.
+          </p>
+        ) : (
+          filtered.map((task) => {
+            const perms = permsByTask.get(task.id);
+            return (
+              <TaskCard
+                key={task.id}
+                task={task}
+                projects={projects}
+                users={users}
+                onOpen={onOpenTask}
+                pendingStatus={activePending[task.id]}
+                onChangeStatus={(s) => onStatusChange(task, s)}
+                canChangeStatus={perms?.canChangeStatus}
+                canMarkDone={perms?.canMarkDone}
+              />
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
 
 /**
- * Both trees are always mounted so CSS alone decides which is visible. The
- * kanban's `display: none` on phone prevents pointer events from reaching it,
- * which is what actually matters for dnd-kit — its hook registrations cost
- * near-nothing without active drag, and the always-mounted layout removes
- * the empty-`.kanbanOnly`-div transient state that a matchMedia JS gate
- * produces when resizing across `--bp-lg`.
+ * Top-level board. Owns the optimistic `pendingStatus` map so both the
+ * desktop drag path AND the per-card move-dropdown share one rollback path,
+ * and computes per-task permission gates once for both viewports.
+ *
+ * Both trees are always mounted so CSS alone decides which is visible — see
+ * PR #149: kanban's `display: none` on phone keeps pointer events out of
+ * dnd-kit, and the always-mounted layout removes the empty-`.kanbanOnly`
+ * transient state that a JS matchMedia gate would otherwise produce when
+ * resizing across `--bp-lg`.
  */
-export default function TaskBoard(props: Props) {
+export default function TaskBoard({
+  tasks,
+  projects,
+  users,
+  onOpenTask,
+  viewerUid,
+  viewerRole,
+}: Props) {
+  // Optimistic status overrides: set on drag drop OR on move-dropdown change,
+  // cleared once Firestore catches up. Without this the card snaps back to
+  // its origin column / filter view for the duration of the round-trip
+  // (~100–400ms) before the onSnapshot re-derives.
+  const [pendingStatus, setPendingStatus] = useState<Record<string, TaskStatus>>({});
+
+  // Prune any pending entries the snapshot has already caught up to. Derived
+  // per-render rather than via effect to avoid the set-state-in-effect trap.
+  const activePending = useMemo(() => {
+    const out: Record<string, TaskStatus> = {};
+    let changed = false;
+    for (const [id, status] of Object.entries(pendingStatus)) {
+      const t = tasks.find((x) => x.id === id);
+      if (t && t.status !== status) {
+        out[id] = status;
+      } else {
+        changed = true;
+      }
+    }
+    return changed ? out : pendingStatus;
+  }, [tasks, pendingStatus]);
+
+  const permsByTask = useMemo(() => {
+    const map = new Map<string, TaskPerms>();
+    for (const t of tasks) {
+      map.set(t.id, computePerms(t, viewerUid, viewerRole));
+    }
+    return map;
+  }, [tasks, viewerUid, viewerRole]);
+
+  const handleStatusChange = useCallback(
+    async (task: TaskDoc, newStatus: TaskStatus) => {
+      setPendingStatus((p) => ({ ...p, [task.id]: newStatus }));
+      try {
+        await setTaskStatus(task, newStatus);
+      } catch (err) {
+        console.error("Failed to update status", err);
+        setPendingStatus((p) => {
+          const next = { ...p };
+          delete next[task.id];
+          return next;
+        });
+      }
+    },
+    [],
+  );
+
+  const shared: SharedProps = {
+    tasks,
+    projects,
+    users,
+    onOpenTask,
+    activePending,
+    permsByTask,
+    onStatusChange: handleStatusChange,
+  };
+
   return (
     <>
       <div className={styles.kanbanOnly}>
-        <TaskBoardKanban {...props} />
+        <TaskBoardKanban {...shared} />
       </div>
       <div className={styles.phoneOnly}>
-        <TaskBoardPhone {...props} />
+        <TaskBoardPhone {...shared} />
       </div>
     </>
   );
