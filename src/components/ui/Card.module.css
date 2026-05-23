@@ -16,3 +16,9 @@
   transform: translateY(-1px);
   box-shadow: var(--shadow-md);
 }
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .pad-md { padding: var(--space-4); }
+  .pad-lg { padding: var(--space-6); }
+}

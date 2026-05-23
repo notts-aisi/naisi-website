@@ -23,6 +23,19 @@ export default function Landing() {
     <>
       <section className={styles.hero}>
         <div className={`container ${styles.heroInner}`}>
+          {/* heroArt is first in source order so it renders at the top of
+              the flex column on mobile (where it un-absolutes). On desktop
+              it is absolute-positioned to the right and source order is
+              irrelevant — see landing.module.css. */}
+          <div className={styles.heroArt} aria-hidden="true">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/brand/naisi-emblem.png"
+              alt=""
+              width={180}
+              height={220}
+            />
+          </div>
           <p className={styles.eyebrow}>
             University of Nottingham · AI Safety
           </p>
@@ -43,15 +56,6 @@ export default function Landing() {
             <Link href="#stay-in-touch" className={styles.secondaryCta}>
               Get the newsletter →
             </Link>
-          </div>
-          <div className={styles.heroArt} aria-hidden="true">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/brand/naisi-emblem.png"
-              alt=""
-              width={180}
-              height={220}
-            />
           </div>
         </div>
       </section>
