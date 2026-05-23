@@ -351,9 +351,13 @@
   }
   /* Push the close button below the iOS notch in portrait. env() falls back
      to 0 on devices without safe-area-inset-top. Bump width / height to the
-     44px touch-target floor + a bigger glyph so the X is reliably tappable. */
+     44px touch-target floor + a bigger glyph so the X is reliably tappable.
+     Top inset bumped to var(--space-4) so the button clears Mobile Safari's
+     top chrome (URL bar / status bar) on devices without an explicit
+     safe-area-inset — the prior `--space-2` value let the larger 44px button
+     graze under the chrome and read as visibly clipped. */
   .closeButton {
-    top: calc(var(--space-2) + env(safe-area-inset-top, 0px));
+    top: calc(var(--space-4) + env(safe-area-inset-top, 0px));
     width: 2.75rem;
     height: 2.75rem;
     font-size: var(--text-lg);
