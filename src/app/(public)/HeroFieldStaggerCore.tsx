@@ -1050,19 +1050,25 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
     if (reduced) draw(performance.now());
     else frame = requestAnimationFrame(draw);
 
-    const io = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        visible = entry.isIntersecting;
-        if (visible && !frame && !reduced) { lastT = performance.now(); frame = requestAnimationFrame(draw); }
-        else if (!visible && frame) { cancelAnimationFrame(frame); frame = 0; }
-      }
-    }, { threshold: 0 });
-    io.observe(canvas);
+    // IntersectionObserver pause-while-offscreen removed: on iOS WebKit
+    // the IO could fire isIntersecting=false initially (canvas 0x0 from
+    // late parent layout) and never recover, leaving the loop dead. We
+    // accept the cost of computing while the hero is off-screen for
+    // reliability.
+
+    // Window-resize fallback alongside ResizeObserver. iOS WebKit's RO
+    // timing can miss the initial layout settle (especially with the
+    // URL bar collapse on first scroll); window resize fires on
+    // orientation change + URL-bar reflow and gives us a second chance
+    // to size correctly.
+    const onWinResize = () => resize();
+    window.addEventListener("resize", onWinResize, { passive: true });
 
     return () => {
       if (frame) cancelAnimationFrame(frame);
       window.clearTimeout(deferredResizeTimer);
-      ro.disconnect(); io.disconnect();
+      ro.disconnect();
+      window.removeEventListener("resize", onWinResize);
       window.removeEventListener("scroll", onScroll);
       cursorTarget?.removeEventListener("mousemove", onMove);
       cursorTarget?.removeEventListener("mouseleave", onLeave);
