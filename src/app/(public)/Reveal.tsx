@@ -29,6 +29,12 @@ const variantClass: Record<Variant, string> = {
   "spring-overshoot": styles.spring,
 };
 
+/*
+  Reveal — drives below-the-fold entrance via a class toggle on first
+  in-view. Class-based (rather than data-attribute) so it works
+  uniformly on every browser, including mobile Safari. Reduced-motion
+  is honoured via Reveal.module.css.
+*/
 export default function Reveal({
   children,
   variant = "fade-rise",

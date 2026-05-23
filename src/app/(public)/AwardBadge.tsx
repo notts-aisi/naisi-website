@@ -1,26 +1,20 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { motion } from "motion/react";
 import styles from "./AwardBadge.module.css";
 
 /*
-  UONSU Activities Awards — "Newcomer of the Year" badge, pinned to the
-  hero top-right (and inline below the emblem on mobile via CSS).
-
-  Behaviour:
-    - Slides in from off-screen-right at t≈3500ms (after the headline settles).
-    - Auto-shimmers once ~t=4500ms to draw the eye.
-    - Hover triggers a re-shimmer.
-
-  Links to the certificate PDF in public/brand/.
+  UONSU Activities Awards 2026 — "Newcomer of the Year" badge.
+  Pinned below the hero CTAs as a trust signal next to the action.
+  Motion-driven entrance (rises in after CTAs settle). Auto-shimmers
+  once ~4.5s in to draw the eye, and on every hover thereafter.
 */
 export default function AwardBadge() {
-  const [loaded, setLoaded] = useState(false);
   const [autoShine, setAutoShine] = useState(false);
   const shineTimer = useRef<number | null>(null);
 
   useEffect(() => {
-    setLoaded(true);
     shineTimer.current = window.setTimeout(() => setAutoShine(true), 4500);
     return () => {
       if (shineTimer.current) window.clearTimeout(shineTimer.current);
@@ -28,12 +22,15 @@ export default function AwardBadge() {
   }, []);
 
   return (
-    <a
-      className={`${styles.badge} ${loaded ? styles.loaded : ""} ${autoShine ? styles.autoShine : ""}`}
+    <motion.a
+      className={`${styles.badge} ${autoShine ? styles.autoShine : ""}`}
       href="/brand/naisi-newcomer-certificate.pdf"
       target="_blank"
       rel="noreferrer noopener"
       aria-label="UONSU Activities Awards 2026 — Newcomer of the Year. Open the certificate."
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.55, delay: 2.9, ease: [0.22, 0.61, 0.36, 1] }}
     >
       <span className={styles.iconWrap} aria-hidden="true">
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -47,6 +44,6 @@ export default function AwardBadge() {
         <span className={styles.label}>Newcomer of the Year</span>
         <span className={styles.subline}>UONSU Activities Awards · 2026</span>
       </span>
-    </a>
+    </motion.a>
   );
 }
