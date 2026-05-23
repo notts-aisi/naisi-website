@@ -627,7 +627,14 @@ export default function SubtaskRow({
           })()}
         </span>
 
-        <div className={rowStyles.sideCluster} onClick={(e) => e.stopPropagation()}>
+        {/* The side-cluster wrapper deliberately does NOT stop event
+            propagation: on mobile it wraps to row 2 of the row grid
+            (avatars + status pills + tap chevron) and that area should
+            still bubble clicks up to the parent `.row` onClick so the
+            whole card opens the detail modal. Interactive children
+            (+Me / -Me / +Review / -Review / Edit / Delete / matrix
+            cells) each carry their own stopPropagation. */}
+        <div className={rowStyles.sideCluster}>
 
         {subtask.roleHint === "reviewer" && (
           <span
