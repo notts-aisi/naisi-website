@@ -25,6 +25,7 @@ import { createTask, type CreateSubtaskInput } from "../taskMutations";
 import { materialiseTemplate } from "../templateMutations";
 import AssigneePicker from "./AssigneePicker";
 import TemplatePicker from "./TemplatePicker";
+import styles from "./TaskForm.module.css";
 
 type Props = {
   mode: "committee" | "personal";
@@ -141,7 +142,7 @@ export default function TaskForm({
         </Field>
 
         {isCommittee && (
-          <div style={{ display: "grid", gap: "var(--space-4)", gridTemplateColumns: "1fr 1fr" }}>
+          <div className={styles.row2}>
             <Field id="task-project" label="Project">
               <ResponsiveSelect
                 value={projectId}
@@ -172,7 +173,7 @@ export default function TaskForm({
           </div>
         )}
 
-        <div style={{ display: "grid", gap: "var(--space-4)", gridTemplateColumns: "1fr 1fr" }}>
+        <div className={styles.row2}>
           <Field id="task-priority" label="Priority">
             <ResponsiveSelect<TaskPriority>
               value={priority}
@@ -240,7 +241,7 @@ export default function TaskForm({
         )}
 
         {isCommittee && (
-          <div style={{ display: "grid", gap: "var(--space-4)", gridTemplateColumns: "1fr 1fr" }}>
+          <div className={styles.row2}>
             <Field id="task-completers" label="Completers">
               <AssigneePicker
                 users={users}

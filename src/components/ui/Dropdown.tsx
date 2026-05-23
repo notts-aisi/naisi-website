@@ -157,8 +157,14 @@ export default function Dropdown<T extends string = string>({
   }, [open, isSheet, isClient]);
 
   // Click outside closes.
+  // Sheet mode skips this entirely: its own scrim owns the close path
+  // (onPointerDown below). On iOS a document-level pointerdown here
+  // would fire before the scrim's handler, unmount the scrim, and the
+  // synthetic click from touchend would then re-target to whatever
+  // trigger sat underneath — opening a second sheet behind the user's
+  // back. Belt-and-braces: see scrim onPointerDown + preventDefault.
   useEffect(() => {
-    if (!open) return;
+    if (!open || isSheet) return;
     function onPointerDown(e: PointerEvent) {
       const target = e.target as Node;
       if (triggerRef.current?.contains(target)) return;
@@ -167,7 +173,7 @@ export default function Dropdown<T extends string = string>({
     }
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
+  }, [open, isSheet]);
 
   // Close popover (not sheet) on scroll / resize — reposition is fiddly
   // and closing is a fine UX trade for now.
@@ -345,7 +351,13 @@ export default function Dropdown<T extends string = string>({
             <div className={styles.sheetRoot}>
               <div
                 className={styles.scrim}
-                onClick={(e) => {
+                onPointerDown={(e) => {
+                  // preventDefault suppresses the synthetic click iOS
+                  // would otherwise dispatch from touchend ~300ms later —
+                  // which, with the scrim already unmounted, would
+                  // re-target to the element under the tap and open a
+                  // second sheet.
+                  e.preventDefault();
                   e.stopPropagation();
                   setOpen(false);
                 }}

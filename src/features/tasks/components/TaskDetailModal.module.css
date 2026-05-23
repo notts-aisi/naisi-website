@@ -340,6 +340,20 @@
     gap: var(--space-4);
     overflow-y: visible;
   }
+  /* Pull Subtasks toward the top on phone so the most-tapped section is
+     reachable inside the first scroll. mainColumn is a flex column, so
+     `order` applies. Title stays at the very top (-2); subtaskSection
+     sits just after it (-1); everything else (field row, due date,
+     description, attachments, discussion) stays at the default 0 in DOM
+     order behind. */
+  .title,
+  .titleEditable,
+  .titleInput {
+    order: -2;
+  }
+  .subtaskSection {
+    order: -1;
+  }
   /* Push the close button below the iOS notch in portrait. env() falls back
      to 0 on devices without safe-area-inset-top. */
   .closeButton {

@@ -14,6 +14,16 @@
   padding-bottom: var(--space-3);
   scroll-snap-type: x proximity;
   scroll-padding-inline: var(--space-3);
+  /* Without this, the flex container's intrinsic min-content (~5 × 17rem =
+     85rem of BoardColumns) propagates up through .kanbanOnly → .main →
+     AppShell's `grid-template-columns: sidebar 1fr`. The `1fr` is
+     minmax(auto, 1fr); `auto` floors at descendant min-content, so the
+     whole shell grid stretches past viewport and the document body gets
+     horizontal scroll. min-width: 0 here breaks that propagation so
+     `overflow-x: auto` above can actually contain the kanban scroll
+     inside .scroll's own bounds. This is the PR #11 lesson in CLAUDE.md:
+     fix the page, not the shell. */
+  min-width: 0;
 }
 
 .column {
@@ -37,6 +47,10 @@
    query in TaskBoard.tsx (currently `maxWidth("lg")`). */
 .kanbanOnly {
   display: block;
+  /* Belt-and-braces alongside .scroll's min-width: 0 — explicitly stops
+     intrinsic-content width from leaking past this wrapper toward .main
+     and AppShell's grid track. */
+  min-width: 0;
 }
 
 .phoneOnly {

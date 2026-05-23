@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { maxWidth } from "@/theme/breakpoints";
 import type { UserDoc } from "@/lib/firestore/users";
+import styles from "./AssigneePicker.module.css";
 
 export type PickerRole = "completer" | "reviewer";
 
@@ -72,6 +74,24 @@ export default function AssigneePicker({
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
 
+  // Below --bp-md the picker collapses to chips + an "Add / change people"
+  // button by default. Tapping the button reveals the search + list inline.
+  // On desktop the picker is always expanded — the sidebar's narrow column
+  // is the right shape for the inline UI. matchMedia + useSyncExternalStore
+  // matches the pattern Dropdown.tsx uses for its sheet-vs-popover gate.
+  const mobileSubscribe = useCallback((cb: () => void) => {
+    const mq = window.matchMedia(maxWidth("md"));
+    mq.addEventListener("change", cb);
+    return () => mq.removeEventListener("change", cb);
+  }, []);
+  const isMobile = useSyncExternalStore(
+    mobileSubscribe,
+    () => window.matchMedia(maxWidth("md")).matches,
+    () => false,
+  );
+  const [expanded, setExpanded] = useState(false);
+  const showFullPicker = !isMobile || expanded;
+
   const limitSet = useMemo(
     () => (limitToUids ? new Set(limitToUids) : null),
     [limitToUids],
@@ -108,7 +128,7 @@ export default function AssigneePicker({
   const selectedUsers = users.filter((u) => selected.includes(u.uid));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)", minWidth: 0 }}>
       {label && (
         <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-muted)" }}>
           {label}
@@ -181,7 +201,19 @@ export default function AssigneePicker({
         </div>
       )}
 
-      {showRoleFilter && (
+      {!showFullPicker && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className={styles.expandButton}
+        >
+          {selectedUsers.length > 0
+            ? `Change ${ROLE_COPY[role].countLabel}s…`
+            : `Add ${ROLE_COPY[role].countLabel}s…`}
+        </button>
+      )}
+
+      {showFullPicker && showRoleFilter && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-1)" }}>
           {ROLE_FILTERS.map((rf) => {
             const active = roleFilter === rf;
@@ -208,6 +240,7 @@ export default function AssigneePicker({
         </div>
       )}
 
+      {showFullPicker && (
       <input
         type="text"
         value={search}
@@ -222,7 +255,9 @@ export default function AssigneePicker({
           fontSize: "var(--text-sm)",
         }}
       />
+      )}
 
+      {showFullPicker && (
       <div
         style={{
           border: "1px solid var(--color-border)",
@@ -280,9 +315,23 @@ export default function AssigneePicker({
           );
         })}
       </div>
+      )}
+
+      {showFullPicker && (
       <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-subtle)" }}>
         {selected.length}/{max} {ROLE_COPY[role].verb}
       </span>
+      )}
+
+      {showFullPicker && isMobile && (
+        <button
+          type="button"
+          onClick={() => setExpanded(false)}
+          className={styles.collapseLink}
+        >
+          Hide search
+        </button>
+      )}
     </div>
   );
 }
