@@ -347,8 +347,14 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
           }
           const zBand = pickZBand(Math.random());
           const [introStartX, introStartY] = computeIntroStart(nnX, nnY);
-          const startX = alwaysAssembled ? nnX : introStartX;
-          const startY = alwaysAssembled ? nnY : introStartY;
+          // In reduced-motion mode the core renders exactly one frame
+          // and freezes. Without this branch, iPhone Safari under Low
+          // Power Mode draws a blank canvas — the single frame is
+          // cycleMs ≈ 0 where Big Bang particles haven't flown in yet.
+          // Spawn directly at NN home so the static frame shows the
+          // assembled network.
+          const startX = (alwaysAssembled || reduced) ? nnX : introStartX;
+          const startY = (alwaysAssembled || reduced) ? nnY : introStartY;
           const rawDelay = config.staggerFn({ x: nnX, y: nnY, layer: l, zBand }, { width, height, layerCount: LAYER_COUNT });
           const crystalT0 = Math.max(0, Math.min(STAGGER_WINDOW_CRYSTAL, rawDelay));
           const dissolveT0 = STAGGER_WINDOW_DISSOLVE > 0
@@ -365,7 +371,7 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
             phase: Math.random() * Math.PI * 2, phase2: Math.random() * Math.PI * 2,
             outEdges: [],
             crystalT0, dissolveT0,
-            coalescedAt: alwaysAssembled ? performance.now() - COALESCE_RIPPLE_MS - 1 : -1,
+            coalescedAt: (alwaysAssembled || reduced) ? performance.now() - COALESCE_RIPPLE_MS - 1 : -1,
             wobbleFreqXa: 0.18 + Math.random() * 0.32,
             wobbleFreqXb: 0.28 + Math.random() * 0.45,
             wobbleFreqYa: 0.18 + Math.random() * 0.32,
@@ -463,7 +469,7 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
     });
 
     const introAmount = (n: Node, cycleMs: number) => {
-      if (alwaysAssembled) return 1;
+      if (alwaysAssembled || reduced) return 1;
       if (cycleMs < PHASE_DRIFT_MS) return 0;
       const inCrystal = cycleMs - PHASE_DRIFT_MS;
       if (inCrystal < PHASE_CRYSTAL_MS) {
