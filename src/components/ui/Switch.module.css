@@ -2,6 +2,10 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
+  /* 44px touch-target floor — the absolute-positioned native input fills
+     the row, so the whole row is the tap area. See docs/touch-targets.md. */
+  min-height: 2.75rem;
+  padding-block: var(--space-1);
   cursor: pointer;
   user-select: none;
 }

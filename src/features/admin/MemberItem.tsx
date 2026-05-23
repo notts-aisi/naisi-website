@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
+import ResponsiveSelect, {
+  type ResponsiveSelectOption,
+} from "@/components/ui/ResponsiveSelect";
 import SegmentedControl, { type SegmentedOption } from "@/components/ui/SegmentedControl";
-import Select from "@/components/ui/Select";
 import Switch from "@/components/ui/Switch";
 import type { Role } from "@/lib/firebase/session";
 import {
@@ -378,18 +380,17 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
             <div className={styles.controls}>
               <div className={styles.controlBlock}>
                 <span className={styles.controlLabel}>Role</span>
-                <Select
+                <ResponsiveSelect<Role>
                   className={styles.rolePicker}
                   value={user.role}
-                  onChange={(e) => onRoleChange(e.target.value as Role)}
+                  onChange={onRoleChange}
+                  options={ACTIVE_ROLES.map<ResponsiveSelectOption<Role>>((r) => ({
+                    value: r,
+                    label: r,
+                  }))}
                   disabled={busy}
-                >
-                  {ACTIVE_ROLES.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </Select>
+                  ariaLabel="Role"
+                />
               </div>
 
               <div className={styles.controlBlock}>

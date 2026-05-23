@@ -14,6 +14,7 @@ import TaskFilters, {
 } from "@/features/tasks/components/TaskFilters";
 import TaskForm from "@/features/tasks/components/TaskForm";
 import { useTasks } from "@/features/tasks/hooks/useTasks";
+import styles from "./CommitteeTasksPage.module.css";
 
 export default function CommitteeTasksPage() {
   const router = useRouter();
@@ -67,50 +68,24 @@ export default function CommitteeTasksPage() {
 
   return (
     <div>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          gap: "var(--space-3)",
-          flexWrap: "wrap",
-          marginBottom: "var(--space-5)",
-        }}
-      >
-        <div>
+      <div className={styles.headerRow}>
+        <div className={styles.headerText}>
           <Badge tone="accent">Committee</Badge>
-          <h1 style={{ marginTop: "var(--space-2)" }}>Task board</h1>
-          <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-1)" }}>
+          <h1 className={styles.headerTitle}>Task board</h1>
+          <p className={styles.subtitle}>
             Drag cards between columns to update status. Click a card to open details.
           </p>
         </div>
-        <Button onClick={() => setCreating(true)}>New task</Button>
+        <Button className={styles.newTaskButton} onClick={() => setCreating(true)}>
+          New task
+        </Button>
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: "var(--space-3)",
-          marginBottom: "var(--space-4)",
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ flex: 1, minWidth: "16rem" }}>
+      <div className={styles.toolbarRow}>
+        <div className={styles.filtersWrap}>
           <TaskFilters value={filters} onChange={setFilters} projects={projects} users={users} />
         </div>
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--space-2)",
-            fontSize: "var(--text-sm)",
-            color: "var(--color-text-muted)",
-            cursor: "pointer",
-            whiteSpace: "nowrap",
-          }}
-        >
+        <label className={styles.showArchivedLabel}>
           <input
             type="checkbox"
             checked={showArchived}
@@ -130,7 +105,16 @@ export default function CommitteeTasksPage() {
             projects={projects}
             users={users}
             currentUserUid={user.uid}
-            onDone={() => setCreating(false)}
+            onDone={() => {
+              setCreating(false);
+              // The form can be tall; closing it from a scrolled-down
+              // position would leave the viewport halfway down an empty
+              // page. Scroll back to the top so the user sees the toolbar
+              // + "New task" button they originally tapped.
+              if (typeof window !== "undefined") {
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }
+            }}
           />
         </div>
       )}
@@ -138,7 +122,14 @@ export default function CommitteeTasksPage() {
       {loading ? (
         <p style={{ color: "var(--color-text-muted)" }}>Loading tasks…</p>
       ) : (
-        <TaskBoard tasks={filtered} projects={projects} users={users} onOpenTask={openTask} />
+        <TaskBoard
+          tasks={filtered}
+          projects={projects}
+          users={users}
+          onOpenTask={openTask}
+          viewerUid={user.uid}
+          viewerRole={role}
+        />
       )}
 
       {openTaskId && (

@@ -1,0 +1,141 @@
+/* TaskCard — extracted from the wall of inline styles in TaskCard.tsx so
+   the layout can carry a mobile @media block (CSS vars don't resolve
+   inside @media query conditions — see docs/mobile-conventions.md).
+   The card renders in two contexts: the kanban board's 17rem columns
+   above --bp-lg, and TaskBoardPhone's 32rem-capped single-column list
+   below. The title row uses CSS Grid (minmax(0, 1fr) auto) rather than
+   flex so the title can shrink to min-content without each flex child
+   needing min-width: 0 plumbed through. */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* === Title row === */
+
+.titleRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  /* center, not flex-start — the dropdown trigger is taller than the
+     title text, so flex-start visually offsets the title floating above
+     the badge cluster. */
+  align-items: center;
+}
+
+.title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text);
+  min-width: 0;
+  /* Long, single-word titles (e.g. URLs) wrap inside the grid track. */
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+.badgeCluster {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* === Drag handle === */
+
+.dragHandle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--color-text-subtle);
+  cursor: grab;
+  font-size: var(--text-md);
+  line-height: 1;
+  touch-action: none;
+  user-select: none;
+  border-radius: var(--radius-sm);
+}
+
+.dragHandle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* === Description === */
+
+.description {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* === Badge row (project + kind + source + due) === */
+
+.metaBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* === Footer (assignees + reviewers + counts) === */
+
+.peopleColumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  min-width: 0;
+}
+
+.peopleLine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.peopleLabel {
+  color: var(--color-text-subtle);
+}
+
+.peopleName {
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
+.peopleNameReviewer {
+  color: var(--color-warning, var(--color-text));
+}
+
+.metaCounts {
+  display: flex;
+  gap: var(--space-2);
+  color: var(--color-text-subtle);
+}
+
+/* === Mobile === */
+@media (max-width: 36rem) { /* --bp-sm */
+  /* On TaskBoardPhone (32rem cap) the badge cluster + status pill no
+     longer fit alongside the title in a single row. Stack the cluster
+     below the title and left-align it so the layout reads top-down. */
+  .titleRow {
+    grid-template-columns: 1fr;
+  }
+  .badgeCluster {
+    justify-content: flex-start;
+  }
+}

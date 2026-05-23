@@ -1,0 +1,352 @@
+/* PersonSelector — sitewide multi-select for users. Lifted from the
+   feature-scoped AssigneePicker and extended with a `tone` axis (accent /
+   warning / neutral) so non-task callsites (admin Projects' member picker)
+   can render in a neutral chip colour instead of borrowing the misleading
+   "completer" semantic. Mobile-collapse by default below --bp-md mirrors
+   the Dropdown sheet pattern. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* Sit inside grid/flex tracks that don't have min-width: 0 set
+     themselves — picker chips + search input shouldn't push the parent
+     wider than its allotted track. */
+  min-width: 0;
+}
+
+.label {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* === Selected chips === */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.chipWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0.3rem 0.65rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    filter var(--transition-fast);
+  /* Default tone is accent (the historical completer chip colour). */
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.chip:hover {
+  border-color: currentColor;
+}
+
+.chipReviewer {
+  background: var(--color-warning-soft, var(--color-surface-hover));
+  color: var(--color-warning, var(--color-text));
+}
+
+.chipNeutral {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.notifyBtn {
+  padding: 0.2rem 0.55rem;
+  background: transparent;
+  color: var(--color-text-muted);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.notifyBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* === Mobile-collapse affordance === */
+
+.expandButton {
+  align-self: flex-start;
+  padding: 0.55rem 0.85rem;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  min-height: 2.75rem;
+  transition: border-color var(--transition-fast);
+}
+
+.expandButton:hover {
+  border-color: var(--color-border-strong);
+}
+
+/* Prominent mobile "Done" dismiss button at the bottom of the expanded
+   picker. Replaces the prior `.collapseLink` text link, which read as a
+   footnote on phone. 44px floor matches the touch-targets policy. */
+.doneButton {
+  align-self: stretch;
+  padding: 0.75rem 1rem;
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  color: var(--color-accent);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 2.75rem;
+  transition: filter var(--transition-fast);
+}
+
+.doneButton:hover {
+  filter: brightness(1.05);
+}
+
+/* === Mobile bottom-sheet shape (below --bp-md) ===
+   The expanded picker becomes a portal-rendered bottom sheet so the
+   page underneath is dimmed + scroll-locked + the picker reads as the
+   active surface. Pattern mirrors Dropdown.module.css's sheet idiom. */
+
+.sheetRoot {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  animation: personSheetScrimIn var(--transition-fast) ease-out;
+}
+
+.sheet {
+  position: relative;
+  width: 100%;
+  background: var(--color-bg-elevated);
+  border-top: 1px solid var(--color-border);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  padding: var(--space-3);
+  padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.25);
+  animation: personSheetUp 0.2s ease-out;
+  max-height: 85vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sheetHandle {
+  width: 2.5rem;
+  height: 0.25rem;
+  margin: 0 auto;
+  background: var(--color-border);
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+}
+
+.sheetHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.sheetTitle {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.sheetCloseIcon {
+  width: 2.25rem;
+  height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text);
+  font-size: var(--text-md);
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+@keyframes personSheetUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes personSheetScrimIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .sheet {
+    animation: none;
+  }
+}
+
+/* === Role-filter chip strip (admin-only callsite uses showRoleFilter) === */
+
+.filterRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.filterChip {
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  font-weight: 400;
+}
+
+.filterChipActive {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+/* === Search input === */
+
+.search {
+  padding: 0.55rem 0.75rem;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  transition: border-color var(--transition-fast);
+}
+
+.search::placeholder {
+  color: var(--color-text-subtle);
+}
+
+.search:hover {
+  border-color: var(--color-border-strong);
+}
+
+.search:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--focus-ring);
+}
+
+/* === Result list === */
+
+.list {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.listEmpty {
+  padding: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+.listRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.55rem 0.75rem;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-border);
+  transition: background var(--transition-fast);
+}
+
+.listRow:last-child {
+  border-bottom: none;
+}
+
+.listRow:hover {
+  background: var(--color-surface-hover);
+}
+
+.listRowSelected {
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+.listRowSelected:hover {
+  background: var(--color-accent-soft);
+}
+
+/* Checkbox: use the system control but recolour with accent-color so the
+   check tick matches the rest of the brand (iOS / Chrome default-blue is
+   the giveaway that nothing here was styled). Sized up slightly so the
+   touch target meets the WCAG floor in a row that's still compact. */
+.listRow input[type="checkbox"] {
+  appearance: auto;
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.listRoleHint {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  text-transform: capitalize;
+}
+
+.countCaption {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* No mobile-specific overrides on the inline shape — the expanded
+     picker portals to body as a bottom sheet, controlled in
+     PersonSelector.tsx via matchMedia + createPortal. The sheet classes
+     above stand on their own (always fixed-positioned full-screen when
+     mounted). */
+}

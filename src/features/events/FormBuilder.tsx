@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Card from "@/components/ui/Card";
-import Select from "@/components/ui/Select";
+import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import {
   emptyQuestion,
   type FormQuestion,
@@ -85,24 +85,21 @@ export default function FormBuilder({ questions, onChange, disabled }: Props) {
             <strong>Start from a preset</strong>
             <span>Pick a template, then tweak the questions. You can always add or remove.</span>
           </label>
-          <Select
-            id="form-preset"
-            defaultValue=""
-            disabled={disabled}
-            onChange={(e) => {
-              applyPreset(e.target.value);
-              e.target.value = "";
+          <ResponsiveSelect
+            value=""
+            onChange={(next) => {
+              if (next) applyPreset(next);
             }}
-          >
-            <option value="" disabled>
-              Choose a preset…
-            </option>
-            {FORM_PRESETS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label} — {p.description}
-              </option>
-            ))}
-          </Select>
+            options={[
+              { value: "", label: "Choose a preset…", disabled: true },
+              ...FORM_PRESETS.map((p) => ({
+                value: p.id,
+                label: `${p.label} — ${p.description}`,
+              })),
+            ]}
+            disabled={disabled}
+            ariaLabel="Form preset"
+          />
         </div>
         {presetWarning && <p className={styles.warn}>{presetWarning}</p>}
       </Card>

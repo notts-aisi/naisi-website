@@ -25,6 +25,25 @@
   flex: 1;
 }
 
+.navGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.navGroupSpaced {
+  margin-top: var(--space-3);
+}
+
+.navGroupLabel {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-subtle);
+  padding: 0 var(--space-3);
+  margin-bottom: var(--space-1);
+}
+
 .navLink {
   display: flex;
   align-items: center;
@@ -66,6 +85,17 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+.userName {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.userRole {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  text-transform: capitalize;
 }
 
 .signOut {
@@ -125,7 +155,8 @@
 
 /* Impersonation banner — only rendered when (app)/layout.tsx detects an active
    view-as session. Negative margins escape main's padding so the banner spans
-   the full width; sticky top-0 keeps it visible while scrolling. */
+   the full width; sticky top-0 keeps it visible while scrolling. Below --bp-lg
+   the topStrip sits above it, so the banner offsets `top` to match. */
 .impersonationBanner {
   position: sticky;
   top: 0;
@@ -179,22 +210,115 @@
   cursor: progress;
 }
 
-@media (max-width: 60rem) {
-  .shell { grid-template-columns: 1fr; }
-  .sidebar {
-    position: static;
-    height: auto;
-    flex-direction: row;
-    align-items: center;
-    flex-wrap: wrap;
-    padding: var(--space-4);
-  }
-  .nav { flex-direction: row; flex-wrap: wrap; }
-  .userBlock { margin-left: auto; }
-  .main { padding: var(--space-6); }
+/* ===== Mobile top strip (rendered always, displayed below --bp-lg) =====
+   Brand + hamburger pinned to the top of the viewport. Replaces the
+   wrapped-row sidebar fallback. The drawer (via the shared <Drawer>
+   primitive) hosts the same nav body the desktop sidebar shows. */
+.topStrip {
+  display: none;
+}
 
+.topStripBrand {
+  display: inline-flex;
+  align-items: center;
+}
+
+.hamburger {
+  position: relative;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  transition: background var(--transition-fast);
+}
+.hamburger:hover { background: var(--color-surface-hover); }
+
+.menuIcon {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 1.25rem;
+  height: 0.875rem;
+}
+.menuIcon > span {
+  display: block;
+  height: 2px;
+  background: var(--color-text);
+  border-radius: 1px;
+}
+
+/* Pending-count badge surfaces on the hamburger when the drawer is closed
+   so admins still see the "you have things to attend to" cue without
+   opening the menu. Mirrors .navBadge inside the drawer. */
+.hamburgerBadge {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.3rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-danger);
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Inside the Drawer (mobile nav portal). */
+.drawerBrand {
+  margin-bottom: var(--space-6);
+  padding-inline: var(--space-1);
+}
+
+/* ===== Below --bp-lg: hide sidebar, show top strip, full-bleed main ===== */
+@media (max-width: 60rem) { /* --bp-lg */
+  .shell {
+    grid-template-columns: 1fr;
+    /* Release the desktop 100vh floor below --bp-lg so the page height
+       tracks content. Below this breakpoint the sidebar is hidden and
+       the shell is a single column — pinning to 100vh leaves dead space
+       under short content and removes the scroll-up cue when a
+       collapsible (AssigneePicker, New-task form, etc.) closes.
+       .loadingPane keeps its own 60vh floor independently. */
+    min-height: auto;
+  }
+  .sidebar {
+    display: none;
+  }
+  .topStrip {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    height: 3.5rem;
+    padding-inline: var(--space-4);
+    padding-top: env(safe-area-inset-top);
+    background: color-mix(in srgb, var(--color-bg-elevated) 92%, transparent);
+    backdrop-filter: saturate(1.4) blur(12px);
+    -webkit-backdrop-filter: saturate(1.4) blur(12px);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .hamburger {
+    display: inline-flex;
+  }
+  .main {
+    max-width: 100%;
+    padding: var(--space-6) var(--space-4);
+  }
+  /* Banner offsets to sit below the top strip (which is sticky at top 0). */
   .impersonationBanner {
-    margin: calc(var(--space-6) * -1) calc(var(--space-6) * -1) var(--space-4);
+    top: 3.5rem;
+    margin: calc(var(--space-6) * -1) calc(var(--space-4) * -1) var(--space-4);
     padding: var(--space-3) var(--space-4);
     flex-wrap: wrap;
   }

@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
-import { Select } from "@/components/ui/Input";
+import ResponsiveSelect, {
+  type ResponsiveSelectOption,
+} from "@/components/ui/ResponsiveSelect";
 import {
   TASK_FIELD_LIMITS,
   TASK_PRIORITIES,
@@ -29,7 +31,7 @@ import {
   setTaskVisibility,
   updateTask,
 } from "../taskMutations";
-import AssigneePicker from "./AssigneePicker";
+import PersonSelector from "@/components/ui/PersonSelector";
 import AttachmentList from "./AttachmentList";
 import AttachmentUpload from "./AttachmentUpload";
 import CommentThread from "./CommentThread";
@@ -41,6 +43,7 @@ import SubtaskList from "./SubtaskList";
 import { useCommentsAndActivity } from "../hooks/useCommentsAndActivity";
 import { useTaskAttachments } from "../hooks/useTaskAttachments";
 import type { ActivityDoc } from "@/lib/firestore/taskActivity";
+import styles from "./TaskDetailModal.module.css";
 
 type Props = {
   taskId: string;
@@ -178,38 +181,14 @@ export default function TaskDetailModal({
   if (deleting) {
     return (
       <Overlay onClose={() => {}}>
-        <div
-          role="status"
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "var(--space-4)",
-            padding: "var(--space-8)",
-            minHeight: "14rem",
-            textAlign: "center",
-          }}
-        >
+        <div role="status" className={styles.deletingStatus}>
           <Spinner />
-          <div style={{ fontSize: "var(--text-md)", color: "var(--color-text)" }}>
-            Deleting task + history…
-          </div>
-          <div
-            style={{
-              fontSize: "var(--text-xs)",
-              color: "var(--color-text-muted)",
-              maxWidth: "22rem",
-            }}
-          >
+          <div className={styles.deletingLabel}>Deleting task + history…</div>
+          <div className={styles.deletingHint}>
             Clearing comments, activity, and attachments. This can take a few
             seconds for tasks with a long history - don&apos;t close the tab.
           </div>
-          {deleteErr && (
-            <div style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)" }}>
-              {deleteErr}
-            </div>
-          )}
+          {deleteErr && <div className={styles.deletingError}>{deleteErr}</div>}
         </div>
       </Overlay>
     );
@@ -218,7 +197,7 @@ export default function TaskDetailModal({
   if (loading || !task) {
     return (
       <Overlay onClose={onClose}>
-        <div style={{ padding: "var(--space-6)", color: "var(--color-text-muted)" }}>
+        <div className={styles.statusFallback}>
           {loading ? "Loading task…" : "Task not found or you don't have access."}
         </div>
       </Overlay>
@@ -412,32 +391,9 @@ export default function TaskDetailModal({
 
   return (
     <Overlay onClose={onClose}>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 2fr) minmax(16rem, 1fr)",
-          // Fixed row so children with overflow can bound their content. Using
-          // maxHeight without an explicit row height lets the grid grow with
-          // content and breaks internal scroll (the main column never knows
-          // it's constrained).
-          gridTemplateRows: "85vh",
-          gap: 0,
-        }}
-      >
+      <div className={styles.grid}>
         {/* Main column */}
-        <div
-          style={{
-            padding: "var(--space-6)",
-            overflowY: "auto",
-            // min-height: 0 is the classic grid/flex scroll fix — without it a
-            // scrollable child inherits its intrinsic height instead of the
-            // grid row's bounded height.
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-            gap: "var(--space-5)",
-          }}
-        >
+        <div className={styles.mainColumn}>
           {editingTitle && canEditAll ? (
             <input
               autoFocus
@@ -452,45 +408,37 @@ export default function TaskDetailModal({
                 }
               }}
               maxLength={TASK_FIELD_LIMITS.title}
-              style={{
-                fontSize: "var(--text-xl)",
-                fontWeight: 600,
-                background: "var(--color-bg-elevated)",
-                border: "1px solid var(--color-border)",
-                borderRadius: "var(--radius-md)",
-                padding: "var(--space-2)",
-                color: "var(--color-text)",
-              }}
+              className={styles.titleInput}
             />
           ) : (
             <h2
               onClick={() => canEditAll && setEditingTitle(true)}
-              style={{
-                fontSize: "var(--text-xl)",
-                fontWeight: 600,
-                margin: 0,
-                cursor: canEditAll ? "text" : "default",
-              }}
+              className={canEditAll ? `${styles.title} ${styles.titleEditable}` : styles.title}
             >
               {task.title}
             </h2>
           )}
 
-          <div
-            style={{
-              display: "grid",
-              gap: "var(--space-3)",
-              gridTemplateColumns: "repeat(auto-fit, minmax(10rem, 1fr))",
-              alignItems: "end",
-            }}
-          >
-            <label style={fieldLabel}>
+          <div className={styles.fieldRow}>
+            <label className={styles.fieldLabel}>
               <span>Status</span>
-              <Select
+              <ResponsiveSelect<TaskStatus>
                 value={task.status}
-                onChange={(e) => onStatusChange(e.target.value as TaskStatus)}
+                onChange={onStatusChange}
+                options={TASK_STATUSES.map<ResponsiveSelectOption<TaskStatus>>((s) => ({
+                  value: s,
+                  label: TASK_STATUS_LABELS[s],
+                  // Block "done" when (a) viewer isn't eligible, or
+                  // (b) the per-subtask + global coverage gates aren't met.
+                  // Always allow the current value to render so the picker
+                  // doesn't show a phantom option when already "done".
+                  disabled:
+                    s === "done" &&
+                    task.status !== "done" &&
+                    (!canMarkDone || !doneGate.ok),
+                }))}
                 disabled={!canEditProgressFields}
-                aria-label="Status"
+                ariaLabel="Status"
                 title={
                   !canMarkDone && task.status !== "done"
                     ? "Only a reviewer, admin, or creator (on reviewer-less tasks) can mark Done"
@@ -498,40 +446,20 @@ export default function TaskDetailModal({
                       ? (doneGate.reason ?? undefined)
                       : undefined
                 }
-              >
-                {TASK_STATUSES.map((s) => (
-                  <option
-                    key={s}
-                    value={s}
-                    // Block "done" when (a) viewer isn't eligible, or
-                    // (b) the per-subtask + global coverage gates aren't met.
-                    // Always allow the current value to render so the select
-                    // doesn't show a phantom option when already "done".
-                    disabled={
-                      s === "done" &&
-                      task.status !== "done" &&
-                      (!canMarkDone || !doneGate.ok)
-                    }
-                  >
-                    {TASK_STATUS_LABELS[s]}
-                  </option>
-                ))}
-              </Select>
+              />
             </label>
             {canEditAll ? (
-              <label style={fieldLabel}>
+              <label className={styles.fieldLabel}>
                 <span>Priority</span>
-                <Select
+                <ResponsiveSelect<TaskPriority>
                   value={task.priority}
-                  onChange={(e) => onPriorityChange(e.target.value as TaskPriority)}
-                  aria-label="Priority"
-                >
-                  {TASK_PRIORITIES.map((p) => (
-                    <option key={p} value={p}>
-                      {TASK_PRIORITY_LABELS[p]}
-                    </option>
-                  ))}
-                </Select>
+                  onChange={onPriorityChange}
+                  options={TASK_PRIORITIES.map<ResponsiveSelectOption<TaskPriority>>((p) => ({
+                    value: p,
+                    label: TASK_PRIORITY_LABELS[p],
+                  }))}
+                  ariaLabel="Priority"
+                />
               </label>
             ) : (
               <Badge tone="neutral">Priority: {TASK_PRIORITY_LABELS[task.priority]}</Badge>
@@ -540,7 +468,7 @@ export default function TaskDetailModal({
 
           {(canEditDueDates || task.dueDate) && (
             <section>
-              <h3 style={sectionLabel}>Due date</h3>
+              <h3 className={styles.sectionLabel}>Due date</h3>
               <TaskCalendar
                 mode={canEditDueDates ? "edit" : "view"}
                 value={task.dueDate}
@@ -558,9 +486,9 @@ export default function TaskDetailModal({
           )}
 
           <section>
-            <h3 style={sectionLabel}>Description</h3>
+            <h3 className={styles.sectionLabel}>Description</h3>
             {editingDesc && canEditAll ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+              <div className={styles.descEditWrapper}>
                 <DescriptionEditor
                   editorKey={`task-desc:${task.id}`}
                   initialBody={task.description}
@@ -568,7 +496,7 @@ export default function TaskDetailModal({
                   autoFocus
                   minHeightRem={6}
                 />
-                <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
+                <div className={styles.descEditActions}>
                   <Button size="sm" onClick={saveDesc}>
                     Save
                   </Button>
@@ -583,14 +511,11 @@ export default function TaskDetailModal({
                     Cancel
                   </Button>
                   <span
-                    style={{
-                      marginLeft: "auto",
-                      fontSize: "var(--text-xs)",
-                      color:
-                        descDraft.length > TASK_FIELD_LIMITS.description
-                          ? "var(--color-danger, #dc2626)"
-                          : "var(--color-text-muted)",
-                    }}
+                    className={
+                      descDraft.length > TASK_FIELD_LIMITS.description
+                        ? `${styles.charCounter} ${styles.charCounterOver}`
+                        : styles.charCounter
+                    }
                   >
                     {descDraft.length} / {TASK_FIELD_LIMITS.description}
                   </span>
@@ -599,18 +524,11 @@ export default function TaskDetailModal({
             ) : (
               <div
                 onClick={() => canEditAll && setEditingDesc(true)}
-                style={{
-                  fontSize: "var(--text-sm)",
-                  color: task.description ? "var(--color-text)" : "var(--color-text-muted)",
-                  cursor: canEditAll ? "text" : "default",
-                  padding: "var(--space-3)",
-                  background: "var(--color-bg-elevated)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "var(--radius-md)",
-                  minHeight: "3rem",
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                }}
+                className={[
+                  styles.descriptionBox,
+                  canEditAll ? styles.descriptionBoxEditable : "",
+                  task.description ? "" : styles.descriptionBoxEmpty,
+                ].filter(Boolean).join(" ")}
               >
                 {task.description ? (
                   <RichTextRender body={task.description} />
@@ -623,10 +541,10 @@ export default function TaskDetailModal({
             )}
           </section>
 
-          <section>
-            <h3 style={sectionLabel}>Subtasks</h3>
+          <section className={styles.subtaskSection}>
+            <h3 className={styles.sectionLabel}>Subtasks</h3>
             {task.subtaskStats.total > 0 && (
-              <div style={{ marginBottom: "var(--space-3)" }}>
+              <div className={styles.subtaskBreakdownWrapper}>
                 <SubtaskBreakdown breakdown={getSubtaskBreakdown(task)} variant="verbose" />
               </div>
             )}
@@ -647,7 +565,7 @@ export default function TaskDetailModal({
           </section>
 
           <section>
-            <h3 style={sectionLabel}>Attachments</h3>
+            <h3 className={styles.sectionLabel}>Attachments</h3>
             <AttachmentsSection
               taskId={task.id}
               users={users}
@@ -658,7 +576,7 @@ export default function TaskDetailModal({
           </section>
 
           <section>
-            <h3 style={sectionLabel}>Discussion &amp; activity</h3>
+            <h3 className={styles.sectionLabel}>Discussion &amp; activity</h3>
             <CommentThread
               task={task}
               users={users}
@@ -673,44 +591,33 @@ export default function TaskDetailModal({
         </div>
 
         {/* Sidebar */}
-        <div
-          style={{
-            padding: "var(--space-5)",
-            background: "var(--color-bg-elevated)",
-            borderLeft: "1px solid var(--color-border)",
-            overflowY: "auto",
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-            gap: "var(--space-5)",
-          }}
-        >
+        <div className={styles.sidebar}>
           {canEditAll && (
             <div>
-              <h4 style={sectionLabel}>Project</h4>
-              <Select
+              <h4 className={styles.sectionLabel}>Project</h4>
+              <ResponsiveSelect
                 value={task.projectId ?? ""}
-                onChange={(e) => onProjectChange(e.target.value)}
-              >
-                <option value="">— none —</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </Select>
+                onChange={onProjectChange}
+                options={
+                  [
+                    { value: "", label: "— none —" },
+                    ...projects.map((p) => ({ value: p.id, label: p.name })),
+                  ] satisfies ResponsiveSelectOption[]
+                }
+                ariaLabel="Project"
+              />
             </div>
           )}
 
           {!canEditAll && project && (
             <div>
-              <h4 style={sectionLabel}>Project</h4>
+              <h4 className={styles.sectionLabel}>Project</h4>
               <Badge tone="accent">{project.name}</Badge>
             </div>
           )}
 
           <div>
-            <h4 style={sectionLabel}>Completers</h4>
+            <h4 className={styles.sectionLabel}>Completers</h4>
             {/* Task-level roster edits are admin-only post-creation.
                 Committee creators set rosters via TaskForm at creation;
                 they can't rewrite them afterwards. Personal-task creators
@@ -718,7 +625,7 @@ export default function TaskDetailModal({
                 service for SUBTASK-level membership still works via the
                 +Me / −Me buttons on each row. */}
             {canEditTaskRoster ? (
-              <AssigneePicker
+              <PersonSelector
                 users={users}
                 selected={task.completerUids}
                 onChange={onCompletersChange}
@@ -729,16 +636,14 @@ export default function TaskDetailModal({
                 notifyBusyUids={Array.from(notifyBusy)}
               />
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+              <div className={styles.assigneeList}>
                 {task.completerUids.length === 0 && (
-                  <span style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
-                    Unassigned
-                  </span>
+                  <span className={styles.assigneeListEmpty}>Unassigned</span>
                 )}
                 {task.completerUids.map((uid) => {
                   const u = users.find((x) => x.uid === uid);
                   return (
-                    <span key={uid} style={{ fontSize: "var(--text-sm)" }}>
+                    <span key={uid} className={styles.assigneeListItem}>
                       {u?.displayName ?? u?.email ?? uid}
                     </span>
                   );
@@ -752,9 +657,9 @@ export default function TaskDetailModal({
               actually a reviewer on this task see it. */}
           {canSeeReviewerSection && (
           <div>
-            <h4 style={sectionLabel}>Reviewers</h4>
+            <h4 className={styles.sectionLabel}>Reviewers</h4>
             {canEditTaskRoster ? (
-              <AssigneePicker
+              <PersonSelector
                 users={users}
                 selected={task.reviewerUids}
                 onChange={onReviewersChange}
@@ -765,16 +670,14 @@ export default function TaskDetailModal({
                 notifyBusyUids={Array.from(notifyBusy)}
               />
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+              <div className={styles.assigneeList}>
                 {task.reviewerUids.length === 0 && (
-                  <span style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
-                    No reviewer set
-                  </span>
+                  <span className={styles.assigneeListEmpty}>No reviewer set</span>
                 )}
                 {task.reviewerUids.map((uid) => {
                   const u = users.find((x) => x.uid === uid);
                   return (
-                    <span key={uid} style={{ fontSize: "var(--text-sm)" }}>
+                    <span key={uid} className={styles.assigneeListItem}>
                       {u?.displayName ?? u?.email ?? uid}
                     </span>
                   );
@@ -819,10 +722,7 @@ export default function TaskDetailModal({
           )}
           {canEditTaskRoster && task.initialNotifyAt !== null && (
             <div
-              style={{
-                fontSize: "var(--text-xs)",
-                color: "var(--color-text-muted)",
-              }}
+              className={styles.initialNotifyConfirmation}
               title={`Initial notifications were sent ${task.initialNotifyAt.toLocaleString()}.`}
             >
               ✓ Initial notifications sent
@@ -833,28 +733,33 @@ export default function TaskDetailModal({
 
           {isAdmin && (
             <div>
-              <h4 style={sectionLabel}>Visibility</h4>
-              <Select
+              <h4 className={styles.sectionLabel}>Visibility</h4>
+              <ResponsiveSelect<TaskVisibility>
                 value={task.visibility}
-                onChange={(e) => onVisibilityChange(e.target.value as TaskVisibility)}
-              >
-                <option value="committee">Committee-visible</option>
-                <option value="assignees-only">Private — assignees + admins</option>
-              </Select>
+                onChange={onVisibilityChange}
+                options={[
+                  { value: "committee", label: "Committee-visible" },
+                  {
+                    value: "assignees-only",
+                    label: "Private — assignees + admins",
+                  },
+                ]}
+                ariaLabel="Visibility"
+              />
             </div>
           )}
 
-          <div style={{ fontSize: "var(--text-xs)", color: "var(--color-text-muted)", display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+          <div className={styles.meta}>
             <div>
               Created by{" "}
-              <strong style={{ color: "var(--color-text)" }}>
+              <strong className={styles.metaName}>
                 {creator?.displayName ?? creator?.email ?? "—"}
               </strong>
             </div>
             {task.createdAt && <div>On {task.createdAt.toLocaleDateString()}</div>}
             {task.updatedAt && <div>Updated {task.updatedAt.toLocaleString()}</div>}
-            <div style={{ textTransform: "capitalize" }}>Source: {task.source.replace("-", " ")}</div>
-            <div style={{ textTransform: "capitalize" }}>Kind: {task.kind.replace("-", " ")}</div>
+            <div className={styles.metaCapitalize}>Source: {task.source.replace("-", " ")}</div>
+            <div className={styles.metaCapitalize}>Kind: {task.kind.replace("-", " ")}</div>
           </div>
 
           {/* Archive + delete are both creator/admin only. Archive is
@@ -865,7 +770,7 @@ export default function TaskDetailModal({
               delete gate for consistency — "big visibility-altering
               actions require elevated privilege". */}
           {(isAdmin || isCreator) && (
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+            <div className={styles.bottomActions}>
               <Button
                 size="sm"
                 variant="secondary"
@@ -883,13 +788,7 @@ export default function TaskDetailModal({
                 {deleting ? "Deleting task + history…" : "Delete task"}
               </Button>
               {deleteErr && (
-                <span
-                  role="alert"
-                  style={{
-                    fontSize: "var(--text-xs)",
-                    color: "var(--color-danger, #dc2626)",
-                  }}
-                >
+                <span role="alert" className={styles.deleteError}>
                   {deleteErr}
                 </span>
               )}
@@ -930,7 +829,7 @@ function AttachmentsSection({
   // within ~200ms. Loud banners make the modal feel slow even when the
   // task body already rendered instantly from the parent seed.
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+    <div className={styles.attachmentsSection}>
       <AttachmentList
         taskId={taskId}
         attachments={taskLevel}
@@ -970,33 +869,17 @@ function ReviewerProgressSummary({
     return { uid, name, approvedCount, questionCount, totalRequired };
   });
   return (
-    <div
-      style={{
-        display: "flex",
-        flexWrap: "wrap",
-        gap: "var(--space-3)",
-        padding: "0.5rem 0.75rem",
-        marginBottom: "var(--space-2)",
-        background: "var(--color-bg-elevated)",
-        border: "1px solid var(--color-border)",
-        borderRadius: "var(--radius-md)",
-        fontSize: "var(--text-xs)",
-      }}
-    >
+    <div className={styles.reviewerProgressSummary}>
       {stats.map((s) => {
         const done = s.totalRequired > 0 && s.approvedCount === s.totalRequired;
+        const stateClass = done
+          ? styles.reviewerStatDone
+          : s.questionCount > 0
+            ? styles.reviewerStatQuestion
+            : styles.reviewerStat;
         return (
-          <span
-            key={s.uid}
-            style={{
-              color: done
-                ? "var(--color-success, #16a34a)"
-                : s.questionCount > 0
-                  ? "var(--color-warning, var(--color-text))"
-                  : "var(--color-text-muted)",
-            }}
-          >
-            <strong style={{ color: "var(--color-text)" }}>{s.name}</strong>{" "}
+          <span key={s.uid} className={stateClass}>
+            <strong className={styles.reviewerStatName}>{s.name}</strong>{" "}
             {s.approvedCount}/{s.totalRequired} ✓
             {s.questionCount > 0 && ` (${s.questionCount} ?)`}
           </span>
@@ -1042,78 +925,20 @@ function computePendingReview(
   return { pendingTaskReview, pendingSubtaskIds };
 }
 
-const sectionLabel: React.CSSProperties = {
-  fontSize: "var(--text-xs)",
-  textTransform: "uppercase",
-  letterSpacing: "0.05em",
-  color: "var(--color-text-muted)",
-  marginBottom: "var(--space-2)",
-  fontWeight: 600,
-};
-
-const fieldLabel: React.CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "var(--space-2)",
-  fontSize: "var(--text-sm)",
-  color: "var(--color-text)",
-  fontWeight: 500,
-};
-
 function Overlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
     <div
       role="dialog"
       aria-modal="true"
       onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0, 0, 0, 0.55)",
-        zIndex: 40,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "var(--space-4)",
-      }}
+      className={styles.overlay}
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: "var(--color-bg)",
-          border: "1px solid var(--color-border)",
-          borderRadius: "var(--radius-lg)",
-          boxShadow: "var(--shadow-lg)",
-          maxWidth: "56rem",
-          width: "100%",
-          maxHeight: "85vh",
-          overflow: "hidden",
-          position: "relative",
-        }}
-      >
+      <div onClick={(e) => e.stopPropagation()} className={styles.panel}>
         <button
           type="button"
           aria-label="Close"
           onClick={onClose}
-          style={{
-            position: "absolute",
-            top: "var(--space-3)",
-            right: "var(--space-3)",
-            width: "2rem",
-            height: "2rem",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "var(--color-bg)",
-            border: "1px solid var(--color-border)",
-            borderRadius: "999px",
-            color: "var(--color-text)",
-            fontSize: "var(--text-md)",
-            lineHeight: 1,
-            cursor: "pointer",
-            zIndex: 2,
-            boxShadow: "var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.15))",
-          }}
+          className={styles.closeButton}
         >
           ✕
         </button>
@@ -1136,7 +961,7 @@ function Spinner() {
       height="32"
       viewBox="0 0 32 32"
       aria-hidden="true"
-      style={{ display: "block" }}
+      className={styles.spinner}
     >
       <circle
         cx="16"

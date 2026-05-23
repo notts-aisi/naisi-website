@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import styles from "./TaskCalendar.module.css";
 
 type Mode = "edit" | "view";
 
@@ -19,6 +20,16 @@ type Props = {
    *  collapses on commit (cell click, shortcut, Clear). Without it the grid
    *  is always visible. */
   collapsible?: boolean;
+  /** When used with `collapsible`, mount the calendar fully expanded
+   *  (skip the initial pill). Useful when an outer trigger already
+   *  owns the open/close state (e.g. BlockHeader's "Set due date"
+   *  button), so users don't have to tap a pill inside an already-
+   *  opened picker. */
+  initiallyExpanded?: boolean;
+  /** Fired after a commit (Done or Clear). Lets callers that own the
+   *  outer open/close state (e.g. BlockHeader's `calendarOpen`) tear
+   *  the calendar down at the right moment. */
+  onClose?: () => void;
 };
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -68,12 +79,16 @@ export default function TaskCalendar({
   size = "md",
   label,
   collapsible = false,
+  initiallyExpanded = false,
+  onClose,
 }: Props) {
   const today = useMemo(() => localMidnight(new Date()), []);
   const [viewMonth, setViewMonth] = useState<Date>(() =>
     startOfMonth(value ?? today),
   );
-  const [expanded, setExpanded] = useState<boolean>(!collapsible);
+  const [expanded, setExpanded] = useState<boolean>(
+    !collapsible || initiallyExpanded,
+  );
   // In collapsible mode, picking a cell / shortcut updates a local draft
   // instead of firing onChange immediately. The bottom Done button commits
   // the draft; Clear commits null. Non-collapsible callers keep the legacy
@@ -112,6 +127,7 @@ export default function TaskCalendar({
   function commit(next: Date | null) {
     onChange?.(next);
     if (collapsible) setExpanded(false);
+    onClose?.();
   }
 
   function pick(d: Date) {
@@ -153,17 +169,8 @@ export default function TaskCalendar({
 
   return (
     <div
-      style={{
-        display: "inline-flex",
-        flexDirection: "column",
-        gap: "var(--space-2)",
-        padding: "var(--space-3)",
-        background: "var(--color-bg-elevated)",
-        border: "1px solid var(--color-border)",
-        borderRadius: "var(--radius-md)",
-        opacity: disabled ? 0.6 : 1,
-        userSelect: "none",
-      }}
+      className={styles.wrapper}
+      style={{ opacity: disabled ? 0.6 : 1 }}
       aria-label={label ?? "Date picker"}
     >
       {/* Month header + nav */}
@@ -197,21 +204,18 @@ export default function TaskCalendar({
         </NavBtn>
       </div>
 
-      {/* Weekday strip */}
+      {/* Weekday strip — fluid below --bp-sm via the CSS module, plus
+          first-letter abbreviation. */}
       <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(7, ${cellPx}px)`,
-          gap: "2px",
-          fontSize: "var(--text-xs)",
-          color: "var(--color-text-subtle)",
-          textAlign: "center",
-          fontWeight: 500,
-        }}
+        className={styles.weekRow}
+        style={{ "--cell-px": `${cellPx}px` } as React.CSSProperties}
       >
         {WEEKDAYS.map((w) => (
-          <div key={w} style={{ padding: "0.2rem 0" }}>
-            {w}
+          <div key={w} className={styles.weekdayLabel}>
+            <span className={styles.weekdayLong}>{w}</span>
+            <span className={styles.weekdayShort} aria-hidden>
+              {w[0]}
+            </span>
           </div>
         ))}
       </div>
@@ -219,11 +223,8 @@ export default function TaskCalendar({
       {/* Day grid */}
       <div
         role="grid"
-        style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(7, ${cellPx}px)`,
-          gap: "2px",
-        }}
+        className={styles.dayGrid}
+        style={{ "--cell-px": `${cellPx}px` } as React.CSSProperties}
       >
         {cells.map((d) => {
           const inMonth = d.getMonth() === viewMonth.getMonth();
@@ -245,21 +246,16 @@ export default function TaskCalendar({
             border = "1px solid var(--color-accent)";
           }
 
-          const commonStyle: React.CSSProperties = {
-            width: cellPx,
-            height: cellPx,
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
+          // Dynamic per-cell styles (state-derived) stay inline; the
+          // static width/height/font-family/etc. live in `.cell`.
+          const dynamicStyle: React.CSSProperties = {
             background: bg,
             color,
             border,
-            borderRadius: "var(--radius-sm)",
-            fontSize: dayFont,
+            // Font-size lives in CSS (`.cell` + the mobile @media block).
+            // Inline fontSize here would override the @media bump on phone.
             fontWeight: isSelected ? 600 : isToday ? 600 : 400,
             opacity: inMonth ? 1 : 0.5,
-            fontFamily: "inherit",
-            padding: 0,
           };
 
           if (!isInteractive) {
@@ -268,7 +264,8 @@ export default function TaskCalendar({
                 key={d.toISOString()}
                 role="gridcell"
                 aria-selected={isSelected}
-                style={commonStyle}
+                className={styles.cell}
+                style={dynamicStyle}
               >
                 {d.getDate()}
               </span>
@@ -287,8 +284,9 @@ export default function TaskCalendar({
                 year: "numeric",
               })}
               onClick={() => pick(d)}
+              className={styles.cell}
               style={{
-                ...commonStyle,
+                ...dynamicStyle,
                 cursor: "pointer",
                 transition: "background 0.12s ease",
               }}
@@ -381,17 +379,12 @@ export default function TaskCalendar({
         </div>
       )}
 
-      {/* Collapsible-mode bottom action bar — explicit Clear / Done. */}
+      {/* Collapsible-mode bottom action bar — explicit Clear / Done.
+          Action row uses CSS module so phone widths can promote the
+          buttons to full-width 44px floor; on desktop the buttons stay
+          their natural size with space-between justification. */}
       {collapsible && (
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: "var(--space-2)",
-            paddingTop: "var(--space-2)",
-            borderTop: "1px solid var(--color-border)",
-          }}
-        >
+        <div className={styles.actionRow}>
           {mode === "edit" ? (
             <ActionBtn
               label="Clear"
@@ -434,24 +427,20 @@ function ActionBtn({
   disabled?: boolean;
   variant: "success" | "danger";
 }) {
-  const bg = variant === "success" ? "#16a34a" : "var(--color-danger)";
+  // Backgrounds live in CSS module variant classes instead of inline
+  // style — Safari treated the inline `background: var(--color-danger)`
+  // unreliably alongside the appearance reset, leaving the buttons
+  // visually missing. Static class-driven colors paint dependably.
+  const className = [
+    styles.actionBtn,
+    variant === "success" ? styles.actionBtnSuccess : styles.actionBtnDanger,
+  ].join(" ");
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      style={{
-        padding: "0.4rem 1rem",
-        background: bg,
-        color: "#ffffff",
-        border: "none",
-        borderRadius: "var(--radius-sm)",
-        fontSize: "var(--text-sm)",
-        fontWeight: 600,
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.55 : 1,
-        fontFamily: "inherit",
-      }}
+      className={className}
     >
       {label}
     </button>

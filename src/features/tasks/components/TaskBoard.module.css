@@ -1,0 +1,150 @@
+/* TaskBoard hosts a horizontal-scroll kanban. The columns themselves stay
+   the same fixed width across viewports — collapsing them is a separate
+   feature decision (see CLAUDE.md §Main-area width, PR #11 lesson). This
+   module adds the scroll polish: snap-to-column on touch, hidden scrollbar,
+   touch-scroll smoothing. The container scrolls *inside its own bounds*,
+   never spills to the document scroll. */
+
+.scroll {
+  display: flex;
+  gap: var(--space-3);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: var(--space-3);
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: var(--space-3);
+  /* Without this, the flex container's intrinsic min-content (~5 × 17rem =
+     85rem of BoardColumns) propagates up through .kanbanOnly → .main →
+     AppShell's `grid-template-columns: sidebar 1fr`. The `1fr` is
+     minmax(auto, 1fr); `auto` floors at descendant min-content, so the
+     whole shell grid stretches past viewport and the document body gets
+     horizontal scroll. min-width: 0 here breaks that propagation so
+     `overflow-x: auto` above can actually contain the kanban scroll
+     inside .scroll's own bounds. This is the PR #11 lesson in CLAUDE.md:
+     fix the page, not the shell. */
+  min-width: 0;
+  /* Right-edge fade so a cut-off column reads as "scroll for more"
+     rather than broken layout. Static gradient — the fade past the
+     last column reads as "you've reached the edge" when scrolled
+     fully right; if that turns out to be confusing a data-at-end JS
+     hook can toggle it on/off as a follow-up. */
+  mask-image: linear-gradient(
+    to right,
+    black 0,
+    black calc(100% - 2rem),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to right,
+    black 0,
+    black calc(100% - 2rem),
+    transparent 100%
+  );
+  /* Visible thin scrollbar so trackpad-less users see the affordance
+     without having to swipe-scroll first. Sits in its own gutter, the
+     mask only paints content. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+.scroll::-webkit-scrollbar {
+  height: 8px;
+}
+.scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+.scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  min-width: 17rem;
+  width: 17rem;
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+}
+
+/* === Tree visibility gating ===
+
+   Both trees (kanban + phone) are always rendered structurally by the
+   parent so the initial SSR paint is correct at either viewport without
+   a hydration flash. CSS decides which is visible.
+
+   Breakpoint at --bp-md (48rem). Below that, the phone column shape is
+   the right fit (single-column 32rem-capped). At 48rem the kanban
+   appears — two 17rem columns fit comfortably with the kanban's own
+   `overflow-x: auto` handling anything wider. Earlier this was --bp-lg
+   (60rem), but that left a 48–60rem band where the page rendered the
+   32rem-capped phone column inside a much wider canvas, which read as
+   a broken layout. */
+.kanbanOnly {
+  display: block;
+  /* Belt-and-braces alongside .scroll's min-width: 0 — explicitly stops
+     intrinsic-content width from leaking past this wrapper toward .main
+     and AppShell's grid track. */
+  min-width: 0;
+}
+
+.phoneOnly {
+  display: none;
+}
+
+@media (max-width: 48rem) { /* --bp-md */
+  .kanbanOnly {
+    display: none;
+  }
+  .phoneOnly {
+    display: block;
+  }
+}
+
+/* === Phone view (below --bp-md) ===
+
+   Status-filter dropdown at the top picks ONE status to view; the cards
+   below are filtered to that status. Tasks are reallocated between
+   statuses via the per-card move-dropdown rendered by TaskCard. Rendered
+   inside `.phoneOnly` (above), which is hidden on desktop via CSS.
+
+   The 32rem cap on the children stays for taste — even at viewports
+   just under 48rem we don't want cards stretched to full bleed. Below
+   the cap the viewport itself is narrower, so the cap is a no-op. */
+
+.statusFilter {
+  margin-bottom: var(--space-3);
+  max-width: 32rem;
+  margin-inline: auto;
+}
+
+.phoneList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 32rem;
+  margin-inline: auto;
+}
+
+.phoneEmpty {
+  margin: 0;
+  padding: var(--space-6) var(--space-3);
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  max-width: 32rem;
+  margin-inline: auto;
+}
+
+/* === Mobile ===
+   The .scroll + .column kanban tree is never rendered below --bp-lg (the
+   parent component switches to TaskBoardPhone), so no kanban-specific
+   mobile overrides are needed here. Placeholder block kept per the
+   docs/mobile-conventions.md convention. */
+@media (max-width: 48rem) { /* --bp-md */
+  /* no overrides needed */
+}

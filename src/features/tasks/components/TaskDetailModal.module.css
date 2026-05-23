@@ -1,0 +1,377 @@
+/* Styles for TaskDetailModal. Extracted from the previous all-inline-styles
+   implementation so that a mobile @media block can be added (CSS variables
+   don't work inside @media conditions — see docs/mobile-conventions.md). */
+
+/* === Overlay scrim + panel === */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+}
+
+.panel {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  max-width: 56rem;
+  width: 100%;
+  max-height: 85vh;
+  overflow: hidden;
+  position: relative;
+}
+
+.closeButton {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text);
+  font-size: var(--text-md);
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+  box-shadow: var(--shadow-sm);
+}
+
+/* === Status fallbacks (loading / not found / deleting) === */
+
+.statusFallback {
+  padding: var(--space-6);
+  color: var(--color-text-muted);
+}
+
+.deletingStatus {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-8);
+  min-height: 14rem;
+  text-align: center;
+}
+
+.deletingLabel {
+  font-size: var(--text-md);
+  color: var(--color-text);
+}
+
+.deletingHint {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  max-width: 22rem;
+}
+
+.deletingError {
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}
+
+.spinner {
+  display: block;
+}
+
+/* === Layout grid + columns === */
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(16rem, 1fr);
+  /* Fixed row so children with overflow can bound their content. Using
+     max-height without an explicit row height lets the grid grow with
+     content and breaks internal scroll. */
+  grid-template-rows: 85vh;
+  gap: 0;
+}
+
+.mainColumn {
+  padding: var(--space-6);
+  overflow-y: auto;
+  /* min-height: 0 is the classic grid/flex scroll fix — without it a
+     scrollable child inherits its intrinsic height instead of the
+     grid row's bounded height. */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.sidebar {
+  padding: var(--space-5);
+  background: var(--color-bg-elevated);
+  border-left: 1px solid var(--color-border);
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* === Title === */
+
+.title {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  margin: 0;
+  cursor: default;
+}
+
+.titleEditable {
+  cursor: text;
+}
+
+.titleInput {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  color: var(--color-text);
+}
+
+/* === Field row (Status / Priority pickers) === */
+
+.fieldRow {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  align-items: end;
+}
+
+.sectionLabel {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-2);
+  font-weight: 600;
+}
+
+.fieldLabel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+/* === Description === */
+
+.descEditWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.descEditActions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.charCounter {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.charCounterOver {
+  color: var(--color-danger);
+}
+
+.descriptionBox {
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  cursor: default;
+  padding: var(--space-3);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-height: 3rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.descriptionBoxEditable {
+  cursor: text;
+}
+
+.descriptionBoxEmpty {
+  color: var(--color-text-muted);
+}
+
+/* === Subtasks === */
+
+.subtaskBreakdownWrapper {
+  margin-bottom: var(--space-3);
+}
+
+.reviewerProgressSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: 0.5rem 0.75rem;
+  margin-bottom: var(--space-2);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+}
+
+.reviewerStat {
+  color: var(--color-text-muted);
+}
+
+.reviewerStatDone {
+  color: var(--color-success);
+}
+
+.reviewerStatQuestion {
+  color: var(--color-warning);
+}
+
+.reviewerStatName {
+  color: var(--color-text);
+}
+
+/* === Attachments === */
+
+.attachmentsSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* === Sidebar pieces === */
+
+.assigneeList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.assigneeListEmpty {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.assigneeListItem {
+  font-size: var(--text-sm);
+}
+
+.initialNotifyConfirmation {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.metaName {
+  color: var(--color-text);
+}
+
+.metaCapitalize {
+  text-transform: capitalize;
+}
+
+.bottomActions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.deleteError {
+  font-size: var(--text-xs);
+  color: var(--color-danger);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* Modal fills the viewport on phone — opening a task IS the status-change
+     UX below this breakpoint (the kanban becomes a pill list in PR T3), so
+     hiding the rail's controls behind a second tap is hostile. Rail stacks
+     below main instead of beside it; the grid becomes the single outer
+     scroll container. */
+  .overlay {
+    padding: 0;
+  }
+  .panel {
+    width: 100vw;
+    height: 100vh;
+    max-width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+  .grid {
+    grid-template-columns: 1fr;
+    /* `max-content max-content` so each row sizes to its intrinsic content
+       and the grid scrollHeight grows past 100vh. `auto auto` doesn't work
+       here: items have min-height: 0 (inherited from the base .mainColumn
+       rule), which lets the auto track's minimum collapse to 0; the browser
+       then splits the definite 100vh evenly between the two tracks, clamping
+       mainColumn's track to ~half the viewport while its content remains
+       full-height. Children paint past the clamped track, over the sidebar.
+       `max-content` forces each track to its content size, the grid itself
+       becomes the scroll container, and the two regions stack cleanly. */
+    grid-template-rows: max-content max-content;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  .mainColumn {
+    padding: var(--space-4);
+    gap: var(--space-4);
+    overflow-y: visible;
+  }
+  .sidebar {
+    border-left: 0;
+    border-top: 1px solid var(--color-border);
+    gap: var(--space-4);
+    overflow-y: visible;
+  }
+  /* Push the close button below the iOS notch in portrait. env() falls back
+     to 0 on devices without safe-area-inset-top. */
+  .closeButton {
+    top: calc(var(--space-2) + env(safe-area-inset-top, 0px));
+  }
+  /* NOTE: the previous round set `.title { order: -2 }` and
+     `.subtaskSection { order: -1 }` to pull Subtasks toward the top on
+     phone. That was reverted here — flex `order` only moved those two
+     children, and the rest of mainColumn (Status / Priority / Due /
+     Description / Attachments / Discussion) overflowed past the column's
+     rendered box, hiding behind the sidebar. DOM order (Title → Status
+     → Priority → Due → Description → Subtasks → Attachments → Discussion)
+     already reads top-to-bottom. If product wants Subtasks earlier in
+     scroll, do it by reordering the JSX in TaskDetailModal.tsx instead
+     of CSS `order`. */
+}
+
+/* Narrowest phones — collapse the Status + Priority pickers into one
+   column. `auto-fit` *should* already do this at 343px content width,
+   but the ResponsiveSelect trigger has its own intrinsic width so be
+   explicit. */
+@media (max-width: 36rem) { /* --bp-sm */
+  .fieldRow {
+    grid-template-columns: 1fr;
+  }
+}

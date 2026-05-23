@@ -1,0 +1,151 @@
+/* SubtaskRow — mobile-adapt block. The per-reviewer approval matrix
+   takes one column per reviewer and pushes the row wider than the
+   modal at N reviewers. Below `--bp-md` we hide the matrix and show a
+   horizontal chip strip (read-only state per reviewer); tapping a chip
+   opens the SubtaskDetailModal where the viewer can change state.
+
+   Both shapes are always in the DOM so SSR + hydration paint cleanly
+   at either viewport — same pattern as TaskBoard's kanbanOnly/phoneOnly. */
+
+/* === Row layout ===
+
+   Up to 11+ children competed for one flex line with no wrap, so on the
+   live page title / due-pill / avatars / buttons piled onto each other.
+   The row is now a 4-track grid: drag handle, checkbox, title area
+   (minmax(0, 1fr) so it shrinks to fit), side cluster (wraps when its
+   children don't fit a single line). Below --bp-md the side cluster
+   spans the full row on a second grid row and reads left-aligned. */
+
+.row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 2rem;
+  cursor: pointer;
+}
+
+.titleArea {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: var(--space-2);
+  align-items: center;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+
+.titleAreaDone {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.duePill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.duePillOverdue {
+  background: var(--color-danger-soft, rgba(220, 38, 38, 0.12));
+  color: var(--color-danger, #dc2626);
+  border: none;
+}
+
+.sideCluster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.matrixOnly {
+  display: contents;
+}
+
+.chipStripOnly {
+  display: none;
+}
+
+.chipStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.chipApproved {
+  color: var(--color-success, #16a34a);
+  border-color: var(--color-success, #16a34a);
+  background: var(--color-success-soft, var(--color-bg-elevated));
+}
+
+.chipQuestion {
+  color: var(--color-warning, var(--color-text));
+  border-color: var(--color-warning, var(--color-text));
+  background: var(--color-warning-soft, var(--color-bg-elevated));
+}
+
+.chipRejected {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+  background: var(--color-danger-soft, var(--color-bg-elevated));
+}
+
+/* Phone-only "tap for more" cue. Hidden on desktop where the row already
+   exposes the action buttons inline; shown on phone where those buttons
+   have migrated into SubtaskDetailModal's Actions section. */
+.tapChevron {
+  display: none;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--color-text-muted);
+  padding: 0 var(--space-2);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* Phone: drop the side-cluster column from the row grid and let it
+     wrap to a second row spanning the full width, left-aligned. Title
+     stays on row 1 with drag handle + checkbox. */
+  .row {
+    grid-template-columns: auto auto 1fr;
+  }
+  .sideCluster {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+  .matrixOnly {
+    display: none;
+  }
+  .chipStripOnly {
+    display: block;
+  }
+  .tapChevron {
+    display: inline-flex;
+    align-items: center;
+    margin-left: auto;
+  }
+}

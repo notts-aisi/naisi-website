@@ -6,7 +6,9 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Input";
-import Select from "@/components/ui/Select";
+import ResponsiveSelect, {
+  type ResponsiveSelectOption,
+} from "@/components/ui/ResponsiveSelect";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
 import type { Block } from "@/lib/firestore/newsletterBlocks";
@@ -221,17 +223,17 @@ export default function EmailDesignEditor({ templateId }: Props) {
             label="Send this email to"
             hint="Which of the two addresses on file should receive this message."
           >
-            <Select
-              id="email-recipients"
+            <ResponsiveSelect<RecipientModifier>
               value={recipients}
-              onChange={(e) => setRecipients(e.target.value as RecipientModifier)}
-            >
-              {(Object.keys(RECIPIENT_MODIFIER_LABELS) as RecipientModifier[]).map((key) => (
-                <option key={key} value={key}>
-                  {RECIPIENT_MODIFIER_LABELS[key]}
-                </option>
-              ))}
-            </Select>
+              onChange={setRecipients}
+              options={(Object.keys(RECIPIENT_MODIFIER_LABELS) as RecipientModifier[]).map<
+                ResponsiveSelectOption<RecipientModifier>
+              >((key) => ({
+                value: key,
+                label: RECIPIENT_MODIFIER_LABELS[key],
+              }))}
+              ariaLabel="Send this email to"
+            />
           </Field>
 
           <BlockEditor

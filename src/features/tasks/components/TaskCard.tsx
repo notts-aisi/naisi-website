@@ -3,11 +3,20 @@
 import { useMemo } from "react";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
-import { TASK_KIND_LABELS, getSubtaskBreakdown, type TaskDoc } from "@/lib/firestore/tasks";
+import Dropdown, { type DropdownOption } from "@/components/ui/Dropdown";
+import {
+  TASK_KIND_LABELS,
+  TASK_STATUSES,
+  TASK_STATUS_LABELS,
+  getSubtaskBreakdown,
+  type TaskDoc,
+  type TaskStatus,
+} from "@/lib/firestore/tasks";
 import type { ProjectDoc } from "@/lib/firestore/projects";
 import type { UserDoc } from "@/lib/firestore/users";
 import DueDateBadge from "./DueDateBadge";
 import SubtaskBreakdown from "./SubtaskBreakdown";
+import styles from "./TaskCard.module.css";
 
 type Props = {
   task: TaskDoc;
@@ -17,6 +26,14 @@ type Props = {
   dense?: boolean;
   dragHandleProps?: React.HTMLAttributes<HTMLElement>;
   isDragging?: boolean;
+  /** Optimistic status override applied while a Firestore write is in flight.
+   *  When set, the move-dropdown shows this value instead of `task.status`. */
+  pendingStatus?: TaskStatus | null;
+  /** Present means render the top-right move-dropdown. Receives the chosen
+   *  target status; the parent owns the mutation + optimistic update. */
+  onChangeStatus?: (status: TaskStatus) => void;
+  canChangeStatus?: boolean;
+  canMarkDone?: boolean;
 };
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -40,7 +57,12 @@ export default function TaskCard({
   dense,
   dragHandleProps,
   isDragging,
+  pendingStatus,
+  onChangeStatus,
+  canChangeStatus,
+  canMarkDone,
 }: Props) {
+  const effectiveStatus = pendingStatus ?? task.status;
   const project = useMemo(
     () => (task.projectId ? projects.find((p) => p.id === task.projectId) : null),
     [task.projectId, projects],
@@ -65,7 +87,6 @@ export default function TaskCard({
     return u.displayName ?? u.email ?? u.uid;
   }
 
-
   return (
     <Card
       padding={dense ? "sm" : "md"}
@@ -78,23 +99,38 @@ export default function TaskCard({
         borderStyle: task.archived ? "dashed" : undefined,
       }}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-        <div
-          style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-2)", alignItems: "flex-start" }}
-        >
-          <div
-            style={{
-              flex: 1,
-              fontSize: "var(--text-sm)",
-              fontWeight: 500,
-              color: "var(--color-text)",
-            }}
-          >
-            {task.title}
-          </div>
-          <div style={{ display: "flex", gap: "var(--space-1)", alignItems: "center" }}>
+      <div className={styles.body}>
+        <div className={styles.titleRow}>
+          <div className={styles.title}>{task.title}</div>
+          <div className={styles.badgeCluster}>
             {task.archived && <Badge tone="neutral">Archived</Badge>}
             {task.priority === "urgent" && <Badge tone="danger">Urgent</Badge>}
+            {onChangeStatus && (
+              <Dropdown<TaskStatus>
+                value={effectiveStatus}
+                onChange={onChangeStatus}
+                disabled={!canChangeStatus}
+                size="sm"
+                /* Sheet at --bp-md so the 48–60rem band uses the bottom
+                   sheet instead of the popover (which can render outside
+                   17rem kanban columns). */
+                sheetBreakpoint="md"
+                ariaLabel="Change status"
+                title={
+                  canChangeStatus
+                    ? "Change status"
+                    : "You don't have permission to change this task's status"
+                }
+                options={TASK_STATUSES.map<DropdownOption<TaskStatus>>((s) => ({
+                  value: s,
+                  label: TASK_STATUS_LABELS[s],
+                  // Mirror the modal: block "done" when the viewer can't
+                  // mark done AND the task isn't already done.
+                  disabled:
+                    s === "done" && effectiveStatus !== "done" && !canMarkDone,
+                }))}
+              />
+            )}
             {dragHandleProps && (
               <button
                 type="button"
@@ -102,25 +138,10 @@ export default function TaskCard({
                 title="Drag to reorder or move between columns"
                 {...dragHandleProps}
                 onClick={(e) => {
-                  // Purely a drag handle — don't let a click on it open the modal.
+                  // Drag handle — never open the modal.
                   e.stopPropagation();
                 }}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: "1.4rem",
-                  height: "1.4rem",
-                  padding: 0,
-                  background: "transparent",
-                  border: "none",
-                  color: "var(--color-text-subtle)",
-                  cursor: "grab",
-                  fontSize: "var(--text-md)",
-                  lineHeight: 1,
-                  touchAction: "none",
-                  userSelect: "none",
-                }}
+                className={styles.dragHandle}
               >
                 ≡
               </button>
@@ -129,29 +150,10 @@ export default function TaskCard({
         </div>
 
         {!dense && task.description && (
-          <p
-            style={{
-              fontSize: "var(--text-xs)",
-              color: "var(--color-text-muted)",
-              margin: 0,
-              display: "-webkit-box",
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: "vertical",
-              overflow: "hidden",
-            }}
-          >
-            {task.description}
-          </p>
+          <p className={styles.description}>{task.description}</p>
         )}
 
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "var(--space-2)",
-            alignItems: "center",
-          }}
-        >
+        <div className={styles.metaBadges}>
           {project && <Badge tone="accent">{project.name}</Badge>}
           {(task.kind === "social" || task.kind === "event") && (
             <Badge tone="success">{TASK_KIND_LABELS[task.kind]}</Badge>
@@ -168,15 +170,7 @@ export default function TaskCard({
           <SubtaskBreakdown breakdown={getSubtaskBreakdown(task)} variant="compact" />
         )}
 
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "var(--space-1)",
-            fontSize: "var(--text-xs)",
-            color: "var(--color-text-muted)",
-          }}
-        >
+        <div className={styles.peopleColumn}>
           <PeopleLine
             label="Assigned to"
             people={completers}
@@ -194,13 +188,7 @@ export default function TaskCard({
             />
           )}
           {(task.commentCount > 0 || task.attachmentCount > 0) && (
-            <div
-              style={{
-                display: "flex",
-                gap: "var(--space-2)",
-                color: "var(--color-text-subtle)",
-              }}
-            >
+            <div className={styles.metaCounts}>
               {task.commentCount > 0 && <span>💬 {task.commentCount}</span>}
               {task.attachmentCount > 0 && <span>📎 {task.attachmentCount}</span>}
             </div>
@@ -224,23 +212,23 @@ function PeopleLine({
   emptyLabel: string | null;
   nameOf: (u: UserDoc) => string;
 }) {
-  const nameColor =
-    tone === "warning"
-      ? "var(--color-warning, var(--color-text))"
-      : "var(--color-accent)";
   if (people.length === 0) {
     if (!emptyLabel) return null;
     return (
       <div>
-        <span style={{ color: "var(--color-text-subtle)" }}>{emptyLabel}</span>
+        <span className={styles.peopleLabel}>{emptyLabel}</span>
       </div>
     );
   }
+  const nameClass =
+    tone === "warning"
+      ? `${styles.peopleName} ${styles.peopleNameReviewer}`
+      : styles.peopleName;
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
-      <span style={{ color: "var(--color-text-subtle)" }}>{label}:</span>
+    <div className={styles.peopleLine}>
+      <span className={styles.peopleLabel}>{label}:</span>
       {people.map((u, i) => (
-        <span key={u.uid} style={{ color: nameColor, fontWeight: 500 }}>
+        <span key={u.uid} className={nameClass}>
           {nameOf(u)}
           {i < people.length - 1 ? "," : ""}
         </span>

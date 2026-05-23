@@ -1,0 +1,239 @@
+/* Custom Dropdown primitive — see Dropdown.tsx for behaviour rationale.
+   Two visual shapes share an option list:
+   - popover: portalled menu anchored under the trigger (desktop, and any
+     viewport above --bp-md)
+   - sheet: bottom-anchored slide-up panel (mobile, below --bp-md)
+*/
+
+/* === Trigger button === */
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+  /* min-width: 0 so the trigger can shrink in flex/grid tracks without
+     intrinsic-content fighting back (PR #147 lesson). */
+  min-width: 0;
+  max-width: 100%;
+}
+
+.trigger:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+}
+
+.trigger:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--focus-ring);
+}
+
+.trigger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.triggerOpen {
+  border-color: var(--color-accent);
+}
+
+/* Size variants — `md` matches Input.module.css .control (44px touch
+   floor); `sm` is the in-card chip used by TaskCard. */
+.triggerSize_md {
+  min-height: 2.75rem;
+  padding: 0.55rem 0.7rem 0.55rem 0.85rem;
+  font-size: var(--text-md);
+  width: 100%;
+}
+
+.triggerSize_sm {
+  min-height: auto;
+  padding: 0.2rem 0.35rem 0.2rem 0.45rem;
+  font-size: var(--text-xs);
+}
+
+.triggerLabel {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Inline SVG (mirrors Input.module.css's .select background chevron — same
+   viewBox 12×8, same path, same stroke 1.75) so the custom Dropdown trigger
+   matches the native styled <select> chevron exactly. width/height in em
+   scale with the parent trigger's font-size; currentColor lets the muted
+   colour cascade. The previous Unicode `▾` glyph had font-metric centring
+   issues at large sizes — tall-narrow ink box, visual offset from the
+   geometric centre — that an SVG sidesteps. */
+.chevron {
+  flex-shrink: 0;
+  width: 0.75em;
+  height: 0.5em;
+  color: var(--color-text-muted);
+}
+
+.triggerSize_sm .chevron {
+  width: 0.625em;
+  height: 0.4167em;
+}
+
+/* === Popover (desktop / tablet) === */
+
+.popover {
+  position: fixed;
+  z-index: 100;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-1);
+  max-height: 18rem;
+  overflow-y: auto;
+  outline: none;
+}
+
+/* === Sheet (mobile) === */
+
+.sheetRoot {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  animation: dropdownScrimIn var(--transition-fast) ease-out;
+}
+
+.sheet {
+  position: relative;
+  width: 100%;
+  background: var(--color-bg-elevated);
+  border-top: 1px solid var(--color-border);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  padding: var(--space-3) 0 calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.25);
+  animation: dropdownSheetUp 0.2s ease-out;
+  max-height: 75vh;
+  overflow-y: auto;
+  outline: none;
+}
+
+.sheetHandle {
+  width: 2.5rem;
+  height: 0.25rem;
+  margin: 0 auto var(--space-3);
+  background: var(--color-border);
+  border-radius: var(--radius-pill);
+}
+
+.sheetCancel {
+  display: block;
+  width: calc(100% - 2 * var(--space-3));
+  margin: var(--space-3) var(--space-3) 0;
+  padding: 0.75rem 1rem;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  min-height: 2.75rem;
+}
+
+.sheetCancel:hover {
+  border-color: var(--color-border-strong);
+}
+
+@keyframes dropdownSheetUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes dropdownScrimIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .sheet {
+    animation: none;
+  }
+}
+
+/* === Option (shared between popover and sheet) === */
+
+.option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  user-select: none;
+  /* Min-height for touch targets on each row in sheet mode. */
+  min-height: 2.25rem;
+}
+
+/* In sheet mode each option fills the row and is a more substantial tap
+   target (44px floor). Override min-height + horizontal padding. */
+.sheetOption {
+  padding: 0.85rem var(--space-4);
+  border-radius: 0;
+  min-height: 2.75rem;
+  font-size: var(--text-md);
+}
+
+.option:hover:not(.optionDisabled) {
+  background: var(--color-surface-hover, var(--color-bg));
+}
+
+.optionActive:not(.optionDisabled) {
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+.optionSelected {
+  font-weight: 600;
+}
+
+.optionDisabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.optionLabel {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.optionCheck {
+  flex-shrink: 0;
+  color: var(--color-accent);
+  font-weight: 700;
+}

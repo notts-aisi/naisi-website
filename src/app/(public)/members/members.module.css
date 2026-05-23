@@ -1,0 +1,93 @@
+.page {
+  padding: var(--space-16) 0;
+}
+
+.intro {
+  max-width: 40rem;
+  margin-bottom: var(--space-10);
+}
+
+.heading {
+  margin-top: var(--space-4);
+}
+
+.lede {
+  color: var(--color-text-muted);
+  margin-top: var(--space-3);
+}
+
+.inlineLink {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.empty {
+  color: var(--color-text-muted);
+}
+
+.grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* Photo URL is piped in via the `--member-photo` custom property on the
+   element's inline `style` (the only legit inline-style use in CSS-module
+   land — see docs/mobile-conventions.md). */
+.photo {
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: var(--radius-pill);
+  background-color: var(--color-surface-hover);
+  background-image: var(--member-photo, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  border: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.identity {
+  min-width: 0;
+}
+
+.name {
+  font-weight: 600;
+}
+
+.role {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.bio {
+  color: var(--color-text-muted);
+  margin-top: var(--space-4);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .page {
+    padding: var(--space-10) 0;
+  }
+  .intro {
+    margin-bottom: var(--space-8);
+  }
+  .grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-3);
+  }
+  .cardHead {
+    gap: var(--space-3);
+  }
+  .photo {
+    width: 3rem;
+    height: 3rem;
+  }
+}

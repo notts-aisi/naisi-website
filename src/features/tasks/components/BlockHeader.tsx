@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import ResponsiveSelect, {
+  type ResponsiveSelectOption,
+} from "@/components/ui/ResponsiveSelect";
 import {
   TASK_FIELD_LIMITS,
   canSendReviewOutcome,
@@ -450,63 +453,32 @@ export default function BlockHeader({
         )}
 
         {showGating && canEditGating && (
-          <label
+          <div
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: "var(--space-2)",
-              padding: "0.35rem 0.75rem",
-              background:
-                block.gatingMode === "none"
-                  ? "var(--color-bg-elevated)"
-                  : "var(--color-accent-soft)",
-              border: `1px solid ${
-                block.gatingMode === "none"
-                  ? "var(--color-border)"
-                  : "var(--color-accent)"
-              }`,
-              borderRadius: "999px",
-              fontSize: "var(--text-xs)",
-              fontWeight: 600,
-              color:
-                block.gatingMode === "none"
-                  ? "var(--color-text-muted)"
-                  : "var(--color-accent)",
-              cursor: "pointer",
             }}
             title="Controls what must be complete before this block's work can start."
           >
             <span aria-hidden="true" style={{ fontSize: "14px", lineHeight: 1 }}>
               {block.gatingMode === "none" ? "🔓" : "🔗"}
             </span>
-            <select
+            <ResponsiveSelect<BlockGatingMode>
               value={block.gatingMode}
-              onChange={(e) =>
-                setBlockGatingMode(
-                  task,
-                  block.id,
-                  e.target.value as BlockGatingMode,
-                ).catch(console.error)
+              onChange={(next) =>
+                setBlockGatingMode(task, block.id, next).catch(console.error)
               }
-              aria-label="Upstream gating for this block"
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "inherit",
-                fontSize: "inherit",
-                fontWeight: "inherit",
-                fontFamily: "inherit",
-                cursor: "pointer",
-                outline: "none",
-                padding: 0,
-                paddingRight: "0.2rem",
-              }}
-            >
-              <option value="previous">{GATING_LABELS.previous}</option>
-              <option value="all-previous">{GATING_LABELS["all-previous"]}</option>
-              <option value="none">{GATING_LABELS.none}</option>
-            </select>
-          </label>
+              options={
+                [
+                  { value: "previous", label: GATING_LABELS.previous },
+                  { value: "all-previous", label: GATING_LABELS["all-previous"] },
+                  { value: "none", label: GATING_LABELS.none },
+                ] satisfies ResponsiveSelectOption<BlockGatingMode>[]
+              }
+              ariaLabel="Upstream gating for this block"
+            />
+          </div>
         )}
         {showGating && !canEditGating && (
           <span
@@ -546,62 +518,29 @@ export default function BlockHeader({
             buttons on rows, and getBlockPhase jumps from "in-progress" to
             "complete" without passing through "reviewing". */}
         {canEditDueDates && (
-          <label
+          <div
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: "var(--space-2)",
-              padding: "0.35rem 0.75rem",
-              background:
-                block.reviewMode === "skip-review"
-                  ? "var(--color-bg-elevated)"
-                  : "var(--color-accent-soft)",
-              border: `1px solid ${
-                block.reviewMode === "skip-review"
-                  ? "var(--color-border)"
-                  : "var(--color-accent)"
-              }`,
-              borderRadius: "999px",
-              fontSize: "var(--text-xs)",
-              fontWeight: 600,
-              color:
-                block.reviewMode === "skip-review"
-                  ? "var(--color-text-muted)"
-                  : "var(--color-accent)",
-              cursor: "pointer",
             }}
             title="Whether this block requires a reviewer signoff before it can be marked complete."
           >
             <span aria-hidden="true" style={{ fontSize: "14px", lineHeight: 1 }}>
               {block.reviewMode === "skip-review" ? "⤳" : "👁"}
             </span>
-            <select
+            <ResponsiveSelect<BlockReviewMode>
               value={block.reviewMode}
-              onChange={(e) =>
-                setBlockReviewMode(
-                  task,
-                  block.id,
-                  e.target.value as BlockReviewMode,
-                ).catch(console.error)
+              onChange={(next) =>
+                setBlockReviewMode(task, block.id, next).catch(console.error)
               }
-              aria-label="Review mode for this block"
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "inherit",
-                fontSize: "inherit",
-                fontWeight: "inherit",
-                fontFamily: "inherit",
-                cursor: "pointer",
-                outline: "none",
-                padding: 0,
-                paddingRight: "0.2rem",
-              }}
-            >
-              <option value="review">{REVIEW_MODE_LABELS.review}</option>
-              <option value="skip-review">{REVIEW_MODE_LABELS["skip-review"]}</option>
-            </select>
-          </label>
+              options={[
+                { value: "review", label: REVIEW_MODE_LABELS.review },
+                { value: "skip-review", label: REVIEW_MODE_LABELS["skip-review"] },
+              ]}
+              ariaLabel="Review mode for this block"
+            />
+          </div>
         )}
         {!canEditDueDates && block.reviewMode === "skip-review" && (
           <span
@@ -818,10 +757,12 @@ export default function BlockHeader({
             value={dueIsMixed ? null : commonDue}
             disabled={busy}
             size="sm"
+            collapsible
+            initiallyExpanded
+            onClose={() => setCalendarOpen(false)}
             onChange={(date) => {
               const v = date ? toDateInputValue(date) : "";
               handleBlockDueChange(v).catch(console.error);
-              setCalendarOpen(false);
             }}
           />
         </div>
