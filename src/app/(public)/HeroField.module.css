@@ -1,4 +1,8 @@
 .canvas {
+  /* Absolute so multiple canvases (e.g. Option 5: aurora + NN) stack
+     in the same bg container without pushing each other vertically. */
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;

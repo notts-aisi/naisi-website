@@ -14,6 +14,7 @@ import styles from "./landing.module.css";
 export default function HeroCTAs() {
   const primaryRef = useMagneticPull<HTMLAnchorElement>({ radius: 130, strength: 0.18, cap: 8 });
   const secondaryRef = useMagneticPull<HTMLAnchorElement>({ radius: 130, strength: 0.14, cap: 6 });
+  const tertiaryRef = useMagneticPull<HTMLAnchorElement>({ radius: 130, strength: 0.14, cap: 6 });
 
   return (
     <div className={styles.ctas}>
@@ -23,7 +24,7 @@ export default function HeroCTAs() {
         transition={{ duration: 0.5, delay: 2.5, type: "spring", stiffness: 320, damping: 20 }}
       >
         <Link ref={primaryRef} href="/register" className={styles.primaryCta}>
-          Apply to join
+          Apply to our platform
         </Link>
       </motion.div>
       <motion.div
@@ -34,6 +35,21 @@ export default function HeroCTAs() {
         <Link ref={secondaryRef} href="#stay-in-touch" className={styles.secondaryCta}>
           Get the newsletter →
         </Link>
+      </motion.div>
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 2.7, type: "spring", stiffness: 320, damping: 20 }}
+      >
+        <a
+          ref={tertiaryRef}
+          href="https://su.nottingham.ac.uk/activities/view/NottsAISafety"
+          target="_blank"
+          rel="noreferrer noopener"
+          className={styles.secondaryCta}
+        >
+          Join the society for £6 →
+        </a>
       </motion.div>
     </div>
   );

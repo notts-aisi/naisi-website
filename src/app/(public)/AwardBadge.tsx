@@ -1,29 +1,20 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import styles from "./AwardBadge.module.css";
 
 /*
-  UONSU Activities Awards 2026 — "Newcomer of the Year" badge.
-  Pinned below the hero CTAs as a trust signal next to the action.
-  Motion-driven entrance (rises in after CTAs settle). Auto-shimmers
-  once ~4.5s in to draw the eye, and on every hover thereafter.
+  UONSU Activities Awards 2026 — "Newcomer of the Year" badge. Sits
+  below the hero headline as a trust signal. Motion-driven entrance
+  (rises in shortly after the headline settles). Gold shimmer sweep
+  fires on hover; auto-shine on load was removed because the sweep
+  was rendering against the .hero ancestor and rushing across the
+  whole viewport on every page load.
 */
 export default function AwardBadge() {
-  const [autoShine, setAutoShine] = useState(false);
-  const shineTimer = useRef<number | null>(null);
-
-  useEffect(() => {
-    shineTimer.current = window.setTimeout(() => setAutoShine(true), 4500);
-    return () => {
-      if (shineTimer.current) window.clearTimeout(shineTimer.current);
-    };
-  }, []);
-
   return (
     <motion.a
-      className={`${styles.badge} ${autoShine ? styles.autoShine : ""}`}
+      className={styles.badge}
       href="/brand/naisi-newcomer-certificate.pdf"
       target="_blank"
       rel="noreferrer noopener"

@@ -3,12 +3,13 @@ import SubscribeForm from "@/components/SubscribeForm";
 import ReadingListAccordion from "@/components/ReadingListAccordion";
 import { READING_LISTS } from "@/content/readingLists";
 import HeroAtmosphere from "./HeroAtmosphere";
-import HeroEmblem from "./HeroEmblem";
 import HeroEyebrow from "./HeroEyebrow";
 import HeroLede from "./HeroLede";
+import MobileTagline from "./MobileTagline";
 import TypedHeadline from "./TypedHeadline";
 import HeroCTAs from "./HeroCTAs";
 import AwardBadge from "./AwardBadge";
+import CredentialsBar from "./CredentialsBar";
 import StatsRow from "./StatsRow";
 import UpcomingEvents from "./UpcomingEvents";
 import InstagramCarousel from "./InstagramCarousel";
@@ -21,20 +22,24 @@ import styles from "./landing.module.css";
 /**
  * Public landing page. Sections, top to bottom:
  *
- *  1. Hero — three-layer atmosphere (aurora shader + neural-activation
- *     field + sparkles) under a choreographed headline (blur-rise prefix
- *     + typed/looping accent), magnetic 3D CTAs, UONSU Activities Awards
- *     2026 "Newcomer of the Year" badge.
- *  2. By the numbers — stats strip with rolodex digit-roll.
- *  3. About. Brief framing + a reference to the three tiers below.
- *  4. "Three ways in." Socials (with £6 SU link inline), fellowships (with
- *     BlueDot logo inline), research incubator.
- *  5. Upcoming. Next 2-3 public events pulled from Firestore. Hides if empty.
- *  6. Where to start — curated reading lists.
- *  7. From the gram — Instagram carousel (hides if empty content file).
- *  8. Elsewhere — Substack / Linktree / SU membership link cards.
- *  9. Run by students — committee preview (dev-only via env flag).
- * 10. Stay in touch — subscribe form.
+ *  1. Hero — full-viewport (100vh). Layered neural-network atmosphere
+ *     (HeroFieldZeroBase: Big Bang layer entry, 2 inference rounds, cool
+ *     pink palette, breathing, subtle cursor attractor) under the NAISI
+ *     lockup + typed headline + UONSU Activities Awards 2026 "Newcomer
+ *     of the Year" badge. Nothing else lives in the hero — lede + CTAs
+ *     are the next beat.
+ *  2. Intro — lede paragraph + magnetic 3D CTAs (revealed via blur-rise
+ *     on scroll). This used to sit inside the hero.
+ *  3. By the numbers — stats strip with rolodex digit-roll.
+ *  4. About. Brief framing + a reference to the three tiers below.
+ *  5. "Three ways in." Socials (with £6 SU link inline), fellowships
+ *     (with BlueDot logo inline), research incubator.
+ *  6. Upcoming. Next 2-3 public events pulled from Firestore. Hides if empty.
+ *  7. Where to start — curated reading lists.
+ *  8. From the gram — Instagram carousel (hides if empty content file).
+ *  9. Elsewhere — Substack / Linktree / SU membership link cards.
+ * 10. Run by students — committee preview (dev-only via env flag).
+ * 11. Stay in touch — subscribe form.
  */
 
 export default function Landing() {
@@ -43,13 +48,17 @@ export default function Landing() {
       <section className={styles.hero} data-hero="true">
         <HeroAtmosphere />
         <div className={`container ${styles.heroInner}`}>
-          {/* heroArt is first in source order so it renders at the top of
-              the flex column on mobile (where it un-absolutes). On desktop
-              it is absolute-positioned to the right and source order is
-              irrelevant — see landing.module.css. */}
-          <HeroEmblem />
           <HeroEyebrow />
+          <MobileTagline />
           <TypedHeadline prefix="Make AI go well." accent="From Nottingham." startDelayMs={500} />
+          <div className={styles.heroBadge}>
+            <AwardBadge />
+          </div>
+        </div>
+      </section>
+
+      <Reveal variant="blur-rise" as="section" className={styles.introSection}>
+        <div className={`container ${styles.introInner}`}>
           <HeroLede>
             NAISI is the AI safety student group at the University of
             Nottingham. We run a termly fellowship in two streams, technical
@@ -57,11 +66,12 @@ export default function Landing() {
             and build.
           </HeroLede>
           <HeroCTAs />
-          <AwardBadge />
         </div>
-      </section>
+      </Reveal>
 
       <StatsRow />
+
+      <CredentialsBar />
 
       <Reveal variant="blur-rise" as="section" className={styles.aboutSection}>
         <div className={`container ${styles.aboutInner}`}>
@@ -86,7 +96,7 @@ export default function Landing() {
         <div className={`container ${styles.tiersInner}`}>
           <header className={styles.tiersHead}>
             <Reveal variant="mask-wipe" as="h2" className={styles.tiersTitle}>
-              Three ways to take part.
+              Three ways to get involved.
             </Reveal>
             <p className={styles.tiersBlurb}>
               Pick the level of commitment that matches where you are.

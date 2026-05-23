@@ -1,15 +1,27 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import HeroAurora from "./HeroAurora";
-import HeroField from "./HeroField";
-import HeroSparkles from "./HeroSparkles";
+import HeroFieldZeroBase from "./HeroFieldZeroBase";
+import { bgRadialDim } from "./heroOptionBg";
 import styles from "./landing.module.css";
 
 /*
-  HeroAtmosphere — mounts the three atmosphere layers (aurora shader,
-  constellation field, sparkles) inside .hero and toggles
-  data-atmosphere-on on the parent so the fade-in transitions kick in.
+  Production hero atmosphere — the locked-in vision.
+
+  Big Bang layer-sequential intro into a layered neural network, two
+  rounds of single-round inference per cycle with 0s gap (back-to-back),
+  cool-pink palette (NAISI blue with pink only at the brightest stop),
+  breathing, per-node random wobble, brightness variation, responsive
+  layer count (4 / 5 / 6 by viewport width), subtle cursor attractor
+  with envelope-fading so it never bugs the layer entry/exit.
+
+  Rendering is one canvas on a dark radial backdrop. No aurora cloud
+  layer, no sparkles layer — those were earlier iterations and read as
+  clutter against the neural-network animation.
+
+  The wrapping div toggles data-atmosphere-on on the closest .hero
+  ancestor so the existing fade-in CSS still kicks in once the canvas
+  is mounted.
 */
 export default function HeroAtmosphere() {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -17,12 +29,9 @@ export default function HeroAtmosphere() {
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
-    // Walk up to the closest .hero ancestor and mark atmosphere on.
     let cur: HTMLElement | null = node.parentElement;
     while (cur && !cur.dataset.hero) cur = cur.parentElement;
     if (cur) {
-      // Use a microtask so the initial 0-opacity styles are committed before
-      // the transition begins.
       requestAnimationFrame(() => {
         if (cur) cur.dataset.atmosphereOn = "true";
       });
@@ -31,14 +40,9 @@ export default function HeroAtmosphere() {
 
   return (
     <div ref={ref} aria-hidden="true">
-      <div className={`${styles.heroLayer} ${styles.heroLayerShader}`}>
-        <HeroAurora />
-      </div>
+      <div style={bgRadialDim} />
       <div className={`${styles.heroLayer} ${styles.heroLayerField}`}>
-        <HeroField />
-      </div>
-      <div className={`${styles.heroLayer} ${styles.heroLayerSparkles}`}>
-        <HeroSparkles />
+        <HeroFieldZeroBase />
       </div>
     </div>
   );

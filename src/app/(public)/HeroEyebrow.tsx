@@ -4,9 +4,10 @@ import { motion } from "motion/react";
 import styles from "./landing.module.css";
 
 /*
-  Renders the University of Nottingham logo where the eyebrow text used
-  to be — the "University of Nottingham · AI Safety" line read as
-  duplicative with the NAISI brand mark already in the public header.
+  NAISI emblem (no wordmark) at the top of the hero. Switched from the
+  full lockup because the lockup's "Nottingham AI Safety Initiative"
+  wordmark duplicated the headline's "From Nottingham." accent — the
+  emblem alone carries identity without repeating copy.
 */
 export default function HeroEyebrow() {
   return (
@@ -18,8 +19,8 @@ export default function HeroEyebrow() {
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/brand/uon-logo.png"
-        alt="The University of Nottingham"
+        src="/brand/naisi-emblem.png"
+        alt="Nottingham AI Safety Initiative"
         className={styles.eyebrowLogo}
       />
     </motion.div>
