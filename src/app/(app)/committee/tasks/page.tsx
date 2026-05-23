@@ -113,7 +113,14 @@ export default function CommitteeTasksPage() {
       {loading ? (
         <p style={{ color: "var(--color-text-muted)" }}>Loading tasks…</p>
       ) : (
-        <TaskBoard tasks={filtered} projects={projects} users={users} onOpenTask={openTask} />
+        <TaskBoard
+          tasks={filtered}
+          projects={projects}
+          users={users}
+          onOpenTask={openTask}
+          viewerUid={user.uid}
+          viewerRole={role}
+        />
       )}
 
       {openTaskId && (

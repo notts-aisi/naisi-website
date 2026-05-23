@@ -3,7 +3,14 @@
 import { useMemo } from "react";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
-import { TASK_KIND_LABELS, getSubtaskBreakdown, type TaskDoc } from "@/lib/firestore/tasks";
+import {
+  TASK_KIND_LABELS,
+  TASK_STATUSES,
+  TASK_STATUS_LABELS,
+  getSubtaskBreakdown,
+  type TaskDoc,
+  type TaskStatus,
+} from "@/lib/firestore/tasks";
 import type { ProjectDoc } from "@/lib/firestore/projects";
 import type { UserDoc } from "@/lib/firestore/users";
 import DueDateBadge from "./DueDateBadge";
@@ -17,6 +24,14 @@ type Props = {
   dense?: boolean;
   dragHandleProps?: React.HTMLAttributes<HTMLElement>;
   isDragging?: boolean;
+  /** Optimistic status override applied while a Firestore write is in flight.
+   *  When set, the move-dropdown shows this value instead of `task.status`. */
+  pendingStatus?: TaskStatus | null;
+  /** Present means render the top-right move-dropdown. Receives the chosen
+   *  target status; the parent owns the mutation + optimistic update. */
+  onChangeStatus?: (status: TaskStatus) => void;
+  canChangeStatus?: boolean;
+  canMarkDone?: boolean;
 };
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -40,7 +55,12 @@ export default function TaskCard({
   dense,
   dragHandleProps,
   isDragging,
+  pendingStatus,
+  onChangeStatus,
+  canChangeStatus,
+  canMarkDone,
 }: Props) {
+  const effectiveStatus = pendingStatus ?? task.status;
   const project = useMemo(
     () => (task.projectId ? projects.find((p) => p.id === task.projectId) : null),
     [task.projectId, projects],
@@ -92,9 +112,51 @@ export default function TaskCard({
           >
             {task.title}
           </div>
-          <div style={{ display: "flex", gap: "var(--space-1)", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "var(--space-1)", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
             {task.archived && <Badge tone="neutral">Archived</Badge>}
             {task.priority === "urgent" && <Badge tone="danger">Urgent</Badge>}
+            {onChangeStatus && (
+              <select
+                value={effectiveStatus}
+                disabled={!canChangeStatus}
+                onClick={(e) => {
+                  // Don't let opening the picker bubble up to Card's onClick
+                  // (which opens the full-screen modal).
+                  e.stopPropagation();
+                }}
+                onChange={(e) => onChangeStatus(e.target.value as TaskStatus)}
+                aria-label="Change status"
+                title={canChangeStatus ? "Change status" : "You don't have permission to change this task's status"}
+                style={{
+                  fontSize: "var(--text-xs)",
+                  fontWeight: 500,
+                  padding: "0.2rem 0.4rem",
+                  background: "var(--color-bg-elevated)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "var(--radius-md)",
+                  color: "var(--color-text)",
+                  cursor: canChangeStatus ? "pointer" : "not-allowed",
+                  maxWidth: "9rem",
+                }}
+              >
+                {TASK_STATUSES.map((s) => (
+                  <option
+                    key={s}
+                    value={s}
+                    // Mirror the modal: block "done" when (a) viewer can't
+                    // mark done, AND the task isn't already done. Always
+                    // allow the current value so the picker renders cleanly.
+                    disabled={
+                      s === "done" &&
+                      effectiveStatus !== "done" &&
+                      !canMarkDone
+                    }
+                  >
+                    {TASK_STATUS_LABELS[s]}
+                  </option>
+                ))}
+              </select>
+            )}
             {dragHandleProps && (
               <button
                 type="button"
