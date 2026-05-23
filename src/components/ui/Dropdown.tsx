@@ -13,7 +13,7 @@ import {
 // useEffect kept for click-outside + scroll/resize listeners (no setState
 // inside those effects so they don't trip set-state-in-effect).
 import { createPortal } from "react-dom";
-import { maxWidth } from "@/theme/breakpoints";
+import { maxWidth, type BreakpointKey } from "@/theme/breakpoints";
 import styles from "./Dropdown.module.css";
 
 /**
@@ -61,21 +61,12 @@ type Props<T extends string = string> = {
   triggerPrefix?: string;
   /** Passthrough class on the trigger button. */
   className?: string;
+  /** Viewport at or below which the menu becomes a bottom sheet instead of
+   *  a popover. Defaults to `"md"` (48rem) — right for sitewide forms and
+   *  modals. Task-board consumers pass `"lg"` so the sheet/popover gate
+   *  lines up with the board's own kanban-vs-phone CSS gate at `--bp-lg`. */
+  sheetBreakpoint?: BreakpointKey;
 };
-
-const SHEET_QUERY = maxWidth("md");
-
-function subscribeSheet(cb: () => void): () => void {
-  const mq = window.matchMedia(SHEET_QUERY);
-  mq.addEventListener("change", cb);
-  return () => mq.removeEventListener("change", cb);
-}
-function getSheetSnapshot(): boolean {
-  return window.matchMedia(SHEET_QUERY).matches;
-}
-function getSheetServerSnapshot(): boolean {
-  return false;
-}
 
 const subscribeClient = () => () => {};
 const getClientSnapshot = () => true;
@@ -91,6 +82,7 @@ export default function Dropdown<T extends string = string>({
   title,
   triggerPrefix,
   className,
+  sheetBreakpoint = "md",
 }: Props<T>) {
   const reactId = useId();
   const triggerId = `dropdown-trigger-${reactId}`;
@@ -103,10 +95,23 @@ export default function Dropdown<T extends string = string>({
     getClientSnapshot,
     getClientServerSnapshot,
   );
+
+  const sheetSubscribe = useCallback(
+    (cb: () => void) => {
+      const mq = window.matchMedia(maxWidth(sheetBreakpoint));
+      mq.addEventListener("change", cb);
+      return () => mq.removeEventListener("change", cb);
+    },
+    [sheetBreakpoint],
+  );
+  const sheetGetSnapshot = useCallback(
+    () => window.matchMedia(maxWidth(sheetBreakpoint)).matches,
+    [sheetBreakpoint],
+  );
   const isSheet = useSyncExternalStore(
-    subscribeSheet,
-    getSheetSnapshot,
-    getSheetServerSnapshot,
+    sheetSubscribe,
+    sheetGetSnapshot,
+    () => false,
   );
 
   const [open, setOpen] = useState(false);

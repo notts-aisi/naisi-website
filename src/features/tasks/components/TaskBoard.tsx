@@ -347,6 +347,7 @@ function TaskBoardPhone({
           options={filterOptions}
           ariaLabel="View tasks by status"
           triggerPrefix="View"
+          sheetBreakpoint="lg"
         />
       </div>
       <div className={styles.phoneList}>
