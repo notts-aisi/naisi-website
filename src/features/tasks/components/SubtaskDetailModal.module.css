@@ -107,17 +107,21 @@
     gap: var(--space-4);
     max-height: 100vh;
     /* Leave room at the top so the body doesn't slide under the close
-       button (which now respects the iOS notch). Sized to match the
-       bigger 2.75rem close button below. */
+       button. Stack: var(--space-4) top inset on the close button itself
+       + 2.75rem button height + var(--space-2) breathing gap + iOS safe
+       area. */
     padding-top: calc(
-      var(--space-4) + 2.75rem + env(safe-area-inset-top, 0px)
+      var(--space-4) + 2.75rem + var(--space-2) + env(safe-area-inset-top, 0px)
     );
   }
   /* Push the close button below the iOS notch in portrait + bump width /
      height to the 44px touch-target floor with a bigger glyph so the X
-     is reliably tappable. */
+     is reliably tappable. Top inset bumped from var(--space-2) to
+     var(--space-4) so the button clears Mobile Safari's top chrome
+     (URL bar / status bar) on devices without an explicit
+     safe-area-inset. */
   .closeButton {
-    top: calc(var(--space-2) + env(safe-area-inset-top, 0px));
+    top: calc(var(--space-4) + env(safe-area-inset-top, 0px));
     width: 2.75rem;
     height: 2.75rem;
     font-size: var(--text-lg);
