@@ -38,14 +38,22 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  padding: 0.25rem 0.55rem;
+  padding: 0.3rem 0.65rem;
   border-radius: var(--radius-pill);
   font-size: var(--text-xs);
-  border: none;
+  font-weight: 500;
+  border: 1px solid transparent;
   cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    filter var(--transition-fast);
   /* Default tone is accent (the historical completer chip colour). */
   background: var(--color-accent-soft);
   color: var(--color-accent);
+}
+
+.chip:hover {
+  border-color: currentColor;
 }
 
 .chipReviewer {
@@ -141,6 +149,21 @@
   border-radius: var(--radius-md);
   color: var(--color-text);
   font-size: var(--text-sm);
+  transition: border-color var(--transition-fast);
+}
+
+.search::placeholder {
+  color: var(--color-text-subtle);
+}
+
+.search:hover {
+  border-color: var(--color-border-strong);
+}
+
+.search:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--focus-ring);
 }
 
 /* === Result list === */
@@ -164,13 +187,42 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 0.45rem 0.75rem;
+  padding: 0.55rem 0.75rem;
   font-size: var(--text-sm);
   cursor: pointer;
+  border-bottom: 1px solid var(--color-border);
+  transition: background var(--transition-fast);
+}
+
+.listRow:last-child {
+  border-bottom: none;
+}
+
+.listRow:hover {
+  background: var(--color-surface-hover);
 }
 
 .listRowSelected {
-  background: var(--color-surface-hover);
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+.listRowSelected:hover {
+  background: var(--color-accent-soft);
+}
+
+/* Checkbox: use the system control but recolour with accent-color so the
+   check tick matches the rest of the brand (iOS / Chrome default-blue is
+   the giveaway that nothing here was styled). Sized up slightly so the
+   touch target meets the WCAG floor in a row that's still compact. */
+.listRow input[type="checkbox"] {
+  appearance: auto;
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin: 0;
 }
 
 .listRoleHint {

@@ -105,7 +105,16 @@ export default function CommitteeTasksPage() {
             projects={projects}
             users={users}
             currentUserUid={user.uid}
-            onDone={() => setCreating(false)}
+            onDone={() => {
+              setCreating(false);
+              // The form can be tall; closing it from a scrolled-down
+              // position would leave the viewport halfway down an empty
+              // page. Scroll back to the top so the user sees the toolbar
+              // + "New task" button they originally tapped.
+              if (typeof window !== "undefined") {
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }
+            }}
           />
         </div>
       )}

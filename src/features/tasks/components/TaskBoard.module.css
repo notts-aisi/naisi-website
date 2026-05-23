@@ -37,14 +37,17 @@
 
 /* === Tree visibility gating ===
 
-   Both trees (kanban + phone) are always rendered structurally by the parent
-   so the initial SSR paint is correct at either viewport without a
-   hydration flash. CSS decides which is visible; the `useIsNarrow` hook in
-   TaskBoard.tsx separately gates dnd-kit mounting so phone never pays the
-   useSortable cost.
+   Both trees (kanban + phone) are always rendered structurally by the
+   parent so the initial SSR paint is correct at either viewport without
+   a hydration flash. CSS decides which is visible.
 
-   The 60rem breakpoint here MUST stay in sync with the `useIsNarrow`
-   query in TaskBoard.tsx (currently `maxWidth("lg")`). */
+   Breakpoint at --bp-md (48rem). Below that, the phone column shape is
+   the right fit (single-column 32rem-capped). At 48rem the kanban
+   appears — two 17rem columns fit comfortably with the kanban's own
+   `overflow-x: auto` handling anything wider. Earlier this was --bp-lg
+   (60rem), but that left a 48–60rem band where the page rendered the
+   32rem-capped phone column inside a much wider canvas, which read as
+   a broken layout. */
 .kanbanOnly {
   display: block;
   /* Belt-and-braces alongside .scroll's min-width: 0 — explicitly stops
@@ -57,7 +60,7 @@
   display: none;
 }
 
-@media (max-width: 60rem) { /* --bp-lg */
+@media (max-width: 48rem) { /* --bp-md */
   .kanbanOnly {
     display: none;
   }
@@ -66,18 +69,16 @@
   }
 }
 
-/* === Phone view (below --bp-lg) ===
+/* === Phone view (below --bp-md) ===
 
    Status-filter dropdown at the top picks ONE status to view; the cards
    below are filtered to that status. Tasks are reallocated between
    statuses via the per-card move-dropdown rendered by TaskCard. Rendered
    inside `.phoneOnly` (above), which is hidden on desktop via CSS.
 
-   Both children are capped to a phone-shaped width and centred so the
-   48–60rem band (where AppShell's main is full-bleed but the kanban
-   hasn't returned yet) shows a phone column in a wide canvas instead of
-   sprawling single-column cards stretched 768–960px wide. Below the cap
-   the viewport itself is narrower, so the cap is a no-op. */
+   The 32rem cap on the children stays for taste — even at viewports
+   just under 48rem we don't want cards stretched to full bleed. Below
+   the cap the viewport itself is narrower, so the cap is a no-op. */
 
 .statusFilter {
   margin-bottom: var(--space-3);

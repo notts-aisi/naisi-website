@@ -44,14 +44,6 @@
   justify-content: flex-end;
 }
 
-/* The status Dropdown's .triggerSize_sm carries a max-width: 9rem hard
-   cap inside Dropdown.module.css. On a 17rem kanban column that cap
-   conflicts with the actual flex budget; override to 100% so the trigger
-   respects whatever the badge cluster gives it. */
-.statusTrigger {
-  max-width: 100%;
-}
-
 /* === Drag handle === */
 
 .dragHandle {

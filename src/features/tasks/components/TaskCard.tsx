@@ -121,7 +121,6 @@ export default function TaskCard({
                     ? "Change status"
                     : "You don't have permission to change this task's status"
                 }
-                className={styles.statusTrigger}
                 options={TASK_STATUSES.map<DropdownOption<TaskStatus>>((s) => ({
                   value: s,
                   label: TASK_STATUS_LABELS[s],
