@@ -35,18 +35,39 @@
   right: var(--space-3);
   width: 2rem;
   height: 2rem;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-bg);
+  background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
   border-radius: 999px;
   color: var(--color-text);
-  font-size: var(--text-md);
   line-height: 1;
   cursor: pointer;
   z-index: 2;
   box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.15));
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.closeButton:hover {
+  border-color: var(--color-border-strong);
+}
+
+.closeButton:active {
+  background: var(--color-surface-hover);
+  transform: scale(0.94);
+}
+
+.closeIcon {
+  width: 0.875rem;
+  height: 0.875rem;
 }
 
 /* Inner body scroll container. On desktop it caps at 85vh to match the
@@ -97,15 +118,23 @@
   }
   .panel {
     width: 100vw;
+    /* 100dvh (dynamic viewport height) respects Mobile Safari's URL bar
+       chrome — 100vh always represents the largest possible viewport
+       (URL bar collapsed) on iOS, so the panel extended behind the
+       chrome and the close button sat in the clipped region. 100vh
+       kept as a fallback for older browsers. */
     height: 100vh;
+    height: 100dvh;
     max-width: 100vw;
     max-height: 100vh;
+    max-height: 100dvh;
     border-radius: 0;
   }
   .body {
     padding: var(--space-4);
     gap: var(--space-4);
     max-height: 100vh;
+    max-height: 100dvh;
     /* Leave room at the top so the body doesn't slide under the close
        button. Stack: var(--space-4) top inset on the close button itself
        + 2.75rem button height + var(--space-2) breathing gap + iOS safe
@@ -124,6 +153,11 @@
     top: calc(var(--space-4) + env(safe-area-inset-top, 0px));
     width: 2.75rem;
     height: 2.75rem;
-    font-size: var(--text-lg);
+  }
+  /* Bigger glyph on phone so the X reads as substantial inside the
+     bigger 2.75rem button. */
+  .closeIcon {
+    width: 1.125rem;
+    height: 1.125rem;
   }
 }
