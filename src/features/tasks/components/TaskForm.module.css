@@ -1,0 +1,20 @@
+/* TaskForm — extracted from inline styles in TaskForm.tsx so the New-task
+   form's two-column rows can collapse on narrow viewports. The old inline
+   `grid-template-columns: 1fr 1fr` (= minmax(auto, 1fr)) floored each
+   track at the widest child's min-content, which on /committee/tasks at
+   375px pushed the document body past viewport — most visibly with the
+   completers + reviewers row because AssigneePicker chips don't shrink. */
+
+.row2 {
+  display: grid;
+  gap: var(--space-4);
+  /* auto-fit collapses to a single column below ~28rem viewport (2 × 14rem
+     minimum + gap won't fit). Above that, two equal tracks. */
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* The auto-fit minmax above already collapses to one column on phone;
+     no overrides needed. Block kept per docs/mobile-conventions.md. */
+}

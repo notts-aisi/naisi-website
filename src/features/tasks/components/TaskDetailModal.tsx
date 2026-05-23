@@ -541,7 +541,7 @@ export default function TaskDetailModal({
             )}
           </section>
 
-          <section>
+          <section className={styles.subtaskSection}>
             <h3 className={styles.sectionLabel}>Subtasks</h3>
             {task.subtaskStats.total > 0 && (
               <div className={styles.subtaskBreakdownWrapper}>
