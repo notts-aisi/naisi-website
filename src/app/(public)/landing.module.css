@@ -41,8 +41,13 @@
 .heroLayerShader { z-index: 1; opacity: 0; transition: opacity 1200ms ease 600ms; }
 .heroLayerField {
   z-index: 2;
-  opacity: 0;
-  transition: opacity 1200ms ease 800ms;
+  /* opacity defaults to 1 — the canvas fades in via its own Big Bang
+     entrance animation, no CSS fade needed. The previous opacity:0 +
+     data-atmosphere-on transition was reliable on Chromium but iOS
+     Safari was leaving the canvas at opacity:0 in some cases (the
+     attribute toggle in HeroAtmosphere uses rAF, and pairing that with
+     iOS Safari layout timing can lose the transition). Defaulting
+     visible removes that whole class of failure. */
   /* Receive cursor events so the field's mouse attractor + spawn fire.
      .heroInner sits above at z-index 10, so badge / link / button hits
      still win priority — this layer only catches events on the empty
