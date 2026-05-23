@@ -72,18 +72,17 @@
 */
 
 .eyebrow {
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  /*
-    Brighter than --color-text-muted so it stays legible on top of
-    the aurora shader. A subtle text-shadow also lifts it away from
-    bright bands of the shader.
-  */
-  color: #c8d0e3;
-  font-weight: 600;
-  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
+  display: inline-flex;
+  align-items: center;
   margin: 0;
+}
+
+.eyebrowLogo {
+  height: 2.2rem;
+  width: auto;
+  object-fit: contain;
+  /* Soft drop shadow so the white-on-shader logo holds shape */
+  filter: drop-shadow(0 1px 6px rgba(0, 0, 0, 0.55));
 }
 
 .lede {

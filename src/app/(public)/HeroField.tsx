@@ -32,14 +32,32 @@ type Node = {
 };
 
 const LAYER_COUNT = 4;
-const PULSE_TRAVEL_MS = 700;
-const SPONT_FIRE_MS = 1100;     // shorter gap — keep the field feeling alive
-const CASCADE_INTENSITY_FLOOR = 0.22;
-const CASCADE_DEPTH_MAX = 2;
-const CASCADE_DECAY = 0.6;       // slightly less decay so cascades feel decisive
+const PULSE_TRAVEL_MS = 950;          // slower so the wave is watchable
+const SPONT_WAVE_MS = 5500;           // gap between full fill-up waves
+const INPUT_WAVE_STAGGER_MS = 55;     // input nodes fire in a tight stagger, not all at once
+const CASCADE_INTENSITY_FLOOR = 0.14; // low floor so the wave reaches the output layer
+const CASCADE_DEPTH_MAX = 3;          // full propagation: input → output
+const CASCADE_DECAY = 0.9;            // very little decay per hop — keeps the rainbow vivid
+const ACTIVATION_DECAY = 0.985;       // slow per-frame fade so trails persist after the wave
 const CURSOR_RECOMPUTE_PX = 8;
 const CURSOR_FIRE_COOLDOWN_MS = 500;
 const CURSOR_FIRE_DIST = 70;
+
+/*
+  Per-layer HUE assignment (violet → blue → green → orange-red). Each
+  node's colour comes from its LAYER, not its activation level. So when
+  the wave fills the network you see a genuine rainbow stretched across
+  it (input violet, output orange-red). Activation drives brightness +
+  saturation: dim at rest, electric at peak.
+*/
+const LAYER_HUE: number[] = [275, 200, 80, 10];
+
+function layerColor(layer: number, activation: number, alpha: number): string {
+  const hue = LAYER_HUE[Math.min(layer, LAYER_HUE.length - 1)];
+  const sat = 70 + activation * 25;
+  const light = 38 + activation * 30;
+  return `hsla(${hue}, ${sat}%, ${light}%, ${alpha})`;
+}
 
 export default function HeroField() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -215,7 +233,11 @@ export default function HeroField() {
     const startMs = performance.now();
 
     let lastT = performance.now();
-    let lastSpontFireAt = startMs;
+    let lastWaveAt = startMs;
+    // Pending input fires queued for the current wave. Each wave fires
+    // every input-layer node in sequence (tight stagger ~55ms apart) so
+    // the leading edge of the rainbow forms across the input layer.
+    let pendingInputFires: Array<{ fireAt: number; nodeIdx: number }> = [];
     let frame = 0;
     let visible = true;
 
@@ -249,7 +271,7 @@ export default function HeroField() {
 
       ctx.clearRect(0, 0, width, height);
 
-      // Drift nodes
+      // Drift nodes + slow activation decay (so the fill leaves a fading trail).
       if (!reduced) {
         for (let i = 0; i < nodes.length; i++) {
           const n = nodes[i];
@@ -261,7 +283,7 @@ export default function HeroField() {
           n.vy += (n.hy - n.y) * 0.0015;
           n.x += n.vx;
           n.y += n.vy;
-          n.activation *= 0.94;
+          n.activation *= ACTIVATION_DECAY;
         }
       }
 
@@ -289,14 +311,36 @@ export default function HeroField() {
         }
       }
 
-      // Spontaneous input-layer fires (every SPONT_FIRE_MS ms on average)
-      if (atmosphereOn && !reduced && now - lastSpontFireAt > SPONT_FIRE_MS * (0.7 + Math.random() * 0.6)) {
-        // Pick a random node in the INPUT layer (layer 0) — forward flow
-        const inputNodes = [];
+      // Wave: queue every input-layer node to fire in a tight stagger.
+      // This makes the leading edge of the propagation feel like a wide
+      // wave hitting all of layer 0 at once, which then cascades right.
+      if (atmosphereOn && !reduced && now - lastWaveAt > SPONT_WAVE_MS) {
+        const inputNodes: number[] = [];
         for (let i = 0; i < nodes.length; i++) if (nodes[i].layer === 0) inputNodes.push(i);
-        const target = inputNodes[Math.floor(Math.random() * inputNodes.length)];
-        fireNode(target, 0.95);
-        lastSpontFireAt = now;
+        // Shuffle so the stagger doesn't always march along the y-axis.
+        for (let i = inputNodes.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [inputNodes[i], inputNodes[j]] = [inputNodes[j], inputNodes[i]];
+        }
+        for (let k = 0; k < inputNodes.length; k++) {
+          pendingInputFires.push({
+            fireAt: now + k * INPUT_WAVE_STAGGER_MS,
+            nodeIdx: inputNodes[k],
+          });
+        }
+        lastWaveAt = now;
+      }
+      // Drain pending input fires whose time has come.
+      if (pendingInputFires.length) {
+        let i = 0;
+        while (i < pendingInputFires.length) {
+          if (pendingInputFires[i].fireAt <= now) {
+            fireNode(pendingInputFires[i].nodeIdx, 0.95);
+            pendingInputFires.splice(i, 1);
+          } else {
+            i++;
+          }
+        }
       }
 
       // Draw edges + advance pulses
@@ -312,12 +356,13 @@ export default function HeroField() {
         const x2 = b.x;
         const y2 = b.y - parallax;
 
-        // Edge colour = heatmap of the brighter endpoint. At rest both
-        // are 0, so edges read as cool NAISI blue. When a node fires,
-        // its outgoing edges warm up too — telling the signal story.
+        // Edge colour = layer colour of the brighter endpoint. At rest
+        // the edges are dim layer-tinted lines; when nodes fire the
+        // edges glow in the source layer's rainbow hue.
         const endpointMax = Math.max(a.activation, b.activation);
-        const edgeAlpha = 0.14 + endpointMax * 0.55;
-        ctx.strokeStyle = heat(endpointMax, edgeAlpha);
+        const brighterNode = a.activation >= b.activation ? a : b;
+        const edgeAlpha = 0.14 + endpointMax * 0.6;
+        ctx.strokeStyle = layerColor(brighterNode.layer, endpointMax, edgeAlpha);
         ctx.beginPath();
         ctx.moveTo(x1, y1);
         ctx.lineTo(x2, y2);
@@ -340,13 +385,24 @@ export default function HeroField() {
             const len = Math.sqrt(dx * dx + dy * dy) || 1;
             const ux = dx / len;
             const uy = dy / len;
-            const half = 12;
-            // Pulse colour reflects how hot the activation it carries is.
-            ctx.strokeStyle = heat(e.pulse.intensity, 1.0);
-            ctx.lineWidth = 2.4;
+            const half = 14;
+            // Pulse carries the destination layer's colour — the wave
+            // is "becoming" the next layer's hue as it arrives. Adds a
+            // bright white-hot core so it reads like a spark.
+            const intensity = e.pulse.intensity;
+            ctx.strokeStyle = layerColor(b.layer, intensity, 1.0);
+            ctx.lineWidth = 3.0;
             ctx.beginPath();
             ctx.moveTo(px - ux * half, py - uy * half);
             ctx.lineTo(px + ux * half, py + uy * half);
+            ctx.stroke();
+            // White-hot core — narrower segment at the leading edge of
+            // the pulse for that "arc of electricity" feel.
+            ctx.strokeStyle = `rgba(255, 255, 255, ${0.6 * intensity})`;
+            ctx.lineWidth = 1.3;
+            ctx.beginPath();
+            ctx.moveTo(px - ux * (half - 5), py - uy * (half - 5));
+            ctx.lineTo(px + ux * (half - 5), py + uy * (half - 5));
             ctx.stroke();
             ctx.lineWidth = 1.2;
           }
@@ -354,8 +410,8 @@ export default function HeroField() {
       }
 
       // Cursor virtual edges (only on hover, only to 3 nearest).
-      // Coloured by the nearest node's activation so the cursor's
-      // virtual links also follow the heatmap.
+      // Coloured by the nearest node's LAYER so each link picks up the
+      // rainbow position of the node it touches.
       if (!coarse && cachedCursorNeighbours.length && cursorX > -100) {
         for (let i = 0; i < cachedCursorNeighbours.length; i++) {
           const n = nodes[cachedCursorNeighbours[i]];
@@ -364,7 +420,7 @@ export default function HeroField() {
           const dist = Math.sqrt(dx * dx + dy * dy);
           const a = Math.max(0, 0.22 * (1 - dist / 200));
           if (a > 0.01) {
-            ctx.strokeStyle = heat(n.activation, a);
+            ctx.strokeStyle = layerColor(n.layer, Math.max(0.35, n.activation), a);
             ctx.beginPath();
             ctx.moveTo(cursorX, cursorY);
             ctx.lineTo(n.x, n.y - parallax);
@@ -373,44 +429,52 @@ export default function HeroField() {
         }
       }
 
-      // Nodes — base dot + halo if active. Colour by activation via the
-      // heatmap so a firing node visibly heats up from blue → red.
+      // Nodes — base dot + halo if active. Colour by LAYER (rainbow
+      // across the network); activation drives brightness + saturation.
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
         const renderY = n.y - parallax;
 
-        // Halo for activated nodes — outer soft glow + inner ring at
-        // the node's current heatmap colour.
+        // Outer + inner halo for activated nodes — gives the "electric
+        // glow" feel without paying for shadowBlur.
         if (n.activation > 0.06) {
-          const haloAlpha = n.activation * 0.55;
-          ctx.fillStyle = heat(n.activation, haloAlpha * 0.4);
+          const haloAlpha = n.activation * 0.6;
+          ctx.fillStyle = layerColor(n.layer, n.activation, haloAlpha * 0.45);
           ctx.beginPath();
-          ctx.arc(n.x, renderY, 7 + n.activation * 10, 0, Math.PI * 2);
+          ctx.arc(n.x, renderY, 8 + n.activation * 14, 0, Math.PI * 2);
           ctx.fill();
 
-          ctx.fillStyle = heat(n.activation, haloAlpha);
+          ctx.fillStyle = layerColor(n.layer, n.activation, haloAlpha);
           ctx.beginPath();
-          ctx.arc(n.x, renderY, 3 + n.activation * 5, 0, Math.PI * 2);
+          ctx.arc(n.x, renderY, 3 + n.activation * 6, 0, Math.PI * 2);
           ctx.fill();
         }
 
-        // Core dot — heatmap colour matches activation. Resting nodes
-        // stay NAISI blue; firing ones warm through cyan / green /
-        // yellow / orange / red as they propagate.
-        const radius = 2 + n.activation * 1.8;
-        const alpha = 0.7 + n.activation * 0.3;
-        ctx.fillStyle = heat(n.activation, alpha);
+        // Core dot — always layer-coloured. Dim at rest, electric when
+        // the wave is passing through.
+        const radius = 2 + n.activation * 2;
+        const alpha = 0.5 + n.activation * 0.5;
+        ctx.fillStyle = layerColor(n.layer, n.activation, alpha);
         ctx.beginPath();
         ctx.arc(n.x, renderY, radius, 0, Math.PI * 2);
         ctx.fill();
+
+        // White-hot core inside fully-firing nodes (peak of the wave).
+        if (n.activation > 0.5) {
+          ctx.fillStyle = `rgba(255, 255, 255, ${(n.activation - 0.5) * 0.8})`;
+          ctx.beginPath();
+          ctx.arc(n.x, renderY, 1.4, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
 
       if (visible && !reduced) frame = requestAnimationFrame(draw);
     };
 
     if (reduced) {
-      // Static frame: every input-layer node at mid activation
-      for (const n of nodes) if (n.layer === 0) n.activation = 0.5;
+      // Static frame: every node at mid activation so the rainbow is
+      // visible at rest. No animation, no pulses, no decay.
+      for (const n of nodes) n.activation = 0.55;
       draw(performance.now());
     } else {
       frame = requestAnimationFrame(draw);
@@ -460,34 +524,5 @@ function pickLayerCounts(spreadAxis: number): number[] {
   return [13, 22, 22, 12];
 }
 
-/**
- * Heatmap colour for a 0..1 activation. Resting state is NAISI brand
- * blue; activation warms up through cyan → green → yellow → orange →
- * red so a firing node reads like a real NN activation visualisation.
- * Returns rgba string at the given alpha.
- */
-type RGB = [number, number, number];
-const HEATMAP: Array<[number, RGB]> = [
-  [0.00, [106, 130, 255]], // NAISI blue (rest)
-  [0.30, [34, 211, 238]],  // cyan
-  [0.55, [34, 197, 94]],   // green
-  [0.75, [234, 179, 8]],   // yellow
-  [0.90, [249, 115, 22]],  // orange
-  [1.00, [239, 68, 68]],   // red (peak activation)
-];
-function heat(t: number, a = 1): string {
-  const clamped = t < 0 ? 0 : t > 1 ? 1 : t;
-  for (let i = 0; i < HEATMAP.length - 1; i++) {
-    const [tA, cA] = HEATMAP[i];
-    const [tB, cB] = HEATMAP[i + 1];
-    if (clamped <= tB) {
-      const f = tB === tA ? 0 : (clamped - tA) / (tB - tA);
-      const r = Math.round(cA[0] + (cB[0] - cA[0]) * f);
-      const g = Math.round(cA[1] + (cB[1] - cA[1]) * f);
-      const b = Math.round(cA[2] + (cB[2] - cA[2]) * f);
-      return `rgba(${r}, ${g}, ${b}, ${a})`;
-    }
-  }
-  const [r, g, b] = HEATMAP[HEATMAP.length - 1][1];
-  return `rgba(${r}, ${g}, ${b}, ${a})`;
-}
+// layerColor() (defined near the top, with LAYER_HUE) is the only
+// colour generator now — superseded the old activation-heatmap.
