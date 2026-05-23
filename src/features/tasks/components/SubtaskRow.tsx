@@ -1,6 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import ResponsiveSelect, {
+  type ResponsiveSelectOption,
+} from "@/components/ui/ResponsiveSelect";
 import {
   TASK_FIELD_LIMITS,
   effectiveReviewerUids,
@@ -37,6 +40,7 @@ import {
 import { addComment } from "../commentMutations";
 import AssigneePicker from "./AssigneePicker";
 import SubtaskDetailModal from "./SubtaskDetailModal";
+import rowStyles from "./SubtaskRow.module.css";
 
 type Props = {
   task: TaskDoc;
@@ -741,9 +745,17 @@ export default function SubtaskRow({
         )}
 
         {/* Hide the per-reviewer matrix on reviewer-signoff rows — the
-            checkbox IS the approval there, no grid needed. */}
+            checkbox IS the approval there, no grid needed.
+
+            Above --bp-md the matrix renders inline in the row. Below
+            --bp-md we hide it via `.matrixOnly` and surface a chip
+            strip below the row instead (rendered later in the markup
+            so DOM order matches reading order). */}
         {showMatrix && reviewers.length > 0 && subtask.roleHint !== "reviewer" && (
-          <div onClick={(e) => e.stopPropagation()} style={{ display: "contents" }}>
+          <span
+            className={rowStyles.matrixOnly}
+            onClick={(e) => e.stopPropagation()}
+          >
             <ApprovalMatrixRow
               reviewers={reviewers}
               approvedUids={subtask.approvedByReviewerUids}
@@ -757,7 +769,7 @@ export default function SubtaskRow({
                 handleSetReview(state).catch(console.error);
               }}
             />
-          </div>
+          </span>
         )}
 
         {canEdit && (
@@ -804,6 +816,43 @@ export default function SubtaskRow({
           </div>
         )}
       </div>
+
+      {/* Phone replacement for the matrix — read-only chip per reviewer
+          coloured by state. Taps open the SubtaskDetailModal where the
+          viewer can change their state. */}
+      {showMatrix && reviewers.length > 0 && subtask.roleHint !== "reviewer" && (
+        <div
+          className={`${rowStyles.chipStripOnly} ${rowStyles.chipStrip}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {reviewers.map((r) => {
+            const approved = subtask.approvedByReviewerUids.includes(r.uid);
+            const questioned = subtask.questionedByReviewerUids.includes(r.uid);
+            const rejected = subtask.rejectedByReviewerUids.includes(r.uid);
+            const chipClass = rejected
+              ? `${rowStyles.chip} ${rowStyles.chipRejected}`
+              : approved
+                ? `${rowStyles.chip} ${rowStyles.chipApproved}`
+                : questioned
+                  ? `${rowStyles.chip} ${rowStyles.chipQuestion}`
+                  : rowStyles.chip;
+            const icon = rejected ? "✗" : approved ? "✓" : questioned ? "?" : "—";
+            const name = r.displayName ?? r.email ?? r.uid;
+            return (
+              <button
+                key={r.uid}
+                type="button"
+                className={chipClass}
+                onClick={() => setDetailOpen(true)}
+                aria-label={`${name} — open subtask to change review state`}
+              >
+                <span aria-hidden>{icon}</span>
+                <span>{name}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {blocked && blockers.length > 0 && (
         <p
@@ -1095,7 +1144,7 @@ export default function SubtaskRow({
               rather than any completer. Previously leaked via the outer
               `canEdit` gate on the edit panel. */}
           {canEditStructure && task.blocks.length > 0 && (
-            <label
+            <div
               style={{
                 gridColumn: "span 2",
                 display: "flex",
@@ -1106,30 +1155,23 @@ export default function SubtaskRow({
               <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-muted)" }}>
                 Block
               </span>
-              <select
+              <ResponsiveSelect
                 value={subtask.blockId ?? ""}
-                onChange={(e) => {
-                  const next = e.target.value || null;
-                  setSubtaskBlock(task, subtask.id, next).catch(console.error);
+                onChange={(next) => {
+                  setSubtaskBlock(task, subtask.id, next || null).catch(console.error);
                 }}
-                style={{
-                  padding: "0.4rem 0.6rem",
-                  background: "var(--color-bg)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "var(--radius-md)",
-                  color: "var(--color-text)",
-                  fontSize: "var(--text-sm)",
-                }}
-              >
-                <option value="">— Ungrouped —</option>
-                {task.blocks.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                    {b.sealState === "sealed" ? " (sealed)" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
+                options={
+                  [
+                    { value: "", label: "— Ungrouped —" },
+                    ...task.blocks.map((b) => ({
+                      value: b.id,
+                      label: `${b.name}${b.sealState === "sealed" ? " (sealed)" : ""}`,
+                    })),
+                  ] satisfies ResponsiveSelectOption[]
+                }
+                ariaLabel="Block"
+              />
+            </div>
           )}
 
           {isAdmin && (

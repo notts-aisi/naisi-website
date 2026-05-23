@@ -5,7 +5,8 @@ import { useSearchParams, useRouter } from "next/navigation";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
-import { Input, Select } from "@/components/ui/Input";
+import { Input } from "@/components/ui/Input";
+import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import { downloadCSV, toCSV } from "@/lib/csv";
 import {
   useSubscriptions,
@@ -579,48 +580,47 @@ export default function SubscriptionsTable() {
             <label className={styles.filterLabel} htmlFor="sub-channel">
               Channel
             </label>
-            <Select
-              id="sub-channel"
+            <ResponsiveSelect
               value={channelFilter}
-              onChange={(e) => onChannel(e.target.value)}
-            >
-              <option value="all">All channels</option>
-              {channelColumns.map((c) => (
-                <option key={c} value={c}>
-                  {titleCase(c)}
-                </option>
-              ))}
-            </Select>
+              onChange={onChannel}
+              options={[
+                { value: "all", label: "All channels" },
+                ...channelColumns.map((c) => ({ value: c, label: titleCase(c) })),
+              ]}
+              ariaLabel="Channel"
+            />
           </div>
           <div className={styles.filterField}>
             <label className={styles.filterLabel} htmlFor="sub-status">
               Status
             </label>
-            <Select
-              id="sub-status"
+            <ResponsiveSelect<StatusFilter>
               value={statusFilter}
-              onChange={(e) => onStatus(e.target.value as StatusFilter)}
-            >
-              <option value="all">All statuses</option>
-              <option value="subscribed">Subscribed</option>
-              <option value="pending">Pending</option>
-              <option value="unsubscribed">Unsubscribed</option>
-              <option value="lapsed">Lapsed</option>
-            </Select>
+              onChange={onStatus}
+              options={[
+                { value: "all", label: "All statuses" },
+                { value: "subscribed", label: "Subscribed" },
+                { value: "pending", label: "Pending" },
+                { value: "unsubscribed", label: "Unsubscribed" },
+                { value: "lapsed", label: "Lapsed" },
+              ]}
+              ariaLabel="Status"
+            />
           </div>
           <div className={styles.filterField}>
             <label className={styles.filterLabel} htmlFor="sub-audience">
               Audience
             </label>
-            <Select
-              id="sub-audience"
+            <ResponsiveSelect<AudienceFilter>
               value={audienceFilter}
-              onChange={(e) => onAudience(e.target.value as AudienceFilter)}
-            >
-              <option value="all">All audiences</option>
-              <option value="user">Members</option>
-              <option value="guest">Guests</option>
-            </Select>
+              onChange={onAudience}
+              options={[
+                { value: "all", label: "All audiences" },
+                { value: "user", label: "Members" },
+                { value: "guest", label: "Guests" },
+              ]}
+              ariaLabel="Audience"
+            />
           </div>
           <div className={styles.toolbarActions}>
             <Button

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import styles from "./TaskCalendar.module.css";
 
 type Mode = "edit" | "view";
 
@@ -197,21 +198,18 @@ export default function TaskCalendar({
         </NavBtn>
       </div>
 
-      {/* Weekday strip */}
+      {/* Weekday strip — fluid below --bp-sm via the CSS module, plus
+          first-letter abbreviation. */}
       <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(7, ${cellPx}px)`,
-          gap: "2px",
-          fontSize: "var(--text-xs)",
-          color: "var(--color-text-subtle)",
-          textAlign: "center",
-          fontWeight: 500,
-        }}
+        className={styles.weekRow}
+        style={{ "--cell-px": `${cellPx}px` } as React.CSSProperties}
       >
         {WEEKDAYS.map((w) => (
-          <div key={w} style={{ padding: "0.2rem 0" }}>
-            {w}
+          <div key={w} className={styles.weekdayLabel}>
+            <span className={styles.weekdayLong}>{w}</span>
+            <span className={styles.weekdayShort} aria-hidden>
+              {w[0]}
+            </span>
           </div>
         ))}
       </div>
@@ -219,11 +217,8 @@ export default function TaskCalendar({
       {/* Day grid */}
       <div
         role="grid"
-        style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(7, ${cellPx}px)`,
-          gap: "2px",
-        }}
+        className={styles.dayGrid}
+        style={{ "--cell-px": `${cellPx}px` } as React.CSSProperties}
       >
         {cells.map((d) => {
           const inMonth = d.getMonth() === viewMonth.getMonth();
@@ -245,21 +240,15 @@ export default function TaskCalendar({
             border = "1px solid var(--color-accent)";
           }
 
-          const commonStyle: React.CSSProperties = {
-            width: cellPx,
-            height: cellPx,
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
+          // Dynamic per-cell styles (state-derived) stay inline; the
+          // static width/height/font-family/etc. live in `.cell`.
+          const dynamicStyle: React.CSSProperties = {
             background: bg,
             color,
             border,
-            borderRadius: "var(--radius-sm)",
             fontSize: dayFont,
             fontWeight: isSelected ? 600 : isToday ? 600 : 400,
             opacity: inMonth ? 1 : 0.5,
-            fontFamily: "inherit",
-            padding: 0,
           };
 
           if (!isInteractive) {
@@ -268,7 +257,8 @@ export default function TaskCalendar({
                 key={d.toISOString()}
                 role="gridcell"
                 aria-selected={isSelected}
-                style={commonStyle}
+                className={styles.cell}
+                style={dynamicStyle}
               >
                 {d.getDate()}
               </span>
@@ -287,8 +277,9 @@ export default function TaskCalendar({
                 year: "numeric",
               })}
               onClick={() => pick(d)}
+              className={styles.cell}
               style={{
-                ...commonStyle,
+                ...dynamicStyle,
                 cursor: "pointer",
                 transition: "background 0.12s ease",
               }}

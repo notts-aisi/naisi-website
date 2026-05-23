@@ -24,6 +24,7 @@ import DescriptionEditor from "./DescriptionEditor";
 import RichTextRender from "./RichTextRender";
 import TaskCalendar from "./TaskCalendar";
 import type { ActivityDoc } from "@/lib/firestore/taskActivity";
+import styles from "./SubtaskDetailModal.module.css";
 
 type Props = {
   task: TaskDoc;
@@ -201,16 +202,7 @@ export default function SubtaskDetailModal({
 
   return (
     <Overlay onClose={onClose}>
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: "var(--space-5)",
-          padding: "var(--space-6)",
-          maxHeight: "85vh",
-          overflowY: "auto",
-        }}
-      >
+      <div className={styles.body}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
           <h2
             style={{
@@ -691,54 +683,17 @@ function Overlay({
       role="dialog"
       aria-modal="true"
       onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0, 0, 0, 0.55)",
-        zIndex: 50,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "var(--space-4)",
-      }}
+      className={styles.overlay}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{
-          background: "var(--color-bg)",
-          border: "1px solid var(--color-border)",
-          borderRadius: "var(--radius-lg)",
-          boxShadow: "var(--shadow-lg)",
-          maxWidth: "40rem",
-          width: "100%",
-          maxHeight: "85vh",
-          overflow: "hidden",
-          position: "relative",
-        }}
+        className={styles.panel}
       >
         <button
           type="button"
           aria-label="Close"
           onClick={onClose}
-          style={{
-            position: "absolute",
-            top: "var(--space-3)",
-            right: "var(--space-3)",
-            width: "2rem",
-            height: "2rem",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "var(--color-bg)",
-            border: "1px solid var(--color-border)",
-            borderRadius: "999px",
-            color: "var(--color-text)",
-            fontSize: "var(--text-md)",
-            lineHeight: 1,
-            cursor: "pointer",
-            zIndex: 2,
-            boxShadow: "var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.15))",
-          }}
+          className={styles.closeButton}
         >
           ✕
         </button>

@@ -1,0 +1,71 @@
+/* TaskCalendar — only the cell-grid sizing needs CSS-driven control, so
+   the rest of the calendar's per-cell styling (bg, border, selected
+   state) stays inline alongside the dynamic state it depends on.
+
+   At wider widths the grid columns are pinned to `--cell-px` (the inline
+   size hint set by the `size` prop). Below `--bp-sm` the grid switches
+   to 7 fluid columns and cells fill 1/7th of the available width — a
+   343px iPhone SE viewport that previously overflowed because 7 × 36 +
+   gaps > 343 now fits. The 36px min-height keeps day cells above their
+   touch-target exception floor (docs/touch-targets.md). */
+
+.weekRow {
+  display: grid;
+  grid-template-columns: repeat(7, var(--cell-px));
+  gap: 2px;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  text-align: center;
+  font-weight: 500;
+}
+
+.dayGrid {
+  display: grid;
+  grid-template-columns: repeat(7, var(--cell-px));
+  gap: 2px;
+}
+
+.cell {
+  width: var(--cell-px);
+  height: var(--cell-px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  padding: 0;
+}
+
+.weekdayLabel {
+  padding: 0.2rem 0;
+}
+
+.weekdayLong {
+  display: inline;
+}
+
+.weekdayShort {
+  display: none;
+}
+
+/* === Mobile ===
+   Phone — cells fill 1/7th of the available width, weekday labels
+   compress to a single letter, day cells keep their 36px touch-target
+   floor (the documented exception to 44px). */
+@media (max-width: 36rem) { /* --bp-sm */
+  .weekRow,
+  .dayGrid {
+    grid-template-columns: repeat(7, 1fr);
+  }
+  .cell {
+    width: 100%;
+    height: auto;
+    min-height: 36px;
+  }
+  .weekdayLong {
+    display: none;
+  }
+  .weekdayShort {
+    display: inline;
+  }
+}

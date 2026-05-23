@@ -9,7 +9,7 @@ import Card from "@/components/ui/Card";
 import DateTimePopover from "@/components/ui/DateTimePopover";
 import { Field, Input, Textarea } from "@/components/ui/Input";
 import Link from "next/link";
-import Select from "@/components/ui/Select";
+import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
 import {
@@ -880,18 +880,22 @@ export default function EventEditor({ eventId }: Props) {
 
           <div className={styles.twoCol}>
             <Field id="visibility" label="Who can RSVP?">
-              <Select
-                id="visibility"
+              <ResponsiveSelect<EventVisibility>
                 value={visibility}
-                onChange={(e) => {
-                  setVisibility(e.target.value as EventVisibility);
+                onChange={(next) => {
+                  setVisibility(next);
                   markDirty();
                 }}
+                options={[
+                  {
+                    value: "public",
+                    label: "Public — anyone with the link (email only)",
+                  },
+                  { value: "members", label: "Members only — must sign in" },
+                ]}
                 disabled={!editable || busy}
-              >
-                <option value="public">Public — anyone with the link (email only)</option>
-                <option value="members">Members only — must sign in</option>
-              </Select>
+                ariaLabel="Who can RSVP?"
+              />
             </Field>
 
             <Field id="capacity" label="Capacity (optional)" hint="Leave blank for unlimited.">

@@ -1,6 +1,5 @@
 "use client";
 
-import { Select } from "@/components/ui/Input";
 import ResponsiveSelect, {
   type ResponsiveSelectOption,
 } from "@/components/ui/ResponsiveSelect";
@@ -29,6 +28,23 @@ export default function TaskFilters({ value, onChange, projects, users }: Props)
     { value: "all", label: "All projects" },
     ...projects.map((p) => ({ value: p.id, label: p.name })),
   ];
+  const personOptions: ResponsiveSelectOption<TaskFilterState["personUid"]>[] = [
+    { value: "all", label: "All people" },
+    ...users.map((u) => ({
+      value: u.uid,
+      label: u.displayName ?? u.email ?? u.uid,
+    })),
+  ];
+  const sourceOptions: ResponsiveSelectOption<TaskFilterState["source"]>[] = [
+    { value: "all", label: "All sources" },
+    { value: "committee", label: "Committee" },
+    { value: "fellowship-reminder", label: "Fellowship" },
+    { value: "personal", label: "Personal" },
+  ];
+  const kindOptions: ResponsiveSelectOption<TaskFilterState["kind"]>[] = [
+    { value: "all", label: "All kinds" },
+    ...TASK_KINDS.map((k) => ({ value: k, label: TASK_KIND_LABELS[k] })),
+  ];
   return (
     <div className={styles.grid}>
       <ResponsiveSelect<TaskFilterState["projectId"]>
@@ -37,40 +53,24 @@ export default function TaskFilters({ value, onChange, projects, users }: Props)
         options={projectOptions}
         ariaLabel="Filter by project"
       />
-      <Select
+      <ResponsiveSelect<TaskFilterState["personUid"]>
         value={value.personUid}
-        onChange={(e) => onChange({ ...value, personUid: e.target.value as TaskFilterState["personUid"] })}
-        aria-label="Filter by person (completer or reviewer)"
-      >
-        <option value="all">All people</option>
-        {users.map((u) => (
-          <option key={u.uid} value={u.uid}>
-            {u.displayName ?? u.email ?? u.uid}
-          </option>
-        ))}
-      </Select>
-      <Select
+        onChange={(next) => onChange({ ...value, personUid: next })}
+        options={personOptions}
+        ariaLabel="Filter by person (completer or reviewer)"
+      />
+      <ResponsiveSelect<TaskFilterState["source"]>
         value={value.source}
-        onChange={(e) => onChange({ ...value, source: e.target.value as TaskFilterState["source"] })}
-        aria-label="Filter by source"
-      >
-        <option value="all">All sources</option>
-        <option value="committee">Committee</option>
-        <option value="fellowship-reminder">Fellowship</option>
-        <option value="personal">Personal</option>
-      </Select>
-      <Select
+        onChange={(next) => onChange({ ...value, source: next })}
+        options={sourceOptions}
+        ariaLabel="Filter by source"
+      />
+      <ResponsiveSelect<TaskFilterState["kind"]>
         value={value.kind}
-        onChange={(e) => onChange({ ...value, kind: e.target.value as TaskFilterState["kind"] })}
-        aria-label="Filter by kind"
-      >
-        <option value="all">All kinds</option>
-        {TASK_KINDS.map((k) => (
-          <option key={k} value={k}>
-            {TASK_KIND_LABELS[k]}
-          </option>
-        ))}
-      </Select>
+        onChange={(next) => onChange({ ...value, kind: next })}
+        options={kindOptions}
+        ariaLabel="Filter by kind"
+      />
     </div>
   );
 }

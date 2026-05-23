@@ -1,0 +1,89 @@
+/* SubtaskDetailModal — only the overlay + panel + close button are
+   extracted here so the modal can go full-screen on phone via @media.
+   The body content is still inline-styled inside SubtaskDetailModal.tsx
+   itself; restructuring all of that is out of scope.
+
+   Class names mirror TaskDetailModal.module.css's structure (.overlay /
+   .panel / .closeButton) so the two modals are scannable side-by-side. */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+}
+
+.panel {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  max-width: 40rem;
+  width: 100%;
+  max-height: 85vh;
+  overflow: hidden;
+  position: relative;
+}
+
+.closeButton {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text);
+  font-size: var(--text-md);
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.15));
+}
+
+/* Inner body scroll container. On desktop it caps at 85vh to match the
+   panel; on phone the panel is the whole viewport so the inner cap is
+   relaxed. */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-6);
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .overlay {
+    padding: 0;
+  }
+  .panel {
+    width: 100vw;
+    height: 100vh;
+    max-width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+  .body {
+    padding: var(--space-4);
+    gap: var(--space-4);
+    max-height: 100vh;
+    /* Leave room at the top so the body doesn't slide under the close
+       button (which now respects the iOS notch). */
+    padding-top: calc(
+      var(--space-4) + 2.5rem + env(safe-area-inset-top, 0px)
+    );
+  }
+  .closeButton {
+    top: calc(var(--space-2) + env(safe-area-inset-top, 0px));
+  }
+}

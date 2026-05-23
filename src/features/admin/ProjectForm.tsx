@@ -3,7 +3,10 @@
 import { useMemo, useState } from "react";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
-import { Field, Input, Select } from "@/components/ui/Input";
+import { Field, Input } from "@/components/ui/Input";
+import ResponsiveSelect, {
+  type ResponsiveSelectOption,
+} from "@/components/ui/ResponsiveSelect";
 import AssigneePicker from "@/features/tasks/components/AssigneePicker";
 import type { ProjectDoc } from "@/lib/firestore/projects";
 import type { UserDoc } from "@/lib/firestore/users";
@@ -79,20 +82,22 @@ export default function ProjectForm({ existing, committee, onDone }: Props) {
         </Field>
 
         <Field id="project-lead" label="Lead" hint="Committee members + admins only.">
-          <Select
-            id="project-lead"
+          <ResponsiveSelect
             value={leadUid}
-            onChange={(e) => setLeadUid(e.target.value)}
-            required
-          >
-            <option value="">— pick a lead —</option>
-            {leadOptions.map((m) => (
-              <option key={m.uid} value={m.uid}>
-                {m.displayName ?? m.email ?? m.uid}
-                {m.role === "admin" ? " (admin)" : ""}
-              </option>
-            ))}
-          </Select>
+            onChange={setLeadUid}
+            options={
+              [
+                { value: "", label: "— pick a lead —" },
+                ...leadOptions.map((m) => ({
+                  value: m.uid,
+                  label: `${m.displayName ?? m.email ?? m.uid}${
+                    m.role === "admin" ? " (admin)" : ""
+                  }`,
+                })),
+              ] satisfies ResponsiveSelectOption[]
+            }
+            ariaLabel="Lead"
+          />
         </Field>
 
         <Field

@@ -1,6 +1,8 @@
 "use client";
 
-import { Select } from "@/components/ui/Input";
+import ResponsiveSelect, {
+  type ResponsiveSelectOption,
+} from "@/components/ui/ResponsiveSelect";
 import { useTaskTemplates } from "../hooks/useTaskTemplates";
 import type { TaskTemplate } from "@/lib/firestore/taskTemplates";
 
@@ -13,29 +15,30 @@ type Props = {
 export default function TemplatePicker({ value, onChange, disabled }: Props) {
   const { templates, loading } = useTaskTemplates();
 
+  const options: ResponsiveSelectOption[] = [
+    { value: "", label: "Blank task" },
+    ...templates.map((t) => ({
+      value: t.id,
+      label: `${t.name}${t.subtasks.length ? ` — ${t.subtasks.length} steps` : ""}`,
+    })),
+  ];
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
       <span style={{ fontSize: "var(--text-sm)", color: "var(--color-text-muted)" }}>
         Start from template
       </span>
-      <Select
+      <ResponsiveSelect
         value={value ?? ""}
-        onChange={(e) => {
-          const id = e.target.value || null;
+        onChange={(next) => {
+          const id = next || null;
           const tpl = id ? templates.find((t) => t.id === id) ?? null : null;
           onChange(id, tpl);
         }}
+        options={options}
         disabled={disabled || loading}
-        aria-label="Task template"
-      >
-        <option value="">Blank task</option>
-        {templates.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.name}
-            {t.subtasks.length ? ` — ${t.subtasks.length} steps` : ""}
-          </option>
-        ))}
-      </Select>
+        ariaLabel="Task template"
+      />
     </div>
   );
 }

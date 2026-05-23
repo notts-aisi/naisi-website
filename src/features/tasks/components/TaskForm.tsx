@@ -3,7 +3,10 @@
 import { useState } from "react";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
-import { Field, Input, Select, Textarea } from "@/components/ui/Input";
+import { Field, Input, Textarea } from "@/components/ui/Input";
+import ResponsiveSelect, {
+  type ResponsiveSelectOption,
+} from "@/components/ui/ResponsiveSelect";
 import {
   TASK_FIELD_LIMITS,
   TASK_KINDS,
@@ -140,51 +143,46 @@ export default function TaskForm({
         {isCommittee && (
           <div style={{ display: "grid", gap: "var(--space-4)", gridTemplateColumns: "1fr 1fr" }}>
             <Field id="task-project" label="Project">
-              <Select
-                id="task-project"
+              <ResponsiveSelect
                 value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
-              >
-                <option value="">— none —</option>
-                {projects
-                  .filter((p) => !p.archived)
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-              </Select>
+                onChange={setProjectId}
+                options={
+                  [
+                    { value: "", label: "— none —" },
+                    ...projects
+                      .filter((p) => !p.archived)
+                      .map((p) => ({ value: p.id, label: p.name })),
+                  ] satisfies ResponsiveSelectOption[]
+                }
+                ariaLabel="Project"
+              />
             </Field>
 
             <Field id="task-kind" label="Kind">
-              <Select
-                id="task-kind"
+              <ResponsiveSelect<TaskKind>
                 value={kind}
-                onChange={(e) => setKind(e.target.value as TaskKind)}
-              >
-                {TASK_KINDS.map((k) => (
-                  <option key={k} value={k}>
-                    {TASK_KIND_LABELS[k]}
-                  </option>
-                ))}
-              </Select>
+                onChange={setKind}
+                options={TASK_KINDS.map<ResponsiveSelectOption<TaskKind>>((k) => ({
+                  value: k,
+                  label: TASK_KIND_LABELS[k],
+                }))}
+                ariaLabel="Kind"
+              />
             </Field>
           </div>
         )}
 
         <div style={{ display: "grid", gap: "var(--space-4)", gridTemplateColumns: "1fr 1fr" }}>
           <Field id="task-priority" label="Priority">
-            <Select
-              id="task-priority"
+            <ResponsiveSelect<TaskPriority>
               value={priority}
-              onChange={(e) => setPriority(e.target.value as TaskPriority)}
-            >
-              {TASK_PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  {TASK_PRIORITY_LABELS[p]}
-                </option>
-              ))}
-            </Select>
+              onChange={setPriority}
+              options={TASK_PRIORITIES.map<ResponsiveSelectOption<TaskPriority>>((p) => ({
+                value: p,
+                label: TASK_PRIORITY_LABELS[p],
+              }))}
+              ariaLabel="Priority"
+            />
           </Field>
 
           <Field
@@ -271,14 +269,18 @@ export default function TaskForm({
 
         {isCommittee && isAdmin && (
           <Field id="task-visibility" label="Visibility">
-            <Select
-              id="task-visibility"
+            <ResponsiveSelect<TaskVisibility>
               value={visibility}
-              onChange={(e) => setVisibility(e.target.value as TaskVisibility)}
-            >
-              <option value="committee">Committee-visible (default)</option>
-              <option value="assignees-only">Private — completers + reviewers + admins only</option>
-            </Select>
+              onChange={setVisibility}
+              options={[
+                { value: "committee", label: "Committee-visible (default)" },
+                {
+                  value: "assignees-only",
+                  label: "Private — completers + reviewers + admins only",
+                },
+              ]}
+              ariaLabel="Visibility"
+            />
           </Field>
         )}
 
