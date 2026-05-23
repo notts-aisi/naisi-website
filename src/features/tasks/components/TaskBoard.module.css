@@ -24,3 +24,94 @@
   flex: 0 0 auto;
   scroll-snap-align: start;
 }
+
+/* === Phone view (below --bp-lg) ===
+
+   These classes are only rendered by `TaskBoardPhone`, which the parent
+   component switches to via a matchMedia branch — the kanban tree above
+   (.scroll + .column) is not rendered on phone, so the two views never
+   coexist in the DOM. */
+
+/* Horizontal-scrolling pill row with snap, matching the AdminTabs idiom.
+   Wrapping is rejected: 5 status labels wrap to two ragged rows at 320px
+   and layout-shift when the active pill changes shape. */
+.statusPills {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--space-2);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  padding: var(--space-1) 0;
+  margin-bottom: var(--space-3);
+}
+
+.statusPills::-webkit-scrollbar {
+  display: none;
+}
+
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  scroll-snap-align: start;
+  padding: 0.5rem 0.85rem;
+  min-height: 2.5rem;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.statusPillActive {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.pillCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4rem;
+  height: 1.4rem;
+  padding: 0 0.4rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.phoneList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.phoneEmpty {
+  padding: var(--space-6) var(--space-3);
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+/* === Mobile ===
+   The .scroll + .column kanban tree is never rendered below --bp-lg (the
+   parent component switches to TaskBoardPhone), so no kanban-specific
+   mobile overrides are needed here. Placeholder block kept per the
+   docs/mobile-conventions.md convention. */
+@media (max-width: 48rem) { /* --bp-md */
+  /* no overrides needed */
+}
