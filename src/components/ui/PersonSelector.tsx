@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { createPortal } from "react-dom";
 import { maxWidth } from "@/theme/breakpoints";
 import type { UserDoc } from "@/lib/firestore/users";
 import styles from "./PersonSelector.module.css";
@@ -18,8 +25,10 @@ import styles from "./PersonSelector.module.css";
  *   pass `tone="neutral"` for project-membership-style use where the
  *   "completer" verb would lie.
  * - Below `--bp-md` the picker collapses to chips + an "Add / change…"
- *   button by default. Desktop stays inline-expanded (the sidebar is a
- *   narrow column and the inline shape is the right fit).
+ *   button. Tapping it opens a portal-rendered bottom sheet (scrim +
+ *   slide-up panel + scroll-locked body) mirroring Dropdown.tsx's sheet
+ *   pattern. Desktop stays inline-expanded (the sidebar is a narrow
+ *   column and the inline shape is the right fit).
  */
 
 export type PersonRole = "completer" | "reviewer";
@@ -143,8 +152,9 @@ export default function PersonSelector({
 
   const selectedUsers = users.filter((u) => selected.includes(u.uid));
 
-  // Below --bp-md the picker collapses to chips + an "Add / change…"
-  // button. Pattern mirrors Dropdown.tsx's sheet-vs-popover gate.
+  // Mobile gate. Below --bp-md the picker collapses to chips + an
+  // "Add / change…" button; tapping opens the bottom sheet (portal +
+  // scrim + slide-up panel). Mirrors Dropdown.tsx's sheet-vs-popover gate.
   const mobileSubscribe = useCallback((cb: () => void) => {
     const mq = window.matchMedia(maxWidth("md"));
     mq.addEventListener("change", cb);
@@ -156,79 +166,80 @@ export default function PersonSelector({
     () => false,
   );
   const [expanded, setExpanded] = useState(false);
-  const showFullPicker = !isMobile || expanded;
 
-  return (
-    <div className={styles.root}>
-      {label && <span className={styles.label}>{label}</span>}
+  // Body scroll-lock while the mobile sheet is open. Same pattern as
+  // Drawer.tsx — the cleanup restores the previous overflow value so we
+  // don't stomp on whatever the parent had set.
+  useEffect(() => {
+    if (!isMobile || !expanded) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [isMobile, expanded]);
 
-      {selectedUsers.length > 0 && (
-        <div className={styles.chips}>
-          {selectedUsers.map((u) => {
-            const showNotify = onNotify && notifySet.has(u.uid);
-            const notifyBusy = notifyBusySet.has(u.uid);
-            return (
-              <span key={u.uid} className={styles.chipWrap}>
+  function renderChips() {
+    if (selectedUsers.length === 0) return null;
+    return (
+      <div className={styles.chips}>
+        {selectedUsers.map((u) => {
+          const showNotify = onNotify && notifySet.has(u.uid);
+          const notifyBusy = notifyBusySet.has(u.uid);
+          return (
+            <span key={u.uid} className={styles.chipWrap}>
+              <button
+                type="button"
+                onClick={() => toggle(u.uid)}
+                className={chipClass}
+              >
+                <span>{u.displayName ?? u.email ?? u.uid}</span>
+                <span aria-hidden>✕</span>
+              </button>
+              {showNotify && (
                 <button
                   type="button"
-                  onClick={() => toggle(u.uid)}
-                  className={chipClass}
+                  onClick={() => onNotify!(u.uid)}
+                  disabled={notifyBusy}
+                  title={`Send the membership email to ${u.displayName ?? u.email ?? u.uid}.`}
+                  className={styles.notifyBtn}
                 >
-                  <span>{u.displayName ?? u.email ?? u.uid}</span>
-                  <span aria-hidden>✕</span>
+                  {notifyBusy ? "Notifying…" : "Notify"}
                 </button>
-                {showNotify && (
-                  <button
-                    type="button"
-                    onClick={() => onNotify!(u.uid)}
-                    disabled={notifyBusy}
-                    title={`Send the membership email to ${u.displayName ?? u.email ?? u.uid}.`}
-                    className={styles.notifyBtn}
-                  >
-                    {notifyBusy ? "Notifying…" : "Notify"}
-                  </button>
-                )}
-              </span>
-            );
-          })}
-        </div>
-      )}
+              )}
+            </span>
+          );
+        })}
+      </div>
+    );
+  }
 
-      {!showFullPicker && (
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className={styles.expandButton}
-        >
-          {selectedUsers.length > 0
-            ? `Change ${ROLE_COPY[role].countLabel}s…`
-            : `Add ${ROLE_COPY[role].countLabel}s…`}
-        </button>
-      )}
+  // Picker controls shared between desktop inline render and mobile sheet.
+  function renderPickerControls() {
+    return (
+      <>
+        {showRoleFilter && (
+          <div className={styles.filterRow}>
+            {ROLE_FILTERS.map((rf) => {
+              const active = roleFilter === rf;
+              return (
+                <button
+                  key={rf}
+                  type="button"
+                  onClick={() => setRoleFilter(rf)}
+                  className={
+                    active
+                      ? `${styles.filterChip} ${styles.filterChipActive}`
+                      : styles.filterChip
+                  }
+                >
+                  {ROLE_FILTER_LABELS[rf]}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
-      {showFullPicker && showRoleFilter && (
-        <div className={styles.filterRow}>
-          {ROLE_FILTERS.map((rf) => {
-            const active = roleFilter === rf;
-            return (
-              <button
-                key={rf}
-                type="button"
-                onClick={() => setRoleFilter(rf)}
-                className={
-                  active
-                    ? `${styles.filterChip} ${styles.filterChipActive}`
-                    : styles.filterChip
-                }
-              >
-                {ROLE_FILTER_LABELS[rf]}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {showFullPicker && (
         <input
           type="text"
           value={search}
@@ -236,9 +247,7 @@ export default function PersonSelector({
           placeholder="Search people…"
           className={styles.search}
         />
-      )}
 
-      {showFullPicker && (
         <div className={styles.list}>
           {sorted.length === 0 && (
             <p className={styles.listEmpty}>
@@ -269,23 +278,89 @@ export default function PersonSelector({
             );
           })}
         </div>
-      )}
 
-      {showFullPicker && (
         <span className={styles.countCaption}>
           {selected.length}/{max} {ROLE_COPY[role].verb}
         </span>
-      )}
+      </>
+    );
+  }
 
-      {showFullPicker && isMobile && (
+  return (
+    <div className={styles.root}>
+      {label && <span className={styles.label}>{label}</span>}
+
+      {renderChips()}
+
+      {/* Mobile collapsed state: chips above + "Change…" button.
+          Desktop renders the inline picker controls instead. */}
+      {isMobile ? (
         <button
           type="button"
-          onClick={() => setExpanded(false)}
-          className={styles.collapseLink}
+          onClick={() => setExpanded(true)}
+          className={styles.expandButton}
         >
-          Hide search
+          {selectedUsers.length > 0
+            ? `Change ${ROLE_COPY[role].countLabel}s…`
+            : `Add ${ROLE_COPY[role].countLabel}s…`}
         </button>
+      ) : (
+        renderPickerControls()
       )}
+
+      {/* Mobile expanded state: portal-rendered bottom sheet with scrim +
+          slide-up panel + scroll-locked body. The `typeof document` guard
+          is belt-and-braces (useSyncExternalStore's server snapshot makes
+          isMobile false during SSR anyway). */}
+      {isMobile && expanded && typeof document !== "undefined" &&
+        createPortal(
+          <div className={styles.sheetRoot}>
+            <div
+              className={styles.scrim}
+              onClick={(e) => {
+                // Close on click (not pointerdown) — matches Dropdown.tsx's
+                // sheet scrim behaviour so iOS doesn't re-target the
+                // synthetic click to the trigger underneath.
+                e.stopPropagation();
+                setExpanded(false);
+              }}
+            />
+            <div
+              className={styles.sheet}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className={styles.sheetHandle} aria-hidden />
+              <div className={styles.sheetHeader}>
+                <h3 className={styles.sheetTitle}>
+                  {selectedUsers.length > 0
+                    ? `Change ${ROLE_COPY[role].countLabel}s`
+                    : `Add ${ROLE_COPY[role].countLabel}s`}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setExpanded(false)}
+                  aria-label="Close picker"
+                  className={styles.sheetCloseIcon}
+                >
+                  ✕
+                </button>
+              </div>
+              {/* Repeat the chips inside the sheet so the user can
+                  deselect from here without dismissing back to the
+                  collapsed state. */}
+              {renderChips()}
+              {renderPickerControls()}
+              <button
+                type="button"
+                onClick={() => setExpanded(false)}
+                className={styles.doneButton}
+              >
+                Done
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
