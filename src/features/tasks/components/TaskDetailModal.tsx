@@ -940,7 +940,19 @@ function Overlay({ children, onClose }: { children: React.ReactNode; onClose: ()
           onClick={onClose}
           className={styles.closeButton}
         >
-          ✕
+          <svg
+            className={styles.closeIcon}
+            viewBox="0 0 14 14"
+            aria-hidden="true"
+          >
+            <path
+              d="M2 2L12 12M12 2L2 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            />
+          </svg>
         </button>
         {children}
       </div>
