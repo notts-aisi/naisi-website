@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   DndContext,
   PointerSensor,
@@ -26,6 +26,7 @@ import {
 } from "@/lib/firestore/tasks";
 import type { ProjectDoc } from "@/lib/firestore/projects";
 import type { UserDoc } from "@/lib/firestore/users";
+import { maxWidth } from "@/theme/breakpoints";
 import { setTaskStatus } from "../taskMutations";
 import TaskCard from "./TaskCard";
 import styles from "./TaskBoard.module.css";
@@ -36,6 +37,37 @@ type Props = {
   users: UserDoc[];
   onOpenTask: (taskId: string) => void;
 };
+
+/**
+ * `useSyncExternalStore` over a matchMedia query. SSR returns `false` so the
+ * first paint is always the desktop kanban — on phone, a single re-render
+ * flips to the pill view within a tick. Rendering both trees and CSS-toggling
+ * is rejected because the kanban hosts a `DndContext` with N `useSortable`
+ * hooks per task; keeping it mounted on phone doubles the dnd-kit surface
+ * for no benefit (drag is desktop-only). One visible flash on first phone
+ * load is the accepted trade.
+ *
+ * Same shape as `Drawer.tsx`'s `isClient` check.
+ */
+const NARROW_QUERY = maxWidth("lg");
+
+function subscribeNarrow(cb: () => void): () => void {
+  const mq = window.matchMedia(NARROW_QUERY);
+  mq.addEventListener("change", cb);
+  return () => mq.removeEventListener("change", cb);
+}
+
+function getNarrowSnapshot(): boolean {
+  return window.matchMedia(NARROW_QUERY).matches;
+}
+
+function getNarrowServerSnapshot(): boolean {
+  return false;
+}
+
+function useIsNarrow(): boolean {
+  return useSyncExternalStore(subscribeNarrow, getNarrowSnapshot, getNarrowServerSnapshot);
+}
 
 function SortableTaskCard({
   task,
@@ -148,7 +180,7 @@ function BoardColumn({
   );
 }
 
-export default function TaskBoard({ tasks, projects, users, onOpenTask }: Props) {
+function TaskBoardKanban({ tasks, projects, users, onOpenTask }: Props) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   // Optimistic status overrides: set on drop, cleared once Firestore catches up.
   // Without this, the card snaps back to its origin column for the duration of
@@ -248,4 +280,76 @@ export default function TaskBoard({ tasks, projects, users, onOpenTask }: Props)
       </DragOverlay>
     </DndContext>
   );
+}
+
+function TaskBoardPhone({ tasks, projects, users, onOpenTask }: Props) {
+  const [activeStatus, setActiveStatus] = useState<TaskStatus>(TASK_STATUSES[0]);
+  const activePillRef = useRef<HTMLButtonElement | null>(null);
+
+  // Centre the initial active pill in the scrollable row on mount only.
+  // Subsequent pill taps must NOT re-centre — that would jerk the row out
+  // from under the user's finger.
+  useEffect(() => {
+    activePillRef.current?.scrollIntoView({ inline: "center", block: "nearest" });
+  }, []);
+
+  const counts = useMemo(() => {
+    const map = new Map<TaskStatus, number>();
+    TASK_STATUSES.forEach((s) => map.set(s, 0));
+    for (const t of tasks) {
+      map.set(t.status, (map.get(t.status) ?? 0) + 1);
+    }
+    return map;
+  }, [tasks]);
+
+  const filtered = useMemo(
+    () => tasks.filter((t) => t.status === activeStatus),
+    [tasks, activeStatus],
+  );
+
+  return (
+    <div>
+      <div className={styles.statusPills} role="tablist" aria-label="Filter by status">
+        {TASK_STATUSES.map((status) => {
+          const active = status === activeStatus;
+          return (
+            <button
+              key={status}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              ref={active ? activePillRef : undefined}
+              className={active ? `${styles.statusPill} ${styles.statusPillActive}` : styles.statusPill}
+              onClick={() => setActiveStatus(status)}
+            >
+              <span>{TASK_STATUS_LABELS[status]}</span>
+              <span className={styles.pillCount}>{counts.get(status) ?? 0}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className={styles.phoneList}>
+        {filtered.length === 0 ? (
+          <p className={styles.phoneEmpty}>
+            No tasks in {TASK_STATUS_LABELS[activeStatus].toLowerCase()}.
+          </p>
+        ) : (
+          filtered.map((task) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              projects={projects}
+              users={users}
+              onOpen={onOpenTask}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function TaskBoard(props: Props) {
+  const narrow = useIsNarrow();
+  return narrow ? <TaskBoardPhone {...props} /> : <TaskBoardKanban {...props} />;
 }
