@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Button from "@/components/ui/Button";
+import { maxWidth } from "@/theme/breakpoints";
 import {
   TASK_FIELD_LIMITS,
   effectiveReviewerUids,
@@ -44,6 +45,25 @@ type Props = {
    *  (completer/reviewer/admin/creator) can; outside viewers see the
    *  thread read-only. */
   canComment: boolean;
+  /** Phone-only Actions section. SubtaskRow's inline +Me / −Me / +Review /
+   *  −Review / Edit / Delete buttons render too small on phone, so below
+   *  --bp-md they migrate here as full-size Button primitives. Optional
+   *  because the row only passes this on tasks where the viewer has at
+   *  least one of these capabilities; desktop renders nothing regardless. */
+  mobileActions?: {
+    canSelfAdd: boolean;
+    onSelfAdd: () => void;
+    canSelfRemove: boolean;
+    onSelfRemove: () => void;
+    canSelfAddReviewer: boolean;
+    onSelfAddReviewer: () => void;
+    canSelfRemoveReviewer: boolean;
+    onSelfRemoveReviewer: () => void;
+    canEdit: boolean;
+    isEditing: boolean;
+    onToggleEdit: () => void;
+    onDelete: () => void;
+  };
   onClose: () => void;
 };
 
@@ -61,8 +81,23 @@ export default function SubtaskDetailModal({
   canEditDescription,
   canEditDueDates,
   canComment,
+  mobileActions,
   onClose,
 }: Props) {
+  // Phone-shape gate — only show the Actions section below --bp-md, where
+  // the row's inline buttons are too small to tap comfortably. Matches the
+  // pattern used in SubtaskRow / PersonSelector.
+  const mobileSubscribe = useCallback((cb: () => void) => {
+    const mq = window.matchMedia(maxWidth("md"));
+    mq.addEventListener("change", cb);
+    return () => mq.removeEventListener("change", cb);
+  }, []);
+  const isMobile = useSyncExternalStore(
+    mobileSubscribe,
+    () => window.matchMedia(maxWidth("md")).matches,
+    () => false,
+  );
+
   const [editingDesc, setEditingDesc] = useState(false);
   const [descDraft, setDescDraft] = useState(subtask.description);
   const [saving, setSaving] = useState(false);
@@ -235,6 +270,10 @@ export default function SubtaskDetailModal({
             </span>
           )}
         </div>
+
+        {isMobile && mobileActions && (
+          <MobileActionsSection actions={mobileActions} />
+        )}
 
         <section>
           <h3 style={sectionLabel}>Description</h3>
@@ -700,5 +739,73 @@ function Overlay({
         {children}
       </div>
     </div>
+  );
+}
+
+/**
+ * Phone-only Actions section. Surfaces the +Me / −Me / +Review / −Review /
+ * Edit / Delete controls that SubtaskRow hides below --bp-md, at proper
+ * tap-target size via the Button primitive (44px min-height per the
+ * touch-targets policy).
+ */
+function MobileActionsSection({
+  actions,
+}: {
+  actions: NonNullable<Props["mobileActions"]>;
+}) {
+  const {
+    canSelfAdd,
+    onSelfAdd,
+    canSelfRemove,
+    onSelfRemove,
+    canSelfAddReviewer,
+    onSelfAddReviewer,
+    canSelfRemoveReviewer,
+    onSelfRemoveReviewer,
+    canEdit,
+    isEditing,
+    onToggleEdit,
+    onDelete,
+  } = actions;
+
+  const hasSelfControls =
+    canSelfAdd || canSelfRemove || canSelfAddReviewer || canSelfRemoveReviewer;
+  if (!hasSelfControls && !canEdit) return null;
+
+  return (
+    <section className={styles.actionsSection}>
+      <h3 className={styles.actionsSectionLabel}>Actions</h3>
+      {canSelfAdd && (
+        <Button variant="secondary" onClick={onSelfAdd}>
+          Add me as completer
+        </Button>
+      )}
+      {canSelfRemove && (
+        <Button variant="secondary" onClick={onSelfRemove}>
+          Remove me from completers
+        </Button>
+      )}
+      {canSelfAddReviewer && (
+        <Button variant="secondary" onClick={onSelfAddReviewer}>
+          Add me as reviewer
+        </Button>
+      )}
+      {canSelfRemoveReviewer && (
+        <Button variant="secondary" onClick={onSelfRemoveReviewer}>
+          Remove me from reviewers
+        </Button>
+      )}
+      {canEdit && (
+        <>
+          <Button variant="secondary" onClick={onToggleEdit}>
+            {isEditing ? "Close inline editor" : "Edit subtask (rename, assignees)"}
+          </Button>
+          <div className={styles.actionsSectionDangerSpacer} />
+          <Button variant="danger" onClick={onDelete}>
+            Delete subtask
+          </Button>
+        </>
+      )}
+    </section>
   );
 }

@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import ResponsiveSelect, {
   type ResponsiveSelectOption,
 } from "@/components/ui/ResponsiveSelect";
+import { maxWidth } from "@/theme/breakpoints";
 import {
   TASK_FIELD_LIMITS,
   effectiveReviewerUids,
@@ -158,6 +159,21 @@ export default function SubtaskRow({
   const [rejectReasonDraft, setRejectReasonDraft] = useState<string | null>(null);
   const [rejectBusy, setRejectBusy] = useState(false);
   const [resendBusy, setResendBusy] = useState(false);
+
+  // Phone-shape gate. Below --bp-md the row's inline action buttons
+  // (+Me / −Me / +Review / −Review / Edit / Delete) migrate into
+  // SubtaskDetailModal as proper-sized tap targets; the row stays a
+  // tap-to-open card. Pattern mirrors PersonSelector.tsx.
+  const mobileSubscribe = useCallback((cb: () => void) => {
+    const mq = window.matchMedia(maxWidth("md"));
+    mq.addEventListener("change", cb);
+    return () => mq.removeEventListener("change", cb);
+  }, []);
+  const isMobile = useSyncExternalStore(
+    mobileSubscribe,
+    () => window.matchMedia(maxWidth("md")).matches,
+    () => false,
+  );
 
   const blocked = !subtask.done && isSubtaskBlocked(subtask, task);
   // Reviewer-signoff gate: the viewer can only tick their own signoff once
@@ -540,13 +556,7 @@ export default function SubtaskRow({
           }
         }}
         aria-label={`Open details for "${subtask.title}"`}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--space-3)",
-          minHeight: "2rem",
-          cursor: "pointer",
-        }}
+        className={rowStyles.row}
       >
         {dragHandle}
         <input
@@ -593,15 +603,11 @@ export default function SubtaskRow({
           }
         />
         <span
-          style={{
-            flex: 1,
-            fontSize: "var(--text-sm)",
-            textDecoration: subtask.done ? "line-through" : "none",
-            color: subtask.done ? "var(--color-text-muted)" : "var(--color-text)",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "var(--space-2)",
-          }}
+          className={
+            subtask.done
+              ? `${rowStyles.titleArea} ${rowStyles.titleAreaDone}`
+              : rowStyles.titleArea
+          }
         >
           {subtask.title}
           {subtask.dueDate && (() => {
@@ -609,29 +615,19 @@ export default function SubtaskRow({
             return (
               <span
                 title={`Due ${subtask.dueDate.toLocaleDateString()}${overdue ? " — overdue" : ""}`}
-                style={{
-                  padding: "2px 8px",
-                  borderRadius: "999px",
-                  background: overdue
-                    ? "var(--color-danger-soft, rgba(220, 38, 38, 0.12))"
-                    : "var(--color-bg-elevated)",
-                  color: overdue
-                    ? "var(--color-danger, #dc2626)"
-                    : "var(--color-text-muted)",
-                  border: overdue ? "none" : "1px solid var(--color-border)",
-                  fontSize: "10px",
-                  fontWeight: 700,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
-                  textDecoration: subtask.done ? "line-through" : "none",
-                  opacity: subtask.done ? 0.7 : 1,
-                }}
+                className={
+                  overdue
+                    ? `${rowStyles.duePill} ${rowStyles.duePillOverdue}`
+                    : rowStyles.duePill
+                }
               >
                 {overdue ? "Overdue" : `Due ${subtask.dueDate.toLocaleDateString()}`}
               </span>
             );
           })()}
         </span>
+
+        <div className={rowStyles.sideCluster} onClick={(e) => e.stopPropagation()}>
 
         {subtask.roleHint === "reviewer" && (
           <span
@@ -658,8 +654,11 @@ export default function SubtaskRow({
         {/* Completer self-service: quick add/remove me, without opening
             the Edit panel. Hidden when the viewer isn't a completer or
             when roster lock (subtask-seal or block-seal with existing
-            membership) forbids the direction they'd move in. */}
-        {canSelfAdd && (
+            membership) forbids the direction they'd move in.
+
+            Phone (<48rem) hides these inline buttons; they re-surface
+            full-size inside SubtaskDetailModal's mobile Actions section. */}
+        {!isMobile && canSelfAdd && (
           <button
             type="button"
             onClick={(e) => {
@@ -676,7 +675,7 @@ export default function SubtaskRow({
             + Me
           </button>
         )}
-        {canSelfRemove && (
+        {!isMobile && canSelfRemove && (
           <button
             type="button"
             onClick={(e) => {
@@ -689,7 +688,7 @@ export default function SubtaskRow({
             − Me
           </button>
         )}
-        {canSelfAddReviewer && (
+        {!isMobile && canSelfAddReviewer && (
           <button
             type="button"
             onClick={(e) => {
@@ -706,7 +705,7 @@ export default function SubtaskRow({
             + Review
           </button>
         )}
-        {canSelfRemoveReviewer && (
+        {!isMobile && canSelfRemoveReviewer && (
           <button
             type="button"
             onClick={(e) => {
@@ -772,7 +771,7 @@ export default function SubtaskRow({
           </span>
         )}
 
-        {canEdit && (
+        {!isMobile && canEdit && (
           <div
             onClick={(e) => e.stopPropagation()}
             style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", marginLeft: "var(--space-2)" }}
@@ -815,6 +814,19 @@ export default function SubtaskRow({
             </button>
           </div>
         )}
+
+        {isMobile &&
+          (canSelfAdd ||
+            canSelfRemove ||
+            canSelfAddReviewer ||
+            canSelfRemoveReviewer ||
+            canEdit) && (
+            <span className={rowStyles.tapChevron} aria-hidden>
+              ›
+            </span>
+          )}
+
+        </div>
       </div>
 
       {/* Phone replacement for the matrix — read-only chip per reviewer
@@ -1291,6 +1303,34 @@ export default function SubtaskRow({
             isTaskLevelReviewer ||
             subtask.reviewerUids.includes(viewerUid)
           }
+          mobileActions={{
+            canSelfAdd,
+            onSelfAdd: () => {
+              selfAddToSubtask(task, subtask.id).catch(console.error);
+            },
+            canSelfRemove,
+            onSelfRemove: () => {
+              selfRemoveFromSubtask(task, subtask.id).catch(console.error);
+            },
+            canSelfAddReviewer,
+            onSelfAddReviewer: () => {
+              handleSelfAddReviewer().catch(console.error);
+            },
+            canSelfRemoveReviewer,
+            onSelfRemoveReviewer: () => {
+              handleSelfRemoveReviewer().catch(console.error);
+            },
+            canEdit,
+            isEditing: editing,
+            onToggleEdit: () => {
+              setEditing((v) => !v);
+              setDetailOpen(false);
+            },
+            onDelete: () => {
+              handleDelete();
+              setDetailOpen(false);
+            },
+          }}
           onClose={() => setDetailOpen(false)}
         />
       )}

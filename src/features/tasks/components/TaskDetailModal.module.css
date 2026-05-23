@@ -325,7 +325,16 @@
   }
   .grid {
     grid-template-columns: 1fr;
-    grid-template-rows: auto;
+    /* `max-content max-content` so each row sizes to its intrinsic content
+       and the grid scrollHeight grows past 100vh. `auto auto` doesn't work
+       here: items have min-height: 0 (inherited from the base .mainColumn
+       rule), which lets the auto track's minimum collapse to 0; the browser
+       then splits the definite 100vh evenly between the two tracks, clamping
+       mainColumn's track to ~half the viewport while its content remains
+       full-height. Children paint past the clamped track, over the sidebar.
+       `max-content` forces each track to its content size, the grid itself
+       becomes the scroll container, and the two regions stack cleanly. */
+    grid-template-rows: max-content max-content;
     height: 100vh;
     overflow-y: auto;
   }
@@ -340,25 +349,21 @@
     gap: var(--space-4);
     overflow-y: visible;
   }
-  /* Pull Subtasks toward the top on phone so the most-tapped section is
-     reachable inside the first scroll. mainColumn is a flex column, so
-     `order` applies. Title stays at the very top (-2); subtaskSection
-     sits just after it (-1); everything else (field row, due date,
-     description, attachments, discussion) stays at the default 0 in DOM
-     order behind. */
-  .title,
-  .titleEditable,
-  .titleInput {
-    order: -2;
-  }
-  .subtaskSection {
-    order: -1;
-  }
   /* Push the close button below the iOS notch in portrait. env() falls back
      to 0 on devices without safe-area-inset-top. */
   .closeButton {
     top: calc(var(--space-2) + env(safe-area-inset-top, 0px));
   }
+  /* NOTE: the previous round set `.title { order: -2 }` and
+     `.subtaskSection { order: -1 }` to pull Subtasks toward the top on
+     phone. That was reverted here — flex `order` only moved those two
+     children, and the rest of mainColumn (Status / Priority / Due /
+     Description / Attachments / Discussion) overflowed past the column's
+     rendered box, hiding behind the sidebar. DOM order (Title → Status
+     → Priority → Due → Description → Subtasks → Attachments → Discussion)
+     already reads top-to-bottom. If product wants Subtasks earlier in
+     scroll, do it by reordering the JSX in TaskDetailModal.tsx instead
+     of CSS `order`. */
 }
 
 /* Narrowest phones — collapse the Status + Priority pickers into one

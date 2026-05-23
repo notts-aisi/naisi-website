@@ -757,10 +757,12 @@ export default function BlockHeader({
             value={dueIsMixed ? null : commonDue}
             disabled={busy}
             size="sm"
+            collapsible
+            initiallyExpanded
+            onClose={() => setCalendarOpen(false)}
             onChange={(date) => {
               const v = date ? toDateInputValue(date) : "";
               handleBlockDueChange(v).catch(console.error);
-              setCalendarOpen(false);
             }}
           />
         </div>

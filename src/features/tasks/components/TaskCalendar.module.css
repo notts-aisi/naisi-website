@@ -9,6 +9,22 @@
    gaps > 343 now fits. The 36px min-height keeps day cells above their
    touch-target exception floor (docs/touch-targets.md). */
 
+/* Wrapper. Desktop is content-sized (inline-flex) so BlockHeader / event
+   editor / inline pickers don't grow past their natural width. On phone
+   the wrapper goes block-level + full-width so the `repeat(7, 1fr)` cell
+   grid distributes the full parent width (which the old inline-flex
+   collapsed to min-content). */
+.wrapper {
+  display: inline-flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  user-select: none;
+}
+
 .weekRow {
   display: grid;
   grid-template-columns: repeat(7, var(--cell-px));
@@ -33,11 +49,85 @@
   justify-content: center;
   border-radius: var(--radius-sm);
   font-family: inherit;
+  font-size: var(--text-sm);
   padding: 0;
+  /* iOS Safari applies a default min-width / inset shadow to button
+     elements that overrides our `width: 100%` on phone. Without these
+     resets the cells visually clamp to ~36px even though the grid track
+     is 44px+ (Chromium / Android Chrome don't have this default). */
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .weekdayLabel {
   padding: 0.2rem 0;
+}
+
+/* Collapsible-mode bottom action bar (Clear + Done). Desktop is a
+   space-between two-button row with natural-sized buttons; phone
+   promotes the buttons to full-width 44px floor so they read as
+   primary tap targets. */
+.actionRow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.actionBtn {
+  /* Each button fills half the row at every viewport — user pref:
+     bigger desktop tap targets, mirrors the existing mobile split.
+     `.actionRow` provides `justify-content: space-between` so the
+     gap sits between them. */
+  flex: 1;
+  padding: 0.4rem 1rem;
+  color: #ffffff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  /* Safari applies `-webkit-appearance: button` by default, which paints
+     its own grey gradient + black border on top of our background/color.
+     Result: on Safari (desktop + iOS) the Clear / Done buttons read as
+     missing entirely because the white text sits invisibly on Safari's
+     default light grey button face. Resetting appearance lets our
+     class-driven background + color: #ffffff paint correctly. */
+  appearance: none;
+  -webkit-appearance: none;
+  /* Belt-and-braces: explicitly remove the user-agent box-shadow that
+     some Safari versions paint as an inset highlight. */
+  box-shadow: none;
+  /* Safari sometimes shows a grey tap highlight on touch — neutralise
+     it so the variant background colour reads as authoritative. */
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+  /* Backgrounds are set by the variant classes below. */
+}
+
+.actionBtnSuccess {
+  background-color: #16a34a;
+}
+
+.actionBtnSuccess:hover {
+  background-color: #15803d;
+}
+
+.actionBtnDanger {
+  background-color: var(--color-danger);
+}
+
+.actionBtnDanger:hover {
+  filter: brightness(0.92);
+}
+
+.actionBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .weekdayLong {
@@ -48,11 +138,21 @@
   display: none;
 }
 
-/* === Mobile ===
-   Phone — cells fill 1/7th of the available width, weekday labels
-   compress to a single letter, day cells keep their 36px touch-target
-   floor (the documented exception to 44px). */
-@media (max-width: 36rem) { /* --bp-sm */
+/* === Phone widths (≤ --bp-md) ===
+   Below the tablet breakpoint the wrapper goes block-level + full-width
+   AND the cell grid switches to `repeat(7, 1fr)` so the cells actually
+   distribute the wrapper's full width. The `--bp-sm` block below extends
+   this with single-letter weekday labels for the narrowest viewports.
+
+   Earlier the fluid-cell rule was gated at `--bp-sm` only, which left a
+   36rem-48rem band (576-768px) where the cells stuck at the fixed
+   `--cell-px` (36px) and huddled on the left of a much wider wrapper. */
+@media (max-width: 48rem) { /* --bp-md */
+  .wrapper {
+    display: flex;
+    width: 100%;
+    padding: var(--space-2);
+  }
   .weekRow,
   .dayGrid {
     grid-template-columns: repeat(7, 1fr);
@@ -60,8 +160,26 @@
   .cell {
     width: 100%;
     height: auto;
-    min-height: 36px;
+    min-height: 56px;
+    font-size: var(--text-lg);
+    font-weight: 500;
   }
+  /* Phone bumps Clear / Done to the 44px touch-target floor + slightly
+     larger label. The `flex: 1` split is already in the base rule, so
+     the buttons fill the row at every viewport. */
+  .actionRow {
+    gap: var(--space-3);
+  }
+  .actionBtn {
+    min-height: 2.75rem;
+    font-size: var(--text-md, 1rem);
+  }
+}
+
+/* === Narrowest phones (≤ --bp-sm) ===
+   Weekday labels compress to a single letter so 7 columns fit cleanly
+   at 343px iPhone SE width without truncation. */
+@media (max-width: 36rem) { /* --bp-sm */
   .weekdayLong {
     display: none;
   }
