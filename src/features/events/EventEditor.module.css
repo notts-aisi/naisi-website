@@ -44,7 +44,7 @@
   gap: var(--space-4);
 }
 
-@media (max-width: 640px) {
+@media (max-width: 48rem) { /* --bp-md (normalised from 640px) */
   .twoCol {
     grid-template-columns: 1fr;
   }

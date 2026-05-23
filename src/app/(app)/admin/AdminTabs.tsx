@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef } from "react";
 import { usePendingCount } from "@/features/admin/usePendingCount";
 import styles from "./AdminTabs.module.css";
 
@@ -23,6 +24,14 @@ const TABS = [
 export default function AdminTabs() {
   const pathname = usePathname();
   const pendingCount = usePendingCount();
+  const activeRef = useRef<HTMLAnchorElement>(null);
+
+  // On mobile the tab strip scrolls horizontally — pull the active tab into
+  // view so users landing on a deep tab (e.g. /admin/danger-zone) don't have
+  // to swipe through the strip to find where they are.
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [pathname]);
 
   return (
     <nav className={styles.tabs} aria-label="Admin sections">
@@ -33,6 +42,7 @@ export default function AdminTabs() {
           <Link
             key={tab.href}
             href={tab.href}
+            ref={active ? activeRef : undefined}
             className={`${styles.tab} ${active ? styles.active : ""}`}
           >
             <span>{tab.label}</span>

@@ -16,6 +16,12 @@ type Props = {
   /** Accessible label announced by screen readers. */
   ariaLabel: string;
   children: ReactNode;
+  /**
+   * Drawer auto-closes when the viewport crosses this rem value upward
+   * (e.g. iPad rotates landscape, desktop devtools resize). Defaults to 48
+   * to match PublicHeader's --bp-md. AppShell passes 60 to match --bp-lg.
+   */
+  closeAboveRem?: number;
 };
 
 /**
@@ -26,7 +32,14 @@ type Props = {
  * root, not whichever parent rendered it. Always mounted (after first
  * client render) so both open and close can transition.
  */
-export default function Drawer({ open, onClose, id, ariaLabel, children }: Props) {
+export default function Drawer({
+  open,
+  onClose,
+  id,
+  ariaLabel,
+  children,
+  closeAboveRem = 48,
+}: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
   // SSR-safe "are we on the client" check. The portal needs `document.body`,
@@ -81,17 +94,17 @@ export default function Drawer({ open, onClose, id, ariaLabel, children }: Props
     }
   }, [open]);
 
-  // Auto-close when the viewport crosses the md breakpoint upward
+  // Auto-close when the viewport crosses `closeAboveRem` upward
   // (iPad rotate, window resize on desktop with devtools open, etc.).
   useEffect(() => {
     if (!open) return;
-    const mq = window.matchMedia("(min-width: 48rem)");
+    const mq = window.matchMedia(`(min-width: ${closeAboveRem}rem)`);
     const onChange = () => {
       if (mq.matches) onClose();
     };
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
-  }, [open, onClose]);
+  }, [open, onClose, closeAboveRem]);
 
   if (!isClient) return null;
 

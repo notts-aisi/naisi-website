@@ -28,6 +28,7 @@ import type { ProjectDoc } from "@/lib/firestore/projects";
 import type { UserDoc } from "@/lib/firestore/users";
 import { setTaskStatus } from "../taskMutations";
 import TaskCard from "./TaskCard";
+import styles from "./TaskBoard.module.css";
 
 type Props = {
   tasks: TaskDoc[];
@@ -89,15 +90,7 @@ function BoardColumn({
   });
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        minWidth: "17rem",
-        width: "17rem",
-        flex: "0 0 auto",
-      }}
-    >
+    <div className={styles.column}>
       <div
         style={{
           display: "flex",
@@ -236,14 +229,7 @@ export default function TaskBoard({ tasks, projects, users, onOpenTask }: Props)
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
-      <div
-        style={{
-          display: "flex",
-          gap: "var(--space-3)",
-          overflowX: "auto",
-          paddingBottom: "var(--space-3)",
-        }}
-      >
+      <div className={styles.scroll}>
         {TASK_STATUSES.map((status) => (
           <BoardColumn
             key={status}
