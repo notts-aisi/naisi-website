@@ -12,41 +12,52 @@
   height: var(--header-height);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-6);
+  gap: var(--space-4);
 }
 
-.brand { display: inline-flex; align-items: center; }
+.brand {
+  display: inline-flex;
+  align-items: center;
+}
 
 .nav {
   display: flex;
   align-items: center;
-  gap: var(--space-6);
+  gap: var(--space-5);
+  margin-left: auto;
 }
 
 .navLink {
   font-size: var(--text-sm);
   color: var(--color-text-muted);
+  padding: 0.5rem 0.25rem;
   transition: color var(--transition-fast);
 }
-.navLink:hover { color: var(--color-text); }
+.navLink:hover {
+  color: var(--color-text);
+}
 
 .actions {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 
 .signIn {
   font-size: var(--text-sm);
   color: var(--color-text-muted);
+  padding: 0.5rem 0.25rem;
   transition: color var(--transition-fast);
 }
-.signIn:hover { color: var(--color-text); }
+.signIn:hover {
+  color: var(--color-text);
+}
 
 .joinBtn {
   display: inline-flex;
-  padding: 0.5rem 0.95rem;
+  align-items: center;
+  min-height: 2.5rem;
+  padding: 0.5rem 1rem;
   border-radius: var(--radius-md);
   background: var(--color-accent);
   color: white;
@@ -54,8 +65,115 @@
   font-weight: 500;
   transition: background var(--transition-fast);
 }
-.joinBtn:hover { background: var(--color-accent-hover); }
+.joinBtn:hover {
+  background: var(--color-accent-hover);
+}
 
-@media (max-width: 40rem) {
-  .nav { display: none; }
+.rejectedLabel {
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+  margin-right: var(--space-2);
+}
+
+/* Hamburger button — hidden on desktop, shown via the mobile block below. */
+.menuButton {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  margin-left: auto;
+  transition: background var(--transition-fast);
+}
+.menuButton:hover {
+  background: var(--color-surface-hover);
+}
+
+.menuIcon {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 1.25rem;
+  height: 0.875rem;
+}
+.menuIcon > span {
+  display: block;
+  height: 2px;
+  background: var(--color-text);
+  border-radius: 1px;
+}
+
+/* === Drawer contents (rendered into the Drawer portal) === */
+.drawerBrand {
+  margin-bottom: var(--space-6);
+}
+
+.drawerNav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.drawerLink {
+  display: flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: var(--space-3);
+  font-size: var(--text-base);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  width: 100%;
+  transition: background var(--transition-fast);
+}
+.drawerLink:hover,
+.drawerLink:focus-visible {
+  background: var(--color-surface-hover);
+}
+
+.drawerLinkPrimary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: var(--space-3);
+  font-size: var(--text-base);
+  font-weight: 500;
+  background: var(--color-accent);
+  color: white;
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast);
+}
+.drawerLinkPrimary:hover {
+  background: var(--color-accent-hover);
+}
+
+.drawerRejected {
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+  padding: var(--space-2) var(--space-3);
+}
+
+.drawerFooter {
+  margin-top: auto;
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .nav {
+    display: none;
+  }
+  .actions {
+    display: none;
+  }
+  .menuButton {
+    display: inline-flex;
+  }
 }

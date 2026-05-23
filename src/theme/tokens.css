@@ -2,6 +2,21 @@
   NAISI theme tokens.
   Every colour, radius, spacing, and shadow in the app should read from a var here.
   Swapping the brand palette = editing this one file.
+
+  ─────────────────────────────────────────────────────────────────────────
+  Canonical breakpoints (mirrored in src/theme/breakpoints.ts).
+  CSS custom properties do NOT work inside `@media` conditions — the values
+  below are the documented constants; use them as literal `Xrem` in queries
+  and add a trailing comment `--bp-md` so the breakpoint name is greppable.
+
+    --bp-sm: 36rem  /  576px   small phone landscape / large phone portrait
+    --bp-md: 48rem  /  768px   phone ↔ tablet split (most-used breakpoint)
+    --bp-lg: 60rem  /  960px   tablet ↔ laptop split (sidebar collapse)
+    --bp-xl: 80rem  / 1280px   wide-laptop (reserved for wide-data views)
+
+  Example: `@media (max-width: 48rem) { … }` /* --bp-md */
+  See docs/mobile-conventions.md for the full convention.
+  ─────────────────────────────────────────────────────────────────────────
 */
 
 :root,

@@ -99,8 +99,20 @@
   pointer-events: none;
 }
 
-@media (max-width: 60rem) {
-  .heroArt { display: none; }
+/* Below --bp-lg the absolute-positioned emblem becomes an inline brand
+   anchor above the headline. Source order in landing/page.tsx puts heroArt
+   first inside .heroInner so it renders at the top of the flex column. */
+@media (max-width: 60rem) { /* --bp-lg */
+  .heroArt {
+    position: static;
+    transform: none;
+    align-self: center;
+    margin-bottom: var(--space-4);
+  }
+  .heroArt img {
+    width: 120px;
+    height: auto;
+  }
 }
 
 /* === Shared inline link ================================ */
