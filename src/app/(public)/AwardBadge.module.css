@@ -1,11 +1,16 @@
+/*
+  Sits as a trust signal below the hero CTAs (in the flex flow, not
+  absolute) — keeps the emblem column clean and pairs the badge with
+  the action call rather than competing with the brand mark.
+
+  Entrance is driven by motion in AwardBadge.tsx; we only declare the
+  static styles + shimmer here.
+*/
 .badge {
-  position: absolute;
-  top: var(--space-6);
-  right: var(--space-6);
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2);
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-2);
   border: 1px solid rgba(245, 165, 36, 0.4);
   background: linear-gradient(
     180deg,
@@ -20,19 +25,8 @@
   box-shadow:
     0 2px 14px rgba(245, 165, 36, 0.18),
     0 6px 22px rgba(0, 0, 0, 0.35);
-  /* Slide in from the right after the headline lands. */
-  opacity: 0;
-  transform: translateX(40px);
-  transition:
-    opacity 600ms cubic-bezier(0.22, 0.61, 0.36, 1) 3500ms,
-    transform 600ms cubic-bezier(0.22, 0.61, 0.36, 1) 3500ms,
-    box-shadow 200ms ease;
-  z-index: 11;
-}
-
-.badge.loaded {
-  opacity: 1;
-  transform: translateX(0);
+  width: fit-content;
+  transition: box-shadow 200ms ease, border-color 200ms ease;
 }
 
 /* Gold shimmer sweep — runs once on auto, again on every hover. */
@@ -125,25 +119,12 @@
 }
 
 /* === Mobile === */
-@media (max-width: 60rem) { /* --bp-lg */
-  /* Below the emblem-reflow breakpoint, dock the badge inline at the top
-     of the hero rather than absolute-positioned. */
-  .badge {
-    position: static;
-    align-self: center;
-    margin-bottom: var(--space-2);
-    transform: translateY(20px);
-    transition:
-      opacity 600ms cubic-bezier(0.22, 0.61, 0.36, 1) 3500ms,
-      transform 600ms cubic-bezier(0.22, 0.61, 0.36, 1) 3500ms,
-      box-shadow 200ms ease;
-  }
-  .badge.loaded {
-    transform: translateY(0);
-  }
-}
-
 @media (max-width: 36rem) { /* --bp-sm */
   .label { font-size: 0.85rem; }
   .subline { font-size: 0.65rem; }
+  .badge {
+    /* Tighten padding so it doesn't take a whole line on narrow phones */
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2);
+  }
 }

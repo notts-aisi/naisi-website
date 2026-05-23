@@ -33,10 +33,10 @@ type Node = {
 
 const LAYER_COUNT = 4;
 const PULSE_TRAVEL_MS = 700;
-const SPONT_FIRE_MS = 1800;     // mean interval between spontaneous input fires
-const CASCADE_INTENSITY_FLOOR = 0.25;
+const SPONT_FIRE_MS = 1100;     // shorter gap — keep the field feeling alive
+const CASCADE_INTENSITY_FLOOR = 0.22;
 const CASCADE_DEPTH_MAX = 2;
-const CASCADE_DECAY = 0.55;
+const CASCADE_DECAY = 0.6;       // slightly less decay so cascades feel decisive
 const CURSOR_RECOMPUTE_PX = 8;
 const CURSOR_FIRE_COOLDOWN_MS = 500;
 const CURSOR_FIRE_DIST = 70;
@@ -58,58 +58,93 @@ export default function HeroField() {
     let height = 0;
     let nodes: Node[] = [];
     let edges: Edge[] = [];
-    let accent = "#6a82ff";
     let scrollY = 0;
-
-    const readAccent = () => {
-      const v = getComputedStyle(canvas).getPropertyValue("--color-accent").trim();
-      if (v) accent = v;
-    };
+    // Node/edge/pulse colours now come from the heatmap based on
+    // activation; the accent token isn't needed at render time.
 
     /**
-     * Build a feed-forward layout: 4 vertical layers with N nodes each,
-     * edges between adjacent layers only. Layer x-positions are fixed
-     * fractions of the canvas width; nodes within a layer spaced
-     * vertically with a small jitter.
+     * Build a feed-forward layout: 4 layers with N nodes each, edges
+     * between adjacent layers only.
+     *
+     * Orientation auto-picks based on the aspect ratio:
+     *   - landscape / desktop (wider than tall): layers run LEFT → RIGHT,
+     *     nodes within a layer spread vertically. Signal flows rightward.
+     *   - portrait / mobile (taller than wide, or width < 600): layers
+     *     run TOP → BOTTOM, nodes within a layer spread horizontally.
+     *     Signal flows downward, matching the natural portrait reading.
      */
     const init = () => {
       nodes = [];
       edges = [];
 
-      // Layer sizes — input wider than the rest's tail.
-      const layerCounts = pickLayerCounts(width, height);
-      const layerX = [0.10, 0.36, 0.64, 0.90].map((f) => f * width);
+      const vertical = width < height || width < 600;
+      // Spread axis is where nodes within a layer fan out:
+      //   horizontal layout → spread along Y (use height as budget)
+      //   vertical layout   → spread along X (use width as budget)
+      const layerCounts = pickLayerCounts(vertical ? width : height);
+      const layerFractions = [0.10, 0.36, 0.64, 0.90];
 
       for (let l = 0; l < LAYER_COUNT; l++) {
         const count = layerCounts[l];
-        const padding = height * 0.12;
-        const usable = height - padding * 2;
-        const step = count > 1 ? usable / (count - 1) : 0;
-        for (let i = 0; i < count; i++) {
-          const baseY = padding + (count > 1 ? step * i : usable / 2);
-          const jitterX = (Math.random() - 0.5) * (width / 60);
-          const jitterY = (Math.random() - 0.5) * (step * 0.18);
-          const x = layerX[l] + jitterX;
-          const y = baseY + jitterY;
-          nodes.push({
-            x, y, vx: 0, vy: 0,
-            hx: x, hy: y,
-            layer: l,
-            outEdges: [],
-            activation: 0,
-          });
+        if (vertical) {
+          // Layer is a horizontal row at a specific Y. Nodes spread along X.
+          const padding = width * 0.10;
+          const usable = width - padding * 2;
+          const step = count > 1 ? usable / (count - 1) : 0;
+          const yPos = layerFractions[l] * height;
+          for (let i = 0; i < count; i++) {
+            const baseX = padding + (count > 1 ? step * i : usable / 2);
+            const jitterY = (Math.random() - 0.5) * (height / 60);
+            const jitterX = (Math.random() - 0.5) * (step * 0.18);
+            const x = baseX + jitterX;
+            const y = yPos + jitterY;
+            nodes.push({
+              x, y, vx: 0, vy: 0,
+              hx: x, hy: y,
+              layer: l,
+              outEdges: [],
+              activation: 0,
+            });
+          }
+        } else {
+          // Layer is a vertical column at a specific X. Nodes spread along Y.
+          const padding = height * 0.12;
+          const usable = height - padding * 2;
+          const step = count > 1 ? usable / (count - 1) : 0;
+          const xPos = layerFractions[l] * width;
+          for (let i = 0; i < count; i++) {
+            const baseY = padding + (count > 1 ? step * i : usable / 2);
+            const jitterX = (Math.random() - 0.5) * (width / 60);
+            const jitterY = (Math.random() - 0.5) * (step * 0.18);
+            const x = xPos + jitterX;
+            const y = baseY + jitterY;
+            nodes.push({
+              x, y, vx: 0, vy: 0,
+              hx: x, hy: y,
+              layer: l,
+              outEdges: [],
+              activation: 0,
+            });
+          }
         }
       }
 
       // Edges — each node connects to ~3 of the next layer's nodes.
-      // Picks the 3 nearest by vertical position for a less-tangled look.
+      // Picks the 3 nearest along the spread axis for a less-tangled look.
+      // (In horizontal layout that's Y distance; in vertical it's X.)
+      const vertical2 = width < height || width < 600;
       for (let l = 0; l < LAYER_COUNT - 1; l++) {
         const src = nodes.map((n, i) => ({ n, i })).filter((x) => x.n.layer === l);
         const dst = nodes.map((n, i) => ({ n, i })).filter((x) => x.n.layer === l + 1);
         for (const s of src) {
           const sorted = dst
-            .map((d) => ({ idx: d.i, dy: Math.abs(d.n.hy - s.n.hy) }))
-            .sort((a, b) => a.dy - b.dy)
+            .map((d) => ({
+              idx: d.i,
+              d: vertical2
+                ? Math.abs(d.n.hx - s.n.hx)
+                : Math.abs(d.n.hy - s.n.hy),
+            }))
+            .sort((a, b) => a.d - b.d)
             .slice(0, 3);
           for (const d of sorted) {
             const edgeIdx = edges.length;
@@ -130,7 +165,6 @@ export default function HeroField() {
       init();
     };
 
-    readAccent();
     resize();
 
     const ro = new ResizeObserver(() => resize());
@@ -267,8 +301,7 @@ export default function HeroField() {
 
       // Draw edges + advance pulses
       ctx.lineCap = "round";
-      ctx.lineWidth = 1;
-      const baseA = withAlpha(accent, 0.05);
+      ctx.lineWidth = 1.2;
 
       for (let i = 0; i < edges.length; i++) {
         const e = edges[i];
@@ -279,9 +312,12 @@ export default function HeroField() {
         const x2 = b.x;
         const y2 = b.y - parallax;
 
-        // Base line — dim
-        const edgeAlpha = 0.05 + Math.max(a.activation, b.activation) * 0.32;
-        ctx.strokeStyle = edgeAlpha === 0.05 ? baseA : withAlpha(accent, edgeAlpha);
+        // Edge colour = heatmap of the brighter endpoint. At rest both
+        // are 0, so edges read as cool NAISI blue. When a node fires,
+        // its outgoing edges warm up too — telling the signal story.
+        const endpointMax = Math.max(a.activation, b.activation);
+        const edgeAlpha = 0.14 + endpointMax * 0.55;
+        ctx.strokeStyle = heat(endpointMax, edgeAlpha);
         ctx.beginPath();
         ctx.moveTo(x1, y1);
         ctx.lineTo(x2, y2);
@@ -304,19 +340,22 @@ export default function HeroField() {
             const len = Math.sqrt(dx * dx + dy * dy) || 1;
             const ux = dx / len;
             const uy = dy / len;
-            const half = 9;
-            ctx.strokeStyle = withAlpha(accent, 0.9 * e.pulse.intensity);
-            ctx.lineWidth = 1.8;
+            const half = 12;
+            // Pulse colour reflects how hot the activation it carries is.
+            ctx.strokeStyle = heat(e.pulse.intensity, 1.0);
+            ctx.lineWidth = 2.4;
             ctx.beginPath();
             ctx.moveTo(px - ux * half, py - uy * half);
             ctx.lineTo(px + ux * half, py + uy * half);
             ctx.stroke();
-            ctx.lineWidth = 1;
+            ctx.lineWidth = 1.2;
           }
         }
       }
 
-      // Cursor virtual edges (only on hover, only to 3 nearest)
+      // Cursor virtual edges (only on hover, only to 3 nearest).
+      // Coloured by the nearest node's activation so the cursor's
+      // virtual links also follow the heatmap.
       if (!coarse && cachedCursorNeighbours.length && cursorX > -100) {
         for (let i = 0; i < cachedCursorNeighbours.length; i++) {
           const n = nodes[cachedCursorNeighbours[i]];
@@ -325,7 +364,7 @@ export default function HeroField() {
           const dist = Math.sqrt(dx * dx + dy * dy);
           const a = Math.max(0, 0.22 * (1 - dist / 200));
           if (a > 0.01) {
-            ctx.strokeStyle = withAlpha(accent, a);
+            ctx.strokeStyle = heat(n.activation, a);
             ctx.beginPath();
             ctx.moveTo(cursorX, cursorY);
             ctx.lineTo(n.x, n.y - parallax);
@@ -334,24 +373,33 @@ export default function HeroField() {
         }
       }
 
-      // Nodes — base dot, plus a halo arc if active (no shadowBlur — too slow)
+      // Nodes — base dot + halo if active. Colour by activation via the
+      // heatmap so a firing node visibly heats up from blue → red.
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
         const renderY = n.y - parallax;
 
-        // Halo for activated nodes (cheaper than shadowBlur)
-        if (n.activation > 0.08) {
-          const haloAlpha = n.activation * 0.45;
-          ctx.fillStyle = withAlpha(accent, haloAlpha);
+        // Halo for activated nodes — outer soft glow + inner ring at
+        // the node's current heatmap colour.
+        if (n.activation > 0.06) {
+          const haloAlpha = n.activation * 0.55;
+          ctx.fillStyle = heat(n.activation, haloAlpha * 0.4);
           ctx.beginPath();
-          ctx.arc(n.x, renderY, 4 + n.activation * 6, 0, Math.PI * 2);
+          ctx.arc(n.x, renderY, 7 + n.activation * 10, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = heat(n.activation, haloAlpha);
+          ctx.beginPath();
+          ctx.arc(n.x, renderY, 3 + n.activation * 5, 0, Math.PI * 2);
           ctx.fill();
         }
 
-        // Core dot
-        const radius = 1.6 + n.activation * 1.6;
-        const alpha = 0.4 + n.activation * 0.6;
-        ctx.fillStyle = withAlpha(accent, alpha);
+        // Core dot — heatmap colour matches activation. Resting nodes
+        // stay NAISI blue; firing ones warm through cyan / green /
+        // yellow / orange / red as they propagate.
+        const radius = 2 + n.activation * 1.8;
+        const alpha = 0.7 + n.activation * 0.3;
+        ctx.fillStyle = heat(n.activation, alpha);
         ctx.beginPath();
         ctx.arc(n.x, renderY, radius, 0, Math.PI * 2);
         ctx.fill();
@@ -399,19 +447,47 @@ export default function HeroField() {
  * Pick layer node counts based on viewport. Slimmer on mobile.
  * Returns 4 numbers for [input, hidden1, hidden2, output].
  */
-function pickLayerCounts(width: number, _height: number): number[] {
-  if (width < 480) return [4, 6, 6, 3];
-  if (width < 768) return [5, 8, 8, 4];
-  if (width < 1100) return [6, 10, 10, 5];
-  return [7, 12, 12, 6];
+/**
+ * Pick how many nodes go in each of the 4 layers based on the SPREAD
+ * AXIS dimension — the axis nodes fan out along. For horizontal
+ * orientation that's height; for vertical it's width. Pyramid shape:
+ * input + output are slimmer than the hidden layers.
+ */
+function pickLayerCounts(spreadAxis: number): number[] {
+  if (spreadAxis < 480) return [7, 12, 12, 6];
+  if (spreadAxis < 768) return [9, 16, 16, 8];
+  if (spreadAxis < 1100) return [11, 19, 19, 10];
+  return [13, 22, 22, 12];
 }
 
-function withAlpha(rgb: string, a: number): string {
-  if (rgb.startsWith("#") && rgb.length === 7) {
-    const r = parseInt(rgb.slice(1, 3), 16);
-    const g = parseInt(rgb.slice(3, 5), 16);
-    const b = parseInt(rgb.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${a})`;
+/**
+ * Heatmap colour for a 0..1 activation. Resting state is NAISI brand
+ * blue; activation warms up through cyan → green → yellow → orange →
+ * red so a firing node reads like a real NN activation visualisation.
+ * Returns rgba string at the given alpha.
+ */
+type RGB = [number, number, number];
+const HEATMAP: Array<[number, RGB]> = [
+  [0.00, [106, 130, 255]], // NAISI blue (rest)
+  [0.30, [34, 211, 238]],  // cyan
+  [0.55, [34, 197, 94]],   // green
+  [0.75, [234, 179, 8]],   // yellow
+  [0.90, [249, 115, 22]],  // orange
+  [1.00, [239, 68, 68]],   // red (peak activation)
+];
+function heat(t: number, a = 1): string {
+  const clamped = t < 0 ? 0 : t > 1 ? 1 : t;
+  for (let i = 0; i < HEATMAP.length - 1; i++) {
+    const [tA, cA] = HEATMAP[i];
+    const [tB, cB] = HEATMAP[i + 1];
+    if (clamped <= tB) {
+      const f = tB === tA ? 0 : (clamped - tA) / (tB - tA);
+      const r = Math.round(cA[0] + (cB[0] - cA[0]) * f);
+      const g = Math.round(cA[1] + (cB[1] - cA[1]) * f);
+      const b = Math.round(cA[2] + (cB[2] - cA[2]) * f);
+      return `rgba(${r}, ${g}, ${b}, ${a})`;
+    }
   }
-  return rgb;
+  const [r, g, b] = HEATMAP[HEATMAP.length - 1][1];
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
 }

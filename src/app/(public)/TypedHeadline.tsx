@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { motion } from "motion/react";
 import styles from "./TypedHeadline.module.css";
 
 type Props = {
-  /** Typed once as a blur-rise word stagger, then static. */
+  /** Word-by-word blur-to-focus reveal on load. Stays static after. */
   prefix?: string;
-  /** Typed char-by-char, underlined, deleted, looped. */
+  /** Typed char-by-char, underlined, deleted, looped forever. */
   accent?: string;
-  /** Delay before the prefix's first word starts revealing. */
+  /** Delay (s) before the prefix's first word begins revealing. */
   startDelayMs?: number;
 };
 
@@ -21,26 +22,24 @@ type Phase =
   | "deleting"
   | "pauseEmpty";
 
-const ACCENT_TYPE_FIRST_MS = 45; // first iteration types faster
-const ACCENT_TYPE_LOOP_MS = 70; // looped iterations slower
-const ACCENT_DELETE_MS = 40;
-const HOLD_MS = 2500;
-const PRE_UNDERLINE_MS = 300;
-const UN_UNDERLINE_MS = 250;
-const POST_DELETE_MS = 600;
+// Speeds tuned to feel like a deliberate typist, not a script.
+const ACCENT_TYPE_FIRST_MS = 95;
+const ACCENT_TYPE_LOOP_MS = 110;
+const ACCENT_DELETE_MS = 55;
+const HOLD_MS = 2800;
+const PRE_UNDERLINE_MS = 350;
+const UN_UNDERLINE_MS = 280;
+const POST_DELETE_MS = 750;
 
 /*
-  TypedHeadline owns the whole hero headline timeline.
+  Hero headline.
 
-  Prefix: split into words, each animates a blur-rise via CSS keyframe with
-  staggered delay. Lands once, stays static.
+  Prefix words use motion.span — motion handles paint timing, Safari
+  quirks, and reduced-motion automatically. Each word has its own
+  staggered delay calculated from the word index.
 
-  Accent: typed char-by-char by a setTimeout chain. Underline grows via CSS
-  class toggle. After the first iteration the loop only deletes and re-types.
-
-  Side effect: sets data-loaded="true" on its closest .heroInner ancestor
-  after mount, which CSS uses to animate the emblem, eyebrow, lede, and
-  CTAs in alongside the typing.
+  Accent text is JS-driven (typed char-by-char then looped). Caret is
+  a JSX child at the trailing edge so it follows each character.
 */
 export default function TypedHeadline({
   prefix = "Make AI go well.",
@@ -51,46 +50,36 @@ export default function TypedHeadline({
   const [phase, setPhase] = useState<Phase>("idle");
   const [underlineState, setUnderlineState] = useState<"hidden" | "growing" | "full" | "shrinking">("hidden");
   const [reduced, setReduced] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const firstTypePass = useRef(true);
-  const rootRef = useRef<HTMLHeadingElement>(null);
+  const [mounted, setMounted] = useState(false);
+  const [firstTypePass, setFirstTypePass] = useState(true);
 
-  // Honor reduced motion + mark the hero-inner as loaded so CSS keyframes can fire.
+  // Honor reduced motion and mark mounted so we can start the loop.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const reducedMatch = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     setReduced(reducedMatch);
-    setLoaded(true);
-
-    // Walk up to the .heroInner ancestor and mark it loaded so CSS keyframes fire.
-    let node: HTMLElement | null = rootRef.current;
-    while (node && !node.dataset.heroInner) node = node.parentElement;
-    if (node) node.dataset.loaded = "true";
+    setMounted(true);
   }, []);
 
-  // Drive the accent timeline.
+  // Kick the accent loop off after the prefix word-stagger lands.
   useEffect(() => {
-    if (!loaded || reduced) return;
-
-    // Wait for the prefix word-stagger to finish, then begin typing the accent.
+    if (!mounted || reduced) return;
     const prefixWordCount = prefix.split(/\s+/).filter(Boolean).length;
+    // Words start at startDelayMs and stagger 120ms apart; each
+    // animation takes ~700ms. Add 200ms breath after the last lands.
     const prefixDoneAt = startDelayMs + 700 + (prefixWordCount - 1) * 120 + 200;
+    const id = window.setTimeout(() => setPhase("typingAccent"), prefixDoneAt);
+    return () => window.clearTimeout(id);
+  }, [mounted, reduced, prefix, startDelayMs]);
 
-    const start = window.setTimeout(() => {
-      setPhase("typingAccent");
-    }, prefixDoneAt);
-
-    return () => window.clearTimeout(start);
-  }, [loaded, reduced, prefix, startDelayMs]);
-
-  // Phase machine.
+  // Accent phase machine.
   useEffect(() => {
-    if (!loaded || reduced) return;
+    if (!mounted || reduced) return;
     let timer = 0;
 
     if (phase === "typingAccent") {
       if (accentText.length < accent.length) {
-        const interval = firstTypePass.current ? ACCENT_TYPE_FIRST_MS : ACCENT_TYPE_LOOP_MS;
+        const interval = firstTypePass ? ACCENT_TYPE_FIRST_MS : ACCENT_TYPE_LOOP_MS;
         timer = window.setTimeout(() => {
           setAccentText(accent.slice(0, accentText.length + 1));
         }, interval + (Math.random() * 20 - 10));
@@ -117,21 +106,24 @@ export default function TypedHeadline({
           setAccentText(accent.slice(0, accentText.length - 1));
         }, ACCENT_DELETE_MS);
       } else {
-        firstTypePass.current = false;
+        setFirstTypePass(false);
         timer = window.setTimeout(() => setPhase("typingAccent"), POST_DELETE_MS);
       }
     }
 
     return () => window.clearTimeout(timer);
-  }, [phase, accentText, accent, loaded, reduced]);
+  }, [phase, accentText, accent, mounted, reduced, firstTypePass]);
 
-  if (!loaded || reduced) {
-    // SSR + reduced-motion: render static with underline visible.
+  // Static rendering for SSR + reduced motion. Same DOM shape as the
+  // dynamic version so hydration matches cleanly.
+  if (!mounted || reduced) {
     return (
-      <h1 ref={rootRef} className={`${styles.headline} ${styles.static}`}>
+      <h1 className={`${styles.headline} ${styles.static}`}>
         <span className={styles.srOnly}>{prefix} {accent}</span>
         <span aria-hidden="true" className={styles.prefix}>{prefix}</span>{" "}
-        <span aria-hidden="true" className={`${styles.accent} ${styles.underlineFull}`}>{accent}</span>
+        <span aria-hidden="true" className={`${styles.accent} ${styles.underlineFull}`}>
+          <span className={styles.accentText}>{accent}</span>
+        </span>
       </h1>
     );
   }
@@ -139,8 +131,6 @@ export default function TypedHeadline({
   const prefixWords = prefix.split(/(\s+)/);
   let wordIdx = -1;
 
-  // Caret is rendered as a JSX child at the trailing edge of the accent
-  // span so it visibly moves with each typed/deleted character.
   const showCaret =
     phase === "typingAccent" ||
     phase === "deleting" ||
@@ -158,25 +148,26 @@ export default function TypedHeadline({
       : "";
 
   return (
-    <h1 ref={rootRef} className={styles.headline}>
+    <h1 className={styles.headline}>
       <span className={styles.srOnly}>{prefix} {accent}</span>
       <span aria-hidden="true" className={styles.prefix}>
         {prefixWords.map((segment, i) => {
           if (/^\s+$/.test(segment)) return <span key={i}>{segment}</span>;
           wordIdx++;
+          const delaySec = (startDelayMs + wordIdx * 120) / 1000;
           return (
-            <span
+            <motion.span
               key={i}
               className={styles.prefixWord}
-              style={{
-                animationDelay: `${startDelayMs + wordIdx * 120}ms`,
-              }}
+              initial={{ opacity: 0, y: 18, filter: "blur(14px)" }}
+              animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+              transition={{ duration: 0.7, delay: delaySec, ease: [0.22, 0.61, 0.36, 1] }}
             >
               {segment}
-            </span>
+            </motion.span>
           );
         })}
-      </span>
+      </span>{" "}
       <span aria-hidden="true" className={`${styles.accent} ${underlineClass}`}>
         <span className={styles.accentText}>{accentText}</span>
         {showCaret && <span className={styles.caret}>|</span>}

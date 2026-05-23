@@ -30,58 +30,63 @@
   display: inline;
 }
 
-/* Each word starts blurred + below, then animates in via keyframe whose
-   animation-delay is set inline based on word index. */
+/* Each word's blur-to-focus rise is driven by motion in TypedHeadline.tsx.
+   Inline-block keeps the words measurable for transform/filter to work. */
 .prefixWord {
   display: inline-block;
-  opacity: 0;
-  filter: blur(14px);
-  transform: translateY(18px);
-  animation: prefix-rise 700ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
-}
-
-@keyframes prefix-rise {
-  to {
-    opacity: 1;
-    filter: blur(0);
-    transform: translateY(0);
-  }
 }
 
 .accent {
   position: relative;
   display: inline-block;
-  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  /* Reserve width so the heading doesn't jitter as chars appear/disappear.
-     9.5em fits "From Nottingham." with breathing room at the largest size. */
+  /*
+    Reserve width so the heading doesn't jitter as chars appear /
+    disappear during the type/delete loop. The reserved space stays
+    invisible; only the .accentText below carries the typed glyphs.
+  */
   min-width: 9.5em;
 }
 
-.accent::after {
+/*
+  The actual typed text. Wraps the visible characters so the gradient
+  + underline hug the real text width rather than the reserved 9.5em.
+
+  Electric-blue gradient — punchier than the NAISI accent token gives
+  on its own. Reads cleanly against the aurora shader.
+*/
+.accentText {
+  position: relative;
+  display: inline-block;
+  background: linear-gradient(120deg, #4d8eff, #22d3ee 70%, #5cf3ff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.accentText::after {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
-  bottom: -0.06em;
-  height: 0.08em;
-  background: linear-gradient(90deg, var(--color-accent), var(--color-accent-hover));
+  bottom: -0.08em;
+  height: 0.09em;
+  background: linear-gradient(90deg, #4d8eff, #22d3ee 60%, #5cf3ff);
   border-radius: 2px;
   transform: scaleX(0);
   transform-origin: left center;
   opacity: 0;
+  /* The text-clip on .accentText doesn't affect ::after, so the
+     underline renders solid colour as intended. */
 }
 
-.underlineGrowing::after {
+.underlineGrowing .accentText::after {
   animation: underline-grow 350ms ease-out forwards;
 }
-.underlineFull::after {
+.underlineFull .accentText::after {
   transform: scaleX(1);
   opacity: 1;
 }
-.underlineShrinking::after {
+.underlineShrinking .accentText::after {
   animation: underline-shrink 250ms ease-in forwards;
 }
 
@@ -97,21 +102,16 @@
 /*
   Caret: rendered as a JSX child at the trailing edge of the accent
   text so it follows each typed/deleted character. Blinks at 1s.
+  Electric-blue solid colour for legibility against the shader.
 */
 .caret {
   display: inline-block;
   margin-left: 0.04em;
-  color: var(--color-accent);
+  color: #22d3ee;
   font-weight: 400;
-  /* Don't apply the gradient text-clip; keep solid colour for legibility */
-  -webkit-background-clip: initial;
-  background-clip: initial;
-  background: none;
+  /* Caret sits as a sibling of .accentText, not inside it, so
+     the gradient text-clip doesn't affect it. */
   animation: caret-blink 1s steps(2) infinite;
-}
-
-.accentText {
-  display: inline;
 }
 
 @keyframes caret-blink {

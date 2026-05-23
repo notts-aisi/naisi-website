@@ -3,6 +3,9 @@ import SubscribeForm from "@/components/SubscribeForm";
 import ReadingListAccordion from "@/components/ReadingListAccordion";
 import { READING_LISTS } from "@/content/readingLists";
 import HeroAtmosphere from "./HeroAtmosphere";
+import HeroEmblem from "./HeroEmblem";
+import HeroEyebrow from "./HeroEyebrow";
+import HeroLede from "./HeroLede";
 import TypedHeadline from "./TypedHeadline";
 import HeroCTAs from "./HeroCTAs";
 import AwardBadge from "./AwardBadge";
@@ -39,32 +42,22 @@ export default function Landing() {
     <>
       <section className={styles.hero} data-hero="true">
         <HeroAtmosphere />
-        <div className={`container ${styles.heroInner}`} data-hero-inner="true">
-          <AwardBadge />
+        <div className={`container ${styles.heroInner}`}>
           {/* heroArt is first in source order so it renders at the top of
               the flex column on mobile (where it un-absolutes). On desktop
               it is absolute-positioned to the right and source order is
               irrelevant — see landing.module.css. */}
-          <div className={styles.heroArt} aria-hidden="true">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/brand/naisi-emblem.png"
-              alt=""
-              width={180}
-              height={220}
-            />
-          </div>
-          <p className={styles.eyebrow}>
-            University of Nottingham · AI Safety
-          </p>
+          <HeroEmblem />
+          <HeroEyebrow>University of Nottingham · AI Safety</HeroEyebrow>
           <TypedHeadline prefix="Make AI go well." accent="From Nottingham." startDelayMs={500} />
-          <p className={styles.lede}>
+          <HeroLede>
             NAISI is the AI safety student group at the University of
             Nottingham. We run a termly fellowship in two streams, technical
             alignment and AI governance, and meet weekly to read, discuss,
             and build.
-          </p>
+          </HeroLede>
           <HeroCTAs />
+          <AwardBadge />
         </div>
       </section>
 
