@@ -148,18 +148,11 @@ export default function Landing() {
               <div className={styles.tierHead}>
                 <h3 className={styles.tierName}>Fellowships</h3>
                 <span className={styles.tierMeta}>
-                  Six to seven weeks · ~5 hrs/week · certificate
+                  ~7 weeks · ~5 hrs/week · certificate
                 </span>
               </div>
               <p className={styles.tierBody}>
                 Two parallel cohorts, technical and governance, built on{" "}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/brand/bluedot-logo.png"
-                  alt=""
-                  className={styles.inlineLogo}
-                  aria-hidden="true"
-                />
                 <a
                   href="https://aisafetyfundamentals.com/"
                   target="_blank"

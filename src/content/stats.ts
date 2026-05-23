@@ -16,7 +16,7 @@ export type Stat = {
 };
 
 export const STATS: Stat[] = [
-  { value: "120+", label: "Members" },
+  { value: "30+", label: "Members" },
   { value: "4", label: "Fellowships run" },
   { value: "30+", label: "Events hosted" },
 ];

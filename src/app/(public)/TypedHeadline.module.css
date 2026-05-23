@@ -95,18 +95,23 @@
 }
 
 /*
-  Caret: an inline pseudo-element on the active span. It blinks at 1s.
-  We attach it to the accent span by default since the prefix doesn't
-  use it (the prefix is revealed via word-stagger, not char-typing).
+  Caret: rendered as a JSX child at the trailing edge of the accent
+  text so it follows each typed/deleted character. Blinks at 1s.
 */
-.cursorOnAccent .accent::before {
-  content: "|";
-  position: relative;
-  display: inline;
-  margin-right: 0.05em;
+.caret {
+  display: inline-block;
+  margin-left: 0.04em;
   color: var(--color-accent);
   font-weight: 400;
+  /* Don't apply the gradient text-clip; keep solid colour for legibility */
+  -webkit-background-clip: initial;
+  background-clip: initial;
+  background: none;
   animation: caret-blink 1s steps(2) infinite;
+}
+
+.accentText {
+  display: inline;
 }
 
 @keyframes caret-blink {
@@ -129,7 +134,7 @@
     transform: none !important;
     animation: none !important;
   }
-  .cursorOnAccent .accent::before { animation: none; opacity: 0; }
+  .caret { animation: none; display: none; }
   .accent::after {
     transform: scaleX(1);
     opacity: 1;
