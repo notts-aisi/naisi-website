@@ -1,0 +1,121 @@
+.section {
+  padding-block: var(--space-12);
+  border-top: 1px solid var(--color-border);
+}
+
+.inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  max-width: 56rem;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.heading {
+  font-size: clamp(1.75rem, 3vw, 2.25rem);
+  letter-spacing: -0.015em;
+  font-weight: 700;
+  margin: 0;
+  display: inline-block;
+}
+
+.blurb {
+  font-size: var(--text-base);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.grid {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--space-4);
+}
+
+.itemWrap { perspective: 900px; }
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-5);
+  min-height: 8rem;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, var(--color-bg-elevated), var(--color-surface));
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  text-decoration: none;
+  box-shadow:
+    0 3px 0 var(--btn3d-edge),
+    0 10px 22px rgba(0, 0, 0, 0.22);
+  transition:
+    transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    box-shadow 220ms ease,
+    border-color 220ms ease,
+    background 220ms ease;
+  transform-style: preserve-3d;
+}
+.card:hover {
+  border-color: var(--color-accent);
+  box-shadow:
+    0 5px 0 var(--btn3d-edge),
+    0 16px 32px rgba(0, 0, 0, 0.32);
+}
+
+.platform {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-text-muted);
+  transform: translateZ(8px);
+}
+
+.primary {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+  margin-top: var(--space-1);
+  transform: translateZ(15px);
+}
+
+.description {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: 1.45;
+  margin-top: var(--space-2);
+  transform: translateZ(5px);
+}
+
+.arrow {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  font-size: 1.25rem;
+  color: var(--color-text-muted);
+  transition: transform 200ms ease, color 200ms ease;
+  transform: translateZ(20px);
+}
+.card:hover .arrow {
+  color: var(--color-accent);
+  transform: translateZ(20px) translateX(2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card { transform: none !important; }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

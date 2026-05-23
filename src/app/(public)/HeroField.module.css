@@ -1,0 +1,11 @@
+.canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* Node count is dynamically reduced based on (width * height) / 12000
+     with a floor of 24. No CSS override needed. */
+}

@@ -1,0 +1,42 @@
+.roll {
+  display: inline-flex;
+  align-items: baseline;
+  font-variant-numeric: tabular-nums;
+}
+
+.barrel {
+  display: inline-block;
+  overflow: hidden;
+  height: 1em;
+  line-height: 1;
+  vertical-align: top;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  transform: translateY(0);
+  transition: transform 1400ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition-delay: var(--barrel-delay, 0ms);
+}
+
+.column.settled {
+  /* Each digit row is 1em; translate to bring `--target` row to the top. */
+  transform: translateY(calc(var(--target) * -1em));
+}
+
+.digit {
+  display: block;
+  height: 1em;
+  line-height: 1;
+}
+
+.suffix {
+  margin-left: 0.05em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .column {
+    transition: none;
+  }
+}

@@ -2,27 +2,45 @@ import Link from "next/link";
 import SubscribeForm from "@/components/SubscribeForm";
 import ReadingListAccordion from "@/components/ReadingListAccordion";
 import { READING_LISTS } from "@/content/readingLists";
+import HeroAtmosphere from "./HeroAtmosphere";
+import TypedHeadline from "./TypedHeadline";
+import HeroCTAs from "./HeroCTAs";
+import AwardBadge from "./AwardBadge";
+import StatsRow from "./StatsRow";
+import UpcomingEvents from "./UpcomingEvents";
+import InstagramCarousel from "./InstagramCarousel";
+import ElsewhereRow from "./ElsewhereRow";
+import CommitteePreview from "./CommitteePreview";
+import FellowQuotes from "./FellowQuotes";
+import Reveal from "./Reveal";
 import styles from "./landing.module.css";
 
 /**
- * Public landing page. Editorial-first: prose paragraphs and curated lists,
- * not Badge-eyebrow-h2-grid cards. Sections, top to bottom:
+ * Public landing page. Sections, top to bottom:
  *
- *  1. Hero. Brand statement + two CTAs.
- *  2. About. Brief framing + a reference to the three tiers below.
- *  3. "Three ways in." Socials, fellowships, research pathway. Each tier
- *     names its commitment level and links to the right next step.
- *  4. "Where to start" reading lists. Four curated lists, collapsible,
- *     closed by default. The page's substance for self-starters.
- *  5. "Stay in touch" signup. One form, name + email + checkboxes for the
- *     two lists (the newsletter and event announcements).
+ *  1. Hero — three-layer atmosphere (aurora shader + neural-activation
+ *     field + sparkles) under a choreographed headline (blur-rise prefix
+ *     + typed/looping accent), magnetic 3D CTAs, UONSU Activities Awards
+ *     2026 "Newcomer of the Year" badge.
+ *  2. By the numbers — stats strip with rolodex digit-roll.
+ *  3. About. Brief framing + a reference to the three tiers below.
+ *  4. "Three ways in." Socials (with £6 SU link inline), fellowships (with
+ *     BlueDot logo inline), research incubator.
+ *  5. Upcoming. Next 2-3 public events pulled from Firestore. Hides if empty.
+ *  6. Where to start — curated reading lists.
+ *  7. From the gram — Instagram carousel (hides if empty content file).
+ *  8. Elsewhere — Substack / Linktree / SU membership link cards.
+ *  9. Run by students — committee preview (dev-only via env flag).
+ * 10. Stay in touch — subscribe form.
  */
 
 export default function Landing() {
   return (
     <>
-      <section className={styles.hero}>
-        <div className={`container ${styles.heroInner}`}>
+      <section className={styles.hero} data-hero="true">
+        <HeroAtmosphere />
+        <div className={`container ${styles.heroInner}`} data-hero-inner="true">
+          <AwardBadge />
           {/* heroArt is first in source order so it renders at the top of
               the flex column on mobile (where it un-absolutes). On desktop
               it is absolute-positioned to the right and source order is
@@ -39,28 +57,20 @@ export default function Landing() {
           <p className={styles.eyebrow}>
             University of Nottingham · AI Safety
           </p>
-          <h1 className={styles.title}>
-            Make AI go well.{" "}
-            <span className={styles.titleAccent}>From Nottingham.</span>
-          </h1>
+          <TypedHeadline prefix="Make AI go well." accent="From Nottingham." startDelayMs={500} />
           <p className={styles.lede}>
             NAISI is the AI safety student group at the University of
             Nottingham. We run a termly fellowship in two streams, technical
             alignment and AI governance, and meet weekly to read, discuss,
             and build.
           </p>
-          <div className={styles.ctas}>
-            <Link href="/register" className={styles.primaryCta}>
-              Apply to join
-            </Link>
-            <Link href="#stay-in-touch" className={styles.secondaryCta}>
-              Get the newsletter →
-            </Link>
-          </div>
+          <HeroCTAs />
         </div>
       </section>
 
-      <section className={styles.aboutSection}>
+      <StatsRow />
+
+      <Reveal variant="blur-rise" as="section" className={styles.aboutSection}>
         <div className={`container ${styles.aboutInner}`}>
           <p className={styles.aboutLead}>
             AI Safety is one of the biggest challenges and opportunities of
@@ -74,15 +84,17 @@ export default function Landing() {
             </Link>{" "}
             before joining the community properly. There are three ways to
             take part, stacked by commitment: the socials, the fellowships,
-            and the research pathway.
+            and the research incubator.
           </p>
         </div>
-      </section>
+      </Reveal>
 
       <section className={styles.tiersSection}>
         <div className={`container ${styles.tiersInner}`}>
           <header className={styles.tiersHead}>
-            <h2 className={styles.tiersTitle}>Three ways to take part.</h2>
+            <Reveal variant="mask-wipe" as="h2" className={styles.tiersTitle}>
+              Three ways to take part.
+            </Reveal>
             <p className={styles.tiersBlurb}>
               Pick the level of commitment that matches where you are.
               You&apos;re welcome wherever you feel you fit best.{" "}
@@ -97,7 +109,7 @@ export default function Landing() {
               if you want to come to an event but you&apos;re unsure.
             </p>
           </header>
-          <ol className={styles.tiersList}>
+          <Reveal variant="tilt-in" staggerChildren staggerMs={110} as="ol" className={styles.tiersList}>
             <li className={styles.tier}>
               <div className={styles.tierHead}>
                 <h3 className={styles.tierName}>Socials</h3>
@@ -114,7 +126,16 @@ export default function Landing() {
               </p>
               <p className={styles.tierBody}>
                 Your first social is on us. Come once before you decide
-                whether to pay for membership.
+                whether to{" "}
+                <a
+                  href="https://su.nottingham.ac.uk/activities/view/NottsAISafety"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className={styles.inlineLink}
+                >
+                  become an SU member (£6/year)
+                </a>{" "}
+                — that&apos;s what gets you onto the official roster.
               </p>
               <p className={styles.tierFooter}>
                 <Link href="/events" className={styles.inlineLink}>
@@ -132,6 +153,13 @@ export default function Landing() {
               </div>
               <p className={styles.tierBody}>
                 Two parallel cohorts, technical and governance, built on{" "}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/brand/bluedot-logo.png"
+                  alt=""
+                  className={styles.inlineLogo}
+                  aria-hidden="true"
+                />
                 <a
                   href="https://aisafetyfundamentals.com/"
                   target="_blank"
@@ -146,6 +174,7 @@ export default function Landing() {
                 required. You leave with a certificate and a finished
                 project to point at.
               </p>
+              <FellowQuotes />
               <p className={styles.tierFooter}>
                 <Link href="/register" className={styles.inlineLink}>
                   Apply for the next cohort →
@@ -155,28 +184,32 @@ export default function Landing() {
 
             <li className={styles.tier}>
               <div className={styles.tierHead}>
-                <h3 className={styles.tierName}>Research pathway</h3>
+                <h3 className={styles.tierName}>Research incubator</h3>
                 <span className={styles.tierMeta}>
                   Upcoming · fellowship-completer level
                 </span>
               </div>
               <p className={styles.tierBody}>
                 For anyone who has finished a fellowship (ours or
-                comparable self-study). A guided research pipeline:
+                comparable self-study). A guided research incubator:
                 ideation, grouping, supervised research, writeup. The aim
                 is to walk you from &ldquo;I have a question&rdquo; to a piece of work
                 you could submit, present, or build on. We&apos;re standing
                 this up; expressions of interest are welcome now.
               </p>
             </li>
-          </ol>
+          </Reveal>
         </div>
       </section>
+
+      <UpcomingEvents />
 
       <section className={styles.readingSection}>
         <div className={`container ${styles.readingInner}`}>
           <header className={styles.readingHead}>
-            <h2 className={styles.readingTitle}>Where to start.</h2>
+            <Reveal variant="mask-wipe" as="h2" className={styles.readingTitle}>
+              Where to start.
+            </Reveal>
             <p className={styles.readingBlurb}>
               Four short reading lists curated by the committee. The same
               things we hand a new fellow on day one. Tap a list to expand
@@ -184,15 +217,21 @@ export default function Landing() {
               want to know.
             </p>
           </header>
-          <div className={styles.readingStack}>
+          <Reveal variant="fade-rise" staggerChildren staggerMs={80} as="div" className={styles.readingStack}>
             {READING_LISTS.map((list) => (
               <ReadingListAccordion key={list.slug} list={list} />
             ))}
-          </div>
+          </Reveal>
         </div>
       </section>
 
-      <section id="stay-in-touch" className={styles.digestSection}>
+      <InstagramCarousel />
+
+      <ElsewhereRow />
+
+      <CommitteePreview />
+
+      <Reveal variant="blur-rise" as="section" id="stay-in-touch" className={styles.digestSection}>
         <div className={`container ${styles.digestInner}`}>
           <div className={styles.digestPitch}>
             <h2 className={styles.digestTitle}>Stay in touch.</h2>
@@ -230,7 +269,7 @@ export default function Landing() {
             />
           </div>
         </div>
-      </section>
+      </Reveal>
     </>
   );
 }

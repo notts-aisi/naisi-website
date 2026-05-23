@@ -1,0 +1,114 @@
+.section {
+  padding-block: var(--space-12);
+  border-top: 1px solid var(--color-border);
+}
+
+.inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  max-width: 56rem;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.heading {
+  font-size: clamp(1.5rem, 2.5vw, 1.875rem);
+  letter-spacing: -0.015em;
+  font-weight: 700;
+  margin: 0;
+  display: inline-block;
+}
+
+.blurb {
+  font-size: var(--text-base);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.allLink {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+.allLink:hover { text-decoration: underline; }
+
+.grid {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr));
+  gap: var(--space-4);
+}
+
+.itemWrap { display: contents; }
+
+.card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  text-decoration: none;
+  color: var(--color-text);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  transition: background 160ms ease;
+}
+.card:hover {
+  background: var(--color-surface-hover);
+}
+
+.avatarWrap {
+  width: 4rem;
+  height: 4rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.avatar {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatarFallback {
+  font-size: 1.5rem;
+  color: var(--color-text-subtle);
+}
+
+.name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.title {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  text-align: center;
+  line-height: 1.2;
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(6rem, 1fr));
+  }
+}
+
+@media (max-width: 36rem) { /* --bp-sm */
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(5rem, 1fr));
+  }
+  .avatarWrap { width: 3.5rem; height: 3.5rem; }
+}

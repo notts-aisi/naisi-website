@@ -1,0 +1,30 @@
+.list {
+  list-style: none;
+  padding: 0;
+  margin: var(--space-4) 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  border-left: 2px solid var(--color-accent);
+  padding-left: var(--space-4);
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.quote {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: 1.5;
+  color: var(--color-text);
+  font-style: italic;
+}
+
+.attribution {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
