@@ -3,12 +3,17 @@ import SubscribeForm from "@/components/SubscribeForm";
 import ReadingListAccordion from "@/components/ReadingListAccordion";
 import { READING_LISTS } from "@/content/readingLists";
 import HeroAtmosphere from "./HeroAtmosphere";
-import HeroEmblem from "./HeroEmblem";
+import HeroAurora from "./HeroAurora";
+import HeroFieldTfStyle from "./HeroFieldTfStyle";
+import HeroFieldParticles from "./HeroFieldParticles";
+import HeroFieldImpulses from "./HeroFieldImpulses";
+import HeroOption from "./HeroOption";
 import HeroEyebrow from "./HeroEyebrow";
 import HeroLede from "./HeroLede";
+import MobileTagline from "./MobileTagline";
 import TypedHeadline from "./TypedHeadline";
 import HeroCTAs from "./HeroCTAs";
-import AwardBadge from "./AwardBadge";
+import CredentialsBar from "./CredentialsBar";
 import StatsRow from "./StatsRow";
 import UpcomingEvents from "./UpcomingEvents";
 import InstagramCarousel from "./InstagramCarousel";
@@ -40,15 +45,41 @@ import styles from "./landing.module.css";
 export default function Landing() {
   return (
     <>
+      {/*
+        TEMPORARY: 4 stacked background options for the hero. Scroll through
+        and pick one. After picking, the four <HeroOption> blocks come out
+        and the chosen background gets wired into <HeroAtmosphere />.
+      */}
+      <HeroOption
+        num={1}
+        name="TensorFlow Playground style"
+        description="Each neuron coloured by value — orange = negative, blue = positive. Connection weights coloured the same way. Activation waves propagate forward then fade. Meaningful, restrained, no flying streaks."
+        background={<HeroFieldTfStyle />}
+      />
+      <HeroOption
+        num={2}
+        name="Subtle particle network"
+        description="No layers, no NN pretence. Floating particles + soft connections in NAISI blue. Cursor reactive. The aesthetic most AI lab landing pages reach for — it's hard to mess up."
+        background={<HeroFieldParticles />}
+      />
+      <HeroOption
+        num={3}
+        name="Aurora only (no NN overlay)"
+        description="Drop the network entirely. The WebGL aurora shader carries the hero alone. Simplest. Loses the explicit AI-safety visual specificity but removes any risk of the NN looking bad."
+        background={<HeroAurora />}
+      />
+      <HeroOption
+        num={4}
+        name="Subtle traveling impulses (towc-style)"
+        description="Layered NN, but rendered calmly: small dots travel along edges (no streaks, no rainbow, no white core), per-node tint variance for organic feel. Monochrome NAISI accent."
+        background={<HeroFieldImpulses />}
+      />
+
       <section className={styles.hero} data-hero="true">
         <HeroAtmosphere />
         <div className={`container ${styles.heroInner}`}>
-          {/* heroArt is first in source order so it renders at the top of
-              the flex column on mobile (where it un-absolutes). On desktop
-              it is absolute-positioned to the right and source order is
-              irrelevant — see landing.module.css. */}
-          <HeroEmblem />
           <HeroEyebrow />
+          <MobileTagline />
           <TypedHeadline prefix="Make AI go well." accent="From Nottingham." startDelayMs={500} />
           <HeroLede>
             NAISI is the AI safety student group at the University of
@@ -57,11 +88,12 @@ export default function Landing() {
             and build.
           </HeroLede>
           <HeroCTAs />
-          <AwardBadge />
         </div>
       </section>
 
       <StatsRow />
+
+      <CredentialsBar />
 
       <Reveal variant="blur-rise" as="section" className={styles.aboutSection}>
         <div className={`container ${styles.aboutInner}`}>

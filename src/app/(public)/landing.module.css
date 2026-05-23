@@ -85,6 +85,28 @@
   filter: drop-shadow(0 1px 6px rgba(0, 0, 0, 0.55));
 }
 
+/*
+  Mobile-only tagline — shows below the UoN logo in the hero, hidden on
+  desktop where the headline + UoN logo + emblem-below-stats carry enough
+  identity on their own.
+*/
+.mobileTagline {
+  display: none;
+  font-family: var(--font-space-grotesk), var(--font-sans);
+  font-size: var(--text-base);
+  font-weight: 700;
+  letter-spacing: 0.005em;
+  color: #22d3ee;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.55);
+  margin: 0;
+}
+
+@media (max-width: 60rem) { /* --bp-lg */
+  .mobileTagline {
+    display: block;
+  }
+}
+
 .lede {
   /*
     Lifted from --color-text-muted (#8b94ac) to a brighter value with
