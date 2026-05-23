@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import BrandMark from "@/components/BrandMark";
+import Drawer from "@/components/ui/Drawer";
 import { useAuth } from "@/auth/AuthProvider";
 import { exitImpersonation } from "@/auth/impersonation";
 import { signOut } from "@/auth/signInWithGoogle";
@@ -82,6 +83,8 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+const NAV_DRAWER_ID = "app-nav-drawer";
+
 export default function AppShell({
   children,
   impersonation,
@@ -94,6 +97,7 @@ export default function AppShell({
   const { user, role, permissions, suRecognised, loading } = useAuth();
   const pendingCount = usePendingCount();
   const [exiting, setExiting] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // [monitor] Track AppShell lifecycle. The "stays-on-/login" symptom can
   // show up here as either (a) AppShell mounts on the destination but
@@ -130,6 +134,17 @@ export default function AppShell({
     return () => clearTimeout(t);
   }, [loading, pathname, user, role]);
 
+  // Close the mobile drawer whenever the route changes. Catches back-button
+  // navigations and any other path change not initiated by a drawer link tap
+  // (links also call setDrawerOpen(false) on click, this is the safety net).
+  // The set-state-in-effect rule doesn't apply cleanly here — we're reacting
+  // to an external router state change but pathname doesn't expose a
+  // subscribe API the way useSyncExternalStore expects.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDrawerOpen(false);
+  }, [pathname]);
+
   async function handleExitImpersonation() {
     setExiting(true);
     try {
@@ -157,6 +172,49 @@ export default function AppShell({
     router.push("/");
   }
 
+  // Shared nav body — rendered both inside the desktop sidebar and inside
+  // the mobile drawer so role-conditional rules and the pending-count
+  // badge stay single-sourced.
+  const renderNav = (onLinkClick?: () => void): ReactNode => (
+    <nav className={styles.nav}>
+      {visibleGroups.map((group, gi) => (
+        <div
+          key={group.label ?? `group-${gi}`}
+          className={`${styles.navGroup} ${gi === 0 ? "" : styles.navGroupSpaced}`}
+        >
+          {group.label && <div className={styles.navGroupLabel}>{group.label}</div>}
+          {group.items.map((item) => {
+            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+            const showBadge = item.href === "/admin" && pendingCount > 0;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`${styles.navLink} ${active ? styles.active : ""}`}
+                onClick={onLinkClick}
+              >
+                <span>{item.label}</span>
+                {showBadge && <span className={styles.navBadge}>{pendingCount}</span>}
+              </Link>
+            );
+          })}
+        </div>
+      ))}
+    </nav>
+  );
+
+  const renderUserBlock = (): ReactNode => (
+    <div className={styles.userBlock}>
+      <div className={styles.userName}>
+        {user?.displayName ?? user?.email ?? "Signed in"}
+      </div>
+      {role && <div className={styles.userRole}>{role}</div>}
+      <button onClick={handleSignOut} className={styles.signOut}>
+        Sign out
+      </button>
+    </div>
+  );
+
   // Gate the entire authed UI on auth+role+permissions being ready. Otherwise
   // on a fresh navigation the server-rendered HTML (which has full auth context
   // via getCurrentUser in the layout) hydrates against a client AuthProvider
@@ -165,114 +223,115 @@ export default function AppShell({
   // permission-gated content appearing and disappearing.
   if (loading) {
     return (
-      <div className={styles.shell}>
-        <aside className={styles.sidebar} aria-label="Primary">
-          <div className={styles.brand}>
+      <>
+        <div className={styles.topStrip} aria-hidden>
+          <div className={styles.topStripBrand}>
             <BrandMark size={28} />
           </div>
-          <nav className={styles.nav} aria-hidden>
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className={styles.navSkeleton} />
-            ))}
-          </nav>
-        </aside>
-        <main className={styles.main}>
-          <div className={styles.loadingPane} role="status" aria-live="polite">
-            <span className={styles.spinner} aria-hidden />
-            <span className={styles.loadingText}>Loading your workspace…</span>
-          </div>
-        </main>
-      </div>
+        </div>
+        <div className={styles.shell}>
+          <aside className={styles.sidebar} aria-label="Primary">
+            <div className={styles.brand}>
+              <BrandMark size={28} />
+            </div>
+            <nav className={styles.nav} aria-hidden>
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className={styles.navSkeleton} />
+              ))}
+            </nav>
+          </aside>
+          <main className={styles.main}>
+            <div className={styles.loadingPane} role="status" aria-live="polite">
+              <span className={styles.spinner} aria-hidden />
+              <span className={styles.loadingText}>Loading your workspace…</span>
+            </div>
+          </main>
+        </div>
+      </>
     );
   }
 
   return (
-    <div className={styles.shell}>
-      <aside className={styles.sidebar} aria-label="Primary">
-        <div className={styles.brand}>
-          <Link href="/" aria-label="NAISI home">
-            <BrandMark size={28} />
-          </Link>
-        </div>
-        <nav className={styles.nav}>
-          {visibleGroups.map((group, gi) => (
-            <div
-              key={group.label ?? `group-${gi}`}
-              style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)", marginTop: gi === 0 ? 0 : "var(--space-3)" }}
+    <>
+      <div className={styles.topStrip}>
+        <Link href="/" className={styles.topStripBrand} aria-label="NAISI home">
+          <BrandMark size={28} />
+        </Link>
+        <button
+          type="button"
+          className={styles.hamburger}
+          aria-label={drawerOpen ? "Close menu" : "Open menu"}
+          aria-expanded={drawerOpen}
+          aria-controls={NAV_DRAWER_ID}
+          onClick={() => setDrawerOpen(true)}
+        >
+          <span className={styles.menuIcon} aria-hidden>
+            <span />
+            <span />
+            <span />
+          </span>
+          {pendingCount > 0 && (
+            <span
+              className={styles.hamburgerBadge}
+              aria-label={`${pendingCount} pending approval${pendingCount === 1 ? "" : "s"}`}
             >
-              {group.label && (
-                <div
-                  style={{
-                    fontSize: "var(--text-xs)",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    color: "var(--color-text-subtle)",
-                    padding: "0 var(--space-3)",
-                    marginBottom: "var(--space-1)",
-                  }}
-                >
-                  {group.label}
-                </div>
-              )}
-              {group.items.map((item) => {
-                const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-                const showBadge = item.href === "/admin" && pendingCount > 0;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`${styles.navLink} ${active ? styles.active : ""}`}
-                  >
-                    <span>{item.label}</span>
-                    {showBadge && <span className={styles.navBadge}>{pendingCount}</span>}
-                  </Link>
-                );
-              })}
-            </div>
-          ))}
-        </nav>
-        <div className={styles.userBlock}>
-          <div style={{ fontSize: "var(--text-sm)", fontWeight: 500 }}>
-            {user?.displayName ?? user?.email ?? "Signed in"}
+              {pendingCount}
+            </span>
+          )}
+        </button>
+      </div>
+      <div className={styles.shell}>
+        <aside className={styles.sidebar} aria-label="Primary">
+          <div className={styles.brand}>
+            <Link href="/" aria-label="NAISI home">
+              <BrandMark size={28} />
+            </Link>
           </div>
-          {role && (
-            <div style={{ fontSize: "var(--text-xs)", color: "var(--color-text-muted)", textTransform: "capitalize" }}>
-              {role}
+          {renderNav()}
+          {renderUserBlock()}
+        </aside>
+        <main className={styles.main}>
+          {impersonation && (
+            <div
+              className={styles.impersonationBanner}
+              role="status"
+              aria-live="polite"
+            >
+              <span className={styles.impersonationText}>
+                <strong>Viewing as {impersonation.targetName}</strong>{" "}
+                <span className={styles.impersonationRole}>
+                  ({impersonation.targetRole})
+                </span>
+                <span className={styles.impersonationWarn}>
+                  {" — "}any actions you take will be recorded as this member.
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={handleExitImpersonation}
+                disabled={exiting}
+                className={styles.impersonationExit}
+              >
+                {exiting ? "Exiting…" : "Exit view-as"}
+              </button>
             </div>
           )}
-          <button onClick={handleSignOut} className={styles.signOut}>
-            Sign out
-          </button>
+          {children}
+        </main>
+      </div>
+      <Drawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        id={NAV_DRAWER_ID}
+        ariaLabel="App navigation"
+        closeAboveRem={60}
+      >
+        <div className={styles.drawerBrand}>
+          <BrandMark size={32} />
         </div>
-      </aside>
-      <main className={styles.main}>
-        {impersonation && (
-          <div
-            className={styles.impersonationBanner}
-            role="status"
-            aria-live="polite"
-          >
-            <span className={styles.impersonationText}>
-              <strong>Viewing as {impersonation.targetName}</strong>{" "}
-              <span className={styles.impersonationRole}>
-                ({impersonation.targetRole})
-              </span>
-              <span className={styles.impersonationWarn}>
-                {" — "}any actions you take will be recorded as this member.
-              </span>
-            </span>
-            <button
-              type="button"
-              onClick={handleExitImpersonation}
-              disabled={exiting}
-              className={styles.impersonationExit}
-            >
-              {exiting ? "Exiting…" : "Exit view-as"}
-            </button>
-          </div>
-        )}
-        {children}
-      </main>
-    </div>
+        {renderNav(() => setDrawerOpen(false))}
+        {renderUserBlock()}
+      </Drawer>
+    </>
   );
 }

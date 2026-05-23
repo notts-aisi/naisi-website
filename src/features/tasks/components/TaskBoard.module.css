@@ -1,0 +1,26 @@
+/* TaskBoard hosts a horizontal-scroll kanban. The columns themselves stay
+   the same fixed width across viewports — collapsing them is a separate
+   feature decision (see CLAUDE.md §Main-area width, PR #11 lesson). This
+   module adds the scroll polish: snap-to-column on touch, hidden scrollbar,
+   touch-scroll smoothing. The container scrolls *inside its own bounds*,
+   never spills to the document scroll. */
+
+.scroll {
+  display: flex;
+  gap: var(--space-3);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: var(--space-3);
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: var(--space-3);
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  min-width: 17rem;
+  width: 17rem;
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+}

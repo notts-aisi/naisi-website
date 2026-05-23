@@ -14,6 +14,7 @@
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   transition: color var(--transition-fast), border-color var(--transition-fast);
+  white-space: nowrap;
 }
 
 .tab:hover { color: var(--color-text); }
@@ -37,4 +38,27 @@
   font-weight: 700;
   line-height: 1;
   flex-shrink: 0;
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* Horizontal scroll instead of wrapping into multiple ragged rows. The
+     `tab` rule already sets `white-space: nowrap`; scroll-snap keeps each
+     tap landing on a single tab. Scrollbar is hidden to avoid stealing
+     vertical room from the row. */
+  .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .tab {
+    scroll-snap-align: start;
+    flex-shrink: 0;
+  }
 }

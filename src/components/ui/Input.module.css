@@ -12,6 +12,9 @@
 
 .control {
   width: 100%;
+  /* 44px touch-target floor on form controls — see docs/touch-targets.md.
+     Textarea overrides via its own min-height below. */
+  min-height: 2.75rem;
   padding: 0.65rem 0.85rem;
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);

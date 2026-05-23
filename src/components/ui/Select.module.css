@@ -1,4 +1,6 @@
 .select {
+  /* 44px touch-target floor on form controls — see docs/touch-targets.md. */
+  min-height: 2.75rem;
   padding: 0.55rem 2.25rem 0.55rem 0.7rem;
   background: var(--color-bg-elevated)
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path fill='%238b94ac' d='M6 8.5 1.5 4h9z'/></svg>")

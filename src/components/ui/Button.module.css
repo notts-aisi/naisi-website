@@ -17,8 +17,11 @@
 .slot { display: inline-flex; align-items: center; }
 
 .sm { padding: 0.4rem 0.75rem; font-size: var(--text-sm); }
-.md { padding: 0.6rem 1.1rem; font-size: var(--text-base); }
-.lg { padding: 0.85rem 1.5rem; font-size: var(--text-lg); }
+/* `md` (default) carries the 44px touch-target floor. `sm` is an explicit
+   opt-in for dense table rows / inline card actions — see
+   docs/touch-targets.md. */
+.md { padding: 0.6rem 1.1rem; font-size: var(--text-base); min-height: 2.75rem; }
+.lg { padding: 0.85rem 1.5rem; font-size: var(--text-lg); min-height: 2.75rem; }
 
 .fullWidth { width: 100%; }
 
