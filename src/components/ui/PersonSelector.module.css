@@ -103,16 +103,121 @@
   border-color: var(--color-border-strong);
 }
 
-.collapseLink {
-  align-self: flex-start;
-  padding: 0;
-  background: transparent;
-  border: none;
-  color: var(--color-text-muted);
+/* Prominent mobile "Done" dismiss button at the bottom of the expanded
+   picker. Replaces the prior `.collapseLink` text link, which read as a
+   footnote on phone. 44px floor matches the touch-targets policy. */
+.doneButton {
+  align-self: stretch;
+  padding: 0.75rem 1rem;
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  color: var(--color-accent);
   font: inherit;
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
+  font-weight: 600;
   cursor: pointer;
-  text-decoration: underline;
+  min-height: 2.75rem;
+  transition: filter var(--transition-fast);
+}
+
+.doneButton:hover {
+  filter: brightness(1.05);
+}
+
+/* === Mobile bottom-sheet shape (below --bp-md) ===
+   The expanded picker becomes a portal-rendered bottom sheet so the
+   page underneath is dimmed + scroll-locked + the picker reads as the
+   active surface. Pattern mirrors Dropdown.module.css's sheet idiom. */
+
+.sheetRoot {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  animation: personSheetScrimIn var(--transition-fast) ease-out;
+}
+
+.sheet {
+  position: relative;
+  width: 100%;
+  background: var(--color-bg-elevated);
+  border-top: 1px solid var(--color-border);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  padding: var(--space-3);
+  padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.25);
+  animation: personSheetUp 0.2s ease-out;
+  max-height: 85vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sheetHandle {
+  width: 2.5rem;
+  height: 0.25rem;
+  margin: 0 auto;
+  background: var(--color-border);
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+}
+
+.sheetHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.sheetTitle {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.sheetCloseIcon {
+  width: 2.25rem;
+  height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text);
+  font-size: var(--text-md);
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+@keyframes personSheetUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes personSheetScrimIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .sheet {
+    animation: none;
+  }
 }
 
 /* === Role-filter chip strip (admin-only callsite uses showRoleFilter) === */
@@ -239,7 +344,9 @@
 
 /* === Mobile === */
 @media (max-width: 48rem) { /* --bp-md */
-  /* No mobile-specific overrides — the collapse toggle is JS-driven via
-     matchMedia in PersonSelector.tsx, not CSS-toggled. Block kept per
-     docs/mobile-conventions.md. */
+  /* No mobile-specific overrides on the inline shape — the expanded
+     picker portals to body as a bottom sheet, controlled in
+     PersonSelector.tsx via matchMedia + createPortal. The sheet classes
+     above stand on their own (always fixed-positioned full-screen when
+     mounted). */
 }
