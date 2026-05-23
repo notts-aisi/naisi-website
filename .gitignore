@@ -45,3 +45,17 @@ firebase-debug.*.log
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local-only hero animation variant archive. The /hero-alts route +
+# every HeroField*.tsx iteration variant lives here. Production hero
+# only needs HeroFieldZeroBase + HeroFieldStaggerCore (the shared core)
+# + the original legacy variants that were tracked before the rework;
+# everything else is local-only for revisiting alternate directions.
+src/app/(public)/hero-alts/
+src/app/(public)/HeroField*.tsx
+!src/app/(public)/HeroField.tsx
+!src/app/(public)/HeroFieldStaggerCore.tsx
+!src/app/(public)/HeroFieldZeroBase.tsx
+!src/app/(public)/HeroFieldImpulses.tsx
+!src/app/(public)/HeroFieldParticles.tsx
+!src/app/(public)/HeroFieldTfStyle.tsx

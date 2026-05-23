@@ -1,0 +1,134 @@
+/*
+  Sits as a trust signal below the hero CTAs (in the flex flow, not
+  absolute) — keeps the emblem column clean and pairs the badge with
+  the action call rather than competing with the brand mark.
+
+  Entrance is driven by motion in AwardBadge.tsx; we only declare the
+  static styles + shimmer here.
+*/
+.badge {
+  /* position: relative so the ::after shimmer sweep stays inside the
+     badge instead of positioning against the nearest positioned
+     ancestor (the .hero section) and rushing across the whole screen. */
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-2);
+  border: 1px solid rgba(245, 165, 36, 0.4);
+  background: linear-gradient(
+    180deg,
+    rgba(26, 34, 56, 0.85),
+    rgba(17, 23, 38, 0.95)
+  );
+  border-radius: var(--radius-pill);
+  text-decoration: none;
+  color: var(--color-text);
+  overflow: hidden;
+  isolation: isolate;
+  box-shadow:
+    0 2px 14px rgba(245, 165, 36, 0.18),
+    0 6px 22px rgba(0, 0, 0, 0.35);
+  width: fit-content;
+  transition: box-shadow 200ms ease, border-color 200ms ease;
+}
+
+/* Gold shimmer sweep — runs once on auto, again on every hover. */
+.badge::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    120deg,
+    transparent 30%,
+    rgba(255, 213, 130, 0.55) 50%,
+    transparent 70%
+  );
+  transform: translateX(-110%);
+  pointer-events: none;
+  border-radius: inherit;
+  z-index: 1;
+}
+.badge:hover::after {
+  animation: badge-shine 1100ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+.badge.autoShine::after {
+  animation: badge-shine 1300ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+
+@keyframes badge-shine {
+  from { transform: translateX(-110%); }
+  to   { transform: translateX(110%);  }
+}
+
+.badge:hover {
+  box-shadow:
+    0 4px 22px rgba(245, 165, 36, 0.32),
+    0 10px 30px rgba(0, 0, 0, 0.4);
+  border-color: rgba(245, 165, 36, 0.6);
+}
+
+.iconWrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: rgba(245, 165, 36, 0.08);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+}
+
+.icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  object-fit: contain;
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.2;
+  position: relative;
+  z-index: 2;
+}
+
+.label {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--color-text);
+  letter-spacing: -0.005em;
+}
+
+.subline {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(245, 165, 36, 0.85);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .badge {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: box-shadow 200ms ease, border-color 200ms ease !important;
+  }
+  .badge::after, .badge:hover::after, .badge.autoShine::after {
+    animation: none;
+    display: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 36rem) { /* --bp-sm */
+  .label { font-size: 0.85rem; }
+  .subline { font-size: 0.65rem; }
+  .badge {
+    /* Tighten padding so it doesn't take a whole line on narrow phones */
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2);
+  }
+}

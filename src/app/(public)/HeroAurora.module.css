@@ -1,0 +1,18 @@
+.canvas {
+  /* Absolute so this can sit underneath a layered NN canvas in the
+     same container without pushing it vertically (Option 5 stacks both). */
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* On coarse-pointer tablets/phones, dim the shader slightly so it doesn't
+     overwhelm the smaller text. */
+  @media (pointer: coarse) {
+    .canvas { opacity: 0.7; }
+  }
+}

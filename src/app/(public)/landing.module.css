@@ -1,63 +1,170 @@
 /* ============================================================
-   Public landing page styles. Editorial-first.
+   Public landing page styles. Editorial-first with a depth pass.
 
-   Goals:
-   - No card frames around content sections. Type and whitespace
-     do the structural work.
-   - Restrained atmosphere: layered radial gradients on the hero,
-     section-level border lines elsewhere. No animation.
-   - Reading-list grid is the page's visual centrepiece, the rest
-     of the page is sized to make room for it.
+   Goals (post-rejig):
+   - Hero is a small environment: three-layer atmosphere
+     (shader + constellation + sparkles) hosts a typed/blur-rise
+     headline. Below-the-fold sections stay editorial and calm.
+   - 3D buttons (.button3d family below) replace the old flat
+     anchors on the public surface only. Press-down + shine sweep.
+   - Reading-list grid remains the page's visual centrepiece.
+
+   Scope: the .button3d styles here are duplicated into
+   PublicHeader.module.css rather than shared via composes:
+   cross-module composition. They are NOT in the shared
+   <Button> component yet — public surface only.
    ============================================================ */
 
 /* === Hero ============================================== */
 
 .hero {
   position: relative;
-  padding-block: var(--space-24) var(--space-20);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  padding-block: var(--space-12);
   overflow: hidden;
-  background:
-    radial-gradient(ellipse at 20% -20%, var(--color-accent-soft) 0%, transparent 55%),
-    radial-gradient(ellipse at 100% 0%, rgba(106, 130, 255, 0.06) 0%, transparent 50%),
-    var(--color-bg);
+  /* The dark radial backdrop now ships from HeroAtmosphere as an
+     absolutely-positioned div; this CSS fallback only shows if the
+     atmosphere fails to mount. */
+  background: var(--color-bg);
+  isolation: isolate;
+}
+
+/* Hero atmosphere layers — absolute-positioned siblings of .heroInner.
+   z-stack: shader (1) → field (2) → sparkles (3) → text content (10). */
+.heroLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.heroLayerShader { z-index: 1; opacity: 0; transition: opacity 1200ms ease 600ms; }
+.heroLayerField {
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 1200ms ease 800ms;
+  /* Receive cursor events so the field's mouse attractor + spawn fire.
+     .heroInner sits above at z-index 10, so badge / link / button hits
+     still win priority — this layer only catches events on the empty
+     atmosphere area. */
+  pointer-events: auto;
+}
+.heroLayerSparkles { z-index: 3; opacity: 0; transition: opacity 1500ms ease 1000ms; }
+
+.hero[data-atmosphere-on="true"] .heroLayerShader,
+.hero[data-atmosphere-on="true"] .heroLayerField,
+.hero[data-atmosphere-on="true"] .heroLayerSparkles {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .heroLayerShader,
+  .heroLayerField,
+  .heroLayerSparkles {
+    opacity: 1 !important;
+    transition: none !important;
+  }
 }
 
 .heroInner {
   position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  max-width: 56rem;
+}
+
+/* Award badge sits as a small accent below the headline, separated by
+   generous space rather than crammed under CTAs (which now live in
+   their own section). */
+.heroBadge {
+  margin-top: var(--space-4);
+}
+
+/* Intro section directly below the hero — the lede + CTAs that used
+   to sit inside the hero. Revealed via the existing blur-rise on
+   scroll, so the hero stays minimal and this content lands as a
+   second beat. */
+.introSection {
+  padding-block: var(--space-16) var(--space-12);
+}
+.introInner {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
   max-width: 56rem;
 }
 
+/*
+  Hero entrance — emblem, eyebrow, lede, CTAs, badge are all motion-
+  driven from their respective client components. No CSS hooks needed
+  here. Motion handles reduced-motion internally.
+*/
+
 .eyebrow {
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
   margin: 0;
 }
 
-.title {
-  font-size: clamp(2.5rem, 5vw, 4rem);
-  letter-spacing: -0.025em;
-  line-height: 1.05;
+.eyebrowLogo {
+  /* 2.5x the previous size — the lockup is the hero identity beat now,
+     leave it real visual weight above the headline. Scales from
+     ~140px on mobile to ~220px on wide desktop. */
+  height: clamp(8.75rem, 15vw, 13.75rem);
+  width: auto;
+  object-fit: contain;
+  /* Soft drop shadow so the white-on-shader logo holds shape */
+  filter: drop-shadow(0 1px 6px rgba(0, 0, 0, 0.55));
+}
+
+/* At the breakpoint where the neural network rotates to vertical
+   (width < 600px in HeroFieldStaggerCore), centre the logo and bump
+   it 1.5x. Headline + badge stay left-aligned; only the lockup
+   centres so it dominates the mobile hero. */
+@media (max-width: 37.5rem) {
+  .eyebrow {
+    align-self: center;
+  }
+  .eyebrowLogo {
+    height: 13.125rem;
+  }
+}
+
+/*
+  Mobile-only tagline — shows below the UoN logo in the hero, hidden on
+  desktop where the headline + UoN logo + emblem-below-stats carry enough
+  identity on their own.
+*/
+.mobileTagline {
+  display: none;
+  font-family: var(--font-space-grotesk), var(--font-sans);
+  font-size: var(--text-base);
   font-weight: 700;
+  letter-spacing: 0.005em;
+  color: #22d3ee;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.55);
   margin: 0;
 }
 
-.titleAccent {
-  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-hover));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+@media (max-width: 60rem) { /* --bp-lg */
+  .mobileTagline {
+    display: block;
+  }
 }
 
 .lede {
-  color: var(--color-text-muted);
+  /*
+    Lifted from --color-text-muted (#8b94ac) to a brighter value with
+    a soft text-shadow so the lede stays readable above the aurora
+    shader without competing with the headline.
+  */
+  color: #d7dceb;
   font-size: var(--text-lg);
   max-width: 38rem;
   line-height: var(--leading-relaxed);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.5);
   margin: 0;
 }
 
@@ -68,34 +175,156 @@
   flex-wrap: wrap;
 }
 
-.primaryCta {
+/* === 3D button family ================================== */
+
+/*
+  Base depth: padding + flex centring + 80ms press transition.
+  Each variant declares its own background + box-shadow skirt.
+  Press: translateY(--btn3d-press-distance), shadow shrinks to flat.
+  Shine sweep: ::after diagonal highlight slides on hover.
+*/
+.button3d {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  padding: 0.85rem 1.4rem;
+  justify-content: center;
+  min-height: 2.75rem; /* 44px touch-target floor for the public site */
+  padding: 0.85rem 1.5rem;
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
-  background: var(--color-accent);
-  color: white;
-  font-weight: 500;
-  transition: background var(--transition-fast);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  text-decoration: none;
+  overflow: hidden;
+  isolation: isolate;
+  will-change: transform, translate;
+  /*
+    Magnetic pull writes --mag-x / --mag-y via useMagneticPull. We apply
+    them via `translate:` (a separate CSS property from `transform:`) so
+    the :active press translateY doesn't conflict — both stack.
+  */
+  translate: var(--mag-x, 0) var(--mag-y, 0);
+  transition:
+    translate 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    transform 80ms ease,
+    box-shadow 80ms ease,
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
 }
-.primaryCta:hover { background: var(--color-accent-hover); }
+
+.button3d::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    120deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.22) 50%,
+    transparent 70%
+  );
+  transform: translateX(-110%);
+  transition: transform 700ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  pointer-events: none;
+  border-radius: inherit;
+  z-index: 1;
+}
+.button3d:hover::after { transform: translateX(110%); }
+
+.button3d > * {
+  position: relative;
+  z-index: 2;
+}
+
+.button3dPrimary {
+  background: linear-gradient(180deg, var(--color-accent-hover), var(--color-accent));
+  color: #fff;
+  box-shadow:
+    0 var(--btn3d-press-distance) 0 color-mix(in oklab, var(--color-accent), black 35%),
+    0 calc(var(--btn3d-press-distance) + 4px) 14px rgba(0, 0, 0, 0.28);
+}
+.button3dPrimary:hover {
+  background: linear-gradient(180deg, var(--color-accent-hover), var(--color-accent-hover));
+}
+.button3dPrimary:active {
+  transform: translateY(var(--btn3d-press-distance));
+  box-shadow:
+    0 0 0 color-mix(in oklab, var(--color-accent), black 35%),
+    0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.button3dSecondary {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-color: var(--color-border);
+  box-shadow:
+    0 var(--btn3d-press-distance) 0 var(--btn3d-edge),
+    0 calc(var(--btn3d-press-distance) + 4px) 12px rgba(0, 0, 0, 0.18);
+}
+.button3dSecondary:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-strong);
+}
+.button3dSecondary:active {
+  transform: translateY(var(--btn3d-press-distance));
+  box-shadow:
+    0 0 0 var(--btn3d-edge),
+    0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.button3dGhost {
+  background: transparent;
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  box-shadow:
+    0 var(--btn3d-press-distance) 0 color-mix(in oklab, var(--color-accent), transparent 60%),
+    0 calc(var(--btn3d-press-distance) + 4px) 10px rgba(0, 0, 0, 0.18);
+}
+.button3dGhost:hover {
+  background: var(--color-accent-soft);
+}
+.button3dGhost:active {
+  transform: translateY(var(--btn3d-press-distance));
+  box-shadow:
+    0 0 0 color-mix(in oklab, var(--color-accent), transparent 60%),
+    0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button3d {
+    transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+  }
+  .button3d::after { display: none; }
+  .button3dPrimary:active,
+  .button3dSecondary:active,
+  .button3dGhost:active {
+    transform: none;
+  }
+}
+
+/* === Hero CTAs (use the 3D family above) =============== */
+
+.primaryCta {
+  composes: button3d button3dPrimary;
+}
 
 .secondaryCta {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.85rem 1.4rem;
-  border-radius: var(--radius-md);
-  color: var(--color-text);
-  font-weight: 500;
-  transition: background var(--transition-fast);
+  composes: button3d button3dSecondary;
 }
-.secondaryCta:hover { background: var(--color-surface-hover); }
 
 .heroArt {
   position: absolute;
   right: var(--space-6);
+  /*
+    Center vertically without using transform — animations apply
+    their own transform and would wipe out a -50% offset, leaving
+    the emblem positioned at top:50% (i.e. its top edge at hero
+    centre, not its centre). margin-top: -110px keeps centering
+    additive with whatever transform the animation library writes.
+    110px = half of the 220px emblem image height.
+  */
   top: 50%;
-  transform: translateY(-50%);
+  margin-top: -110px;
   pointer-events: none;
 }
 
@@ -126,6 +355,17 @@
 .inlineLink:hover {
   color: var(--color-accent-hover);
   text-decoration-thickness: 2px;
+}
+
+/* === Inline logo (BlueDot, UoN SU, etc) ================== */
+
+.inlineLogo {
+  display: inline-block;
+  height: 1.1em;
+  width: auto;
+  vertical-align: -0.2em;
+  margin-right: 0.2em;
+  object-fit: contain;
 }
 
 /* === About: prose paragraph ============================= */
@@ -202,13 +442,22 @@
 
 .tier {
   /* Generous block padding so the divider rules above and below each
-     tier don't crowd the heading or last paragraph. The previous spacing
-     was too tight at desktop widths and made the section feel cramped. */
-  padding: var(--space-10) 0;
+     tier don't crowd the heading or last paragraph. Bumped from space-10
+     for the rejig — more room per tier so the page feels less cramped. */
+  padding: var(--space-12) 0;
   border-top: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-5);
+}
+
+/* Mobile keeps the tighter spacing — the desktop bump would stretch the
+   page on phones. */
+@media (max-width: 48rem) { /* --bp-md */
+  .tier {
+    padding: var(--space-10) 0;
+    gap: var(--space-4);
+  }
 }
 
 .tier:last-child {

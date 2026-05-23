@@ -43,30 +43,108 @@
   gap: var(--space-4);
 }
 
-.signIn {
+/*
+  Header CTA buttons share the .button3d base from landing.module.css
+  conceptually, but the rules are duplicated here to keep this module
+  self-contained (no cross-module composes fragility).
+
+  .signIn → ghost 3D in NAISI accent blue. Used for: signed-out "Sign in",
+            signed-in "Sign out", pending "Application status".
+  .joinBtn → primary 3D in NAISI accent gradient. Used for: signed-out
+            "Join us", approved "Dashboard", rejected-state "Sign out".
+  Both: 44×44 touch-target floor, shine sweep on hover, translateY press,
+  reduced-motion safe.
+*/
+.signIn,
+.joinBtn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
+  padding: 0 1rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
   font-size: var(--text-sm);
-  color: var(--color-text-muted);
-  padding: 0.5rem 0.25rem;
-  transition: color var(--transition-fast);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  isolation: isolate;
+  will-change: transform;
+  transition:
+    transform 80ms ease,
+    box-shadow 80ms ease,
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.signIn::after,
+.joinBtn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    120deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.22) 50%,
+    transparent 70%
+  );
+  transform: translateX(-110%);
+  transition: transform 700ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  pointer-events: none;
+  border-radius: inherit;
+  z-index: 1;
+}
+.signIn:hover::after,
+.joinBtn:hover::after { transform: translateX(110%); }
+
+.signIn {
+  background: transparent;
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  box-shadow:
+    0 var(--btn3d-press-distance) 0 color-mix(in oklab, var(--color-accent), transparent 60%),
+    0 calc(var(--btn3d-press-distance) + 4px) 10px rgba(0, 0, 0, 0.18);
 }
 .signIn:hover {
-  color: var(--color-text);
+  background: var(--color-accent-soft);
+}
+.signIn:active {
+  transform: translateY(var(--btn3d-press-distance));
+  box-shadow:
+    0 0 0 color-mix(in oklab, var(--color-accent), transparent 60%),
+    0 2px 4px rgba(0, 0, 0, 0.15);
 }
 
 .joinBtn {
-  display: inline-flex;
-  align-items: center;
-  min-height: 2.5rem;
-  padding: 0.5rem 1rem;
-  border-radius: var(--radius-md);
-  background: var(--color-accent);
-  color: white;
-  font-size: var(--text-sm);
-  font-weight: 500;
-  transition: background var(--transition-fast);
+  background: linear-gradient(180deg, var(--color-accent-hover), var(--color-accent));
+  color: #fff;
+  box-shadow:
+    0 var(--btn3d-press-distance) 0 color-mix(in oklab, var(--color-accent), black 35%),
+    0 calc(var(--btn3d-press-distance) + 4px) 14px rgba(0, 0, 0, 0.28);
 }
 .joinBtn:hover {
-  background: var(--color-accent-hover);
+  background: linear-gradient(180deg, var(--color-accent-hover), var(--color-accent-hover));
+}
+.joinBtn:active {
+  transform: translateY(var(--btn3d-press-distance));
+  box-shadow:
+    0 0 0 color-mix(in oklab, var(--color-accent), black 35%),
+    0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signIn,
+  .joinBtn {
+    transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+  }
+  .signIn::after,
+  .joinBtn::after { display: none; }
+  .signIn:active,
+  .joinBtn:active { transform: none; }
 }
 
 .rejectedLabel {
