@@ -281,6 +281,13 @@
 @media (max-width: 60rem) { /* --bp-lg */
   .shell {
     grid-template-columns: 1fr;
+    /* Release the desktop 100vh floor below --bp-lg so the page height
+       tracks content. Below this breakpoint the sidebar is hidden and
+       the shell is a single column — pinning to 100vh leaves dead space
+       under short content and removes the scroll-up cue when a
+       collapsible (AssigneePicker, New-task form, etc.) closes.
+       .loadingPane keeps its own 60vh floor independently. */
+    min-height: auto;
   }
   .sidebar {
     display: none;

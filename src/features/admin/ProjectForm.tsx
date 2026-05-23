@@ -7,7 +7,7 @@ import { Field, Input } from "@/components/ui/Input";
 import ResponsiveSelect, {
   type ResponsiveSelectOption,
 } from "@/components/ui/ResponsiveSelect";
-import AssigneePicker from "@/features/tasks/components/AssigneePicker";
+import PersonSelector from "@/components/ui/PersonSelector";
 import type { ProjectDoc } from "@/lib/firestore/projects";
 import type { UserDoc } from "@/lib/firestore/users";
 import { createProject, updateProject } from "./adminMutations";
@@ -105,12 +105,12 @@ export default function ProjectForm({ existing, committee, onDone }: Props) {
           label="Members"
           hint="Filter by role or search by name. Any role can be a project member."
         >
-          <AssigneePicker
+          <PersonSelector
             users={committee}
             selected={memberUids}
             onChange={setMemberUids}
             max={50}
-            role="completer"
+            tone="neutral"
             showRoleFilter
           />
         </Field>

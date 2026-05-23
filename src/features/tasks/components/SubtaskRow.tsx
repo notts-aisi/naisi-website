@@ -38,7 +38,7 @@ import {
   type ReviewState,
 } from "../taskMutations";
 import { addComment } from "../commentMutations";
-import AssigneePicker from "./AssigneePicker";
+import PersonSelector from "@/components/ui/PersonSelector";
 import SubtaskDetailModal from "./SubtaskDetailModal";
 import rowStyles from "./SubtaskRow.module.css";
 
@@ -1084,7 +1084,7 @@ export default function SubtaskRow({
 
           <div>
             {canEditRoster ? (
-              <AssigneePicker
+              <PersonSelector
                 users={users}
                 selected={subtask.assigneeUids}
                 onChange={(uids) =>
@@ -1115,7 +1115,7 @@ export default function SubtaskRow({
           </div>
           <div>
             {canEditRoster ? (
-              <AssigneePicker
+              <PersonSelector
                 users={users}
                 selected={subtask.reviewerUids}
                 onChange={(uids) => setSubtaskReviewers(task, subtask.id, uids).catch(console.error)}

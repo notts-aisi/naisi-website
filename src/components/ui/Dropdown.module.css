@@ -70,15 +70,23 @@
   text-overflow: ellipsis;
 }
 
+/* Inline SVG (mirrors Input.module.css's .select background chevron — same
+   viewBox 12×8, same path, same stroke 1.75) so the custom Dropdown trigger
+   matches the native styled <select> chevron exactly. width/height in em
+   scale with the parent trigger's font-size; currentColor lets the muted
+   colour cascade. The previous Unicode `▾` glyph had font-metric centring
+   issues at large sizes — tall-narrow ink box, visual offset from the
+   geometric centre — that an SVG sidesteps. */
 .chevron {
   flex-shrink: 0;
-  font-size: calc(var(--text-xs) * 3.5);
+  width: 0.75em;
+  height: 0.5em;
   color: var(--color-text-muted);
-  line-height: 1;
 }
 
 .triggerSize_sm .chevron {
-  font-size: calc(var(--text-xs) * 1.75);
+  width: 0.625em;
+  height: 0.4167em;
 }
 
 /* === Popover (desktop / tablet) === */
