@@ -1,0 +1,90 @@
+/* Page-level layout for /committee/tasks. Extracted from inline styles in
+   page.tsx so the header + toolbar rows can carry an @media block (CSS
+   custom properties don't resolve inside @media query conditions — see
+   docs/mobile-conventions.md). The breakpoint here mirrors
+   TaskFilters.module.css so the entire page collapses at the same point. */
+
+/* === Page header (Badge + h1 + subtitle, plus the "New task" action) === */
+
+.headerRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-5);
+}
+
+.headerText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.headerTitle {
+  margin-top: var(--space-2);
+}
+
+.subtitle {
+  color: var(--color-text-muted);
+  margin-top: var(--space-1);
+}
+
+/* === Toolbar row (filters + Show archived) === */
+
+.toolbarRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.filtersWrap {
+  flex: 1;
+  /* min-width: 0 lets the filter Selects shrink below their intrinsic
+     min-content width inside this flex track. See PR #147 + the
+     Input.module.css note on .control. */
+  min-width: 0;
+}
+
+.showArchivedLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* Header stacks vertically: Badge + h1 above, "New task" full-width below.
+     The desktop subtitle ("Drag cards between columns…") is removed entirely
+     on phone — drag is desktop-only since PR #145, and the pill view + tap-
+     to-open are self-evident affordances. */
+  .headerRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .subtitle {
+    display: none;
+  }
+  .newTaskButton {
+    width: 100%;
+  }
+
+  /* Toolbar stacks vertically: filters (already 1-col via TaskFilters
+     module) above, Show-archived on its own row. The nowrap on the label
+     fights for horizontal space with the filters on a single row; relaxing
+     it on phone removes that contention. */
+  .toolbarRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .showArchivedLabel {
+    white-space: normal;
+  }
+}
