@@ -25,12 +25,37 @@
   scroll-snap-align: start;
 }
 
+/* === Tree visibility gating ===
+
+   Both trees (kanban + phone) are always rendered structurally by the parent
+   so the initial SSR paint is correct at either viewport without a
+   hydration flash. CSS decides which is visible; the `useIsNarrow` hook in
+   TaskBoard.tsx separately gates dnd-kit mounting so phone never pays the
+   useSortable cost.
+
+   The 60rem breakpoint here MUST stay in sync with the `useIsNarrow`
+   query in TaskBoard.tsx (currently `maxWidth("lg")`). */
+.kanbanOnly {
+  display: block;
+}
+
+.phoneOnly {
+  display: none;
+}
+
+@media (max-width: 60rem) { /* --bp-lg */
+  .kanbanOnly {
+    display: none;
+  }
+  .phoneOnly {
+    display: block;
+  }
+}
+
 /* === Phone view (below --bp-lg) ===
 
-   These classes are only rendered by `TaskBoardPhone`, which the parent
-   component switches to via a matchMedia branch — the kanban tree above
-   (.scroll + .column) is not rendered on phone, so the two views never
-   coexist in the DOM. */
+   These classes are rendered inside `.phoneOnly` (above), which is hidden
+   on desktop via CSS. */
 
 /* Horizontal-scrolling pill row with snap, matching the AdminTabs idiom.
    Wrapping is rejected: 5 status labels wrap to two ragged rows at 320px
