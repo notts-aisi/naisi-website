@@ -3,7 +3,10 @@
 import { useState } from "react";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
-import { Field, Input, Select, Textarea } from "@/components/ui/Input";
+import { Field, Input, Textarea } from "@/components/ui/Input";
+import ResponsiveSelect, {
+  type ResponsiveSelectOption,
+} from "@/components/ui/ResponsiveSelect";
 import {
   TASK_KINDS,
   TASK_KIND_LABELS,
@@ -167,20 +170,19 @@ export default function TemplateEditor({ template, onDone, onDelete }: Props) {
         </Field>
 
         <Field id="tpl-kind" label="Categorisation (optional)">
-          <Select
-            id="tpl-kind"
+          <ResponsiveSelect
             value={draft.kind ?? ""}
-            onChange={(e) =>
-              setDraft((d) => ({ ...d, kind: (e.target.value || null) as TaskKind | null }))
+            onChange={(next) =>
+              setDraft((d) => ({ ...d, kind: (next || null) as TaskKind | null }))
             }
-          >
-            <option value="">Any / uncategorised</option>
-            {TASK_KINDS.map((k) => (
-              <option key={k} value={k}>
-                {TASK_KIND_LABELS[k]}
-              </option>
-            ))}
-          </Select>
+            options={
+              [
+                { value: "", label: "Any / uncategorised" },
+                ...TASK_KINDS.map((k) => ({ value: k, label: TASK_KIND_LABELS[k] })),
+              ] satisfies ResponsiveSelectOption[]
+            }
+            ariaLabel="Categorisation"
+          />
         </Field>
 
         <div>

@@ -1,6 +1,6 @@
 "use client";
 
-import Select from "@/components/ui/Select";
+import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import {
   DIETARY_ALLERGIES,
   DIETARY_NONE,
@@ -74,21 +74,16 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
             return (
               <label key={q.id} className={styles.field}>
                 {label}
-                <Select
+                <ResponsiveSelect
                   value={value}
-                  onChange={(e) => set(q.id, e.target.value)}
+                  onChange={(next) => set(q.id, next)}
+                  options={[
+                    { value: "", label: "Pick one…", disabled: true },
+                    ...opts.map((opt) => ({ value: opt, label: opt })),
+                  ]}
                   disabled={disabled}
-                  required={q.required}
-                >
-                  <option value="" disabled>
-                    Pick one…
-                  </option>
-                  {opts.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
-                    </option>
-                  ))}
-                </Select>
+                  ariaLabel={q.label || "Pick one"}
+                />
               </label>
             );
           }

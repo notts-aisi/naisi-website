@@ -280,10 +280,14 @@ const toolbarRow: React.CSSProperties = {
 const popoverStyle: React.CSSProperties = {
   position: "absolute",
   top: "calc(100% + 6px)",
-  left: 0,
+  // Anchor to the right edge of the link-button span and expand leftward
+  // so a button near the right edge of a narrow toolbar (the task modal
+  // at 375px) doesn't push the popover past the modal frame.
+  right: 0,
+  left: "auto",
   zIndex: 10,
-  minWidth: "20rem",
-  maxWidth: "min(28rem, 90vw)",
+  minWidth: "min(20rem, calc(100vw - 2 * var(--space-4)))",
+  maxWidth: "calc(100vw - 2 * var(--space-4))",
   padding: "var(--space-3)",
   background: "var(--color-bg-elevated)",
   border: "1px solid var(--color-border)",

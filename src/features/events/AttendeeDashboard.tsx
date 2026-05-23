@@ -5,7 +5,7 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Input";
-import Select from "@/components/ui/Select";
+import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import { copyToClipboard, downloadCSV, toCSV } from "@/lib/csv";
 import { useAuth } from "@/auth/AuthProvider";
 import {
@@ -583,18 +583,19 @@ export default function AttendeeDashboard({ event }: Props) {
           <div className={styles.tableControls}>
             <label className={styles.filterLabel}>
               <span>Show</span>
-              <Select
+              <ResponsiveSelect<typeof filter>
                 value={filter}
-                onChange={(e) => setFilter(e.target.value as typeof filter)}
-              >
-                <option value="active">Active (confirmed + waitlisted)</option>
-                <option value="all">All</option>
-                {RSVP_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {RSVP_STATUS_LABEL[s]}
-                  </option>
-                ))}
-              </Select>
+                onChange={setFilter}
+                options={[
+                  { value: "active", label: "Active (confirmed + waitlisted)" },
+                  { value: "all", label: "All" },
+                  ...RSVP_STATUSES.map((s) => ({
+                    value: s,
+                    label: RSVP_STATUS_LABEL[s],
+                  })),
+                ]}
+                ariaLabel="Show RSVPs"
+              />
             </label>
             <Button variant="ghost" onClick={onCopyEmails}>
               Copy emails (active)

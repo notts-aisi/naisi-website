@@ -57,16 +57,26 @@
    Status-filter dropdown at the top picks ONE status to view; the cards
    below are filtered to that status. Tasks are reallocated between
    statuses via the per-card move-dropdown rendered by TaskCard. Rendered
-   inside `.phoneOnly` (above), which is hidden on desktop via CSS. */
+   inside `.phoneOnly` (above), which is hidden on desktop via CSS.
+
+   Both children are capped to a phone-shaped width and centred so the
+   48–60rem band (where AppShell's main is full-bleed but the kanban
+   hasn't returned yet) shows a phone column in a wide canvas instead of
+   sprawling single-column cards stretched 768–960px wide. Below the cap
+   the viewport itself is narrower, so the cap is a no-op. */
 
 .statusFilter {
   margin-bottom: var(--space-3);
+  max-width: 32rem;
+  margin-inline: auto;
 }
 
 .phoneList {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  max-width: 32rem;
+  margin-inline: auto;
 }
 
 .phoneEmpty {
@@ -75,6 +85,8 @@
   text-align: center;
   color: var(--color-text-muted);
   font-size: var(--text-sm);
+  max-width: 32rem;
+  margin-inline: auto;
 }
 
 /* === Mobile ===

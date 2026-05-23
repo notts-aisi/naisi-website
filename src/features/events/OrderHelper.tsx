@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Card from "@/components/ui/Card";
-import Select from "@/components/ui/Select";
+import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import type {
   EventDoc,
   MultiSelectQuestion,
@@ -52,17 +52,15 @@ export default function OrderHelper({ event, rsvps }: Props) {
 
       {multiSelects.length > 1 && (
         <div className={styles.picker}>
-          <Select
+          <ResponsiveSelect
             value={question.id}
-            onChange={(e) => setQuestionId(e.target.value)}
-            aria-label="Which question lists toppings to avoid"
-          >
-            {multiSelects.map((q) => (
-              <option key={q.id} value={q.id}>
-                {q.label || "(untitled question)"}
-              </option>
-            ))}
-          </Select>
+            onChange={setQuestionId}
+            options={multiSelects.map((q) => ({
+              value: q.id,
+              label: q.label || "(untitled question)",
+            }))}
+            ariaLabel="Which question lists toppings to avoid"
+          />
         </div>
       )}
 

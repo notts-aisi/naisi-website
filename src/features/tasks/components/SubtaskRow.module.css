@@ -1,0 +1,66 @@
+/* SubtaskRow — mobile-adapt block. The per-reviewer approval matrix
+   takes one column per reviewer and pushes the row wider than the
+   modal at N reviewers. Below `--bp-md` we hide the matrix and show a
+   horizontal chip strip (read-only state per reviewer); tapping a chip
+   opens the SubtaskDetailModal where the viewer can change state.
+
+   Both shapes are always in the DOM so SSR + hydration paint cleanly
+   at either viewport — same pattern as TaskBoard's kanbanOnly/phoneOnly. */
+
+.matrixOnly {
+  display: contents;
+}
+
+.chipStripOnly {
+  display: none;
+}
+
+.chipStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.chipApproved {
+  color: var(--color-success, #16a34a);
+  border-color: var(--color-success, #16a34a);
+  background: var(--color-success-soft, var(--color-bg-elevated));
+}
+
+.chipQuestion {
+  color: var(--color-warning, var(--color-text));
+  border-color: var(--color-warning, var(--color-text));
+  background: var(--color-warning-soft, var(--color-bg-elevated));
+}
+
+.chipRejected {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+  background: var(--color-danger-soft, var(--color-bg-elevated));
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .matrixOnly {
+    display: none;
+  }
+  .chipStripOnly {
+    display: block;
+  }
+}

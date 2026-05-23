@@ -1,6 +1,7 @@
 "use client";
 
 import type { ChangeEvent } from "react";
+import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import type { AffiliationStatus } from "@/lib/firestore/users";
 import styles from "./MembersToolbar.module.css";
 
@@ -105,47 +106,33 @@ export default function MembersToolbar({
       <div className={styles.selectRow}>
         <label className={styles.selectLabel}>
           <span>Level of studies</span>
-          <select
+          <ResponsiveSelect<StatusFilter>
             className={styles.select}
             value={statusFilter}
-            onChange={(e) => onStatusFilterChange(e.target.value as StatusFilter)}
-          >
-            {STATUS_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+            onChange={onStatusFilterChange}
+            options={STATUS_OPTIONS}
+            ariaLabel="Level of studies"
+          />
         </label>
         <label className={styles.selectLabel}>
           <span>Track</span>
-          <select
+          <ResponsiveSelect<TrackFilter>
             className={styles.select}
             value={trackFilter}
-            onChange={(e) => onTrackFilterChange(e.target.value as TrackFilter)}
-          >
-            {TRACK_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+            onChange={onTrackFilterChange}
+            options={TRACK_OPTIONS}
+            ariaLabel="Track"
+          />
         </label>
         <label className={styles.selectLabel}>
           <span>Newsletter</span>
-          <select
+          <ResponsiveSelect<NewsletterFilter>
             className={styles.select}
             value={newsletterFilter}
-            onChange={(e) =>
-              onNewsletterFilterChange(e.target.value as NewsletterFilter)
-            }
-          >
-            {NEWSLETTER_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+            onChange={onNewsletterFilterChange}
+            options={NEWSLETTER_OPTIONS}
+            ariaLabel="Newsletter"
+          />
         </label>
       </div>
     </div>

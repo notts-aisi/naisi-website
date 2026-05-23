@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
-import { Select } from "@/components/ui/Input";
+import ResponsiveSelect, {
+  type ResponsiveSelectOption,
+} from "@/components/ui/ResponsiveSelect";
 import {
   TASK_FIELD_LIMITS,
   TASK_PRIORITIES,
@@ -420,11 +422,23 @@ export default function TaskDetailModal({
           <div className={styles.fieldRow}>
             <label className={styles.fieldLabel}>
               <span>Status</span>
-              <Select
+              <ResponsiveSelect<TaskStatus>
                 value={task.status}
-                onChange={(e) => onStatusChange(e.target.value as TaskStatus)}
+                onChange={onStatusChange}
+                options={TASK_STATUSES.map<ResponsiveSelectOption<TaskStatus>>((s) => ({
+                  value: s,
+                  label: TASK_STATUS_LABELS[s],
+                  // Block "done" when (a) viewer isn't eligible, or
+                  // (b) the per-subtask + global coverage gates aren't met.
+                  // Always allow the current value to render so the picker
+                  // doesn't show a phantom option when already "done".
+                  disabled:
+                    s === "done" &&
+                    task.status !== "done" &&
+                    (!canMarkDone || !doneGate.ok),
+                }))}
                 disabled={!canEditProgressFields}
-                aria-label="Status"
+                ariaLabel="Status"
                 title={
                   !canMarkDone && task.status !== "done"
                     ? "Only a reviewer, admin, or creator (on reviewer-less tasks) can mark Done"
@@ -432,40 +446,20 @@ export default function TaskDetailModal({
                       ? (doneGate.reason ?? undefined)
                       : undefined
                 }
-              >
-                {TASK_STATUSES.map((s) => (
-                  <option
-                    key={s}
-                    value={s}
-                    // Block "done" when (a) viewer isn't eligible, or
-                    // (b) the per-subtask + global coverage gates aren't met.
-                    // Always allow the current value to render so the select
-                    // doesn't show a phantom option when already "done".
-                    disabled={
-                      s === "done" &&
-                      task.status !== "done" &&
-                      (!canMarkDone || !doneGate.ok)
-                    }
-                  >
-                    {TASK_STATUS_LABELS[s]}
-                  </option>
-                ))}
-              </Select>
+              />
             </label>
             {canEditAll ? (
               <label className={styles.fieldLabel}>
                 <span>Priority</span>
-                <Select
+                <ResponsiveSelect<TaskPriority>
                   value={task.priority}
-                  onChange={(e) => onPriorityChange(e.target.value as TaskPriority)}
-                  aria-label="Priority"
-                >
-                  {TASK_PRIORITIES.map((p) => (
-                    <option key={p} value={p}>
-                      {TASK_PRIORITY_LABELS[p]}
-                    </option>
-                  ))}
-                </Select>
+                  onChange={onPriorityChange}
+                  options={TASK_PRIORITIES.map<ResponsiveSelectOption<TaskPriority>>((p) => ({
+                    value: p,
+                    label: TASK_PRIORITY_LABELS[p],
+                  }))}
+                  ariaLabel="Priority"
+                />
               </label>
             ) : (
               <Badge tone="neutral">Priority: {TASK_PRIORITY_LABELS[task.priority]}</Badge>
@@ -601,17 +595,17 @@ export default function TaskDetailModal({
           {canEditAll && (
             <div>
               <h4 className={styles.sectionLabel}>Project</h4>
-              <Select
+              <ResponsiveSelect
                 value={task.projectId ?? ""}
-                onChange={(e) => onProjectChange(e.target.value)}
-              >
-                <option value="">— none —</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </Select>
+                onChange={onProjectChange}
+                options={
+                  [
+                    { value: "", label: "— none —" },
+                    ...projects.map((p) => ({ value: p.id, label: p.name })),
+                  ] satisfies ResponsiveSelectOption[]
+                }
+                ariaLabel="Project"
+              />
             </div>
           )}
 
@@ -740,13 +734,18 @@ export default function TaskDetailModal({
           {isAdmin && (
             <div>
               <h4 className={styles.sectionLabel}>Visibility</h4>
-              <Select
+              <ResponsiveSelect<TaskVisibility>
                 value={task.visibility}
-                onChange={(e) => onVisibilityChange(e.target.value as TaskVisibility)}
-              >
-                <option value="committee">Committee-visible</option>
-                <option value="assignees-only">Private — assignees + admins</option>
-              </Select>
+                onChange={onVisibilityChange}
+                options={[
+                  { value: "committee", label: "Committee-visible" },
+                  {
+                    value: "assignees-only",
+                    label: "Private — assignees + admins",
+                  },
+                ]}
+                ariaLabel="Visibility"
+              />
             </div>
           )}
 

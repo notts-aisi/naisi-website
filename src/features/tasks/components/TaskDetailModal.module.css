@@ -346,3 +346,13 @@
     top: calc(var(--space-2) + env(safe-area-inset-top, 0px));
   }
 }
+
+/* Narrowest phones — collapse the Status + Priority pickers into one
+   column. `auto-fit` *should* already do this at 343px content width,
+   but the ResponsiveSelect trigger has its own intrinsic width so be
+   explicit. */
+@media (max-width: 36rem) { /* --bp-sm */
+  .fieldRow {
+    grid-template-columns: 1fr;
+  }
+}

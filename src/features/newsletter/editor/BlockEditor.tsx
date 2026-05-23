@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Card from "@/components/ui/Card";
-import Select from "@/components/ui/Select";
+import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import {
   emptyBlock,
   youtubeIdFromUrl,
@@ -192,14 +192,16 @@ function BlockForm({
           </label>
           <label className={styles.fieldLabel}>
             <span>Size</span>
-            <Select
+            <ResponsiveSelect
               value={String(block.level)}
-              onChange={(e) => onChange({ level: Number(e.target.value) as 2 | 3 })}
+              onChange={(next) => onChange({ level: Number(next) as 2 | 3 })}
+              options={[
+                { value: "2", label: "Major (H2) — big" },
+                { value: "3", label: "Minor (H3) — smaller" },
+              ]}
               disabled={disabled}
-            >
-              <option value="2">Major (H2) — big</option>
-              <option value="3">Minor (H3) — smaller</option>
-            </Select>
+              ariaLabel="Heading size"
+            />
           </label>
         </div>
       );
