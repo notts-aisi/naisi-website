@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useMemo, useState } from "react";
 import {
   DndContext,
   PointerSensor,
@@ -26,7 +26,6 @@ import {
 } from "@/lib/firestore/tasks";
 import type { ProjectDoc } from "@/lib/firestore/projects";
 import type { UserDoc } from "@/lib/firestore/users";
-import { maxWidth } from "@/theme/breakpoints";
 import { setTaskStatus } from "../taskMutations";
 import TaskCard from "./TaskCard";
 import styles from "./TaskBoard.module.css";
@@ -37,42 +36,6 @@ type Props = {
   users: UserDoc[];
   onOpenTask: (taskId: string) => void;
 };
-
-/**
- * `useSyncExternalStore` over a matchMedia query. Used to GATE mounting of
- * the kanban tree — the visibility flip itself is CSS-driven so the initial
- * SSR paint on phone never shows the wide kanban (5x17rem columns would push
- * past the viewport before hydration completes, causing body-level
- * horizontal scroll for as long as JS takes to load + parse + hydrate).
- *
- * Plan revision after PR #145 landed and the flash was unacceptable on real
- * phones: render both trees, CSS hides the wrong one always (including
- * during SSR), and this hook gates whether the heavy `DndContext` +
- * `useSortable` hook surface actually mounts. The original plan's cost
- * concern was the dnd-kit hooks, not duplicate DOM — duplicate DOM is cheap;
- * the hooks aren't.
- *
- * Same shape as `Drawer.tsx`'s `isClient` check.
- */
-const NARROW_QUERY = maxWidth("lg");
-
-function subscribeNarrow(cb: () => void): () => void {
-  const mq = window.matchMedia(NARROW_QUERY);
-  mq.addEventListener("change", cb);
-  return () => mq.removeEventListener("change", cb);
-}
-
-function getNarrowSnapshot(): boolean {
-  return window.matchMedia(NARROW_QUERY).matches;
-}
-
-function getNarrowServerSnapshot(): boolean {
-  return false;
-}
-
-function useIsNarrow(): boolean {
-  return useSyncExternalStore(subscribeNarrow, getNarrowSnapshot, getNarrowServerSnapshot);
-}
 
 function SortableTaskCard({
   task,
@@ -287,84 +250,70 @@ function TaskBoardKanban({ tasks, projects, users, onOpenTask }: Props) {
   );
 }
 
+/**
+ * Phone-shaped board: a vertical kanban. The desktop columns become stacked
+ * sections, each a labelled box containing its tasks. No drag (desktop-only;
+ * the modal is the status-change UX on phone). Empty sections render with a
+ * muted placeholder so the user sees the full board shape at a glance.
+ *
+ * Visual treatment mirrors `BoardColumn` above — same header strip and same
+ * boxed content area — so the two views feel consistent.
+ */
 function TaskBoardPhone({ tasks, projects, users, onOpenTask }: Props) {
-  const [activeStatus, setActiveStatus] = useState<TaskStatus>(TASK_STATUSES[0]);
-  const activePillRef = useRef<HTMLButtonElement | null>(null);
-
-  // Centre the initial active pill in the scrollable row on mount only.
-  // Subsequent pill taps must NOT re-centre — that would jerk the row out
-  // from under the user's finger.
-  useEffect(() => {
-    activePillRef.current?.scrollIntoView({ inline: "center", block: "nearest" });
-  }, []);
-
-  const counts = useMemo(() => {
-    const map = new Map<TaskStatus, number>();
-    TASK_STATUSES.forEach((s) => map.set(s, 0));
+  const byStatus = useMemo(() => {
+    const map = new Map<TaskStatus, TaskDoc[]>();
+    TASK_STATUSES.forEach((s) => map.set(s, []));
     for (const t of tasks) {
-      map.set(t.status, (map.get(t.status) ?? 0) + 1);
+      map.get(t.status)?.push(t);
     }
     return map;
   }, [tasks]);
 
-  const filtered = useMemo(
-    () => tasks.filter((t) => t.status === activeStatus),
-    [tasks, activeStatus],
-  );
-
   return (
-    <div>
-      <div className={styles.statusPills} role="tablist" aria-label="Filter by status">
-        {TASK_STATUSES.map((status) => {
-          const active = status === activeStatus;
-          return (
-            <button
-              key={status}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              ref={active ? activePillRef : undefined}
-              className={active ? `${styles.statusPill} ${styles.statusPillActive}` : styles.statusPill}
-              onClick={() => setActiveStatus(status)}
-            >
-              <span>{TASK_STATUS_LABELS[status]}</span>
-              <span className={styles.pillCount}>{counts.get(status) ?? 0}</span>
-            </button>
-          );
-        })}
-      </div>
-      <div className={styles.phoneList}>
-        {filtered.length === 0 ? (
-          <p className={styles.phoneEmpty}>
-            No tasks in {TASK_STATUS_LABELS[activeStatus].toLowerCase()}.
-          </p>
-        ) : (
-          filtered.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              projects={projects}
-              users={users}
-              onOpen={onOpenTask}
-            />
-          ))
-        )}
-      </div>
+    <div className={styles.phoneList}>
+      {TASK_STATUSES.map((status) => {
+        const sectionTasks = byStatus.get(status) ?? [];
+        return (
+          <section key={status} className={styles.phoneSection}>
+            <div className={styles.phoneSectionHeader}>
+              <span className={styles.phoneSectionTitle}>{TASK_STATUS_LABELS[status]}</span>
+              <span className={styles.phoneSectionCount}>{sectionTasks.length}</span>
+            </div>
+            <div className={styles.phoneSectionBody}>
+              {sectionTasks.length === 0 ? (
+                <p className={styles.phoneSectionEmpty}>No tasks</p>
+              ) : (
+                sectionTasks.map((task) => (
+                  <TaskCard
+                    key={task.id}
+                    task={task}
+                    projects={projects}
+                    users={users}
+                    onOpen={onOpenTask}
+                  />
+                ))
+              )}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
 
+/**
+ * Both trees are always mounted so CSS alone decides which is visible. The
+ * kanban's `display: none` on phone prevents pointer events from reaching it,
+ * which is what actually matters for dnd-kit — its hook registrations cost
+ * near-nothing without active drag, and the always-mounted layout removes
+ * the empty-`.kanbanOnly`-div transient state that a matchMedia JS gate
+ * produces when resizing across `--bp-lg`.
+ */
 export default function TaskBoard(props: Props) {
-  const narrow = useIsNarrow();
-  // Both trees are always rendered structurally so the initial SSR paint is
-  // correct regardless of viewport (CSS decides which is visible). The
-  // kanban tree only mounts its DndContext + useSortable hooks when the
-  // client-side matchMedia hook confirms a desktop viewport, so phone never
-  // pays the dnd-kit cost.
   return (
     <>
       <div className={styles.kanbanOnly}>
-        {!narrow && <TaskBoardKanban {...props} />}
+        <TaskBoardKanban {...props} />
       </div>
       <div className={styles.phoneOnly}>
         <TaskBoardPhone {...props} />
