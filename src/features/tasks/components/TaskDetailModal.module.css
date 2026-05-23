@@ -350,9 +350,13 @@
     overflow-y: visible;
   }
   /* Push the close button below the iOS notch in portrait. env() falls back
-     to 0 on devices without safe-area-inset-top. */
+     to 0 on devices without safe-area-inset-top. Bump width / height to the
+     44px touch-target floor + a bigger glyph so the X is reliably tappable. */
   .closeButton {
     top: calc(var(--space-2) + env(safe-area-inset-top, 0px));
+    width: 2.75rem;
+    height: 2.75rem;
+    font-size: var(--text-lg);
   }
   /* NOTE: the previous round set `.title { order: -2 }` and
      `.subtaskSection { order: -1 }` to pull Subtasks toward the top on

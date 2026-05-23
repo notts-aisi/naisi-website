@@ -107,12 +107,19 @@
     gap: var(--space-4);
     max-height: 100vh;
     /* Leave room at the top so the body doesn't slide under the close
-       button (which now respects the iOS notch). */
+       button (which now respects the iOS notch). Sized to match the
+       bigger 2.75rem close button below. */
     padding-top: calc(
-      var(--space-4) + 2.5rem + env(safe-area-inset-top, 0px)
+      var(--space-4) + 2.75rem + env(safe-area-inset-top, 0px)
     );
   }
+  /* Push the close button below the iOS notch in portrait + bump width /
+     height to the 44px touch-target floor with a bigger glyph so the X
+     is reliably tappable. */
   .closeButton {
     top: calc(var(--space-2) + env(safe-area-inset-top, 0px));
+    width: 2.75rem;
+    height: 2.75rem;
+    font-size: var(--text-lg);
   }
 }
