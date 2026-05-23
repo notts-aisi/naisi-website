@@ -1,0 +1,312 @@
+/* Styles for TaskDetailModal. Extracted from the previous all-inline-styles
+   implementation so that a mobile @media block can be added (CSS variables
+   don't work inside @media conditions — see docs/mobile-conventions.md). */
+
+/* === Overlay scrim + panel === */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+}
+
+.panel {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  max-width: 56rem;
+  width: 100%;
+  max-height: 85vh;
+  overflow: hidden;
+  position: relative;
+}
+
+.closeButton {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text);
+  font-size: var(--text-md);
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+  box-shadow: var(--shadow-sm);
+}
+
+/* === Status fallbacks (loading / not found / deleting) === */
+
+.statusFallback {
+  padding: var(--space-6);
+  color: var(--color-text-muted);
+}
+
+.deletingStatus {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-8);
+  min-height: 14rem;
+  text-align: center;
+}
+
+.deletingLabel {
+  font-size: var(--text-md);
+  color: var(--color-text);
+}
+
+.deletingHint {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  max-width: 22rem;
+}
+
+.deletingError {
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}
+
+.spinner {
+  display: block;
+}
+
+/* === Layout grid + columns === */
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(16rem, 1fr);
+  /* Fixed row so children with overflow can bound their content. Using
+     max-height without an explicit row height lets the grid grow with
+     content and breaks internal scroll. */
+  grid-template-rows: 85vh;
+  gap: 0;
+}
+
+.mainColumn {
+  padding: var(--space-6);
+  overflow-y: auto;
+  /* min-height: 0 is the classic grid/flex scroll fix — without it a
+     scrollable child inherits its intrinsic height instead of the
+     grid row's bounded height. */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.sidebar {
+  padding: var(--space-5);
+  background: var(--color-bg-elevated);
+  border-left: 1px solid var(--color-border);
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* === Title === */
+
+.title {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  margin: 0;
+  cursor: default;
+}
+
+.titleEditable {
+  cursor: text;
+}
+
+.titleInput {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  color: var(--color-text);
+}
+
+/* === Field row (Status / Priority pickers) === */
+
+.fieldRow {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  align-items: end;
+}
+
+.sectionLabel {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-2);
+  font-weight: 600;
+}
+
+.fieldLabel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+/* === Description === */
+
+.descEditWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.descEditActions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.charCounter {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.charCounterOver {
+  color: var(--color-danger);
+}
+
+.descriptionBox {
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  cursor: default;
+  padding: var(--space-3);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-height: 3rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.descriptionBoxEditable {
+  cursor: text;
+}
+
+.descriptionBoxEmpty {
+  color: var(--color-text-muted);
+}
+
+/* === Subtasks === */
+
+.subtaskBreakdownWrapper {
+  margin-bottom: var(--space-3);
+}
+
+.reviewerProgressSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: 0.5rem 0.75rem;
+  margin-bottom: var(--space-2);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+}
+
+.reviewerStat {
+  color: var(--color-text-muted);
+}
+
+.reviewerStatDone {
+  color: var(--color-success);
+}
+
+.reviewerStatQuestion {
+  color: var(--color-warning);
+}
+
+.reviewerStatName {
+  color: var(--color-text);
+}
+
+/* === Attachments === */
+
+.attachmentsSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* === Sidebar pieces === */
+
+.assigneeList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.assigneeListEmpty {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.assigneeListItem {
+  font-size: var(--text-sm);
+}
+
+.initialNotifyConfirmation {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.metaName {
+  color: var(--color-text);
+}
+
+.metaCapitalize {
+  text-transform: capitalize;
+}
+
+.bottomActions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.deleteError {
+  font-size: var(--text-xs);
+  color: var(--color-danger);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* TODO: PR T2 */
+}
