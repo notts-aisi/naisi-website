@@ -139,9 +139,14 @@ export default function TypedHeadline({
   const prefixWords = prefix.split(/(\s+)/);
   let wordIdx = -1;
 
-  const cursorClass = phase === "typingAccent" || phase === "deleting" || phase === "holding" || phase === "underlining" || phase === "ununderlining"
-    ? styles.cursorOnAccent
-    : "";
+  // Caret is rendered as a JSX child at the trailing edge of the accent
+  // span so it visibly moves with each typed/deleted character.
+  const showCaret =
+    phase === "typingAccent" ||
+    phase === "deleting" ||
+    phase === "holding" ||
+    phase === "underlining" ||
+    phase === "ununderlining";
 
   const underlineClass =
     underlineState === "growing"
@@ -153,7 +158,7 @@ export default function TypedHeadline({
       : "";
 
   return (
-    <h1 ref={rootRef} className={`${styles.headline} ${cursorClass}`}>
+    <h1 ref={rootRef} className={styles.headline}>
       <span className={styles.srOnly}>{prefix} {accent}</span>
       <span aria-hidden="true" className={styles.prefix}>
         {prefixWords.map((segment, i) => {
@@ -173,7 +178,8 @@ export default function TypedHeadline({
         })}
       </span>
       <span aria-hidden="true" className={`${styles.accent} ${underlineClass}`}>
-        {accentText}
+        <span className={styles.accentText}>{accentText}</span>
+        {showCaret && <span className={styles.caret}>|</span>}
       </span>
     </h1>
   );

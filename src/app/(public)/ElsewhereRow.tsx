@@ -18,7 +18,7 @@ const ITEMS: Item[] = [
   },
   {
     platform: "Linktree",
-    href: "https://linktr.ee/nottsaisafety",
+    href: "https://linktr.ee/nottsaisi",
     primary: "Every link in one place",
     description: "The latest thing we're pointing people at — socials, sign-ups, events.",
   },
