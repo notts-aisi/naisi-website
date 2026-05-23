@@ -418,10 +418,23 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
       dpr = Math.min(window.devicePixelRatio || 1, 1.5);
       width = canvas.clientWidth; height = canvas.clientHeight;
       canvas.width = Math.floor(width * dpr); canvas.height = Math.floor(height * dpr);
+      // Force reflow — iOS Safari occasionally caches stale layout
+      // dimensions after setting canvas.width/height, leaving the canvas
+      // visually 0×0 even though the backing store sized correctly.
+      void canvas.offsetHeight;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0); init();
     };
     resize();
     const ro = new ResizeObserver(() => resize()); ro.observe(canvas);
+    // Defensive resize at +100ms in case ResizeObserver doesn't fire
+    // quickly enough on iOS Safari and the first resize() captured
+    // canvas.clientWidth/Height as 0 (parent layout not finalised yet).
+    // No-op when dimensions match.
+    const deferredResizeTimer = window.setTimeout(() => {
+      if (canvas.clientWidth !== width || canvas.clientHeight !== height) {
+        resize();
+      }
+    }, 100);
 
     let cursorX = -9999, cursorY = -9999, cursorActive = false;
     let lastCursorFireAt = -Infinity;
@@ -1048,6 +1061,7 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
 
     return () => {
       if (frame) cancelAnimationFrame(frame);
+      window.clearTimeout(deferredResizeTimer);
       ro.disconnect(); io.disconnect();
       window.removeEventListener("scroll", onScroll);
       cursorTarget?.removeEventListener("mousemove", onMove);
