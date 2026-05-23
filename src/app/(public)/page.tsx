@@ -48,7 +48,7 @@ export default function Landing() {
               it is absolute-positioned to the right and source order is
               irrelevant — see landing.module.css. */}
           <HeroEmblem />
-          <HeroEyebrow>University of Nottingham · AI Safety</HeroEyebrow>
+          <HeroEyebrow />
           <TypedHeadline prefix="Make AI go well." accent="From Nottingham." startDelayMs={500} />
           <HeroLede>
             NAISI is the AI safety student group at the University of
