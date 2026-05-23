@@ -58,7 +58,6 @@
   min-height: auto;
   padding: 0.2rem 0.35rem 0.2rem 0.45rem;
   font-size: var(--text-xs);
-  max-width: 9rem;
 }
 
 .triggerLabel {
@@ -120,10 +119,6 @@
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
   animation: dropdownScrimIn var(--transition-fast) ease-out;
-  /* Stops iOS from generating the synthetic click that would re-target
-     to a trigger underneath after the scrim unmounts. Pair with the
-     scrim's onPointerDown + preventDefault in Dropdown.tsx. */
-  touch-action: none;
 }
 
 .sheet {

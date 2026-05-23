@@ -362,13 +362,15 @@ export default function Dropdown<T extends string = string>({
             <div className={styles.sheetRoot}>
               <div
                 className={styles.scrim}
-                onPointerDown={(e) => {
-                  // preventDefault suppresses the synthetic click iOS
-                  // would otherwise dispatch from touchend ~300ms later —
-                  // which, with the scrim already unmounted, would
-                  // re-target to the element under the tap and open a
-                  // second sheet.
-                  e.preventDefault();
+                onClick={(e) => {
+                  // Close on click, not pointerdown. Document-level
+                  // pointerdown is already gated off in sheet mode (see
+                  // useEffect above), so this is the only close path.
+                  // Reacting on click means the scrim stays mounted
+                  // through pointerdown → pointerup → click — iOS hit-
+                  // tests the synthetic click against the scrim (still
+                  // mounted) and fires THIS handler, instead of
+                  // re-targeting to the trigger underneath.
                   e.stopPropagation();
                   setOpen(false);
                 }}
