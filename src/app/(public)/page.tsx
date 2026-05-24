@@ -3,6 +3,7 @@ import SubscribeForm from "@/components/SubscribeForm";
 import ReadingListAccordion from "@/components/ReadingListAccordion";
 import { READING_LISTS } from "@/content/readingLists";
 import HeroAtmosphere from "./HeroAtmosphere";
+import HeroScrollChevron from "./HeroScrollChevron";
 import HeroEyebrow from "./HeroEyebrow";
 import HeroLede from "./HeroLede";
 import MobileTagline from "./MobileTagline";
@@ -52,7 +53,10 @@ export default function Landing() {
           <MobileTagline />
           <TypedHeadline prefix="Make AI go well." accent="From Nottingham." startDelayMs={500} />
           <div className={styles.heroBadge}>
-            <AwardBadge />
+            <div className={styles.heroAwardDesktop}>
+              <AwardBadge />
+            </div>
+            <HeroScrollChevron />
           </div>
         </div>
       </section>

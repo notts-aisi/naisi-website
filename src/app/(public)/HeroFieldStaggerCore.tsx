@@ -347,8 +347,14 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
           }
           const zBand = pickZBand(Math.random());
           const [introStartX, introStartY] = computeIntroStart(nnX, nnY);
-          const startX = alwaysAssembled ? nnX : introStartX;
-          const startY = alwaysAssembled ? nnY : introStartY;
+          // In reduced-motion mode the core renders exactly one frame
+          // and freezes. Without this branch, iPhone Safari under Low
+          // Power Mode draws a blank canvas — the single frame is
+          // cycleMs ≈ 0 where Big Bang particles haven't flown in yet.
+          // Spawn directly at NN home so the static frame shows the
+          // assembled network.
+          const startX = (alwaysAssembled || reduced) ? nnX : introStartX;
+          const startY = (alwaysAssembled || reduced) ? nnY : introStartY;
           const rawDelay = config.staggerFn({ x: nnX, y: nnY, layer: l, zBand }, { width, height, layerCount: LAYER_COUNT });
           const crystalT0 = Math.max(0, Math.min(STAGGER_WINDOW_CRYSTAL, rawDelay));
           const dissolveT0 = STAGGER_WINDOW_DISSOLVE > 0
@@ -365,7 +371,7 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
             phase: Math.random() * Math.PI * 2, phase2: Math.random() * Math.PI * 2,
             outEdges: [],
             crystalT0, dissolveT0,
-            coalescedAt: alwaysAssembled ? performance.now() - COALESCE_RIPPLE_MS - 1 : -1,
+            coalescedAt: (alwaysAssembled || reduced) ? performance.now() - COALESCE_RIPPLE_MS - 1 : -1,
             wobbleFreqXa: 0.18 + Math.random() * 0.32,
             wobbleFreqXb: 0.28 + Math.random() * 0.45,
             wobbleFreqYa: 0.18 + Math.random() * 0.32,
@@ -412,10 +418,23 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
       dpr = Math.min(window.devicePixelRatio || 1, 1.5);
       width = canvas.clientWidth; height = canvas.clientHeight;
       canvas.width = Math.floor(width * dpr); canvas.height = Math.floor(height * dpr);
+      // Force reflow — iOS Safari occasionally caches stale layout
+      // dimensions after setting canvas.width/height, leaving the canvas
+      // visually 0×0 even though the backing store sized correctly.
+      void canvas.offsetHeight;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0); init();
     };
     resize();
     const ro = new ResizeObserver(() => resize()); ro.observe(canvas);
+    // Defensive resize at +100ms in case ResizeObserver doesn't fire
+    // quickly enough on iOS Safari and the first resize() captured
+    // canvas.clientWidth/Height as 0 (parent layout not finalised yet).
+    // No-op when dimensions match.
+    const deferredResizeTimer = window.setTimeout(() => {
+      if (canvas.clientWidth !== width || canvas.clientHeight !== height) {
+        resize();
+      }
+    }, 100);
 
     let cursorX = -9999, cursorY = -9999, cursorActive = false;
     let lastCursorFireAt = -Infinity;
@@ -426,6 +445,19 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
       cursorX = e.clientX - rect.left; cursorY = e.clientY - rect.top; cursorActive = true;
     };
     const onLeave = () => { cursorActive = false; };
+    // Touch attractor — passive listeners (no preventDefault) so the
+    // chevron button still receives synthetic click events on tap. The
+    // .hero is touch-action: none in CSS on mobile, which prevents
+    // scroll without needing preventDefault here. Always attached (no
+    // coarse gate) — listeners are dormant on non-touch devices.
+    const onTouchPos = (e: TouchEvent) => {
+      if (e.touches.length === 0) return;
+      const touch = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      cursorX = touch.clientX - rect.left;
+      cursorY = touch.clientY - rect.top;
+      cursorActive = true;
+    };
     // Listen on the closest [data-hero] ancestor so cursor events bubble
     // up from EVERY child (logo, headline, badge, …) and the attractor
     // doesn't get blocked by overlay content. Falls back to the canvas's
@@ -440,9 +472,13 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
       return canvas.parentElement;
     };
     const cursorTarget = findCursorTarget();
-    if (!coarse && cursorTarget) {
+    if (cursorTarget) {
       cursorTarget.addEventListener("mousemove", onMove);
       cursorTarget.addEventListener("mouseleave", onLeave);
+      cursorTarget.addEventListener("touchstart", onTouchPos, { passive: true });
+      cursorTarget.addEventListener("touchmove", onTouchPos, { passive: true });
+      cursorTarget.addEventListener("touchend", onLeave);
+      cursorTarget.addEventListener("touchcancel", onLeave);
     }
     const onScroll = () => { scrollY = window.scrollY; };
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -463,7 +499,7 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
     });
 
     const introAmount = (n: Node, cycleMs: number) => {
-      if (alwaysAssembled) return 1;
+      if (alwaysAssembled || reduced) return 1;
       if (cycleMs < PHASE_DRIFT_MS) return 0;
       const inCrystal = cycleMs - PHASE_DRIFT_MS;
       if (inCrystal < PHASE_CRYSTAL_MS) {
@@ -616,7 +652,7 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
       // Cursor-driven fire — gated to the active inference window. Outside
       // it (coalesce pause, inference tail, dissolve, intro), the cursor
       // does not fire comets so no stray inference appears mid-Big-Bang.
-      if (cursorActive && !coarse && cursorCanFire && now - lastCursorFireAt > LENS_FIRE_COOLDOWN_MS) {
+      if (cursorActive && cursorCanFire && now - lastCursorFireAt > LENS_FIRE_COOLDOWN_MS) {
         let bestI = -1, bestD = Infinity;
         for (let i = 0; i < nodes.length; i++) {
           if (nodes[i].outEdges.length === 0) continue;
@@ -740,7 +776,7 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
           // (no positive-feedback drift). Only applied once the node is
           // assembled enough to have a stable home.
           let attrX = 0, attrY = 0;
-          if (effectiveAttract > 0 && cursorActive && !coarse && amt > 0.6) {
+          if (effectiveAttract > 0 && cursorActive && amt > 0.6) {
             const adx = cursorX - n.nnX;
             const ady = cursorY - n.nnY;
             const aDist = Math.sqrt(adx * adx + ady * ady);
@@ -798,7 +834,7 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
             n.vx *= damp; n.vy *= damp;
             n.x += n.vx; n.y += n.vy;
           }
-          if (cursorActive && !coarse) {
+          if (cursorActive) {
             const dx = cursorX - n.x, dy = cursorY - n.y;
             const distSq = dx * dx + dy * dy;
             if (distSq < LENS_RADIUS * LENS_RADIUS && distSq > 4) {
@@ -1031,21 +1067,32 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
     if (reduced) draw(performance.now());
     else frame = requestAnimationFrame(draw);
 
-    const io = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        visible = entry.isIntersecting;
-        if (visible && !frame && !reduced) { lastT = performance.now(); frame = requestAnimationFrame(draw); }
-        else if (!visible && frame) { cancelAnimationFrame(frame); frame = 0; }
-      }
-    }, { threshold: 0 });
-    io.observe(canvas);
+    // IntersectionObserver pause-while-offscreen removed: on iOS WebKit
+    // the IO could fire isIntersecting=false initially (canvas 0x0 from
+    // late parent layout) and never recover, leaving the loop dead. We
+    // accept the cost of computing while the hero is off-screen for
+    // reliability.
+
+    // Window-resize fallback alongside ResizeObserver. iOS WebKit's RO
+    // timing can miss the initial layout settle (especially with the
+    // URL bar collapse on first scroll); window resize fires on
+    // orientation change + URL-bar reflow and gives us a second chance
+    // to size correctly.
+    const onWinResize = () => resize();
+    window.addEventListener("resize", onWinResize, { passive: true });
 
     return () => {
       if (frame) cancelAnimationFrame(frame);
-      ro.disconnect(); io.disconnect();
+      window.clearTimeout(deferredResizeTimer);
+      ro.disconnect();
+      window.removeEventListener("resize", onWinResize);
       window.removeEventListener("scroll", onScroll);
       cursorTarget?.removeEventListener("mousemove", onMove);
       cursorTarget?.removeEventListener("mouseleave", onLeave);
+      cursorTarget?.removeEventListener("touchstart", onTouchPos);
+      cursorTarget?.removeEventListener("touchmove", onTouchPos);
+      cursorTarget?.removeEventListener("touchend", onLeave);
+      cursorTarget?.removeEventListener("touchcancel", onLeave);
     };
   }, [config]);
 
