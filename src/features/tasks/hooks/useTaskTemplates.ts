@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
+import { bypass } from "@/lib/devBypass";
 import { getClientDb } from "@/lib/firebase/client";
 import { normalizeTaskTemplate, type TaskTemplate } from "@/lib/firestore/taskTemplates";
 
@@ -11,6 +12,12 @@ export function useTaskTemplates() {
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
+    if (bypass.isActive) {
+      // No template fixtures: show empty list and stop loading.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLoading(false);
+      return;
+    }
     const db = getClientDb();
     // `name` is required on every template, so orderBy here is safe.
     const q = query(collection(db, "taskTemplates"), orderBy("name"));

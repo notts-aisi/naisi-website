@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
+import { bypass } from "@/lib/devBypass";
 import { getClientDb } from "@/lib/firebase/client";
 import { normalizeTask, type TaskDoc } from "@/lib/firestore/tasks";
 
@@ -24,6 +25,12 @@ export function useTask(
 
   useEffect(() => {
     if (!taskId) return;
+    if (bypass.isActive) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setTask(bypass.getTask(taskId));
+      setLoading(false);
+      return;
+    }
     const db = getClientDb();
     const ref = doc(db, "tasks", taskId);
     const unsub = onSnapshot(

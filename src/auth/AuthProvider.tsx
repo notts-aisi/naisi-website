@@ -10,6 +10,7 @@ import {
 } from "react";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
+import { bypass } from "@/lib/devBypass";
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import type { Role } from "@/lib/firebase/session";
 import type { UserPermissions } from "@/lib/firestore/users";
@@ -46,14 +47,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const log = instance("authProvider");
     log.mark("mounted");
 
+    // Apply either the dev-bypass admin (if active locally) or signed-out
+    // state. Used both as the no-real-user branch of the Firebase Auth
+    // listener and as the failsafe fallback when the SDK wedges.
+    function applyBypassOrSignedOut() {
+      const bypassUser = bypass.getAuthUser();
+      const snapshot = bypass.getAuthSnapshot();
+      if (bypassUser && snapshot) {
+        setUser(bypassUser);
+        setRole(snapshot.role);
+        setPermissions(snapshot.permissions);
+        setSuRecognised(snapshot.suRecognised);
+      } else {
+        setUser(null);
+        setRole(null);
+        setPermissions({});
+        setSuRecognised(false);
+      }
+    }
+
     // Hard ceiling on the loading state. Firebase Auth's init reads from
     // IndexedDB; a wedged IDB (lock contention, private-mode quirks,
     // corrupted db) can leave onAuthStateChanged unfired indefinitely,
     // which used to leave the header stuck on the loading branch forever.
     // 3s covers the happy path on cold cache; beyond that we assume the
-    // SDK is wedged and render as signed-out.
+    // SDK is wedged and render with whatever the bypass tells us (or
+    // signed-out if the bypass is off).
     const failsafe = setTimeout(() => {
       log.warn("failsafe fired (onAuthStateChanged never ran in 3s)");
+      applyBypassOrSignedOut();
       setLoading(false);
     }, 3000);
 
@@ -67,11 +89,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       log.mark("onAuthStateChanged", { uid: u?.uid ?? null, email: u?.email ?? null });
       clearTimeout(failsafe);
-      setUser(u);
-      if (!u) {
-        setRole(null);
-        setPermissions({});
-        setSuRecognised(false);
+      if (u) {
+        // Real signed-in user; bypass cedes. The user-doc snapshot effect
+        // below will fill in role/permissions/suRecognised from Firestore.
+        setUser(u);
+      } else {
+        // No real user. Fall back to the dev bypass if active, otherwise
+        // render as signed-out.
+        applyBypassOrSignedOut();
       }
       // Auth state is resolved — UI can render regardless of whether the
       // Firestore user-doc snapshot has arrived yet. Previously we waited
@@ -91,6 +116,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!user) return;
+    // The dev-bypass admin doesn't exist in Firestore, so a snapshot would
+    // just hit permission-denied. Skip it; the bypass already supplied
+    // role/permissions/suRecognised in applyBypassOrSignedOut above.
+    const bypassUser = bypass.getAuthUser();
+    if (bypassUser && user.uid === bypassUser.uid) return;
     const log = instance("userDocSnap");
     log.mark("attaching", { uid: user.uid });
     const clearSnapWatchdog = watchdog(`${log.id} first snapshot`, 5000);

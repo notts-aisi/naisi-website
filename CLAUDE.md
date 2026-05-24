@@ -370,6 +370,59 @@ Two separate Firebase projects, each with its own App Hosting backend (both back
 4. **Track-lead sub-role** — admins designating a member or committee member as head of a specific reading group / fellowship track / project, orthogonal to the governance role. No data field, UI, or rules exist. (The existing `users.tracks` field is unrelated: it is an admin `technical` / `governance` tag, not a leadership role.)
 5. **Cohort channels** — the subscriptions junction collection already accepts `cohort:<id>`-style channel strings as data, but no cohort feature creates or sends to them yet.
 
+## Local dev: auth bypass
+
+`src/lib/devBypass/` is an optional shim that lets you run authed surfaces (dashboard, tasks, admin) on localhost without a real Firebase Auth session. Useful for UI work + mobile pass iteration where signing in repeatedly is friction.
+
+**Architecture:**
+
+- `types.ts` (committed): the `BypassAPI` interface. One method per bypassed surface (auth user/snapshot/server-user; users/projects/tasks lists; single task by ID).
+- `local.ts` (committed **stub**): every method returns `null`, `isActive: false`. Production builds use this as-is, so any bypass branch in production code is a no-op. An accidental `NEXT_PUBLIC_DEV_BYPASS_AUTH=true` on a deployed backend **cannot** activate the bypass: the activation logic isn't here.
+- `index.ts` (committed): re-exports `bypass` from `./local`.
+- `fixtures.ts` (**not committed**, local-only via `.git/info/exclude`): the real fixture data (users, projects, tasks). Stays off GitHub because it carries real emails / names.
+- Production files (`AuthProvider.tsx`, `proxy.ts`, `session.ts`, the 7 data hooks) import `bypass` and have small dormant branches like `const fixture = bypass.getUsers(); if (fixture !== null) { ... }`. With the stub, these branches don't fire.
+
+**Defer-to-real-session:** bypass cedes to any real Firebase Auth session. `getCurrentUser`, the proxy, and `AuthProvider` all check for a real cookie / signed-in user first and only fall back to the bypass when there isn't one. So you can `/login` normally on localhost and test real-auth surfaces (events editor, etc.) without flipping the env var.
+
+**Activating locally (one-time setup, per machine):**
+
+```sh
+# 1. Construct a local fixtures.ts (paste your fixture data). The file is
+#    already in .git/info/exclude so it never lands on GitHub.
+
+# 2. Replace the committed stub `local.ts` with a real impl that reads
+#    NEXT_PUBLIC_DEV_BYPASS_AUTH and returns the fixtures. Reference impl:
+#
+#    import type { BypassAPI } from "./types";
+#    import { DEV_USERS, DEV_PROJECTS, DEV_TASKS } from "./fixtures";
+#    const ACTIVE = process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === "true";
+#    const DEV_USER = { uid: "dev-bypass-admin", … } as unknown as User;
+#    const SESSION = { uid: "dev-bypass-admin", role: "admin", … };
+#    const SNAPSHOT = { role: "admin", permissions: { … }, suRecognised: true };
+#    export const bypass: BypassAPI = {
+#      isActive: ACTIVE,
+#      getAuthUser: () => ACTIVE ? DEV_USER : null,
+#      getAuthSnapshot: () => ACTIVE ? SNAPSHOT : null,
+#      getServerUser: () => ACTIVE ? SESSION : null,
+#      getUsers: () => ACTIVE ? DEV_USERS : null,
+#      getProjects: () => ACTIVE ? DEV_PROJECTS : null,
+#      getTasks: (q) => ACTIVE ? applyFilters(DEV_TASKS, q) : null,
+#      getTask: (id) => ACTIVE ? (DEV_TASKS.find(t => t.id === id) ?? null) : null,
+#    };
+
+# 3. Hide your local override from git so it never lands on GitHub.
+git update-index --skip-worktree src/lib/devBypass/local.ts
+
+# 4. Enable in .env.local
+echo "NEXT_PUBLIC_DEV_BYPASS_AUTH=true" >> .env.local
+
+# 5. Restart the dev server. Bypass is now live.
+```
+
+**Disabling without removing files:** set `NEXT_PUBLIC_DEV_BYPASS_AUTH=false` (or sign in for real, since the bypass cedes automatically). To revert the override entirely: `git update-index --no-skip-worktree src/lib/devBypass/local.ts && git checkout -- src/lib/devBypass/local.ts`.
+
+**Why one file with skip-worktree, not 11:** an earlier version of this shim hand-modded 10 production files (`AuthProvider`, hooks, proxy, session) with `--skip-worktree` flags. That mechanism made cross-branch checkouts brittle (any branch with a real edit to a flagged file errored on switch) and risked leaking the bypass if you ever resaved a flagged file without the dance. The current design keeps committed production code clean. The only file you `--skip-worktree` is `local.ts`, and only when the BypassAPI interface itself changes (rare) do you have to re-run the dance.
+
 ## Debug instrumentation
 
 Two console-tagged probes exist for live debugging, both gated so they only emit when explicitly turned on:

@@ -1,5 +1,6 @@
 import "server-only";
 import { cookies } from "next/headers";
+import { bypass } from "@/lib/devBypass";
 import { getAdminAuth, getAdminDb } from "./admin";
 
 export const SESSION_COOKIE = "__session";
@@ -91,7 +92,13 @@ export async function clearSessionCookieOnly(): Promise<void> {
 export async function getCurrentUser(): Promise<SessionUser | null> {
   const store = await cookies();
   const cookie = store.get(SESSION_COOKIE);
-  if (!cookie?.value) return null;
+  if (!cookie?.value) {
+    // No real session, so fall back to the dev bypass if it's active
+    // locally. The bypass stub returns null in production builds, so
+    // this is a no-op there. A real session cookie always wins over
+    // the bypass.
+    return bypass.getServerUser();
+  }
 
   const auth = getAdminAuth();
   const db = getAdminDb();

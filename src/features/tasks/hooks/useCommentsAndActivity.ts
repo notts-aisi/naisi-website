@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
+import { bypass } from "@/lib/devBypass";
 import { getClientDb } from "@/lib/firebase/client";
 import { normalizeComment, type CommentDoc } from "@/lib/firestore/comments";
 import {
@@ -28,6 +29,11 @@ export function useCommentsAndActivity(taskId: string | null) {
 
   useEffect(() => {
     if (!taskId) return;
+    if (bypass.isActive) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCommentsLoading(false);
+      return;
+    }
     const db = getClientDb();
     const qComments = query(
       collection(db, "tasks", taskId, "comments"),
@@ -50,6 +56,11 @@ export function useCommentsAndActivity(taskId: string | null) {
 
   useEffect(() => {
     if (!taskId) return;
+    if (bypass.isActive) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setActivityLoading(false);
+      return;
+    }
     const db = getClientDb();
     const qActivity = query(
       collection(db, "tasks", taskId, "activity"),
