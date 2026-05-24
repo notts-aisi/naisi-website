@@ -19,7 +19,13 @@
 
 .hero {
   position: relative;
-  min-height: 100vh;
+  /* dvh (dynamic viewport height) accounts for the URL bar on iOS Safari
+     so the hero fits the actual visible viewport on first load. With
+     vh, mobile Safari measures 100vh as the URL-bar-collapsed height,
+     pushing the bottom of the hero (and the scrollChevron CTA) below
+     the fold while the page is still scroll-locked. dvh resolves to
+     vh on desktop, so this is mobile-correctness with no desktop cost. */
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   padding-block: var(--space-12);
@@ -71,6 +77,128 @@
   }
 }
 
+/*
+  Mobile: lock vertical scroll inside the hero so a finger drag drives
+  the NN cursor attractor instead of scrolling the page. Gated on
+  viewport width to match the rest of the codebase's mobile detection
+  (60rem = --bp-lg). Desktop touchscreens at full width keep normal
+  scroll. The scrollChevron CTA below is how mobile users advance past
+  the hero.
+*/
+@media (max-width: 60rem) {
+  .hero {
+    touch-action: none;
+  }
+}
+
+/*
+  Downward chevron CTA, mobile-only. Sits in the same slot as the award
+  badge: on desktop the badge shows, on coarse pointers (touch primary)
+  the badge hides and the chevron takes its place. Slides up + fades in
+  after the hero settles, then loops a gentle float so it reads as
+  "tap me" rather than static decoration.
+*/
+/* Desktop slot for the award badge — sits inside .heroBadge alongside
+   the chevron CTA. Hidden on mobile via the @media block below so the
+   only badge a mobile user sees is the one in CredentialsBar further
+   down (less cluttered hero). */
+.heroAwardDesktop { display: block; }
+
+.scrollChevron {
+  display: none;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 10px 16px;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.9);
+  font: inherit;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  opacity: 0;
+  transform: translateY(20px);
+  animation: scrollChevronEnter 900ms ease 1600ms forwards;
+}
+.scrollChevron:active { color: rgba(255, 255, 255, 1); }
+
+/* Inner stack — Safari's <button> doesn't always honour flex-direction:
+   column on the button element itself. A child span as the flex
+   container is the reliable cross-browser approach. */
+.scrollChevronStack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.scrollChevronLabel {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.65);
+  opacity: 0;
+  transform: translateY(6px);
+  animation: scrollChevronLabelEnter 700ms ease 5000ms forwards;
+}
+
+.scrollChevronInner {
+  display: inline-flex;
+  animation: scrollChevronFloat 2400ms ease-in-out 2600ms infinite;
+  filter: drop-shadow(0 1px 6px rgba(0, 0, 0, 0.65));
+}
+
+@keyframes scrollChevronEnter {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 0.9; transform: translateY(0); }
+}
+
+@keyframes scrollChevronLabelEnter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scrollChevronFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(6px); }
+}
+
+/*
+  Mobile: chevron CTA takes the heroBadge slot below the headline, with
+  flex-centering so it sits in the middle. Award badge relocates above
+  the eyebrow logo via .heroAwardMobile, and the desktop in-slot copy
+  is hidden. Gated on viewport width (matches mobileTagline at
+  --bp-lg) for consistent mobile detection across the codebase, so
+  wide-viewport desktop browsers never render the chevron.
+*/
+@media (max-width: 60rem) {
+  .scrollChevron { display: inline-flex; }
+  .heroAwardDesktop { display: none; }
+  .heroBadge {
+    display: flex;
+    justify-content: center;
+    margin-top: var(--space-6);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrollChevron {
+    opacity: 0.9;
+    transform: translateY(0);
+    animation: none;
+  }
+  .scrollChevronInner { animation: none; }
+  .scrollChevronLabel {
+    opacity: 1;
+    transform: translateY(0);
+    animation: none;
+  }
+}
+
 .heroInner {
   position: relative;
   z-index: 10;
@@ -82,10 +210,16 @@
 
 /* Award badge sits as a small accent below the headline, separated by
    generous space rather than crammed under CTAs (which now live in
-   their own section). */
+   their own section). On mobile, the heroBadge slot holds the chevron
+   CTA centered (the award badge relocates to .heroAwardMobile above
+   the eyebrow logo) — see scrollChevron + heroAwardMobile rules. */
 .heroBadge {
   margin-top: var(--space-4);
 }
+
+/* Award badge desktop/mobile slots — visibility is overridden together
+   in the mobile @media block earlier in this file. Defaults declared
+   here so heroAward* exists as a class. */
 
 /* Intro section directly below the hero — the lede + CTAs that used
    to sit inside the hero. Revealed via the existing blur-rise on
@@ -178,6 +312,31 @@
   gap: var(--space-3);
   margin-top: var(--space-3);
   flex-wrap: wrap;
+  justify-content: center;
+}
+
+/*
+  Mobile: stack the hero CTAs full-width and centered. With the default
+  flex-wrap each button used to land on its own line but left-aligned
+  at content width — three half-width buttons stair-stepping down the
+  left edge looks unbalanced next to the centered tagline and chevron.
+  Stretch each button to fill the content area and centre the text
+  inside so they read as a clean stacked column.
+*/
+@media (max-width: 60rem) {
+  .ctas {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+  .ctas > div {
+    width: 100%;
+  }
+  .primaryCta,
+  .secondaryCta {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 /* === 3D button family ================================== */
@@ -218,23 +377,12 @@
     color 160ms ease;
 }
 
-.button3d::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    120deg,
-    transparent 30%,
-    rgba(255, 255, 255, 0.22) 50%,
-    transparent 70%
-  );
-  transform: translateX(-110%);
-  transition: transform 700ms cubic-bezier(0.22, 0.61, 0.36, 1);
-  pointer-events: none;
-  border-radius: inherit;
-  z-index: 1;
-}
-.button3d:hover::after { transform: translateX(110%); }
+/* Shimmer ::after was previously transition-based, which made it sweep
+   backwards on hover-out (700ms reverse from 110% back to -110%).
+   Animation-driven one-shot avoids the reverse but introduced its own
+   stutter when rapidly moving between adjacent buttons. Dropped in
+   favour of the tilt-on-hover in HeroCTAs.tsx (useTilt), which gives a
+   more interactive depth signal without the rapid-hover edge cases. */
 
 .button3d > * {
   position: relative;
@@ -307,14 +455,84 @@
   }
 }
 
-/* === Hero CTAs (use the 3D family above) =============== */
+/* === Hero CTAs ==========================================
+
+   Styled after the ElsewhereRow cards (Long-form posts / Every link in
+   one place / Join the society for £6) so the hero CTAs and that
+   section read as the same depth-card family. Hover deepens the box
+   shadow and accents the border; useTilt in HeroCTAs.tsx applies a
+   gentle rotateX/rotateY toward the cursor on desktop. Active state
+   gives a translateY(2px) press feedback that's the only response on
+   touch (useTilt skips coarse pointers). */
+
+.primaryCta,
+.secondaryCta {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: 0.85rem 1.5rem;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  text-decoration: none;
+  transform-style: preserve-3d;
+  transition:
+    transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    box-shadow 220ms ease,
+    border-color 220ms ease,
+    background 220ms ease,
+    color 160ms ease;
+}
 
 .primaryCta {
-  composes: button3d button3dPrimary;
+  background: linear-gradient(180deg, var(--color-accent-hover), var(--color-accent));
+  color: #fff;
+  border: 1px solid transparent;
+  box-shadow:
+    0 3px 0 color-mix(in oklab, var(--color-accent), black 35%),
+    0 10px 22px rgba(0, 0, 0, 0.28);
+}
+.primaryCta:hover {
+  background: linear-gradient(180deg, var(--color-accent-hover), var(--color-accent-hover));
+  box-shadow:
+    0 5px 0 color-mix(in oklab, var(--color-accent), black 35%),
+    0 16px 32px rgba(0, 0, 0, 0.4);
 }
 
 .secondaryCta {
-  composes: button3d button3dSecondary;
+  background: linear-gradient(180deg, var(--color-bg-elevated), var(--color-surface));
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  box-shadow:
+    0 3px 0 var(--btn3d-edge),
+    0 10px 22px rgba(0, 0, 0, 0.22);
+}
+.secondaryCta:hover {
+  border-color: var(--color-accent);
+  background: linear-gradient(180deg, var(--color-bg-elevated), var(--color-surface-hover));
+  box-shadow:
+    0 5px 0 var(--btn3d-edge),
+    0 16px 32px rgba(0, 0, 0, 0.32);
+}
+
+/* Press feedback. On desktop the inline transform from useTilt wins
+   over this CSS transform so the press is mostly invisible (the
+   cursor's mid-click and we're navigating away anyway), but on mobile
+   useTilt is disabled and this is the only tap feedback the user gets
+   before navigation. */
+.primaryCta:active,
+.secondaryCta:active {
+  transform: translateY(2px);
+  box-shadow:
+    0 1px 0 var(--btn3d-edge),
+    0 4px 10px rgba(0, 0, 0, 0.2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primaryCta,
+  .secondaryCta { transform: none !important; transition: none; }
 }
 
 .heroArt {

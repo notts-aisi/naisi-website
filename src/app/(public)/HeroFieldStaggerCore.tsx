@@ -445,6 +445,19 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
       cursorX = e.clientX - rect.left; cursorY = e.clientY - rect.top; cursorActive = true;
     };
     const onLeave = () => { cursorActive = false; };
+    // Touch attractor — passive listeners (no preventDefault) so the
+    // chevron button still receives synthetic click events on tap. The
+    // .hero is touch-action: none in CSS on mobile, which prevents
+    // scroll without needing preventDefault here. Always attached (no
+    // coarse gate) — listeners are dormant on non-touch devices.
+    const onTouchPos = (e: TouchEvent) => {
+      if (e.touches.length === 0) return;
+      const touch = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      cursorX = touch.clientX - rect.left;
+      cursorY = touch.clientY - rect.top;
+      cursorActive = true;
+    };
     // Listen on the closest [data-hero] ancestor so cursor events bubble
     // up from EVERY child (logo, headline, badge, …) and the attractor
     // doesn't get blocked by overlay content. Falls back to the canvas's
@@ -459,9 +472,13 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
       return canvas.parentElement;
     };
     const cursorTarget = findCursorTarget();
-    if (!coarse && cursorTarget) {
+    if (cursorTarget) {
       cursorTarget.addEventListener("mousemove", onMove);
       cursorTarget.addEventListener("mouseleave", onLeave);
+      cursorTarget.addEventListener("touchstart", onTouchPos, { passive: true });
+      cursorTarget.addEventListener("touchmove", onTouchPos, { passive: true });
+      cursorTarget.addEventListener("touchend", onLeave);
+      cursorTarget.addEventListener("touchcancel", onLeave);
     }
     const onScroll = () => { scrollY = window.scrollY; };
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -635,7 +652,7 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
       // Cursor-driven fire — gated to the active inference window. Outside
       // it (coalesce pause, inference tail, dissolve, intro), the cursor
       // does not fire comets so no stray inference appears mid-Big-Bang.
-      if (cursorActive && !coarse && cursorCanFire && now - lastCursorFireAt > LENS_FIRE_COOLDOWN_MS) {
+      if (cursorActive && cursorCanFire && now - lastCursorFireAt > LENS_FIRE_COOLDOWN_MS) {
         let bestI = -1, bestD = Infinity;
         for (let i = 0; i < nodes.length; i++) {
           if (nodes[i].outEdges.length === 0) continue;
@@ -759,7 +776,7 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
           // (no positive-feedback drift). Only applied once the node is
           // assembled enough to have a stable home.
           let attrX = 0, attrY = 0;
-          if (effectiveAttract > 0 && cursorActive && !coarse && amt > 0.6) {
+          if (effectiveAttract > 0 && cursorActive && amt > 0.6) {
             const adx = cursorX - n.nnX;
             const ady = cursorY - n.nnY;
             const aDist = Math.sqrt(adx * adx + ady * ady);
@@ -817,7 +834,7 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
             n.vx *= damp; n.vy *= damp;
             n.x += n.vx; n.y += n.vy;
           }
-          if (cursorActive && !coarse) {
+          if (cursorActive) {
             const dx = cursorX - n.x, dy = cursorY - n.y;
             const distSq = dx * dx + dy * dy;
             if (distSq < LENS_RADIUS * LENS_RADIUS && distSq > 4) {
@@ -1072,6 +1089,10 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
       window.removeEventListener("scroll", onScroll);
       cursorTarget?.removeEventListener("mousemove", onMove);
       cursorTarget?.removeEventListener("mouseleave", onLeave);
+      cursorTarget?.removeEventListener("touchstart", onTouchPos);
+      cursorTarget?.removeEventListener("touchmove", onTouchPos);
+      cursorTarget?.removeEventListener("touchend", onLeave);
+      cursorTarget?.removeEventListener("touchcancel", onLeave);
     };
   }, [config]);
 

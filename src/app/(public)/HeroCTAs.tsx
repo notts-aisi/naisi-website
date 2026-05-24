@@ -2,19 +2,21 @@
 
 import Link from "next/link";
 import { motion } from "motion/react";
-import { useMagneticPull } from "@/hooks/useMagneticPull";
+import { useTilt } from "@/hooks/useTilt";
 import styles from "./landing.module.css";
 
 /*
   Hero CTAs — motion-driven entrance (rise with subtle overshoot spring)
-  + magnetic-pull on hover. The magnetic --mag-x/--mag-y CSS variables
-  are written by the useMagneticPull hook and applied via `translate:`
-  in landing.module.css, which stacks with motion's transform output.
+  + tilt-on-hover via useTilt. Tilt is the same depth signal used by
+  the Instagram / Elsewhere cards further down the page; we previously
+  used a magnetic-pull + diagonal-shimmer combination but the shimmer
+  visibly reversed itself on hover-out and stuttered when the cursor
+  ran from one CTA to the next.
 */
 export default function HeroCTAs() {
-  const primaryRef = useMagneticPull<HTMLAnchorElement>({ radius: 130, strength: 0.18, cap: 8 });
-  const secondaryRef = useMagneticPull<HTMLAnchorElement>({ radius: 130, strength: 0.14, cap: 6 });
-  const tertiaryRef = useMagneticPull<HTMLAnchorElement>({ radius: 130, strength: 0.14, cap: 6 });
+  const primaryRef = useTilt<HTMLAnchorElement>({ max: 6, perspective: 900 });
+  const secondaryRef = useTilt<HTMLAnchorElement>({ max: 6, perspective: 900 });
+  const tertiaryRef = useTilt<HTMLAnchorElement>({ max: 6, perspective: 900 });
 
   return (
     <div className={styles.ctas}>
