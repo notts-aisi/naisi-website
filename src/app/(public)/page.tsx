@@ -43,6 +43,11 @@ import styles from "./landing.module.css";
  * 11. Stay in touch — subscribe form.
  */
 
+// Re-render at most every 10 min so event deletes / edits propagate without
+// a redeploy. UpcomingEvents reads from Firestore at render time; without
+// this, the homepage is statically built at deploy time and goes stale.
+export const revalidate = 600;
+
 export default function Landing() {
   return (
     <>
