@@ -7,6 +7,7 @@ import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import { signInWithGoogle } from "@/auth/signInWithGoogle";
 import { useAuth } from "@/auth/AuthProvider";
+import { bypass } from "@/lib/devBypass";
 import { mark, warn } from "@/lib/devMonitor";
 
 export default function LoginPage() {
@@ -67,6 +68,16 @@ function LoginInner() {
   // necessary.
   useEffect(() => {
     if (authLoading || !user) return;
+    // The dev bypass auto-signs the user in as a fake admin. Don't bounce
+    // them off /login when they're trying to start a real sign-in: the
+    // moment they complete the popup flow, the real session cookie wins
+    // over the bypass everywhere (defer-to-real-session). Skipping here
+    // is the only place the bypass admin gets to sit on /login.
+    const bypassUser = bypass.getAuthUser();
+    if (bypassUser && user.uid === bypassUser.uid) {
+      mark("[login] bounce-effect skipped: dev-bypass admin, letting real sign-in proceed");
+      return;
+    }
     if (loading) {
       mark("[login] bounce-effect skipped: signin in flight");
       return;
