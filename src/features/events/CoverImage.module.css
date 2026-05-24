@@ -3,6 +3,9 @@
   border-radius: var(--radius-xl);
   overflow: hidden;
   border: 1px solid var(--color-border);
+  /* Emblem sizes use `cqw` so the logo scales with the cover, not the viewport
+     — keeping the editor preview and the published page visually identical. */
+  container-type: inline-size;
 }
 
 .poster {
@@ -36,7 +39,7 @@
 
 .stripEmblem {
   display: block;
-  height: calc(54px * var(--logo-scale, 1));
+  height: calc(9cqw * var(--logo-scale, 1));
   width: auto;
 }
 
@@ -49,7 +52,7 @@
   top: var(--logo-y, 86%);
   transform: translate(-50%, -50%);
   display: block;
-  height: calc(40px * var(--logo-scale, 1));
+  height: calc(6.5cqw * var(--logo-scale, 1));
   width: auto;
   pointer-events: none;
 }
@@ -83,17 +86,12 @@
   pointer-events: auto;
   cursor: grab;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
 }
 
 .cornerEmblemDraggable:active {
   cursor: grabbing;
-}
-
-@media (max-width: 600px) {
-  .stripEmblem {
-    height: calc(42px * var(--logo-scale, 1));
-  }
-  .cornerEmblem {
-    height: calc(32px * var(--logo-scale, 1));
-  }
 }

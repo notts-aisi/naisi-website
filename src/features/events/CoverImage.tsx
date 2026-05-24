@@ -77,6 +77,9 @@ export default function CoverImage({
   function handlePointerDown(e: React.PointerEvent<HTMLImageElement>) {
     const frame = frameRef.current;
     if (!frame) return;
+    // Suppress the browser's native image drag / long-press callout so our
+    // pointer handlers own the gesture (Safari is the main offender).
+    e.preventDefault();
     const rect = frame.getBoundingClientRect();
     const centreX = rect.left + (logoX / 100) * rect.width;
     const centreY = rect.top + (logoY / 100) * rect.height;
@@ -93,9 +96,11 @@ export default function CoverImage({
     if (rect.width === 0 || rect.height === 0) return;
     const x = ((e.clientX + grabOffset.current.x - rect.left) / rect.width) * 100;
     const y = ((e.clientY + grabOffset.current.y - rect.top) / rect.height) * 100;
+    // Round to 1 decimal so the position is smooth at sub-percent precision
+    // (integer rounding snapped in ~6px steps on a 600px-wide preview).
     onPositionChange(
-      Math.min(100, Math.max(0, Math.round(x))),
-      Math.min(100, Math.max(0, Math.round(y))),
+      Math.min(100, Math.max(0, Math.round(x * 10) / 10)),
+      Math.min(100, Math.max(0, Math.round(y * 10) / 10)),
     );
   }
 
@@ -150,6 +155,10 @@ export default function CoverImage({
           src={emblemSrc}
           alt=""
           aria-hidden="true"
+          // Disable the browser's native HTML5 image-drag (ghost preview) so it
+          // doesn't race our pointer handlers when the editor takes over the
+          // gesture. Harmless on the public page (where there's no drag at all).
+          draggable={false}
           className={cornerClass}
           onPointerDown={draggable ? handlePointerDown : undefined}
           onPointerMove={draggable ? handlePointerMove : undefined}
