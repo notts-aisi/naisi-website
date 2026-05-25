@@ -228,6 +228,30 @@
   background: var(--color-accent-hover);
 }
 
+/* Outlined ghost variant — mirrors the desktop .signIn (accent-outlined) but
+   shaped for a full-width drawer footer slot. Used for auth secondary actions
+   in the mobile drawer: Sign in, Sign out, Application status. Keeps the
+   3D shine off (busy in a drawer context); the colour + outline carry the
+   "this is a button" affordance. */
+.drawerLinkSecondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: var(--space-3);
+  font-size: var(--text-base);
+  font-weight: 500;
+  background: transparent;
+  color: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.drawerLinkSecondary:hover,
+.drawerLinkSecondary:focus-visible {
+  background: var(--color-accent-soft);
+}
+
 .drawerRejected {
   font-size: var(--text-sm);
   color: var(--color-danger);

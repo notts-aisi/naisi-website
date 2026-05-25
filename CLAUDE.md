@@ -64,9 +64,16 @@ src/
 - **Two-layer auth gate**: `src/proxy.ts` does a fast session-cookie presence check on protected routes. Real role enforcement happens in `(app)/layout.tsx` via `getCurrentUser()` (Admin SDK, reliable).
 - **No `orderBy` on sparse fields**: Firestore drops docs missing the ordered field. Query without orderBy, sort client-side, or only orderBy on fields that are *always* present.
 - **No `undefined` in `setDoc`**: Firestore refuses it. Use the `compact()` helper in `src/auth/signInWithGoogle.ts` before writing.
-- **Main-area width — lessons from a reverted attempt (PR #11, reverted 2026-04-21)**: `AppShell`'s `<main>` caps at `max-width: 64rem` (1024px). A per-route opt-in for a wider 100rem cap was tried so kanban pages could fill fullscreen — scrapped because:
-  1. **Authed pages must not overflow horizontally.** `TaskBoard`'s fixed-width columns overflow at intermediate viewports, and `AppShell`'s sidebar is only `position: sticky` vertically (not horizontally) — so horizontal document scroll orphans the nav and the user has to scroll past empty space to reach it. Worse UX than the narrow cap it was trying to fix.
-  2. **Fix the page, not the shell.** Wide-data views (kanban, courses grid, booking calendar, wide tables) must handle their own responsiveness — internal horizontal scroll *inside their own container*, collapsing columns, or stackable layouts — before the shell's cap is ever revisited. If a future wide-cap attempt is made, the sidebar likely needs to become viewport-fixed (not just sticky) so horizontal scroll can't orphan it.
+- **Main-area width — PR #11 (reverted 2026-04-21) + follow-up landed 2026-05-25**:
+  `AppShell`'s `<main>` defaults to `max-width: 64rem` (1024px). A `.mainWide` per-route class bumps the cap to 100rem and is currently applied to `/committee/tasks`. The original PR #11 attempt was reverted because the sidebar was only `position: sticky` vertically — wide-content pages caused horizontal document scroll that orphaned the nav off the left edge.
+
+  Follow-up that landed:
+  1. Sidebar is now `position: fixed` (with `.main` pinned to `grid-column: 2` so auto-placement doesn't collapse it into the now-empty first track). Horizontal scroll — kanban-internal or document — can't orphan it.
+  2. Kanban still contains its own horizontal scroll via `overflow-x: auto` + a `min-width: 0` chain on `.scroll` and `.kanbanOnly` (the documented chain that prevents intrinsic-content width from propagating up to the shell grid track). The `mask-image` right-edge fade was removed — it was reading as a shadow on the rightmost visible column rather than a "scroll for more" affordance, and the bottom scrollbar already signals scrollability.
+  3. `.mainWide` `padding-right` is `var(--space-4)` (was `var(--space-10)`) so the board reaches close to the viewport's right edge.
+  4. Sidebar gains a per-user **collapse**: hamburger in the brand row collapses; when collapsed, a top-right pill (NAISI brand link + hamburger) slides in from off-right in sync with the sidebar sliding off-left. Persisted to `localStorage` (`naisi.sidebar.collapsed`) — kept off cookies to sidestep PECR preference-cookie ambiguity. `prefers-reduced-motion` opt-out.
+
+  Rule remains: **wide-data views must handle their own responsiveness** — internal scroll, collapsing columns, stackable layouts — don't expand the shell cap to dodge it.
 
 ## Data model (Firestore)
 
