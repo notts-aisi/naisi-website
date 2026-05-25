@@ -24,26 +24,8 @@
      inside .scroll's own bounds. This is the PR #11 lesson in CLAUDE.md:
      fix the page, not the shell. */
   min-width: 0;
-  /* Right-edge fade so a cut-off column reads as "scroll for more"
-     rather than broken layout. Static gradient — the fade past the
-     last column reads as "you've reached the edge" when scrolled
-     fully right; if that turns out to be confusing a data-at-end JS
-     hook can toggle it on/off as a follow-up. */
-  mask-image: linear-gradient(
-    to right,
-    black 0,
-    black calc(100% - 2rem),
-    transparent 100%
-  );
-  -webkit-mask-image: linear-gradient(
-    to right,
-    black 0,
-    black calc(100% - 2rem),
-    transparent 100%
-  );
   /* Visible thin scrollbar so trackpad-less users see the affordance
-     without having to swipe-scroll first. Sits in its own gutter, the
-     mask only paints content. */
+     without having to swipe-scroll first. */
   scrollbar-width: thin;
   scrollbar-color: var(--color-border) transparent;
 }

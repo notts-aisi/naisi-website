@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import BrandMark from "@/components/BrandMark";
+import Button from "@/components/ui/Button";
 import Drawer from "@/components/ui/Drawer";
 import { useAuth } from "@/auth/AuthProvider";
 import { exitImpersonation } from "@/auth/impersonation";
@@ -98,6 +99,32 @@ export default function AppShell({
   const pendingCount = usePendingCount();
   const [exiting, setExiting] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Desktop sidebar collapse. Persisted to localStorage (kept out of cookies
+  // to sidestep PECR's preference-cookie gray area). Default open; reloads
+  // with a saved-collapsed state will briefly show the sidebar before sliding
+  // it out — acceptable since the authed area isn't reload-heavy.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("naisi.sidebar.collapsed");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (stored === "true") setSidebarCollapsed(true);
+    } catch {
+      // localStorage unavailable (private mode etc.) — keep default
+    }
+  }, []);
+  function toggleSidebar() {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("naisi.sidebar.collapsed", String(next));
+      } catch {
+        // Persistence best-effort; UI state still toggles
+      }
+      return next;
+    });
+  }
 
   // [monitor] Track AppShell lifecycle. The "stays-on-/login" symptom can
   // show up here as either (a) AppShell mounts on the destination but
@@ -209,9 +236,15 @@ export default function AppShell({
         {user?.displayName ?? user?.email ?? "Signed in"}
       </div>
       {role && <div className={styles.userRole}>{role}</div>}
-      <button onClick={handleSignOut} className={styles.signOut}>
+      <Button
+        variant="secondary"
+        size="md"
+        fullWidth
+        onClick={handleSignOut}
+        className={styles.signOut}
+      >
         Sign out
-      </button>
+      </Button>
     </div>
   );
 
@@ -282,12 +315,35 @@ export default function AppShell({
           )}
         </button>
       </div>
-      <div className={styles.shell}>
-        <aside className={styles.sidebar} aria-label="Primary">
-          <div className={styles.brand}>
+      <div
+        className={styles.shell}
+        data-sidebar={sidebarCollapsed ? "collapsed" : "open"}
+      >
+        <aside
+          id="app-sidebar"
+          className={styles.sidebar}
+          aria-label="Primary"
+          aria-hidden={sidebarCollapsed || undefined}
+          inert={sidebarCollapsed}
+        >
+          <div className={styles.brandRow}>
             <Link href="/" aria-label="NAISI home">
               <BrandMark size={28} />
             </Link>
+            <button
+              type="button"
+              className={styles.sidebarHamburger}
+              onClick={toggleSidebar}
+              aria-label="Collapse sidebar"
+              aria-expanded={!sidebarCollapsed}
+              aria-controls="app-sidebar"
+            >
+              <span className={styles.menuIcon} aria-hidden>
+                <span />
+                <span />
+                <span />
+              </span>
+            </button>
           </div>
           {renderNav()}
           {renderUserBlock()}
@@ -322,6 +378,38 @@ export default function AppShell({
           )}
           {children}
         </main>
+      </div>
+      {/* Always rendered so the slide-in/out transition has an interpolation
+          source. CSS hides the container (transform off-screen right) unless
+          its sibling .shell is in the collapsed state. `inert` mirrors the
+          visual hidden state so keyboard / screen readers can't reach the
+          off-screen brand link or hamburger. */}
+      <div
+        className={styles.floatingControls}
+        aria-hidden={!sidebarCollapsed || undefined}
+        inert={!sidebarCollapsed}
+      >
+        <Link
+          href="/"
+          aria-label="NAISI home"
+          className={styles.floatingBrandLink}
+        >
+          <BrandMark size={24} />
+        </Link>
+        <button
+          type="button"
+          className={styles.floatingHamburger}
+          onClick={toggleSidebar}
+          aria-label="Open sidebar"
+          aria-expanded={!sidebarCollapsed}
+          aria-controls="app-sidebar"
+        >
+          <span className={styles.menuIcon} aria-hidden>
+            <span />
+            <span />
+            <span />
+          </span>
+        </button>
       </div>
       <Drawer
         open={drawerOpen}

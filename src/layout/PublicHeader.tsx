@@ -97,10 +97,10 @@ export default function PublicHeader() {
     if (user && isApproved) {
       return (
         <>
-          <Link href="/dashboard" className={styles.drawerLink} onClick={closeDrawer}>
+          <Link href="/dashboard" className={styles.drawerLinkPrimary} onClick={closeDrawer}>
             Dashboard
           </Link>
-          <button type="button" onClick={handleSignOut} className={styles.drawerLink}>
+          <button type="button" onClick={handleSignOut} className={styles.drawerLinkSecondary}>
             Sign out
           </button>
         </>
@@ -109,10 +109,10 @@ export default function PublicHeader() {
     if (user && isPending) {
       return (
         <>
-          <Link href="/pending-approval" className={styles.drawerLink} onClick={closeDrawer}>
+          <Link href="/pending-approval" className={styles.drawerLinkSecondary} onClick={closeDrawer}>
             Application status
           </Link>
-          <button type="button" onClick={handleSignOut} className={styles.drawerLink}>
+          <button type="button" onClick={handleSignOut} className={styles.drawerLinkSecondary}>
             Sign out
           </button>
         </>
@@ -122,7 +122,7 @@ export default function PublicHeader() {
       return (
         <>
           <span className={styles.drawerRejected}>Application not approved</span>
-          <button type="button" onClick={handleSignOut} className={styles.drawerLink}>
+          <button type="button" onClick={handleSignOut} className={styles.drawerLinkPrimary}>
             Sign out
           </button>
         </>
@@ -130,7 +130,7 @@ export default function PublicHeader() {
     }
     return (
       <>
-        <Link href="/login" className={styles.drawerLink} onClick={closeDrawer}>
+        <Link href="/login" className={styles.drawerLinkSecondary} onClick={closeDrawer}>
           Sign in
         </Link>
         <Link href="/register" className={styles.drawerLinkPrimary} onClick={closeDrawer}>
