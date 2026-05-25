@@ -2,13 +2,37 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Card from "@/components/ui/Card";
-import Button from "@/components/ui/Button";
-import { consumeGoogleRedirect, signInWithGoogle } from "@/auth/signInWithGoogle";
+import GoogleSignInButton from "@/components/GoogleSignInButton";
+import SigningIn from "@/components/SigningIn";
+import signinStyles from "@/components/SigningIn.module.css";
+import { AUTH_BACK_HOME_EVENT, AUTH_PAGE_READY_EVENT } from "../LogoLink";
+import { exchangeGoogleCredential } from "@/auth/signInWithGoogle";
 import { useAuth } from "@/auth/AuthProvider";
 import { bypass } from "@/lib/devBypass";
 import { mark, warn } from "@/lib/devMonitor";
+
+type SignInPhase = "idle" | "active" | "success" | "exiting" | "exitingBack";
+
+/** Minimum time the active loader plays before we slip into the success
+ *  sweep — keeps the cascade visible even if Firebase resolves the
+ *  credential in <100ms. */
+const MIN_ACTIVE_MS = 1700;
+/** Green wavefront duration (must match LivingPlasma's `successDurationMs`). */
+const SUCCESS_DURATION_MS = 2550;
+/** Tail-hold after the wave finishes: gives the last nodes' smooth lock-in
+ *  enough time to complete (LOCK_DELAY 110 + LOCK_RAMP 1090 ≈ 1200ms)
+ *  plus a brief admire window before the card slides out. */
+const SUCCESS_HOLD_TAIL_MS = 1330;
+/** Card slide-out duration (matches .exitFrame transition CSS). Kept
+ *  short so the dashboard fade-in kicks in soon after the slide starts. */
+const EXIT_DURATION_MS = 530;
+/** If the window regains focus this soon after blurring with no
+ *  credential having arrived, treat it as a Google popup cancellation
+ *  and drop back to idle. */
+const CANCEL_GRACE_MS = 900;
+const sleep = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
 
 export default function LoginPage() {
   return (
@@ -33,203 +57,274 @@ function LoginInner() {
   const next = params.get("next") ?? "/dashboard";
   const { user, role, loading: authLoading } = useAuth();
 
-  // Hoisted above the bounce effect because the effect's guard reads
-  // `loading` (the signing-in flag) to avoid racing the post-redirect
-  // cookie POST. See the bounce-effect block below for the why.
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  // True while we're consuming a post-redirect result on mount. Initially
-  // true so the bounce effect can't fire before we've had a chance to
-  // check for a pending redirect — without this, onAuthStateChanged fires
-  // before /api/auth/session has minted the cookie, the bounce sends us
-  // to `next`, and the server layout bounces us right back to /login.
-  const [consumingRedirect, setConsumingRedirect] = useState(true);
-  // Set true once any explicit router.push has fired. After that the
-  // bounce effect should stay quiet for the rest of this LoginInner
-  // lifetime — otherwise it re-runs and emits a redundant replace to
-  // the same path. Ref (not state) because we don't need a re-render.
+  // idle = ambient loader on the page (Waiting for user prompt).
+  // active = surge mode after the Google button has been clicked, while
+  //   the credential exchange + minimum animation time elapse.
+  // exiting = card sliding off-screen, then router.push.
+  const [phase, setPhase] = useState<SignInPhase>("idle");
+  const [successAt, setSuccessAt] = useState<number | null>(null);
+  // Card is hidden offscreen-right until GIS reports ready. We then
+  // remove the .entering class and the card swipes in. Masks the GIS
+  // "Loading sign-in…" placeholder + any layout shifts on first render.
+  const [entering, setEntering] = useState(true);
+  const activeStartRef = useRef(0);
+  /** Set true the moment we receive a credential — used by the
+   *  cancellation watchdog to know whether a focus-return is a popup
+   *  dismissal or a successful credential exchange in flight. */
+  const credentialReceivedRef = useRef(false);
+
+  // Safety fallback: even if GIS never reports ready (script blocker,
+  // misconfig), reveal the card after 3.2s. Accounts for GIS's own
+  // 700ms personalisation-settle delay on top of the typical 500-1500ms
+  // script load on slow networks.
+  useEffect(() => {
+    if (!entering) return;
+    const t = setTimeout(() => setEntering(false), 3200);
+    return () => clearTimeout(t);
+  }, [entering]);
+
+  /** GIS reports ready synchronously after renderButton — but the
+   *  iframe still has its own opacity-fade-in (150ms) and Google's
+   *  internal layout pass to settle. If we start the card swipe in
+   *  the same frame, the user perceives the button's fade-in as
+   *  jitter against the moving card. Two paint frames + ~220ms lets
+   *  it land cleanly first. */
+  const handleGisReady = useCallback(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          setEntering(false);
+          // Logo in the auth layout's header listens for this and floats
+          // in from the left, landing roughly in sync with the card.
+          try {
+            window.dispatchEvent(new CustomEvent(AUTH_PAGE_READY_EVENT));
+          } catch {
+            /* CustomEvent unavailable on truly ancient browsers */
+          }
+        }, 220);
+      });
+    });
+  }, []);
+
+  // Logo click → swipe back to the homepage. We intercept the layout's
+  // custom event, animate the card off to the right (mirror of the
+  // forward swipe-in), then router.push("/").
+  useEffect(() => {
+    const onBack = (e: Event) => {
+      // Only handle when we're not already exiting / in success.
+      if (phase === "exiting" || phase === "exitingBack" || phase === "success") return;
+      e.preventDefault();
+      setPhase("exitingBack");
+      handledNavRef.current = true;
+      setTimeout(() => router.push("/"), EXIT_DURATION_MS);
+    };
+    window.addEventListener(AUTH_BACK_HOME_EVENT, onBack);
+    return () => window.removeEventListener(AUTH_BACK_HOME_EVENT, onBack);
+  }, [phase, router]);
+  // Set true once an explicit router.push has fired. Stops the bounce
+  // effect from emitting a redundant replace after the credential-exchange
+  // path navigates. Ref (not state) so it doesn't trigger a re-render.
   const handledNavRef = useRef(false);
 
-  // [monitor] Page-mount + auth-state snapshot. Logged on every render so
-  // we can see exactly what useAuth() reported each time the bounce effect
-  // below re-evaluated. The "stays on /login" failure mode is almost
-  // certainly visible here as a sequence of (user=null, role=null) →
-  // (user=set, role=null) → (user=set, role=member) and we want to see
-  // which transitions did / didn't trigger a navigation.
+  /** Flip into active mode. Called on Google-button click, and as a
+   *  belt-and-braces fallback when the credential callback arrives if we
+   *  somehow missed the click (e.g. iframe click didn't bubble). */
+  const startSurge = useCallback(() => {
+    setPhase((p) => {
+      if (p !== "idle") return p;
+      activeStartRef.current = performance.now();
+      return "active";
+    });
+  }, []);
+
+  // Click on the GIS iframe doesn't always bubble out, so we also watch
+  // for window blur within ~1.5s of a recent mousedown. That covers the
+  // common case: user clicks the button, popup steals focus, window
+  // blurs — strong signal that a sign-in attempt has started.
+  //
+  // Same listener pair drives the inverse: if the window REGAINS focus
+  // shortly after blur and no credential has arrived, the user has
+  // dismissed Google's popup. We drop back to idle so the loader doesn't
+  // get stuck in active forever.
+  useEffect(() => {
+    let lastMouseDown = 0;
+    let lastBlurAt = 0;
+    const onMouseDown = () => {
+      lastMouseDown = performance.now();
+    };
+    const onBlur = () => {
+      lastBlurAt = performance.now();
+      if (phase === "idle" && performance.now() - lastMouseDown < 1500) {
+        startSurge();
+      }
+    };
+    const onFocus = () => {
+      // Only count this as a cancellation if (a) we were mid-active,
+      // (b) the blur was recent (popup-style), and (c) no credential
+      // has been received since.
+      if (phase !== "active") return;
+      if (credentialReceivedRef.current) return;
+      if (performance.now() - lastBlurAt > 3000) return;
+      // Give the credential callback a moment — Firebase can fire it
+      // a few hundred ms after focus returns in some browsers.
+      setTimeout(() => {
+        if (!credentialReceivedRef.current && phase === "active") {
+          setPhase("idle");
+        }
+      }, CANCEL_GRACE_MS);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [phase, startSurge]);
+
   useEffect(() => {
     mark("[login] render", { authLoading, user: user?.uid ?? null, role, next, pathname });
   }, [authLoading, user, role, next, pathname]);
 
-  // Already signed in? Bounce away based on role.
-  //
-  // The `loading` and `consumingRedirect` guards are load-bearing. Without
-  // them the effect races the post-redirect handoff: Firebase Auth restores
-  // the user from the redirect result (so useAuth() reports user+role)
-  // BEFORE the cookie POST to /api/auth/session completes. The effect would
-  // then fire router.replace(next), the server-side (app)/layout.tsx would
-  // read the (not yet set) __session cookie, see no session, and redirect
-  // back to /login. The consume effect drives its own navigation post-
-  // cookie-set, so skipping the bounce while a sign-in is in flight is
-  // safe — and necessary.
+  // Already signed in? Bounce away based on role. Runs in two scenarios:
+  //   (a) user navigated to /login while already signed in elsewhere
+  //   (b) One Tap auto-signed them in and the credential-exchange path
+  //       hasn't navigated yet — handled by the `loading` guard.
   useEffect(() => {
     if (authLoading || !user) return;
     // The dev bypass auto-signs the user in as a fake admin. Don't bounce
     // them off /login when they're trying to start a real sign-in: the
-    // moment they complete the redirect flow, the real session cookie wins
-    // over the bypass everywhere (defer-to-real-session). Skipping here
-    // is the only place the bypass admin gets to sit on /login.
+    // moment they complete the credential flow, the real session cookie
+    // wins over the bypass everywhere (defer-to-real-session).
     const bypassUser = bypass.getAuthUser();
     if (bypassUser && user.uid === bypassUser.uid) {
-      mark("[login] bounce-effect skipped: dev-bypass admin, letting real sign-in proceed");
+      mark("[login] bounce-effect skipped: dev-bypass admin");
       return;
     }
-    if (consumingRedirect) {
-      mark("[login] bounce-effect skipped: consuming redirect result");
-      return;
-    }
-    if (loading) {
+    if (phase !== "idle") {
       mark("[login] bounce-effect skipped: signin in flight");
       return;
     }
-    if (handledNavRef.current) {
-      mark("[login] bounce-effect skipped: handleSignIn already navigated");
-      return;
-    }
+    if (handledNavRef.current) return;
     if (role === "member" || role === "committee" || role === "admin") {
       mark(`[login] bounce-effect → ${next} (role=${role})`);
       router.replace(next);
     } else if (role === "pending") {
-      mark("[login] bounce-effect → /pending-approval");
       router.replace("/pending-approval");
     } else if (role === "rejected") {
-      mark("[login] bounce-effect → / (rejected)");
       router.replace("/");
-    } else {
-      // user exists, no role yet — Firestore snapshot probably hasn't
-      // fired. Effect will re-run when role lands; no navigation here.
-      mark("[login] bounce-effect: user but no role yet — waiting", { role });
     }
-  }, [authLoading, user, role, next, router, loading, consumingRedirect]);
+    // user but no role yet — Firestore snapshot probably hasn't fired.
+    // Effect will re-run when role lands; no navigation here.
+  }, [authLoading, user, role, next, router, phase]);
 
-  // Consume a pending Google redirect result on mount. Most page loads
-  // have no pending redirect (consume returns null) and this is a quick
-  // no-op; on a sign-in return, this is where the session cookie gets
-  // minted and the routing decision (new user → /register, else → next)
-  // happens.
-  //
-  // The `cancelled` flag is the standard "ignore late results from an
-  // unmounted component" guard. It works correctly with Strict Mode here
-  // because consumeGoogleRedirect dedupes the underlying Firebase call at
-  // module scope — both effect runs await the same promise and see the
-  // same SignInResult; only the active (non-cancelled) one routes.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
+  const onCredential = useCallback(
+    async (idToken: string) => {
+      mark("[login] onCredential start");
+      credentialReceivedRef.current = true;
+      setError(null);
+      // Belt-and-braces: if the click signal never landed, kick off surge
+      // now so we still get the animation. activeStartRef gets stamped
+      // here too in that case.
+      startSurge();
       try {
-        console.log("[login] consume effect start");
-        mark("[login] consumeGoogleRedirect start");
-        const result = await consumeGoogleRedirect();
-        console.log("[login] consume effect: got result", { result, cancelled });
-        if (cancelled) return;
-        if (!result) {
-          mark("[login] no pending redirect — normal page load");
-          setConsumingRedirect(false);
-          return;
+        const result = await exchangeGoogleCredential(idToken);
+        mark("[login] credential exchanged", { isNew: result.isNew, uid: result.uid });
+
+        // Honour the minimum active window so the cascade plays through
+        // even when Firebase resolves the credential in <100ms.
+        const elapsed = performance.now() - activeStartRef.current;
+        const remaining = Math.max(0, MIN_ACTIVE_MS - elapsed);
+        if (remaining > 0) await sleep(remaining);
+
+        // Success sweep: slow green wavefront locks every node green
+        // with a smooth per-node attract. Hold past the wave's end so
+        // the trailing edge nodes finish their lock-in animation before
+        // we slide the card out.
+        setSuccessAt(performance.now());
+        setPhase("success");
+        await sleep(SUCCESS_DURATION_MS + SUCCESS_HOLD_TAIL_MS);
+
+        // Flag the destination page so its layout fades-in on mount.
+        try {
+          sessionStorage.setItem("naisi:from-signin", "1");
+        } catch {
+          /* sessionStorage may be unavailable; the fade-in is decorative */
         }
-        mark("[login] redirect consumed", { isNew: result.isNew, uid: result.uid });
-        if (result.isNew) {
-          console.log("[login] routing → /register (new user)");
-          mark("[login] router.push → /register (new user)");
-          router.push("/register");
-        } else {
-          console.log(`[login] routing → ${next}`);
-          mark(`[login] router.push → ${next}`);
-          router.push(next);
-        }
+
+        setPhase("exiting");
         handledNavRef.current = true;
-        // [monitor] Smoking-gun watchdog: if pathname is still /login 6s
-        // after a successful signin, the navigation never landed (likely
-        // a cookie-propagation race in (app)/layout.tsx or a silent
-        // router.push fail).
-        setTimeout(() => {
-          if (window.location.pathname === "/login") {
-            warn("[login] STILL ON /login 6s after successful signin", {
-              currentPath: window.location.pathname,
-            });
-          }
-        }, 6000);
+        await sleep(EXIT_DURATION_MS);
+        router.push(result.isNew ? "/register" : next);
       } catch (err) {
-        if (cancelled) return;
-        console.error("[login] consume effect threw", err);
-        warn("[login] consumeGoogleRedirect threw", err);
+        warn("[login] onCredential threw", err);
+        console.error(err);
         setError("Sign-in failed. Please try again.");
-        setConsumingRedirect(false);
+        credentialReceivedRef.current = false;
+        setSuccessAt(null);
+        setPhase("idle");
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [router, next]);
+    },
+    [router, next, startSurge],
+  );
 
-  async function handleSignIn() {
-    mark("[login] handleSignIn start");
-    setError(null);
-    setLoading(true);
-    try {
-      // Two return paths: popup (localhost) resolves with SignInResult
-      // inline; redirect (deployed) navigates the browser away and
-      // resolves to null — the consume effect picks up the result on
-      // the post-OAuth mount.
-      const result = await signInWithGoogle();
-      if (!result) {
-        mark("[login] redirect dispatched — consume effect will handle return");
-        return;
-      }
-      mark("[login] popup resolved inline", { isNew: result.isNew, uid: result.uid });
-      if (result.isNew) {
-        router.push("/register");
-      } else {
-        router.push(next);
-      }
-      handledNavRef.current = true;
-    } catch (err) {
-      warn("[login] handleSignIn threw", err);
-      console.error(err);
-      setError("Sign-in failed. Please try again.");
-      setLoading(false);
-    }
-  }
+  const onScriptError = useCallback((message: string) => {
+    setError(message);
+  }, []);
 
+  const frameClass = [
+    signinStyles.exitFrame,
+    entering ? signinStyles.entering : "",
+    phase === "exiting" ? signinStyles.exiting : "",
+    phase === "exitingBack" ? signinStyles.exitingBack : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <Card padding="lg" style={{ width: "100%", maxWidth: "26rem" }}>
-      <h1 style={{ fontSize: "var(--text-2xl)", marginBottom: "var(--space-2)" }}>
-        Welcome back
-      </h1>
-      <p style={{ color: "var(--color-text-muted)", marginBottom: "var(--space-6)" }}>
-        Sign in to access your dashboard, tasks, and course materials.
-      </p>
-      <Button onClick={handleSignIn} fullWidth size="lg" disabled={loading}>
-        {loading ? "Signing in…" : "Continue with Google"}
-      </Button>
-      {error && (
-        <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)", marginTop: "var(--space-4)" }}>
-          {error}
+    <div className={frameClass} style={{ maxWidth: "26rem" }}>
+      <Card padding="lg" style={{ width: "100%" }}>
+        <h1 style={{ fontSize: "var(--text-2xl)", marginBottom: "var(--space-2)" }}>
+          Welcome back
+        </h1>
+        <p style={{ color: "var(--color-text-muted)", marginBottom: "var(--space-6)" }}>
+          Sign in to access your dashboard, tasks, and course materials.
         </p>
-      )}
-      <p
-        style={{
-          color: "var(--color-text-muted)",
-          fontSize: "var(--text-sm)",
-          marginTop: "var(--space-6)",
-          textAlign: "center",
-        }}
-      >
-        New here?{" "}
-        <Link href="/register" style={{ color: "var(--color-accent)" }}>
-          Create an account
-        </Link>
-      </p>
-    </Card>
+        {/* onMouseDown catches GIS button clicks that DO bubble out of the
+            iframe element; the window-blur fallback in the parent useEffect
+            covers browsers that swallow them. */}
+        <div onMouseDown={startSurge}>
+          <GoogleSignInButton
+            onCredential={onCredential}
+            onScriptError={onScriptError}
+            onReady={handleGisReady}
+          />
+        </div>
+        <SigningIn
+          active={phase !== "idle"}
+          successStartAt={phase === "success" || phase === "exiting" ? successAt : null}
+        />
+        {error && (
+          <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)", marginTop: "var(--space-4)" }}>
+            {error}
+          </p>
+        )}
+        <p
+          style={{
+            color: "var(--color-text-muted)",
+            fontSize: "var(--text-sm)",
+            marginTop: "var(--space-6)",
+            textAlign: "center",
+          }}
+        >
+          New here?{" "}
+          <Link href="/register" style={{ color: "var(--color-accent)" }}>
+            Create an account
+          </Link>
+        </p>
+      </Card>
+    </div>
   );
 }

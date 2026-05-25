@@ -6,6 +6,48 @@
   backdrop-filter: saturate(1.4) blur(12px);
   -webkit-backdrop-filter: saturate(1.4) blur(12px);
   border-bottom: 1px solid var(--color-border);
+  /* Transition-based entrance + exit. The header sits at default
+   * (translateY 0, opacity 1) by default; .headerInitial holds it
+   * offscreen-up for the first paint, then JS strips that class on the
+   * next animation frame which lets the transition interpolate down
+   * into place. Same transition is used for the exit (with
+   * .headerExiting setting the destination). Avoids the CSS animation
+   * conflict that caused jumpy hand-offs between entrance + exit. */
+  transform: translateY(0);
+  opacity: 1;
+  transition:
+    transform 540ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    opacity 380ms ease-out;
+  will-change: transform, opacity;
+}
+
+.headerInitial {
+  transform: translateY(-100%);
+  opacity: 0;
+}
+
+/* Exit-upward: applied while the public layout is in its `exiting`
+ * fade-out (e.g. user clicked Sign in). Banner transitions to
+ * translateY(-100%) + opacity 0 over the same 540ms curve as the
+ * entrance — exact mirror motion. */
+.headerExiting {
+  transform: translateY(-100%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .header {
+    transition: opacity 200ms ease;
+  }
+  .headerInitial {
+    transform: none;
+    opacity: 0;
+  }
+  .headerExiting {
+    transform: none;
+    opacity: 0;
+  }
 }
 
 .inner {

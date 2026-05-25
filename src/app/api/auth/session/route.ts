@@ -15,9 +15,9 @@ export async function POST(request: NextRequest) {
 
     // Look up the user doc BEFORE minting so the cookie lifetime can be
     // sized to the role. Also doubles as the server-side existence check
-    // that signInWithGoogle / consumeGoogleRedirect rely on for the
-    // new-vs-existing-user routing decision (client-side Firestore reads
-    // race the auth-token attachment).
+    // that exchangeGoogleCredential relies on for the new-vs-existing-user
+    // routing decision (client-side Firestore reads race the auth-token
+    // attachment).
     let exists = false;
     let role: Role | undefined;
     const auth = getAdminAuth();

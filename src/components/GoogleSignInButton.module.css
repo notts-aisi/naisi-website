@@ -1,0 +1,61 @@
+/* Wrapper around Google's renderButton. GSI renders the button inside
+ * a cross-origin iframe sourced from accounts.google.com/gsi/button.
+ * The iframe's body has class `.haAclf` and a white background which
+ * we cannot reach via CSS (cross-origin). Two effects to manage:
+ *
+ *   1. The iframe's white body bleeds around the pill. Mitigated by
+ *      stripping injected-element backgrounds and clip-path'ing the
+ *      iframe's visible area to the pill shape.
+ *   2. The iframe loads + sizes asynchronously after our component
+ *      mounts, so the surrounding layout reflows several times during
+ *      the first ~300ms. Mitigated by reserving the final dimensions
+ *      on `.container`, fading in `.wrapper` once GSI is ready, and
+ *      `contain: layout` to wall off iframe-internal resizes.
+ */
+
+.container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Reserve the button's final height so removing the loading text
+   * or injecting the iframe doesn't shift the page. 2.75rem matches
+   * GSI's `size: "large"` button height (~44px) plus a touch of slack. */
+  min-height: 2.75rem;
+}
+
+.wrapper {
+  display: flex;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+  /* contain: layout walls off GSI's iframe internal reflows so any
+   * resize chatter inside the iframe can't propagate up to our card. */
+  contain: layout;
+}
+
+.wrapperReady {
+  opacity: 1;
+}
+
+.loadingMessage {
+  position: absolute;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+.wrapper * {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.wrapper iframe {
+  /* Tighter than the literal 2px/10px iframe inset so that subpixel
+   * anti-aliasing at the rounded corners doesn't leave thin white
+   * slivers. The pill button content has enough internal padding to
+   * absorb a few extra cropped pixels without anything visible being
+   * clipped. */
+  clip-path: inset(4px 12px round 9999px) !important;
+  -webkit-clip-path: inset(4px 12px round 9999px) !important;
+}

@@ -1,0 +1,156 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.textRow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.successTick {
+  display: inline-block;
+  filter: drop-shadow(0 0 6px hsla(142, 70%, 55%, 0.5));
+  animation:
+    tick-in 520ms cubic-bezier(0.2, 1.4, 0.4, 1) both,
+    tick-float 2.6s ease-in-out 520ms infinite;
+}
+
+.successTickPath {
+  stroke-dasharray: 18;
+  stroke-dashoffset: 18;
+  animation: tick-draw 360ms cubic-bezier(0.4, 0.4, 0.2, 1) 180ms forwards;
+}
+
+@keyframes tick-in {
+  from {
+    opacity: 0;
+    transform: scale(0.4) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes tick-draw {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes tick-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2.5px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .successTick {
+    animation: tick-in 200ms ease both;
+  }
+  .successTickPath {
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+}
+
+/* Feather the canvas edges so the network bleeds smoothly into the
+ * surrounding card instead of being clipped sharply by the canvas
+ * bounding box (which is wider than the card content area). Also
+ * paint a soft purple/pink wash behind it so the off-card overflow
+ * blurs into the page background rather than ending hard. */
+.networkWrap {
+  position: relative;
+  display: block;
+  isolation: isolate;
+}
+
+.networkWrap::before {
+  content: "";
+  position: absolute;
+  inset: -18px -28px;
+  background:
+    radial-gradient(ellipse 65% 55% at center, hsla(275, 75%, 60%, 0.10), transparent 70%);
+  filter: blur(14px);
+  z-index: -1;
+  pointer-events: none;
+}
+
+.networkWrap canvas {
+  /* Two-axis mask so left/right and top/bottom both feather. The
+   * mask-composite trick lets us intersect a horizontal and vertical
+   * gradient — gives a soft rectangle with rounded falloff. */
+  mask-image:
+    linear-gradient(to right, transparent 0%, black 9%, black 91%, transparent 100%),
+    linear-gradient(to bottom, transparent 0%, black 11%, black 89%, transparent 100%);
+  mask-composite: intersect;
+  -webkit-mask-image:
+    linear-gradient(to right, transparent 0%, black 9%, black 91%, transparent 100%),
+    linear-gradient(to bottom, transparent 0%, black 11%, black 89%, transparent 100%);
+  -webkit-mask-composite: source-in;
+}
+
+/*
+  Exit transition: applied by login/register pages to the wrapper div
+  around the auth Card. When `.exiting` is added, the card slides left
+  off-screen and fades — clears the way for the destination route.
+  Width is parametric so login (26rem) and register (32rem) reuse this.
+*/
+.exitFrame {
+  width: 100%;
+  /* Default transition speed governs the ENTRANCE (when .entering is
+   * removed). Slower + more deliberate so the swipe-in from the right
+   * lands gently. The exit overrides below restore the snappier slide
+   * for login-success / back-to-home so the user isn't waiting once
+   * the cascade is done. */
+  transition:
+    transform 760ms cubic-bezier(0.22, 0.7, 0.22, 1),
+    opacity 560ms ease-out;
+  will-change: transform, opacity;
+}
+
+/* Exit-direction overrides: keep the slide-out at the original snappier
+ * pace so login-success / logo-back don't feel sluggish. */
+.exitFrame.exiting,
+.exitFrame.exitingBack {
+  transition:
+    transform 580ms cubic-bezier(0.22, 0.7, 0.22, 1),
+    opacity 430ms ease-out;
+}
+
+/* Initial-render state: card is offscreen RIGHT, invisible. The login
+ * page strips this class the moment GIS reports ready, which triggers
+ * a clean swipe-in from the right (mirror of the homepage-after-signout
+ * left swipe). Masks the GIS button's "Loading sign-in…" placeholder
+ * entirely. */
+.entering {
+  transform: translateX(112vw);
+  opacity: 0;
+}
+
+.exiting {
+  transform: translateX(-112vw);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Back-exit: card swipes BACK out to the right when the user clicks
+ * the NAISI logo to return to the homepage. Mirror of `.entering` so
+ * the journey feels like undoing the forward swipe-in. */
+.exitingBack {
+  transform: translateX(112vw);
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .exitFrame {
+    transition: opacity 200ms ease;
+  }
+  .exiting {
+    transform: none;
+    opacity: 0;
+  }
+}

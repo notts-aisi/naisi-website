@@ -99,6 +99,31 @@ export default function AppShell({
   const pendingCount = usePendingCount();
   const [exiting, setExiting] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Fade the main content in once when we arrive from the sign-in flow.
+  // Flag is set by login/register before router.push and consumed here.
+  //
+  // We start the content opacity-0 *immediately* on mount, but DELAY
+  // the actual fade-in animation by ~280ms. That gives Firestore
+  // onSnapshot listeners + initial role/permissions loads time to land
+  // their first emit, so the content the user sees fade in is stable
+  // rather than jittering as data populates mid-animation.
+  const [enteringFromSignin, setEnteringFromSignin] = useState(false);
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("naisi:from-signin") === "1") {
+        sessionStorage.removeItem("naisi:from-signin");
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setEnteringFromSignin(true);
+        // CSS handles the 280ms delay + 620ms animation; remove the
+        // class once it's done so subsequent navigations don't pay
+        // the cost.
+        const t = setTimeout(() => setEnteringFromSignin(false), 280 + 620 + 80);
+        return () => clearTimeout(t);
+      }
+    } catch {
+      // sessionStorage unavailable (e.g. private mode iframe) — skip the fade
+    }
+  }, []);
 
   // Desktop sidebar collapse. Persisted to localStorage (kept out of cookies
   // to sidestep PECR's preference-cookie gray area). Default open; reloads
@@ -194,7 +219,34 @@ export default function AppShell({
         })).filter((g) => g.items.length > 0)
       : [];
 
+  // Slide the entire app shell off to the right when signing out, in
+  // mirror of the sign-in slide-left. The public homepage then fades in
+  // from the left thanks to the sessionStorage flag set just before
+  // signOut. Sequence: flag → close drawer (if open) → slide → signOut → push.
+  //
+  // The mobile drawer portals to <body>, so it isn't a descendant of
+  // our slide wrapper — if it's still open when the slide starts, the
+  // shell slides off but the drawer stays put, "depopulating" the rest
+  // of the UI. Close the drawer first and let its own close animation
+  // play before the wrapper slides.
+  const [signoutExiting, setSignoutExiting] = useState(false);
+  const SIGNOUT_SLIDE_MS = 530;
+  /** Drawer panel transition is 900ms (Drawer.module.css). Wait that
+   *  long on signout from the mobile drawer so the close fully lands
+   *  before the shell starts sliding right. */
+  const DRAWER_CLOSE_MS = 900;
   async function handleSignOut() {
+    try {
+      sessionStorage.setItem("naisi:from-signout", "1");
+    } catch {
+      /* sessionStorage may be unavailable — public layout falls back to no fade */
+    }
+    if (drawerOpen) {
+      setDrawerOpen(false);
+      await new Promise((r) => setTimeout(r, DRAWER_CLOSE_MS));
+    }
+    setSignoutExiting(true);
+    await new Promise((r) => setTimeout(r, SIGNOUT_SLIDE_MS));
     await signOut();
     router.push("/");
   }
@@ -287,7 +339,7 @@ export default function AppShell({
   }
 
   return (
-    <>
+    <div className={signoutExiting ? styles.shellExitingRight : undefined}>
       <div className={styles.topStrip}>
         <Link href="/" className={styles.topStripBrand} aria-label="NAISI home">
           <BrandMark size={28} />
@@ -349,7 +401,7 @@ export default function AppShell({
           {renderUserBlock()}
         </aside>
         <main
-          className={`${styles.main} ${pathname === "/committee/tasks" ? styles.mainWide : ""}`}
+          className={`${styles.main} ${pathname === "/committee/tasks" ? styles.mainWide : ""} ${enteringFromSignin ? styles.entering : ""}`}
         >
           {impersonation && (
             <div
@@ -424,6 +476,6 @@ export default function AppShell({
         {renderNav(() => setDrawerOpen(false))}
         {renderUserBlock()}
       </Drawer>
-    </>
+    </div>
   );
 }
