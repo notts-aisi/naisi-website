@@ -8,14 +8,14 @@ import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import CountedTextarea from "@/components/ui/CountedTextarea";
+import GoogleSignInButton from "@/components/GoogleSignInButton";
 import GraduationSelect from "@/components/ui/GraduationSelect";
 import StatusSelect from "@/components/ui/StatusSelect";
 import Switch from "@/components/ui/Switch";
 import { Field, Input } from "@/components/ui/Input";
 import {
   completeRegistration,
-  consumeGoogleRedirect,
-  signInWithGoogle,
+  exchangeGoogleCredential,
 } from "@/auth/signInWithGoogle";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
@@ -59,17 +59,21 @@ function RegisterPageInner() {
   const fromSubscriber = searchParams.get("from") === "subscriber";
   const { user, role, loading: authLoading } = useAuth();
 
-  // Initially true so this bounce effect can't fire before the consume
-  // effect below has had a chance to mint the session cookie post-redirect.
-  // Otherwise an existing user returning from OAuth would get bounced to
-  // /dashboard before the cookie lands, and the server layout would bounce
-  // them back to /login.
-  const [consumingRedirect, setConsumingRedirect] = useState(true);
+  const [step, setStep] = useState<"sign-in" | "profile">(
+    user && !role ? "profile" : "sign-in",
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
+  // Already signed in? Bounce away based on role. The `loading` guard
+  // keeps the bounce from racing the inline credential-exchange path:
+  // signInWithCredential fires onAuthStateChanged before the cookie POST
+  // completes, and we don't want to navigate before /api/auth/session
+  // mints the cookie.
   useEffect(() => {
-    if (consumingRedirect) return;
     if (authLoading) return;
     if (!user) return;
+    if (loading) return;
     if (role === "member" || role === "committee" || role === "admin") {
       router.replace("/dashboard");
     } else if (role === "pending") {
@@ -77,44 +81,7 @@ function RegisterPageInner() {
     } else if (role === "rejected") {
       router.replace("/");
     }
-  }, [authLoading, user, role, router, consumingRedirect]);
-
-  const [step, setStep] = useState<"sign-in" | "profile">(
-    user && !role ? "profile" : "sign-in",
-  );
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  // Consume a pending Google redirect on mount. New users → profile step;
-  // existing users (rare on /register but possible) → /dashboard, then the
-  // bounce effect routes them onward by role.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const result = await consumeGoogleRedirect();
-        if (cancelled) return;
-        if (!result) {
-          setConsumingRedirect(false);
-          return;
-        }
-        if (result.isNew) {
-          setStep("profile");
-          setConsumingRedirect(false);
-        } else {
-          router.push("/dashboard");
-        }
-      } catch (err) {
-        if (cancelled) return;
-        console.error(err);
-        setError("Sign-in failed. Please try again.");
-        setConsumingRedirect(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
+  }, [authLoading, user, role, router, loading]);
 
   // Profile state
   const [preferredName, setPreferredName] = useState("");
@@ -226,27 +193,30 @@ function RegisterPageInner() {
     }
   }, [universityEmail, preferredName]);
 
-  async function handleSignIn() {
-    setError(null);
-    setLoading(true);
-    try {
-      // Popup (localhost) resolves with SignInResult inline; redirect
-      // (deployed) navigates the browser away and resolves to null —
-      // the consume effect picks up the result on the post-OAuth mount.
-      const result = await signInWithGoogle();
-      if (!result) return;
-      if (!result.isNew) {
-        router.push("/dashboard");
-        return;
+  const onCredential = useCallback(
+    async (idToken: string) => {
+      setError(null);
+      setLoading(true);
+      try {
+        const result = await exchangeGoogleCredential(idToken);
+        if (result.isNew) {
+          setStep("profile");
+        } else {
+          router.push("/dashboard");
+        }
+      } catch (err) {
+        console.error(err);
+        setError("Sign-in failed. Please try again.");
+      } finally {
+        setLoading(false);
       }
-      setStep("profile");
-    } catch (err) {
-      console.error(err);
-      setError("Sign-in failed. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  }
+    },
+    [router],
+  );
+
+  const onScriptError = useCallback((message: string) => {
+    setError(message);
+  }, []);
 
   async function handleSubmitProfile(e: React.FormEvent) {
     e.preventDefault();
@@ -337,9 +307,12 @@ function RegisterPageInner() {
 
       {step === "sign-in" ? (
         <>
-          <Button onClick={handleSignIn} fullWidth size="lg" disabled={loading}>
-            {loading ? "Signing in…" : "Continue with Google"}
-          </Button>
+          <GoogleSignInButton onCredential={onCredential} onScriptError={onScriptError} />
+          {loading && (
+            <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)", marginTop: "var(--space-4)" }}>
+              Signing in…
+            </p>
+          )}
           {error && (
             <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)", marginTop: "var(--space-4)" }}>
               {error}

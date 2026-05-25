@@ -31,6 +31,15 @@ env:
   - variable: NEXT_PUBLIC_FIREBASE_APP_ID
     secret: naisi-web-app-id
     availability: [BUILD, RUNTIME]
+  # OAuth 2.0 client ID for Google Identity Services. Required by the GSI
+  # button initializer (google.accounts.id.initialize). One client ID per
+  # Firebase project — the dev backend overrides this with its own ID via
+  # the App Hosting console UI. Public by design (ships in the client
+  # bundle), no Secret Manager indirection needed.
+  # TODO: replace with the prod OAuth 2.0 client ID before merging dev → main.
+  - variable: NEXT_PUBLIC_GOOGLE_CLIENT_ID
+    value: REPLACE_WITH_PROD_OAUTH_CLIENT_ID.apps.googleusercontent.com
+    availability: [BUILD, RUNTIME]
   # HMAC secret used to sign RSVP self-cancel / change-request links in emails.
   # Rotating the secret invalidates every outstanding email link.
   - variable: EVENTS_TOKEN_SECRET
