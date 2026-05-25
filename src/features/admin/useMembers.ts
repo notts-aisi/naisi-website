@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { bypass } from "@/lib/devBypass";
 import { getClientDb } from "@/lib/firebase/client";
 import { normalizeUser, type UserDoc } from "@/lib/firestore/users";
 
@@ -11,6 +12,13 @@ export function useMembers({ includeRejected = false }: { includeRejected?: bool
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
+    const fixture = bypass.getUsers();
+    if (fixture !== null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setUsers(fixture);
+      setLoading(false);
+      return;
+    }
     const db = getClientDb();
     const roles = includeRejected
       ? ["member", "committee", "admin", "rejected"]

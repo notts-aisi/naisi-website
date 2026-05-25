@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
+import { bypass } from "@/lib/devBypass";
 import { getClientDb } from "@/lib/firebase/client";
 import {
   normalizeAttachment,
@@ -15,6 +16,12 @@ export function useTaskAttachments(taskId: string | null) {
 
   useEffect(() => {
     if (!taskId) return;
+    if (bypass.isActive) {
+      // No attachment fixtures: empty list, stop loading.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLoading(false);
+      return;
+    }
     const db = getClientDb();
     const q = query(
       collection(db, "tasks", taskId, "attachments"),
