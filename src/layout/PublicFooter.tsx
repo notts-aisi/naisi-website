@@ -32,6 +32,11 @@ export default function PublicFooter() {
       </div>
       <div className={`container ${styles.meta}`}>
         <span>© {new Date().getFullYear()} NAISI</span>
+        <span className={styles.legalLinks}>
+          <Link href="/privacy">Privacy</Link>
+          <span aria-hidden="true">·</span>
+          <Link href="/terms">Terms</Link>
+        </span>
         <span>
           Built at Nottingham ·{" "}
           <a
