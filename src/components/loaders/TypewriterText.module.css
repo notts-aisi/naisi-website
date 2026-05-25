@@ -1,0 +1,113 @@
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-sm);
+  letter-spacing: 0.04em;
+  min-height: 1.4em;
+}
+
+.text {
+  white-space: nowrap;
+  transition: color 220ms ease, text-shadow 220ms ease;
+}
+
+/* Electric-green tone for the post-sign-in "Model aligned" moment.
+ * Bright neon-green with a layered halo so it reads as a positive
+ * confirmation event rather than ambient status text. */
+.toneSuccess .text {
+  color: hsl(142, 95%, 68%);
+  text-shadow:
+    0 0 6px hsla(142, 90%, 55%, 0.55),
+    0 0 14px hsla(142, 90%, 60%, 0.32),
+    0 0 22px hsla(142, 90%, 65%, 0.18);
+  font-weight: 500;
+}
+
+.toneSuccess .caretBlink {
+  color: hsl(142, 95%, 75%);
+}
+
+.caretBlink {
+  display: inline-block;
+  margin-left: 2px;
+  animation: caret-blink 1.05s steps(2, jump-none) infinite;
+  font-size: 0.85em;
+}
+
+@keyframes caret-blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+
+.ellipsisWrap {
+  display: inline-flex;
+  margin-left: 2px;
+  gap: 1px;
+}
+
+.dot {
+  display: inline-block;
+  width: 0.4em;
+  text-align: center;
+  font-weight: 700;
+}
+
+/* === Wave: each dot bounces in sequence === */
+@keyframes wave-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-3px); opacity: 1; }
+}
+
+.dotWave1 { animation: wave-bounce 1.2s ease-in-out infinite; }
+.dotWave2 { animation: wave-bounce 1.2s ease-in-out infinite 0.18s; }
+.dotWave3 { animation: wave-bounce 1.2s ease-in-out infinite 0.36s; }
+
+/* === Pulse: dots fade in/out staggered === */
+@keyframes pulse-fade {
+  0%, 80%, 100% { opacity: 0.2; }
+  40% { opacity: 1; }
+}
+
+.dotPulse1 { animation: pulse-fade 1.35s ease-in-out infinite; }
+.dotPulse2 { animation: pulse-fade 1.35s ease-in-out infinite 0.22s; }
+.dotPulse3 { animation: pulse-fade 1.35s ease-in-out infinite 0.44s; }
+
+/* === Typing: dots type out one by one, repeat === */
+@keyframes typing-cycle {
+  0%, 100% { opacity: 0; }
+  25%, 75% { opacity: 1; }
+}
+
+.dotTyping1 { animation: typing-cycle 1.4s steps(1) infinite; }
+.dotTyping2 { animation: typing-cycle 1.4s steps(1) infinite 0.35s; }
+.dotTyping3 { animation: typing-cycle 1.4s steps(1) infinite 0.7s; }
+
+/* === Spinner === */
+.spinner {
+  display: inline-block;
+  width: 0.85em;
+  height: 0.85em;
+  margin-left: 6px;
+  border: 1.5px solid var(--color-text-subtle);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spinner-rot 0.85s linear infinite;
+}
+
+@keyframes spinner-rot {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caretBlink,
+  .dotWave1, .dotWave2, .dotWave3,
+  .dotPulse1, .dotPulse2, .dotPulse3,
+  .dotTyping1, .dotTyping2, .dotTyping3,
+  .spinner {
+    animation: none;
+  }
+  .dotTyping1, .dotTyping2, .dotTyping3 { opacity: 1; }
+}

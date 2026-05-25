@@ -14,7 +14,12 @@ html[data-theme="light"] { color-scheme: light; }
 
 body {
   min-height: 100%;
-  background: var(--color-bg);
+  /* Deep base that matches the hero atmosphere's outer color (bgRadialDim
+   * edge stop in heroOptionBg.ts) so cold-load + cross-layout transitions
+   * don't flash between two different darks. Card/surface tokens still
+   * use --color-bg (a touch lighter), giving them subtle elevation
+   * against this page floor. */
+  background: #050810;
   color: var(--color-text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

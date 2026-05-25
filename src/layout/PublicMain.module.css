@@ -1,0 +1,73 @@
+.main {
+  flex: 1;
+}
+
+/* Animated entrance — applied via a className swap on the next animation
+ * frame so the initial paint can have an inline `opacity:0` keeping
+ * content invisible. Splitting the animation off the base class lets us
+ * defer animation start until after first paint, eliminating the flash
+ * where CSS-class animations briefly land AFTER React commits the
+ * initial visible content. */
+.mainAnim {
+  animation: public-fade-in 360ms ease-out both;
+}
+
+@keyframes public-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Fade-out before navigating into /login (or /register). Slight left
+ * drift mirrors the directional language of the journey: content
+ * leaves leftward as the user moves "right" into the auth flow.
+ * Duration matches the header's lift-up animation so they leave in
+ * coordinated lockstep. */
+.exiting {
+  animation: public-exit 540ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  pointer-events: none;
+}
+
+@keyframes public-exit {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+}
+
+@keyframes public-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mainAnim {
+    animation: public-fade-in-rm 180ms ease both;
+  }
+  @keyframes public-fade-in-rm {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  .exiting {
+    animation: public-exit-rm 180ms ease both;
+  }
+  @keyframes public-exit-rm {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+}

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { mark, warn } from "@/lib/devMonitor";
+import styles from "./GoogleSignInButton.module.css";
 
 type Props = {
   /** Receives the Google-issued ID token. The caller hands it to Firebase
@@ -12,12 +13,11 @@ type Props = {
    *  an actionable error message — silent failure was the original bug
    *  that made this whole flow user-hostile. */
   onScriptError?: (reason: string) => void;
-  /** Show the One Tap auto-prompt card alongside the button. Returning
-   *  users who've already signed in once see a top-right card that
-   *  completes sign-in in a single click. Default true on /login, false
-   *  on /register (a new user clicking "Continue with Google" shouldn't
-   *  be hijacked by One Tap auto-signing them into an unintended account). */
-  showOneTap?: boolean;
+  /** Called once the GIS button has finished rendering and is interactive.
+   *  Used by the login page to gate its swipe-in entrance — the card stays
+   *  off-screen until the Google button is genuinely ready so users don't
+   *  see the "Loading sign-in…" placeholder. */
+  onReady?: () => void;
 };
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
@@ -30,7 +30,7 @@ const SCRIPT_LOAD_TIMEOUT_MS = 5000;
 export default function GoogleSignInButton({
   onCredential,
   onScriptError,
-  showOneTap = true,
+  onReady,
 }: Props) {
   const buttonRef = useRef<HTMLDivElement | null>(null);
   // Latest onCredential in a ref so the GIS callback registered with
@@ -40,6 +40,8 @@ export default function GoogleSignInButton({
   // current state).
   const onCredentialRef = useRef(onCredential);
   onCredentialRef.current = onCredential;
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
 
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
 
@@ -48,6 +50,7 @@ export default function GoogleSignInButton({
       warn("[gsi] NEXT_PUBLIC_GOOGLE_CLIENT_ID is unset — button cannot render");
       onScriptError?.("Sign-in is misconfigured. Please contact support.");
       setStatus("error");
+      onReadyRef.current?.();
       return;
     }
 
@@ -63,6 +66,7 @@ export default function GoogleSignInButton({
             "Sign-in couldn't load. A content blocker, ad-blocker, or VPN tracking-protection may be blocking Google's services. Try disabling those for this site, or use a different browser.",
           );
           setStatus("error");
+          onReadyRef.current?.();
           return;
         }
         // Poll — next/script's `afterInteractive` strategy doesn't
@@ -92,7 +96,10 @@ export default function GoogleSignInButton({
       if (buttonRef.current) {
         // Renders Google's branded button into our div. We can't deeply
         // restyle it (Google's TOS) — only their official theme variants
-        // are allowed. width is in px; we use the card width.
+        // are allowed. `filled_blue` matches our accent colour. The
+        // white wrapper background GSI injects around the pill is
+        // stripped by GoogleSignInButton.module.css. width is in px;
+        // we fix at 320 so the button feels prominent on the card.
         window.google.accounts.id.renderButton(buttonRef.current, {
           theme: "filled_blue",
           size: "large",
@@ -103,44 +110,37 @@ export default function GoogleSignInButton({
         });
       }
 
-      if (showOneTap) {
-        // Auto-prompt for returning users. GIS itself decides whether to
-        // show it (it won't if the user dismissed recently or has opted
-        // out). The callback lets us log why it didn't display — useful
-        // during the rollout to know if One Tap is being suppressed.
-        window.google.accounts.id.prompt((notification) => {
-          if (notification.isNotDisplayed()) {
-            mark("[gsi] One Tap not displayed", {
-              reason: notification.getNotDisplayedReason(),
-            });
-          } else if (notification.isSkippedMoment()) {
-            mark("[gsi] One Tap skipped", {
-              reason: notification.getSkippedReason(),
-            });
-          }
-        });
-      }
-
-      setStatus("ready");
+      // GIS's iframe initially renders the generic "Continue with Google"
+      // button, then — for users with an active Google session — re-renders
+      // ~200-500ms later as the personalised "Continue as [Name]" with the
+      // user's photo. There's no public config to suppress this. Instead
+      // we keep the wrapper opacity:0 (via the `loading` state below) for
+      // 700ms after renderButton so the user sees a STABLE final button
+      // when it reveals, not the mid-flight personalisation re-render.
+      const PERSONALISATION_SETTLE_MS = 700;
+      setTimeout(() => {
+        if (cancelled) return;
+        setStatus("ready");
+        onReadyRef.current?.();
+      }, PERSONALISATION_SETTLE_MS);
     }
 
     tryInit();
 
     return () => {
       cancelled = true;
-      // Dismiss any open One Tap prompt on unmount so it doesn't linger
-      // after navigating away from the auth pages.
-      window.google?.accounts?.id?.cancel();
     };
-  }, [onScriptError, showOneTap]);
+  }, [onScriptError]);
 
   return (
-    <div>
-      <div ref={buttonRef} style={{ minHeight: "2.75rem" }} />
+    <div className={styles.container}>
+      <div
+        ref={buttonRef}
+        className={`${styles.wrapper} ${status === "ready" ? styles.wrapperReady : ""}`}
+        aria-hidden={status !== "ready"}
+      />
       {status === "loading" && (
-        <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)", marginTop: "var(--space-3)" }}>
-          Loading sign-in…
-        </p>
+        <p className={styles.loadingMessage}>Loading sign-in…</p>
       )}
     </div>
   );

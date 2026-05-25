@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import BrandMark from "@/components/BrandMark";
 import Drawer from "@/components/ui/Drawer";
+import TransitionLink from "./TransitionLink";
+import { usePublicTransition } from "./PublicMain";
 import { useAuth } from "@/auth/AuthProvider";
 import { signOut } from "@/auth/signInWithGoogle";
 import styles from "./PublicHeader.module.css";
@@ -21,6 +23,22 @@ export default function PublicHeader() {
   const router = useRouter();
   const { user, role } = useAuth();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Banner lifts off the top of the screen on Sign in / Join us. The
+  // context fires `headerLifting` BEFORE the body fade-out (`exiting`)
+  // so the banner clears the viewport as a discrete moment before the
+  // page transitions away.
+  const publicTransition = usePublicTransition();
+  const headerExiting = publicTransition?.headerLifting ?? false;
+  // Entrance: mount with .headerInitial (offscreen-up + invisible).
+  // After one animation frame, strip the class — the transition then
+  // smoothly interpolates the header into place. Using transitions
+  // instead of @keyframes animation eliminates the conflict that made
+  // the exit feel jumpy when it interrupted the entrance animation.
+  const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setEntered(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
 
   const isApproved = role === "member" || role === "committee" || role === "admin";
   const isPending = role === "pending";
@@ -83,12 +101,12 @@ export default function PublicHeader() {
     }
     return (
       <>
-        <Link href="/login" className={styles.signIn}>
+        <TransitionLink href="/login" className={styles.signIn}>
           Sign in
-        </Link>
-        <Link href="/register" className={styles.joinBtn}>
+        </TransitionLink>
+        <TransitionLink href="/register" className={styles.joinBtn}>
           Join us
-        </Link>
+        </TransitionLink>
       </>
     );
   };
@@ -130,19 +148,41 @@ export default function PublicHeader() {
     }
     return (
       <>
-        <Link href="/login" className={styles.drawerLinkSecondary} onClick={closeDrawer}>
+        {/* delayMs waits ~1s — long enough for the drawer's 900ms close
+            animation to fully complete (plus a 100ms beat) before the
+            page transition begins. The user sees the drawer take its
+            time, then the page transitions to the new route. */}
+        <TransitionLink
+          href="/login"
+          className={styles.drawerLinkSecondary}
+          onClick={closeDrawer}
+          delayMs={1000}
+        >
           Sign in
-        </Link>
-        <Link href="/register" className={styles.drawerLinkPrimary} onClick={closeDrawer}>
+        </TransitionLink>
+        <TransitionLink
+          href="/register"
+          className={styles.drawerLinkPrimary}
+          onClick={closeDrawer}
+          delayMs={1000}
+        >
           Join us
-        </Link>
+        </TransitionLink>
       </>
     );
   };
 
   return (
     <>
-      <header className={styles.header}>
+      <header
+        className={[
+          styles.header,
+          !entered ? styles.headerInitial : "",
+          headerExiting ? styles.headerExiting : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
         <div className={`container ${styles.inner}`}>
           <Link href="/" className={styles.brand} aria-label="NAISI home">
             <BrandMark size={40} />
