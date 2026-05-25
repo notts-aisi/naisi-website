@@ -4,11 +4,14 @@ import { useCallback, useMemo, useState } from "react";
 import {
   DndContext,
   PointerSensor,
-  closestCorners,
+  closestCenter,
+  pointerWithin,
   useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
+  type DragOverEvent,
   type DragStartEvent,
   DragOverlay,
 } from "@dnd-kit/core";
@@ -78,6 +81,7 @@ function computePerms(
 
 function SortableTaskCard({
   task,
+  columnStatus,
   projects,
   users,
   onOpen,
@@ -86,6 +90,7 @@ function SortableTaskCard({
   onChangeStatus,
 }: {
   task: TaskDoc;
+  columnStatus: TaskStatus;
   projects: ProjectDoc[];
   users: UserDoc[];
   onOpen: (id: string) => void;
@@ -95,7 +100,7 @@ function SortableTaskCard({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
-    data: { type: "task", status: task.status },
+    data: { type: "task", status: columnStatus },
   });
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -129,6 +134,7 @@ function BoardColumn({
   permsByTask,
   activePending,
   onStatusChange,
+  hoverStatus,
 }: {
   status: TaskStatus;
   tasks: TaskDoc[];
@@ -138,14 +144,16 @@ function BoardColumn({
   permsByTask: Map<string, TaskPerms>;
   activePending: Record<string, TaskStatus>;
   onStatusChange: (task: TaskDoc, status: TaskStatus) => void;
+  hoverStatus: TaskStatus | null;
 }) {
-  const { setNodeRef, isOver } = useDroppable({
+  const { setNodeRef } = useDroppable({
     id: `column-${status}`,
     data: { type: "column", status },
   });
+  const isHover = hoverStatus === status;
 
   return (
-    <div className={styles.column}>
+    <div ref={setNodeRef} className={styles.column}>
       <div
         style={{
           display: "flex",
@@ -162,13 +170,12 @@ function BoardColumn({
         <span style={{ color: "var(--color-text-subtle)" }}>{tasks.length}</span>
       </div>
       <div
-        ref={setNodeRef}
         style={{
           display: "flex",
           flexDirection: "column",
           gap: "var(--space-2)",
           padding: "var(--space-2)",
-          background: isOver ? "var(--color-accent-soft)" : "var(--color-bg-elevated)",
+          background: isHover ? "var(--color-accent-soft)" : "var(--color-bg-elevated)",
           border: "1px solid var(--color-border)",
           borderRadius: "var(--radius-md)",
           minHeight: "8rem",
@@ -180,6 +187,7 @@ function BoardColumn({
             <SortableTaskCard
               key={task.id}
               task={task}
+              columnStatus={status}
               projects={projects}
               users={users}
               onOpen={onOpenTask}
@@ -226,7 +234,26 @@ function TaskBoardKanban({
   onStatusChange,
 }: SharedProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [hoverStatus, setHoverStatus] = useState<TaskStatus | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  // Pointer-first detection. closestCorners (the dnd-kit default we used to
+  // pass here) measures corner-to-corner distance from the dragged card's
+  // rect to every droppable — with 17rem-wide columns it routinely picked
+  // the next column over when the dragged rect overflowed the column by a
+  // few pixels. The pointer is unambiguous about which column it's in, so
+  // use it as the source of truth and fall back to closestCenter only when
+  // the pointer is in a gap (between columns, past the scrollbar).
+  const collisionDetection: CollisionDetection = useCallback((args) => {
+    const pointerHits = pointerWithin(args);
+    if (pointerHits.length > 0) {
+      const taskHit = pointerHits.find(
+        (h) => h.data?.droppableContainer?.data?.current?.type === "task",
+      );
+      return taskHit ? [taskHit] : pointerHits;
+    }
+    return closestCenter(args);
+  }, []);
 
   const byStatus = useMemo(() => {
     const map = new Map<TaskStatus, TaskDoc[]>();
@@ -240,36 +267,52 @@ function TaskBoardKanban({
 
   const draggingTask = draggingId ? tasks.find((t) => t.id === draggingId) : null;
 
+  function statusFromOver(over: DragOverEvent["over"]): TaskStatus | null {
+    const overData = over?.data.current;
+    if (overData?.type === "column" || overData?.type === "task") {
+      return overData.status as TaskStatus;
+    }
+    return null;
+  }
+
   function handleDragStart(e: DragStartEvent) {
     setDraggingId(String(e.active.id));
+    const task = tasks.find((t) => t.id === e.active.id);
+    setHoverStatus(task ? (activePending[task.id] ?? task.status) : null);
+  }
+
+  function handleDragOver(e: DragOverEvent) {
+    setHoverStatus(statusFromOver(e.over));
   }
 
   function handleDragEnd(e: DragEndEvent) {
     setDraggingId(null);
+    setHoverStatus(null);
     const { active, over } = e;
     if (!over) return;
     const task = tasks.find((t) => t.id === active.id);
     if (!task) return;
 
-    let targetStatus: TaskStatus | null = null;
-    const overData = over.data.current;
-    if (overData?.type === "column") {
-      targetStatus = overData.status as TaskStatus;
-    } else if (overData?.type === "task") {
-      targetStatus = overData.status as TaskStatus;
-    }
+    const targetStatus = statusFromOver(over);
     const currentStatus = activePending[task.id] ?? task.status;
     if (!targetStatus || targetStatus === currentStatus) return;
 
     onStatusChange(task, targetStatus);
   }
 
+  function handleDragCancel() {
+    setDraggingId(null);
+    setHoverStatus(null);
+  }
+
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCorners}
+      collisionDetection={collisionDetection}
       onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
     >
       <div className={styles.scroll}>
         {TASK_STATUSES.map((status) => (
@@ -283,6 +326,7 @@ function TaskBoardKanban({
             permsByTask={permsByTask}
             activePending={activePending}
             onStatusChange={onStatusChange}
+            hoverStatus={hoverStatus}
           />
         ))}
       </div>
