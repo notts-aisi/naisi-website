@@ -4,9 +4,24 @@ import { bypass } from "@/lib/devBypass";
 import { getAdminAuth, getAdminDb } from "./admin";
 
 export const SESSION_COOKIE = "__session";
-const SESSION_EXPIRES_IN_MS = 5 * 24 * 60 * 60 * 1000; // 5 days
+// Role-tiered session lifetime. Elevated roles (committee, admin) have
+// broader access — member PII, drafter tools, the admin board, view-as
+// impersonation — so a leaked/copied cookie carries more risk and we
+// cap dwell time at 1 day. Pending / member / rejected get 5 days
+// since the blast radius is small and re-auth is friction. Promotions
+// mid-session keep the long cookie until next sign-in (the new role
+// takes effect immediately via getCurrentUser's per-request doc read).
+const SESSION_EXPIRES_IN_LONG_MS = 5 * 24 * 60 * 60 * 1000;
+const SESSION_EXPIRES_IN_SHORT_MS = 1 * 24 * 60 * 60 * 1000;
 
 export type Role = "pending" | "member" | "committee" | "admin" | "rejected";
+
+function sessionDurationForRole(role: Role | undefined): number {
+  if (role === "committee" || role === "admin") {
+    return SESSION_EXPIRES_IN_SHORT_MS;
+  }
+  return SESSION_EXPIRES_IN_LONG_MS;
+}
 
 export type SessionUser = {
   uid: string;
@@ -24,18 +39,24 @@ export type SessionUser = {
   };
 };
 
-/** Exchange a Firebase ID token for a long-lived session cookie, written httpOnly. */
-export async function createSessionCookie(idToken: string): Promise<void> {
+/**
+ * Exchange a Firebase ID token for a session cookie, written httpOnly.
+ * Cookie lifetime is sized to the caller's role: see
+ * sessionDurationForRole above.
+ */
+export async function createSessionCookie(
+  idToken: string,
+  role?: Role,
+): Promise<void> {
   const auth = getAdminAuth();
   if (!auth) throw new Error("Firebase Admin not configured");
 
-  const sessionCookie = await auth.createSessionCookie(idToken, {
-    expiresIn: SESSION_EXPIRES_IN_MS,
-  });
+  const expiresIn = sessionDurationForRole(role);
+  const sessionCookie = await auth.createSessionCookie(idToken, { expiresIn });
 
   const store = await cookies();
   store.set(SESSION_COOKIE, sessionCookie, {
-    maxAge: SESSION_EXPIRES_IN_MS / 1000,
+    maxAge: expiresIn / 1000,
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
