@@ -113,6 +113,19 @@
   width: 100%;
 }
 
+/* Per-route opt-in wider cap for the committee task board, where the kanban
+   benefits from the extra horizontal real estate (5 × 17rem columns ≈ 85rem
+   of content). TaskBoard handles its own overflow via `overflow-x: auto` +
+   the `min-width: 0` chain on .scroll / .kanbanOnly, so the original PR #11
+   concern — fixed-width columns leaking past viewport and orphaning the
+   sticky-vertical sidebar — is addressed at the page layer. Order matters:
+   this sits after `.main` so it overrides at desktop, and before the
+   `@media (max-width: 60rem)` block below so the phone full-bleed rule
+   still wins on small viewports. */
+.mainWide {
+  max-width: 100rem;
+}
+
 .navSkeleton {
   height: 2.1rem;
   border-radius: var(--radius-md);
