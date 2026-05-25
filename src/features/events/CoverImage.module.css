@@ -4,7 +4,11 @@
   overflow: hidden;
   border: 1px solid var(--color-border);
   /* Emblem sizes use `cqw` so the logo scales with the cover, not the viewport
-     — keeping the editor preview and the published page visually identical. */
+     — keeping the editor preview and the published page visually identical.
+     The chip's padding/radius are also cqw rather than fixed px, so the
+     box-edge sits at the same fraction of the cover in both contexts; fixed
+     px drifted the editor preview from the published page by ~1-2px because
+     the modal preview is wider than the published cover. */
   container-type: inline-size;
 }
 
@@ -57,11 +61,13 @@
   pointer-events: none;
 }
 
-/* boxed: the frosted chip behind the emblem. Padding is deliberately tight
-   so the box hugs the logo. */
+/* boxed: the frosted chip behind the emblem. Padding/radius are cqw so they
+   stay at the same fraction of the cover in the editor preview as on the
+   published page (the modal preview is a different absolute width than the
+   live event, but the chip occupies the same fractional footprint in both). */
 .cornerEmblemBoxed {
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-md);
+  padding: 0.85cqw 1.7cqw;
+  border-radius: 1.7cqw;
   background: rgba(5, 8, 14, 0.55);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -81,7 +87,11 @@
   filter: drop-shadow(0 2px 6px rgba(5, 8, 14, 0.55));
 }
 
-/* draggable: editor-only. The emblem becomes a grab handle. */
+/* draggable: editor-only. The emblem supports two equivalent gestures:
+   click-to-pick-up + click-to-place, OR hold-and-drag. A click on the
+   emblem that releases without moving past a small threshold lifts the
+   emblem (next click anywhere commits); a press that moves before release
+   is a normal drag and releases the position where you let go. */
 .cornerEmblemDraggable {
   pointer-events: auto;
   cursor: grab;
@@ -94,4 +104,16 @@
 
 .cornerEmblemDraggable:active {
   cursor: grabbing;
+}
+
+/* placing: while picked up, the cursor is a crosshair across the cover and
+   the emblem shows a soft outline so it reads as "lifted". */
+.framePlacing {
+  cursor: crosshair;
+}
+
+.cornerEmblemPlacing {
+  cursor: crosshair;
+  outline: 2px dashed var(--color-accent, rgba(120, 180, 255, 0.9));
+  outline-offset: 2px;
 }
