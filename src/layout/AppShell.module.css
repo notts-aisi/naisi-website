@@ -2,6 +2,17 @@
   display: grid;
   grid-template-columns: var(--sidebar-width) 1fr;
   min-height: 100vh;
+  transition: grid-template-columns var(--transition-base);
+}
+
+/* Collapsed state — sidebar slides off the left, the column that reserved its
+   space shrinks to 0 so .main (pinned to grid-column: 2) slides over to fill
+   the viewport. Sidebar + shell transitions run in sync for the smooth slide. */
+.shell[data-sidebar="collapsed"] {
+  grid-template-columns: 0 1fr;
+}
+.shell[data-sidebar="collapsed"] .sidebar {
+  transform: translateX(-100%);
 }
 
 .sidebar {
@@ -11,12 +22,111 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
-  position: sticky;
+  /* Viewport-fixed so horizontal scroll (kanban-internal or document) can't
+     orphan the nav off the left edge — sticky only pins vertically. Taking
+     the sidebar out of grid flow means .main must explicitly claim column 2
+     below, otherwise auto-placement drops it into the now-empty column 1. */
+  position: fixed;
   top: 0;
+  left: 0;
+  width: var(--sidebar-width);
   height: 100vh;
+  transition: transform var(--transition-base);
 }
 
 .brand { padding-inline: var(--space-2); }
+
+/* Brand row hosts the wordmark on the left and the in-sidebar hamburger on
+   the right. The hamburger collapses the sidebar; when collapsed, the
+   .floatingHamburger below takes over so the user always has a way back. */
+.brandRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-inline: var(--space-2);
+  gap: var(--space-2);
+  /* NAISI is all-caps with no descenders, so its default 1.5 line-height
+     pads the bounding box top-heavy and the wordmark optically rides higher
+     than the hamburger's icon center. Pin line-height: 1 so the bounding
+     box collapses to glyph height and align-items: center actually centers
+     what the eye sees. */
+  line-height: 1;
+}
+
+.sidebarHamburger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.sidebarHamburger:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+/* Top-right floating affordance — a single pill housing the brand link (back
+   to /) and the hamburger (re-opens the sidebar). Matches the sidebar's own
+   background + border so it reads as a piece of the same chrome that just
+   slid off-left. Always in the DOM so the slide can interpolate; hidden by
+   default via off-screen-right transform + opacity, slides in when its
+   sibling .shell enters the collapsed state — same var(--transition-base)
+   duration as the sidebar's transform, so both slides run in lockstep. */
+.floatingControls {
+  position: fixed;
+  top: var(--space-4);
+  right: var(--space-4);
+  z-index: 15;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  transform: translateX(calc(100% + var(--space-6)));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--transition-base),
+    opacity var(--transition-base);
+}
+.shell[data-sidebar="collapsed"] ~ .floatingControls {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.floatingBrandLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+.floatingBrandLink:hover {
+  background: var(--color-surface-hover);
+}
+
+.floatingHamburger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  transition: background var(--transition-fast);
+}
+.floatingHamburger:hover {
+  background: var(--color-surface-hover);
+}
 
 .nav {
   display: flex;
@@ -98,19 +208,20 @@
   text-transform: capitalize;
 }
 
+/* Spacing-only — the Button component owns the visual treatment (secondary
+   variant, sm size, full width). Just nudge it down from the role line. */
 .signOut {
   margin-top: var(--space-2);
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  text-align: left;
-  cursor: pointer;
 }
-.signOut:hover { color: var(--color-text); }
 
 .main {
   padding: var(--space-8) var(--space-10);
   max-width: 64rem;
   width: 100%;
+  /* Sidebar is position: fixed (above), so it no longer participates in
+     auto-placement — pin main to column 2 explicitly so it sits past the
+     reserved sidebar track instead of collapsing into column 1. */
+  grid-column: 2;
 }
 
 /* Per-route opt-in wider cap for the committee task board, where the kanban
@@ -124,6 +235,60 @@
    still wins on small viewports. */
 .mainWide {
   max-width: 100rem;
+  padding-right: var(--space-4);
+}
+
+/* Wrapper around the whole shell — used to slide the authed UI right
+   when the user signs out, mirroring the sign-in slide-left. Idle state
+   is just a plain block wrapper (no layout impact since the children
+   already manage their own positioning). The .shellExitingRight class
+   flips on for the duration of the transition before router.push to
+   the public homepage. */
+.shellExitingRight {
+  transition:
+    transform 530ms cubic-bezier(0.7, 0, 0.3, 1),
+    opacity 384ms ease-in;
+  transform: translateX(112vw);
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shellExitingRight {
+    transition: opacity 200ms ease;
+    transform: none;
+  }
+}
+
+/* One-shot fade-in applied by AppShell when arriving from the sign-in
+   flow (login or register). The 280ms `animation-delay` holds the
+   content invisible while initial Firestore onSnapshot listeners fire
+   their first emit — without this, the fade-in animates against
+   content that jitters as snapshots populate. `both` keeps the from-
+   state pinned during the delay. */
+.entering {
+  animation: shell-enter 620ms cubic-bezier(0.2, 0.6, 0.2, 1) 280ms both;
+}
+
+@keyframes shell-enter {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entering {
+    animation: shell-enter-rm 220ms ease 280ms both;
+  }
+  @keyframes shell-enter-rm {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
 }
 
 .navSkeleton {
@@ -327,6 +492,15 @@
   .main {
     max-width: 100%;
     padding: var(--space-6) var(--space-4);
+    /* Sidebar is display:none here — reset the desktop column-2 pin so main
+       takes the single grid track instead of creating a phantom column 2. */
+    grid-column: auto;
+  }
+  /* The desktop collapse affordances are irrelevant below --bp-lg — the
+     mobile drawer + hamburger in .topStrip own the nav-toggle UX here. */
+  .sidebarHamburger,
+  .floatingControls {
+    display: none;
   }
   /* Banner offsets to sit below the top strip (which is sticky at top 0). */
   .impersonationBanner {
@@ -334,5 +508,15 @@
     margin: calc(var(--space-6) * -1) calc(var(--space-4) * -1) var(--space-4);
     padding: var(--space-3) var(--space-4);
     flex-wrap: wrap;
+  }
+}
+
+/* Honour reduced-motion preferences — the collapse should still work, just
+   without the slide. */
+@media (prefers-reduced-motion: reduce) {
+  .shell,
+  .sidebar,
+  .floatingControls {
+    transition: none;
   }
 }

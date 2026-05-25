@@ -8,11 +8,18 @@ import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import CountedTextarea from "@/components/ui/CountedTextarea";
+import GoogleSignInButton from "@/components/GoogleSignInButton";
+import SigningIn from "@/components/SigningIn";
+import signinStyles from "@/components/SigningIn.module.css";
+import { AUTH_BACK_HOME_EVENT, AUTH_PAGE_READY_EVENT } from "../LogoLink";
 import GraduationSelect from "@/components/ui/GraduationSelect";
 import StatusSelect from "@/components/ui/StatusSelect";
 import Switch from "@/components/ui/Switch";
 import { Field, Input } from "@/components/ui/Input";
-import { completeRegistration, signInWithGoogle } from "@/auth/signInWithGoogle";
+import {
+  completeRegistration,
+  exchangeGoogleCredential,
+} from "@/auth/signInWithGoogle";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
 import {
@@ -31,6 +38,15 @@ import {
   setChannel,
   type NotificationPrefs,
 } from "@/lib/firestore/notifications";
+
+type SignInPhase = "idle" | "active" | "success" | "exiting" | "exitingBack";
+
+const MIN_ACTIVE_MS = 1700;
+const SUCCESS_DURATION_MS = 2550;
+const SUCCESS_HOLD_TAIL_MS = 1330;
+const EXIT_DURATION_MS = 530;
+const CANCEL_GRACE_MS = 900;
+const sleep = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
 
 type VerificationState =
   | { status: "idle" }
@@ -55,9 +71,111 @@ function RegisterPageInner() {
   const fromSubscriber = searchParams.get("from") === "subscriber";
   const { user, role, loading: authLoading } = useAuth();
 
+  const [step, setStep] = useState<"sign-in" | "profile">(
+    user && !role ? "profile" : "sign-in",
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  // Sign-in phase mirrors /login. Drives the ambient SigningIn surge,
+  // the green success sweep, and the card slide-out on credential success.
+  const [signinPhase, setSigninPhase] = useState<SignInPhase>("idle");
+  const [successAt, setSuccessAt] = useState<number | null>(null);
+  const [entering, setEntering] = useState(true);
+  const activeStartRef = useRef(0);
+  const credentialReceivedRef = useRef(false);
+
+  useEffect(() => {
+    if (!entering) return;
+    const t = setTimeout(() => setEntering(false), 3200);
+    return () => clearTimeout(t);
+  }, [entering]);
+
+  const handleGisReady = useCallback(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          setEntering(false);
+          try {
+            window.dispatchEvent(new CustomEvent(AUTH_PAGE_READY_EVENT));
+          } catch {
+            /* CustomEvent unavailable */
+          }
+        }, 220);
+      });
+    });
+  }, []);
+
+  // Logo click → swipe back to the homepage. Only meaningful when on the
+  // sign-in step; if the user is mid-profile-form we let the layout
+  // handle the normal Link navigation (the page is leaving anyway).
+  useEffect(() => {
+    if (step !== "sign-in") return;
+    const onBack = (e: Event) => {
+      if (
+        signinPhase === "exiting" ||
+        signinPhase === "exitingBack" ||
+        signinPhase === "success"
+      ) {
+        return;
+      }
+      e.preventDefault();
+      setSigninPhase("exitingBack");
+      setTimeout(() => router.push("/"), EXIT_DURATION_MS);
+    };
+    window.addEventListener(AUTH_BACK_HOME_EVENT, onBack);
+    return () => window.removeEventListener(AUTH_BACK_HOME_EVENT, onBack);
+  }, [step, signinPhase, router]);
+
+  const startSurge = useCallback(() => {
+    setSigninPhase((p) => {
+      if (p !== "idle") return p;
+      activeStartRef.current = performance.now();
+      return "active";
+    });
+  }, []);
+
+  useEffect(() => {
+    if (step !== "sign-in") return;
+    let lastMouseDown = 0;
+    let lastBlurAt = 0;
+    const onMouseDown = () => {
+      lastMouseDown = performance.now();
+    };
+    const onBlur = () => {
+      lastBlurAt = performance.now();
+      if (signinPhase === "idle" && performance.now() - lastMouseDown < 1500) {
+        startSurge();
+      }
+    };
+    const onFocus = () => {
+      if (signinPhase !== "active") return;
+      if (credentialReceivedRef.current) return;
+      if (performance.now() - lastBlurAt > 3000) return;
+      setTimeout(() => {
+        if (!credentialReceivedRef.current && signinPhase === "active") {
+          setSigninPhase("idle");
+        }
+      }, CANCEL_GRACE_MS);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [signinPhase, step, startSurge]);
+
+  // Already signed in? Bounce away based on role. The `loading` guard
+  // keeps the bounce from racing the inline credential-exchange path:
+  // signInWithCredential fires onAuthStateChanged before the cookie POST
+  // completes, and we don't want to navigate before /api/auth/session
+  // mints the cookie.
   useEffect(() => {
     if (authLoading) return;
     if (!user) return;
+    if (loading) return;
     if (role === "member" || role === "committee" || role === "admin") {
       router.replace("/dashboard");
     } else if (role === "pending") {
@@ -65,13 +183,7 @@ function RegisterPageInner() {
     } else if (role === "rejected") {
       router.replace("/");
     }
-  }, [authLoading, user, role, router]);
-
-  const [step, setStep] = useState<"sign-in" | "profile">(
-    user && !role ? "profile" : "sign-in",
-  );
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  }, [authLoading, user, role, router, loading]);
 
   // Profile state
   const [preferredName, setPreferredName] = useState("");
@@ -183,23 +295,55 @@ function RegisterPageInner() {
     }
   }, [universityEmail, preferredName]);
 
-  async function handleSignIn() {
-    setError(null);
-    setLoading(true);
-    try {
-      const result = await signInWithGoogle();
-      if (!result.isNew) {
-        router.push("/dashboard");
-        return;
+  const onCredential = useCallback(
+    async (idToken: string) => {
+      credentialReceivedRef.current = true;
+      setError(null);
+      setLoading(true);
+      startSurge();
+      try {
+        const result = await exchangeGoogleCredential(idToken);
+        if (result.isNew) {
+          // New user — exchange completed but they still need to fill the
+          // profile form, so we don't slide-out, just swap inline.
+          setSigninPhase("idle");
+          credentialReceivedRef.current = false;
+          setStep("profile");
+        } else {
+          // Existing user → cascade through, green success sweep, slide.
+          const elapsed = performance.now() - activeStartRef.current;
+          const remaining = Math.max(0, MIN_ACTIVE_MS - elapsed);
+          if (remaining > 0) await sleep(remaining);
+
+          setSuccessAt(performance.now());
+          setSigninPhase("success");
+          await sleep(SUCCESS_DURATION_MS + SUCCESS_HOLD_TAIL_MS);
+
+          try {
+            sessionStorage.setItem("naisi:from-signin", "1");
+          } catch {
+            /* sessionStorage may be unavailable */
+          }
+          setSigninPhase("exiting");
+          await sleep(EXIT_DURATION_MS);
+          router.push("/dashboard");
+        }
+      } catch (err) {
+        console.error(err);
+        setError("Sign-in failed. Please try again.");
+        credentialReceivedRef.current = false;
+        setSuccessAt(null);
+        setSigninPhase("idle");
+      } finally {
+        setLoading(false);
       }
-      setStep("profile");
-    } catch (err) {
-      console.error(err);
-      setError("Sign-in failed. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  }
+    },
+    [router, startSurge],
+  );
+
+  const onScriptError = useCallback((message: string) => {
+    setError(message);
+  }, []);
 
   async function handleSubmitProfile(e: React.FormEvent) {
     e.preventDefault();
@@ -258,8 +402,18 @@ function RegisterPageInner() {
     }
   }
 
+  const frameClass = [
+    signinStyles.exitFrame,
+    entering ? signinStyles.entering : "",
+    signinPhase === "exiting" ? signinStyles.exiting : "",
+    signinPhase === "exitingBack" ? signinStyles.exitingBack : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <Card padding="lg" style={{ width: "100%", maxWidth: "32rem" }}>
+    <div className={frameClass} style={{ maxWidth: "32rem" }}>
+    <Card padding="lg" style={{ width: "100%" }}>
       <h1 style={{ fontSize: "var(--text-2xl)", marginBottom: "var(--space-2)" }}>
         Join NAISI
       </h1>
@@ -290,9 +444,17 @@ function RegisterPageInner() {
 
       {step === "sign-in" ? (
         <>
-          <Button onClick={handleSignIn} fullWidth size="lg" disabled={loading}>
-            {loading ? "Signing in…" : "Continue with Google"}
-          </Button>
+          <div onMouseDown={startSurge}>
+            <GoogleSignInButton
+              onCredential={onCredential}
+              onScriptError={onScriptError}
+              onReady={handleGisReady}
+            />
+          </div>
+          <SigningIn
+            active={signinPhase !== "idle"}
+            successStartAt={signinPhase === "success" || signinPhase === "exiting" ? successAt : null}
+          />
           {error && (
             <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)", marginTop: "var(--space-4)" }}>
               {error}
@@ -531,6 +693,7 @@ function RegisterPageInner() {
         </form>
       )}
     </Card>
+    </div>
   );
 }
 

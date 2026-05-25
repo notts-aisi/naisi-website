@@ -1,11 +1,21 @@
 .shell {
-  min-height: 100vh;
+  /* Pin to the visual viewport. 100dvh accounts for mobile chrome
+     showing/hiding (URL bar, keyboard) so the layout doesn't jump. */
+  height: 100dvh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   padding: var(--space-6);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Base matches the hero atmosphere's outer colour so cross-layout
+   * transitions (homepage → login, login → homepage) don't show a
+   * background seam. Soft accent radial at the top echoes the hero
+   * vibe just enough that the auth surface still feels its own thing. */
   background:
     radial-gradient(ellipse at top, var(--color-accent-soft) 0%, transparent 55%),
-    var(--color-bg);
+    #050810;
 }
 
 .header {

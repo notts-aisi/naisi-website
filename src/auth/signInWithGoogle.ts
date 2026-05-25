@@ -1,13 +1,13 @@
 "use client";
 
-import { signInWithPopup, signOut as fbSignOut } from "firebase/auth";
-import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import {
-  getClientAuth,
-  getClientDb,
-  getGoogleProvider,
-} from "@/lib/firebase/client";
-import { mark, warn, watchdog } from "@/lib/devMonitor";
+  GoogleAuthProvider,
+  signInWithCredential,
+  signOut as fbSignOut,
+} from "firebase/auth";
+import { doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { getClientAuth, getClientDb } from "@/lib/firebase/client";
+import { mark, warn } from "@/lib/devMonitor";
 
 export type SignInResult = {
   uid: string;
@@ -16,52 +16,53 @@ export type SignInResult = {
 };
 
 /**
- * Google sign-in + session cookie provisioning.
- * The server (via /api/auth/session) tells us whether a user doc exists —
- * relying on a server-side check avoids the client-SDK race where Firestore
- * reads fire before the fresh auth token is attached.
- * Role-based routing happens in (app)/layout.tsx, not here.
+ * Exchanges a Google-issued ID token (from Google Identity Services) for
+ * a Firebase Auth session + a `__session` cookie. Designed to be called
+ * from GoogleSignInButton's onCredential callback.
+ *
+ * Why GIS instead of signInWithPopup / signInWithRedirect:
+ *
+ * Both Firebase Auth client flows depend on cross-origin iframes or
+ * popups loading accounts.google.com — content blockers, ad-blockers,
+ * and VPN tracking-protection routinely block those, leaving the user
+ * stuck on /login with no signal. GIS uses FedCM in modern browsers
+ * (Safari 17.4+, Chrome 117+) which is a browser-native API that
+ * extensions can't intercept, and falls back to a top-level redirect on
+ * older browsers. The credential comes back as an ID token JWT we hand
+ * to Firebase via GoogleAuthProvider.credential — Firebase Auth signs
+ * the user in client-side without any extra round trips.
+ *
+ * Server-side `exists` (returned by /api/auth/session) is the source of
+ * truth for the new-vs-existing-user routing decision — a client-side
+ * Firestore read here would race the fresh auth token attachment.
  */
-export async function signInWithGoogle(): Promise<SignInResult> {
-  mark("[signin] start");
-  // [monitor] Wraps the slowest realistic happy-path leg (popup → cookie
-  // mint). If this watchdog ever fires, something stalled mid-handoff —
-  // most often Firebase popup blocked, slow network, or our /api/auth/session
-  // wedged waiting on the Admin SDK init.
-  const clear = watchdog("signInWithGoogle full flow", 15000);
-  try {
-    const auth = getClientAuth();
-    const cred = await signInWithPopup(auth, getGoogleProvider());
-    const user = cred.user;
-    mark("[signin] popup resolved", { uid: user.uid, email: user.email });
+export async function exchangeGoogleCredential(
+  idToken: string,
+): Promise<SignInResult> {
+  const auth = getClientAuth();
+  mark("[signin] exchanging GIS credential");
+  const cred = await signInWithCredential(
+    auth,
+    GoogleAuthProvider.credential(idToken),
+  );
+  const user = cred.user;
+  mark("[signin] signInWithCredential resolved", { uid: user.uid });
 
-    const idToken = await user.getIdToken();
-    mark("[signin] getIdToken done", { length: idToken.length });
-
-    const res = await fetch("/api/auth/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idToken }),
-    });
-    mark("[signin] /api/auth/session POST returned", {
-      status: res.status,
-      ok: res.ok,
-    });
-    if (!res.ok) throw new Error("Failed to establish session");
-    const body = (await res.json()) as { ok: boolean; exists: boolean };
-    mark("[signin] session cookie established", { exists: body.exists });
-
-    return {
-      uid: user.uid,
-      email: user.email,
-      isNew: !body.exists,
-    };
-  } catch (err) {
-    warn("[signin] threw", err);
-    throw err;
-  } finally {
-    clear();
+  // Use the freshly-minted Firebase ID token (not the Google one) — the
+  // server's createSessionCookie verifies against Firebase Auth.
+  const firebaseIdToken = await user.getIdToken();
+  const res = await fetch("/api/auth/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken: firebaseIdToken }),
+  });
+  if (!res.ok) {
+    warn("[signin] /api/auth/session failed", { status: res.status });
+    throw new Error("Failed to establish session");
   }
+  const body = (await res.json()) as { ok: boolean; exists: boolean };
+  mark("[signin] session cookie established", { exists: body.exists });
+  return { uid: user.uid, email: user.email, isNew: !body.exists };
 }
 
 /**

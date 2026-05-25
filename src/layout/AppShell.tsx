@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import BrandMark from "@/components/BrandMark";
+import Button from "@/components/ui/Button";
 import Drawer from "@/components/ui/Drawer";
 import { useAuth } from "@/auth/AuthProvider";
 import { exitImpersonation } from "@/auth/impersonation";
@@ -98,6 +99,57 @@ export default function AppShell({
   const pendingCount = usePendingCount();
   const [exiting, setExiting] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Fade the main content in once when we arrive from the sign-in flow.
+  // Flag is set by login/register before router.push and consumed here.
+  //
+  // We start the content opacity-0 *immediately* on mount, but DELAY
+  // the actual fade-in animation by ~280ms. That gives Firestore
+  // onSnapshot listeners + initial role/permissions loads time to land
+  // their first emit, so the content the user sees fade in is stable
+  // rather than jittering as data populates mid-animation.
+  const [enteringFromSignin, setEnteringFromSignin] = useState(false);
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("naisi:from-signin") === "1") {
+        sessionStorage.removeItem("naisi:from-signin");
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setEnteringFromSignin(true);
+        // CSS handles the 280ms delay + 620ms animation; remove the
+        // class once it's done so subsequent navigations don't pay
+        // the cost.
+        const t = setTimeout(() => setEnteringFromSignin(false), 280 + 620 + 80);
+        return () => clearTimeout(t);
+      }
+    } catch {
+      // sessionStorage unavailable (e.g. private mode iframe) — skip the fade
+    }
+  }, []);
+
+  // Desktop sidebar collapse. Persisted to localStorage (kept out of cookies
+  // to sidestep PECR's preference-cookie gray area). Default open; reloads
+  // with a saved-collapsed state will briefly show the sidebar before sliding
+  // it out — acceptable since the authed area isn't reload-heavy.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("naisi.sidebar.collapsed");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (stored === "true") setSidebarCollapsed(true);
+    } catch {
+      // localStorage unavailable (private mode etc.) — keep default
+    }
+  }, []);
+  function toggleSidebar() {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("naisi.sidebar.collapsed", String(next));
+      } catch {
+        // Persistence best-effort; UI state still toggles
+      }
+      return next;
+    });
+  }
 
   // [monitor] Track AppShell lifecycle. The "stays-on-/login" symptom can
   // show up here as either (a) AppShell mounts on the destination but
@@ -167,7 +219,34 @@ export default function AppShell({
         })).filter((g) => g.items.length > 0)
       : [];
 
+  // Slide the entire app shell off to the right when signing out, in
+  // mirror of the sign-in slide-left. The public homepage then fades in
+  // from the left thanks to the sessionStorage flag set just before
+  // signOut. Sequence: flag → close drawer (if open) → slide → signOut → push.
+  //
+  // The mobile drawer portals to <body>, so it isn't a descendant of
+  // our slide wrapper — if it's still open when the slide starts, the
+  // shell slides off but the drawer stays put, "depopulating" the rest
+  // of the UI. Close the drawer first and let its own close animation
+  // play before the wrapper slides.
+  const [signoutExiting, setSignoutExiting] = useState(false);
+  const SIGNOUT_SLIDE_MS = 530;
+  /** Drawer panel transition is 900ms (Drawer.module.css). Wait that
+   *  long on signout from the mobile drawer so the close fully lands
+   *  before the shell starts sliding right. */
+  const DRAWER_CLOSE_MS = 900;
   async function handleSignOut() {
+    try {
+      sessionStorage.setItem("naisi:from-signout", "1");
+    } catch {
+      /* sessionStorage may be unavailable — public layout falls back to no fade */
+    }
+    if (drawerOpen) {
+      setDrawerOpen(false);
+      await new Promise((r) => setTimeout(r, DRAWER_CLOSE_MS));
+    }
+    setSignoutExiting(true);
+    await new Promise((r) => setTimeout(r, SIGNOUT_SLIDE_MS));
     await signOut();
     router.push("/");
   }
@@ -209,9 +288,15 @@ export default function AppShell({
         {user?.displayName ?? user?.email ?? "Signed in"}
       </div>
       {role && <div className={styles.userRole}>{role}</div>}
-      <button onClick={handleSignOut} className={styles.signOut}>
+      <Button
+        variant="secondary"
+        size="md"
+        fullWidth
+        onClick={handleSignOut}
+        className={styles.signOut}
+      >
         Sign out
-      </button>
+      </Button>
     </div>
   );
 
@@ -254,7 +339,7 @@ export default function AppShell({
   }
 
   return (
-    <>
+    <div className={signoutExiting ? styles.shellExitingRight : undefined}>
       <div className={styles.topStrip}>
         <Link href="/" className={styles.topStripBrand} aria-label="NAISI home">
           <BrandMark size={28} />
@@ -282,18 +367,41 @@ export default function AppShell({
           )}
         </button>
       </div>
-      <div className={styles.shell}>
-        <aside className={styles.sidebar} aria-label="Primary">
-          <div className={styles.brand}>
+      <div
+        className={styles.shell}
+        data-sidebar={sidebarCollapsed ? "collapsed" : "open"}
+      >
+        <aside
+          id="app-sidebar"
+          className={styles.sidebar}
+          aria-label="Primary"
+          aria-hidden={sidebarCollapsed || undefined}
+          inert={sidebarCollapsed}
+        >
+          <div className={styles.brandRow}>
             <Link href="/" aria-label="NAISI home">
               <BrandMark size={28} />
             </Link>
+            <button
+              type="button"
+              className={styles.sidebarHamburger}
+              onClick={toggleSidebar}
+              aria-label="Collapse sidebar"
+              aria-expanded={!sidebarCollapsed}
+              aria-controls="app-sidebar"
+            >
+              <span className={styles.menuIcon} aria-hidden>
+                <span />
+                <span />
+                <span />
+              </span>
+            </button>
           </div>
           {renderNav()}
           {renderUserBlock()}
         </aside>
         <main
-          className={`${styles.main} ${pathname === "/committee/tasks" ? styles.mainWide : ""}`}
+          className={`${styles.main} ${pathname === "/committee/tasks" ? styles.mainWide : ""} ${enteringFromSignin ? styles.entering : ""}`}
         >
           {impersonation && (
             <div
@@ -323,6 +431,38 @@ export default function AppShell({
           {children}
         </main>
       </div>
+      {/* Always rendered so the slide-in/out transition has an interpolation
+          source. CSS hides the container (transform off-screen right) unless
+          its sibling .shell is in the collapsed state. `inert` mirrors the
+          visual hidden state so keyboard / screen readers can't reach the
+          off-screen brand link or hamburger. */}
+      <div
+        className={styles.floatingControls}
+        aria-hidden={!sidebarCollapsed || undefined}
+        inert={!sidebarCollapsed}
+      >
+        <Link
+          href="/"
+          aria-label="NAISI home"
+          className={styles.floatingBrandLink}
+        >
+          <BrandMark size={24} />
+        </Link>
+        <button
+          type="button"
+          className={styles.floatingHamburger}
+          onClick={toggleSidebar}
+          aria-label="Open sidebar"
+          aria-expanded={!sidebarCollapsed}
+          aria-controls="app-sidebar"
+        >
+          <span className={styles.menuIcon} aria-hidden>
+            <span />
+            <span />
+            <span />
+          </span>
+        </button>
+      </div>
       <Drawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
@@ -336,6 +476,6 @@ export default function AppShell({
         {renderNav(() => setDrawerOpen(false))}
         {renderUserBlock()}
       </Drawer>
-    </>
+    </div>
   );
 }

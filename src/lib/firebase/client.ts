@@ -1,7 +1,7 @@
 "use client";
 
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, type Auth } from "firebase/auth";
+import { getAuth, type Auth } from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
 import { getStorage, type FirebaseStorage } from "firebase/storage";
 
@@ -41,10 +41,4 @@ export function getClientStorage(): FirebaseStorage {
   if (_storage) return _storage;
   _storage = getStorage(getFirebaseApp());
   return _storage;
-}
-
-export function getGoogleProvider(): GoogleAuthProvider {
-  const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: "select_account" });
-  return provider;
 }

@@ -14,7 +14,7 @@ env:
   # Firebase Hosting custom domain serving the OAuth handler at
   # /__/auth/handler/*. Serving from auth.naisi.uk (same eTLD+1 as naisi.uk)
   # keeps Firebase auth cookies first-party → Safari ITP doesn't block them →
-  # popup sign-in works reliably. Dev overrides this to auth-website-dev.naisi.uk
+  # popup sign-in works reliably. Dev overrides this to auth-dev.naisi.uk
   # via the App Hosting console UI.
   - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
     value: auth.naisi.uk
@@ -30,6 +30,14 @@ env:
     availability: [BUILD, RUNTIME]
   - variable: NEXT_PUBLIC_FIREBASE_APP_ID
     secret: naisi-web-app-id
+    availability: [BUILD, RUNTIME]
+  # OAuth 2.0 client ID for Google Identity Services. Required by the GSI
+  # button initializer (google.accounts.id.initialize). One client ID per
+  # Firebase project — the dev backend overrides this with its own ID via
+  # the App Hosting console UI. Public by design (ships in the client
+  # bundle), no Secret Manager indirection needed.
+  - variable: NEXT_PUBLIC_GOOGLE_CLIENT_ID
+    value: 742980551273-h0p1c9kmff5tdoe32rm2d10ia2iht4k1.apps.googleusercontent.com
     availability: [BUILD, RUNTIME]
   # HMAC secret used to sign RSVP self-cancel / change-request links in emails.
   # Rotating the secret invalidates every outstanding email link.
