@@ -9,6 +9,7 @@ import {
   type Query,
   type QueryConstraint,
 } from "firebase/firestore";
+import { bypass } from "@/lib/devBypass";
 import { getClientDb } from "@/lib/firebase/client";
 import { normalizeTask, type TaskDoc, type TaskSource } from "@/lib/firestore/tasks";
 
@@ -38,6 +39,13 @@ export function useTasks(args: UseTasksArgs = {}) {
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
+    const fixture = bypass.getTasks(stable);
+    if (fixture !== null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setTasks(fixture);
+      setLoading(false);
+      return;
+    }
     const db = getClientDb();
     const constraints: QueryConstraint[] = [];
     if (stable.projectId) constraints.push(where("projectId", "==", stable.projectId));

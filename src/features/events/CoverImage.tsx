@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   COVER_LOGO_SCALE_DEFAULT,
   COVER_LOGO_X_DEFAULT,
@@ -67,43 +67,131 @@ export default function CoverImage({
   const emblemSrc = EMBLEM_SRC[logoColor];
   const atTop = logoPosition === "top";
   const frameRef = useRef<HTMLDivElement>(null);
-  const dragging = useRef(false);
-  // Pixel gap between the cursor and the badge centre at grab time, so the
-  // badge tracks the cursor smoothly instead of snapping its centre under it.
-  const grabOffset = useRef({ x: 0, y: 0 });
+  // Click-to-pick-up / click-to-place: first click on the emblem lifts it,
+  // the cursor then drives the position live, and the next click anywhere
+  // commits. Escape reverts to the position at the moment of pick-up.
+  const [placing, setPlacing] = useState(false);
+  const startPos = useRef<{ x: number; y: number } | null>(null);
 
   const draggable = !!onPositionChange && branding === "corner";
 
-  function handlePointerDown(e: React.PointerEvent<HTMLImageElement>) {
+  useEffect(() => {
+    if (!placing || !onPositionChange) return;
     const frame = frameRef.current;
     if (!frame) return;
+
+    function applyAt(e: PointerEvent) {
+      const rect = frame!.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      const x = ((e.clientX - rect.left) / rect.width) * 100;
+      const y = ((e.clientY - rect.top) / rect.height) * 100;
+      // 1-decimal rounding so the position is smooth at sub-percent precision
+      // (integer rounding snapped in ~6px steps on a 600px-wide preview).
+      onPositionChange!(
+        Math.min(100, Math.max(0, Math.round(x * 10) / 10)),
+        Math.min(100, Math.max(0, Math.round(y * 10) / 10)),
+      );
+    }
+
+    function onMove(e: PointerEvent) {
+      // Desktop: cursor drives the emblem live. Touch: pointermove only
+      // fires while a finger is in contact, but the pointerdown commit
+      // below still places the emblem at the tap location.
+      applyAt(e);
+    }
+    function onDown(e: PointerEvent) {
+      // Commit when the click lands on the cover itself; clicks outside
+      // (modal controls, close button, sliders) just cancel placing
+      // without nudging the saved position.
+      const target = e.target as Node | null;
+      if (target && frame!.contains(target)) {
+        applyAt(e);
+      }
+      setPlacing(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        if (startPos.current) {
+          onPositionChange!(startPos.current.x, startPos.current.y);
+        }
+        setPlacing(false);
+      }
+    }
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [placing, onPositionChange]);
+
+  function handleEmblemPointerDown(e: React.PointerEvent<HTMLImageElement>) {
+    if (!draggable) return;
+    // Suppress native image drag / long-press callout and stop the event
+    // from bubbling to the window pointerdown handler above (which would
+    // otherwise treat this same press as the "commit" tap).
+    e.preventDefault();
+    e.stopPropagation();
+    if (placing) {
+      setPlacing(false);
+      return;
+    }
+    // Disambiguate click vs drag from this single pointerdown: if the
+    // pointer moves past a small threshold before release, treat it as a
+    // hold-drag and the release position is the final placement; otherwise
+    // it was a click and we enter placing mode for click-to-place.
+    const frame = frameRef.current;
+    if (!frame || !onPositionChange) return;
+    const downX = e.clientX;
+    const downY = e.clientY;
     const rect = frame.getBoundingClientRect();
     const centreX = rect.left + (logoX / 100) * rect.width;
     const centreY = rect.top + (logoY / 100) * rect.height;
-    grabOffset.current = { x: centreX - e.clientX, y: centreY - e.clientY };
-    dragging.current = true;
-    e.currentTarget.setPointerCapture(e.pointerId);
-  }
+    const grabOffsetX = centreX - e.clientX;
+    const grabOffsetY = centreY - e.clientY;
+    let mode: "pending" | "dragging" = "pending";
+    const target = e.currentTarget;
+    target.setPointerCapture(e.pointerId);
 
-  function handlePointerMove(e: React.PointerEvent<HTMLImageElement>) {
-    if (!dragging.current || !onPositionChange) return;
-    const frame = frameRef.current;
-    if (!frame) return;
-    const rect = frame.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
-    const x = ((e.clientX + grabOffset.current.x - rect.left) / rect.width) * 100;
-    const y = ((e.clientY + grabOffset.current.y - rect.top) / rect.height) * 100;
-    onPositionChange(
-      Math.min(100, Math.max(0, Math.round(x))),
-      Math.min(100, Math.max(0, Math.round(y))),
-    );
-  }
+    const onMove = (ev: PointerEvent) => {
+      if (mode === "pending") {
+        const dx = Math.abs(ev.clientX - downX);
+        const dy = Math.abs(ev.clientY - downY);
+        if (dx > 4 || dy > 4) mode = "dragging";
+      }
+      if (mode === "dragging") {
+        const r = frame.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return;
+        const x = ((ev.clientX + grabOffsetX - r.left) / r.width) * 100;
+        const y = ((ev.clientY + grabOffsetY - r.top) / r.height) * 100;
+        onPositionChange(
+          Math.min(100, Math.max(0, Math.round(x * 10) / 10)),
+          Math.min(100, Math.max(0, Math.round(y * 10) / 10)),
+        );
+      }
+    };
 
-  function handlePointerUp(e: React.PointerEvent<HTMLImageElement>) {
-    dragging.current = false;
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    }
+    const onUp = (ev: PointerEvent) => {
+      target.removeEventListener("pointermove", onMove);
+      target.removeEventListener("pointerup", onUp);
+      target.removeEventListener("pointercancel", onUp);
+      if (target.hasPointerCapture(ev.pointerId)) {
+        target.releasePointerCapture(ev.pointerId);
+      }
+      if (mode === "pending") {
+        // It was a click — enter placing mode.
+        startPos.current = { x: logoX, y: logoY };
+        setPlacing(true);
+      }
+      // If dragging, the position was already committed by the last onMove.
+    };
+
+    target.addEventListener("pointermove", onMove);
+    target.addEventListener("pointerup", onUp);
+    target.addEventListener("pointercancel", onUp);
   }
 
   const frameStyle = {
@@ -122,12 +210,17 @@ export default function CoverImage({
         : styles.cornerEmblemShadowBare
       : "",
     draggable ? styles.cornerEmblemDraggable : "",
+    placing ? styles.cornerEmblemPlacing : "",
   ]
     .filter(Boolean)
     .join(" ");
 
+  const frameClass = [styles.frame, placing ? styles.framePlacing : ""]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div ref={frameRef} className={styles.frame} style={frameStyle}>
+    <div ref={frameRef} className={frameClass} style={frameStyle}>
       {/* User-uploaded Firebase Storage image - next/image optimization isn't
           worth the remote-pattern config here. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -150,11 +243,12 @@ export default function CoverImage({
           src={emblemSrc}
           alt=""
           aria-hidden="true"
+          // Disable the browser's native HTML5 image-drag (ghost preview) so it
+          // doesn't race our pointer handlers when the editor takes over the
+          // gesture. Harmless on the public page (where there's no drag at all).
+          draggable={false}
           className={cornerClass}
-          onPointerDown={draggable ? handlePointerDown : undefined}
-          onPointerMove={draggable ? handlePointerMove : undefined}
-          onPointerUp={draggable ? handlePointerUp : undefined}
-          onPointerCancel={draggable ? handlePointerUp : undefined}
+          onPointerDown={draggable ? handleEmblemPointerDown : undefined}
         />
       )}
     </div>

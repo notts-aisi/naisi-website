@@ -134,7 +134,7 @@ export default function Landing() {
                 discussion built around the films, basic jailbreaking
                 demonstrations, the occasional themed quiz. The point is
                 to meet the people in this fast-growing community before
-                you commit to anything else. Show up, eat something, leave.
+                you commit to anything else.
               </p>
               <p className={styles.tierBody}>
                 Your first social is on us. Come once before you decide

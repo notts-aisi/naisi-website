@@ -240,7 +240,9 @@ export default function AppShell({
               ))}
             </nav>
           </aside>
-          <main className={styles.main}>
+          <main
+            className={`${styles.main} ${pathname === "/committee/tasks" ? styles.mainWide : ""}`}
+          >
             <div className={styles.loadingPane} role="status" aria-live="polite">
               <span className={styles.spinner} aria-hidden />
               <span className={styles.loadingText}>Loading your workspace…</span>
@@ -290,7 +292,9 @@ export default function AppShell({
           {renderNav()}
           {renderUserBlock()}
         </aside>
-        <main className={styles.main}>
+        <main
+          className={`${styles.main} ${pathname === "/committee/tasks" ? styles.mainWide : ""}`}
+        >
           {impersonation && (
             <div
               className={styles.impersonationBanner}

@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { bypass } from "@/lib/devBypass";
 import { SESSION_COOKIE } from "@/lib/firebase/session";
 
 /*
@@ -23,6 +24,12 @@ export function proxy(request: NextRequest) {
 
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE)?.value);
   if (hasSession) return NextResponse.next();
+
+  // No real session cookie. If the dev bypass is active locally, let the
+  // request through and let (app)/layout.tsx's getCurrentUser resolve the
+  // fake admin. The bypass stub is `isActive: false` in production builds,
+  // so this branch is dead code in deployed environments.
+  if (bypass.isActive) return NextResponse.next();
 
   const url = request.nextUrl.clone();
   url.pathname = "/login";
