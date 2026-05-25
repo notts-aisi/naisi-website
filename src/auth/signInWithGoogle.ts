@@ -1,13 +1,18 @@
 "use client";
 
-import { signInWithPopup, signOut as fbSignOut } from "firebase/auth";
+import {
+  getRedirectResult,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut as fbSignOut,
+} from "firebase/auth";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import {
   getClientAuth,
   getClientDb,
   getGoogleProvider,
 } from "@/lib/firebase/client";
-import { mark, warn, watchdog } from "@/lib/devMonitor";
+import { mark, warn } from "@/lib/devMonitor";
 
 export type SignInResult = {
   uid: string;
@@ -16,24 +21,115 @@ export type SignInResult = {
 };
 
 /**
- * Google sign-in + session cookie provisioning.
- * The server (via /api/auth/session) tells us whether a user doc exists —
- * relying on a server-side check avoids the client-SDK race where Firestore
- * reads fire before the fresh auth token is attached.
- * Role-based routing happens in (app)/layout.tsx, not here.
+ * Whether to use popup instead of redirect. Redirect requires the auth
+ * domain to be on the same eTLD+1 as the app so the post-OAuth iframe
+ * can read its sessionStorage from the app origin (Safari ITP / Chrome
+ * storage partitioning block cross-eTLD+1 access). On localhost we have
+ * no such shared apex with `*.firebaseapp.com`, so redirect can't
+ * recover the credential and we fall back to popup, which uses
+ * window.opener.postMessage and isn't affected.
+ *
+ * Prod (naisi.uk + auth.naisi.uk) and the deployed dev backend
+ * (dev.naisi.uk + auth-website-dev.naisi.uk) both share apex naisi.uk,
+ * so they use redirect — which is the whole reason we migrated away
+ * from popup (Safari blocking popups in real browsers).
  */
-export async function signInWithGoogle(): Promise<SignInResult> {
-  mark("[signin] start");
-  // [monitor] Wraps the slowest realistic happy-path leg (popup → cookie
-  // mint). If this watchdog ever fires, something stalled mid-handoff —
-  // most often Firebase popup blocked, slow network, or our /api/auth/session
-  // wedged waiting on the Admin SDK init.
-  const clear = watchdog("signInWithGoogle full flow", 15000);
-  try {
-    const auth = getClientAuth();
-    const cred = await signInWithPopup(auth, getGoogleProvider());
+function shouldUsePopup(): boolean {
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname;
+  if (host === "localhost" || host === "127.0.0.1") return true;
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return true; // LAN IP for phone testing
+  return false;
+}
+
+/**
+ * Kicks off Google sign-in. Two paths:
+ *
+ * - **Popup** (localhost): completes inline, returns the SignInResult
+ *   (id-token already exchanged for a session cookie).
+ * - **Redirect** (deployed): navigates the browser away to
+ *   `auth.naisi.uk/__/auth/handler/...`; resolves to null because the
+ *   page is torn down. The caller should rely on `consumeGoogleRedirect`
+ *   on the next mount to pick up the result. A thrown rejection means
+ *   the redirect couldn't even start.
+ *
+ * The auth subdomain is a Firebase Hosting first-party custom domain
+ * specifically to dodge Safari ITP — see apphosting.yaml.
+ */
+export async function signInWithGoogle(): Promise<SignInResult | null> {
+  const auth = getClientAuth();
+  const provider = getGoogleProvider();
+
+  if (shouldUsePopup()) {
+    console.log("[signin] trigger: popup mode (localhost)");
+    mark("[signin] popup start");
+    const cred = await signInWithPopup(auth, provider);
     const user = cred.user;
     mark("[signin] popup resolved", { uid: user.uid, email: user.email });
+
+    const idToken = await user.getIdToken();
+    const res = await fetch("/api/auth/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken }),
+    });
+    if (!res.ok) {
+      warn("[signin] /api/auth/session failed", { status: res.status });
+      throw new Error("Failed to establish session");
+    }
+    const body = (await res.json()) as { ok: boolean; exists: boolean };
+    mark("[signin] session cookie established (popup)", { exists: body.exists });
+    return { uid: user.uid, email: user.email, isNew: !body.exists };
+  }
+
+  console.log("[signin] trigger: redirect mode (deployed)");
+  mark("[signin] redirect start");
+  await signInWithRedirect(auth, provider);
+  // Unreachable in the happy path — the browser has already navigated away.
+  console.log("[signin] trigger: signInWithRedirect returned without navigating");
+  return null;
+}
+
+/**
+ * Consumes the post-redirect result on page load: pulls the credential
+ * (or null if no sign-in is pending), exchanges its idToken for a session
+ * cookie via /api/auth/session, and reports whether the user already has a
+ * Firestore profile doc so the caller can route to /register vs. /next.
+ *
+ * Module-level dedup of the in-flight promise is load-bearing. React's
+ * Strict Mode in dev runs the calling useEffect twice; without dedup, the
+ * second call hits Firebase's already-consumed redirect state and returns
+ * null, while the first call (now wrapped in a `cancelled` cleanup)
+ * silently drops the routing decision. With dedup both mounts await the
+ * same promise and both see the real SignInResult — the active mount
+ * routes, the cancelled one bails harmlessly. The cache persists for the
+ * page-load lifetime; the next signInWithRedirect is a fresh navigation
+ * that resets module state.
+ *
+ * Server-side `exists` is the source of truth — a client-SDK Firestore
+ * read here would race the fresh auth token attachment.
+ *
+ * Role-based routing happens in (app)/layout.tsx, not here.
+ */
+let inFlight: Promise<SignInResult | null> | null = null;
+
+export function consumeGoogleRedirect(): Promise<SignInResult | null> {
+  if (inFlight) return inFlight;
+  inFlight = (async () => {
+    const auth = getClientAuth();
+    console.log("[signin] consume: calling getRedirectResult");
+    const cred = await getRedirectResult(auth);
+    if (!cred) {
+      console.log("[signin] consume: no pending redirect");
+      mark("[signin] no pending redirect");
+      return null;
+    }
+    const user = cred.user;
+    console.log("[signin] consume: redirect resolved", {
+      uid: user.uid,
+      email: user.email,
+    });
+    mark("[signin] redirect resolved", { uid: user.uid, email: user.email });
 
     const idToken = await user.getIdToken();
     mark("[signin] getIdToken done", { length: idToken.length });
@@ -43,12 +139,22 @@ export async function signInWithGoogle(): Promise<SignInResult> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ idToken }),
     });
+    console.log("[signin] consume: /api/auth/session POST returned", {
+      status: res.status,
+      ok: res.ok,
+    });
     mark("[signin] /api/auth/session POST returned", {
       status: res.status,
       ok: res.ok,
     });
-    if (!res.ok) throw new Error("Failed to establish session");
+    if (!res.ok) {
+      warn("[signin] /api/auth/session failed", { status: res.status });
+      throw new Error("Failed to establish session");
+    }
     const body = (await res.json()) as { ok: boolean; exists: boolean };
+    console.log("[signin] consume: session cookie established", {
+      exists: body.exists,
+    });
     mark("[signin] session cookie established", { exists: body.exists });
 
     return {
@@ -56,12 +162,8 @@ export async function signInWithGoogle(): Promise<SignInResult> {
       email: user.email,
       isNew: !body.exists,
     };
-  } catch (err) {
-    warn("[signin] threw", err);
-    throw err;
-  } finally {
-    clear();
-  }
+  })();
+  return inFlight;
 }
 
 /**

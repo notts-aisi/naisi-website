@@ -12,7 +12,11 @@ import GraduationSelect from "@/components/ui/GraduationSelect";
 import StatusSelect from "@/components/ui/StatusSelect";
 import Switch from "@/components/ui/Switch";
 import { Field, Input } from "@/components/ui/Input";
-import { completeRegistration, signInWithGoogle } from "@/auth/signInWithGoogle";
+import {
+  completeRegistration,
+  consumeGoogleRedirect,
+  signInWithGoogle,
+} from "@/auth/signInWithGoogle";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
 import {
@@ -55,7 +59,15 @@ function RegisterPageInner() {
   const fromSubscriber = searchParams.get("from") === "subscriber";
   const { user, role, loading: authLoading } = useAuth();
 
+  // Initially true so this bounce effect can't fire before the consume
+  // effect below has had a chance to mint the session cookie post-redirect.
+  // Otherwise an existing user returning from OAuth would get bounced to
+  // /dashboard before the cookie lands, and the server layout would bounce
+  // them back to /login.
+  const [consumingRedirect, setConsumingRedirect] = useState(true);
+
   useEffect(() => {
+    if (consumingRedirect) return;
     if (authLoading) return;
     if (!user) return;
     if (role === "member" || role === "committee" || role === "admin") {
@@ -65,13 +77,44 @@ function RegisterPageInner() {
     } else if (role === "rejected") {
       router.replace("/");
     }
-  }, [authLoading, user, role, router]);
+  }, [authLoading, user, role, router, consumingRedirect]);
 
   const [step, setStep] = useState<"sign-in" | "profile">(
     user && !role ? "profile" : "sign-in",
   );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Consume a pending Google redirect on mount. New users → profile step;
+  // existing users (rare on /register but possible) → /dashboard, then the
+  // bounce effect routes them onward by role.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await consumeGoogleRedirect();
+        if (cancelled) return;
+        if (!result) {
+          setConsumingRedirect(false);
+          return;
+        }
+        if (result.isNew) {
+          setStep("profile");
+          setConsumingRedirect(false);
+        } else {
+          router.push("/dashboard");
+        }
+      } catch (err) {
+        if (cancelled) return;
+        console.error(err);
+        setError("Sign-in failed. Please try again.");
+        setConsumingRedirect(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   // Profile state
   const [preferredName, setPreferredName] = useState("");
@@ -187,7 +230,11 @@ function RegisterPageInner() {
     setError(null);
     setLoading(true);
     try {
+      // Popup (localhost) resolves with SignInResult inline; redirect
+      // (deployed) navigates the browser away and resolves to null —
+      // the consume effect picks up the result on the post-OAuth mount.
       const result = await signInWithGoogle();
+      if (!result) return;
       if (!result.isNew) {
         router.push("/dashboard");
         return;
