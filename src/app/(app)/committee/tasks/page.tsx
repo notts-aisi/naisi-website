@@ -76,10 +76,20 @@ export default function CommitteeTasksPage() {
             Drag cards between columns to update status. Click a card to open details.
           </p>
         </div>
-        <Button className={styles.newTaskButton} onClick={() => setCreating(true)}>
+        <Button className={styles.headerNewTaskButton} onClick={() => setCreating(true)}>
           New task
         </Button>
       </div>
+
+      {!creating && (
+        <Button
+          className={styles.fabNewTaskButton}
+          onClick={() => setCreating(true)}
+          aria-label="New task"
+        >
+          + New task
+        </Button>
+      )}
 
       <div className={styles.toolbarRow}>
         <div className={styles.filtersWrap}>
