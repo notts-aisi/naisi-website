@@ -35,6 +35,27 @@ function preloadGoogleIdentityServices() {
 }
 
 const AUTH_HREFS = new Set(["/login", "/register"]);
+/** Destinations inside the authed (app) shell. When the public layout
+ *  navigates to one of these, mirror what login/register do on sign-in
+ *  success: set a sessionStorage flag that AppShell reads on mount to
+ *  apply its `.entering` fade-in (opacity 0→1 + translateX(18px)→0
+ *  over 620ms with a 280ms delay). Without this, e.g. Dashboard from
+ *  the public homepage hard-cuts into the app shell, which reads as
+ *  jarring against the smooth header-lift + body-fade-out exit. */
+const APP_HREFS = new Set(["/dashboard", "/pending-approval"]);
+
+/** Sets the same flag login/register use post-sign-in. AppShell
+ *  consumes + clears it on mount. sessionStorage can be unavailable
+ *  (private-mode iframe, etc.); the entering fade is a nice-to-have,
+ *  not load-bearing, so silently skip. */
+function markEnteringAppShell() {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem("naisi:from-signin", "1");
+  } catch {
+    // ignore — fade-in falls back to a jump cut
+  }
+}
 
 /**
  * Wraps `next/link` so clicking it on a public page first fades the
@@ -66,6 +87,13 @@ export default function TransitionLink({
     // The fade-out is a bonus; the preload is the load-time benefit.
     if (AUTH_HREFS.has(href)) {
       preloadGoogleIdentityServices();
+    }
+    // Mark app-area navigation so AppShell fades in on mount instead
+    // of jump-cutting. Same flag the login/register pages set on
+    // sign-in success — semantic re-use is intentional (both cases
+    // share "public surface → app shell, please fade").
+    if (APP_HREFS.has(href)) {
+      markEnteringAppShell();
     }
     if (!ctx) return;
     if (ctx.exiting) {
