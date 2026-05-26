@@ -63,9 +63,9 @@ export default function PublicHeader() {
     if (user && isApproved) {
       return (
         <>
-          <Link href="/dashboard" className={styles.joinBtn}>
+          <TransitionLink href="/dashboard" className={styles.joinBtn}>
             Dashboard
-          </Link>
+          </TransitionLink>
           <button type="button" onClick={handleSignOut} className={styles.signIn}>
             Sign out
           </button>
@@ -75,9 +75,9 @@ export default function PublicHeader() {
     if (user && isPending) {
       return (
         <>
-          <Link href="/pending-approval" className={styles.signIn}>
+          <TransitionLink href="/pending-approval" className={styles.signIn}>
             Application status
-          </Link>
+          </TransitionLink>
           <button type="button" onClick={handleSignOut} className={styles.signIn}>
             Sign out
           </button>
@@ -115,9 +115,14 @@ export default function PublicHeader() {
     if (user && isApproved) {
       return (
         <>
-          <Link href="/dashboard" className={styles.drawerLinkPrimary} onClick={closeDrawer}>
+          <TransitionLink
+            href="/dashboard"
+            className={styles.drawerLinkPrimary}
+            onClick={closeDrawer}
+            delayMs={1000}
+          >
             Dashboard
-          </Link>
+          </TransitionLink>
           <button type="button" onClick={handleSignOut} className={styles.drawerLinkSecondary}>
             Sign out
           </button>
@@ -127,9 +132,14 @@ export default function PublicHeader() {
     if (user && isPending) {
       return (
         <>
-          <Link href="/pending-approval" className={styles.drawerLinkSecondary} onClick={closeDrawer}>
+          <TransitionLink
+            href="/pending-approval"
+            className={styles.drawerLinkSecondary}
+            onClick={closeDrawer}
+            delayMs={1000}
+          >
             Application status
-          </Link>
+          </TransitionLink>
           <button type="button" onClick={handleSignOut} className={styles.drawerLinkSecondary}>
             Sign out
           </button>

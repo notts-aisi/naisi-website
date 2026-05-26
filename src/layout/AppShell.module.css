@@ -222,6 +222,16 @@
      auto-placement — pin main to column 2 explicitly so it sits past the
      reserved sidebar track instead of collapsing into column 1. */
   grid-column: 2;
+  /* Allow the grid track to ignore .main's intrinsic min-content (driven
+     by the kanban's 5 × 17rem of fixed-width columns). Without this, the
+     1fr track = minmax(auto, 1fr) takes `auto` to mean kanban min-content
+     → .main expands to ~1440px → document scrolls horizontally instead of
+     the kanban scrolling internally. The chain on .scroll + .kanbanOnly
+     prevents propagation in flex/block contexts but doesn't help once the
+     grid item itself uses `auto` as its automatic min size. At desktop
+     viewports the symptom was hidden by .main's max-width cap; at <60rem
+     where max-width: 100% removes the cap, the bug surfaced. */
+  min-width: 0;
 }
 
 /* Per-route opt-in wider cap for the committee task board, where the kanban

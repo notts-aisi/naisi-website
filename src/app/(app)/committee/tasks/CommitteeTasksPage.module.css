@@ -4,7 +4,15 @@
    docs/mobile-conventions.md). The breakpoint here mirrors
    TaskFilters.module.css so the entire page collapses at the same point. */
 
-/* === Page header (Badge + h1 + subtitle, plus the "New task" action) === */
+/* === Page header (Badge + h1 + subtitle) ===
+   The "New task" action lives in two places that are mutually exclusive at
+   any one breakpoint:
+   - .headerNewTaskButton: inline below the page title on mobile (<48rem)
+   - .fabNewTaskButton: fixed-position floating action button at bottom-right
+     on desktop (>=48rem), hidden while the create form is open
+   Two button instances rather than one repositioned element keeps the mobile
+   layout in normal flow and the desktop FAB out of it, with no awkward
+   position-static reset inside a media query. */
 
 .headerRow {
   display: flex;
@@ -28,6 +36,21 @@
 .subtitle {
   color: var(--color-text-muted);
   margin-top: var(--space-1);
+}
+
+.headerNewTaskButton {
+  /* Mobile-only. Hidden on desktop where .fabNewTaskButton takes over. */
+  display: none;
+}
+
+.fabNewTaskButton {
+  position: fixed;
+  bottom: var(--space-6);
+  right: var(--space-6);
+  /* Above kanban + sidebar (AppShell.module.css uses 10/15/20) but well
+     below modal/drawer overlays. */
+  z-index: 25;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
 }
 
 /* === Toolbar row (filters + Show archived) === */
@@ -72,8 +95,13 @@
   .subtitle {
     display: none;
   }
-  .newTaskButton {
+  .headerNewTaskButton {
+    display: block;
     width: 100%;
+  }
+  .fabNewTaskButton {
+    /* FAB is desktop-only; mobile uses the inline header button instead. */
+    display: none;
   }
 
   /* Toolbar stacks vertically: filters (already 1-col via TaskFilters
