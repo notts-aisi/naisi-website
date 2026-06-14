@@ -4,11 +4,17 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Card from "@/components/ui/Card";
+import Button from "@/components/ui/Button";
+import { Field, Input } from "@/components/ui/Input";
 import GoogleSignInButton from "@/components/GoogleSignInButton";
 import SigningIn from "@/components/SigningIn";
 import signinStyles from "@/components/SigningIn.module.css";
 import { AUTH_BACK_HOME_EVENT, AUTH_PAGE_READY_EVENT } from "../LogoLink";
 import { exchangeGoogleCredential } from "@/auth/signInWithGoogle";
+import {
+  resetCollaboratorPassword,
+  signInWithEmailPassword,
+} from "@/auth/signInWithEmailPassword";
 import { useAuth } from "@/auth/AuthProvider";
 import { bypass } from "@/lib/devBypass";
 import { mark, warn } from "@/lib/devMonitor";
@@ -274,6 +280,72 @@ function LoginInner() {
     setError(message);
   }, []);
 
+  // --- Email + password sign-in (collaborators; returning members may also
+  // use it). Kept deliberately separate from the Google credential path so the
+  // surge/success choreography above isn't entangled. ---
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [resetNote, setResetNote] = useState<string | null>(null);
+
+  const handleEmailSignIn = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      setEmailError(null);
+      setResetNote(null);
+      if (!email.trim() || !password) {
+        setEmailError("Enter your email and password.");
+        return;
+      }
+      setEmailBusy(true);
+      startSurge();
+      try {
+        const result = await signInWithEmailPassword(email.trim(), password);
+        // No handledNavRef here — startSurge() above already put `phase` in
+        // `active`, and the sign-in bounce effect early-returns while
+        // phase !== "idle", so it won't double-navigate.
+        if (result.kind === "collaborator") router.push("/collaborator");
+        else if (result.kind === "member") router.push(next);
+        else router.push("/register?type=collaborator");
+      } catch (err) {
+        setEmailError(
+          err instanceof Error ? err.message : "Sign-in failed. Please try again.",
+        );
+        setPhase("idle");
+      } finally {
+        setEmailBusy(false);
+      }
+    },
+    [email, password, next, router, startSurge],
+  );
+
+  const handleReset = useCallback(async () => {
+    setEmailError(null);
+    setResetNote(null);
+    if (!email.trim()) {
+      setEmailError("Enter your email above first, then tap reset.");
+      return;
+    }
+    try {
+      await resetCollaboratorPassword(email.trim());
+      setResetNote(
+        "If an account exists for that email, a password reset link is on its way.",
+      );
+    } catch (err) {
+      setEmailError(
+        err instanceof Error ? err.message : "Couldn't send a reset email.",
+      );
+    }
+  }, [email]);
+
+  // Per the input-focus surge: clicking/focusing an input flips the loader to
+  // `active` (via startSurge on the fields). When the user leaves an empty form
+  // and nothing's in flight, settle back to idle so it doesn't surge forever.
+  const calmIfEmpty = useCallback(() => {
+    if (!email.trim() && !password && !emailBusy) setPhase("idle");
+  }, [email, password, emailBusy]);
+
   const frameClass = [
     signinStyles.exitFrame,
     entering ? signinStyles.entering : "",
@@ -302,15 +374,100 @@ function LoginInner() {
             onReady={handleGisReady}
           />
         </div>
-        <SigningIn
-          active={phase !== "idle"}
-          successStartAt={phase === "success" || phase === "exiting" ? successAt : null}
-        />
         {error && (
           <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)", marginTop: "var(--space-4)" }}>
             {error}
           </p>
         )}
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--space-3)",
+            margin: "var(--space-6) 0 var(--space-4)",
+          }}
+        >
+          <span style={{ flex: 1, height: 1, background: "var(--color-border)" }} />
+          <span
+            style={{
+              color: "var(--color-text-subtle)",
+              fontSize: "var(--text-xs)",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+            }}
+          >
+            or
+          </span>
+          <span style={{ flex: 1, height: 1, background: "var(--color-border)" }} />
+        </div>
+
+        <form
+          onSubmit={handleEmailSignIn}
+          style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}
+        >
+          <Field id="login-email" label="Email">
+            <Input
+              id="login-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onFocus={startSurge}
+              onMouseDown={startSurge}
+              onBlur={calmIfEmpty}
+              autoComplete="email"
+              placeholder="you@example.com"
+              required
+            />
+          </Field>
+          <Field id="login-password" label="Password">
+            <Input
+              id="login-password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onFocus={startSurge}
+              onMouseDown={startSurge}
+              onBlur={calmIfEmpty}
+              autoComplete="current-password"
+              required
+            />
+          </Field>
+          {emailError && (
+            <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)" }}>
+              {emailError}
+            </p>
+          )}
+          {resetNote && (
+            <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>
+              {resetNote}
+            </p>
+          )}
+          <Button type="submit" fullWidth disabled={emailBusy}>
+            {emailBusy ? "Signing in…" : "Sign in with email"}
+          </Button>
+          <button
+            type="button"
+            onClick={handleReset}
+            style={{
+              alignSelf: "center",
+              background: "none",
+              border: "none",
+              color: "var(--color-text-muted)",
+              fontSize: "var(--text-xs)",
+              cursor: "pointer",
+              textDecoration: "underline",
+            }}
+          >
+            Forgot password?
+          </button>
+        </form>
+
+        <SigningIn
+          active={phase !== "idle"}
+          successStartAt={phase === "success" || phase === "exiting" ? successAt : null}
+        />
+
         <p
           style={{
             color: "var(--color-text-muted)",

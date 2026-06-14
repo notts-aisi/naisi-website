@@ -4,11 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { usePendingCount } from "@/features/admin/usePendingCount";
+import { useCollaboratorCount } from "@/features/admin/useCollaboratorCount";
 import styles from "./AdminTabs.module.css";
 
 const TABS = [
   { label: "Approvals", href: "/admin", match: (p: string) => p === "/admin" },
   { label: "Members", href: "/admin/members", match: (p: string) => p.startsWith("/admin/members") },
+  { label: "Collaborators", href: "/admin/collaborators", match: (p: string) => p.startsWith("/admin/collaborators") },
   { label: "Projects", href: "/admin/projects", match: (p: string) => p.startsWith("/admin/projects") },
   { label: "Newsletter", href: "/admin/newsletter", match: (p: string) => p.startsWith("/admin/newsletter") },
   { label: "Subscriptions", href: "/admin/subscriptions", match: (p: string) => p.startsWith("/admin/subscriptions") },
@@ -24,6 +26,7 @@ const TABS = [
 export default function AdminTabs() {
   const pathname = usePathname();
   const pendingCount = usePendingCount();
+  const collaboratorCount = useCollaboratorCount();
   const activeRef = useRef<HTMLAnchorElement>(null);
 
   // On mobile the tab strip scrolls horizontally — pull the active tab into
@@ -37,7 +40,12 @@ export default function AdminTabs() {
     <nav className={styles.tabs} aria-label="Admin sections">
       {TABS.map((tab) => {
         const active = tab.match(pathname);
-        const showBadge = tab.href === "/admin" && pendingCount > 0;
+        const badgeCount =
+          tab.href === "/admin"
+            ? pendingCount
+            : tab.href === "/admin/collaborators"
+              ? collaboratorCount
+              : 0;
         return (
           <Link
             key={tab.href}
@@ -46,7 +54,7 @@ export default function AdminTabs() {
             className={`${styles.tab} ${active ? styles.active : ""}`}
           >
             <span>{tab.label}</span>
-            {showBadge && <span className={styles.badge}>{pendingCount}</span>}
+            {badgeCount > 0 && <span className={styles.badge}>{badgeCount}</span>}
           </Link>
         );
       })}

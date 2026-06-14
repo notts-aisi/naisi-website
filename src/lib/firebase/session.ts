@@ -1,6 +1,7 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { bypass } from "@/lib/devBypass";
+import type { CollaboratorStatus } from "@/lib/firestore/collaborators";
 import { getAdminAuth, getAdminDb } from "./admin";
 
 export const SESSION_COOKIE = "__session";
@@ -142,6 +143,80 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
         draftEvent: Boolean(perms.draftEvent),
         approveEvent: Boolean(perms.approveEvent),
       },
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verify the session cookie and return just `{ uid, email }` — no Firestore
+ * read. Used by the collaborator API routes, which key off the auth uid and do
+ * their own collection reads. Returns null when there is no valid session.
+ */
+export async function getSessionUid(): Promise<{
+  uid: string;
+  email: string | null;
+} | null> {
+  const store = await cookies();
+  const cookie = store.get(SESSION_COOKIE);
+  if (!cookie?.value) return null;
+
+  const auth = getAdminAuth();
+  if (!auth) return null;
+  try {
+    const decoded = await auth.verifySessionCookie(cookie.value, true);
+    return { uid: decoded.uid, email: decoded.email ?? null };
+  } catch {
+    return null;
+  }
+}
+
+export type SessionCollaborator = {
+  /** Firestore doc id: `<name-slug>__<uid>`. */
+  id: string;
+  uid: string;
+  email: string | null;
+  emailVerified: boolean;
+  fullName: string;
+  status: CollaboratorStatus;
+};
+
+/**
+ * Read + verify the session cookie, then resolve the `collaborators` doc for
+ * this uid. The doc id is name-slugged, so we query the `uid` field rather than
+ * doing a direct `doc()` get. Null when there is no session or no collaborator
+ * doc. Gates the `/collaborator` area (and distinguishes a collaborator session
+ * from a member one). A real member session — or no session — returns null here.
+ */
+export async function getCurrentCollaborator(): Promise<SessionCollaborator | null> {
+  const store = await cookies();
+  const cookie = store.get(SESSION_COOKIE);
+  if (!cookie?.value) return null;
+
+  const auth = getAdminAuth();
+  const db = getAdminDb();
+  if (!auth || !db) return null;
+
+  try {
+    const decoded = await auth.verifySessionCookie(cookie.value, true);
+    const snap = await db
+      .collection("collaborators")
+      .where("uid", "==", decoded.uid)
+      .limit(1)
+      .get();
+    if (snap.empty) return null;
+    const doc = snap.docs[0];
+    const data = doc.data() ?? {};
+    const status = data.status as CollaboratorStatus;
+    return {
+      id: doc.id,
+      uid: decoded.uid,
+      email: decoded.email ?? null,
+      emailVerified: Boolean(decoded.email_verified),
+      fullName: (data.fullName as string) ?? "",
+      status:
+        status === "approved" || status === "rejected" ? status : "pending",
     };
   } catch {
     return null;

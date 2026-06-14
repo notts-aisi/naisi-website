@@ -11,6 +11,7 @@ import CountedTextarea from "@/components/ui/CountedTextarea";
 import GoogleSignInButton from "@/components/GoogleSignInButton";
 import SigningIn from "@/components/SigningIn";
 import signinStyles from "@/components/SigningIn.module.css";
+import CollaboratorApply from "./CollaboratorApply";
 import { AUTH_BACK_HOME_EVENT, AUTH_PAGE_READY_EVENT } from "../LogoLink";
 import GraduationSelect from "@/components/ui/GraduationSelect";
 import StatusSelect from "@/components/ui/StatusSelect";
@@ -20,6 +21,7 @@ import {
   completeRegistration,
   exchangeGoogleCredential,
 } from "@/auth/signInWithGoogle";
+import { signUpWithEmailPassword } from "@/auth/signInWithEmailPassword";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
 import {
@@ -60,9 +62,20 @@ export default function RegisterPage() {
   // boundary so the bailout-to-CSR semantics are explicit at build time.
   return (
     <Suspense fallback={null}>
-      <RegisterPageInner />
+      <RegisterRouter />
     </Suspense>
   );
+}
+
+/**
+ * `?type=collaborator` → the external-collaborator apply flow (email/password,
+ * no uni email). Anything else → the existing Google + uni-email registration,
+ * left untouched.
+ */
+function RegisterRouter() {
+  const type = useSearchParams().get("type");
+  if (type === "collaborator") return <CollaboratorApply />;
+  return <RegisterPageInner />;
 }
 
 function RegisterPageInner() {
@@ -83,6 +96,16 @@ function RegisterPageInner() {
   const [entering, setEntering] = useState(true);
   const activeStartRef = useRef(0);
   const credentialReceivedRef = useRef(false);
+
+  // Email + password sign-up for UoN members (an alternative to Google sign-in).
+  // The account is created here; the existing profile step + completeRegistration
+  // run unchanged afterwards. Input focus only flips the ambient surge — it stays
+  // off the Google popup-cancellation watchdog (which keys off window blur).
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountError, setAccountError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!entering) return;
@@ -133,6 +156,48 @@ function RegisterPageInner() {
       return "active";
     });
   }, []);
+
+  // Settle the ambient surge back to idle when the user leaves an empty
+  // email/password form and nothing is in flight (mirrors /login).
+  const calmIfEmpty = useCallback(() => {
+    if (!email.trim() && !password && !confirm && !accountBusy) {
+      setSigninPhase("idle");
+    }
+  }, [email, password, confirm, accountBusy]);
+
+  const handleCreateAccount = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      setAccountError(null);
+      if (!email.trim() || !password) {
+        setAccountError("Enter an email and a password.");
+        return;
+      }
+      if (password.length < 6) {
+        setAccountError("Password must be at least 6 characters.");
+        return;
+      }
+      if (password !== confirm) {
+        setAccountError("Those passwords don't match.");
+        return;
+      }
+      setAccountBusy(true);
+      try {
+        await signUpWithEmailPassword(email.trim(), password);
+        // New account → straight to the profile form (mirrors the Google
+        // new-user path, which swaps inline rather than sliding out).
+        setSigninPhase("idle");
+        setStep("profile");
+      } catch (err) {
+        setAccountError(
+          err instanceof Error ? err.message : "Couldn't create your account.",
+        );
+      } finally {
+        setAccountBusy(false);
+      }
+    },
+    [email, password, confirm],
+  );
 
   useEffect(() => {
     if (step !== "sign-in") return;
@@ -451,15 +516,93 @@ function RegisterPageInner() {
               onReady={handleGisReady}
             />
           </div>
-          <SigningIn
-            active={signinPhase !== "idle"}
-            successStartAt={signinPhase === "success" || signinPhase === "exiting" ? successAt : null}
-          />
           {error && (
             <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)", marginTop: "var(--space-4)" }}>
               {error}
             </p>
           )}
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--space-3)",
+              margin: "var(--space-6) 0 var(--space-4)",
+            }}
+          >
+            <span style={{ flex: 1, height: 1, background: "var(--color-border)" }} />
+            <span
+              style={{
+                color: "var(--color-text-subtle)",
+                fontSize: "var(--text-xs)",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+              }}
+            >
+              or
+            </span>
+            <span style={{ flex: 1, height: 1, background: "var(--color-border)" }} />
+          </div>
+
+          <form
+            onSubmit={handleCreateAccount}
+            style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
+          >
+            <Field id="register-email" label="Email">
+              <Input
+                id="register-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onFocus={startSurge}
+                onMouseDown={startSurge}
+                onBlur={calmIfEmpty}
+                autoComplete="email"
+                placeholder="you@nottingham.ac.uk"
+                required
+              />
+            </Field>
+            <Field id="register-password" label="Password" hint="At least 6 characters.">
+              <Input
+                id="register-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onFocus={startSurge}
+                onMouseDown={startSurge}
+                onBlur={calmIfEmpty}
+                autoComplete="new-password"
+                required
+              />
+            </Field>
+            <Field id="register-confirm" label="Confirm password">
+              <Input
+                id="register-confirm"
+                type="password"
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                onFocus={startSurge}
+                onMouseDown={startSurge}
+                onBlur={calmIfEmpty}
+                autoComplete="new-password"
+                required
+              />
+            </Field>
+            {accountError && (
+              <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)" }}>
+                {accountError}
+              </p>
+            )}
+            <Button type="submit" fullWidth size="lg" disabled={accountBusy}>
+              {accountBusy ? "Creating account…" : "Create account & continue"}
+            </Button>
+          </form>
+
+          <SigningIn
+            active={signinPhase !== "idle"}
+            successStartAt={signinPhase === "success" || signinPhase === "exiting" ? successAt : null}
+          />
+
           <p
             style={{
               color: "var(--color-text-muted)",
@@ -665,7 +808,7 @@ function RegisterPageInner() {
                 <Switch
                   checked={prefs.channels.gmail}
                   onChange={(next) => setPrefs((p) => setChannel(p, "gmail", next))}
-                  label={`Google account email (${user?.email ?? "your sign-in email"})`}
+                  label={`Account email (${user?.email ?? "your sign-in email"})`}
                 />
                 <Switch
                   checked={prefs.channels.uniEmail}
