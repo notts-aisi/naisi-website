@@ -76,6 +76,21 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // === collaborators ===
+    // External collaborator applications (people NOT at the University of
+    // Nottingham). A SEPARATE collection from `users` so the member governance /
+    // trust model is untouched. Doc id is "<name-slug>__<uid>"; the read gate
+    // keys off the stored `uid` field, NOT the doc-id path param. All writes go
+    // through server routes (Admin SDK) — clients never write — so this is
+    // locked like subscriptions / eventRsvps; the create-route is the validation
+    // + rate-limit boundary. Admins manage; a collaborator reads only their own
+    // application (powers the limited collaborator area).
+    match /collaborators/{docId} {
+      allow read: if isAdmin()
+        || (isSignedIn() && request.auth.uid == resource.data.uid);
+      allow write: if false;
+    }
+
     // === projects ===
     match /projects/{projectId} {
       allow read:   if hasRole(['member', 'committee', 'admin']);

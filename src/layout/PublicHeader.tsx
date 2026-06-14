@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import BrandMark from "@/components/BrandMark";
 import Drawer from "@/components/ui/Drawer";
+import JoinMenu from "@/components/ui/JoinMenu";
 import TransitionLink from "./TransitionLink";
 import { usePublicTransition } from "./PublicMain";
 import { useAuth } from "@/auth/AuthProvider";
@@ -104,9 +105,11 @@ export default function PublicHeader() {
         <TransitionLink href="/login" className={styles.signIn}>
           Sign in
         </TransitionLink>
-        <TransitionLink href="/register" className={styles.joinBtn}>
-          Join us
-        </TransitionLink>
+        {/* Join us is now a chooser: UoN member vs external collaborator.
+            Desktop = popover; on smaller viewports the same component drops a
+            bottom sheet. The mobile drawer below uses plain links instead, to
+            avoid nesting a sheet inside the drawer portal. */}
+        <JoinMenu className={styles.joinBtn} />
       </>
     );
   };
@@ -176,7 +179,17 @@ export default function PublicHeader() {
           onClick={closeDrawer}
           delayMs={1000}
         >
-          Join us
+          Join as a UoN member
+        </TransitionLink>
+        {/* Separated external-collaborator path — plain link in the drawer
+            (not a nested sheet) per the documented nested-portal gotcha. */}
+        <TransitionLink
+          href="/register?type=collaborator"
+          className={styles.drawerLinkCollaborator}
+          onClick={closeDrawer}
+          delayMs={1000}
+        >
+          Collaborate with us (external)
         </TransitionLink>
       </>
     );

@@ -1,0 +1,86 @@
+/* JoinMenu — the "Join us" chooser. Owns its option-row styling (the shared
+   Dropdown.module.css supplies the sheet/popover shell only) so there's no
+   cross-module cascade fight. The collaborator row is a deliberately distinct,
+   separated section in --color-collaborator-*. */
+
+.popover {
+  padding: var(--space-2);
+  max-width: 24rem;
+}
+
+.optionRow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 0.7rem 0.75rem;
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.optionRow:hover,
+.optionRow:focus-visible {
+  outline: none;
+  background: var(--color-surface-hover, var(--color-bg));
+}
+
+/* Sheet rows fill the width and meet the 44px touch floor. */
+.sheetRow {
+  border-radius: 0;
+  padding: 0.85rem var(--space-4);
+  min-height: 2.75rem;
+}
+
+.optionLabel {
+  font-weight: 600;
+}
+
+.optionSub {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+/* The separated, differently-coloured external-collaborator section. */
+.collaborator {
+  background: var(--color-collaborator-soft);
+  border-left: 3px solid var(--color-collaborator-accent);
+}
+.sheetRow.collaborator {
+  border-radius: 0;
+}
+.collaborator .optionLabel {
+  color: var(--color-collaborator-accent);
+}
+.collaborator:hover,
+.collaborator:focus-visible {
+  background: var(--color-collaborator-soft);
+  filter: brightness(1.12);
+}
+
+.divider {
+  height: 1px;
+  background: var(--color-border);
+  margin: var(--space-2);
+}
+.sheetDivider {
+  margin: var(--space-2) 0;
+}
+
+.sheetHeading {
+  padding: 0 var(--space-4) var(--space-2);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-subtle);
+}
+
+@media (max-width: 48rem) {
+  /* TODO: mobile pass — sheet rows already span full width via .sheetRow. */
+}

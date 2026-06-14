@@ -294,6 +294,30 @@
   background: var(--color-accent-soft);
 }
 
+/* Collaborator (external, non-UoN) join option — collaborator-tinted so the
+   non-Nottingham path reads as its own thing in the drawer, mirroring the
+   JoinMenu's separated section on desktop / the mobile sheet. */
+.drawerLinkCollaborator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 2.75rem;
+  padding: var(--space-3);
+  font-size: var(--text-base);
+  font-weight: 500;
+  background: var(--color-collaborator-soft);
+  color: var(--color-collaborator-accent);
+  border: 1px solid var(--color-collaborator-accent);
+  border-radius: var(--radius-md);
+  transition: filter var(--transition-fast);
+}
+.drawerLinkCollaborator:hover,
+.drawerLinkCollaborator:focus-visible {
+  filter: brightness(1.15);
+}
+
 .drawerRejected {
   font-size: var(--text-sm);
   color: var(--color-danger);
