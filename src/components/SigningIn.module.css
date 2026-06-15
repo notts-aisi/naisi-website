@@ -92,6 +92,19 @@
   -webkit-mask-composite: source-in;
 }
 
+/* The canvas is a fixed 640px (LIVING_W_DEFAULT) and doesn't reflow, so on a
+   narrow phone it overflows / gets cropped. Scale it down to fit the viewport
+   so the whole loader is visible. Desktop keeps the intentional off-card bleed. */
+@media (max-width: 48rem) { /* --bp-md */
+  .networkWrap,
+  .networkWrap canvas {
+    max-width: 100%;
+  }
+  .networkWrap canvas {
+    height: auto;
+  }
+}
+
 /*
   Exit transition: applied by login/register pages to the wrapper div
   around the auth Card. When `.exiting` is added, the card slides left

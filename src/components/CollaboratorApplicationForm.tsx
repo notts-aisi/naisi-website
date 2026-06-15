@@ -5,6 +5,7 @@ import { Field, Input } from "@/components/ui/Input";
 import CountedTextarea from "@/components/ui/CountedTextarea";
 import Switch from "@/components/ui/Switch";
 import Button from "@/components/ui/Button";
+import PolicyConsent from "@/components/PolicyConsent";
 import {
   COLLABORATOR_FIELD_LIMITS as L,
   validateCollaboratorInput,
@@ -26,6 +27,7 @@ export default function CollaboratorApplicationForm({
   externalError = null,
   onSubmit,
   intro,
+  requireConsent = false,
 }: {
   initial?: Partial<CollaboratorInput> & { application?: Partial<CollaboratorInput["application"]> };
   submitLabel: string;
@@ -34,6 +36,8 @@ export default function CollaboratorApplicationForm({
   externalError?: string | null;
   onSubmit: (input: CollaboratorInput) => void | Promise<void>;
   intro?: ReactNode;
+  /** Show + require the Terms/Privacy consent checkbox (apply flow, not edit). */
+  requireConsent?: boolean;
 }) {
   const a0 = initial?.application;
   const [fullName, setFullName] = useState(initial?.fullName ?? "");
@@ -53,6 +57,7 @@ export default function CollaboratorApplicationForm({
     a0?.impactJustification ?? "",
   );
   const [localError, setLocalError] = useState<string | null>(null);
+  const [agreed, setAgreed] = useState(false);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -76,6 +81,10 @@ export default function CollaboratorApplicationForm({
     const err = validateCollaboratorInput(input);
     if (err) {
       setLocalError(err);
+      return;
+    }
+    if (requireConsent && !agreed) {
+      setLocalError("Please agree to the Terms of Use and Privacy Policy to continue.");
       return;
     }
     void onSubmit(input);
@@ -243,6 +252,10 @@ export default function CollaboratorApplicationForm({
           rows={3}
         />
       </Field>
+
+      {requireConsent && (
+        <PolicyConsent checked={agreed} onChange={setAgreed} id="collab-consent" />
+      )}
 
       {error && (
         <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)" }}>{error}</p>
