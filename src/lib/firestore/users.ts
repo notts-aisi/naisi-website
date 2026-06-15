@@ -68,6 +68,39 @@ export const FIELD_LIMITS = {
  */
 export const UNI_EMAIL_PATTERN = /^[^@\s]+@([a-z0-9-]+\.)*nottingham\.ac\.uk$/i;
 
+/**
+ * Broader than UNI_EMAIL_PATTERN: matches ANY University of Nottingham address
+ * we don't want used as a permanent sign-in identity — the UK campus
+ * (nottingham.ac.uk + subdomains like exmail.nottingham.ac.uk) plus the China
+ * (edu.cn) and Malaysia (edu.my) campuses. Used to BLOCK these on email/password
+ * sign-up: uni addresses lapse at graduation, and a uni member who signs up with
+ * one would double up with the Google member flow. Uni affiliation is proven
+ * separately via the magic-link, so blocking the login costs nothing. Anchored
+ * on the domain end so it does NOT catch Nottingham Trent (ntu.ac.uk).
+ */
+export const NOTTINGHAM_DOMAIN_PATTERN =
+  /@([a-z0-9-]+\.)*nottingham\.(ac\.uk|edu\.cn|edu\.my)$/i;
+
+export function isNottinghamEmail(email: string): boolean {
+  return NOTTINGHAM_DOMAIN_PATTERN.test(email.trim());
+}
+
+/**
+ * Matches ANY academic / institutional email — UK-style `.ac.<cc>` (ac.uk,
+ * ac.nz, …), US `.edu`, and `.edu.<cc>` (edu.cn, edu.au, …), with optional
+ * subdomains. Used to require a PERMANENT PERSONAL email as the sign-in identity
+ * for everyone: institution emails lapse when you graduate / change jobs, so
+ * keying an account to one locks people out. The `[a-z]{2}` ccTLD guard keeps
+ * `foo@bar.edu.com`-style domains from false-matching. UoN affiliation is still
+ * proven separately via the magic-link.
+ */
+export const ACADEMIC_DOMAIN_PATTERN =
+  /@([a-z0-9-]+\.)*(ac\.[a-z]{2}|edu|edu\.[a-z]{2})$/i;
+
+export function isAcademicEmail(email: string): boolean {
+  return ACADEMIC_DOMAIN_PATTERN.test(email.trim());
+}
+
 export function validateUniversityEmail(email: string): string | null {
   const trimmed = email.trim();
   if (!trimmed) return "University email is required.";

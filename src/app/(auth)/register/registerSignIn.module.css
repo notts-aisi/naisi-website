@@ -1,0 +1,77 @@
+/* On phones the register sign-in step becomes a full-screen app view (the auth
+   header stays pinned — see layout.module.css): the card chrome is stripped so
+   the form fills the screen instead of floating in a centred card, and the
+   primary CTA + loader live in a separate bar pinned to the bottom. Desktop is
+   unchanged. */
+
+.frame {
+  max-width: 32rem;
+}
+
+.heading {
+  font-size: var(--text-2xl);
+  margin-bottom: var(--space-2);
+}
+
+.footer {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--space-5);
+}
+
+@media (max-width: 48rem) { /* --bp-md */
+  .frame {
+    max-width: none;
+    width: 100%;
+    justify-self: stretch;
+    align-self: start;
+  }
+
+  /* Strip the card chrome so the form reads as a full-screen view, not a card
+     stuck in the middle of the page. */
+  .frame .card {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  /* Bigger, easier-to-read + easier-to-tap controls. */
+  .heading {
+    font-size: 1.85rem;
+  }
+  .subcopy {
+    font-size: 1.0625rem;
+  }
+  .frame input {
+    min-height: 3rem;
+    font-size: 1rem; /* 16px: comfortable target + avoids iOS focus-zoom */
+  }
+  .googleWrap {
+    display: flex;
+    justify-content: center;
+    /* GIS renders a fixed ~320px branded button (Google TOS limits restyling);
+       don't scale it UP — that overflows narrow phones. Keep it centred and let
+       it be the natural size. */
+    max-width: 100%;
+    margin-bottom: var(--space-5);
+  }
+
+  /* Bottom action bar — a clearly SEPARATE surface from the scrolling form
+     above: solid elevated background, top border, and an upward shadow. Goes
+     edge-to-edge by cancelling the .main side padding. Sticky to the scrolling
+     .main so it stays pinned to the bottom of the screen. */
+  .footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    margin-top: var(--space-8);
+    margin-inline: calc(-1 * var(--space-4));
+    padding: var(--space-4) var(--space-4)
+      calc(var(--space-4) + env(safe-area-inset-bottom));
+    background: var(--color-bg-elevated);
+    border-top: 1px solid var(--color-border);
+    box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.4);
+  }
+}

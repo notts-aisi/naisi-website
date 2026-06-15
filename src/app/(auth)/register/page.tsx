@@ -11,7 +11,10 @@ import CountedTextarea from "@/components/ui/CountedTextarea";
 import GoogleSignInButton from "@/components/GoogleSignInButton";
 import SigningIn from "@/components/SigningIn";
 import signinStyles from "@/components/SigningIn.module.css";
+import styles from "./registerSignIn.module.css";
 import CollaboratorApply from "./CollaboratorApply";
+import VerifyEmailStep from "./VerifyEmailStep";
+import PolicyConsent from "@/components/PolicyConsent";
 import { AUTH_BACK_HOME_EVENT, AUTH_PAGE_READY_EVENT } from "../LogoLink";
 import GraduationSelect from "@/components/ui/GraduationSelect";
 import StatusSelect from "@/components/ui/StatusSelect";
@@ -21,7 +24,7 @@ import {
   completeRegistration,
   exchangeGoogleCredential,
 } from "@/auth/signInWithGoogle";
-import { signUpWithEmailPassword } from "@/auth/signInWithEmailPassword";
+import { signUpWithEmailPassword, startOver } from "@/auth/signInWithEmailPassword";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
 import {
@@ -106,6 +109,9 @@ function RegisterPageInner() {
   const [confirm, setConfirm] = useState("");
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountError, setAccountError] = useState<string | null>(null);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [manualVerified, setManualVerified] = useState(false);
+  const [agreedPolicies, setAgreedPolicies] = useState(false);
 
   useEffect(() => {
     if (!entering) return;
@@ -198,6 +204,29 @@ function RegisterPageInner() {
     },
     [email, password, confirm],
   );
+
+  // Abandon an incomplete signup (created an account but didn't finish the
+  // profile) so the user can start fresh with a different email. Safe: the
+  // shared helper only deletes a genuine orphan (no users/collaborators doc).
+  const handleStartOver = useCallback(async () => {
+    setResetBusy(true);
+    try {
+      await startOver();
+      setStep("sign-in");
+      setManualVerified(false);
+      setEmail("");
+      setPassword("");
+      setConfirm("");
+    } finally {
+      setResetBusy(false);
+    }
+  }, []);
+
+  const handleVerified = useCallback(() => setManualVerified(true), []);
+  // Email/password members must verify their login email before the profile
+  // form; Google users are already verified (cached emailVerified) → straight
+  // through. manualVerified is the live flip from VerifyEmailStep.
+  const emailVerified = manualVerified || Boolean(user?.emailVerified);
 
   useEffect(() => {
     if (step !== "sign-in") return;
@@ -443,6 +472,11 @@ function RegisterPageInner() {
       return;
     }
 
+    if (!agreedPolicies) {
+      setError("Please agree to the Terms of Use and Privacy Policy to continue.");
+      return;
+    }
+
     setLoading(true);
     try {
       await completeRegistration({
@@ -477,16 +511,47 @@ function RegisterPageInner() {
     .join(" ");
 
   return (
-    <div className={frameClass} style={{ maxWidth: "32rem" }}>
-    <Card padding="lg" style={{ width: "100%" }}>
-      <h1 style={{ fontSize: "var(--text-2xl)", marginBottom: "var(--space-2)" }}>
-        Join NAISI
-      </h1>
-      <p style={{ color: "var(--color-text-muted)", marginBottom: "var(--space-6)" }}>
+    <div className={`${frameClass} ${styles.frame}`}>
+    <Card padding="lg" className={styles.card} style={{ width: "100%" }}>
+      <h1 className={styles.heading}>Join NAISI</h1>
+      <p
+        className={styles.subcopy}
+        style={{ color: "var(--color-text-muted)", marginBottom: "var(--space-6)" }}
+      >
         {step === "sign-in"
           ? "Apply to join the Nottingham AI Safety Initiative. We'll review your application and be in touch."
-          : "Tell us a bit about you so the committee can review your application."}
+          : !emailVerified
+            ? "Verify your email address to continue."
+            : "Tell us a bit about you so the committee can review your application."}
       </p>
+
+      {step === "profile" && user && emailVerified && (
+        <p
+          style={{
+            color: "var(--color-text-subtle)",
+            fontSize: "var(--text-sm)",
+            marginBottom: "var(--space-5)",
+          }}
+        >
+          Signed in as {user.email}. Not you?{" "}
+          <button
+            type="button"
+            onClick={() => void handleStartOver()}
+            disabled={resetBusy}
+            style={{
+              background: "none",
+              border: "none",
+              padding: 0,
+              font: "inherit",
+              color: "var(--color-accent)",
+              textDecoration: "underline",
+              cursor: "pointer",
+            }}
+          >
+            {resetBusy ? "Starting over…" : "Start over with a different email"}
+          </button>
+        </p>
+      )}
 
       {fromSubscriber && (
         <div
@@ -509,7 +574,7 @@ function RegisterPageInner() {
 
       {step === "sign-in" ? (
         <>
-          <div onMouseDown={startSurge}>
+          <div className={styles.googleWrap} onMouseDown={startSurge}>
             <GoogleSignInButton
               onCredential={onCredential}
               onScriptError={onScriptError}
@@ -545,10 +610,15 @@ function RegisterPageInner() {
           </div>
 
           <form
+            id="register-account-form"
             onSubmit={handleCreateAccount}
             style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
           >
-            <Field id="register-email" label="Email">
+            <Field
+              id="register-email"
+              label="Email"
+              hint="A personal email you'll keep — your university address can't be used to sign in. You'll add your university email separately to confirm eligibility."
+            >
               <Input
                 id="register-email"
                 type="email"
@@ -558,7 +628,7 @@ function RegisterPageInner() {
                 onMouseDown={startSurge}
                 onBlur={calmIfEmpty}
                 autoComplete="email"
-                placeholder="you@nottingham.ac.uk"
+                placeholder="you@gmail.com"
                 required
               />
             </Field>
@@ -593,15 +663,7 @@ function RegisterPageInner() {
                 {accountError}
               </p>
             )}
-            <Button type="submit" fullWidth size="lg" disabled={accountBusy}>
-              {accountBusy ? "Creating account…" : "Create account & continue"}
-            </Button>
           </form>
-
-          <SigningIn
-            active={signinPhase !== "idle"}
-            successStartAt={signinPhase === "success" || signinPhase === "exiting" ? successAt : null}
-          />
 
           <p
             style={{
@@ -616,7 +678,30 @@ function RegisterPageInner() {
               Sign in
             </Link>
           </p>
+
+          <div className={styles.footer}>
+            <Button
+              type="submit"
+              form="register-account-form"
+              fullWidth
+              size="lg"
+              disabled={accountBusy}
+            >
+              {accountBusy ? "Creating account…" : "Create account & continue"}
+            </Button>
+            <SigningIn
+              active={signinPhase !== "idle"}
+              successStartAt={signinPhase === "success" || signinPhase === "exiting" ? successAt : null}
+            />
+          </div>
         </>
+      ) : !emailVerified ? (
+        <VerifyEmailStep
+          email={user?.email ?? null}
+          onVerified={handleVerified}
+          onStartOver={() => void handleStartOver()}
+          startingOver={resetBusy}
+        />
       ) : (
         <form onSubmit={handleSubmitProfile} style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
           <Field id="preferredName" label="Preferred name">
@@ -827,6 +912,11 @@ function RegisterPageInner() {
               email includes a one-click unsubscribe link.
             </p>
           </fieldset>
+          <PolicyConsent
+            checked={agreedPolicies}
+            onChange={setAgreedPolicies}
+            id="member-consent"
+          />
           {error && (
             <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)" }}>{error}</p>
           )}

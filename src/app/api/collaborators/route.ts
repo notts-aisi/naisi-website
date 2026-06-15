@@ -3,6 +3,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getSessionUid } from "@/lib/firebase/session";
 import { sendCollaboratorEmail } from "@/lib/email/collaboratorEmails";
+import { CURRENT_POLICY_VERSION } from "@/lib/legal/policies";
 import {
   buildApplication,
   collaboratorDocId,
@@ -67,6 +68,12 @@ export async function POST(req: Request) {
   if (validationError) {
     return NextResponse.json({ error: validationError }, { status: 400 });
   }
+  if (body.agreedToPolicies !== true) {
+    return NextResponse.json(
+      { error: "You must agree to the Terms of Use and Privacy Policy." },
+      { status: 400 },
+    );
+  }
 
   const db = getAdminDb();
   if (!db) {
@@ -99,6 +106,8 @@ export async function POST(req: Request) {
       fullName: input.fullName.trim(),
       status: "pending",
       application,
+      policyVersion: CURRENT_POLICY_VERSION,
+      policyAgreedAt: FieldValue.serverTimestamp(),
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });

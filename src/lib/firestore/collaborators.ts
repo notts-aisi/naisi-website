@@ -81,6 +81,10 @@ export type CollaboratorDoc = {
   rejectionReason?: string | null;
   /** Set once the collaborator enrols a passkey (passkey phase). */
   passkeyEnrolled?: boolean;
+  /** Combined Terms+Privacy version accepted at apply time, and when (server-
+   *  stamped). Powers a future "re-consent to the updated policy" prompt. */
+  policyVersion?: string;
+  policyAgreedAt?: Date | null;
 };
 
 /**
@@ -160,6 +164,8 @@ export function normalizeCollaborator(id: string, data: Raw): CollaboratorDoc {
     rejectedBy: (data.rejectedBy as string) ?? null,
     rejectionReason: (data.rejectionReason as string) ?? null,
     passkeyEnrolled: Boolean(data.passkeyEnrolled),
+    policyVersion: (data.policyVersion as string) ?? undefined,
+    policyAgreedAt: tsToDate(data.policyAgreedAt),
   };
 }
 

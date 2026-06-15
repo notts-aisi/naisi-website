@@ -8,6 +8,7 @@ import {
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import { mark, warn } from "@/lib/devMonitor";
+import { CURRENT_POLICY_VERSION } from "@/lib/legal/policies";
 
 export type SignInResult = {
   uid: string;
@@ -129,6 +130,8 @@ export async function completeRegistration(profile: {
     role: "pending",
     profile: writableProfile,
     showOnMembers: false,
+    policyVersion: CURRENT_POLICY_VERSION,
+    policyAgreedAt: serverTimestamp(),
     createdAt: serverTimestamp(),
   });
   // verifiedTokenId is accepted into the signature for forward-compat with a

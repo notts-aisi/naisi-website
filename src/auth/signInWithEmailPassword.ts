@@ -6,7 +6,10 @@ import {
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
 } from "firebase/auth";
-import { getClientAuth } from "@/lib/firebase/client";
+import { collection, doc, getDoc, getDocs, limit, query, where } from "firebase/firestore";
+import { getClientAuth, getClientDb } from "@/lib/firebase/client";
+import { isAcademicEmail, isNottinghamEmail } from "@/lib/firestore/users";
+import { signOut } from "./signInWithGoogle";
 
 /**
  * Email + password auth for external collaborators. Parallels
@@ -87,6 +90,23 @@ export async function signUpWithEmailPassword(
   password: string,
 ): Promise<EmailAuthResult> {
   const auth = getClientAuth();
+  // The sign-in identity must be a PERMANENT personal email. Academic/institution
+  // addresses lapse when you graduate or change jobs, so keying an account to one
+  // locks people out; a UoN member signing up with theirs would also double up
+  // with the Google member flow. Affiliation is proven separately (magic-link).
+  // Applies to BOTH the member and collaborator email/password paths.
+  if (isAcademicEmail(email)) {
+    throw new Error(
+      isNottinghamEmail(email)
+        ? "That's a University of Nottingham email. Sign in with a personal email " +
+          "(e.g. you@gmail.com) instead — university addresses stop working after " +
+          "you graduate. Current students and staff register on the student/staff " +
+          "form, where you'll confirm your university email separately."
+        : "Please sign in with a personal email you'll keep long-term " +
+          "(e.g. you@gmail.com) rather than an academic address — institution " +
+          "emails stop working when you change institution.",
+    );
+  }
   let credUser;
   try {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
@@ -115,6 +135,48 @@ export async function signInWithEmailPassword(
     throw friendlyError(err);
   }
   return exchangeForSession();
+}
+
+/**
+ * Abandon an INCOMPLETE signup so the user can start fresh (e.g. with a
+ * different email). Best-effort deletes the orphaned auth account — but ONLY
+ * when there's genuinely no `users` doc AND no `collaborators` doc for the uid,
+ * so a real member/collaborator who lands here is never deleted (they're just
+ * signed out). Deleting frees the email for reuse. `user.delete()` can throw
+ * `auth/requires-recent-login` on an old session; that's fine — we fall back to
+ * a plain sign-out. Always finishes by signing out + clearing the session cookie.
+ */
+export async function startOver(): Promise<void> {
+  const auth = getClientAuth();
+  const current = auth.currentUser;
+  if (current) {
+    const db = getClientDb();
+    let safeToDelete = false;
+    try {
+      const [userSnap, collabSnap] = await Promise.all([
+        getDoc(doc(db, "users", current.uid)),
+        getDocs(
+          query(
+            collection(db, "collaborators"),
+            where("uid", "==", current.uid),
+            limit(1),
+          ),
+        ),
+      ]);
+      // Only an orphan (no real account of either kind) is safe to delete.
+      safeToDelete = !userSnap.exists() && collabSnap.empty;
+    } catch {
+      safeToDelete = false; // can't confirm it's an orphan → never delete
+    }
+    if (safeToDelete) {
+      try {
+        await current.delete();
+      } catch {
+        /* requires-recent-login etc. → fall through to a plain sign-out */
+      }
+    }
+  }
+  await signOut();
 }
 
 /** Send a Firebase password-reset email. */
