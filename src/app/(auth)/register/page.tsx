@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, where } from "firebase/firestore";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
@@ -14,6 +14,7 @@ import signinStyles from "@/components/SigningIn.module.css";
 import styles from "./registerSignIn.module.css";
 import CollaboratorApply from "./CollaboratorApply";
 import VerifyEmailStep from "./VerifyEmailStep";
+import AuthEntry from "../AuthEntry";
 import PolicyConsent from "@/components/PolicyConsent";
 import { AUTH_BACK_HOME_EVENT, AUTH_PAGE_READY_EVENT } from "../LogoLink";
 import GraduationSelect from "@/components/ui/GraduationSelect";
@@ -23,6 +24,7 @@ import { Field, Input } from "@/components/ui/Input";
 import {
   completeRegistration,
   exchangeGoogleCredential,
+  signOut,
 } from "@/auth/signInWithGoogle";
 import { signUpWithEmailPassword, startOver } from "@/auth/signInWithEmailPassword";
 import { useAuth } from "@/auth/AuthProvider";
@@ -71,14 +73,17 @@ export default function RegisterPage() {
 }
 
 /**
- * `?type=collaborator` → the external-collaborator apply flow (email/password,
- * no uni email). Anything else → the existing Google + uni-email registration,
- * left untouched.
+ * Signed out → the unified <AuthEntry> (in register mode; the mode + audience
+ * toggles morph in place). Once an account exists, hand off to the
+ * audience-specific continuation (collaborator application / member profile),
+ * which skips its own entry step because the user is already signed in.
  */
 function RegisterRouter() {
+  const { user } = useAuth();
   const type = useSearchParams().get("type");
-  if (type === "collaborator") return <CollaboratorApply />;
-  return <RegisterPageInner />;
+
+  if (!user) return <AuthEntry initialMode="register" />;
+  return type === "collaborator" ? <CollaboratorApply /> : <RegisterPageInner />;
 }
 
 function RegisterPageInner() {
@@ -279,6 +284,24 @@ function RegisterPageInner() {
     }
   }, [authLoading, user, role, router, loading]);
 
+  // Reverse guard: a signed-in collaborator has a collaborators doc but no
+  // users doc, so `role` is null and the bounce above never fires — without
+  // this they'd land on the member profile form and could end up with BOTH a
+  // users and a collaborators doc on one uid. Probe by the `uid` field (the
+  // collaborators doc id is name-slugged), mirroring CollaboratorApply. null =
+  // still resolving.
+  const [hasCollabDoc, setHasCollabDoc] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!user) return;
+    const db = getClientDb();
+    const q = query(collection(db, "collaborators"), where("uid", "==", user.uid));
+    return onSnapshot(
+      q,
+      (snap) => setHasCollabDoc(!snap.empty),
+      () => setHasCollabDoc(false),
+    );
+  }, [user]);
+
   // Profile state
   const [preferredName, setPreferredName] = useState("");
   const [universityEmail, setUniversityEmail] = useState("");
@@ -302,6 +325,13 @@ function RegisterPageInner() {
   const showGraduation = status !== "" && STATUSES_WITH_GRADUATION.includes(status);
   const showStatusOther = status === "other";
   const anyCategoryOn = isSubscribedToAnything(prefs);
+  // A typed-out university email that isn't a Nottingham address (e.g. another
+  // institution, or the .edu.cn/.edu.my campuses — eligibility is .ac.uk-only)
+  // → steer them to the external-collaborator flow. Gated on "@" so it only
+  // fires once they've actually typed a domain, not on every keystroke.
+  const uniEmailRejected =
+    universityEmail.includes("@") &&
+    validateUniversityEmail(universityEmail) !== null;
 
   // Subscribe to the outstanding verification doc. Firestore rules gate read
   // to authUid == request.auth.uid, so only this tab (signed in as the
@@ -499,6 +529,41 @@ function RegisterPageInner() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // Hold the authed render until we know whether they're a collaborator, so a
+  // collaborator never flashes the member profile form before the guard.
+  if (user && !role && hasCollabDoc === null) {
+    return (
+      <Card padding="lg" style={{ width: "100%", maxWidth: "30rem" }}>
+        <p style={{ color: "var(--color-text-muted)" }}>Loading…</p>
+      </Card>
+    );
+  }
+
+  // Signed in as an external collaborator → they can't also register as a
+  // member on the same account. Mirror of CollaboratorApply's member guard.
+  if (user && !role && hasCollabDoc) {
+    return (
+      <Card padding="lg" style={{ width: "100%", maxWidth: "30rem" }}>
+        <h1 style={{ fontSize: "var(--text-2xl)", marginBottom: "var(--space-2)" }}>
+          You&apos;re signed in as a collaborator
+        </h1>
+        <p style={{ color: "var(--color-text-muted)", marginBottom: "var(--space-5)" }}>
+          You&apos;re signed in as an external collaborator ({user.email}). Head to
+          your collaborator space, or sign out to register as a University of
+          Nottingham student or staff member on a different account.
+        </p>
+        <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
+          <Button onClick={() => router.push("/collaborator")}>
+            Go to your collaborator space
+          </Button>
+          <Button variant="secondary" onClick={() => void signOut()}>
+            Sign out
+          </Button>
+        </div>
+      </Card>
+    );
   }
 
   const frameClass = [
@@ -761,6 +826,30 @@ function RegisterPageInner() {
               allowUnverifiedSubmit={allowUnverifiedSubmit}
               onToggleAllowUnverified={() => setAllowUnverifiedSubmit((v) => !v)}
             />
+
+            {uniEmailRejected && (
+              <div
+                style={{
+                  marginTop: "var(--space-3)",
+                  padding: "var(--space-3) var(--space-4)",
+                  borderRadius: "var(--radius-md)",
+                  background: "var(--color-bg-elevated)",
+                  border: "1px solid var(--color-border)",
+                  color: "var(--color-text-muted)",
+                  fontSize: "var(--text-sm)",
+                  lineHeight: 1.5,
+                }}
+              >
+                Not a University of Nottingham student or staff member?{" "}
+                <Link
+                  href="/register?type=collaborator"
+                  style={{ color: "var(--color-accent)" }}
+                >
+                  Apply as an external collaborator
+                </Link>{" "}
+                instead — no university email needed.
+              </div>
+            )}
           </Field>
           <Field id="status" label="What do you do at UoN?">
             <StatusSelect id="status" value={status} onChange={setStatus} required />

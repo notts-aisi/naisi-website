@@ -17,7 +17,11 @@ import { createHmac, timingSafeEqual, randomBytes } from "node:crypto";
  * outstanding unsubscribe + verify links become invalid.
  */
 
-export type TokenScope = "unsubscribe" | "verify-uni-email" | "public-confirm";
+export type TokenScope =
+  | "unsubscribe"
+  | "verify-uni-email"
+  | "public-confirm"
+  | "verify-login-email";
 
 type PayloadBase = {
   s: TokenScope;
@@ -47,6 +51,12 @@ type VerifyPayload = PayloadBase & {
   v: string;
 };
 
+type VerifyLoginPayload = PayloadBase & {
+  s: "verify-login-email";
+  /** Firestore doc id in `emailVerifications` (the login-email verification). */
+  v: string;
+};
+
 type PublicConfirmPayload = PayloadBase & {
   s: "public-confirm";
   /**
@@ -62,7 +72,8 @@ type PublicConfirmPayload = PayloadBase & {
 export type TokenPayload =
   | UnsubscribePayload
   | VerifyPayload
-  | PublicConfirmPayload;
+  | PublicConfirmPayload
+  | VerifyLoginPayload;
 
 function b64url(buf: Buffer): string {
   return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");

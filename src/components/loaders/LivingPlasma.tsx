@@ -144,7 +144,9 @@ export default function LivingPlasma({
   expansionIdleScale = 0.35,
   rowSpacing = 10,
   successStartAt = null,
-  successDurationMs = 2550,
+  // ~30% faster green sweep (was 2550) — keep in sync with AuthEntry's
+  // SUCCESS_DURATION_MS.
+  successDurationMs = 1785,
   width = LIVING_W_DEFAULT,
   height = LIVING_H_DEFAULT,
 }: LivingPlasmaProps) {
