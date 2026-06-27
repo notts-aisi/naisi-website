@@ -29,7 +29,8 @@ type Body = {
  * Enumeration-safe, reCAPTCHA-gated, server-side registration. The form collects
  * EMAIL ONLY — the account is created with a SERVER-RANDOM throwaway password, and
  * the user sets their real password only after clicking the verification link
- * (updatePassword). Keeping the register-time password server-random — never
+ * (server-side, via /api/register/password-set). Keeping the register-time
+ * password server-random — never
  * client-supplied — is what makes creating the account up front safe: if someone
  * registers an email that isn't theirs, they can't know the password and can never
  * sign in; only the inbox owner, who sets their own password after verifying, ends
