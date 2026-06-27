@@ -22,7 +22,11 @@ import {
   signInWithEmailPassword,
 } from "@/auth/signInWithEmailPassword";
 import { useAuth } from "@/auth/AuthProvider";
-import { getRecaptchaToken } from "@/lib/recaptcha/client";
+import {
+  RecaptchaInvisible,
+  RECAPTCHA_ENABLED,
+  type RecaptchaHandle,
+} from "@/components/ui/RecaptchaInvisible";
 
 type Mode = "signin" | "register";
 type SignInPhase = "idle" | "active" | "success" | "exiting" | "exitingBack";
@@ -76,11 +80,12 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [resetNote, setResetNote] = useState<string | null>(null);
   const [sentEmail, setSentEmail] = useState<string | null>(null);
+  // reCAPTCHA v2 Invisible — driven imperatively on submit (no visible widget).
+  const recaptchaRef = useRef<RecaptchaHandle>(null);
 
   // Reveal fallback if GIS never reports ready.
   useEffect(() => {
@@ -274,27 +279,29 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
         return;
       }
 
-      // register
-      if (!trimmed || !password) {
-        setFormError("Enter an email and a password.");
-        return;
-      }
-      if (password.length < 6) {
-        setFormError("Password must be at least 6 characters.");
-        return;
-      }
-      if (password !== confirm) {
-        setFormError("Those passwords don't match.");
+      // register — EMAIL ONLY. The password is set after the email is verified
+      // (the account is created server-side with a random throwaway password).
+      if (!trimmed) {
+        setFormError("Enter your email.");
         return;
       }
       setBusy(true);
       startSurge();
       try {
-        const recaptchaToken = await getRecaptchaToken("register");
+        // Invisible challenge — resolves silently for a trusted user, or after a
+        // popup for a flagged one. Null = unconfigured (skip) or dismissed/failed.
+        const recaptchaToken = await (recaptchaRef.current?.execute() ?? Promise.resolve(null));
+        if (RECAPTCHA_ENABLED && !recaptchaToken) {
+          setFormError("Couldn't verify you're human. Please try again.");
+          setSuccessAt(null);
+          setPhase("idle");
+          setBusy(false);
+          return;
+        }
         const res = await fetch("/api/register", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email: trimmed, password, audience, recaptchaToken }),
+          body: JSON.stringify({ email: trimmed, audience, recaptchaToken }),
         });
         const data = (await res.json().catch(() => null)) as
           | { ok?: boolean; error?: string }
@@ -317,7 +324,7 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
         setBusy(false);
       }
     },
-    [mode, email, password, confirm, audience, next, router, startSurge, playSuccessSweep, loaderOpen],
+    [mode, email, password, audience, next, router, startSurge, playSuccessSweep, loaderOpen],
   );
 
   const handleReset = useCallback(async () => {
@@ -406,6 +413,14 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
   if (sentEmail) {
     return (
       <div className={`${frameClass} ${styles.frame}`}>
+        {/* Ease the check-inbox card in rather than hard-swapping from the form —
+            the submit pause (server-side email send) makes an instant pop jarring. */}
+        <motion.div
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: [0.22, 0.61, 0.36, 1] }}
+          style={{ width: "100%" }}
+        >
         <Card padding="lg" className={styles.card} style={{ width: "100%" }}>
           <h1 className={styles.heading}>Check your inbox</h1>
           <p style={{ color: "var(--color-text-muted)", marginBottom: "var(--space-5)", lineHeight: 1.5 }}>
@@ -430,23 +445,17 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
             </p>
           </div>
         </Card>
+        </motion.div>
       </div>
     );
   }
 
-  // Mode-switch timing: slower than a snap, and SEQUENCED. The confirm-password
-  // slot is offset into its own phase — it appears LAST going into register and
-  // collapses FIRST coming out — so the rows aren't all moving at once. The other
-  // rows (audience toggle, the form) wait that beat before settling on sign-in.
+  // Mode-switch timing: slower than a snap, and SEQUENCED so the rows aren't all
+  // moving at once (the password block waits this beat before settling on sign-in).
   const moveT = {
     duration: 0.45,
     ease: [0.22, 0.61, 0.36, 1] as const,
     delay: mode === "signin" ? 0.38 : 0,
-  };
-  const slotT = {
-    duration: 0.45,
-    ease: [0.22, 0.61, 0.36, 1] as const,
-    delay: mode === "register" ? 0.38 : 0,
   };
 
   return (
@@ -548,69 +557,32 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
               )}
             </AnimatePresence>
           </div>
-          <div>
-            <Field id="auth-password" label="Password">
-              <PasswordInput
-                id="auth-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onFocus={startSurge}
-                onMouseDown={startSurge}
-                onBlur={onFieldBlur}
-                autoComplete={mode === "register" ? "new-password" : "current-password"}
-                required
-              />
-            </Field>
-            <AnimatePresence initial={false}>
-              {mode === "register" && (
-                <motion.div
-                  key="password-hint"
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={moveT}
-                  style={{ overflow: "hidden" }}
-                >
-                  <p style={{ marginTop: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--color-text-muted)", lineHeight: 1.5 }}>
-                    At least 6 characters.
-                  </p>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-          {/* Confirm-password (register) / Forgot-password (sign in) share one
-              slot. SEQUENCED via slotT: going INTO register the height expands
-              last (after the rest); coming OUT it collapses first. The inner
-              content fades on swap. */}
-          <motion.div layout transition={slotT} style={{ overflow: "hidden" }}>
-            <motion.div
-              key={mode}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{
-                duration: 0.34,
-                ease: [0.22, 0.61, 0.36, 1],
-                // Float the content UP into place, and hold it until the rows
-                // have finished moving (forgot-password waits the longest, so it
-                // doesn't pop in then get shoved up as the password rises).
-                delay: mode === "signin" ? 0.8 : 0.42,
-              }}
-            >
-              {mode === "register" ? (
-                <Field id="auth-confirm" label="Confirm password">
+          {/* Password + "Forgot password?" — SIGN-IN only. Register is email-only
+              (the password is set after the email is verified), so the whole block
+              height-collapses on register and the form stays compact. */}
+          <AnimatePresence initial={false}>
+            {mode === "signin" && (
+              <motion.div
+                key="password-block"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={moveT}
+                style={{ overflow: "hidden" }}
+              >
+                <Field id="auth-password" label="Password">
                   <PasswordInput
-                    id="auth-confirm"
-                    value={confirm}
-                    onChange={(e) => setConfirm(e.target.value)}
+                    id="auth-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
                     onFocus={startSurge}
                     onMouseDown={startSurge}
                     onBlur={onFieldBlur}
-                    autoComplete="new-password"
+                    autoComplete="current-password"
                     required
                   />
                 </Field>
-              ) : (
-                <div style={{ display: "flex", justifyContent: "center", paddingTop: "var(--space-1)" }}>
+                <div style={{ display: "flex", justifyContent: "center", paddingTop: "var(--space-2)" }}>
                   <button
                     type="button"
                     onClick={() => void handleReset()}
@@ -619,14 +591,19 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
                     Forgot password?
                   </button>
                 </div>
-              )}
-            </motion.div>
-          </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
           {formError && (
             <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)" }}>{formError}</p>
           )}
           {resetNote && (
             <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)" }}>{resetNote}</p>
+          )}
+          {/* Invisible reCAPTCHA — register only (keeps the floating badge off the
+              sign-in screen). No layout footprint; driven via the ref on submit. */}
+          {mode === "register" && RECAPTCHA_ENABLED && (
+            <RecaptchaInvisible ref={recaptchaRef} />
           )}
         </form>
 
@@ -693,8 +670,8 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
           <Button type="submit" form="auth-form" fullWidth size="lg" disabled={busy}>
             {mode === "register"
               ? busy
-                ? "Creating account…"
-                : "Create account & continue"
+                ? "Sending…"
+                : "Continue with email"
               : busy
                 ? "Signing in…"
                 : "Sign in"}
@@ -766,11 +743,13 @@ function ResendButton({ email }: { email: string }) {
     if (remainingMs > 0 || busy) return;
     setBusy(true);
     try {
-      const recaptchaToken = await getRecaptchaToken("resend");
+      // No reCAPTCHA here: the resend is already 60s-cooldown-gated and only ever
+      // re-sends to a genuine pending registration — a second invisible widget on
+      // the check-inbox screen isn't worth the wiring.
       await fetch("/api/register/resend", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, recaptchaToken }),
+        body: JSON.stringify({ email }),
       });
     } catch {
       /* uniform response anyway */

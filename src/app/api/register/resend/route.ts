@@ -3,13 +3,12 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { sendEmail } from "@/lib/email/send";
 import { signToken } from "@/lib/signedTokens";
-import { verifyRecaptcha } from "@/lib/recaptcha/server";
 import VerifyLoginEmail from "@/emails/VerifyLoginEmail";
 
 const COOLDOWN_SECONDS = 60;
 const TOKEN_TTL_SECONDS = 60 * 30;
 
-type Body = { email?: string; recaptchaToken?: string };
+type Body = { email?: string };
 
 /**
  * Resend the registration verification email. Enumeration-safe and abuse-gated:
@@ -19,6 +18,10 @@ type Body = { email?: string; recaptchaToken?: string };
  * whether the email is registered) nor an open relay (it can't email an address
  * that isn't a pending registration). The client drives its own 60s progress bar
  * off `cooldownSeconds`; the server is the real gate.
+ *
+ * No reCAPTCHA here (the register route carries the v2 invisible check): the
+ * cooldown + pending-registration-only constraint already bound abuse, and a
+ * second widget on the check-inbox screen isn't worth the wiring.
  */
 export async function POST(req: Request) {
   let body: Body;
@@ -34,7 +37,6 @@ export async function POST(req: Request) {
   // server returns the same shape so nothing is inferable from the response.
   const uniform = NextResponse.json({ ok: true, cooldownSeconds: COOLDOWN_SECONDS });
   if (!email || !db) return uniform;
-  if (!(await verifyRecaptcha(body.recaptchaToken))) return uniform;
 
   try {
     const snap = await db
