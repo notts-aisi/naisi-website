@@ -7,6 +7,12 @@ import { randomOpaqueId, signToken } from "@/lib/signedTokens";
 import { isAcademicEmail, isNottinghamEmail } from "@/lib/firestore/users";
 import { verifyRecaptcha } from "@/lib/recaptcha/server";
 import VerifyLoginEmail from "@/emails/VerifyLoginEmail";
+import {
+  recordRegistrationCreated,
+  recordRegistrationResend,
+  recordSignupOutcome,
+} from "@/lib/firestore/registrationWrites";
+import type { SignupOutcome } from "@/lib/firestore/registrations";
 
 const COOLDOWN_SECONDS = 60;
 const TOKEN_TTL_SECONDS = 60 * 30; // 30 minutes
@@ -52,9 +58,11 @@ export async function POST(req: Request) {
   // Format + policy validation. These depend only on the SUBMITTED email, not on
   // whether it's registered, so surfacing them leaks nothing.
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    await recordSignupOutcome("invalid-email");
     return NextResponse.json({ error: "Enter a valid email address." }, { status: 400 });
   }
   if (isAcademicEmail(email)) {
+    await recordSignupOutcome("invalid-email");
     return NextResponse.json(
       {
         error: isNottinghamEmail(email)
@@ -66,11 +74,14 @@ export async function POST(req: Request) {
   }
 
   if (!(await verifyRecaptcha(body.recaptchaToken))) {
+    await recordSignupOutcome("recaptcha-failed");
     return NextResponse.json(
       { error: "Couldn't verify you're human. Please try again." },
       { status: 400 },
     );
   }
+
+  const audience = body.audience === "collaborator" ? "collaborator" : "member";
 
   const auth = getAdminAuth();
   const db = getAdminDb();
@@ -84,25 +95,39 @@ export async function POST(req: Request) {
 
   let pendingUid: string | null = null;
   let isNewAccount = false;
+  // Outcome recorded on the daily signup-metrics counter (the flagger's data).
+  let outcome: SignupOutcome = "created";
   try {
     const user = await auth.createUser({ email, password: throwawayPassword });
     pendingUid = user.uid;
     isNewAccount = true;
+    outcome = "created";
+    await recordRegistrationCreated({ uid: user.uid, email, audience });
   } catch (err) {
     const code = (err as { code?: string })?.code ?? "";
     if (code === "auth/email-already-exists") {
+      // Default to "existing-verified" (send nothing). Flip to a re-send only if
+      // the lookup proves the account is unverified; if the lookup itself fails
+      // we keep this safe default so neither the response NOR the recorded
+      // outcome can leak whether the address is verified.
+      outcome = "existing-verified";
       try {
         const existing = await auth.getUserByEmail(email);
         // Verified → real account → send nothing. Unverified → re-send (below).
         // The password is left untouched; the user sets it post-verify regardless.
-        if (!existing.emailVerified) pendingUid = existing.uid;
+        if (!existing.emailVerified) {
+          pendingUid = existing.uid;
+          outcome = "existing-unverified";
+        }
       } catch (lookupErr) {
         // A failure here must NOT change the response shape (would leak).
         console.error("[/api/register] existing-account lookup failed", lookupErr);
       }
     } else if (code === "auth/invalid-email") {
+      await recordSignupOutcome("invalid-email");
       return NextResponse.json({ error: "That email isn't valid." }, { status: 400 });
     } else {
+      await recordSignupOutcome("error");
       console.error("[/api/register] createUser failed", err);
       return NextResponse.json(
         { error: "Something went wrong. Please try again." },
@@ -110,6 +135,10 @@ export async function POST(req: Request) {
       );
     }
   }
+
+  // Record the created/existing outcome once — the response is uniform from here
+  // on regardless of which branch ran or what the send block below does.
+  await recordSignupOutcome(outcome);
 
   if (pendingUid) {
     const uid = pendingUid;
@@ -158,6 +187,7 @@ export async function POST(req: Request) {
               expiresAt,
             });
             await sendFor(doc.id);
+            await recordRegistrationResend(uid);
           }
           // within cooldown → skip the send (anti email-bomb)
           return NextResponse.json({ ok: true, cooldownSeconds: COOLDOWN_SECONDS });
@@ -174,7 +204,7 @@ export async function POST(req: Request) {
           email,
           uid,
           authUid: uid,
-          audience: body.audience === "collaborator" ? "collaborator" : "member",
+          audience,
           createdAt: now,
           lastSentAt: now,
           sendCount: 1,

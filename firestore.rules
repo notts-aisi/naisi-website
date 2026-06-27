@@ -414,6 +414,25 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // === registrations ===
+    // One durable doc per account created via the email-only register route
+    // (keyed by Auth uid). Tracks emailVerified / passwordSet → the admin orphan
+    // tracker + suspicious-signup flagger. All writes are Admin SDK (the
+    // register / verify / password-set routes); the admin tab reads it through a
+    // server route. Rows hold email PII, so client access is fully locked — same
+    // posture as emailSends / suppressedEmails.
+    match /registrations/{uid} {
+      allow read, write: if false;
+    }
+
+    // === signupMetrics ===
+    // Bounded daily signup-outcome counters (one doc per UTC day) powering the
+    // reCAPTCHA-fail-rate signal. Admin SDK increments per attempt; the admin
+    // summary route reads them. Fully locked to clients.
+    match /signupMetrics/{date} {
+      allow read, write: if false;
+    }
+
     // === subscriptions ===
     // Junction collection: each row is one (recipient, channel) pair. All
     // mutations go through server routes (admin SDK) — clients never write.
