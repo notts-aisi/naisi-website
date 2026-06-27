@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { signInWithCustomToken, updatePassword } from "firebase/auth";
+import { signInWithCustomToken } from "firebase/auth";
 import { getClientAuth } from "@/lib/firebase/client";
 import { Field } from "@/components/ui/Input";
 import { PasswordInput } from "@/components/ui/PasswordInput";
@@ -14,10 +14,10 @@ type Phase = "signing-in" | "set-password" | "saving" | "failed";
  * Client island for the login-email magic link. The account was created at
  * register time with a SERVER-RANDOM throwaway password; the server has now
  * verified the address and minted `customToken`. Here we sign in with it, exchange
- * for the session cookie, then have the user set their REAL password
- * (`updatePassword`) before continuing to the form they started (member profile /
- * collaborator application). Setting the password only here — after proving inbox
- * ownership — is what makes the throwaway-password approach safe.
+ * for the session cookie, then have the user set their REAL password (server-side
+ * via `/api/register/password-set`) before continuing to the form they started
+ * (member profile / collaborator application). Setting the password only here —
+ * after proving inbox ownership — is what makes the throwaway-password approach safe.
  */
 export default function LoginEmailVerified({
   customToken,
@@ -69,28 +69,27 @@ export default function LoginEmailVerified({
       }
       setPhase("saving");
       try {
-        const auth = getClientAuth();
-        if (!auth.currentUser) throw new Error("not signed in");
-        // The custom-token sign-in just above counts as a recent login, so
-        // updatePassword won't require re-authentication here.
-        await updatePassword(auth.currentUser, password);
-        // Mark the registration "completed" in the admin tracker. The account is
-        // fully usable regardless, so we never block the redirect — but we AWAIT
-        // and retry once so the flip isn't lost: a fire-and-forget call gets
-        // cancelled when router.replace unmounts this island mid-request, which
-        // would strand a completed account at "verified-no-password".
-        for (let attempt = 0; attempt < 2; attempt++) {
-          try {
-            const r = await fetch("/api/register/password-set", { method: "POST" });
-            if (r.ok) break;
-          } catch {
-            /* retry once, then give up — non-fatal */
-          }
+        // Set the password AND mark the registration completed SERVER-SIDE in a
+        // single request (Admin SDK updateUser + the tracker flip), authenticated
+        // by the custom-token session established above. Server-side is what makes
+        // "completed" reliable — a client updatePassword + a separate flip could
+        // lose the flip to the navigation below, stranding finished accounts at
+        // "verified-no-password".
+        const res = await fetch("/api/register/password-set", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ password }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(body?.error ?? "Couldn't save your password.");
         }
         router.replace(continueUrl);
       } catch (err) {
         console.error("[verify-login] set password failed", err);
-        setError("Couldn't save your password. Please try again.");
+        setError(
+          err instanceof Error ? err.message : "Couldn't save your password. Please try again.",
+        );
         setPhase("set-password");
       }
     },
