@@ -74,13 +74,18 @@ export default function LoginEmailVerified({
         // The custom-token sign-in just above counts as a recent login, so
         // updatePassword won't require re-authentication here.
         await updatePassword(auth.currentUser, password);
-        // Mark the registration "completed" in the admin tracker. Best-effort:
-        // the account is fully set up regardless — only the console lags if this
-        // fails — so the redirect proceeds either way.
-        try {
-          await fetch("/api/register/password-set", { method: "POST" });
-        } catch {
-          /* non-fatal */
+        // Mark the registration "completed" in the admin tracker. The account is
+        // fully usable regardless, so we never block the redirect — but we AWAIT
+        // and retry once so the flip isn't lost: a fire-and-forget call gets
+        // cancelled when router.replace unmounts this island mid-request, which
+        // would strand a completed account at "verified-no-password".
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const r = await fetch("/api/register/password-set", { method: "POST" });
+            if (r.ok) break;
+          } catch {
+            /* retry once, then give up — non-fatal */
+          }
         }
         router.replace(continueUrl);
       } catch (err) {

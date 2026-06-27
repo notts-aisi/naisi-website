@@ -6,8 +6,7 @@ import {
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
 } from "firebase/auth";
-import { collection, doc, getDoc, getDocs, limit, query, where } from "firebase/firestore";
-import { getClientAuth, getClientDb } from "@/lib/firebase/client";
+import { getClientAuth } from "@/lib/firebase/client";
 import { isAcademicEmail, isNottinghamEmail } from "@/lib/firestore/users";
 import { signOut } from "./signInWithGoogle";
 
@@ -138,43 +137,53 @@ export async function signInWithEmailPassword(
 }
 
 /**
- * Abandon an INCOMPLETE signup so the user can start fresh (e.g. with a
- * different email). Best-effort deletes the orphaned auth account — but ONLY
- * when there's genuinely no `users` doc AND no `collaborators` doc for the uid,
- * so a real member/collaborator who lands here is never deleted (they're just
- * signed out). Deleting frees the email for reuse. `user.delete()` can throw
- * `auth/requires-recent-login` on an old session; that's fine — we fall back to
- * a plain sign-out. Always finishes by signing out + clearing the session cookie.
+ * Abandon/delete an INCOMPLETE signup (registered, maybe set a password, but
+ * never submitted a profile/application). Routes through the server cascade
+ * (`POST /api/account/delete`), which tears down the orphan's Auth account,
+ * `registrations` tracker row, and subscriptions in one place. A client-only
+ * `user.delete()` couldn't touch the locked `registrations` doc and left a ghost
+ * tracker row behind — this fixes that. The route enforces the unfinished-only
+ * scope SERVER-side (a real member/collaborator is refused, never deleted), so
+ * this is safe to call from any "start over" / "delete account" affordance.
+ * Always finishes by signing out + clearing the session cookie.
  */
 export async function startOver(): Promise<void> {
-  const auth = getClientAuth();
-  const current = auth.currentUser;
-  if (current) {
-    const db = getClientDb();
-    let safeToDelete = false;
+  // Best-effort: the cascade is cleanup, not the point — "start over" must always
+  // return the user to a clean slate, so it signs out regardless of the result (a
+  // 401 at the pre-verify step, a 409 on a finished account, a 500, or a network
+  // error all still end in a sign-out). The server is the gate, so a failed or
+  // refused call never deletes a real account.
+  try {
+    await fetch("/api/account/delete", { method: "POST" });
+  } catch {
+    /* network error → still sign out below */
+  }
+  await signOut();
+}
+
+/**
+ * "Delete my account" for an unfinished registration. Unlike {@link startOver}
+ * (best-effort), this is STRICT: it inspects the response and THROWS on a refusal
+ * (409 finished account) or failure (500 / network) WITHOUT signing out, so the
+ * caller can surface the error and not redirect as if the delete succeeded. Only
+ * a 2xx — or a 207 (data removed, Auth orphan left for the tracker) — signs out.
+ */
+export async function deleteOwnAccount(): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch("/api/account/delete", { method: "POST" });
+  } catch {
+    throw new Error("Couldn't reach the server. Check your connection and try again.");
+  }
+  if (!res.ok && res.status !== 207) {
+    let message = "Couldn't delete this account. Please try again.";
     try {
-      const [userSnap, collabSnap] = await Promise.all([
-        getDoc(doc(db, "users", current.uid)),
-        getDocs(
-          query(
-            collection(db, "collaborators"),
-            where("uid", "==", current.uid),
-            limit(1),
-          ),
-        ),
-      ]);
-      // Only an orphan (no real account of either kind) is safe to delete.
-      safeToDelete = !userSnap.exists() && collabSnap.empty;
+      const body = (await res.json()) as { error?: string };
+      if (body?.error) message = body.error;
     } catch {
-      safeToDelete = false; // can't confirm it's an orphan → never delete
+      /* keep the default message */
     }
-    if (safeToDelete) {
-      try {
-        await current.delete();
-      } catch {
-        /* requires-recent-login etc. → fall through to a plain sign-out */
-      }
-    }
+    throw new Error(message);
   }
   await signOut();
 }

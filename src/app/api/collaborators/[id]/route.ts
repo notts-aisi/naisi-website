@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { sendCollaboratorEmail } from "@/lib/email/collaboratorEmails";
+import { deleteAccountCascade } from "@/lib/firestore/accountDeletion";
 
 // Explicit Promise params (Next 16) rather than the generated RouteContext
 // helper, so this typechecks independent of typegen state.
@@ -109,26 +110,36 @@ export async function DELETE(_req: Request, ctx: Ctx) {
   }
   const uid = (snap.data()?.uid as string | undefined) ?? "";
 
-  await ref.delete();
-
-  if (uid) {
-    try {
-      await auth.deleteUser(uid);
-    } catch (err: unknown) {
-      const code = (err as { code?: string })?.code;
-      if (code !== "auth/user-not-found") {
-        console.error("[collaborators delete] Auth delete failed:", err);
-        return NextResponse.json(
-          {
-            ok: true,
-            warning:
-              "Application deleted but the Auth account could not be removed.",
-          },
-          { status: 207 },
-        );
-      }
-    }
+  // No uid on the doc (legacy/edge) → just remove the application doc.
+  if (!uid) {
+    await ref.delete();
+    return NextResponse.json({ ok: true });
   }
 
-  return NextResponse.json({ ok: true });
+  // Match the other admin cascade routes: an admin can't cascade away their own
+  // account here (e.g. an admin who also holds a self-keyed collaborator doc).
+  if (uid === actor.uid) {
+    return NextResponse.json(
+      { error: "You can't delete your own account here. Ask another admin." },
+      { status: 400 },
+    );
+  }
+
+  // Full account teardown via the shared cascade — removes the collaborators doc
+  // (queried by uid), the registrations tracker row, subscriptions, any users
+  // doc, and the Auth account. Previously this deleted only the doc + Auth and
+  // left a ghost registrations row behind.
+  try {
+    const summary = await deleteAccountCascade(auth, db, uid);
+    return NextResponse.json(
+      { ok: true, ...summary },
+      summary.warning ? { status: 207 } : undefined,
+    );
+  } catch (err) {
+    console.error("[collaborators delete] cascade failed:", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Delete failed." },
+      { status: 500 },
+    );
+  }
 }

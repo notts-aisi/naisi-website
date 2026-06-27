@@ -27,6 +27,7 @@ import {
   signOut,
 } from "@/auth/signInWithGoogle";
 import { signUpWithEmailPassword, startOver } from "@/auth/signInWithEmailPassword";
+import DeleteAccountButton from "@/components/DeleteAccountButton";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
 import {
@@ -615,6 +616,8 @@ function RegisterPageInner() {
           >
             {resetBusy ? "Starting over…" : "Start over with a different email"}
           </button>
+          {" · "}
+          <DeleteAccountButton />
         </p>
       )}
 

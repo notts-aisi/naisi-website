@@ -52,20 +52,27 @@ export async function recordRegistrationCreated(args: {
   }
 }
 
-/** Bump the resend counters when an existing PENDING account re-sends its link. */
+/**
+ * Bump the resend counters when an existing PENDING account re-sends its link.
+ * Only ever UPDATES an existing row — never creates one. A merge-set here would
+ * create a partial doc with no `createdAt`, which the createdAt-ordered list
+ * query silently drops while count() still counts it (a count/list mismatch).
+ * Accounts that predate this collection therefore stay untracked on re-send,
+ * consistent with the forward-looking, no-backfill design.
+ */
 export async function recordRegistrationResend(uid: string): Promise<void> {
   const db = getAdminDb();
   if (!db) return;
   try {
+    const ref = db.collection(REGISTRATIONS_COLLECTION).doc(uid);
+    const snap = await ref.get();
+    if (!snap.exists) return; // never create a row here (would lack createdAt)
     const now = Timestamp.now();
-    await db.collection(REGISTRATIONS_COLLECTION).doc(uid).set(
-      {
-        lastSentAt: now,
-        updatedAt: now,
-        sendCount: FieldValue.increment(1),
-      },
-      { merge: true },
-    );
+    await ref.update({
+      lastSentAt: now,
+      updatedAt: now,
+      sendCount: FieldValue.increment(1),
+    });
   } catch (err) {
     console.error("[registrations] recordRegistrationResend failed", err);
   }

@@ -11,6 +11,7 @@ import SigningIn from "@/components/SigningIn";
 import CollaboratorApplicationForm from "@/components/CollaboratorApplicationForm";
 import VerifyEmailStep from "./VerifyEmailStep";
 import { signUpWithEmailPassword, startOver } from "@/auth/signInWithEmailPassword";
+import DeleteAccountButton from "@/components/DeleteAccountButton";
 import { signOut } from "@/auth/signInWithGoogle";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
@@ -292,6 +293,8 @@ export default function CollaboratorApply() {
                 >
                   {resetBusy ? "Starting over…" : "Start over with a different email"}
                 </button>
+                {" · "}
+                <DeleteAccountButton />
               </p>
             )}
             <CollaboratorApplicationForm
