@@ -159,6 +159,14 @@
         { "fieldPath": "email", "order": "ASCENDING" },
         { "fieldPath": "audience", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "registrations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

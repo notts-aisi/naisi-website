@@ -3,6 +3,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import { Timestamp } from "firebase-admin/firestore";
 import { getAdminAuth } from "@/lib/firebase/admin";
 import { verifyToken } from "@/lib/signedTokens";
+import { markRegistrationEmailVerified } from "@/lib/firestore/registrationWrites";
 
 export type ConfirmLoginEmailResult =
   | {
@@ -72,6 +73,10 @@ export async function confirmLoginEmailVerification(
   } catch (err) {
     console.error("[confirmLoginEmail] updateUser emailVerified failed", err);
   }
+
+  // Mirror the verification onto the signup-tracker row so the admin console
+  // shows "verified · no password" (best-effort — never blocks the sign-in).
+  await markRegistrationEmailVerified(uid);
 
   let customToken: string;
   try {

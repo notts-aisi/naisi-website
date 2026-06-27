@@ -74,6 +74,14 @@ export default function LoginEmailVerified({
         // The custom-token sign-in just above counts as a recent login, so
         // updatePassword won't require re-authentication here.
         await updatePassword(auth.currentUser, password);
+        // Mark the registration "completed" in the admin tracker. Best-effort:
+        // the account is fully set up regardless — only the console lags if this
+        // fails — so the redirect proceeds either way.
+        try {
+          await fetch("/api/register/password-set", { method: "POST" });
+        } catch {
+          /* non-fatal */
+        }
         router.replace(continueUrl);
       } catch (err) {
         console.error("[verify-login] set password failed", err);
