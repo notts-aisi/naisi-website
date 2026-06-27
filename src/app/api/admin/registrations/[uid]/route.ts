@@ -6,13 +6,9 @@ import { deleteAccountCascade } from "@/lib/firestore/accountDeletion";
 type Ctx = { params: Promise<{ uid: string }> };
 
 /**
- * Hard-delete a user by uid (admin-only) via the shared account cascade:
- * subscriptions + their event log, the registrations tracker row, any
- * collaborators doc, the users doc, and the Firebase Auth account.
- *
- * Substantive content (tasks / comments / attachments / events / RSVPs /
- * bookings) is intentionally retained — that's the deferred hygiene sweep; see
- * the scope note on `deleteAccountCascade`.
+ * Admin: delete a registered account straight from the registrations tracker
+ * (keyed by uid) via the shared account cascade. Same teardown as the Members
+ * delete — used for the orphan / unfinished accounts the tracker surfaces.
  */
 export async function DELETE(_req: Request, ctx: Ctx) {
   const actor = await getCurrentUser();
@@ -26,7 +22,7 @@ export async function DELETE(_req: Request, ctx: Ctx) {
   }
   if (uid === actor.uid) {
     return NextResponse.json(
-      { error: "You can't delete yourself. Ask another admin." },
+      { error: "You can't delete your own account here." },
       { status: 400 },
     );
   }
@@ -44,7 +40,7 @@ export async function DELETE(_req: Request, ctx: Ctx) {
       summary.warning ? { status: 207 } : undefined,
     );
   } catch (err) {
-    console.error("[admin delete] cascade failed:", uid, err);
+    console.error("[admin registrations delete] cascade failed:", uid, err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Delete failed." },
       { status: 500 },

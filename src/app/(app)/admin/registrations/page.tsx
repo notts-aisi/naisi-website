@@ -24,6 +24,28 @@ export default function AdminRegistrationsPage() {
   const [filter, setFilter] = useState<RegistrationFilter>("all");
   const summary = useRegistrationSummary();
   const list = useRegistrations(filter);
+  const [deletingUid, setDeletingUid] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  async function handleDelete(uid: string) {
+    setActionError(null);
+    setDeletingUid(uid);
+    try {
+      const res = await fetch(`/api/admin/registrations/${encodeURIComponent(uid)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok && res.status !== 207) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Couldn't delete that account.");
+      }
+      list.reload();
+      void summary.reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't delete that account.");
+    } finally {
+      setDeletingUid(null);
+    }
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-6)" }}>
@@ -58,6 +80,14 @@ export default function AdminRegistrationsPage() {
       ) : (
         <Card padding="md">
           <p style={{ color: "var(--color-text-muted)", margin: 0 }}>Loading summary…</p>
+        </Card>
+      )}
+
+      {actionError && (
+        <Card padding="sm">
+          <p style={{ color: "var(--color-danger)", margin: 0, fontSize: "var(--text-sm)" }}>
+            {actionError}
+          </p>
         </Card>
       )}
 
@@ -96,7 +126,12 @@ export default function AdminRegistrationsPage() {
         <>
           <div className={styles.list}>
             {list.rows.map((r) => (
-              <RegistrationRow key={r.uid} reg={r} />
+              <RegistrationRow
+                key={r.uid}
+                reg={r}
+                busy={deletingUid === r.uid}
+                onDelete={() => handleDelete(r.uid)}
+              />
             ))}
           </div>
           {list.hasMore && (

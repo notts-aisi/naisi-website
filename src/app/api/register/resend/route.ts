@@ -4,6 +4,7 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { sendEmail } from "@/lib/email/send";
 import { signToken } from "@/lib/signedTokens";
 import VerifyLoginEmail from "@/emails/VerifyLoginEmail";
+import { recordRegistrationResend } from "@/lib/firestore/registrationWrites";
 
 const COOLDOWN_SECONDS = 60;
 const TOKEN_TTL_SECONDS = 60 * 30;
@@ -75,6 +76,12 @@ export async function POST(req: Request) {
       actorUid: (data.uid as string | undefined) ?? undefined,
       referenceId: doc.id,
     });
+
+    // Mirror the resend onto the registrations tracker row so its sendCount /
+    // lastSentAt match real volume (the inline /api/register resend path does the
+    // same). No-ops when there's no tracker row (pre-tracker accounts).
+    const trackedUid = data.uid as string | undefined;
+    if (trackedUid) await recordRegistrationResend(trackedUid);
   } catch (err) {
     console.error("[/api/register/resend] failed", err);
   }

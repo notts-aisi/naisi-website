@@ -421,6 +421,12 @@ service cloud.firestore {
     // register / verify / password-set routes); the admin tab reads it through a
     // server route. Rows hold email PII, so client access is fully locked — same
     // posture as emailSends / suppressedEmails.
+    //
+    // Deletion (self-service unfinished-account delete, admin delete, and the
+    // collaborator/member deletes) ALSO runs server-side via the shared account
+    // cascade (deleteAccountCascade, Admin SDK). Client deletes stay locked on
+    // purpose: a client deleting just this row — or just its users doc — would
+    // skip the Auth + cross-collection teardown and recreate the ghost-row bug.
     match /registrations/{uid} {
       allow read, write: if false;
     }
