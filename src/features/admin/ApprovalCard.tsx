@@ -116,8 +116,23 @@ export default function ApprovalCard({
     ? user.createdAt.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
     : "—";
 
+  // Claimed a university email but never verified it via the magic link. Tint the
+  // whole card (matching the Members tab treatment) on top of the existing pill.
+  const uniEmailUnverified =
+    Boolean(user.profile?.universityEmail) && !user.profile?.uniEmailVerifiedAt;
+
   return (
-    <Card padding="lg">
+    <Card
+      padding="lg"
+      style={
+        uniEmailUnverified
+          ? {
+              background: "var(--color-warning-soft)",
+              borderColor: "var(--color-warning)",
+            }
+          : undefined
+      }
+    >
       <div style={{ display: "flex", gap: "var(--space-4)", alignItems: "flex-start" }}>
         <div
           aria-hidden
@@ -200,7 +215,7 @@ export default function ApprovalCard({
                     {user.profile.uniEmailVerifiedAt ? (
                       <Badge tone="success">Verified</Badge>
                     ) : (
-                      <Badge tone="warning">Not verified — won&apos;t be emailed</Badge>
+                      <Badge tone="warning">Not verified, won&apos;t be emailed</Badge>
                     )}
                   </dd>
                 </>
