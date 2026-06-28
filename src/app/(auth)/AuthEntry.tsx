@@ -61,6 +61,9 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
   const router = useRouter();
   const params = useSearchParams();
   const next = params.get("next") ?? "/dashboard";
+  // Guard every post-auth redirect against open-redirect: only ever navigate to a
+  // same-origin path, never an absolute URL or a protocol-relative //evil.com.
+  const safeNext = next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
   const { user, role, loading: authLoading } = useAuth();
 
   const [mode, setMode] = useState<Mode>(initialMode);
@@ -77,6 +80,7 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
   const activeStartRef = useRef(0);
   const credentialReceivedRef = useRef(false);
   const handledNavRef = useRef(false);
+  const mintingRef = useRef(false);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -172,20 +176,76 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
     };
   }, [phase, startSurge]);
 
-  // Already signed in? Bounce away (only meaningful in signin mode — in register
-  // mode this component only mounts while signed out).
+  // Already signed in on a passive page load? Re-mint the server session cookie,
+  // THEN bounce away. The client can hold a live Firebase Auth session while the
+  // httpOnly __session cookie is missing or expired (cleared cookies, an idle
+  // longer than the cookie lifetime, a deploy). Navigating straight to a gated
+  // route then bounces back to /login on the SERVER cookie check, this effect
+  // fires again, and the user is stuck in a /login redirect loop. Minting a fresh
+  // cookie from the current idToken first turns that loop into a one-round-trip
+  // self-heal.
+  //
+  // We mint FIRST and let the route's returned `kind` decide the destination,
+  // because role can be null for two different reasons: a collaborator (no users
+  // doc, so AuthProvider never resolves a role) — the OTHER account type that
+  // hits this loop — or a members-doc snapshot that simply hasn't arrived yet.
+  //
+  // Guards: `phase !== "idle"` + `credentialReceivedRef` mean this never runs
+  // mid-sign-in (those interactive paths mint their own cookie and navigate);
+  // `mintingRef` stops a re-render from starting a second mint; `handledNavRef`
+  // is only set once we actually navigate, so a not-yet-routable null role can
+  // still be picked up when it resolves.
   useEffect(() => {
     if (authLoading || !user) return;
     if (phase !== "idle") return;
-    if (handledNavRef.current) return;
-    if (role === "member" || role === "committee" || role === "admin") {
-      router.replace(next);
-    } else if (role === "pending") {
-      router.replace("/pending-approval");
-    } else if (role === "rejected") {
-      router.replace("/");
-    }
-  }, [authLoading, user, role, next, router, phase]);
+    if (handledNavRef.current || mintingRef.current) return;
+    if (credentialReceivedRef.current) return; // an interactive sign-in is driving
+
+    const knownDest =
+      role === "member" || role === "committee" || role === "admin"
+        ? safeNext
+        : role === "pending"
+          ? "/pending-approval"
+          : role === "rejected"
+            ? "/"
+            : null;
+
+    mintingRef.current = true;
+    void (async () => {
+      let kind: string | null = null;
+      try {
+        const idToken = await user.getIdToken();
+        const res = await fetch("/api/auth/session", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ idToken }),
+        });
+        kind =
+          ((await res.json().catch(() => null)) as { kind?: string } | null)?.kind ??
+          null;
+      } catch {
+        // Best-effort: a fake dev-bypass user (no real getIdToken) or a network
+        // failure lands here. We fall back to knownDest only.
+      }
+      // Prefer the resolved member-side role; otherwise route on the server's
+      // account kind (collaborator → their area; member = users doc exists but the
+      // snapshot is just lagging → honour `next`). kind "new"/unknown with a null
+      // role means no completed account, so we don't navigate — the registration
+      // flow handles them, and a later role resolution re-fires this effect.
+      const dest =
+        knownDest ??
+        (kind === "collaborator"
+          ? "/collaborator"
+          : kind === "member"
+            ? safeNext
+            : null);
+      if (dest) {
+        handledNavRef.current = true;
+        router.replace(dest);
+      }
+      mintingRef.current = false;
+    })();
+  }, [authLoading, user, role, safeNext, router, phase]);
 
   const onCredential = useCallback(
     async (idToken: string) => {
@@ -225,7 +285,7 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
           setPhase("exiting");
           await sleep(EXIT_DURATION_MS);
         }
-        router.push(next);
+        router.push(safeNext);
       } catch (err) {
         console.error(err);
         setFormError("Sign-in failed. Please try again.");
@@ -234,7 +294,7 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
         setPhase("idle");
       }
     },
-    [mode, audience, next, router, startSurge, playSuccessSweep, loaderOpen],
+    [mode, audience, safeNext, router, startSurge, playSuccessSweep, loaderOpen],
   );
 
   // Stable identity so GoogleSignInButton's init effect (keyed on onScriptError)
@@ -266,7 +326,7 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
             await sleep(EXIT_DURATION_MS);
           }
           if (result.kind === "collaborator") router.push("/collaborator");
-          else if (result.kind === "member") router.push(next);
+          else if (result.kind === "member") router.push(safeNext);
           else router.push("/register?type=collaborator");
         } catch (err) {
           setFormError(
@@ -324,7 +384,7 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
         setBusy(false);
       }
     },
-    [mode, email, password, audience, next, router, startSurge, playSuccessSweep, loaderOpen],
+    [mode, email, password, audience, safeNext, router, startSurge, playSuccessSweep, loaderOpen],
   );
 
   const handleReset = useCallback(async () => {
