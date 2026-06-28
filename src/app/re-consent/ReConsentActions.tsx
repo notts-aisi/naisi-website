@@ -93,7 +93,7 @@ export default function ReConsentActions({
         </Button>
         {isMember ? (
           <Button variant="secondary" onClick={signOutOnly} disabled={busy !== null}>
-            {busy === "decline" ? "Signing out…" : "I don't accept — sign out"}
+            {busy === "decline" ? "Signing out…" : "I don't accept"}
           </Button>
         ) : !confirmDelete ? (
           <Button

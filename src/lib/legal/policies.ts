@@ -34,7 +34,7 @@ export const POLICIES: Record<
     label: "Privacy Policy",
     href: "/privacy",
     versions: [
-      { version: 2, lastUpdated: "28 June 2026" },
+      { version: 2, lastUpdated: "29 June 2026" },
       { version: 1, lastUpdated: "25 May 2026" },
     ],
   },

@@ -304,17 +304,28 @@ export default function PrivacyContentV2({
                 not re-contact them by mistake).
               </p>
               <p>
-                <strong>Content you contributed after your account is
-                deleted.</strong> When your account is deleted, content you
-                created while using the site is not always removed at the same
-                moment. In particular, tasks, comments, and file attachments
-                you created or were added to in the committee tooling, and event
-                RSVPs and the answers you gave, may be retained for a limited
-                period after your account is deleted so that ongoing committee
-                work and event records are not disrupted. We then delete this
-                content, or detach it from your identity, in line with the
-                retention practices described here. If you need specific content
-                removed sooner, email us and we will deal with it.
+                <strong>For up to 30 days after deletion.</strong> When your
+                account is deleted, whether by you or by us, we may keep your
+                account data, the content you contributed, and our logs for up
+                to 30 days afterwards. We do this so we can meet our legal
+                obligations and, where it is necessary, investigate abuse or
+                misuse of the site, including activity that may break the law.
+                Once that period has passed we permanently delete or anonymise
+                this information, except for the limited records described in
+                this section that we are required or permitted to keep for
+                longer.
+              </p>
+              <p>
+                <strong>Content you contributed.</strong> Some content you
+                created while using the site is not always removed at the moment
+                your account is deleted. In particular, tasks, comments, and
+                file attachments you created or were added to in the committee
+                tooling, and event RSVPs and the answers you gave, may be
+                retained for a limited period so that ongoing committee work and
+                event records are not disrupted. We then delete this content, or
+                detach it from your identity, in line with the retention periods
+                described here. If you need specific content removed sooner,
+                email us and we will deal with it.
               </p>
               <p>
                 Audit-style records (the email send log, subscription event
