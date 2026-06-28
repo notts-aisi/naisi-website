@@ -2,6 +2,22 @@
   display: flex;
   gap: var(--space-1);
   border-bottom: 1px solid var(--color-border);
+  /* Contain the strip's own overflow at EVERY width. With 11 nowrap tabs the row
+     is wider than the main column on many desktop sizes; without this it pushed
+     document width and slid under the fixed sidebar (and scrollIntoView below,
+     finding no scrollable .tabs, scrolled the whole document horizontally). Now
+     the strip scrolls INTERNALLY instead. The active tab is centred in
+     AdminTabs.tsx; scrollbar hidden to avoid stealing vertical room from the row. */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .tab {
@@ -15,6 +31,8 @@
   margin-bottom: -1px;
   transition: color var(--transition-fast), border-color var(--transition-fast);
   white-space: nowrap;
+  scroll-snap-align: start;
+  flex-shrink: 0;
 }
 
 .tab:hover { color: var(--color-text); }
@@ -40,25 +58,147 @@
   flex-shrink: 0;
 }
 
+/* === Mobile picker === */
+/* On phones the 11-tab strip is replaced by a single picker button that opens a
+   searchable bottom-of-the-stack sheet (the Drawer). Hidden on desktop/tablet. */
+.mobileTrigger {
+  display: none; /* shown only below --bp-md (see @media) */
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.mobileTriggerLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.mobileTriggerHint {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.mobileTriggerValue {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.mobileChevron {
+  width: 0.75rem;
+  height: 0.5rem;
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+/* Sheet content rendered inside the Drawer portal (only when open). */
+.sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  /* The Drawer panel anchors to the viewport edge; respect the iOS safe area. */
+  padding-top: max(var(--space-4), env(safe-area-inset-top));
+  padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+}
+
+.sheetHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.sheetTitle {
+  font-size: var(--text-lg);
+  margin: 0;
+}
+
+.sheetClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-2)) calc(-1 * var(--space-2)) 0;
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-lg);
+  cursor: pointer;
+}
+
+.sheetSearch {
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--text-base);
+}
+
+.sheetSearch:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.sheetList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  overflow-y: auto;
+}
+
+.sheetItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.sheetItem:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.sheetItemActive {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  font-weight: 600;
+}
+
+.sheetEmpty {
+  padding: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
 /* === Mobile === */
 @media (max-width: 48rem) { /* --bp-md */
-  /* Horizontal scroll instead of wrapping into multiple ragged rows. The
-     `tab` rule already sets `white-space: nowrap`; scroll-snap keeps each
-     tap landing on a single tab. Scrollbar is hidden to avoid stealing
-     vertical room from the row. */
   .tabs {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    scroll-snap-type: x proximity;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-  .tabs::-webkit-scrollbar {
     display: none;
   }
-  .tab {
-    scroll-snap-align: start;
-    flex-shrink: 0;
+  .mobileTrigger {
+    display: flex;
   }
 }

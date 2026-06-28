@@ -1,18 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { RegistrationStatus, RegistrationView } from "@/lib/firestore/registrations";
 
 export type RegistrationFilter = "all" | "orphans" | RegistrationStatus;
 
+const PAGE_SIZE = 100;
+// Safety cap: load up to MAX_PAGES * PAGE_SIZE rows into the client. The
+// collection is small for a society; if it ever exceeds this the page shows a
+// "first N" note and we'd switch back to server-side filtering.
+const MAX_PAGES = 10;
+
 type ListResponse = { rows: RegistrationView[]; nextCursor: string | null };
 
-/** Module-level fetch (carries no React state) so the effect below never setStates synchronously. */
-async function fetchRegistrations(
-  filter: RegistrationFilter,
-  cursor: string | null,
-): Promise<ListResponse> {
-  const params = new URLSearchParams({ filter });
+async function fetchPage(cursor: string | null): Promise<ListResponse> {
+  const params = new URLSearchParams({ filter: "all", limit: String(PAGE_SIZE) });
   if (cursor) params.set("cursor", cursor);
   const res = await fetch(`/api/admin/registrations?${params.toString()}`);
   if (!res.ok) {
@@ -22,36 +24,50 @@ async function fetchRegistrations(
   return (await res.json()) as ListResponse;
 }
 
+/** Page through the whole collection (capped) so filtering can be client-side. */
+async function fetchAll(): Promise<{ rows: RegistrationView[]; truncated: boolean }> {
+  const rows: RegistrationView[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = await fetchPage(cursor);
+    rows.push(...data.rows);
+    cursor = data.nextCursor;
+    if (!cursor) return { rows, truncated: false };
+  }
+  return { rows, truncated: true };
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : "Couldn't load registrations.";
 }
 
 /**
- * Paginated reader for the admin registrations list. Backed by the server route
- * (`GET /api/admin/registrations`) — not a client onSnapshot — because the
- * collection holds email PII and accumulates orphans without bound. Re-fetches
- * from the top whenever `filter` changes; `loadMore` appends the next page.
- * State updates live in the fetch callbacks, mirroring the other admin hooks.
+ * Loads ALL registration rows ONCE and caches them, so switching filter pills is
+ * instant client-side filtering instead of a fresh server query per click. The
+ * cache persists until `reload()` (the Refresh button, or after a delete).
+ *
+ * Trade-off vs. the previous per-filter server query: this reads the whole
+ * collection (≤ MAX_PAGES·PAGE_SIZE rows) on open rather than one bounded page,
+ * which is fine at a society's scale and much snappier. If signups ever blow past
+ * the cap the page surfaces a "showing first N" note — revisit server-side
+ * filtering then. State updates live in the fetch callbacks (no setState in an
+ * effect body), matching the other admin hooks.
  */
-export function useRegistrations(filter: RegistrationFilter) {
+export function useAllRegistrations() {
   const [rows, setRows] = useState<RegistrationView[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(false);
-  const cursorRef = useRef<string | null>(null);
+  const [truncated, setTruncated] = useState(false);
 
-  // Initial load + reload-on-filter-change. Ref mutation (not setState) resets
-  // the cursor; all setState happens in the fetch callbacks.
+  // Initial load. `loading` starts true (useState), so the effect never setStates
+  // synchronously — it only resolves in the async callbacks.
   useEffect(() => {
     let cancelled = false;
-    cursorRef.current = null;
-    fetchRegistrations(filter, null)
-      .then((data) => {
+    fetchAll()
+      .then((res) => {
         if (cancelled) return;
-        cursorRef.current = data.nextCursor;
-        setHasMore(Boolean(data.nextCursor));
-        setRows(data.rows);
+        setRows(res.rows);
+        setTruncated(res.truncated);
         setError(null);
       })
       .catch((err) => {
@@ -63,35 +79,21 @@ export function useRegistrations(filter: RegistrationFilter) {
     return () => {
       cancelled = true;
     };
-  }, [filter]);
+  }, []);
 
-  const loadMore = useCallback(() => {
-    if (loadingMore || !hasMore) return;
-    setLoadingMore(true);
-    fetchRegistrations(filter, cursorRef.current)
-      .then((data) => {
-        cursorRef.current = data.nextCursor;
-        setHasMore(Boolean(data.nextCursor));
-        setRows((prev) => [...prev, ...data.rows]);
-        setError(null);
-      })
-      .catch((err) => setError(errorMessage(err)))
-      .finally(() => setLoadingMore(false));
-  }, [filter, loadingMore, hasMore]);
-
+  // Manual refresh (Refresh button / post-delete). Runs from an event handler, so
+  // setLoading here is not a setState-in-effect.
   const reload = useCallback(() => {
     setLoading(true);
-    cursorRef.current = null;
-    fetchRegistrations(filter, null)
-      .then((data) => {
-        cursorRef.current = data.nextCursor;
-        setHasMore(Boolean(data.nextCursor));
-        setRows(data.rows);
+    fetchAll()
+      .then((res) => {
+        setRows(res.rows);
+        setTruncated(res.truncated);
         setError(null);
       })
       .catch((err) => setError(errorMessage(err)))
       .finally(() => setLoading(false));
-  }, [filter]);
+  }, []);
 
-  return { rows, loading, loadingMore, error, hasMore, loadMore, reload };
+  return { rows, loading, error, truncated, reload };
 }

@@ -139,6 +139,14 @@ export async function completeRegistration(profile: {
   // uniEmailVerifiedAt above is the current source of truth.
   void verifiedTokenId;
 
+  // Flip the signup-tracker row to "completed" now that a profile exists. Done
+  // server-side (the registrations collection is Admin-SDK-only) and fire-and-
+  // forget — this is what stops a finished Google signup showing as an orphan in
+  // the admin tracker; the profile doc above is the source of truth regardless.
+  fetch("/api/register/profile-complete", { method: "POST" }).catch((err) => {
+    console.warn("[registration tracker] profile-complete flip failed", err);
+  });
+
   // Subscriptions sync — claims any pre-existing guest subscription rows
   // for this user's verified email(s) (so a homepage signer-upper who later
   // registers doesn't end up with a duplicate guest row), and applies the

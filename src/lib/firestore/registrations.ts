@@ -32,39 +32,67 @@ export const SIGNUP_METRICS_COLLECTION = "signupMetrics";
 export type RegistrationAudience = "member" | "collaborator";
 
 /**
- * The lifecycle of an email-only registration, derived from two booleans we own:
- *   - pending-verify       account exists, email not yet confirmed (never clicked
- *                          the magic link). Random throwaway password → can't be
- *                          signed into. A benign orphan.
- *   - verified-no-password email confirmed (clicked the link) but the real
- *                          password not yet set. Still no usable credential → a
- *                          benign orphan.
- *   - completed            real password set → a usable account.
+ * How the account was created. `email` = the verify-first email-only register
+ * route (server-random throwaway password → set after verifying). `google` =
+ * Google sign-in (the email is provider-verified up front, there is no password
+ * step). The method changes what "incomplete" means — see deriveRegistrationStatus.
+ */
+export type RegistrationMethod = "email" | "google";
+
+/**
+ * The lifecycle of a registration, derived from the booleans we own. Which ones
+ * apply depends on `method`:
+ *
+ *   email
+ *     - pending-verify       account exists, email not yet confirmed (never
+ *                            clicked the magic link). Random throwaway password →
+ *                            can't be signed into. A benign orphan.
+ *     - verified-no-password email confirmed (clicked the link) but the real
+ *                            password not yet set. Still no usable credential →
+ *                            a benign orphan.
+ *     - completed            real password set → a usable account.
+ *
+ *   google (no password step; the email is verified by Google)
+ *     - pending-profile      signed in with Google but never wrote a member/
+ *                            collaborator profile doc → an abandoned signup.
+ *                            An orphan, by the "no profile doc" test.
+ *     - completed            profile doc written → a usable account.
  */
 export type RegistrationStatus =
   | "pending-verify"
   | "verified-no-password"
+  | "pending-profile"
   | "completed";
 
 export const REGISTRATION_STATUSES: RegistrationStatus[] = [
   "pending-verify",
   "verified-no-password",
+  "pending-profile",
   "completed",
 ];
 
-/** Statuses with no usable credential yet — the benign orphans a cleanup sweep targets. */
+/** Statuses that aren't a usable, finished account yet — the orphans a cleanup sweep targets. */
 export const ORPHAN_STATUSES: RegistrationStatus[] = [
   "pending-verify",
   "verified-no-password",
+  "pending-profile",
 ];
 
-/** Single source of truth for status — keep the stored `status` field in sync with this. */
+/**
+ * Single source of truth for status — keep the stored `status` field in sync with
+ * this. Method-aware: email orphans are gated on a usable credential (passwordSet),
+ * Google orphans on a completed profile (profileComplete), since Google has no
+ * password step.
+ */
 export function deriveRegistrationStatus(
-  emailVerified: boolean,
-  passwordSet: boolean,
+  method: RegistrationMethod,
+  flags: { emailVerified?: boolean; passwordSet?: boolean; profileComplete?: boolean },
 ): RegistrationStatus {
-  if (passwordSet) return "completed";
-  if (emailVerified) return "verified-no-password";
+  if (method === "google") {
+    return flags.profileComplete ? "completed" : "pending-profile";
+  }
+  if (flags.passwordSet) return "completed";
+  if (flags.emailVerified) return "verified-no-password";
   return "pending-verify";
 }
 
@@ -74,7 +102,17 @@ export const REGISTRATION_STATUS_META: Record<
 > = {
   "pending-verify": { label: "Pending verify", tone: "neutral" },
   "verified-no-password": { label: "Verified · no password", tone: "warning" },
+  "pending-profile": { label: "No profile yet", tone: "neutral" },
   completed: { label: "Completed", tone: "success" },
+};
+
+/** Display labels for the sign-up method. */
+export const REGISTRATION_METHOD_META: Record<
+  RegistrationMethod,
+  { label: string; tone: "neutral" | "accent" }
+> = {
+  email: { label: "Email", tone: "neutral" },
+  google: { label: "Google", tone: "accent" },
 };
 
 /**
@@ -109,9 +147,12 @@ export type RegistrationView = {
   uid: string;
   email: string;
   audience: RegistrationAudience;
+  method: RegistrationMethod;
   status: RegistrationStatus;
   emailVerified: boolean;
   passwordSet: boolean;
+  /** True once a member/collaborator profile doc has been written. */
+  profileComplete: boolean;
   createdAt: string | null;
   updatedAt: string | null;
   lastSentAt: string | null;
@@ -142,16 +183,21 @@ function num(v: unknown): number {
 export function toRegistrationView(uid: string, data: Raw): RegistrationView {
   const emailVerified = Boolean(data.emailVerified);
   const passwordSet = Boolean(data.passwordSet);
+  const profileComplete = Boolean(data.profileComplete);
+  // Legacy rows (pre-`method`) are all from the email flow.
+  const method: RegistrationMethod = data.method === "google" ? "google" : "email";
   const status = REGISTRATION_STATUSES.includes(data.status as RegistrationStatus)
     ? (data.status as RegistrationStatus)
-    : deriveRegistrationStatus(emailVerified, passwordSet);
+    : deriveRegistrationStatus(method, { emailVerified, passwordSet, profileComplete });
   return {
     uid,
     email: typeof data.email === "string" ? data.email : "",
     audience: data.audience === "collaborator" ? "collaborator" : "member",
+    method,
     status,
     emailVerified,
     passwordSet,
+    profileComplete,
     createdAt: tsToIso(data.createdAt),
     updatedAt: tsToIso(data.updatedAt),
     lastSentAt: tsToIso(data.lastSentAt),
@@ -188,6 +234,8 @@ export type RegistrationSummary = {
     total: number;
     pendingVerify: number;
     verifiedNoPassword: number;
+    /** Google sign-ins that never completed a profile (Google orphans). */
+    pendingProfile: number;
     completed: number;
     orphans: number;
   };
