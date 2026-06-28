@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getSessionUid } from "@/lib/firebase/session";
+import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { sendCollaboratorEmail } from "@/lib/email/collaboratorEmails";
 import { markRegistrationProfileComplete } from "@/lib/firestore/registrationWrites";
 import { CURRENT_POLICY_VERSION } from "@/lib/legal/policies";
@@ -31,6 +32,12 @@ import {
 // pattern in /api/subscriptions and /api/verify-email/send.
 const EDIT_COOLDOWN_SECONDS = 10;
 
+// Abuse throttle on application creation (see lib/rateLimit). Generous per-IP for
+// shared campus NAT; tighter per-account.
+const RL_WINDOW_MS = 10 * 60 * 1000;
+const RL_IP_MAX = 30;
+const RL_UID_MAX = 5;
+
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 function readInput(body: Record<string, unknown>): CollaboratorInput {
@@ -55,6 +62,25 @@ export async function POST(req: Request) {
   const session = await getSessionUid();
   if (!session) {
     return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+  }
+
+  // Abuse throttle, before the existing-application lookup. Per-IP (generous) +
+  // per-account (tighter). The one-application-per-account 409 below remains the
+  // primary guard; this bounds rapid retries and scripted floods.
+  const ip = clientIp(req);
+  const ipLimit = rateLimit(`collab:ip:${ip}`, RL_IP_MAX, RL_WINDOW_MS);
+  if (!ipLimit.ok) {
+    return NextResponse.json(
+      { error: "Too many attempts. Please wait a few minutes and try again." },
+      { status: 429, headers: { "Retry-After": String(ipLimit.retryAfterSeconds) } },
+    );
+  }
+  const uidLimit = rateLimit(`collab:uid:${session.uid}`, RL_UID_MAX, RL_WINDOW_MS);
+  if (!uidLimit.ok) {
+    return NextResponse.json(
+      { error: "Too many attempts. Please wait a few minutes and try again." },
+      { status: 429, headers: { "Retry-After": String(uidLimit.retryAfterSeconds) } },
+    );
   }
 
   let body: Record<string, unknown>;

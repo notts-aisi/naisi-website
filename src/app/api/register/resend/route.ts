@@ -5,9 +5,15 @@ import { sendEmail } from "@/lib/email/send";
 import { signToken } from "@/lib/signedTokens";
 import VerifyLoginEmail from "@/emails/VerifyLoginEmail";
 import { recordRegistrationResend } from "@/lib/firestore/registrationWrites";
+import { rateLimit, clientIp } from "@/lib/rateLimit";
 
 const COOLDOWN_SECONDS = 60;
 const TOKEN_TTL_SECONDS = 60 * 30;
+
+// Abuse throttle (see lib/rateLimit). Generous per-IP for shared campus NAT.
+const RL_WINDOW_MS = 10 * 60 * 1000;
+const RL_IP_MAX = 30;
+const RL_EMAIL_MAX = 5;
 
 type Body = { email?: string };
 
@@ -38,6 +44,12 @@ export async function POST(req: Request) {
   // server returns the same shape so nothing is inferable from the response.
   const uniform = NextResponse.json({ ok: true, cooldownSeconds: COOLDOWN_SECONDS });
   if (!email || !db) return uniform;
+
+  // Throttle silently — return the same uniform OK (so nothing leaks) while
+  // skipping the Firestore read + email send for floods.
+  const ip = clientIp(req);
+  if (!rateLimit(`resend:ip:${ip}`, RL_IP_MAX, RL_WINDOW_MS).ok) return uniform;
+  if (!rateLimit(`resend:email:${email}`, RL_EMAIL_MAX, RL_WINDOW_MS).ok) return uniform;
 
   try {
     const snap = await db
