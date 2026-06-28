@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import Card from "@/components/ui/Card";
 import ApprovalCard from "@/features/admin/ApprovalCard";
 import { useApprovals } from "@/features/admin/useApprovals";
@@ -7,7 +8,13 @@ import { useUniEmailIndex } from "@/features/admin/useUniEmailIndex";
 
 export default function ApprovalsPage() {
   const { users, loading, error } = useApprovals();
-  const uniEmailIndex = useUniEmailIndex();
+  // Only check the uni emails actually on screen — the hook queries just these,
+  // instead of scanning the whole users collection.
+  const uniEmails = useMemo(
+    () => users.map((u) => u.profile?.universityEmail ?? "").filter(Boolean),
+    [users],
+  );
+  const uniEmailIndex = useUniEmailIndex(uniEmails);
 
   if (loading) {
     return (
