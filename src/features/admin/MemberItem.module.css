@@ -21,6 +21,18 @@
   opacity: 0.7;
 }
 
+/* Signed up as UoN but never verified their university email. Tint the whole row
+   so it stands out in the list; declared after .itemExpanded so the warning
+   colour also reads on the open row. */
+.itemUnverifiedUni {
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning);
+}
+
+.itemUnverifiedUni:hover {
+  border-color: var(--color-warning);
+}
+
 .summary {
   display: flex;
   align-items: center;

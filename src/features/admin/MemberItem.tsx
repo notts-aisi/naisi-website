@@ -145,6 +145,10 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
   const isAdminRole = user.role === "admin";
   const displayName =
     user.displayName ?? user.profile?.preferredName ?? user.email ?? "Unnamed";
+  // Signed up claiming a university email but never clicked the magic link to
+  // prove it. Flag the row (distinct colour + pill) so admins can chase it.
+  const uniEmailUnverified =
+    Boolean(user.profile?.universityEmail) && !user.profile?.uniEmailVerifiedAt;
 
   async function onRoleChange(next: Role) {
     if (next === user.role) return;
@@ -314,6 +318,14 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
       </div>
 
       <div className={styles.meta}>
+        {uniEmailUnverified && (
+          <Badge
+            tone="warning"
+            title="Signed up as University of Nottingham but never verified their university email"
+          >
+            Uni email unverified
+          </Badge>
+        )}
         {status && (
           <Badge tone={statusTone(status)} title={STATUS_LABELS[status]}>
             {shortStatusLabel(status)}
@@ -342,13 +354,17 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
 
   if (!expanded) {
     return (
-      <div className={`${styles.item} ${isRejected ? styles.itemRejected : ""}`}>{summary}</div>
+      <div
+        className={`${styles.item} ${isRejected ? styles.itemRejected : ""} ${uniEmailUnverified ? styles.itemUnverifiedUni : ""}`}
+      >
+        {summary}
+      </div>
     );
   }
 
   return (
     <div
-      className={`${styles.item} ${styles.itemExpanded} ${isRejected ? styles.itemRejected : ""}`}
+      className={`${styles.item} ${styles.itemExpanded} ${isRejected ? styles.itemRejected : ""} ${uniEmailUnverified ? styles.itemUnverifiedUni : ""}`}
     >
       {summary}
 
