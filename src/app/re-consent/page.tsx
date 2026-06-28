@@ -9,7 +9,7 @@ import { CURRENT_POLICY_VERSION, currentPolicy } from "@/lib/legal/policies";
 import ReConsentActions from "./ReConsentActions";
 
 export const metadata: Metadata = {
-  title: "Review our updated policies — NAISI",
+  title: "Review our updated policies",
   robots: { index: false, follow: false },
 };
 
@@ -72,10 +72,13 @@ export default async function ReConsentPage() {
           Privacy Policy (version {privacy.version}, {privacy.lastUpdated}).
         </p>
         <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-4)", lineHeight: 1.6 }}>
-          <strong style={{ color: "var(--color-text)" }}>What changed:</strong> we&apos;ve
-          clarified how long content you contributed — committee tasks, comments,
-          file attachments, and event RSVPs — may be kept after your account is
-          deleted before it is removed or anonymised.
+          <strong style={{ color: "var(--color-text)" }}>What changed:</strong>{" "}
+          we&apos;ve explained how long we keep your information after an account
+          is deleted. We may hold your account data, the content you contributed
+          (committee tasks, comments, file attachments, and event RSVPs), and our
+          logs for up to 30 days, so we can meet our legal obligations and look
+          into any abuse or misuse of the site. After that we permanently delete
+          or anonymise it.
         </p>
         <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-4)", lineHeight: 1.6 }}>
           Read the full{" "}
