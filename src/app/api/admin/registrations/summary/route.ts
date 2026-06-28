@@ -64,19 +64,28 @@ export async function GET() {
   const since24h = Timestamp.fromMillis(now - 24 * 60 * 60 * 1000);
 
   // Status counts + creation velocity, all via aggregation in parallel.
-  const [pendingSnap, verifiedNoPwSnap, completedSnap, last1hSnap, last24hSnap] =
-    await Promise.all([
-      coll.where("status", "==", "pending-verify").count().get(),
-      coll.where("status", "==", "verified-no-password").count().get(),
-      coll.where("status", "==", "completed").count().get(),
-      coll.where("createdAt", ">=", since1h).count().get(),
-      coll.where("createdAt", ">=", since24h).count().get(),
-    ]);
+  const [
+    pendingSnap,
+    verifiedNoPwSnap,
+    pendingProfileSnap,
+    completedSnap,
+    last1hSnap,
+    last24hSnap,
+  ] = await Promise.all([
+    coll.where("status", "==", "pending-verify").count().get(),
+    coll.where("status", "==", "verified-no-password").count().get(),
+    coll.where("status", "==", "pending-profile").count().get(),
+    coll.where("status", "==", "completed").count().get(),
+    coll.where("createdAt", ">=", since1h).count().get(),
+    coll.where("createdAt", ">=", since24h).count().get(),
+  ]);
 
   const pendingVerify = aggCount(pendingSnap);
   const verifiedNoPassword = aggCount(verifiedNoPwSnap);
+  const pendingProfile = aggCount(pendingProfileSnap);
   const completed = aggCount(completedSnap);
-  const orphans = pendingVerify + verifiedNoPassword;
+  // Orphans = anything that isn't a finished account, across both methods.
+  const orphans = pendingVerify + verifiedNoPassword + pendingProfile;
   const last1h = aggCount(last1hSnap);
   const last24h = aggCount(last24hSnap);
 
@@ -140,9 +149,10 @@ export async function GET() {
 
   const summary: RegistrationSummary = {
     counts: {
-      total: pendingVerify + verifiedNoPassword + completed,
+      total: pendingVerify + verifiedNoPassword + pendingProfile + completed,
       pendingVerify,
       verifiedNoPassword,
+      pendingProfile,
       completed,
       orphans,
     },

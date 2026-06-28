@@ -43,6 +43,7 @@ export default function RegistrationFlags({ summary }: { summary: RegistrationSu
         <Stat label="Total" value={counts.total} />
         <Stat label="Pending verify" value={counts.pendingVerify} />
         <Stat label="Verified · no password" value={counts.verifiedNoPassword} />
+        <Stat label="No profile (Google)" value={counts.pendingProfile} />
         <Stat label="Completed" value={counts.completed} />
         <Stat label="Orphans" value={counts.orphans} />
       </div>

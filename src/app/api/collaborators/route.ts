@@ -3,6 +3,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getSessionUid } from "@/lib/firebase/session";
 import { sendCollaboratorEmail } from "@/lib/email/collaboratorEmails";
+import { markRegistrationProfileComplete } from "@/lib/firestore/registrationWrites";
 import { CURRENT_POLICY_VERSION } from "@/lib/legal/policies";
 import {
   buildApplication,
@@ -111,6 +112,11 @@ export async function POST(req: Request) {
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
+
+  // Mirror onto the signup tracker: submitting an application means the signup is
+  // complete. Also corrects a Google orphan's default "member" audience, since the
+  // tracker row was created at sign-in before any form was chosen. Best-effort.
+  await markRegistrationProfileComplete(session.uid, { audience: "collaborator" });
 
   if (session.email) {
     try {

@@ -5,6 +5,7 @@ import {
   revokeAndClearSession,
   type Role,
 } from "@/lib/firebase/session";
+import { recordGoogleRegistrationCreated } from "@/lib/firestore/registrationWrites";
 
 export async function POST(request: NextRequest) {
   try {
@@ -43,6 +44,18 @@ export async function POST(request: NextRequest) {
             .limit(1)
             .get();
           if (!collab.empty) kind = "collaborator";
+        }
+
+        // Mirror a brand-new Google sign-in into the signup tracker so Google
+        // orphans (authenticated but no profile yet) show up alongside email
+        // ones. Only for genuinely new accounts — returning members/collaborators
+        // are skipped (kind !== "new"), so createdAt is written once. Best-effort
+        // (the helper swallows its own errors); never blocks session minting.
+        if (kind === "new" && decoded.firebase?.sign_in_provider === "google.com") {
+          await recordGoogleRegistrationCreated({
+            uid: decoded.uid,
+            email: decoded.email ?? "",
+          });
         }
       } catch (e) {
         console.error("[/api/auth/session] user lookup failed:", e);

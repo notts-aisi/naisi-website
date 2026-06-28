@@ -23,7 +23,7 @@ import {
  * See [registrations.ts] for the data model and why there are two stores.
  */
 
-/** Create the per-account registration row when a brand-new account is registered. */
+/** Create the per-account registration row when a brand-new EMAIL account is registered. */
 export async function recordRegistrationCreated(args: {
   uid: string;
   email: string;
@@ -39,9 +39,11 @@ export async function recordRegistrationCreated(args: {
       uid: args.uid,
       email: args.email,
       audience: args.audience,
+      method: "email",
       emailVerified: false,
       passwordSet: false,
-      status: deriveRegistrationStatus(false, false),
+      profileComplete: false,
+      status: deriveRegistrationStatus("email", { emailVerified: false, passwordSet: false }),
       createdAt: now,
       updatedAt: now,
       lastSentAt: now,
@@ -49,6 +51,51 @@ export async function recordRegistrationCreated(args: {
     });
   } catch (err) {
     console.error("[registrations] recordRegistrationCreated failed", err);
+  }
+}
+
+/**
+ * Mirror a brand-new GOOGLE sign-in into the tracker so Google orphans
+ * (authenticated, but never wrote a profile) are visible to admins — the analogue
+ * of recordRegistrationCreated for the email flow. Google verifies the email up
+ * front and there is no password step, so the row starts emailVerified:true,
+ * status "pending-profile" (an orphan until a profile doc is written).
+ *
+ * Unlike the email creator this must be IDEMPOTENT: the session route fires on
+ * every sign-in, and a returning Google orphan re-mints before finishing. We
+ * guard on existence so createdAt is written exactly once and an existing row
+ * (incl. a pre-existing EMAIL row for a uid that later linked Google) is never
+ * clobbered. Audience is unknown at sign-in (no form chosen yet) → defaults to
+ * "member"; markRegistrationProfileComplete corrects it for collaborators.
+ */
+export async function recordGoogleRegistrationCreated(args: {
+  uid: string;
+  email: string;
+  audience?: RegistrationAudience;
+}): Promise<void> {
+  const db = getAdminDb();
+  if (!db) return;
+  try {
+    const ref = db.collection(REGISTRATIONS_COLLECTION).doc(args.uid);
+    const snap = await ref.get();
+    if (snap.exists) return; // createdAt written once; don't clobber an existing row
+    const now = Timestamp.now();
+    await ref.set({
+      uid: args.uid,
+      email: args.email,
+      audience: args.audience ?? "member",
+      method: "google",
+      emailVerified: true,
+      passwordSet: false,
+      profileComplete: false,
+      status: deriveRegistrationStatus("google", { profileComplete: false }),
+      createdAt: now,
+      updatedAt: now,
+      lastSentAt: null,
+      sendCount: 0,
+    });
+  } catch (err) {
+    console.error("[registrations] recordGoogleRegistrationCreated failed", err);
   }
 }
 
@@ -92,10 +139,17 @@ export async function markRegistrationEmailVerified(uid: string): Promise<void> 
     const ref = db.collection(REGISTRATIONS_COLLECTION).doc(uid);
     const snap = await ref.get();
     if (!snap.exists) return; // account predates the tracker — nothing to mirror
-    const passwordSet = Boolean(snap.data()?.passwordSet);
+    const data = snap.data() ?? {};
+    const passwordSet = Boolean(data.passwordSet);
+    // Email-only path (Google has no magic link), but read method defensively.
+    const method = data.method === "google" ? "google" : "email";
     await ref.update({
       emailVerified: true,
-      status: deriveRegistrationStatus(true, passwordSet),
+      status: deriveRegistrationStatus(method, {
+        emailVerified: true,
+        passwordSet,
+        profileComplete: Boolean(data.profileComplete),
+      }),
       updatedAt: Timestamp.now(),
     });
   } catch (err) {
@@ -113,15 +167,54 @@ export async function markRegistrationPasswordSet(uid: string): Promise<void> {
   const db = getAdminDb();
   if (!db) return;
   try {
+    // Only the email flow has a password step, so "email" is correct here (and
+    // safe even in the impossible Google case — passwordSet:true ⇒ completed).
     await db.collection(REGISTRATIONS_COLLECTION).doc(uid).update({
       passwordSet: true,
       emailVerified: true,
-      status: deriveRegistrationStatus(true, true),
+      status: deriveRegistrationStatus("email", { emailVerified: true, passwordSet: true }),
       updatedAt: Timestamp.now(),
     });
   } catch (err) {
     // NOT_FOUND here just means the account predates the tracker — benign.
     console.error("[registrations] markRegistrationPasswordSet skipped/failed", err);
+  }
+}
+
+/**
+ * Mark the registration row "profile complete" once a member/collaborator profile
+ * doc has been written. For a GOOGLE account this is what flips it from
+ * "pending-profile" (orphan) to "completed"; for an EMAIL account the status is
+ * already driven by passwordSet, so this just records the extra `profileComplete`
+ * signal (and, when given, corrects a Google orphan's default "member" audience to
+ * "collaborator"). Only ever touches an existing row (caught NOT_FOUND = pre-tracker
+ * or unrecorded account). Best-effort — the profile doc is the source of truth.
+ */
+export async function markRegistrationProfileComplete(
+  uid: string,
+  opts?: { audience?: RegistrationAudience },
+): Promise<void> {
+  const db = getAdminDb();
+  if (!db) return;
+  try {
+    const ref = db.collection(REGISTRATIONS_COLLECTION).doc(uid);
+    const snap = await ref.get();
+    if (!snap.exists) return; // no tracker row to update (e.g. pre-tracker account)
+    const data = snap.data() ?? {};
+    const method = data.method === "google" ? "google" : "email";
+    const update: Record<string, unknown> = {
+      profileComplete: true,
+      status: deriveRegistrationStatus(method, {
+        emailVerified: Boolean(data.emailVerified),
+        passwordSet: Boolean(data.passwordSet),
+        profileComplete: true,
+      }),
+      updatedAt: Timestamp.now(),
+    };
+    if (opts?.audience) update.audience = opts.audience;
+    await ref.update(update);
+  } catch (err) {
+    console.error("[registrations] markRegistrationProfileComplete skipped/failed", err);
   }
 }
 

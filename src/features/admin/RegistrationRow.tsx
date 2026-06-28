@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Badge from "@/components/ui/Badge";
 import {
+  REGISTRATION_METHOD_META,
   REGISTRATION_STATUS_META,
   type RegistrationView,
 } from "@/lib/firestore/registrations";
@@ -26,6 +27,7 @@ export default function RegistrationRow({
   busy?: boolean;
 }) {
   const meta = REGISTRATION_STATUS_META[reg.status];
+  const methodMeta = REGISTRATION_METHOD_META[reg.method];
   const [confirming, setConfirming] = useState(false);
 
   return (
@@ -33,12 +35,13 @@ export default function RegistrationRow({
       <div className={styles.rowMain}>
         <span className={styles.email}>{reg.email || "(no email)"}</span>
         <span className={styles.sub}>
-          {reg.audience === "collaborator" ? "Collaborator" : "Member"} · created{" "}
-          {formatDate(reg.createdAt)}
+          {methodMeta.label} · {reg.audience === "collaborator" ? "Collaborator" : "Member"}{" "}
+          · created {formatDate(reg.createdAt)}
           {reg.sendCount > 1 ? ` · ${reg.sendCount} link sends` : ""}
         </span>
       </div>
       <div className={styles.rowActions}>
+        <Badge tone={methodMeta.tone}>{methodMeta.label}</Badge>
         <Badge tone={meta.tone}>{meta.label}</Badge>
         {confirming ? (
           <span className={styles.confirm}>
