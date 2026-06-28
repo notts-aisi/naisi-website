@@ -140,13 +140,25 @@ function tsToDate(v: unknown): Date | null {
  * Defensive fallback: if the preferred channel is missing, fall back to the
  * other one so a misconfigured user doesn't silently get no mail.
  * Deduped (a user's Google address could also be @nottingham.ac.uk).
+ *
+ * An UNVERIFIED university address is treated as absent: the applicant typed it
+ * but never clicked the verification magic-link, so it commonly bounces. We skip
+ * it (falling back to the Google address) rather than mail into the void.
  */
 export function resolveRecipients(
-  user: { email?: string | null; profile?: { universityEmail?: string | null } | null },
+  user: {
+    email?: string | null;
+    profile?: {
+      universityEmail?: string | null;
+      /** Only mail the university address once the user has verified control of it. */
+      uniEmailVerified?: boolean;
+    } | null;
+  },
   modifier: RecipientModifier,
 ): string[] {
   const google = normaliseEmail(user.email);
-  const uni = normaliseEmail(user.profile?.universityEmail);
+  const uniRaw = normaliseEmail(user.profile?.universityEmail);
+  const uni = user.profile?.uniEmailVerified ? uniRaw : null;
   let addresses: (string | null)[];
   if (modifier === "google") {
     addresses = [google ?? uni];

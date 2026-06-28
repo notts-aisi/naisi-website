@@ -188,7 +188,21 @@ export default function ApprovalCard({
               {user.profile.universityEmail && (
                 <>
                   <dt style={{ color: "var(--color-text-muted)" }}>Uni email</dt>
-                  <dd>{user.profile.universityEmail}</dd>
+                  <dd
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "var(--space-2)",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <span>{user.profile.universityEmail}</span>
+                    {user.profile.uniEmailVerifiedAt ? (
+                      <Badge tone="success">Verified</Badge>
+                    ) : (
+                      <Badge tone="warning">Not verified — won&apos;t be emailed</Badge>
+                    )}
+                  </dd>
                 </>
               )}
               {user.profile.status && (
