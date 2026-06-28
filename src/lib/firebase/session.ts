@@ -29,6 +29,12 @@ export type SessionUser = {
   email: string | null;
   role: Role;
   displayName?: string;
+  /** The combined policy version this member last accepted (e.g.
+   *  "terms.1+privacy.2"). Compared against CURRENT_POLICY_VERSION to drive the
+   *  re-consent gate. `null`/absent for legacy members who registered before it
+   *  existed (treated as stale → re-consent, the safe default). Optional so the
+   *  dev-bypass stub's SessionUser doesn't need it. */
+  policyVersion?: string | null;
   /** True only for committee members the SU formally recognises. Admin-set;
    *  gates member-PII access and the committee task board. */
   suRecognised: boolean;
@@ -136,6 +142,7 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
       email: decoded.email ?? null,
       role: (data.role as Role) ?? "pending",
       displayName: data.displayName ?? data.profile?.preferredName,
+      policyVersion: typeof data.policyVersion === "string" ? data.policyVersion : null,
       suRecognised: Boolean(data.suRecognised),
       permissions: {
         draftNewsletter: Boolean(perms.draftNewsletter),
@@ -180,6 +187,9 @@ export type SessionCollaborator = {
   emailVerified: boolean;
   fullName: string;
   status: CollaboratorStatus;
+  /** Combined policy version this collaborator last accepted; drives the
+   *  re-consent gate. `null` if none recorded. */
+  policyVersion: string | null;
 };
 
 /**
@@ -217,6 +227,8 @@ export async function getCurrentCollaborator(): Promise<SessionCollaborator | nu
       fullName: (data.fullName as string) ?? "",
       status:
         status === "approved" || status === "rejected" ? status : "pending",
+      policyVersion:
+        typeof data.policyVersion === "string" ? data.policyVersion : null,
     };
   } catch {
     return null;

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentCollaborator } from "@/lib/firebase/session";
+import { CURRENT_POLICY_VERSION } from "@/lib/legal/policies";
 import CollaboratorTopBar from "./CollaboratorTopBar";
 
 /**
@@ -16,6 +17,16 @@ export default async function CollaboratorLayout({
 }) {
   const collaborator = await getCurrentCollaborator();
   if (!collaborator) redirect("/login");
+  // Re-consent gate: collaborators have a single home, so gating here is their
+  // natural entry point (the member equivalent lives on the dashboard layout).
+  // Deployed builds only (skipped under local `npm run dev`), matching the member
+  // gate — verify on dev.naisi.uk.
+  if (
+    process.env.NODE_ENV === "production" &&
+    collaborator.policyVersion !== CURRENT_POLICY_VERSION
+  ) {
+    redirect("/re-consent");
+  }
 
   return (
     <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column" }}>

@@ -33,7 +33,10 @@ export const POLICIES: Record<
   privacy: {
     label: "Privacy Policy",
     href: "/privacy",
-    versions: [{ version: 1, lastUpdated: "25 May 2026" }],
+    versions: [
+      { version: 2, lastUpdated: "28 June 2026" },
+      { version: 1, lastUpdated: "25 May 2026" },
+    ],
   },
 };
 
