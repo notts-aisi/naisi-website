@@ -484,5 +484,37 @@ service cloud.firestore {
       // No direct client writes; the API route uses the admin SDK.
       allow create, update, delete: if false;
     }
+
+    // === adminLocks ===
+    // Soft, FAIL-OPEN coordination locks for the admin console. Two shapes,
+    // distinguished by doc id:
+    //   page__<key>       one-admin-at-a-time presence lease on an admin page.
+    //   useredit__<uid>   "this member's details are under maintenance" while an
+    //                     admin edits them.
+    // Only admins acquire / heartbeat / release a lock. A member may READ the
+    // useredit lock that targets THEM (doc id useredit__<their uid>) to show the
+    // maintenance notice, and post a message to it, but never create/modify a
+    // lock. The id-pattern check (not resource.data) lets a member read their own
+    // lock doc even when it does not exist yet (an absent doc has no resource).
+    match /adminLocks/{lockId} {
+      allow read: if isSignedIn()
+        && (isAdmin() || lockId == ('useredit__' + request.auth.uid));
+      allow create, update, delete: if isAdmin();
+
+      match /messages/{msgId} {
+        allow read: if isSignedIn()
+          && (isAdmin() || lockId == ('useredit__' + request.auth.uid));
+        // Author can only post as themselves, on a page lock (admins) or their
+        // own user-edit lock. Cap size + fix the shape so a client can't store
+        // oversized / arbitrary message docs.
+        allow create: if isSignedIn()
+          && request.resource.data.fromUid == request.auth.uid
+          && (isAdmin() || lockId == ('useredit__' + request.auth.uid))
+          && request.resource.data.text is string
+          && request.resource.data.text.size() <= 500
+          && request.resource.data.keys().hasOnly(['fromUid', 'fromName', 'text', 'createdAt']);
+        allow update, delete: if false;
+      }
+    }
   }
 }
