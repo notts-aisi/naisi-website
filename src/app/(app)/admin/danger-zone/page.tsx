@@ -14,6 +14,7 @@
 import { useState } from "react";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import { AdminPage } from "@/features/admin/adminList";
 import { useTasks } from "@/features/tasks/hooks/useTasks";
 
 const REQUIRED_CONFIRM = "DELETE ALL TASKS";
@@ -72,7 +73,8 @@ export default function DangerZonePage() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>
+    <AdminPage>
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>
       <div>
         <p style={{ color: "var(--color-text-muted)", margin: 0 }}>
           Temporary admin tools — these run irreversible operations against
@@ -266,6 +268,7 @@ export default function DangerZonePage() {
           )}
         </div>
       </Card>
-    </div>
+      </div>
+    </AdminPage>
   );
 }

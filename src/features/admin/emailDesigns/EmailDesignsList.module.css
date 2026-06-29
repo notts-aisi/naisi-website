@@ -49,3 +49,15 @@
   color: var(--color-text-muted);
   margin-top: var(--space-1);
 }
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .card {
+    /* Full-width tap target, comfortably over 44px tall already. */
+    padding: var(--space-3);
+  }
+  .cardMeta {
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+  }
+}

@@ -92,3 +92,30 @@
 .muted {
   color: var(--color-text-muted);
 }
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .summary {
+    gap: var(--space-5);
+    padding: var(--space-4);
+  }
+  .minis {
+    gap: var(--space-5);
+    flex-wrap: wrap;
+  }
+  /* Stack the pull-list actions so each is a comfortable full-width tap. */
+  .actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .actions > * {
+    width: 100%;
+    min-height: 2.75rem; /* 44px touch target */
+  }
+  /* The table can't shrink to a phone; keep it on its own horizontal track
+     (.tableWrap already scrolls) and stop cells wrapping so columns stay read. */
+  .table th,
+  .table td {
+    white-space: nowrap;
+  }
+}
