@@ -6,6 +6,7 @@ import { sendEmail } from "@/lib/email/send";
 import { randomOpaqueId, signToken } from "@/lib/signedTokens";
 import { isAcademicEmail, isNottinghamEmail } from "@/lib/firestore/users";
 import { verifyRecaptcha } from "@/lib/recaptcha/server";
+import { rateLimit, clientIp } from "@/lib/rateLimit";
 import VerifyLoginEmail from "@/emails/VerifyLoginEmail";
 import {
   recordRegistrationCreated,
@@ -16,6 +17,13 @@ import type { SignupOutcome } from "@/lib/firestore/registrations";
 
 const COOLDOWN_SECONDS = 60;
 const TOKEN_TTL_SECONDS = 60 * 30; // 30 minutes
+
+// Abuse throttle. The per-IP cap is generous because a society's members often
+// share one campus NAT; the per-email cap is tighter. reCAPTCHA is the primary
+// bot gate, this is a cheap backstop (see lib/rateLimit).
+const RL_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+const RL_IP_MAX = 30;
+const RL_EMAIL_MAX = 5;
 
 type Body = {
   email?: string;
@@ -56,6 +64,18 @@ export async function POST(req: Request) {
 
   const email = (body.email ?? "").trim().toLowerCase();
 
+  // Per-IP throttle first, before any work or the reCAPTCHA call. A 429 here is
+  // volume-based, not account-state-based, so it leaks nothing about whether the
+  // email is registered (the enumeration guarantee is preserved).
+  const ip = clientIp(req);
+  const ipLimit = rateLimit(`register:ip:${ip}`, RL_IP_MAX, RL_WINDOW_MS);
+  if (!ipLimit.ok) {
+    return NextResponse.json(
+      { error: "Too many attempts. Please wait a few minutes and try again." },
+      { status: 429, headers: { "Retry-After": String(ipLimit.retryAfterSeconds) } },
+    );
+  }
+
   // Format + policy validation. These depend only on the SUBMITTED email, not on
   // whether it's registered, so surfacing them leaks nothing.
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
@@ -71,6 +91,15 @@ export async function POST(req: Request) {
           : "Please use a personal email you'll keep long-term (e.g. you@gmail.com) rather than an academic address.",
       },
       { status: 400 },
+    );
+  }
+
+  // Per-email throttle (after format validation, so we don't bucket garbage).
+  const emailLimit = rateLimit(`register:email:${email}`, RL_EMAIL_MAX, RL_WINDOW_MS);
+  if (!emailLimit.ok) {
+    return NextResponse.json(
+      { error: "Too many attempts for this email. Please wait a few minutes and try again." },
+      { status: 429, headers: { "Retry-After": String(emailLimit.retryAfterSeconds) } },
     );
   }
 
