@@ -49,16 +49,18 @@ export default async function EmailDesignsPage() {
   const rejected = ordered.filter((t) => t.trigger === "rejected");
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-6)" }}>
-      <p style={{ color: "var(--color-text-muted)", margin: 0 }}>
-        Boilerplate transactional emails sent automatically on application lifecycle events.
-        Edit the subject, body and recipients for each template; rejection reasons are picked
-        by the admin at reject time.
-      </p>
+    <div style={{ width: "100%", maxWidth: "60rem", margin: "0 auto" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-6)" }}>
+        <p style={{ color: "var(--color-text-muted)", margin: 0 }}>
+          Boilerplate transactional emails sent automatically on application lifecycle events.
+          Edit the subject, body and recipients for each template; rejection reasons are picked
+          by the admin at reject time.
+        </p>
 
-      <Group heading="When an application is submitted" templates={submitted} />
-      <Group heading="When an application is approved" templates={approved} />
-      <Group heading="Rejection reasons" templates={rejected} />
+        <Group heading="When an application is submitted" templates={submitted} />
+        <Group heading="When an application is approved" templates={approved} />
+        <Group heading="Rejection reasons" templates={rejected} />
+      </div>
     </div>
   );
 }

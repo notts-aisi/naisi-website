@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import { AdminPage } from "@/features/admin/adminList";
 import RegistrationFlags from "@/features/admin/RegistrationFlags";
 import RegistrationRow from "@/features/admin/RegistrationRow";
 import {
@@ -83,7 +84,8 @@ export default function AdminRegistrationsPage() {
   }
 
   return (
-    <div className={styles.page}>
+    <AdminPage>
+      <div className={styles.page}>
       <div className={styles.pageHead}>
         <div>
           <h1 className={styles.pageTitle}>Registrations</h1>
@@ -161,12 +163,11 @@ export default function AdminRegistrationsPage() {
         </Card>
       ) : (
         <>
-          {list.truncated && (
-            <p className={styles.truncatedNote}>
-              Showing the first {list.rows.length} registrations. Use the flags
-              panel for full counts.
-            </p>
-          )}
+          <p className={styles.truncatedNote}>
+            Showing {filtered.length} of {list.rows.length} loaded
+            {list.hasMore ? " (more available)" : ""}. Filters apply to loaded
+            rows only; the flags panel above carries the full counts.
+          </p>
           <div className={styles.list}>
             {filtered.map((r) => (
               <RegistrationRow
@@ -177,8 +178,21 @@ export default function AdminRegistrationsPage() {
               />
             ))}
           </div>
+          {list.hasMore && (
+            <div className={styles.loadMore}>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={list.loadingMore}
+                onClick={() => list.loadMore()}
+              >
+                {list.loadingMore ? "Loading…" : "Load more"}
+              </Button>
+            </div>
+          )}
         </>
       )}
-    </div>
+      </div>
+    </AdminPage>
   );
 }

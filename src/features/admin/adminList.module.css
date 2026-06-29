@@ -1,0 +1,120 @@
+/* Shared building blocks for the admin list pages: an indeterminate loading bar
+   (the registrations one, reused), a footer with "showing X of Y" + Load more +
+   Refresh, and a content-width wrapper so admin pages don't sprawl edge to edge. */
+
+/* Keep admin content to a comfortable reading/scanning width rather than the full
+   shell. Pages opt in by wrapping their content in .page. */
+.page {
+  width: 100%;
+  max-width: 60rem; /* --bp-lg */
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* === Loading bar (shared with the registrations tab) === */
+.loadingRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.loadingBar {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-hover);
+}
+
+.loadingBar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -40%;
+  width: 40%;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  animation: adminLoadingSlide 1.1s ease-in-out infinite;
+}
+
+@keyframes adminLoadingSlide {
+  0% { left: -40%; }
+  100% { left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loadingBar::after {
+    animation: none;
+    left: 0;
+    width: 100%;
+    opacity: 0.35;
+  }
+}
+
+.loadingText {
+  flex-shrink: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* === Footer: summary + Load more + Refresh === */
+.footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding-top: var(--space-2);
+}
+
+.summary {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  margin-right: auto;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem; /* 40px; comfortable touch target */
+  padding: 0.5rem 1rem;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .footer {
+    gap: var(--space-2);
+  }
+  .summary {
+    flex: 1 1 100%;
+    margin-right: 0;
+  }
+  .button {
+    flex: 1 1 auto;
+  }
+}

@@ -5,6 +5,11 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import { downloadCSV, toCSV } from "@/lib/csv";
+import {
+  AdminLoadingBar,
+  AdminListFooter,
+  useClientPagination,
+} from "./adminList";
 import { useNewsletterSubscribers, type Subscriber } from "./useNewsletterSubscribers";
 import styles from "./NewsletterTable.module.css";
 
@@ -38,8 +43,9 @@ function subscribersToCSV(rows: Subscriber[]): string {
 }
 
 export default function NewsletterTable() {
-  const { subs, loading, error } = useNewsletterSubscribers();
+  const { subs, loading, refreshing, error, reload } = useNewsletterSubscribers();
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const { shown, hasMore, loadMore, total, shownCount } = useClientPagination(subs, 20);
 
   const counts = useMemo(() => {
     let gmail = 0;
@@ -76,7 +82,7 @@ export default function NewsletterTable() {
   if (loading) {
     return (
       <Card padding="md">
-        <p style={{ color: "var(--color-text-muted)" }}>Loading subscribers…</p>
+        <AdminLoadingBar label="Loading subscribers…" />
       </Card>
     );
   }
@@ -160,7 +166,7 @@ export default function NewsletterTable() {
               </tr>
             </thead>
             <tbody>
-              {subs.map((s) => (
+              {shown.map((s) => (
                 <tr key={s.uid}>
                   <td>{s.displayName}</td>
                   <td>
@@ -182,6 +188,18 @@ export default function NewsletterTable() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {!loading && !error && total > 0 && (
+        <AdminListFooter
+          shownCount={shownCount}
+          total={total}
+          hasMore={hasMore}
+          onLoadMore={loadMore}
+          onRefresh={reload}
+          refreshing={refreshing}
+          noun="subscribers"
+        />
       )}
     </div>
   );

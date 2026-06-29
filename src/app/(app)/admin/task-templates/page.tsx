@@ -4,6 +4,7 @@ import { useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import { AdminPage } from "@/features/admin/adminList";
 import { useTaskTemplates } from "@/features/tasks/hooks/useTaskTemplates";
 import TemplateEditor from "@/features/tasks/components/TemplateEditor";
 import { TASK_KIND_LABELS } from "@/lib/firestore/tasks";
@@ -20,7 +21,7 @@ export default function TaskTemplatesPage() {
 
   if (mode.kind !== "list") {
     return (
-      <div>
+      <AdminPage>
         <h2 style={{ fontSize: "var(--text-xl)", marginBottom: "var(--space-4)" }}>
           {mode.kind === "create" ? "New task template" : `Edit "${mode.template.name}"`}
         </h2>
@@ -29,12 +30,12 @@ export default function TaskTemplatesPage() {
           onDone={() => setMode({ kind: "list" })}
           onDelete={mode.kind === "edit" ? () => setMode({ kind: "list" }) : undefined}
         />
-      </div>
+      </AdminPage>
     );
   }
 
   return (
-    <div>
+    <AdminPage>
       <div
         style={{
           display: "flex",
@@ -113,6 +114,6 @@ export default function TaskTemplatesPage() {
           ))}
         </div>
       )}
-    </div>
+    </AdminPage>
   );
 }
