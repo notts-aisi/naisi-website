@@ -1,4 +1,5 @@
 import Badge from "@/components/ui/Badge";
+import { MaintenanceNotice } from "@/features/admin/AdminLockUI";
 import ProfileForm from "@/features/profile/ProfileForm";
 
 export default function ProfilePage() {
@@ -12,6 +13,8 @@ export default function ProfilePage() {
         </p>
       </div>
       <ProfileForm />
+      {/* Shows a notice while an admin is editing this member's details. */}
+      <MaintenanceNotice />
     </div>
   );
 }

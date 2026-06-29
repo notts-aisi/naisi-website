@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/firebase/session";
+import AdminPageLockBar from "@/features/admin/AdminLockUI";
 import AdminTabs from "./AdminTabs";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -24,6 +25,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       </div>
       <AdminTabs />
       <div style={{ marginTop: "var(--space-8)" }}>{children}</div>
+      {/* Per-page, one-admin-at-a-time presence lease (keyed on the current admin
+          route). Fail-open: renders nothing unless another admin holds the page. */}
+      <AdminPageLockBar />
     </div>
   );
 }
