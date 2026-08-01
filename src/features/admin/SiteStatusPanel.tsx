@@ -6,7 +6,7 @@ import Button from "@/components/ui/Button";
 import CountedTextarea from "@/components/ui/CountedTextarea";
 import Select from "@/components/ui/Select";
 import Switch from "@/components/ui/Switch";
-import { Field, Input } from "@/components/ui/Input";
+import { Field } from "@/components/ui/Input";
 import { useSiteNoticeState } from "@/features/maintenance/useSiteNotice";
 import bannerStyles from "@/features/maintenance/SiteNoticeBanner.module.css";
 import {
@@ -66,7 +66,7 @@ type ServerState = {
     active: boolean;
     level: SiteNoticeLevel;
     message: string;
-    linkUrl: string | null;
+    details: string;
     endsAt: string | null;
     updatedAt: string | null;
     expiresAt: string | null;
@@ -84,7 +84,7 @@ type Draft = {
   active: boolean;
   level: SiteNoticeLevel;
   message: string;
-  linkUrl: string;
+  details: string;
   expiryMinutes: number;
   paused: Record<SiteNoticeSurface, boolean>;
 };
@@ -93,7 +93,7 @@ const EMPTY_DRAFT: Draft = {
   active: false,
   level: "warn",
   message: "",
-  linkUrl: "",
+  details: "",
   expiryMinutes: 120,
   paused: {
     newRegistrations: false,
@@ -128,7 +128,7 @@ export default function SiteStatusPanel() {
       active: state.notice.active,
       level: state.notice.level,
       message: state.notice.message,
-      linkUrl: state.notice.linkUrl ?? "",
+      details: state.notice.details,
       expiryMinutes: 120,
       paused: { ...state.notice.paused },
     });
@@ -178,7 +178,6 @@ export default function SiteStatusPanel() {
           active: draft.active,
           level: draft.level,
           message: draft.message,
-          linkUrl: draft.linkUrl.trim() || null,
           [SITE_NOTICE_SURFACE_FLAGS.newRegistrations]: draft.paused.newRegistrations,
           [SITE_NOTICE_SURFACE_FLAGS.collaboratorApplications]:
             draft.paused.collaboratorApplications,
@@ -216,16 +215,11 @@ export default function SiteStatusPanel() {
   }
 
   function handleSave() {
-    const linkUrl = draft.linkUrl.trim();
-    if (linkUrl && !linkUrl.startsWith("https://")) {
-      setSaveError("The link must be an https:// URL (or empty).");
-      return;
-    }
     void patch({
       active: draft.active,
       level: draft.level,
       message: draft.message.trim(),
-      linkUrl: linkUrl || null,
+      details: draft.details.trim(),
       endsAt: new Date(Date.now() + draft.expiryMinutes * 60_000).toISOString(),
       [SITE_NOTICE_SURFACE_FLAGS.newRegistrations]: draft.paused.newRegistrations,
       [SITE_NOTICE_SURFACE_FLAGS.collaboratorApplications]:
@@ -391,16 +385,17 @@ export default function SiteStatusPanel() {
             </Field>
 
             <Field
-              id="site-notice-link"
-              label="More-info link (optional)"
-              hint="https:// only. Rendered as a separate “More info” link."
+              id="site-notice-details"
+              label="Log details (optional)"
+              hint="Longer write-up for the public status page and its popup — not shown in the banner, which links there automatically. Plain text; blank lines make paragraphs."
             >
-              <Input
-                id="site-notice-link"
-                type="url"
-                value={draft.linkUrl}
-                onChange={(e) => setDraft((d) => ({ ...d, linkUrl: e.target.value }))}
-                placeholder="https://…"
+              <CountedTextarea
+                id="site-notice-details"
+                value={draft.details}
+                max={SITE_NOTICE_LIMITS.details}
+                rows={6}
+                onChange={(e) => setDraft((d) => ({ ...d, details: e.target.value }))}
+                placeholder={"What broke, what we're doing about it, what still works…"}
               />
             </Field>
 
@@ -431,9 +426,7 @@ export default function SiteStatusPanel() {
                   className={`${bannerStyles.banner} ${bannerStyles[preview.level]} ${styles.previewFrame}`}
                 >
                   <p className={bannerStyles.message}>{preview.bannerMessage}</p>
-                  {preview.linkUrl !== null && (
-                    <span className={bannerStyles.link}>More info</span>
-                  )}
+                  <span className={bannerStyles.link}>Details</span>
                 </div>
               ) : (
                 <p className={styles.liveMeta}>
@@ -488,7 +481,7 @@ export default function SiteStatusPanel() {
           <li><code>active</code> (boolean) — show the banner</li>
           <li><code>level</code> (string) — <code>info</code> | <code>warn</code> | <code>critical</code></li>
           <li><code>message</code> (string) — plain text</li>
-          <li><code>linkUrl</code> (string) — https:// only, else ignored</li>
+          <li><code>details</code> (string) — longer status-page copy, plain text</li>
           <li><code>endsAt</code> (timestamp) — auto-clear time; without it the notice clears 24h after <code>updatedAt</code></li>
           {SITE_NOTICE_SURFACES.map((surface) => (
             <li key={surface}>

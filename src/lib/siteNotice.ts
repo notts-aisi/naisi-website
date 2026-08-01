@@ -87,14 +87,16 @@ export type MaintenanceLogEntry = {
   endsAt: Date | null;
   level: SiteNoticeLevel;
   message: string;
-  linkUrl: string | null;
+  details: string;
   paused: Record<SiteNoticeSurface, boolean>;
   ongoing: boolean;
 };
 
 export const SITE_NOTICE_LIMITS = {
   message: 500,
-  linkUrl: 300,
+  /** Long-form status-page copy. Plain text with line breaks ONLY — the doc
+      is world-readable and rendered publicly, so no HTML/markdown, ever. */
+  details: 4000,
 } as const;
 
 /** Admin-UI expiry choices: default 2h, hard cap 24h. */
@@ -109,8 +111,8 @@ export type SiteNotice = {
   active: boolean;
   level: SiteNoticeLevel;
   message: string;
-  /** Optional "more info" link; only https:// URLs survive normalisation. */
-  linkUrl: string | null;
+  /** Long-form plain text for the /status page (never in the banner). */
+  details: string;
   endsAt: Date | null;
   updatedAt: Date | null;
   paused: Record<SiteNoticeSurface, boolean>;
@@ -129,7 +131,7 @@ export const DEFAULT_SITE_NOTICE: SiteNotice = Object.freeze({
   active: false,
   level: "info",
   message: "",
-  linkUrl: null,
+  details: "",
   endsAt: null,
   updatedAt: null,
   paused: Object.freeze({
@@ -189,12 +191,10 @@ export function normaliseSiteNotice(data: unknown, now: Date): SiteNotice {
     typeof raw.message === "string"
       ? raw.message.trim().slice(0, SITE_NOTICE_LIMITS.message)
       : "";
-  const linkUrl =
-    typeof raw.linkUrl === "string" &&
-    raw.linkUrl.startsWith("https://") &&
-    raw.linkUrl.length <= SITE_NOTICE_LIMITS.linkUrl
-      ? raw.linkUrl
-      : null;
+  const details =
+    typeof raw.details === "string"
+      ? raw.details.trim().slice(0, SITE_NOTICE_LIMITS.details)
+      : "";
   const endsAt = coerceDate(raw.endsAt);
   const updatedAt = coerceDate(raw.updatedAt);
 
@@ -218,7 +218,7 @@ export function normaliseSiteNotice(data: unknown, now: Date): SiteNotice {
     active,
     level,
     message,
-    linkUrl,
+    details,
     endsAt,
     updatedAt,
     paused,
@@ -260,12 +260,10 @@ export function normaliseLogEntry(
     typeof raw.message === "string"
       ? raw.message.trim().slice(0, SITE_NOTICE_LIMITS.message)
       : "";
-  const linkUrl =
-    typeof raw.linkUrl === "string" &&
-    raw.linkUrl.startsWith("https://") &&
-    raw.linkUrl.length <= SITE_NOTICE_LIMITS.linkUrl
-      ? raw.linkUrl
-      : null;
+  const details =
+    typeof raw.details === "string"
+      ? raw.details.trim().slice(0, SITE_NOTICE_LIMITS.details)
+      : "";
   const rawPaused =
     raw.paused !== null && typeof raw.paused === "object" && !Array.isArray(raw.paused)
       ? (raw.paused as Record<string, unknown>)
@@ -276,5 +274,5 @@ export function normaliseLogEntry(
   }
   const ongoing =
     clearedAt === null && (endsAt === null || now.getTime() < endsAt.getTime());
-  return { id, startedAt, clearedAt, endsAt, level, message, linkUrl, paused, ongoing };
+  return { id, startedAt, clearedAt, endsAt, level, message, details, paused, ongoing };
 }

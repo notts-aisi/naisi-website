@@ -65,7 +65,7 @@ async function readState(db: FirebaseFirestore.Firestore) {
       active: notice.active,
       level: notice.level,
       message: notice.message,
-      linkUrl: notice.linkUrl,
+      details: notice.details,
       endsAt: notice.endsAt?.toISOString() ?? null,
       updatedAt: notice.updatedAt?.toISOString() ?? null,
       expiresAt: notice.expiresAt?.toISOString() ?? null,
@@ -134,23 +134,18 @@ export async function PATCH(req: Request) {
     update.message = message;
   }
 
-  if ("linkUrl" in body) {
-    if (body.linkUrl === null || body.linkUrl === "") {
-      update.linkUrl = null;
-    } else if (
-      typeof body.linkUrl !== "string" ||
-      !body.linkUrl.startsWith("https://") ||
-      body.linkUrl.length > SITE_NOTICE_LIMITS.linkUrl
-    ) {
+  if ("details" in body) {
+    if (typeof body.details !== "string") {
+      return NextResponse.json({ error: "`details` must be a string" }, { status: 400 });
+    }
+    const details = body.details.trim();
+    if (details.length > SITE_NOTICE_LIMITS.details) {
       return NextResponse.json(
-        {
-          error: `\`linkUrl\` must be an https:// URL of ≤ ${SITE_NOTICE_LIMITS.linkUrl} characters (or null)`,
-        },
+        { error: `\`details\` must be ≤ ${SITE_NOTICE_LIMITS.details} characters` },
         { status: 400 },
       );
-    } else {
-      update.linkUrl = body.linkUrl;
     }
+    update.details = details;
   }
 
   if ("endsAt" in body) {
@@ -224,7 +219,7 @@ export async function PATCH(req: Request) {
   const logSnapshot = {
     level: after.level,
     message: after.message,
-    linkUrl: after.linkUrl,
+    details: after.details,
     endsAt: after.endsAt,
     paused: after.paused,
     updatedAt: FieldValue.serverTimestamp(),

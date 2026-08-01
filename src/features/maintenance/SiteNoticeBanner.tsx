@@ -82,19 +82,10 @@ export function SiteNoticeBanner() {
       aria-live="polite"
     >
       <p className={styles.message}>{notice.bannerMessage}</p>
-      <Link className={styles.link} href="/status#log">
+      {/* Lands on /status with the current notice's detail popup open. */}
+      <Link className={styles.link} href="/status?open=current#log">
         Details
       </Link>
-      {notice.linkUrl !== null && (
-        <a
-          className={styles.link}
-          href={notice.linkUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          More info
-        </a>
-      )}
       {notice.level === "info" && (
         <button
           type="button"

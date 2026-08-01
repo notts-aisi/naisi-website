@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import StatusPage from "@/features/maintenance/StatusPage";
 
@@ -8,5 +9,11 @@ export const metadata: Metadata = {
 };
 
 export default function StatusRoute() {
-  return <StatusPage />;
+  // Suspense boundary because StatusPage reads useSearchParams (the banner's
+  // Details link arrives as /status?open=current to auto-open the popup).
+  return (
+    <Suspense fallback={null}>
+      <StatusPage />
+    </Suspense>
+  );
 }

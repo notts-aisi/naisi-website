@@ -190,6 +190,11 @@
 .timelineDot.levelWarn { background: var(--color-warning); }
 .timelineDot.levelCritical { background: var(--color-danger); }
 
+/* Resolved episodes go green — orange/red is reserved for live trouble. */
+.dotResolved {
+  background: var(--color-success);
+}
+
 .dotOngoing {
   animation: dotPulse 1.6s ease-in-out infinite;
 }
@@ -242,17 +247,74 @@
   font-size: var(--text-sm);
 }
 
-.ongoingBadge {
-  color: var(--color-warning);
-  font-weight: 700;
-  text-transform: uppercase;
+.stateBadge {
   font-size: var(--text-xs);
+  font-weight: 700;
   letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.1rem var(--space-2);
+  border-radius: 999px;
+}
+
+.stateBadgeOngoing {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning);
+}
+
+.stateBadgeDone {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  border: 1px solid var(--color-success);
 }
 
 .entryMessage {
   margin: 0;
   line-height: 1.5;
+  font-weight: 600;
+}
+
+.entryDetailsPreview {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* Long entries clamp with a fade toward the bottom; the popup has the rest. */
+.entryBody {
+  position: relative;
+}
+
+.entryBodyClamped {
+  max-height: 7.5rem;
+  overflow: hidden;
+}
+
+.entryBodyClamped::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3rem;
+  background: linear-gradient(to bottom, transparent, var(--color-bg-elevated));
+  pointer-events: none;
+}
+
+.moreButton {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  margin-top: var(--space-2);
+  color: var(--color-accent);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
 
 .entryMeta {
@@ -264,6 +326,78 @@
 .entryMeta a {
   color: var(--color-accent);
   text-decoration: underline;
+}
+
+/* ===== Detail popup ===== */
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: rgba(3, 5, 10, 0.55);
+  backdrop-filter: blur(6px) saturate(0.9);
+  -webkit-backdrop-filter: blur(6px) saturate(0.9);
+}
+
+.modal {
+  position: relative;
+  width: 100%;
+  max-width: 34rem;
+  max-height: 85dvh;
+  overflow-y: auto;
+  padding: var(--space-6);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+.modalClose {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  appearance: none;
+  border: 1px solid var(--color-border);
+  background: none;
+  color: var(--color-text-muted);
+  border-radius: var(--radius-sm, 4px);
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.modalClose:hover {
+  color: var(--color-text);
+  border-color: var(--color-text-muted);
+}
+
+.modalWhen {
+  margin: var(--space-3) 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.modalMessage {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: 1.4;
+  padding-right: var(--space-8);
+}
+
+.modalDetails {
+  margin: var(--space-3) 0 0;
+  color: var(--color-text-muted);
+  line-height: 1.6;
+  white-space: pre-wrap;
 }
 
 .visuallyHidden {
