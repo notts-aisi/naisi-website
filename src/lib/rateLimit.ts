@@ -73,12 +73,29 @@ export function rateLimit(
  * Best-effort client IP from the proxy headers App Hosting / Cloud Run set.
  * Falls back to a constant so a missing header buckets everyone together rather
  * than disabling the limiter.
+ *
+ * Read the header from the RIGHT, never the left. Google's load balancer emits
+ * `X-Forwarded-For: <existing-value>,<client-ip>,<load-balancer-ip>` and does
+ * NOT validate anything preceding `<client-ip>` — whatever the caller sent is
+ * preserved verbatim at the front. Taking the leftmost entry therefore lets a
+ * caller pick their own rate-limit bucket (send a random value per request and
+ * the per-IP throttle never fires). The infrastructure only ever appends, so
+ * the trustworthy entries are at the end: second-to-last is the real client.
+ *
+ * With a single entry there is no load balancer in front (local dev, or a
+ * direct container hit), so that entry is the peer and is used as-is. Erring
+ * toward over-grouping is deliberate: sharing a bucket costs a legitimate user
+ * a 429 at worst, whereas trusting a spoofable value disables the limiter.
  */
 export function clientIp(req: Request): string {
   const xff = req.headers.get("x-forwarded-for");
   if (xff) {
-    const first = xff.split(",")[0]?.trim();
-    if (first) return first;
+    const parts = xff
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length >= 2) return parts[parts.length - 2];
+    if (parts.length === 1) return parts[0];
   }
   return req.headers.get("x-real-ip")?.trim() || "unknown";
 }
