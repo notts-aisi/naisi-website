@@ -36,7 +36,9 @@ const E2E_DIR = join(REPO_ROOT, "scripts", "e2e");
  * assignment from a variable.
  */
 const FORBIDDEN_PRIVILEGE = [
-  /["'`]?\brole["'`]?\s*:\s*/,
+  // Any role literal other than "pending" — Phase 2 seeds a pending user doc
+  // (the lowest role, which grants access to nothing) and nothing above it.
+  /\brole["'`]?\s*:\s*["'`](?!pending)/,
   /["'`]?\bsuRecognised["'`]?\s*:/,
   /["'`]?\bpermissions["'`]?\s*:/,
   /\bdraftNewsletter\b/,
@@ -47,24 +49,17 @@ const FORBIDDEN_PRIVILEGE = [
 ];
 
 /**
- * Firestore reachability. Rather than enumerate write verbs — which cannot be
- * done cleanly, since `.update(` is also a crypto method and a narrower call
- * chain is trivially evaded by a line break — this asserts the harness never
- * obtains a Firestore handle at all. No handle, no writes and no reads: a
- * strictly stronger property, and one that cannot false-positive on
- * `createHmac().update()`.
+ * Phase 1 asserted the harness never obtained a Firestore handle at all.
+ * Phase 2 needs one: its headline assertion is that
+ * `users/{uid}.profile.uniEmailVerifiedAt` really landed, and only an Admin-SDK
+ * read proves that (the UI reads "verified" either way — which is precisely why
+ * the two-phase stamp gap was invisible by hand and needed PR #216).
+ *
+ * So the invariant narrowed rather than vanished: Firestore is reachable, but
+ * only these two collections are. dev holds real member data, and a harness
+ * able to address any collection is one bad edit away from touching it.
  */
-const FORBIDDEN_FIRESTORE = [
-  /firebase-admin\/firestore/,
-  /\bgetFirestore\b/,
-  /\.firestore\(/,
-  /\bcollection\(/,
-  /\bsetDoc\b/,
-  /\baddDoc\b/,
-  /\bupdateDoc\b/,
-  /\bdeleteDoc\b/,
-  /\bFieldValue\b/,
-];
+const ALLOWED_COLLECTIONS = ["users", "emailVerifications"];
 
 function sourceFiles(dir) {
   if (!existsSync(dir)) return [];
@@ -93,16 +88,23 @@ test("the e2e harness never grants a role, permission, or suRecognised", () => {
   }
 });
 
-test("the e2e harness never reaches Firestore at all", () => {
+test("the e2e harness only ever addresses allowlisted Firestore collections", () => {
   for (const file of sourceFiles(E2E_DIR)) {
     const source = readFileSync(file, "utf8");
-    for (const pattern of FORBIDDEN_FIRESTORE) {
+    for (const match of source.matchAll(/\.collection\(\s*["'`]([^"'`]+)["'`]/g)) {
       assert.ok(
-        !pattern.test(source),
-        `${relative(REPO_ROOT, file)} matches ${pattern} — the harness runs against the ` +
-          "dev project, which holds real member data. Its only mutations anywhere are " +
-          "creating and deleting its own namespaced Auth accounts; it must not obtain a " +
-          "Firestore handle, for reading or writing.",
+        ALLOWED_COLLECTIONS.includes(match[1]),
+        `${relative(REPO_ROOT, file)} addresses collection ${JSON.stringify(match[1])} — ` +
+          `the harness may only reach ${ALLOWED_COLLECTIONS.join(", ")}. dev holds real ` +
+          "member data.",
+      );
+    }
+    // A non-literal collection name defeats the check above, so forbid it.
+    for (const match of source.matchAll(/\.collection\(\s*([^"'`\s)])/g)) {
+      assert.fail(
+        `${relative(REPO_ROOT, file)} builds a collection name dynamically (` +
+          `.collection(${match[1]}…) — use a string literal so the allowlist above ` +
+          "can actually see it.",
       );
     }
   }

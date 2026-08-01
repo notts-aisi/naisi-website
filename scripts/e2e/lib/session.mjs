@@ -64,9 +64,9 @@ function readSessionCookie(res) {
  * need only "is somebody signed in", and anything more would be a privilege
  * this harness has no business creating.
  */
-export async function withHarnessSession(id) {
+export async function withHarnessSession(id, options = {}) {
   const env = loadEnv();
-  const { uid, email } = await createHarnessUser(id);
+  const { uid, email } = await createHarnessUser(id, options);
   let cookie = null;
   try {
     const customToken = await adminAuth().createCustomToken(uid);
