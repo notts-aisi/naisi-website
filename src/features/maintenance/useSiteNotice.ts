@@ -11,17 +11,30 @@ import {
 } from "@/lib/siteNotice";
 
 /**
- * Live subscription to `publicConfig/siteNotice`. One instance is mounted for
- * the whole app (inside <SiteNoticeBanner /> in the root layout); Firestore
- * multiplexes the doc listen onto the connection AuthProvider already holds,
- * so this costs no extra bundle and no extra channel.
+ * "loading" until the first snapshot answers, then "live"; "error" when the
+ * listener fails (offline, permission-denied). The banner ignores this —
+ * unknown and error both render nothing there (fail-open). Surfaces that make
+ * AFFIRMATIVE claims (the /status lights, the panel's live section) must not:
+ * a green "Operational" shown before the feed has answered is a lie in the
+ * optimistic direction, so they render loading/unknown states instead.
+ */
+export type SiteNoticeConnection = "loading" | "live" | "error";
+
+/**
+ * Live subscription to `publicConfig/siteNotice`. Firestore multiplexes the
+ * doc listen onto the connection AuthProvider already holds, so extra
+ * subscribers cost no extra bundle and no extra channel.
  *
  * FAIL-OPEN: any listener error (offline, permission-denied, a rules deploy
  * in flight) and any normalisation surprise resolves to DEFAULT_SITE_NOTICE —
  * notice off. Same shape as the useAdminLock error callback.
  */
-export function useSiteNotice(): SiteNotice {
+export function useSiteNoticeState(): {
+  notice: SiteNotice;
+  connection: SiteNoticeConnection;
+} {
   const [raw, setRaw] = useState<unknown>(null);
+  const [connection, setConnection] = useState<SiteNoticeConnection>("loading");
   // Bumped when `expiresAt` passes so an already-open tab re-evaluates the
   // read-time expiry without needing a fresh snapshot from the server.
   const [expiryTick, setExpiryTick] = useState(0);
@@ -35,15 +48,19 @@ export function useSiteNotice(): SiteNotice {
         ref,
         (snap) => {
           setRaw(snap.exists() ? snap.data() : null);
+          setConnection("live");
         },
         () => {
           // Permission/connectivity failure → fail open, notice off.
           setRaw(null);
+          setConnection("error");
         },
       );
     } catch {
       // Firebase init failure (missing config, etc) → never subscribed, and
       // `raw` still holds its initial null → fail open, notice off.
+      // (Microtask keeps the setState out of the effect's synchronous body.)
+      queueMicrotask(() => setConnection("error"));
     }
     return () => {
       unsubscribe?.();
@@ -72,5 +89,9 @@ export function useSiteNotice(): SiteNotice {
     return () => clearTimeout(id);
   }, [notice]);
 
-  return notice;
+  return { notice, connection };
+}
+
+export function useSiteNotice(): SiteNotice {
+  return useSiteNoticeState().notice;
 }

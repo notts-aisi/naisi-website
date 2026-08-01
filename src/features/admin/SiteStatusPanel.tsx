@@ -7,7 +7,7 @@ import CountedTextarea from "@/components/ui/CountedTextarea";
 import Select from "@/components/ui/Select";
 import Switch from "@/components/ui/Switch";
 import { Field, Input } from "@/components/ui/Input";
-import { useSiteNotice } from "@/features/maintenance/useSiteNotice";
+import { useSiteNoticeState } from "@/features/maintenance/useSiteNotice";
 import bannerStyles from "@/features/maintenance/SiteNoticeBanner.module.css";
 import {
   SITE_NOTICE_LEVELS,
@@ -111,8 +111,9 @@ function formatRemaining(ms: number): string {
 }
 
 export default function SiteStatusPanel() {
-  // What every visitor's banner currently shows, live.
-  const live = useSiteNotice();
+  // What every visitor's banner currently shows, live. Before the first
+  // snapshot answers, say "checking" — never a premature "No notice".
+  const { notice: live, connection } = useSiteNoticeState();
 
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [audit, setAudit] = useState<ServerState["audit"] | null>(null);
@@ -254,13 +255,31 @@ export default function SiteStatusPanel() {
           <h2 className={styles.sectionTitle}>Live status</h2>
           <span
             className={`${styles.statusPill} ${
-              live.bannerVisible ? styles.statusOn : styles.statusOff
+              connection !== "live"
+                ? styles.statusChecking
+                : live.bannerVisible
+                  ? styles.statusOn
+                  : styles.statusOff
             }`}
           >
-            {live.bannerVisible ? `NOTICE UP — ${live.level}` : "No notice"}
+            {connection === "loading"
+              ? "Checking…"
+              : connection === "error"
+                ? "Feed unreachable"
+                : live.bannerVisible
+                  ? `NOTICE UP — ${live.level}`
+                  : "No notice"}
           </span>
         </div>
-        {live.bannerVisible ? (
+        {connection === "loading" ? (
+          <p className={styles.liveMeta}>Waiting for the live feed…</p>
+        ) : connection === "error" ? (
+          <p className={styles.liveMeta}>
+            Can&apos;t reach the live notice feed from this browser — what
+            visitors see cannot be confirmed right now. Saves below still go
+            through the server.
+          </p>
+        ) : live.bannerVisible ? (
           <>
             <p className={styles.liveMessage}>“{live.bannerMessage}”</p>
             <p className={styles.liveMeta}>
@@ -297,7 +316,7 @@ export default function SiteStatusPanel() {
           written on saves from this panel; break-glass console flips don&apos;t
           appear there, though the lights stay correct).
         </p>
-        {live.bannerVisible && (
+        {connection === "live" && live.bannerVisible && (
           <div className={styles.actionsRow}>
             <Button onClick={handleSwitchOff} disabled={saving}>
               {saving ? "Working…" : "Switch everything off now"}

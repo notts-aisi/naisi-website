@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { getClientDb } from "@/lib/firebase/client";
-import { useSiteNotice } from "./useSiteNotice";
+import { useSiteNoticeState } from "./useSiteNotice";
 import { formatEta } from "./SurfacePausedNotice";
 import {
   MAINTENANCE_LOG_LIMIT,
@@ -40,8 +40,9 @@ function formatStamp(date: Date): string {
 }
 
 export default function StatusPage() {
-  const live = useSiteNotice();
+  const { notice: live, connection } = useSiteNoticeState();
   const [entries, setEntries] = useState<MaintenanceLogEntry[]>([]);
+  const [logState, setLogState] = useState<"loading" | "ready" | "error">("loading");
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
@@ -61,11 +62,16 @@ export default function StatusPage() {
               .map((doc) => normaliseLogEntry(doc.id, doc.data(), now))
               .filter((entry): entry is MaintenanceLogEntry => entry !== null),
           );
+          setLogState("ready");
         },
-        () => setEntries([]), // fail open — no history beats fabricated history
+        () => {
+          // Fail open — no history beats fabricated history.
+          setEntries([]);
+          setLogState("error");
+        },
       );
     } catch {
-      // Firebase init failure → keep the empty log.
+      queueMicrotask(() => setLogState("error"));
     }
     return () => {
       unsubscribe?.();
@@ -92,7 +98,7 @@ export default function StatusPage() {
         </p>
       </header>
 
-      {live.bannerVisible && (
+      {connection === "live" && live.bannerVisible && (
         <div className={`${styles.noticeCard} ${LEVEL_CLASS[live.level]}`}>
           <p className={styles.noticeMessage}>{live.bannerMessage}</p>
           <p className={styles.noticeMeta}>
@@ -115,29 +121,55 @@ export default function StatusPage() {
         <h2 id="availability-heading" className={styles.sectionTitle}>
           Availability
         </h2>
-        <ul className={styles.serviceList}>
-          {SITE_NOTICE_SURFACES.map((surface) => {
-            const paused = live.paused[surface];
-            const lightClass = !paused
-              ? styles.lightGreen
-              : live.level === "critical"
-                ? styles.lightRed
-                : styles.lightAmber;
-            return (
-              <li key={surface} className={styles.serviceRow}>
-                <span className={`${styles.light} ${lightClass}`} aria-hidden />
-                <span className={styles.serviceName}>
-                  {SITE_NOTICE_SURFACE_NAMES[surface]}
-                </span>
-                <span
-                  className={`${styles.serviceState} ${paused ? styles.statePaused : styles.stateOk}`}
-                >
-                  {paused ? "Paused" : "Operational"}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
+        {connection === "loading" ? (
+          // Never show a light before the feed has answered: a premature
+          // green is an "Operational" claim nobody has actually made.
+          <div className={styles.loadingRow} role="status">
+            <span className={styles.spinner} aria-hidden />
+            Checking current status…
+          </div>
+        ) : (
+          <>
+            <ul className={styles.serviceList}>
+              {SITE_NOTICE_SURFACES.map((surface) => {
+                const unknown = connection === "error";
+                const paused = live.paused[surface];
+                const lightClass = unknown
+                  ? styles.lightUnknown
+                  : !paused
+                    ? styles.lightGreen
+                    : live.level === "critical"
+                      ? styles.lightRed
+                      : styles.lightAmber;
+                return (
+                  <li key={surface} className={styles.serviceRow}>
+                    <span className={`${styles.light} ${lightClass}`} aria-hidden />
+                    <span className={styles.serviceName}>
+                      {SITE_NOTICE_SURFACE_NAMES[surface]}
+                    </span>
+                    <span
+                      className={`${styles.serviceState} ${
+                        unknown
+                          ? styles.stateUnknown
+                          : paused
+                            ? styles.statePaused
+                            : styles.stateOk
+                      }`}
+                    >
+                      {unknown ? "Unknown" : paused ? "Paused" : "Operational"}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+            {connection === "error" && (
+              <p className={styles.smallPrint}>
+                We can&apos;t reach the status feed right now — these lights may
+                be out of date. Check your connection and try again.
+              </p>
+            )}
+          </>
+        )}
         <p className={styles.smallPrint}>
           Sign-in and password reset run directly against Firebase and are
           always reachable from here even during app maintenance.
@@ -149,7 +181,16 @@ export default function StatusPage() {
           Maintenance log
         </h2>
 
-        {entries.length === 0 ? (
+        {logState === "loading" ? (
+          <div className={styles.loadingRow} role="status">
+            <span className={styles.spinner} aria-hidden />
+            Loading history…
+          </div>
+        ) : logState === "error" ? (
+          <p className={styles.smallPrint}>
+            Couldn&apos;t load the maintenance log right now.
+          </p>
+        ) : entries.length === 0 ? (
           <p className={styles.smallPrint}>
             No maintenance events on record. If a banner is showing without an
             entry here, it was raised through the emergency path — the banner is
