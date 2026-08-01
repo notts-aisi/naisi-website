@@ -17,7 +17,12 @@
  * "google.com") never runs under this harness. Google sign-in is not
  * automatable — see README.
  */
-import { adminAuth, createHarnessUser, deleteHarnessUser } from "./admin.mjs";
+import {
+  adminAuth,
+  createHarnessUser,
+  deleteHarnessUser,
+  isHarnessAccount,
+} from "./admin.mjs";
 import { loadEnv } from "./env.mjs";
 
 const IDENTITY_TOOLKIT = "https://identitytoolkit.googleapis.com/v1";
@@ -111,6 +116,30 @@ export async function sessionCookieFromIdToken(idToken) {
   const cookie = readSessionCookie(res);
   if (!cookie) throw new Error("POST /api/auth/session returned no __session cookie.");
   return cookie;
+}
+
+/**
+ * Session cookie for an account that ALREADY exists — the local /api/register
+ * batteries need this, because there the ROUTE creates the account and the
+ * harness only ever learns its uid afterwards. Same custom-token → Identity
+ * Toolkit → /api/auth/session chain as withHarnessSession, without the create.
+ */
+export async function sessionCookieForUid(uid) {
+  const env = loadEnv();
+  // Namespace-guarded like every other uid-taking helper here. Without this it
+  // is a "mint me a working session for any uid" primitive, and dev holds real
+  // members' accounts — one mistaken uid would be a live session as a real
+  // person, against real PII.
+  const record = await adminAuth().getUser(uid);
+  if (!isHarnessAccount(record.email)) {
+    throw new Error(
+      `REFUSING to mint a session for ${uid}: its email is not a harness account. ` +
+        "This helper exists for accounts /api/register created during a local run.",
+    );
+  }
+  const customToken = await adminAuth().createCustomToken(uid);
+  const idToken = await exchangeCustomToken(customToken, env.webApiKey);
+  return sessionCookieFromIdToken(idToken);
 }
 
 /** fetch() against the target with the harness session attached. */

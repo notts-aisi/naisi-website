@@ -43,7 +43,36 @@ function init(): App | undefined {
       // would silently read and write PRODUCTION data. Undefined here on App
       // Hosting (no FIREBASE_ADMIN_* is set there, by design — see
       // apphosting.yaml), where the metadata server supplies it as before.
-      _app = initializeApp({ credential: applicationDefault(), projectId });
+      //
+      // `serviceAccountId` names the service account IAM signs custom tokens
+      // as when the credential itself cannot sign (a user ADC has no private
+      // key; the caller needs roles/iam.serviceAccountTokenCreator on that
+      // account). On App Hosting it stays undefined — the metadata server
+      // already supplies a signing identity — so this only takes effect for a
+      // local server run under `gcloud auth application-default login`, where
+      // createCustomToken (the login magic-link confirm) would otherwise fail.
+      // It is REQUIRED to belong to `projectId`. Tokens are signed by whichever
+      // account this names, so an id from another project — a stale line in
+      // .env.local, a copied snapshot — would have a dev-pinned app minting
+      // custom tokens valid against PRODUCTION, which is exactly the direction
+      // the projectId pin above exists to prevent. Ignored with a loud warning
+      // rather than honoured, so the failure is "createCustomToken doesn't
+      // work" and not a silent cross-project signing capability.
+      const serviceAccountId = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT_ID;
+      const signerMatchesProject =
+        !!serviceAccountId && !!projectId && serviceAccountId.endsWith(`@${projectId}.iam.gserviceaccount.com`);
+      if (serviceAccountId && !signerMatchesProject) {
+        console.error(
+          `[firebase-admin] IGNORING FIREBASE_ADMIN_SERVICE_ACCOUNT_ID=${serviceAccountId}: ` +
+            `it does not belong to project ${projectId}. A signer from another project would ` +
+            "mint custom tokens valid against that project.",
+        );
+      }
+      _app = initializeApp({
+        credential: applicationDefault(),
+        projectId,
+        ...(signerMatchesProject ? { serviceAccountId } : {}),
+      });
     }
   } catch (err) {
     console.error("[firebase-admin] initialization failed:", err);

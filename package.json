@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --test tests/",
-    "e2e": "node --test scripts/e2e/tests/"
+    "e2e": "node --test scripts/e2e/tests/",
+    "e2e:local": "node scripts/e2e/run.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

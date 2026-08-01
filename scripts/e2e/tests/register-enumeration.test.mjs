@@ -23,15 +23,28 @@
  *    can reach a real recipient, but the send is still attempted; prefer SMTP
  *    redirected to a local catcher (Mailpit, Phase 4).
  *
- * Set E2E_ALLOW_REGISTER=1 in .env.e2e.local, with a localhost target and mail
- * redirected, to run it. The assertions below are complete and ready.
+ * `npm run e2e:local` arms it: run.mjs starts exactly that server (loopback
+ * bind, always-pass secret in its environment only, SMTP pointed at Mailpit)
+ * and sets E2E_ALLOW_REGISTER=1 for the test process.
+ *
+ * "Loopback target + E2E_ALLOW_REGISTER=1" is NOT sufficient on its own, and
+ * the gate below does not stop there. Both are ambient-settable, so
+ * `E2E_ALLOW_REGISTER=1 E2E_TARGET=http://127.0.0.1:3000 npm run e2e` would
+ * otherwise arm this against an operator's own `npm run dev` — a server whose
+ * SMTP is the REAL credentials in .env.local. The fixtures are `.invalid` so
+ * no inbox could receive them, but the send would still be ATTEMPTED through
+ * production's sender, producing real rejections against the domain whose
+ * deliverability the newsletter depends on. So the battery proves the server's
+ * mail actually lands in Mailpit before it registers anything.
  * ---------------------------------------------------------------------------
  */
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { loadEnv, runId } from "../lib/env.mjs";
-import { createHarnessUser, deleteHarnessUser } from "../lib/admin.mjs";
+import { loadEnv, isLoopbackOrigin, runId } from "../lib/env.mjs";
+import { createHarnessUser, deleteHarnessUser, harnessUserByEmail } from "../lib/admin.mjs";
+import { deleteEmailVerificationsFor, deleteRegistrationRow } from "../lib/firestore.mjs";
 import { anonFetch } from "../lib/session.mjs";
+import { proveSmtpReachesMailpit } from "../lib/mailpit.mjs";
 
 const REGISTER = "/api/register";
 
@@ -54,22 +67,54 @@ describe("/api/register account enumeration", () => {
   let env;
   let skipReason = null;
   const created = [];
+  // Addresses the ROUTE was given. Its fresh branch creates an Auth user, a
+  // registrations/{uid} tracker row, and an emailVerifications doc whose id the
+  // enumeration-uniform response deliberately hides — teardown finds all three
+  // by address instead.
+  const routeEmails = [];
 
-  before(() => {
+  before(async () => {
     env = loadEnv();
     if (!env.allowRegister) {
       skipReason =
         "E2E_ALLOW_REGISTER is not 1 — /api/register is reCAPTCHA-gated and its " +
         "fresh-address branch sends real email. See the header of this file.";
-    } else if (!env.origin.startsWith("http://127.0.0.1") && !env.origin.startsWith("http://localhost")) {
+      return;
+    }
+    if (!isLoopbackOrigin(env.origin)) {
       skipReason =
         `Refusing to exercise /api/register against ${env.origin}. This battery is ` +
         "local-only: a captcha-relaxed registration endpoint on a public host is a " +
         "mail relay aligned with production's sending domain.";
+      return;
     }
+    // Loopback is necessary but NOT sufficient — an operator's own `npm run dev`
+    // is loopback too, and its SMTP is real. Prove the mail lands in the local
+    // catcher, with a probe address that is undeliverable under every SMTP
+    // configuration, before registering anything else.
+    const probe = `e2e-${runId()}probe@e2e.invalid`;
+    skipReason = await proveSmtpReachesMailpit(probe, async (address) => {
+      routeEmails.push(address);
+      const res = await anonFetch(REGISTER, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: address, recaptchaToken: "e2e-test-token" }),
+      });
+      if (res.status !== 200) {
+        throw new Error(`probe register returned ${res.status}`);
+      }
+    });
   });
 
   after(async () => {
+    for (const email of routeEmails) {
+      const routeUser = await harnessUserByEmail(email).catch(() => null);
+      if (routeUser) {
+        await deleteRegistrationRow(routeUser.uid).catch(() => {});
+        await deleteHarnessUser(routeUser.uid).catch(() => {});
+      }
+      await deleteEmailVerificationsFor(email).catch(() => {});
+    }
     for (const uid of created) {
       await deleteHarnessUser(uid).catch(() => {});
     }
@@ -98,6 +143,9 @@ describe("/api/register account enumeration", () => {
     created.push(a.uid, b.uid);
 
     const fresh = `e2e-${freshId}@e2e.invalid`;
+    // The fresh probe makes the route create an account; the unverified probe
+    // makes it mint a (re)send token doc. Both need address-based teardown.
+    routeEmails.push(fresh, a.email);
     const [freshRes, unverifiedRes, verifiedRes] = [
       await observable(fresh),
       await observable(a.email),
