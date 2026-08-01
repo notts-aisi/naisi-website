@@ -145,16 +145,42 @@ describe("task attachments — the suRecognised divergence", () => {
   });
 });
 
-describe("application-emails — the drift check", () => {
-  it("is denied by the committed rules, for an admin, on the exact path the app uses", async () => {
-    // EmailDesignEditor uploads to `application-emails/{templateId}/...`, and
-    // no committed block covers it. If this test ever starts FAILING, the repo
-    // gained a rule — good. If the feature works in production while this
-    // passes, the DEPLOYED ruleset is a superset of the repo, which is the
-    // drift that broke event-image uploads once already.
+describe("application-emails — was missing entirely, broke prod", () => {
+  // Confirmed broken on production 2026-08-01: uploading an image in the Email
+  // designs tab failed with storage/unauthorized on
+  // `application-emails/application-submitted/application-submitted/...`.
+  // No block covered the path, so it hit deny-by-default. These tests pin the
+  // rule that fixes it — including the double-nested path the editor builds.
+  it("allows an admin to upload, on the exact path the editor uses", async () => {
     await seedUser("admin1", { role: "admin" });
     const s = await storageAsUser("admin1");
-    await assertFails(s.ref("application-emails/tpl1/tpl1/x.png").put(PNG, png));
+    await assertSucceeds(
+      s.ref("application-emails/application-submitted/application-submitted/x.png").put(PNG, png),
+    );
+  });
+
+  it("blocks a non-admin, including a newsletter drafter", async () => {
+    await seedUser("drafter", { role: "member", permissions: { draftNewsletter: true } });
+    const s = await storageAsUser("drafter");
+    await assertFails(s.ref("application-emails/tpl1/x.png").put(PNG, png));
+  });
+
+  it("blocks a non-image content type", async () => {
+    await seedUser("admin1", { role: "admin" });
+    const s = await storageAsUser("admin1");
+    await assertFails(
+      s.ref("application-emails/tpl1/x.html").put(PNG, { contentType: "text/html" }),
+    );
+  });
+
+  it("is publicly readable, because sent emails render without auth", async () => {
+    const s = await storageAsAnon();
+    await assertSucceeds(
+      s.ref("application-emails/tpl1/x.png").getMetadata().catch((e) => {
+        if (e?.code === "storage/object-not-found") return null;
+        throw e;
+      }),
+    );
   });
 });
 

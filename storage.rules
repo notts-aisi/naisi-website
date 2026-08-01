@@ -38,6 +38,26 @@ service firebase.storage {
         && request.resource.contentType.matches('image/.*');
     }
 
+    // Application-email images: public read (a sent email renders in an inbox
+    // with no auth, same as newsletter/event images), admin-only write — the
+    // Email designs tab is admin-only.
+    //
+    // This block was MISSING, so every image upload in that editor hit
+    // deny-by-default and failed with storage/unauthorized in production.
+    // Same failure as ce8f140 ("unbreak ... event-image uploads in prod"), for
+    // the same reason: Storage rules deploy separately via
+    // `firebase deploy --only storage` and nothing verifies the deployed set
+    // matches this file. The recursive {image=**} also tolerates the
+    // double-nested path the editor currently builds
+    // (application-emails/<id>/<id>/<file>).
+    match /application-emails/{templateId}/{image=**} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && userData().role == 'admin'
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
     // Task attachments: mirror the Firestore task access gate — anyone who
     // can read the parent task can read/upload, and delete is author-or-admin.
     // 10MB cap; MIME allowlist covers images, PDFs, common office docs, zips.
