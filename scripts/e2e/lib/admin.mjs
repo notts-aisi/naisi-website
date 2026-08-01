@@ -13,9 +13,19 @@
  *   cleanup helper that trusted a uid argument could wipe a real test account
  *   on a bad day.
  */
-import { cert, getApps, initializeApp } from "firebase-admin/app";
+import { applicationDefault, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { loadEnv } from "./env.mjs";
+
+/**
+ * The service account whose identity is borrowed to SIGN custom tokens.
+ * Signing is the one operation Application Default Credentials cannot do
+ * alone: a user credential has no private key, so firebase-admin asks IAM to
+ * sign on this account's behalf. Hard-coded to dev, like every other
+ * identifier here.
+ */
+const SIGNING_SERVICE_ACCOUNT =
+  "firebase-adminsdk-fbsvc@naisi-website-dev.iam.gserviceaccount.com";
 
 /**
  * Namespace for every account this harness creates. `.invalid` is reserved by
@@ -50,12 +60,19 @@ export function adminApp() {
     existing ??
     initializeApp(
       {
-        credential: cert({
-          projectId: env.projectId,
-          clientEmail: env.clientEmail,
-          privateKey: env.privateKey,
-        }),
+        // Application Default Credentials — deliberately NOT a downloaded
+        // service-account key. A key file is a permanent credential sitting in
+        // plaintext that any process running as this user can read; ADC is a
+        // revocable token (`gcloud auth application-default revoke`), which
+        // makes "log out and the laptop can reach nothing" actually true.
+        // This also matches how the deployed app authenticates: see the
+        // applicationDefault() fallback in src/lib/firebase/admin.ts.
+        credential: applicationDefault(),
+        // Explicit, and asserted against the literal dev id in env.mjs. The
+        // ADC file's own quota_project may point elsewhere; the project a
+        // resource lands in is decided HERE.
         projectId: env.projectId,
+        serviceAccountId: SIGNING_SERVICE_ACCOUNT,
       },
       "e2e",
     );

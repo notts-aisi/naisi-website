@@ -13,6 +13,7 @@
  * `cp .env.prod .env.e2e.local` — it would be a production account factory.
  * Any future loosening of the checks below must read as a security diff.
  */
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -108,16 +109,20 @@ export function assertProject(env) {
     throw new Error(
       `FIREBASE_ADMIN_PROJECT_ID is ${JSON.stringify(projectId)}, expected ` +
         `${JSON.stringify(REQUIRED_PROJECT_ID)}.\n` +
-        `.env.prod and .env.local.prod-snapshot-* in this repo carry the PRODUCTION ` +
-        `project — if you copied one of those, delete .env.e2e.local and start again.`,
+        `This is the id passed to initializeApp, so it decides which project every ` +
+        `resource lands in — refusing to continue.`,
     );
   }
-  const clientEmail = env.FIREBASE_ADMIN_CLIENT_EMAIL ?? "";
-  if (!clientEmail.includes(REQUIRED_PROJECT_ID)) {
+  // A private key here means someone reintroduced a downloaded service-account
+  // key. The harness authenticates with Application Default Credentials
+  // precisely so no permanent credential sits on disk; accepting one silently
+  // would undo that.
+  if (env.FIREBASE_ADMIN_PRIVATE_KEY) {
     throw new Error(
-      `FIREBASE_ADMIN_CLIENT_EMAIL does not belong to ${REQUIRED_PROJECT_ID} ` +
-        `(got ${JSON.stringify(clientEmail.replace(/@.*/, "@…"))}).\n` +
-        `The project id and the service account disagree — refusing to continue.`,
+      "FIREBASE_ADMIN_PRIVATE_KEY is set in .env.e2e.local.\n" +
+        "This harness uses Application Default Credentials (`gcloud auth " +
+        "application-default login`) so that no permanent key sits in plaintext " +
+        "on disk. Delete that line rather than adding the key back.",
     );
   }
 }
@@ -142,17 +147,51 @@ export function loadEnv() {
   cached = {
     origin,
     projectId: file.FIREBASE_ADMIN_PROJECT_ID,
-    clientEmail: file.FIREBASE_ADMIN_CLIENT_EMAIL,
-    privateKey: (file.FIREBASE_ADMIN_PRIVATE_KEY ?? "").replace(/\\n/g, "\n"),
     webApiKey: file.NEXT_PUBLIC_FIREBASE_API_KEY ?? "",
-    // Optional: only needed by the token-negative battery. Absent → those
-    // tests skip rather than fail, so the #209 guard still runs.
-    tokenSecret: file.EVENTS_TOKEN_SECRET ?? "",
+    // Fetched from Secret Manager on demand, never stored. Absent (not signed
+    // in / no access) → the token batteries skip, so the #209 guard still runs.
+    get tokenSecret() {
+      return getTokenSecret();
+    },
     // Opt-in switch for the reCAPTCHA-gated /api/register battery, which can
     // only run against a local server (see README).
     allowRegister: file.E2E_ALLOW_REGISTER === "1",
   };
   return cached;
+}
+
+let tokenSecret;
+
+/**
+ * The DEV backend's magic-link signing secret, read from Secret Manager at
+ * RUNTIME and held in memory only — never written to disk. Returns "" when it
+ * cannot be fetched (not signed in, no access), which makes the token
+ * batteries skip rather than fail.
+ *
+ * Note this must be the secret the DEV BACKEND runs, which is NOT the value in
+ * .env.local — they differ, so a locally-minted token would be rejected by
+ * dev.naisi.uk. The positive control in token-negatives.test.mjs is what
+ * catches that.
+ */
+export function getTokenSecret() {
+  if (tokenSecret !== undefined) return tokenSecret;
+  try {
+    tokenSecret = execFileSync(
+      "gcloud",
+      [
+        "secrets",
+        "versions",
+        "access",
+        "latest",
+        "--secret=EVENTS_TOKEN_SECRET",
+        `--project=${REQUIRED_PROJECT_ID}`,
+      ],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    ).trim();
+  } catch {
+    tokenSecret = "";
+  }
+  return tokenSecret;
 }
 
 /** Per-run id, used to namespace every account this harness creates. */

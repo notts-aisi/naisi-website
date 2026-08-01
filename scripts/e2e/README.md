@@ -8,9 +8,14 @@ Nothing here ships to production, so there is no production guard that can be
 forgotten. It is run by hand from a laptop; there is no CI (see below).
 
 ```sh
-cp .env.e2e.local.example .env.e2e.local   # then fill in DEV values
+gcloud auth application-default login
+gcloud auth application-default set-quota-project naisi-website-dev
+cp .env.e2e.local.example .env.e2e.local   # no secrets go in it
 npm run e2e
 ```
+
+When you are done, `gcloud auth application-default revoke` removes the
+laptop's access to the project entirely.
 
 ## What it covers today (Phase 1)
 
@@ -48,23 +53,35 @@ These are deliberate and enforced, not aspirational:
 - **Teardown cannot delete a real account.** `deleteHarnessUser` refuses any uid
   whose email is outside the `e2e-…@e2e.invalid` namespace.
 
-## Secrets
+## Credentials — nothing permanent on disk
 
-`.env.e2e.local` (git-ignored via `.env*`) holds the **dev** project's values.
-Never put production credentials in it.
+`.env.e2e.local` holds **no secrets**. It carries the target, the project id,
+and the web API key, which is public by design (it ships in the client bundle).
 
-`EVENTS_TOKEN_SECRET` is optional: without it the token-negative battery skips
-rather than fails, so the #209 guard still runs. With it, the harness mints
-magic links exactly as the server does — which is why the design brief rejected
-dev-only "preview the email" pages. A script holding the dev secret needs no
-such page, and the page would have handed the same capability to anyone able to
-load it, recreating #209.
+- **Authentication** is Application Default Credentials, not a downloaded
+  service-account key. A key file is a permanent credential in plaintext that
+  any process running as you can read; ADC is a token you can revoke with one
+  command. This also matches how the deployed app authenticates — see the
+  `applicationDefault()` fallback in `src/lib/firebase/admin.ts`. The harness
+  **rejects** a `FIREBASE_ADMIN_PRIVATE_KEY` in its config so a key cannot
+  quietly come back.
+- **`EVENTS_TOKEN_SECRET`** is read from Secret Manager at runtime and held in
+  memory only. Without access the token batteries skip rather than fail, so the
+  #209 guard still runs.
 
-The secret is a **Secret Manager reference resolved per project**
-(`apphosting.yaml`), so the value must be the *dev backend's* one or every
-minted token is rejected. The positive control in `token-negatives` diagnoses
-exactly that: a validly-signed token for an unknown doc id must return **404**,
-not 400.
+Two gotchas that cost an afternoon, recorded so they don't again:
+
+1. The secret is a **Secret Manager reference resolved per project**, so the
+   dev *backend's* value is **not** the one in `.env.local`. Mint with the
+   wrong one and every token is rejected. The positive control in
+   `token-negatives` diagnoses exactly this: a validly-signed token for an
+   unknown doc id must return **404**, not 400.
+2. `createCustomToken` cannot sign under user ADC without help — it asks IAM to
+   sign instead, which needs `roles/iam.serviceAccountTokenCreator` on
+   `firebase-adminsdk-fbsvc@naisi-website-dev…` (**`roles/owner` does not
+   include it**), and needs the ADC **quota project set to dev** — with it left
+   pointing at another project the call fails with the same
+   `iam.serviceAccounts.signBlob` denial even once the role is granted.
 
 ## Known holes — green here does NOT mean covered
 
