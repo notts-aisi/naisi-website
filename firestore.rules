@@ -511,6 +511,20 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // === publicConfig ===
+    // World-readable runtime config. Today that is ONLY the site-notice doc,
+    // and the match is pinned to that single doc id ON PURPOSE: `allow read`
+    // also grants `list`, so a {docId} wildcard would make every future doc
+    // dropped into this collection world-readable AND enumerable. If the
+    // collection ever grows, add another pinned block per doc.
+    // Nothing sensitive may land here — audit fields (who flipped it) go in
+    // `config/siteNoticeAudit`, which has no match block and stays
+    // default-deny. All writes go through /api/admin/site-notice (Admin SDK).
+    match /publicConfig/siteNotice {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // === adminLocks ===
     // Soft, FAIL-OPEN coordination locks for the admin console. Two shapes,
     // distinguished by doc id:

@@ -27,10 +27,13 @@
      the sidebar out of grid flow means .main must explicitly claim column 2
      below, otherwise auto-placement drops it into the now-empty column 1. */
   position: fixed;
-  top: 0;
+  /* Below the site-notice banner when one is active (the banner is in normal
+     flow at the top of <body>, which a viewport-fixed box would otherwise
+     overlap). Absent banner → 0px → unchanged. */
+  top: var(--site-notice-height, 0px);
   left: 0;
   width: var(--sidebar-width);
-  height: 100vh;
+  height: calc(100vh - var(--site-notice-height, 0px));
   transition: transform var(--transition-base);
 }
 
