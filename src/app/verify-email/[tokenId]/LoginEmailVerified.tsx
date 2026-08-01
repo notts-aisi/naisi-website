@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { signInWithCustomToken } from "firebase/auth";
+import { signInWithCustomToken, signInWithEmailAndPassword } from "firebase/auth";
 import { getClientAuth } from "@/lib/firebase/client";
 import { Field } from "@/components/ui/Input";
 import { PasswordInput } from "@/components/ui/PasswordInput";
@@ -30,6 +30,9 @@ export default function LoginEmailVerified({
   const [phase, setPhase] = useState<Phase>("signing-in");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Captured from the custom-token sign-in so the re-authentication below has
+  // an address to use (the user never types their email on this screen).
+  const [email, setEmail] = useState<string | null>(null);
 
   const continueUrl =
     audience === "collaborator" ? "/register?type=collaborator" : "/register";
@@ -48,7 +51,10 @@ export default function LoginEmailVerified({
           body: JSON.stringify({ idToken }),
         });
         if (!res.ok) throw new Error("session exchange failed");
-        if (!cancelled) setPhase("set-password");
+        if (!cancelled) {
+          setEmail(cred.user.email);
+          setPhase("set-password");
+        }
       } catch (err) {
         console.error("[verify-login] auto sign-in failed", err);
         if (!cancelled) setPhase("failed");
@@ -84,6 +90,37 @@ export default function LoginEmailVerified({
           const body = (await res.json().catch(() => null)) as { error?: string } | null;
           throw new Error(body?.error ?? "Couldn't save your password.");
         }
+
+        // Re-establish the session before navigating. Setting a password bumps
+        // the user's `validSince` in Firebase Auth, which revokes BOTH the
+        // refresh token behind the client SDK and the `__session` cookie minted
+        // above — and every server-side session check verifies with
+        // `checkRevoked: true`. Without this, the next authenticated call the
+        // register flow makes fails: `completeRegistration` POSTs
+        // `/api/verify-email/reconcile` (the PR #216 fix that stamps
+        // `profile.uniEmailVerifiedAt` when the uni-email link was clicked
+        // before the user doc existed) and swallows the 401, so the stamp is
+        // silently lost while every UI surface still reads "verified".
+        //
+        // The credentials are both in hand — the address from the custom-token
+        // sign-in, the password just chosen — so this is invisible to the user.
+        // Best-effort: the password is already saved durably, so a failure here
+        // must not strand anyone. They continue and, at worst, sign in again.
+        if (email) {
+          try {
+            const auth = getClientAuth();
+            const cred = await signInWithEmailAndPassword(auth, email, password);
+            const refreshed = await cred.user.getIdToken(true);
+            await fetch("/api/auth/session", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ idToken: refreshed }),
+            });
+          } catch (err) {
+            console.warn("[verify-login] session refresh after password-set failed", err);
+          }
+        }
+
         router.replace(continueUrl);
       } catch (err) {
         console.error("[verify-login] set password failed", err);
@@ -93,7 +130,7 @@ export default function LoginEmailVerified({
         setPhase("set-password");
       }
     },
-    [password, router, continueUrl],
+    [password, router, continueUrl, email],
   );
 
   if (phase === "failed") {
