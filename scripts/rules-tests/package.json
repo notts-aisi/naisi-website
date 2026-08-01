@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Firestore security-rules tests. Deliberately a SEPARATE package: App Hosting runs `npm ci` with devDependencies on the critical path of every production deploy, so test-only dependencies must never enter the root package.json.",
   "scripts": {
-    "test": "firebase emulators:exec --only firestore --project naisi-rules-test 'node --test tests/'"
+    "test": "firebase emulators:exec --only firestore,storage --project naisi-rules-test 'node --test tests/'"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^4.0.1",
