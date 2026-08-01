@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
+# Template for the e2e harness config. The real .env.e2e.local it is copied to
+# holds dev credentials and stays ignored by the .env* rule above.
+!.env.e2e.local.example
 
 # firebase
 .firebase/
