@@ -1,54 +1,69 @@
 /**
- * Offline guard on the e2e harness (runs under `npm test` — no network, no
+ * Offline guards on the e2e harness (run under `npm test` — no network, no
  * credentials, no dev project involved).
  *
  * The harness authenticates against the dev project, which holds real people's
- * data. Two properties must therefore stay true no matter who edits it next,
- * and a comment saying so is not enforcement:
+ * data. Three properties must stay true no matter who edits it next, and a
+ * comment saying so is not enforcement:
  *
- *   1. It never grants a privilege. No role, no permissions map, no
- *      `suRecognised`. The accounts it creates are bare Auth users with no
- *      Firestore document, which means no role at all — not even `pending`.
- *   2. It never writes to Firestore. Not `users/`, not anything. Read-only
- *      against the database; the only mutation it performs anywhere is
- *      creating and deleting its own namespaced Auth accounts.
+ *   1. It can never be aimed at production.
+ *   2. It never grants a privilege — no role, no permissions map, no
+ *      `suRecognised`. Its accounts are bare Auth users with no Firestore
+ *      document, so they hold no role at all.
+ *   3. It never reaches Firestore at all — not to write, not to read.
  *
- * If a future phase genuinely needs a seeded `member` (the design brief caps
- * the fixture ladder there), this test is the deliberate speed bump: loosening
- * it has to be an explicit, reviewable diff that says which privilege is being
- * granted and why.
+ * Property 1 is tested BEHAVIOURALLY, by calling the real `assertTarget()`.
+ * An earlier version pattern-matched the source of the allowlist and was shown
+ * by review to miss production inserted anywhere except first or last in the
+ * array. Properties 2 and 3 are source greps, which are heuristic by nature:
+ * they are a deliberate speed bump, not a proof. Anything that defeats them is
+ * also, by construction, an obfuscated privilege grant — which is a reviewable
+ * act, and that is the point.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertTarget } from "../scripts/e2e/lib/env.mjs";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const E2E_DIR = join(REPO_ROOT, "scripts", "e2e");
 
-/** Privilege-granting shapes. Matched on assignment, so prose is unaffected. */
+/**
+ * Privilege-granting shapes, in both bare-identifier and quoted-key spellings
+ * (a .mjs file building a JSON body naturally writes `"role": "admin"`), plus
+ * assignment from a variable.
+ */
 const FORBIDDEN_PRIVILEGE = [
-  /\brole\s*:\s*["'`]/,
-  /\bsuRecognised\s*:/,
-  /\bpermissions\s*:\s*\{/,
+  /["'`]?\brole["'`]?\s*:\s*/,
+  /["'`]?\bsuRecognised["'`]?\s*:/,
+  /["'`]?\bpermissions["'`]?\s*:/,
   /\bdraftNewsletter\b/,
   /\bapproveNewsletter\b/,
   /\bdraftEvent\b/,
   /\bapproveEvent\b/,
+  /\bsetCustomUserClaims\b/,
 ];
 
-/** Firestore mutation calls. The harness must not write to the database. */
-const FORBIDDEN_WRITES = [
-  /\.collection\([^)]*\)\s*\.doc\([^)]*\)\s*\.set\(/,
-  /\.collection\([^)]*\)\s*\.add\(/,
-  /\bbatch\(\)/,
-  /\.update\(\s*\{/,
-  /\bsetDoc\(/,
-  /\baddDoc\(/,
-  /\bupdateDoc\(/,
-  /\bdeleteDoc\(/,
-  /\bFieldValue\./,
+/**
+ * Firestore reachability. Rather than enumerate write verbs — which cannot be
+ * done cleanly, since `.update(` is also a crypto method and a narrower call
+ * chain is trivially evaded by a line break — this asserts the harness never
+ * obtains a Firestore handle at all. No handle, no writes and no reads: a
+ * strictly stronger property, and one that cannot false-positive on
+ * `createHmac().update()`.
+ */
+const FORBIDDEN_FIRESTORE = [
+  /firebase-admin\/firestore/,
+  /\bgetFirestore\b/,
+  /\.firestore\(/,
+  /\bcollection\(/,
+  /\bsetDoc\b/,
+  /\baddDoc\b/,
+  /\bupdateDoc\b/,
+  /\bdeleteDoc\b/,
+  /\bFieldValue\b/,
 ];
 
 function sourceFiles(dir) {
@@ -78,36 +93,58 @@ test("the e2e harness never grants a role, permission, or suRecognised", () => {
   }
 });
 
-test("the e2e harness never writes to Firestore", () => {
+test("the e2e harness never reaches Firestore at all", () => {
   for (const file of sourceFiles(E2E_DIR)) {
     const source = readFileSync(file, "utf8");
-    for (const pattern of FORBIDDEN_WRITES) {
+    for (const pattern of FORBIDDEN_FIRESTORE) {
       assert.ok(
         !pattern.test(source),
         `${relative(REPO_ROOT, file)} matches ${pattern} — the harness runs against the ` +
-          "dev project, which holds real member data. It may read, and may create/delete " +
-          "its own namespaced Auth accounts, but must not write documents.",
+          "dev project, which holds real member data. Its only mutations anywhere are " +
+          "creating and deleting its own namespaced Auth accounts; it must not obtain a " +
+          "Firestore handle, for reading or writing.",
       );
     }
   }
 });
 
-test("the e2e harness pins the dev project and refuses production origins", () => {
-  const env = readFileSync(join(E2E_DIR, "lib", "env.mjs"), "utf8");
-  assert.match(
-    env,
-    /naisi-website-dev/,
-    "env.mjs must hard-code the dev project id as a tripwire.",
-  );
-  assert.match(
-    env,
-    /PRODUCTION_ORIGINS/,
-    "env.mjs must name production origins explicitly so aiming at them fails loudly.",
-  );
-  assert.ok(
-    !/["'`]https:\/\/naisi\.uk["'`]\s*,?\s*\n?\s*(\]|["'`]https:\/\/dev)/.test(
-      env.replace(/PRODUCTION_ORIGINS[\s\S]*?\];/, ""),
-    ),
-    "the production origin must not appear in the ALLOWED_ORIGINS list.",
-  );
+test("assertTarget refuses production, however it is spelled", () => {
+  const mustReject = [
+    "https://naisi.uk",
+    "https://naisi.uk/",
+    "https://www.naisi.uk",
+    "https://NAISI.UK",
+    "https://naisi.uk/api/register",
+    "https://naisi.uk:443",
+    // userinfo trick: the origin is production even though it reads as dev
+    "https://dev.naisi.uk@naisi.uk",
+    // trailing-dot FQDN form
+    "https://naisi.uk.",
+    // a plausible future staging host nobody allowlisted
+    "https://staging.naisi.uk",
+    "not a url",
+    "",
+  ];
+  for (const target of mustReject) {
+    assert.throws(
+      () => assertTarget(target),
+      `assertTarget accepted ${JSON.stringify(target)}. Every origin outside the ` +
+        "explicit allowlist must be refused — this is the only guard standing " +
+        "between a typo and real registrations against production.",
+    );
+  }
+});
+
+test("assertTarget still accepts the dev origin and localhost", () => {
+  for (const target of [
+    "https://dev.naisi.uk",
+    "https://dev.naisi.uk/api/verify-email/send",
+    "http://127.0.0.1:3000",
+    "http://localhost:3000",
+  ]) {
+    assert.doesNotThrow(
+      () => assertTarget(target),
+      `assertTarget rejected ${JSON.stringify(target)}, which the harness needs.`,
+    );
+  }
 });

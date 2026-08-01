@@ -34,10 +34,13 @@ These are deliberate and enforced, not aspirational:
 - **It grants no privileges.** Accounts it creates are bare Auth users with **no
   Firestore document**, so they hold no role at all — not even `pending`. The
   design brief caps any future fixture ladder at `member`.
-- **It writes nothing to Firestore.** dev holds real members' data. The harness
-  reads only; its sole mutations anywhere are creating and deleting its own
-  `e2e-<id>@e2e.invalid` Auth accounts. Both properties are enforced offline by
-  `tests/e2e-no-privilege-grants.test.mjs`, which runs under `npm test`.
+- **It never reaches Firestore at all** — not to write, not to read. dev holds
+  real members' data; the harness never obtains a Firestore handle. Its only
+  mutations anywhere are creating and deleting its own `e2e-<id>@e2e.invalid`
+  Auth accounts. Enforced offline by `tests/e2e-no-privilege-grants.test.mjs`
+  under `npm test`, which also calls the real `assertTarget()` against a
+  battery of production spellings (userinfo tricks, trailing dots, `www.`,
+  uppercase) rather than pattern-matching the allowlist's source.
 - **It sends no email.** Every address in the Phase 1 batteries is rejected
   before the route reaches a send. `.invalid` is RFC 2606 reserved and can never
   receive mail, so even a mistake cannot reach a real inbox or bounce against

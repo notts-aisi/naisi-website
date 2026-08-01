@@ -72,9 +72,9 @@ export function adminAuth() {
  * role-gated surface. That is the least-privileged identity that can still
  * satisfy the `getCurrentUser()` check on the routes under test.
  */
-export async function createHarnessUser(id) {
+export async function createHarnessUser(id, { emailVerified = false } = {}) {
   const email = harnessEmail(id);
-  const user = await adminAuth().createUser({ email, emailVerified: false });
+  const user = await adminAuth().createUser({ email, emailVerified });
   return { uid: user.uid, email };
 }
 
