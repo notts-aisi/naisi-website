@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Space_Grotesk } from "next/font/google";
 import { AuthProvider } from "@/auth/AuthProvider";
+import { SiteNoticeBanner } from "@/features/maintenance/SiteNoticeBanner";
 import "./globals.css";
 
 export const viewport: Viewport = {
@@ -38,7 +39,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" data-theme="dark" className={`${inter.variable} ${spaceGrotesk.variable}`}>
       <body>
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <SiteNoticeBanner />
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );

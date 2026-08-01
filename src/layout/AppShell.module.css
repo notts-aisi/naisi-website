@@ -27,10 +27,13 @@
      the sidebar out of grid flow means .main must explicitly claim column 2
      below, otherwise auto-placement drops it into the now-empty column 1. */
   position: fixed;
-  top: 0;
+  /* Below the site-notice banner when one is active (the banner is in normal
+     flow at the top of <body>, which a viewport-fixed box would otherwise
+     overlap). Absent banner → 0px → unchanged. */
+  top: var(--site-notice-height, 0px);
   left: 0;
   width: var(--sidebar-width);
-  height: 100vh;
+  height: calc(100vh - var(--site-notice-height, 0px));
   transition: transform var(--transition-base);
 }
 
@@ -77,7 +80,9 @@
    duration as the sidebar's transform, so both slides run in lockstep. */
 .floatingControls {
   position: fixed;
-  top: var(--space-4);
+  /* Below the site-notice banner when one is active, like .sidebar above —
+     otherwise the pill can cover the banner's Details/dismiss controls. */
+  top: calc(var(--space-4) + var(--site-notice-height, 0px));
   right: var(--space-4);
   z-index: 15;
   display: inline-flex;

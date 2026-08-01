@@ -19,6 +19,7 @@ const TABS = [
   { label: "Email designs", href: "/admin/email-designs", match: (p: string) => p.startsWith("/admin/email-designs") },
   { label: "Deliverability", href: "/admin/deliverability", match: (p: string) => p.startsWith("/admin/deliverability") },
   { label: "Task templates", href: "/admin/task-templates", match: (p: string) => p.startsWith("/admin/task-templates") },
+  { label: "Site status", href: "/admin/site-status", match: (p: string) => p.startsWith("/admin/site-status") },
   // TEMP — fire-once data-wipe controls. Remove this entry along with
   // `src/app/(app)/admin/danger-zone/` and `src/app/api/admin/nuke-tasks/`
   // once both environments have been reset.

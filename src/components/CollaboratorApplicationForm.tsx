@@ -24,6 +24,7 @@ export default function CollaboratorApplicationForm({
   submitLabel,
   busyLabel,
   busy = false,
+  disabled = false,
   externalError = null,
   onSubmit,
   intro,
@@ -33,6 +34,9 @@ export default function CollaboratorApplicationForm({
   submitLabel: string;
   busyLabel: string;
   busy?: boolean;
+  /** Hard-disable the submit (e.g. site notice pausing applications) without
+      the busy label — the parent renders the explanatory copy. */
+  disabled?: boolean;
   externalError?: string | null;
   onSubmit: (input: CollaboratorInput) => void | Promise<void>;
   intro?: ReactNode;
@@ -261,7 +265,7 @@ export default function CollaboratorApplicationForm({
         <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)" }}>{error}</p>
       )}
 
-      <Button type="submit" fullWidth size="lg" disabled={busy}>
+      <Button type="submit" fullWidth size="lg" disabled={busy || disabled}>
         {busy ? busyLabel : submitLabel}
       </Button>
     </form>

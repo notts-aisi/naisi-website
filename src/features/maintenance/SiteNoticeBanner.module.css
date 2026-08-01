@@ -1,0 +1,86 @@
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  /* Root layout declares viewport-fit: cover, so keep the copy out of the
+     notch in standalone/landscape contexts. Zero in normal browsing. */
+  padding-top: max(var(--space-2), env(safe-area-inset-top));
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  text-align: center;
+}
+
+/* Level drives styling ONLY (see src/lib/siteNotice.ts). */
+.info {
+  background: color-mix(in srgb, var(--color-accent) 16%, var(--color-bg-elevated));
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Solid warning surface + dark text, matching the impersonation banner
+   (AppShell.module.css) so "site is degraded" reads as one visual family. */
+.warn {
+  background: var(--color-warning);
+  color: #1a1300;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.18);
+}
+
+.critical {
+  background: var(--color-danger);
+  color: #fff;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.18);
+}
+
+.message {
+  margin: 0;
+  min-width: 0;
+}
+
+.link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dismiss {
+  appearance: none;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  border-radius: var(--radius-sm, 4px);
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dismiss:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+@media (max-width: 48rem) { /* --bp-md */
+  /* The (auth) shell is viewport-pinned with .main as its only scroller
+     below this breakpoint, and it shrinks by the banner's height — so the
+     banner must stay small. Clamp to 2 lines; the full text remains in the
+     DOM for assistive tech, and the register form's inline copy repeats the
+     operative sentence on paused surfaces anyway. */
+  .message {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  /* Finger-sized dismiss on touch viewports. */
+  .dismiss {
+    min-width: 2.25rem;
+    min-height: 2.25rem;
+  }
+}

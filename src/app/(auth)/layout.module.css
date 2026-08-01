@@ -1,8 +1,12 @@
 .shell {
   /* Pin to the visual viewport. 100dvh accounts for mobile chrome
-     showing/hiding (URL bar, keyboard) so the layout doesn't jump. */
-  height: 100dvh;
-  min-height: 100dvh;
+     showing/hiding (URL bar, keyboard) so the layout doesn't jump.
+     Minus the site-notice banner when one is active: AuthBodyLock disables
+     body scrolling here, so without the subtraction an in-flow banner above
+     the shell would push the bottom of the card (the mobile submit bar) off
+     an unscrollable viewport. Absent banner → 0px → unchanged. */
+  height: calc(100dvh - var(--site-notice-height, 0px));
+  min-height: calc(100dvh - var(--site-notice-height, 0px));
   display: flex;
   flex-direction: column;
   padding: var(--space-6);
