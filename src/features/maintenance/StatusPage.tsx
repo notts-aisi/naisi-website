@@ -121,7 +121,7 @@ function EntryModal({
               ? ` · resolved ${formatStamp(endedAt)}`
               : ""}
         </p>
-        <p className={styles.modalMessage}>{entry.message || "Scheduled maintenance."}</p>
+        <p className={styles.modalMessage}>{entry.message || "Maintenance notice."}</p>
         {entry.details !== "" && (
           <p className={styles.modalDetails}>{entry.details}</p>
         )}
@@ -149,6 +149,11 @@ export default function StatusPage() {
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
+    // Same honesty rule as the notice feed: cache-only data never claims
+    // "ready", and a quiet offline client degrades to error after 4s.
+    const staleTimer = setTimeout(() => {
+      setLogState((current) => (current === "ready" ? current : "error"));
+    }, 4000);
     try {
       const db = getClientDb();
       const q = query(
@@ -158,6 +163,7 @@ export default function StatusPage() {
       );
       unsubscribe = onSnapshot(
         q,
+        { includeMetadataChanges: true },
         (snap) => {
           const now = new Date();
           setEntries(
@@ -165,7 +171,7 @@ export default function StatusPage() {
               .map((doc) => normaliseLogEntry(doc.id, doc.data(), now))
               .filter((entry): entry is MaintenanceLogEntry => entry !== null),
           );
-          setLogState("ready");
+          if (!snap.metadata.fromCache) setLogState("ready");
         },
         () => {
           // Fail open — no history beats fabricated history.
@@ -177,16 +183,22 @@ export default function StatusPage() {
       queueMicrotask(() => setLogState("error"));
     }
     return () => {
+      clearTimeout(staleTimer);
       unsubscribe?.();
     };
   }, []);
 
-  // Live countdowns/badges: only the newest entry may present as ongoing, and
-  // only while the live notice actually shows — a log entry must never claim
+  // Live badges/countdowns: the current episode is identified POSITIVELY by
+  // the live doc's logId — never positionally — and only while the notice
+  // actually shows. A break-glass notice with no entry means no entry claims
+  // ongoing (the log's own caveat covers that); a log entry must never claim
   // an outage the banner doesn't.
   const ongoingId =
-    connection === "live" && live.bannerVisible && entries[0]?.ongoing
-      ? entries[0].id
+    connection === "live" &&
+    live.bannerVisible &&
+    live.logId !== null &&
+    entries.some((entry) => entry.id === live.logId && entry.ongoing)
+      ? live.logId
       : null;
 
   // Resolve a ?open=current deep link once the log has answered.
@@ -322,7 +334,7 @@ export default function StatusPage() {
                     key={entry.id}
                     role="listitem"
                     href={`#log-${entry.id}`}
-                    title={`${formatStamp(entry.startedAt)} — ${entry.message || "maintenance"}`}
+                    title={`${formatStamp(entry.startedAt)} — ${entry.message || "maintenance notice"}`}
                     className={`${styles.timelineDot} ${
                       isOngoing
                         ? `${LEVEL_CLASS[entry.level]} ${styles.dotOngoing}`
@@ -361,8 +373,10 @@ export default function StatusPage() {
                     <div
                       className={`${styles.entryBody} ${needsPopup ? styles.entryBodyClamped : ""}`}
                     >
+                      {/* Neutral fallback — "scheduled" would misdescribe an
+                          unplanned incident logged without copy. */}
                       <p className={styles.entryMessage}>
-                        {entry.message || "Scheduled maintenance."}
+                        {entry.message || "Maintenance notice."}
                       </p>
                       {entry.details !== "" && (
                         <p className={styles.entryDetailsPreview}>{entry.details}</p>

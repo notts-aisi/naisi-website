@@ -201,12 +201,6 @@ export async function PATCH(req: Request) {
     .collection(SITE_NOTICE_PATH.collection)
     .doc(SITE_NOTICE_PATH.doc);
 
-  // Maintenance-log lifecycle (powers /status): one public log entry per
-  // banner-visible episode. Visibility off→on opens an entry, on→on updates
-  // it, on→off stamps clearedAt. The live doc carries the open entry's id in
-  // `logId` (harmless on a public doc; the normaliser ignores it). Log
-  // failures are swallowed — the log is best-effort history and must never
-  // block flipping the notice during an incident.
   const beforeSnap = await noticeRef.get();
   const beforeRaw = (beforeSnap.exists ? beforeSnap.data() : null) as
     | Record<string, unknown>
@@ -215,6 +209,31 @@ export async function PATCH(req: Request) {
   const wasVisible = normaliseSiteNotice(beforeRaw, now).bannerVisible;
   const merged = { ...(beforeRaw ?? {}), ...update, updatedAt: now };
   const isVisible = normaliseSiteNotice(merged, now).bannerVisible;
+
+  // A finished episode's endsAt must never linger on the doc: at read time a
+  // stale past endsAt makes the whole doc read as expired, which would turn
+  // the next break-glass console flip (`active: true` by hand) into a silent
+  // no-op — the exact emergency this feature exists for. (Adversarial review
+  // finding, 2026-08-01.)
+  if (!isVisible) {
+    update.endsAt = null;
+  }
+
+  // Flip the live doc FIRST; history second. The reverse order can publish a
+  // "phantom" log entry for a notice write that then fails — and an
+  // unlogged-but-live notice self-heals anyway via the adoption branch below.
+  await noticeRef.set(
+    { ...update, updatedAt: FieldValue.serverTimestamp() },
+    { merge: true },
+  );
+
+  // Maintenance-log lifecycle (powers /status): one public log entry per
+  // banner-visible episode. Off→on opens an entry, on→on updates it, on→off
+  // stamps clearedAt AND clears the doc's `logId` pointer — a surviving
+  // pointer made every later episode unlogged while its saves rewrote the
+  // first episode's public history (adversarial review finding, 2026-08-01).
+  // Log failures are swallowed — history is best-effort and must never block
+  // flipping the notice during an incident.
   const after = normaliseSiteNotice(isVisible ? merged : beforeRaw, now);
   const logSnapshot = {
     level: after.level,
@@ -246,14 +265,15 @@ export async function PATCH(req: Request) {
           { merge: true },
         );
     }
+    if (!isVisible) {
+      logId = null;
+    }
+    if (logId !== existingLogId) {
+      await noticeRef.set({ logId }, { merge: true });
+    }
   } catch {
     // Best-effort only — never let history-keeping block the flip.
   }
-
-  await noticeRef.set(
-    { ...update, logId, updatedAt: FieldValue.serverTimestamp() },
-    { merge: true },
-  );
   await db
     .collection(AUDIT_PATH.collection)
     .doc(AUDIT_PATH.doc)

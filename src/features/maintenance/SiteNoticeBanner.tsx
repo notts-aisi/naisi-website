@@ -38,10 +38,12 @@ export function SiteNoticeBanner() {
     }
   });
 
-  // Identity of the current notice for per-session dismissal: a new write
-  // (or new copy) resurfaces a previously dismissed info banner.
+  // Identity of the current notice for per-session dismissal: a new write or
+  // any change in copy/level/pauses resurfaces a previously dismissed info
+  // banner. The level+pauses fingerprint matters for break-glass flips, which
+  // don't touch updatedAt and may reuse the same copy.
   const noticeKey = notice.bannerVisible
-    ? `${notice.updatedAt?.toISOString() ?? ""}|${notice.bannerMessage}`
+    ? `${notice.updatedAt?.toISOString() ?? ""}|${notice.level}|${JSON.stringify(notice.paused)}|${notice.bannerMessage}`
     : null;
 
   const visible =

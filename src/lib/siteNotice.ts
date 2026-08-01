@@ -115,6 +115,10 @@ export type SiteNotice = {
   details: string;
   endsAt: Date | null;
   updatedAt: Date | null;
+  /** The open maintenance-log entry's id (set by the admin route while the
+      notice is visible; null otherwise). Lets /status identify the current
+      episode positively instead of guessing "newest entry". */
+  logId: string | null;
   paused: Record<SiteNoticeSurface, boolean>;
   /**
    * Effective auto-expiry: `endsAt` when set, else 24h after the last write
@@ -134,6 +138,7 @@ export const DEFAULT_SITE_NOTICE: SiteNotice = Object.freeze({
   details: "",
   endsAt: null,
   updatedAt: null,
+  logId: null,
   paused: Object.freeze({
     newRegistrations: false,
     collaboratorApplications: false,
@@ -197,6 +202,7 @@ export function normaliseSiteNotice(data: unknown, now: Date): SiteNotice {
       : "";
   const endsAt = coerceDate(raw.endsAt);
   const updatedAt = coerceDate(raw.updatedAt);
+  const logId = typeof raw.logId === "string" ? raw.logId : null;
 
   const paused = {} as Record<SiteNoticeSurface, boolean>;
   for (const surface of SITE_NOTICE_SURFACES) {
@@ -221,6 +227,7 @@ export function normaliseSiteNotice(data: unknown, now: Date): SiteNotice {
     details,
     endsAt,
     updatedAt,
+    logId,
     paused,
     expiresAt,
     bannerVisible,

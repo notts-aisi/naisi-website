@@ -80,7 +80,9 @@
    duration as the sidebar's transform, so both slides run in lockstep. */
 .floatingControls {
   position: fixed;
-  top: var(--space-4);
+  /* Below the site-notice banner when one is active, like .sidebar above —
+     otherwise the pill can cover the banner's Details/dismiss controls. */
+  top: calc(var(--space-4) + var(--site-notice-height, 0px));
   right: var(--space-4);
   z-index: 15;
   display: inline-flex;

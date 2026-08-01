@@ -41,14 +41,26 @@ export function useSiteNoticeState(): {
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
+    // If nothing server-confirmed arrives promptly (offline device serving
+    // only its Firestore cache never errors — it just stays quiet), degrade
+    // to "error" so status surfaces say "Unknown" instead of spinning
+    // forever; a later live snapshot upgrades it back.
+    const staleTimer = setTimeout(() => {
+      setConnection((current) => (current === "live" ? current : "error"));
+    }, 4000);
     try {
       const db = getClientDb();
       const ref = doc(db, SITE_NOTICE_PATH.collection, SITE_NOTICE_PATH.doc);
       unsubscribe = onSnapshot(
         ref,
+        { includeMetadataChanges: true },
         (snap) => {
           setRaw(snap.exists() ? snap.data() : null);
-          setConnection("live");
+          // A cache-served snapshot is NOT confirmation: an offline client
+          // replaying stale cache must not light /status green. The banner
+          // still renders cached data (read-time expiry bounds how stale it
+          // can be); only the affirmative "live" claim waits for the server.
+          if (!snap.metadata.fromCache) setConnection("live");
         },
         () => {
           // Permission/connectivity failure → fail open, notice off.
@@ -63,6 +75,7 @@ export function useSiteNoticeState(): {
       queueMicrotask(() => setConnection("error"));
     }
     return () => {
+      clearTimeout(staleTimer);
       unsubscribe?.();
     };
   }, []);

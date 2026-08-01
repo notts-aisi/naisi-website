@@ -231,6 +231,10 @@ export default function SiteStatusPanel() {
   function handleSwitchOff() {
     void patch({
       active: false,
+      // Clear the finished episode's endsAt: a stale past value would make a
+      // later break-glass console flip read as already-expired (the route
+      // also enforces this server-side).
+      endsAt: null,
       [SITE_NOTICE_SURFACE_FLAGS.newRegistrations]: false,
       [SITE_NOTICE_SURFACE_FLAGS.collaboratorApplications]: false,
       [SITE_NOTICE_SURFACE_FLAGS.eventSignups]: false,
@@ -482,7 +486,15 @@ export default function SiteStatusPanel() {
           <li><code>level</code> (string) — <code>info</code> | <code>warn</code> | <code>critical</code></li>
           <li><code>message</code> (string) — plain text</li>
           <li><code>details</code> (string) — longer status-page copy, plain text</li>
-          <li><code>endsAt</code> (timestamp) — auto-clear time; without it the notice clears 24h after <code>updatedAt</code></li>
+          <li>
+            <code>endsAt</code> (timestamp) — <strong>always set this to a
+            future time when flipping by hand.</strong> The doc may hold stale
+            past timestamps from an earlier notice, which read as
+            &ldquo;expired&rdquo; and make your flip silently do nothing.
+            Setting a future <code>endsAt</code> overrides that (and is the
+            auto-clear time; absent, the notice clears 24h after{" "}
+            <code>updatedAt</code>).
+          </li>
           {SITE_NOTICE_SURFACES.map((surface) => (
             <li key={surface}>
               <code>{SITE_NOTICE_SURFACE_FLAGS[surface]}</code> (boolean)
