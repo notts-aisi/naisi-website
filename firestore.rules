@@ -525,6 +525,18 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // === maintenanceLog ===
+    // Public history of maintenance notices powering the /status page — one
+    // doc per banner-visible episode, written ONLY by /api/admin/site-notice
+    // (Admin SDK). Unlike publicConfig this wildcard is world-readable AND
+    // enumerable ON PURPOSE (owner decision 2026-08-01): the whole point is a
+    // public log. Nothing sensitive may ever be written here — entries carry
+    // only admin-authored notice copy, level, times and pause flags.
+    match /maintenanceLog/{entryId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // === adminLocks ===
     // Soft, FAIL-OPEN coordination locks for the admin console. Two shapes,
     // distinguished by doc id:

@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
+  MAINTENANCE_LOG_PATH,
   SITE_NOTICE_LEVELS,
   SITE_NOTICE_LIMITS,
   SITE_NOTICE_MAX_TTL_MS,
@@ -201,10 +202,63 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Server not configured" }, { status: 500 });
   }
 
-  await db
+  const noticeRef = db
     .collection(SITE_NOTICE_PATH.collection)
-    .doc(SITE_NOTICE_PATH.doc)
-    .set({ ...update, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    .doc(SITE_NOTICE_PATH.doc);
+
+  // Maintenance-log lifecycle (powers /status): one public log entry per
+  // banner-visible episode. Visibility off→on opens an entry, on→on updates
+  // it, on→off stamps clearedAt. The live doc carries the open entry's id in
+  // `logId` (harmless on a public doc; the normaliser ignores it). Log
+  // failures are swallowed — the log is best-effort history and must never
+  // block flipping the notice during an incident.
+  const beforeSnap = await noticeRef.get();
+  const beforeRaw = (beforeSnap.exists ? beforeSnap.data() : null) as
+    | Record<string, unknown>
+    | null;
+  const now = new Date();
+  const wasVisible = normaliseSiteNotice(beforeRaw, now).bannerVisible;
+  const merged = { ...(beforeRaw ?? {}), ...update, updatedAt: now };
+  const isVisible = normaliseSiteNotice(merged, now).bannerVisible;
+  const after = normaliseSiteNotice(isVisible ? merged : beforeRaw, now);
+  const logSnapshot = {
+    level: after.level,
+    message: after.message,
+    linkUrl: after.linkUrl,
+    endsAt: after.endsAt,
+    paused: after.paused,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  const existingLogId =
+    beforeRaw && typeof beforeRaw.logId === "string" ? beforeRaw.logId : null;
+  let logId = existingLogId;
+  try {
+    if (isVisible && existingLogId === null) {
+      // Off→on, or adopting a notice that went live without an entry (raised
+      // before logging existed, or via the break-glass console path).
+      const entry = await db.collection(MAINTENANCE_LOG_PATH.collection).add({
+        ...logSnapshot,
+        startedAt: FieldValue.serverTimestamp(),
+        clearedAt: null,
+      });
+      logId = entry.id;
+    } else if (existingLogId !== null && wasVisible) {
+      await db
+        .collection(MAINTENANCE_LOG_PATH.collection)
+        .doc(existingLogId)
+        .set(
+          isVisible ? logSnapshot : { clearedAt: FieldValue.serverTimestamp() },
+          { merge: true },
+        );
+    }
+  } catch {
+    // Best-effort only — never let history-keeping block the flip.
+  }
+
+  await noticeRef.set(
+    { ...update, logId, updatedAt: FieldValue.serverTimestamp() },
+    { merge: true },
+  );
   await db
     .collection(AUDIT_PATH.collection)
     .doc(AUDIT_PATH.doc)

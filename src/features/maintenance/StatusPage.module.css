@@ -1,0 +1,260 @@
+.page {
+  width: 100%;
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: var(--space-10) var(--space-6) var(--space-16, 6rem);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.title {
+  font-size: var(--text-3xl);
+}
+
+.subtitle {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.sectionTitle {
+  font-size: var(--text-xl);
+  margin-bottom: var(--space-4);
+}
+
+/* ===== Current-notice card ===== */
+
+.noticeCard {
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+}
+
+.noticeCard.levelInfo { border-color: var(--color-accent); background: var(--color-accent-soft); }
+.noticeCard.levelWarn { border-color: var(--color-warning); background: var(--color-warning-soft); }
+.noticeCard.levelCritical { border-color: var(--color-danger); background: var(--color-danger-soft); }
+
+.noticeMessage {
+  margin: 0 0 var(--space-1);
+  font-weight: 600;
+}
+
+.noticeMeta {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.noticeMeta a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+/* ===== Availability lights ===== */
+
+.serviceList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  overflow: hidden;
+}
+
+.serviceRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg-elevated);
+}
+
+.serviceRow + .serviceRow {
+  border-top: 1px solid var(--color-border);
+}
+
+.light {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.lightGreen { background: var(--color-success); box-shadow: 0 0 8px var(--color-success-soft); }
+.lightAmber { background: var(--color-warning); box-shadow: 0 0 8px var(--color-warning-soft); }
+.lightRed   { background: var(--color-danger);  box-shadow: 0 0 8px var(--color-danger-soft); }
+
+.serviceName {
+  flex: 1;
+  min-width: 0;
+}
+
+.serviceState {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.stateOk { color: var(--color-success); }
+.statePaused { color: var(--color-warning); }
+
+.smallPrint {
+  margin-top: var(--space-3);
+  color: var(--color-text-subtle);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+/* ===== Maintenance log ===== */
+
+.logSection {
+  /* Anchor target for banner "Details" clicks — clear the sticky header. */
+  scroll-margin-top: 5rem;
+}
+
+/* The timeline bar: a horizontal track with one circle per notice. */
+.timeline {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-2);
+  margin-bottom: var(--space-5);
+  overflow-x: auto;
+}
+
+.timelineTrack {
+  position: absolute;
+  left: var(--space-2);
+  right: var(--space-2);
+  top: 50%;
+  height: 2px;
+  background: var(--color-border);
+}
+
+.timelineDot {
+  position: relative;
+  z-index: 1;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  border: 2px solid var(--color-bg);
+  flex-shrink: 0;
+  transition: transform 120ms ease;
+}
+
+.timelineDot:hover,
+.timelineDot:focus-visible {
+  transform: scale(1.35);
+}
+
+.timelineDot.levelInfo { background: var(--color-accent); }
+.timelineDot.levelWarn { background: var(--color-warning); }
+.timelineDot.levelCritical { background: var(--color-danger); }
+
+.dotOngoing {
+  animation: dotPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes dotPulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--color-warning-soft), 0 0 0 2px currentColor; }
+  50% { box-shadow: 0 0 0 8px transparent, 0 0 0 2px currentColor; }
+}
+
+.entryList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.entry {
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-bg-elevated);
+  scroll-margin-top: 5rem;
+}
+
+.entryHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2);
+}
+
+.levelChip {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.1rem var(--space-2);
+  border-radius: 999px;
+}
+
+.levelChip.levelInfo { background: var(--color-accent-soft); color: var(--color-accent); }
+.levelChip.levelWarn { background: var(--color-warning-soft); color: var(--color-warning); }
+.levelChip.levelCritical { background: var(--color-danger-soft); color: var(--color-danger); }
+
+.entryWhen {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.ongoingBadge {
+  color: var(--color-warning);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+}
+
+.entryMessage {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.entryMeta {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.entryMeta a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dotOngoing { animation: none; }
+  .timelineDot { transition: none; }
+}
+
+@media (max-width: 36rem) { /* --bp-sm */
+  .page {
+    padding: var(--space-6) var(--space-4) var(--space-10);
+  }
+  .timeline {
+    gap: var(--space-4);
+  }
+}

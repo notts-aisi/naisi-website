@@ -60,6 +60,38 @@ export const SITE_NOTICE_SURFACES = Object.keys(
   SITE_NOTICE_SURFACE_FLAGS,
 ) as readonly SiteNoticeSurface[];
 
+/** Visitor-facing display names, shared by the status page, the admin panel
+    and the inline paused notices so the services are named consistently. */
+export const SITE_NOTICE_SURFACE_NAMES: Record<SiteNoticeSurface, string> = {
+  newRegistrations: "New member registrations",
+  collaboratorApplications: "Collaborator applications",
+  eventSignups: "Event sign-ups",
+};
+
+/**
+ * Append-only public history of notices, one doc per banner-visible episode,
+ * written ONLY by /api/admin/site-notice as it flips the live doc (break-glass
+ * console flips bypass the route and are deliberately absent). Powers the
+ * /status maintenance log. World-readable AND enumerable by design — nothing
+ * sensitive may ever be written here.
+ */
+export const MAINTENANCE_LOG_PATH = { collection: "maintenanceLog" } as const;
+export const MAINTENANCE_LOG_LIMIT = 20;
+
+export type MaintenanceLogEntry = {
+  id: string;
+  startedAt: Date;
+  /** Set when an admin switched the notice off; a natural expiry leaves it
+      null and `endsAt` marks the end instead. */
+  clearedAt: Date | null;
+  endsAt: Date | null;
+  level: SiteNoticeLevel;
+  message: string;
+  linkUrl: string | null;
+  paused: Record<SiteNoticeSurface, boolean>;
+  ongoing: boolean;
+};
+
 export const SITE_NOTICE_LIMITS = {
   message: 500,
   linkUrl: 300,
@@ -201,4 +233,48 @@ export function isSurfacePaused(
   surface: SiteNoticeSurface,
 ): boolean {
   return notice.paused[surface];
+}
+
+/**
+ * Fail-open normalisation of one maintenance-log doc: a malformed entry
+ * returns null and is simply omitted from the log, never a throw. Same
+ * coercion posture as normaliseSiteNotice above.
+ */
+export function normaliseLogEntry(
+  id: string,
+  data: unknown,
+  now: Date,
+): MaintenanceLogEntry | null {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) {
+    return null;
+  }
+  const raw = data as Record<string, unknown>;
+  const startedAt = coerceDate(raw.startedAt);
+  if (startedAt === null) return null;
+  const clearedAt = coerceDate(raw.clearedAt);
+  const endsAt = coerceDate(raw.endsAt);
+  const level: SiteNoticeLevel = (SITE_NOTICE_LEVELS as readonly unknown[]).includes(raw.level)
+    ? (raw.level as SiteNoticeLevel)
+    : "info";
+  const message =
+    typeof raw.message === "string"
+      ? raw.message.trim().slice(0, SITE_NOTICE_LIMITS.message)
+      : "";
+  const linkUrl =
+    typeof raw.linkUrl === "string" &&
+    raw.linkUrl.startsWith("https://") &&
+    raw.linkUrl.length <= SITE_NOTICE_LIMITS.linkUrl
+      ? raw.linkUrl
+      : null;
+  const rawPaused =
+    raw.paused !== null && typeof raw.paused === "object" && !Array.isArray(raw.paused)
+      ? (raw.paused as Record<string, unknown>)
+      : {};
+  const paused = {} as Record<SiteNoticeSurface, boolean>;
+  for (const surface of SITE_NOTICE_SURFACES) {
+    paused[surface] = rawPaused[surface] === true;
+  }
+  const ongoing =
+    clearedAt === null && (endsAt === null || now.getTime() < endsAt.getTime());
+  return { id, startedAt, clearedAt, endsAt, level, message, linkUrl, paused, ongoing };
 }

@@ -48,7 +48,7 @@ const SURFACE_LABELS: Record<SiteNoticeSurface, { label: string; description: st
   eventSignups: {
     label: "Pause event sign-ups",
     description:
-      "Banner only for now — the public RSVP form is not yet wired to this flag, so submits stay open.",
+      "Disables the RSVP submit on event pages. Change/cancel links from RSVP emails stay open on purpose.",
   },
 };
 
@@ -288,6 +288,15 @@ export default function SiteStatusPanel() {
             {new Date(audit.updatedAt).toLocaleString()}.
           </p>
         )}
+        <p className={styles.liveMeta}>
+          Visitors can follow the banner&apos;s Details link to the public{" "}
+          <a href="/status#log" target="_blank" rel="noopener noreferrer">
+            status page
+          </a>{" "}
+          — availability lights plus the maintenance log (log entries are
+          written on saves from this panel; break-glass console flips don&apos;t
+          appear there, though the lights stay correct).
+        </p>
         {live.bannerVisible && (
           <div className={styles.actionsRow}>
             <Button onClick={handleSwitchOff} disabled={saving}>

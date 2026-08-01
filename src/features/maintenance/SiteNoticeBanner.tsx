@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useSiteNotice } from "./useSiteNotice";
 import styles from "./SiteNoticeBanner.module.css";
@@ -81,6 +82,9 @@ export function SiteNoticeBanner() {
       aria-live="polite"
     >
       <p className={styles.message}>{notice.bannerMessage}</p>
+      <Link className={styles.link} href="/status#log">
+        Details
+      </Link>
       {notice.linkUrl !== null && (
         <a
           className={styles.link}

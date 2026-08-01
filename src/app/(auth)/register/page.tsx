@@ -30,6 +30,7 @@ import { signUpWithEmailPassword, startOver } from "@/auth/signInWithEmailPasswo
 import DeleteAccountButton from "@/components/DeleteAccountButton";
 import { useAuth } from "@/auth/AuthProvider";
 import { useSiteNotice } from "@/features/maintenance/useSiteNotice";
+import { SurfacePausedNotice } from "@/features/maintenance/SurfacePausedNotice";
 import { isSurfacePaused } from "@/lib/siteNotice";
 import { getClientDb } from "@/lib/firebase/client";
 import {
@@ -1034,9 +1035,7 @@ function RegisterPageInner() {
             <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)" }}>{error}</p>
           )}
           {registrationsPaused && (
-            <p style={{ color: "var(--color-warning)", fontSize: "var(--text-sm)" }}>
-              {siteNotice.bannerMessage} Your answers will stay on this page.
-            </p>
+            <SurfacePausedNotice notice={siteNotice} surface="newRegistrations" />
           )}
           <Button
             type="submit"
