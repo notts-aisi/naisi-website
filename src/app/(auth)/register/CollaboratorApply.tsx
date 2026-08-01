@@ -14,6 +14,8 @@ import { signUpWithEmailPassword, startOver } from "@/auth/signInWithEmailPasswo
 import DeleteAccountButton from "@/components/DeleteAccountButton";
 import { signOut } from "@/auth/signInWithGoogle";
 import { useAuth } from "@/auth/AuthProvider";
+import { useSiteNotice } from "@/features/maintenance/useSiteNotice";
+import { isSurfacePaused } from "@/lib/siteNotice";
 import { getClientDb } from "@/lib/firebase/client";
 import type { CollaboratorInput } from "@/lib/firestore/collaborators";
 
@@ -28,6 +30,13 @@ type Step = "account" | "verify-email" | "application";
 export default function CollaboratorApply() {
   const router = useRouter();
   const { user, role, loading: authLoading } = useAuth();
+  // Maintenance notice: a paused collaboratorApplications surface disables the
+  // final submit with the notice's copy inline (client-side only — see
+  // src/lib/siteNotice.ts). Account creation stays open: it is a
+  // browser→Firebase call this app cannot gate, and stranding someone before
+  // the pausable step helps nobody.
+  const siteNotice = useSiteNotice();
+  const applicationsPaused = isSurfacePaused(siteNotice, "collaboratorApplications");
 
   // Whether the signed-in user already has a collaborator application doc.
   // null = still resolving.
@@ -120,6 +129,16 @@ export default function CollaboratorApply() {
 
   async function handleSubmitApplication(input: CollaboratorInput) {
     setSubmitError(null);
+    if (applicationsPaused) {
+      // Belt and braces behind the disabled submit — never a silent block.
+      setSubmitError(siteNotice.bannerMessage);
+      return;
+    }
+    // During a declared incident the notice copy beats the generic fallback
+    // (a server-provided error body still wins below).
+    const genericError = siteNotice.bannerVisible
+      ? siteNotice.bannerMessage
+      : "Couldn't submit your application.";
     setSubmitBusy(true);
     try {
       const res = await fetch("/api/collaborators", {
@@ -128,12 +147,10 @@ export default function CollaboratorApply() {
         body: JSON.stringify({ ...input, agreedToPolicies: true }),
       });
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      if (!res.ok) throw new Error(body?.error ?? "Couldn't submit your application.");
+      if (!res.ok) throw new Error(body?.error ?? genericError);
       router.push("/collaborator");
     } catch (err) {
-      setSubmitError(
-        err instanceof Error ? err.message : "Couldn't submit your application.",
-      );
+      setSubmitError(err instanceof Error ? err.message : genericError);
       setSubmitBusy(false);
     }
   }
@@ -297,11 +314,23 @@ export default function CollaboratorApply() {
                 <DeleteAccountButton />
               </p>
             )}
+            {applicationsPaused && (
+              <p
+                style={{
+                  color: "var(--color-warning)",
+                  fontSize: "var(--text-sm)",
+                  marginBottom: "var(--space-4)",
+                }}
+              >
+                {siteNotice.bannerMessage} Your answers will stay on this page.
+              </p>
+            )}
             <CollaboratorApplicationForm
               requireConsent
               submitLabel="Submit application"
               busyLabel="Submitting…"
               busy={submitBusy}
+              disabled={applicationsPaused}
               externalError={submitError}
               onSubmit={handleSubmitApplication}
               intro={

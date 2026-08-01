@@ -29,6 +29,8 @@ import {
 import { signUpWithEmailPassword, startOver } from "@/auth/signInWithEmailPassword";
 import DeleteAccountButton from "@/components/DeleteAccountButton";
 import { useAuth } from "@/auth/AuthProvider";
+import { useSiteNotice } from "@/features/maintenance/useSiteNotice";
+import { isSurfacePaused } from "@/lib/siteNotice";
 import { getClientDb } from "@/lib/firebase/client";
 import {
   FIELD_LIMITS,
@@ -92,6 +94,12 @@ function RegisterPageInner() {
   const searchParams = useSearchParams();
   const fromSubscriber = searchParams.get("from") === "subscriber";
   const { user, role, loading: authLoading } = useAuth();
+  // Site-wide maintenance notice: while an admin has paused new registrations
+  // the final submit is disabled with the notice's copy inline, and a failing
+  // submit surfaces that copy instead of the generic error. Client-side only —
+  // the underlying Firestore write is untouched (see src/lib/siteNotice.ts).
+  const siteNotice = useSiteNotice();
+  const registrationsPaused = isSurfacePaused(siteNotice, "newRegistrations");
 
   const [step, setStep] = useState<"sign-in" | "profile">(
     user && !role ? "profile" : "sign-in",
@@ -473,6 +481,11 @@ function RegisterPageInner() {
   async function handleSubmitProfile(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (registrationsPaused) {
+      // Belt and braces behind the disabled submit — never a silent block.
+      setError(siteNotice.bannerMessage);
+      return;
+    }
     if (!preferredName || !universityEmail || !status || !subject || !motivation) {
       setError("Please fill in every required field.");
       return;
@@ -526,7 +539,14 @@ function RegisterPageInner() {
       router.push("/pending-approval");
     } catch (err) {
       console.error(err);
-      setError("Failed to save your application. Try again.");
+      // During a declared incident the admin-written notice copy is the error
+      // message — the exact sentence that couldn't be changed without a
+      // deploy in the 2026-08-01 registration outage.
+      setError(
+        siteNotice.bannerVisible
+          ? siteNotice.bannerMessage
+          : "Failed to save your application. Try again.",
+      );
     } finally {
       setLoading(false);
     }
@@ -1013,7 +1033,17 @@ function RegisterPageInner() {
           {error && (
             <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)" }}>{error}</p>
           )}
-          <Button type="submit" fullWidth size="lg" disabled={loading}>
+          {registrationsPaused && (
+            <p style={{ color: "var(--color-warning)", fontSize: "var(--text-sm)" }}>
+              {siteNotice.bannerMessage} Your answers will stay on this page.
+            </p>
+          )}
+          <Button
+            type="submit"
+            fullWidth
+            size="lg"
+            disabled={loading || registrationsPaused}
+          >
             {loading ? "Submitting…" : "Submit application"}
           </Button>
         </form>
