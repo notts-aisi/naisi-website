@@ -24,7 +24,7 @@ export async function trySignInWithPassword(email, password) {
     },
   );
   const body = await res.json().catch(() => null);
-  if (res.ok && body?.idToken) return { ok: true };
+  if (res.ok && body?.idToken) return { ok: true, idToken: body.idToken };
   return {
     ok: false,
     // Google's message, e.g. INVALID_LOGIN_CREDENTIALS / INVALID_PASSWORD.

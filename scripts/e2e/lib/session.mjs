@@ -95,6 +95,24 @@ export async function withHarnessSession(id, options = {}) {
   };
 }
 
+/**
+ * Exchanges an ID token for a fresh `__session` cookie — the same call the
+ * client makes. Used to re-establish a session after a password change
+ * revokes the previous one.
+ */
+export async function sessionCookieFromIdToken(idToken) {
+  const env = loadEnv();
+  const res = await fetch(`${env.origin}/api/auth/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ idToken }),
+  });
+  if (!res.ok) throw new Error(`POST /api/auth/session failed (${res.status})`);
+  const cookie = readSessionCookie(res);
+  if (!cookie) throw new Error("POST /api/auth/session returned no __session cookie.");
+  return cookie;
+}
+
 /** fetch() against the target with the harness session attached. */
 export function authedFetch(cookie, path, init = {}) {
   const env = loadEnv();

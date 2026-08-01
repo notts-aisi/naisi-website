@@ -30,7 +30,12 @@ import {
   seedEmailVerification,
   seedPendingUserDoc,
 } from "../lib/firestore.mjs";
-import { authedFetch, withHarnessSession } from "../lib/session.mjs";
+import {
+  authedFetch,
+  sessionCookieFromIdToken,
+  withHarnessSession,
+} from "../lib/session.mjs";
+import { trySignInWithPassword } from "../lib/identity.mjs";
 import { opaqueId, signToken } from "../lib/tokens.mjs";
 
 describe("two-phase uniEmailVerifiedAt stamp", () => {
@@ -164,11 +169,16 @@ describe("two-phase uniEmailVerifiedAt stamp", () => {
  *   magic link → session → SET PASSWORD → fill profile → reconcile
  *
  * `password-set` revokes the caller's session cookie (see
- * password-set.test.mjs), and `completeRegistration` does NOT re-establish it
- * before POSTing reconcile — it just warns and moves on when the response is
- * not ok (src/auth/signInWithGoogle.ts). If reconcile 401s here, the stamp
- * silently never lands and PR #216's fix is defeated for this entire flow,
- * while every UI surface still reads "verified".
+ * password-set.test.mjs). This battery found that the stamp was therefore
+ * silently lost — reconcile 401'd and `completeRegistration` swallows the
+ * failure — defeating PR #216's fix for the whole email/password flow while
+ * every UI surface still read "verified". Fixed in PR #221 by re-establishing
+ * the session before continuing; the sequence below mirrors what the patched
+ * client now does, so it guards the recovery path.
+ *
+ * NOT covered here: the client change itself. This harness drives HTTP, not a
+ * browser, so it proves the server accepts the recovery — a manual pass
+ * through registration is still what proves the component does it.
  */
 describe("the stamp survives the real register sequence", () => {
   let env;
@@ -197,13 +207,7 @@ describe("the stamp survives the real register sequence", () => {
     if (session) await session.dispose().catch(() => {});
   });
 
-  // KNOWN FAILING, deliberately recorded rather than deleted. Confirmed
-  // against dev.naisi.uk on 2026-08-01: reconcile returns 401 and the stamp
-  // never lands. Marked `todo` so it does not block the suite as a regression
-  // gate; when the app is fixed this starts passing and node reports it.
-  it("stamps uniEmailVerifiedAt even after the password has been set", {
-    todo: "FAILS TODAY: password-set revokes the session cookie reconcile needs (401), so the uni-email stamp is silently lost for email/password registrants.",
-  }, async (t) => {
+  it("stamps uniEmailVerifiedAt even after the password has been set", async (t) => {
     if (skipReason) return t.skip(skipReason);
 
     // 1. Click the uni-email magic link (before the profile exists).
@@ -216,23 +220,30 @@ describe("the stamp survives the real register sequence", () => {
     assert.equal(confirm.status, 200, "confirm leg failed");
 
     // 2. Set a password — what every email/password registrant does next.
+    //    This revokes the cookie used above.
+    const chosen = `e2e-seq-${Date.now()}`;
     const setPw = await authedFetch(session.cookie, "/api/register/password-set", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password: `e2e-seq-${Date.now()}` }),
+      body: JSON.stringify({ password: chosen }),
     });
     assert.equal(setPw.status, 200, "password-set failed");
 
-    // 3. Complete the profile (completeRegistration's client Firestore write).
+    // 3. Re-establish the session, as the patched LoginEmailVerified now does
+    //    before it navigates. Without this the cookie is dead and step 5 401s.
+    const reauth = await trySignInWithPassword(session.email, chosen);
+    assert.equal(reauth.ok, true, `re-authentication failed: ${reauth.reason}`);
+    const freshCookie = await sessionCookieFromIdToken(reauth.idToken);
+
+    // 4. Complete the profile (completeRegistration's client Firestore write).
     await seedPendingUserDoc(ledger, {
       uid: session.uid,
       email: session.email,
       universityEmail: uniEmail,
     });
 
-    // 4. completeRegistration's reconcile call, on the SAME cookie the browser
-    //    still holds — it never re-establishes the session in between.
-    const reconcile = await authedFetch(session.cookie, "/api/verify-email/reconcile", {
+    // 5. completeRegistration's reconcile call, on the refreshed session.
+    const reconcile = await authedFetch(freshCookie, "/api/verify-email/reconcile", {
       method: "POST",
     });
 
