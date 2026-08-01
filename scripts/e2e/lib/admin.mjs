@@ -124,6 +124,30 @@ export async function deleteHarnessUser(uid) {
 }
 
 /**
+ * Looks up an account BY EMAIL, for accounts the local server's /api/register
+ * route created (the route owns the uid, so unlike createHarnessUser the
+ * harness never saw it). Namespace-guarded twice: the argument must be a
+ * harness address, and the resolved record is re-checked before the uid is
+ * handed to anything that might delete it.
+ */
+export async function harnessUserByEmail(email) {
+  if (!isHarnessAccount(email)) {
+    throw new Error(
+      `REFUSING to look up ${JSON.stringify(email)}: not a harness account. ` +
+        "This helper exists to clean up after /api/register tests, nothing else.",
+    );
+  }
+  let record;
+  try {
+    record = await adminAuth().getUserByEmail(email);
+  } catch {
+    return null;
+  }
+  if (!isHarnessAccount(record.email)) return null;
+  return { uid: record.uid, email: record.email };
+}
+
+/**
  * Sweeps up harness accounts left behind by a crashed run. Only ever touches
  * the namespace; paginates so it works regardless of dev's user count.
  */

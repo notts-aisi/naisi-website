@@ -56,10 +56,18 @@ const FORBIDDEN_PRIVILEGE = [
  * the two-phase stamp gap was invisible by hand and needed PR #216).
  *
  * So the invariant narrowed rather than vanished: Firestore is reachable, but
- * only these two collections are. dev holds real member data, and a harness
- * able to address any collection is one bad edit away from touching it.
+ * only these collections are. dev holds real member data, and a harness able
+ * to address any collection is one bad edit away from touching it.
+ *
+ * `registrations` was added by Phase 3 (the local /api/register batteries):
+ * the route mirrors each account it creates into a `registrations/{uid}`
+ * tracker row, and deleting the Auth user while leaving its row would make the
+ * admin signup tracker list registrations for accounts that no longer exist.
+ * The harness only ever DELETES there, after re-reading the row and checking
+ * its email sits inside the harness namespace — see deleteRegistrationRow in
+ * scripts/e2e/lib/firestore.mjs.
  */
-const ALLOWED_COLLECTIONS = ["users", "emailVerifications"];
+const ALLOWED_COLLECTIONS = ["users", "emailVerifications", "registrations"];
 
 function sourceFiles(dir) {
   if (!existsSync(dir)) return [];
@@ -110,6 +118,29 @@ test("the e2e harness only ever addresses allowlisted Firestore collections", ()
   }
 });
 
+/**
+ * `registrations` is on the allowlist for TEARDOWN ONLY — the harness deletes
+ * tracker rows that /api/register created for its own accounts, and never
+ * writes one. Collection-level allowlisting cannot express that, and a row
+ * carries no `role` field, so a future `.set()` there would pass every other
+ * guard in this file silently. The tracker is admin-facing data about real
+ * people's registrations; writing it is not the harness's business.
+ */
+test("the e2e harness only ever DELETES from the registrations tracker", () => {
+  for (const file of sourceFiles(E2E_DIR)) {
+    const source = readFileSync(file, "utf8");
+    for (const match of source.matchAll(
+      /\.collection\(\s*["'`]registrations["'`][\s\S]{0,200}?\.(set|update|create|add)\(/g,
+    )) {
+      assert.fail(
+        `${relative(REPO_ROOT, file)} calls .${match[1]}() on the registrations ` +
+          "collection. The harness may only delete there — see " +
+          "deleteRegistrationRow in scripts/e2e/lib/firestore.mjs.",
+      );
+    }
+  }
+});
+
 test("assertTarget refuses production, however it is spelled", () => {
   const mustReject = [
     "https://naisi.uk",
@@ -143,6 +174,8 @@ test("assertTarget still accepts the dev origin and localhost", () => {
     "https://dev.naisi.uk/api/verify-email/send",
     "http://127.0.0.1:3000",
     "http://localhost:3000",
+    // The Phase 3 local server (run.mjs binds it to 127.0.0.1 explicitly).
+    "http://127.0.0.1:3100",
   ]) {
     assert.doesNotThrow(
       () => assertTarget(target),

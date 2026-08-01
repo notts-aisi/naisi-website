@@ -39,7 +39,7 @@ const ALLOWED_ORIGINS = [
 /** Origins that must produce a loud, specific failure rather than a generic one. */
 const PRODUCTION_ORIGINS = ["https://naisi.uk", "https://www.naisi.uk"];
 
-function parseEnvFile(path) {
+export function parseEnvFile(path) {
   let raw;
   try {
     raw = readFileSync(path, "utf8");
@@ -95,6 +95,11 @@ export function assertTarget(target) {
     );
   }
   return origin;
+}
+
+/** True for the origins that can only ever be this machine. */
+export function isLoopbackOrigin(origin) {
+  return origin.startsWith("http://127.0.0.1:") || origin.startsWith("http://localhost:");
 }
 
 /**
@@ -154,8 +159,9 @@ export function loadEnv() {
       return getTokenSecret();
     },
     // Opt-in switch for the reCAPTCHA-gated /api/register battery, which can
-    // only run against a local server (see README).
-    allowRegister: file.E2E_ALLOW_REGISTER === "1",
+    // only run against a local server (see README). run.mjs arms it via the
+    // process env; the file value exists for hand-driven runs.
+    allowRegister: (process.env.E2E_ALLOW_REGISTER ?? file.E2E_ALLOW_REGISTER) === "1",
   };
   return cached;
 }
@@ -175,6 +181,25 @@ let tokenSecret;
  */
 export function getTokenSecret() {
   if (tokenSecret !== undefined) return tokenSecret;
+  // Local mode: run.mjs generates a fresh random secret per run and hands the
+  // SAME value to the spawned server and to this process, so tokens mint and
+  // verify without Secret Manager being involved at all. Only honoured when
+  // the target is loopback — against dev.naisi.uk the server's secret lives in
+  // Secret Manager, and silently minting with a local value would turn every
+  // token battery into a false red.
+  const localSecret = process.env.E2E_LOCAL_TOKEN_SECRET;
+  if (localSecret) {
+    const { origin } = loadEnv();
+    if (!isLoopbackOrigin(origin)) {
+      throw new Error(
+        `E2E_LOCAL_TOKEN_SECRET is set but the target is ${origin}. The local ` +
+          "secret only means anything to a server this run started itself — " +
+          "unset it, or target the local server.",
+      );
+    }
+    tokenSecret = localSecret;
+    return tokenSecret;
+  }
   try {
     tokenSecret = execFileSync(
       "gcloud",
