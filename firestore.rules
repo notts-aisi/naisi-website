@@ -48,6 +48,13 @@ service cloud.firestore {
         && !('tracks' in request.resource.data)
         && !('permissions' in request.resource.data)
         && !('suRecognised' in request.resource.data)
+        // `uniEmailVerifiedAt` is a trusted signal (gates uni-email ownership +
+        // the admin "verified" badge). It is stamped SERVER-SIDE from the
+        // server-only `emailVerifications` record (via /api/verify-email/reconcile
+        // right after this create), never from the client — so a self-created doc
+        // must not seed it, or a caller could forge "verified" for an address
+        // they don't own and squat a victim's real uni email.
+        && !('uniEmailVerifiedAt' in request.resource.data.get('profile', {}))
         && smallEnough();
 
       // Self-update: role, tracks, permissions and suRecognised all unchanged.
@@ -70,6 +77,25 @@ service cloud.firestore {
                 == resource.data.get(['profile', 'universityEmail'], '')
               || resource.data.get(['profile', 'universityEmailLockUntil'], request.time)
                 <= request.time
+            )
+            // `uniEmailVerifiedAt` is server-authoritative (see the create rule)
+            // and is BOUND to the address it attests to. A self-update may only
+            // CLEAR it (the profile form does this on any uni-email change) or
+            // leave it untouched WHILE the uni email is also unchanged. It may
+            // never be introduced, changed, OR kept across an email change —
+            // keeping a stale stamp while repointing `universityEmail` to a
+            // victim's address would forge ownership of that address (the admin
+            // "verified" badge + the findVerifiedUniEmailOwner squat). The server
+            // (Admin SDK, which bypasses these rules) is the only writer of a
+            // truthy stamp, always in lockstep with the verified address.
+            && (
+              !('uniEmailVerifiedAt' in request.resource.data.get('profile', {}))
+              || (
+                request.resource.data.get(['profile', 'uniEmailVerifiedAt'], null)
+                  == resource.data.get(['profile', 'uniEmailVerifiedAt'], null)
+                && request.resource.data.get(['profile', 'universityEmail'], '')
+                  == resource.data.get(['profile', 'universityEmail'], '')
+              )
             )))
         && smallEnough();
 
