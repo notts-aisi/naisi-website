@@ -29,10 +29,28 @@ export { assertFails, assertSucceeds };
 
 let testEnv;
 
-export async function getTestEnv() {
+/**
+ * `node --test` runs each test FILE in its own parallel process, and every
+ * file here shares one emulator. With a shared project id, one file's
+ * `clearFirestore()` in `afterEach` wipes another file's fixtures mid-test —
+ * observed as a suite that passed, then failed one test, then passed again.
+ *
+ * So each file gets its own project id, which the emulator keeps in a separate
+ * namespace. Isolation is then real rather than a function of timing, and
+ * adding a third test file cannot reintroduce the race.
+ *
+ * @param namespace unique per test file, e.g. "candidate-findings"
+ */
+export async function getTestEnv(namespace) {
   if (testEnv) return testEnv;
+  if (!namespace) {
+    throw new Error(
+      "getTestEnv(namespace) requires a namespace unique to this test file — " +
+        "sharing one across files lets parallel runs clear each other's data.",
+    );
+  }
   testEnv = await initializeTestEnvironment({
-    projectId: "naisi-rules-test",
+    projectId: `naisi-rules-${namespace}`,
     firestore: {
       rules: readFileSync(join(REPO_ROOT, "firestore.rules"), "utf8"),
       host: "127.0.0.1",

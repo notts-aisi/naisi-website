@@ -23,7 +23,7 @@ import {
 } from "../lib/harness.mjs";
 
 before(async () => {
-  await getTestEnv();
+  await getTestEnv("candidate-findings");
 });
 after(cleanup);
 afterEach(clearData);

@@ -26,7 +26,7 @@ import {
 } from "../lib/harness.mjs";
 
 before(async () => {
-  await getTestEnv();
+  await getTestEnv("public-config");
 });
 after(cleanup);
 afterEach(clearData);
