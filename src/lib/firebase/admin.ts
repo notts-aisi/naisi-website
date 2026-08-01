@@ -35,7 +35,15 @@ function init(): App | undefined {
       // / Cloud Run this reaches the instance metadata server automatically;
       // no env vars needed. Fails gracefully in local dev before `.env` is
       // populated — the catch below keeps the app from crashing.
-      _app = initializeApp({ credential: applicationDefault() });
+      //
+      // `projectId` is passed explicitly because without it the SDK resolves
+      // the project from `gcloud config get-value project` — a machine-wide
+      // setting that has nothing to do with this repo. On a laptop whose
+      // gcloud default is production, a local `npm run dev` running on ADC
+      // would silently read and write PRODUCTION data. Undefined here on App
+      // Hosting (no FIREBASE_ADMIN_* is set there, by design — see
+      // apphosting.yaml), where the metadata server supplies it as before.
+      _app = initializeApp({ credential: applicationDefault(), projectId });
     }
   } catch (err) {
     console.error("[firebase-admin] initialization failed:", err);
