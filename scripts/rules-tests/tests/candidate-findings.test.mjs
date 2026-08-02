@@ -14,6 +14,8 @@
  */
 import { after, afterEach, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import firebase from "firebase/compat/app";
+import "firebase/compat/firestore";
 import {
   asAnon,
   asUser,
@@ -25,6 +27,10 @@ import {
   seed,
   seedUser,
 } from "../lib/harness.mjs";
+
+/** The sentinel a client `serverTimestamp()` sends — resolves to `request.time`
+ *  in rules, which is what the consent re-stamp escape hatch keys off. */
+const serverTimestamp = () => firebase.firestore.FieldValue.serverTimestamp();
 
 before(async () => {
   await getTestEnv("candidate-findings");
@@ -125,6 +131,41 @@ describe("FINDING 1 (FIXED) — events update is scoped per document and per sta
     });
     const db = await asUser("collab");
     await assertSucceeds(db.collection("events").doc("e2c").update({ title: "edited by collaborator" }));
+  });
+
+  it("refuses an AUTHOR unpublishing their own live event by reverting it to draft", async () => {
+    // Found by the adversarial pass on the first version of this fix, which
+    // tested only the INCOMING status — so 'published' -> 'draft' slipped
+    // through and withdrew publication with no approver involved. The rule now
+    // tests the STORED status: a live event is server territory.
+    await seedUser("auth1", { role: "member", permissions: { draftEvent: true } });
+    await seed(async (db) => {
+      await db.collection("events").doc("p1").set({
+        title: "Live event",
+        authorUid: "auth1",
+        status: "published",
+        collaboratorUids: [],
+      });
+    });
+    const db = await asUser("auth1");
+    await assertFails(db.collection("events").doc("p1").update({ status: "draft" }));
+  });
+
+  it("refuses even an APPROVER editing a live event from the client", async () => {
+    // Post-publish edits go through /api/events/[id]/update so the change
+    // notices actually get sent; letting the client bypass that would ship a
+    // silent edit to people who already RSVP'd.
+    await seedUser("approver2", { role: "member", permissions: { approveEvent: true } });
+    await seed(async (db) => {
+      await db.collection("events").doc("p2").set({
+        title: "Live event",
+        authorUid: "someone",
+        status: "published",
+        collaboratorUids: [],
+      });
+    });
+    const db = await asUser("approver2");
+    await assertFails(db.collection("events").doc("p2").update({ title: "changed" }));
   });
 
   it("still blocks a plain member with no event permissions (control)", async () => {
@@ -255,6 +296,52 @@ describe("FINDING 3 (FIXED) — consent records are server-authoritative", () =>
     const db = await asUser("member1b");
     await assertFails(
       db.collection("users").doc("member1b").update({ policyVersion: "2099-12-31" }),
+    );
+  });
+
+  it("still lets the REGISTRATION RETRY re-stamp consent (the flow must survive)", async () => {
+    // completeRegistration (src/auth/signInWithGoogle.ts:129) writes an
+    // UNMERGED setDoc, so a second attempt — after a failed first one — re-sends
+    // policyAgreedAt for the same policyVersion. The first version of this fix
+    // required strict equality and denied exactly that, which would have
+    // stranded anyone whose registration errored once. Caught by the
+    // adversarial pass, not by me.
+    await seedUser("retry1", {
+      role: "pending",
+      policyVersion: "v1",
+      policyAgreedAt: new Date("2020-01-01"),
+      profile: { preferredName: "R" },
+    });
+    const db = await asUser("retry1");
+    await assertSucceeds(
+      db.collection("users").doc("retry1").set({
+        email: "r@example.com",
+        displayName: "R",
+        role: "pending",
+        showOnMembers: false,
+        profile: { preferredName: "R" },
+        policyVersion: "v1",
+        // Exactly what the client sends.
+        policyAgreedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+      }),
+    );
+  });
+
+  it("refuses BACK-DATING the consent timestamp to a caller-chosen value", async () => {
+    // The escape hatch above is scoped to the server's own clock, so it cannot
+    // be used to claim you agreed earlier than you did.
+    await seedUser("backdate1", {
+      role: "member",
+      policyVersion: "v1",
+      policyAgreedAt: new Date("2026-01-01"),
+      profile: { preferredName: "B" },
+    });
+    const db = await asUser("backdate1");
+    await assertFails(
+      db.collection("users").doc("backdate1").update({
+        policyAgreedAt: new Date("2020-01-01"),
+      }),
     );
   });
 

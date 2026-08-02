@@ -83,10 +83,24 @@ service cloud.firestore {
             // registration, by the create rule above (signInWithGoogle.ts).
             // Note this sits INSIDE the self-update disjunct on purpose: the
             // isAdmin() branch above is unaffected.
+            // The VERSION is the security property — claiming to have accepted
+            // a policy you never saw is the forgery, and skipping the
+            // re-consent gate is the escalation. It is pinned outright.
             && request.resource.data.get('policyVersion', '')
               == resource.data.get('policyVersion', '')
-            && request.resource.data.get('policyAgreedAt', null)
-              == resource.data.get('policyAgreedAt', null)
+            // The timestamp may only stay put or be re-stamped to the server's
+            // own clock, never back-dated to a value of the caller's choosing.
+            // `request.time` is what a client `serverTimestamp()` resolves to,
+            // which is what makes the registration RETRY work: completeRegistration
+            // writes an unmerged setDoc, so a second attempt re-sends
+            // policyAgreedAt for the SAME version. Requiring strict equality
+            // here denied that retry outright — an over-tightening that would
+            // have stranded anyone whose first attempt failed.
+            && (
+              request.resource.data.get('policyAgreedAt', null)
+                == resource.data.get('policyAgreedAt', null)
+              || request.resource.data.get('policyAgreedAt', null) == request.time
+            )
             && (
               request.resource.data.get(['profile', 'universityEmail'], '')
                 == resource.data.get(['profile', 'universityEmail'], '')
@@ -426,7 +440,14 @@ service cloud.firestore {
       allow update: if isAdmin()
         || (
           (canApprove() || isCollaborator() || (canDraft() && isOwnEvent()))
-          // Publishing stays server-side (/api/events/[id]/publish).
+          // Once an event is LIVE it is server territory: post-publish edits go
+          // through /api/events/[id]/update (which diffs and sends the change
+          // notices) and cancellation through .../cancel, both Admin SDK. The
+          // STORED status is what matters here — testing only the incoming one
+          // was the original bug, and checking it alone still let an author
+          // quietly unpublish their own live event by reverting it to draft.
+          && resource.data.get('status', 'draft') != 'published'
+          && resource.data.get('status', 'draft') != 'cancelled'
           && request.resource.data.status != 'published'
           && (
             // Content edits that leave the workflow state alone.
