@@ -72,6 +72,21 @@ service cloud.firestore {
             && request.resource.data.get('tracks', []) == resource.data.get('tracks', [])
             && request.resource.data.get('permissions', {}) == resource.data.get('permissions', {})
             && request.resource.data.get('suRecognised', false) == resource.data.get('suRecognised', false)
+            // Consent is an AUDIT RECORD, so the subject must not be able to
+            // write it. Both fields were absent from these rules entirely, and
+            // with no keys().hasOnly() a member could bump `policyVersion` to
+            // skip the re-consent gate AND fabricate the `policyAgreedAt` that
+            // says they agreed — the half that matters under UK GDPR.
+            // Re-consent is server-stamped (/api/account/reconsent, Admin SDK,
+            // which bypasses these rules), so locking self-updates costs no
+            // legitimate flow. The initial value is still written once at
+            // registration, by the create rule above (signInWithGoogle.ts).
+            // Note this sits INSIDE the self-update disjunct on purpose: the
+            // isAdmin() branch above is unaffected.
+            && request.resource.data.get('policyVersion', '')
+              == resource.data.get('policyVersion', '')
+            && request.resource.data.get('policyAgreedAt', null)
+              == resource.data.get('policyAgreedAt', null)
             && (
               request.resource.data.get(['profile', 'universityEmail'], '')
                 == resource.data.get(['profile', 'universityEmail'], '')
@@ -263,7 +278,16 @@ service cloud.firestore {
             || request.auth.uid in parent().reviewerUids;
         }
         allow read: if canAccessParent();
-        allow create: if isSignedIn()
+        // `canAccessParent()` was defined here and used for read but NOT for
+        // create, while the sibling comments/attachments blocks gate create on
+        // it — an oversight that let any signed-in account (a brand-new
+        // `pending` one included) append arbitrary text to the activity log of
+        // a task it cannot even read, or to a task id that does not exist.
+        // Every legitimate client write batches this alongside an update to a
+        // task the actor can already reach, and canAccessParent() admits
+        // everyone the task update rule does, so this closes the hole without
+        // narrowing a real flow.
+        allow create: if canAccessParent()
           && request.resource.data.actorUid == request.auth.uid;
         allow update, delete: if false;
       }
@@ -391,8 +415,32 @@ service cloud.firestore {
       allow create: if canDraft()
         && request.resource.data.authorUid == request.auth.uid
         && request.resource.data.status == 'draft';
-      allow update: if (canDraft() || canApprove() || isCollaborator())
-        && request.resource.data.status != 'published';
+      // Per-document scoping. `draftEvent` is a GLOBAL permission a plain
+      // member can hold, so without an ownership test it granted write access
+      // to EVERY event — including cancelling someone else's published one,
+      // because only the INCOMING status was ever checked. A collaborator is
+      // already per-event by construction (they are named on the doc).
+      function isOwnEvent() {
+        return isSignedIn() && resource.data.get('authorUid', '') == request.auth.uid;
+      }
+      allow update: if isAdmin()
+        || (
+          (canApprove() || isCollaborator() || (canDraft() && isOwnEvent()))
+          // Publishing stays server-side (/api/events/[id]/publish).
+          && request.resource.data.status != 'published'
+          && (
+            // Content edits that leave the workflow state alone.
+            request.resource.data.status == resource.data.status
+            // Author/collaborator self-service: park as draft, or send for review.
+            || ((isOwnEvent() || isCollaborator())
+                && request.resource.data.status in ['draft', 'pending'])
+            // Every state that CONFERS or WITHDRAWS publication — approved,
+            // rejected, cancelled — requires the approve permission. That is
+            // the two-person half of review: holding `draftEvent` alone must
+            // never move an event through it, not even your own.
+            || canApprove()
+          )
+        );
       allow delete: if isAdmin()
         || (canDraft() && resource.data.authorUid == request.auth.uid
             && resource.data.status != 'published');
