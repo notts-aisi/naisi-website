@@ -99,7 +99,7 @@ describe("event-images — same shape as newsletter", () => {
   });
 });
 
-describe("task attachments — the suRecognised divergence", () => {
+describe("task attachments — suRecognised now matches Firestore (was a divergence)", () => {
   async function seedCommitteeTask() {
     const env = await getTestEnv("test");
     await env.withSecurityRulesDisabled(async (ctx) => {
@@ -113,15 +113,42 @@ describe("task attachments — the suRecognised divergence", () => {
     });
   }
 
-  it("FINDING: a NON-SU committee member reaches attachments they are denied in Firestore", async () => {
+  it("FIXED: a NON-SU committee member is refused attachments, as Firestore refuses the doc", async () => {
     // firestore.rules gates committee task access on isSuCommittee() —
-    // role == 'committee' AND suRecognised == true. storage.rules checks only
-    // `role in ['committee','admin']`, with no suRecognised anywhere in the
-    // file. So the document is denied while its attachment blobs are not.
+    // role == 'committee' AND suRecognised == true. storage.rules used to check
+    // only `role in ['committee','admin']`, with no suRecognised anywhere in
+    // the file, so the document was denied while its attachment blobs were not.
+    // The two gates now agree.
     await seedUser("nonSu", { role: "committee", suRecognised: false });
     await seedCommitteeTask();
     const s = await storageAsUser("nonSu");
-    await assertSucceeds(s.ref("tasks/t1/a1/file.png").put(PNG, png));
+    await assertFails(s.ref("tasks/t1/a1/file.png").put(PNG, png));
+  });
+
+  it("FIXED: and cannot READ them either — the blobs were the exposed half", async () => {
+    await seedUser("nonSu2", { role: "committee", suRecognised: false });
+    await seedCommitteeTask();
+    const s = await storageAsUser("nonSu2");
+    await assertFails(s.ref("tasks/t1/a1/file.png").getMetadata());
+  });
+
+  it("still lets a NON-SU committee member named on the task in (the flow must survive)", async () => {
+    // This is precisely how a non-SU committee member is meant to reach a task:
+    // by being explicitly added to it. Tightening the committee branch must not
+    // take this away, or it breaks the collaboration model in CLAUDE.md.
+    await seedUser("nonSuNamed", { role: "committee", suRecognised: false });
+    const env = await getTestEnv("test");
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().collection("tasks").doc("t2").set({
+        title: "Committee task they were added to",
+        creatorUid: "someone-else",
+        completerUids: ["nonSuNamed"],
+        reviewerUids: [],
+        visibility: "committee",
+      });
+    });
+    const s = await storageAsUser("nonSuNamed");
+    await assertSucceeds(s.ref("tasks/t2/a1/file.png").put(PNG, png));
   });
 
   it("an SU-recognised committee member is allowed (intended behaviour)", async () => {

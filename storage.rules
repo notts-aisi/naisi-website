@@ -67,10 +67,22 @@ service firebase.storage {
       function parentTask() {
         return firestore.get(/databases/(default)/documents/tasks/$(taskId)).data;
       }
+      // MUST mirror firestore.rules' canAccessParent() on the attachments
+      // subcollection. It did not: this file checked only
+      // `role in ['committee','admin']`, and the word `suRecognised` appeared
+      // nowhere in it — so Firestore denied a non-SU committee member the task
+      // document AND its attachment metadata, while Storage happily served the
+      // attachment blobs themselves. `suRecognised` is the trust boundary that
+      // decides who sees committee material at all (see CLAUDE.md: non-SU
+      // committee collaborate only on tasks they are explicitly added to), so
+      // the file gate has to honour it too. Being named on the task still
+      // grants access via the completer/reviewer branches below, which is
+      // exactly how a non-SU committee member is meant to reach one.
       function canAccessTask() {
         return request.auth != null && (
           userData().role == 'admin'
-          || (userData().role in ['committee', 'admin']
+          || (userData().role == 'committee'
+              && userData().get('suRecognised', false) == true
               && parentTask().visibility == 'committee')
           || request.auth.uid in parentTask().completerUids
           || request.auth.uid in parentTask().reviewerUids
