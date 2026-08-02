@@ -4,7 +4,7 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { sendEmail } from "@/lib/email/send";
 import { randomOpaqueId, signToken } from "@/lib/signedTokens";
-import { FIELD_LIMITS } from "@/lib/firestore/users";
+import { validateUniversityEmail } from "@/lib/firestore/users";
 import { findVerifiedUniEmailOwner } from "@/lib/firestore/uniEmailOwnership";
 import { obfuscateEmail } from "@/lib/obfuscateEmail";
 import VerifyUniEmail from "@/emails/VerifyUniEmail";
@@ -48,16 +48,11 @@ export async function POST(req: Request) {
   }
 
   const email = (body.email ?? "").trim().toLowerCase();
-  // TEMPORARY (revert before re-locking registration): bypass the @nottingham.ac.uk
-  // requirement so a demo account can register. Restore by swapping this block back to
-  // `const emailError = validateUniversityEmail(email);` and re-importing it.
-  const emailError = !email
-    ? "Email is required."
-    : email.length > FIELD_LIMITS.universityEmail
-      ? "That email is too long."
-      : !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)
-        ? "That doesn't look like a valid email."
-        : null;
+  // The university-email magic link is what proves UoN affiliation, so the
+  // address it is sent to must itself be a Nottingham address. This is the
+  // authoritative server-side eligibility gate (the register form mirrors it
+  // client-side for UX).
+  const emailError = validateUniversityEmail(email);
   if (emailError) {
     return NextResponse.json({ error: emailError }, { status: 400 });
   }

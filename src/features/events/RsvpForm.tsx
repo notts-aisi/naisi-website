@@ -6,6 +6,9 @@ import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Input";
 import { useAuth } from "@/auth/AuthProvider";
+import { useSiteNotice } from "@/features/maintenance/useSiteNotice";
+import { SurfacePausedNotice } from "@/features/maintenance/SurfacePausedNotice";
+import { isSurfacePaused } from "@/lib/siteNotice";
 import {
   EMAIL_MAX,
   NAME_MAX,
@@ -37,6 +40,12 @@ export default function RsvpForm({ event, previewMode }: Props) {
   const [joinEvents, setJoinEvents] = useState(false);
   const [joinNewsletter, setJoinNewsletter] = useState(false);
   const [state, setState] = useState<SubmitState>({ kind: "idle" });
+  // Maintenance notice: a paused eventSignups surface disables the submit with
+  // the notice copy inline (client-side only — the RSVP route is untouched).
+  // The token-gated change/cancel flows stay open on purpose: stranding
+  // someone trying to free up a place helps nobody.
+  const siteNotice = useSiteNotice();
+  const signupsPaused = isSurfacePaused(siteNotice, "eventSignups");
 
   const questions: FormQuestion[] = event.signupForm;
   const needsLogin = event.visibility === "members" && !user && !authLoading;
@@ -54,6 +63,11 @@ export default function RsvpForm({ event, previewMode }: Props) {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (signupsPaused) {
+      // Belt and braces behind the disabled submit — never a silent block.
+      setState({ kind: "error", message: siteNotice.bannerMessage });
+      return;
+    }
     setState({ kind: "submitting" });
     try {
       const res = await fetch(`/api/events/${event.id}/rsvp`, {
@@ -227,8 +241,11 @@ export default function RsvpForm({ event, previewMode }: Props) {
 
         {state.kind === "error" && <p className={styles.danger}>{state.message}</p>}
 
+        {signupsPaused && (
+          <SurfacePausedNotice notice={siteNotice} surface="eventSignups" />
+        )}
         <div className={styles.actions}>
-          <Button type="submit" disabled={state.kind === "submitting"}>
+          <Button type="submit" disabled={state.kind === "submitting" || signupsPaused}>
             {state.kind === "submitting" ? "Submitting…" : "Request RSVP"}
           </Button>
         </div>

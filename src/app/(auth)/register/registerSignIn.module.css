@@ -1,0 +1,182 @@
+/* On phones the register sign-in step becomes a full-screen app view (the auth
+   header stays pinned — see layout.module.css): the card chrome is stripped so
+   the form fills the screen instead of floating in a centred card, and the
+   primary CTA + loader live in a separate bar pinned to the bottom. Desktop is
+   unchanged. */
+
+.frame {
+  max-width: 32rem;
+}
+
+.heading {
+  font-size: var(--text-2xl);
+  margin-bottom: var(--space-2);
+}
+
+.footer {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--space-5);
+}
+
+/* Chevron handle above the action button that reveals/hides the ambient sign-in
+   animation (hidden by default so it stays out of the way). A clear outlined tab
+   so it reads as obviously tappable. */
+.loaderHandle {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.75rem;
+  height: 1.75rem;
+  margin-bottom: var(--space-2);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+.loaderHandle:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+.loaderHandle svg {
+  width: 26px;
+  height: 26px;
+}
+
+/* The SVG bar-edge is a mobile-only flourish (the desktop footer isn't a bar). */
+.barEdge {
+  display: none;
+}
+
+@media (max-width: 48rem) { /* --bp-md */
+  /* Fill the scroll area so the bottom bar reaches the bottom of the screen even
+     when the form is short (.main is a flex column on mobile — see layout.module
+     .css). */
+  .frame {
+    max-width: none;
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Strip the card chrome so the form reads as a full-screen view, not a card
+     stuck in the middle of the page. The card fills the frame so the footer's
+     margin-top:auto can push it to the bottom. */
+  .frame .card {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Bigger, easier-to-read + easier-to-tap controls. */
+  .heading {
+    font-size: 1.85rem;
+  }
+  .subcopy {
+    font-size: 1.0625rem;
+  }
+  .frame input {
+    min-height: 3rem;
+    font-size: 1rem; /* 16px: comfortable target + avoids iOS focus-zoom */
+  }
+  .googleWrap {
+    display: flex;
+    justify-content: center;
+    /* GIS renders a fixed ~320px branded button (Google TOS limits restyling);
+       don't scale it UP — that overflows narrow phones. Keep it centred and let
+       it be the natural size. */
+    max-width: 100%;
+    margin-bottom: var(--space-5);
+  }
+
+  /* Bottom action bar — an opaque "solid-fade" surface (locked in). The
+     scrolling content feathers into it via ::before; the accent top edge is the
+     SVG below. Goes edge-to-edge by cancelling the .main side padding; sticky +
+     pushed to the bottom of the filled card so it sits flush with the screen
+     bottom (the .main bottom padding is removed on mobile too). */
+  .footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    margin-top: auto;
+    margin-inline: calc(-1 * var(--space-4));
+    padding: var(--space-4) var(--space-4)
+      calc(var(--space-4) + env(safe-area-inset-bottom));
+    background: var(--color-bg-elevated);
+  }
+  /* Feather so the content dissolves into the bar instead of hard-clipping. */
+  .footer::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: var(--space-8);
+    transform: translateY(-100%);
+    background: linear-gradient(to top, var(--color-bg-elevated), transparent);
+    pointer-events: none;
+  }
+
+  /* The bar's top edge — a thin NAISI-accent line that smoothly bumps up and
+     around the chevron tab — is drawn as an SVG (mobile only) so it sits ABOVE
+     the solid-fade feather (which was hiding a plain border) and the corners are
+     curved, not right-angled. */
+  .barEdge {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 30px;
+    transform: translateY(-100%);
+    pointer-events: none;
+    z-index: 3;
+  }
+  .barEdgeFill {
+    fill: var(--color-bg-elevated);
+  }
+  .barEdgeStroke {
+    fill: none;
+    stroke: color-mix(in srgb, var(--color-accent) 88%, transparent);
+  }
+  /* Chevron sits over the bump, borderless — the SVG is its outline. */
+  .loaderHandle {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translate(-50%, calc(-100% + 3px));
+    margin-bottom: 0;
+    width: 4.5rem;
+    height: 26px;
+    background: none;
+    border: none;
+    border-radius: 0;
+    z-index: 4;
+  }
+  .loaderHandle:hover {
+    background: none;
+    color: var(--color-accent);
+  }
+  .loaderHandle svg {
+    width: 24px;
+    height: 24px;
+  }
+  /* A little scroll room under the last field so the chevron tab doesn't cover
+     it when scrolled to the bottom. */
+  .authForm {
+    padding-bottom: 2.5rem;
+  }
+}

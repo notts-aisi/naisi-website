@@ -3,6 +3,12 @@
 import { useState } from "react";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import {
+  AdminPage,
+  AdminLoadingBar,
+  AdminListFooter,
+  useClientPagination,
+} from "@/features/admin/adminList";
 import ProjectCard from "@/features/admin/ProjectCard";
 import ProjectForm from "@/features/admin/ProjectForm";
 import { useMembers } from "@/features/admin/useMembers";
@@ -11,13 +17,15 @@ import { useProjects } from "@/features/admin/useProjects";
 export default function ProjectsAdminPage() {
   const [creating, setCreating] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
-  const { projects, loading } = useProjects();
+  const { projects, loading, refreshing, error, reload } = useProjects();
   const { users: members } = useMembers();
 
   const visible = projects.filter((p) => (showArchived ? true : !p.archived));
 
+  const { shown, hasMore, loadMore, total, shownCount } = useClientPagination(visible, 20);
+
   return (
-    <div>
+    <AdminPage>
       <div
         style={{
           display: "flex",
@@ -65,7 +73,19 @@ export default function ProjectsAdminPage() {
         </div>
       )}
 
-      {!loading && visible.length === 0 && !creating && (
+      {error && (
+        <Card padding="md">
+          <p style={{ color: "var(--color-danger)" }}>Couldn&apos;t load: {error.message}</p>
+        </Card>
+      )}
+
+      {loading && (
+        <Card padding="md">
+          <AdminLoadingBar label="Loading projects…" />
+        </Card>
+      )}
+
+      {!loading && !error && visible.length === 0 && !creating && (
         <Card padding="md">
           <p style={{ color: "var(--color-text-muted)" }}>
             No projects yet. Click <strong>New project</strong> to create the first one.
@@ -74,10 +94,22 @@ export default function ProjectsAdminPage() {
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
-        {visible.map((p) => (
+        {shown.map((p) => (
           <ProjectCard key={p.id} project={p} committee={members} />
         ))}
       </div>
-    </div>
+
+      {!loading && !error && total > 0 && (
+        <AdminListFooter
+          shownCount={shownCount}
+          total={total}
+          hasMore={hasMore}
+          onLoadMore={loadMore}
+          onRefresh={reload}
+          refreshing={refreshing}
+          noun="projects"
+        />
+      )}
+    </AdminPage>
   );
 }

@@ -580,12 +580,10 @@ export default function EventEditor({ eventId }: Props) {
     if (!window.confirm("Permanently delete this event? This can't be undone.")) return;
     setBusy(true);
     try {
-      // Clear any generated test RSVPs first so they don't orphan. Best-effort:
-      // the route is admin-only and synthetic RSVPs only exist if an admin made
-      // them, so a failure here is safe to ignore.
-      await fetch(`/api/events/${event.id}/test-rsvps`, { method: "DELETE" }).catch(
-        () => {},
-      );
+      // deleteEvent now routes through /api/events/[id]/delete, which removes
+      // EVERY RSVP (synthetic and real) plus the event's images before deleting
+      // the doc. The old best-effort test-rsvps call is gone: it only cleared
+      // synthetic rows, so real attendees' details were left stranded.
       await deleteEvent(event.id);
       router.push("/events/manage");
     } catch (err) {

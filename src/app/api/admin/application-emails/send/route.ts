@@ -88,6 +88,8 @@ export async function POST(req: Request) {
     preferredName?: string;
     subject?: string;
     universityEmail?: string;
+    /** Firestore Timestamp when set; presence === verified. */
+    uniEmailVerifiedAt?: unknown;
     status?: "employee" | "foundation" | "undergraduate" | "masters" | "phd" | "postdoc" | "other";
     statusOther?: string;
   };
@@ -95,7 +97,11 @@ export async function POST(req: Request) {
   const recipients = resolveRecipients(
     {
       email: (userData.email as string | null | undefined) ?? null,
-      profile: { universityEmail: profile.universityEmail ?? null },
+      profile: {
+        universityEmail: profile.universityEmail ?? null,
+        // Don't mail an unverified uni address — it likely bounces.
+        uniEmailVerified: Boolean(profile.uniEmailVerifiedAt),
+      },
     },
     template.recipients,
   );

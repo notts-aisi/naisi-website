@@ -15,6 +15,7 @@ import {
   type UserDoc,
 } from "@/lib/firestore/users";
 import { updateMember, updateUserProfile } from "./adminMutations";
+import { useUserEditLock } from "./useAdminLock";
 
 type Props = {
   user: UserDoc;
@@ -22,6 +23,13 @@ type Props = {
 };
 
 export default function MemberEditForm({ user, onDone }: Props) {
+  // Hold a maintenance lock on the member ONLY once the admin actually edits a
+  // field (not merely on opening the row to view it), so the member sees an
+  // "under maintenance" notice and doesn't make clashing edits. Released when the
+  // form unmounts (row collapsed / saved).
+  const [dirty, setDirty] = useState(false);
+  useUserEditLock(user.uid, dirty);
+
   const [preferredName, setPreferredName] = useState(user.profile?.preferredName ?? "");
   const [universityEmail, setUniversityEmail] = useState(user.profile?.universityEmail ?? "");
   const [status, setStatus] = useState<AffiliationStatus | "">(user.profile?.status ?? "");
@@ -81,7 +89,13 @@ export default function MemberEditForm({ user, onDone }: Props) {
       <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)", marginBottom: "var(--space-5)" }}>
         Changes save to Firestore immediately.
       </p>
-      <form onSubmit={handleSubmit} style={{ display: "grid", gap: "var(--space-4)", gridTemplateColumns: "1fr 1fr" }}>
+      <form
+        onSubmit={handleSubmit}
+        onChange={() => {
+          if (!dirty) setDirty(true);
+        }}
+        style={{ display: "grid", gap: "var(--space-4)", gridTemplateColumns: "1fr 1fr" }}
+      >
         <Field id={`pn-${user.uid}`} label="Preferred name">
           <Input
             id={`pn-${user.uid}`}

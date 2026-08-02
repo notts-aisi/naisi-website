@@ -8,6 +8,7 @@ import Card from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import { downloadCSV, toCSV } from "@/lib/csv";
+import { AdminLoadingBar } from "./adminList";
 import {
   useSubscriptions,
   type SubscriptionRow,
@@ -305,7 +306,7 @@ function pillTitle(
 }
 
 export default function SubscriptionsTable() {
-  const { rows, loading, error } = useSubscriptions();
+  const { rows, loading, refreshing, error, reload } = useSubscriptions();
   const { verifiedByUid, verifiedLoaded } = useVerifiedEmails();
   const { eventsBySubId } = useSubscriptionEvents();
   const router = useRouter();
@@ -524,7 +525,7 @@ export default function SubscriptionsTable() {
   if (loading) {
     return (
       <Card padding="md">
-        <p style={{ color: "var(--color-text-muted)" }}>Loading subscriptions…</p>
+        <AdminLoadingBar label="Loading subscriptions…" />
       </Card>
     );
   }
@@ -634,6 +635,15 @@ export default function SubscriptionsTable() {
             </Button>
             <Button size="sm" variant="ghost" onClick={onDownload}>
               Download CSV
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={reload}
+              disabled={refreshing}
+              title="Reload subscriptions from Firestore (the list is one-shot, not realtime)."
+            >
+              {refreshing ? "Refreshing…" : "Refresh"}
             </Button>
           </div>
         </div>

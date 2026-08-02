@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { collection, onSnapshot } from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
 import { getClientDb } from "@/lib/firebase/client";
 import { normalizeUser, type UserDoc } from "@/lib/firestore/users";
 import {
   normaliseNotifications,
   wantsCategory,
 } from "@/lib/firestore/notifications";
+import { useOneShotList } from "./adminList";
 
 export type Subscriber = {
   uid: string;
@@ -43,30 +43,18 @@ function toSubscriber(u: UserDoc): Subscriber {
  * shape become the answer (after all users migrate).
  */
 export function useNewsletterSubscribers() {
-  const [subs, setSubs] = useState<Subscriber[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  const { items, loading, refreshing, error, reload } = useOneShotList<Subscriber>(
+    async () => {
+      const db = getClientDb();
+      const snap = await getDocs(collection(db, "users"));
+      return snap.docs
+        .map((d) => normalizeUser(d.id, d.data()))
+        .filter((u) => wantsCategory(normaliseNotifications(u.profile ?? {}), "newsletter"))
+        .map(toSubscriber)
+        .sort((a, b) => a.displayName.localeCompare(b.displayName));
+    },
+    "newsletter",
+  );
 
-  useEffect(() => {
-    const db = getClientDb();
-    const unsub = onSnapshot(
-      collection(db, "users"),
-      (snap) => {
-        const rows = snap.docs
-          .map((d) => normalizeUser(d.id, d.data()))
-          .filter((u) => wantsCategory(normaliseNotifications(u.profile ?? {}), "newsletter"))
-          .map(toSubscriber)
-          .sort((a, b) => a.displayName.localeCompare(b.displayName));
-        setSubs(rows);
-        setLoading(false);
-      },
-      (err) => {
-        setError(err);
-        setLoading(false);
-      },
-    );
-    return unsub;
-  }, []);
-
-  return { subs, loading, error };
+  return { subs: items, loading, refreshing, error, reload };
 }

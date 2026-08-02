@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb, getAdminStorage } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { ownedStoragePaths } from "@/lib/firestore/taskAttachments";
 
 type Payload = { blockId?: unknown };
 
@@ -55,6 +56,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const canDelete =
     viewer.role === "admin" ||
     (viewer.role === "committee" &&
+      viewer.suRecognised &&
       task.visibility === "committee" &&
       isCreator) ||
     (task.source === "personal" && isCreator);
@@ -135,9 +137,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return typeof subtaskId === "string" && deletedIds.has(subtaskId);
   });
 
-  const storagePaths = doomedAttachments
-    .map((d) => d.data().storagePath)
-    .filter((p): p is string => typeof p === "string" && p.length > 0);
+  const storagePaths = ownedStoragePaths(
+    taskId,
+    doomedAttachments.map((d) => d.data().storagePath),
+  );
 
   // Decrement commentCount before the comment docs vanish so the parent
   // task's counter stays in sync (the field is the canonical "comments

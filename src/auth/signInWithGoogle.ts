@@ -8,6 +8,7 @@ import {
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import { mark, warn } from "@/lib/devMonitor";
+import { CURRENT_POLICY_VERSION } from "@/lib/legal/policies";
 
 export type SignInResult = {
   uid: string;
@@ -118,9 +119,12 @@ export async function completeRegistration(profile: {
       deliverToUniEmail: notifications.channels.uniEmail,
     },
   };
-  if (uniEmailVerifiedAt) {
-    writableProfile.uniEmailVerifiedAt = uniEmailVerifiedAt;
-  }
+  // NB: `uniEmailVerifiedAt` is deliberately NOT written here. It is a trusted
+  // signal (it gates uni-email ownership + the admin "verified" badge), so it is
+  // stamped SERVER-SIDE from the unforgeable `emailVerifications` record by the
+  // reconcile call below — never from the client's say-so. The local
+  // `uniEmailVerifiedAt` value is still used further down as a client-side hint
+  // for the subscriptions matrix (which the sync route re-checks server-side).
 
   await setDoc(doc(db, "users", user.uid), {
     email: user.email,
@@ -129,12 +133,39 @@ export async function completeRegistration(profile: {
     role: "pending",
     profile: writableProfile,
     showOnMembers: false,
+    policyVersion: CURRENT_POLICY_VERSION,
+    policyAgreedAt: serverTimestamp(),
     createdAt: serverTimestamp(),
   });
-  // verifiedTokenId is accepted into the signature for forward-compat with a
-  // planned server-side authoritative stamp, but not sent anywhere yet —
-  // uniEmailVerifiedAt above is the current source of truth.
-  void verifiedTokenId;
+  // Server-authoritative uni-email stamp. The user doc now exists, so the server
+  // can stamp `profile.uniEmailVerifiedAt` from the (server-only, unforgeable)
+  // `emailVerifications` record — the create-time gap `confirmUniEmailVerification`
+  // couldn't fill (no user doc yet when the magic link was clicked). Awaited so
+  // the subscriptions sync below sees the stamped state. Best-effort for the
+  // registration flow — a failure never blocks it — but note the degraded path:
+  // if the stamp doesn't land, the user shows un-verified AND the sync below
+  // drops the uni-email subscription rows they ticked (getVerifiedEmails gates on
+  // the stamp). Recovery is NOT automatic: it needs a full re-verify (re-send +
+  // re-click the magic link) from /profile. `fetch` doesn't throw on a non-2xx,
+  // so we check `res.ok` explicitly to at least surface the failure in logs.
+  if (verifiedTokenId || uniEmailVerifiedAt) {
+    try {
+      const res = await fetch("/api/verify-email/reconcile", { method: "POST" });
+      if (!res.ok) {
+        console.warn("[uni-email reconcile] non-ok response", res.status);
+      }
+    } catch (err) {
+      console.warn("[uni-email reconcile] failed", err);
+    }
+  }
+
+  // Flip the signup-tracker row to "completed" now that a profile exists. Done
+  // server-side (the registrations collection is Admin-SDK-only) and fire-and-
+  // forget — this is what stops a finished Google signup showing as an orphan in
+  // the admin tracker; the profile doc above is the source of truth regardless.
+  fetch("/api/register/profile-complete", { method: "POST" }).catch((err) => {
+    console.warn("[registration tracker] profile-complete flip failed", err);
+  });
 
   // Subscriptions sync — claims any pre-existing guest subscription rows
   // for this user's verified email(s) (so a homepage signer-upper who later

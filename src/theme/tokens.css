@@ -39,6 +39,12 @@
   --color-accent-soft: rgba(106, 130, 255, 0.12);
   --color-accent-ring: rgba(106, 130, 255, 0.4);
 
+  /* collaborator (external, non-UoN) — deliberately a different hue from the
+     brand accent so the "Collaborate with us" join option reads as its own
+     section. Tune the whole treatment by editing these two. */
+  --color-collaborator-accent: #4fd1c5;
+  --color-collaborator-soft: rgba(79, 209, 197, 0.12);
+
   /* status */
   --color-danger: #e5484d;
   --color-danger-soft: rgba(229, 72, 77, 0.12);
@@ -67,6 +73,9 @@
   --color-accent-hover: #2b44c9;
   --color-accent-soft: rgba(59, 85, 227, 0.08);
   --color-accent-ring: rgba(59, 85, 227, 0.35);
+
+  --color-collaborator-accent: #0d9488;
+  --color-collaborator-soft: rgba(13, 148, 136, 0.09);
 
   --color-danger: #cd3d41;
   --color-danger-soft: rgba(205, 61, 65, 0.08);

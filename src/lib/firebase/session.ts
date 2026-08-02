@@ -1,6 +1,7 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { bypass } from "@/lib/devBypass";
+import type { CollaboratorStatus } from "@/lib/firestore/collaborators";
 import { getAdminAuth, getAdminDb } from "./admin";
 
 export const SESSION_COOKIE = "__session";
@@ -28,6 +29,12 @@ export type SessionUser = {
   email: string | null;
   role: Role;
   displayName?: string;
+  /** The combined policy version this member last accepted (e.g.
+   *  "terms.1+privacy.2"). Compared against CURRENT_POLICY_VERSION to drive the
+   *  re-consent gate. `null`/absent for legacy members who registered before it
+   *  existed (treated as stale → re-consent, the safe default). Optional so the
+   *  dev-bypass stub's SessionUser doesn't need it. */
+  policyVersion?: string | null;
   /** True only for committee members the SU formally recognises. Admin-set;
    *  gates member-PII access and the committee task board. */
   suRecognised: boolean;
@@ -135,6 +142,7 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
       email: decoded.email ?? null,
       role: (data.role as Role) ?? "pending",
       displayName: data.displayName ?? data.profile?.preferredName,
+      policyVersion: typeof data.policyVersion === "string" ? data.policyVersion : null,
       suRecognised: Boolean(data.suRecognised),
       permissions: {
         draftNewsletter: Boolean(perms.draftNewsletter),
@@ -142,6 +150,85 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
         draftEvent: Boolean(perms.draftEvent),
         approveEvent: Boolean(perms.approveEvent),
       },
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verify the session cookie and return just `{ uid, email }` — no Firestore
+ * read. Used by the collaborator API routes, which key off the auth uid and do
+ * their own collection reads. Returns null when there is no valid session.
+ */
+export async function getSessionUid(): Promise<{
+  uid: string;
+  email: string | null;
+} | null> {
+  const store = await cookies();
+  const cookie = store.get(SESSION_COOKIE);
+  if (!cookie?.value) return null;
+
+  const auth = getAdminAuth();
+  if (!auth) return null;
+  try {
+    const decoded = await auth.verifySessionCookie(cookie.value, true);
+    return { uid: decoded.uid, email: decoded.email ?? null };
+  } catch {
+    return null;
+  }
+}
+
+export type SessionCollaborator = {
+  /** Firestore doc id: `<name-slug>__<uid>`. */
+  id: string;
+  uid: string;
+  email: string | null;
+  emailVerified: boolean;
+  fullName: string;
+  status: CollaboratorStatus;
+  /** Combined policy version this collaborator last accepted; drives the
+   *  re-consent gate. `null` if none recorded. */
+  policyVersion: string | null;
+};
+
+/**
+ * Read + verify the session cookie, then resolve the `collaborators` doc for
+ * this uid. The doc id is name-slugged, so we query the `uid` field rather than
+ * doing a direct `doc()` get. Null when there is no session or no collaborator
+ * doc. Gates the `/collaborator` area (and distinguishes a collaborator session
+ * from a member one). A real member session — or no session — returns null here.
+ */
+export async function getCurrentCollaborator(): Promise<SessionCollaborator | null> {
+  const store = await cookies();
+  const cookie = store.get(SESSION_COOKIE);
+  if (!cookie?.value) return null;
+
+  const auth = getAdminAuth();
+  const db = getAdminDb();
+  if (!auth || !db) return null;
+
+  try {
+    const decoded = await auth.verifySessionCookie(cookie.value, true);
+    const snap = await db
+      .collection("collaborators")
+      .where("uid", "==", decoded.uid)
+      .limit(1)
+      .get();
+    if (snap.empty) return null;
+    const doc = snap.docs[0];
+    const data = doc.data() ?? {};
+    const status = data.status as CollaboratorStatus;
+    return {
+      id: doc.id,
+      uid: decoded.uid,
+      email: decoded.email ?? null,
+      emailVerified: Boolean(decoded.email_verified),
+      fullName: (data.fullName as string) ?? "",
+      status:
+        status === "approved" || status === "rejected" ? status : "pending",
+      policyVersion:
+        typeof data.policyVersion === "string" ? data.policyVersion : null,
     };
   } catch {
     return null;

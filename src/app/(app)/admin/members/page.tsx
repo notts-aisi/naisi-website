@@ -3,6 +3,12 @@
 import { useMemo, useState } from "react";
 import Card from "@/components/ui/Card";
 import { useAuth } from "@/auth/AuthProvider";
+import {
+  AdminPage,
+  AdminLoadingBar,
+  AdminListFooter,
+  useClientPagination,
+} from "@/features/admin/adminList";
 import MemberItem from "@/features/admin/MemberItem";
 import MembersToolbar, {
   type NewsletterFilter,
@@ -69,7 +75,7 @@ export default function MembersAdminPage() {
   const [newsletterFilter, setNewsletterFilter] = useState<NewsletterFilter>("all");
   const [expandedUid, setExpandedUid] = useState<string | null>(null);
 
-  const { users, loading, error } = useMembers({
+  const { users, loading, refreshing, error, reload } = useMembers({
     includeRejected: roleFilter === "rejected",
   });
 
@@ -89,6 +95,8 @@ export default function MembersAdminPage() {
     });
   }, [users, roleFilter, statusFilter, trackFilter, newsletterFilter, query]);
 
+  const { shown, hasMore, loadMore, total, shownCount } = useClientPagination(filtered, 20);
+
   const emptyMessage = query
     ? "No members match that search."
     : roleFilter === "rejected"
@@ -96,7 +104,7 @@ export default function MembersAdminPage() {
       : "No members in this view yet.";
 
   return (
-    <div>
+    <AdminPage>
       <MembersToolbar
         query={query}
         onQueryChange={setQuery}
@@ -122,7 +130,7 @@ export default function MembersAdminPage() {
 
       {loading && (
         <Card padding="md">
-          <p style={{ color: "var(--color-text-muted)" }}>Loading members…</p>
+          <AdminLoadingBar label="Loading members…" />
         </Card>
       )}
 
@@ -134,7 +142,7 @@ export default function MembersAdminPage() {
 
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
         {currentUser &&
-          filtered.map((u) => (
+          shown.map((u) => (
             <MemberItem
               key={u.uid}
               user={u}
@@ -146,6 +154,18 @@ export default function MembersAdminPage() {
             />
           ))}
       </div>
-    </div>
+
+      {!loading && !error && filtered.length > 0 && (
+        <AdminListFooter
+          shownCount={shownCount}
+          total={total}
+          hasMore={hasMore}
+          onLoadMore={loadMore}
+          onRefresh={reload}
+          refreshing={refreshing}
+          noun="members"
+        />
+      )}
+    </AdminPage>
   );
 }

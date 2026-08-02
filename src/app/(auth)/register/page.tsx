@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, where } from "firebase/firestore";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
@@ -11,6 +11,11 @@ import CountedTextarea from "@/components/ui/CountedTextarea";
 import GoogleSignInButton from "@/components/GoogleSignInButton";
 import SigningIn from "@/components/SigningIn";
 import signinStyles from "@/components/SigningIn.module.css";
+import styles from "./registerSignIn.module.css";
+import CollaboratorApply from "./CollaboratorApply";
+import VerifyEmailStep from "./VerifyEmailStep";
+import AuthEntry from "../AuthEntry";
+import PolicyConsent from "@/components/PolicyConsent";
 import { AUTH_BACK_HOME_EVENT, AUTH_PAGE_READY_EVENT } from "../LogoLink";
 import GraduationSelect from "@/components/ui/GraduationSelect";
 import StatusSelect from "@/components/ui/StatusSelect";
@@ -19,8 +24,14 @@ import { Field, Input } from "@/components/ui/Input";
 import {
   completeRegistration,
   exchangeGoogleCredential,
+  signOut,
 } from "@/auth/signInWithGoogle";
+import { signUpWithEmailPassword, startOver } from "@/auth/signInWithEmailPassword";
+import DeleteAccountButton from "@/components/DeleteAccountButton";
 import { useAuth } from "@/auth/AuthProvider";
+import { useSiteNotice } from "@/features/maintenance/useSiteNotice";
+import { SurfacePausedNotice } from "@/features/maintenance/SurfacePausedNotice";
+import { isSurfacePaused } from "@/lib/siteNotice";
 import { getClientDb } from "@/lib/firebase/client";
 import {
   FIELD_LIMITS,
@@ -60,9 +71,23 @@ export default function RegisterPage() {
   // boundary so the bailout-to-CSR semantics are explicit at build time.
   return (
     <Suspense fallback={null}>
-      <RegisterPageInner />
+      <RegisterRouter />
     </Suspense>
   );
+}
+
+/**
+ * Signed out → the unified <AuthEntry> (in register mode; the mode + audience
+ * toggles morph in place). Once an account exists, hand off to the
+ * audience-specific continuation (collaborator application / member profile),
+ * which skips its own entry step because the user is already signed in.
+ */
+function RegisterRouter() {
+  const { user } = useAuth();
+  const type = useSearchParams().get("type");
+
+  if (!user) return <AuthEntry initialMode="register" />;
+  return type === "collaborator" ? <CollaboratorApply /> : <RegisterPageInner />;
 }
 
 function RegisterPageInner() {
@@ -70,6 +95,12 @@ function RegisterPageInner() {
   const searchParams = useSearchParams();
   const fromSubscriber = searchParams.get("from") === "subscriber";
   const { user, role, loading: authLoading } = useAuth();
+  // Site-wide maintenance notice: while an admin has paused new registrations
+  // the final submit is disabled with the notice's copy inline, and a failing
+  // submit surfaces that copy instead of the generic error. Client-side only —
+  // the underlying Firestore write is untouched (see src/lib/siteNotice.ts).
+  const siteNotice = useSiteNotice();
+  const registrationsPaused = isSurfacePaused(siteNotice, "newRegistrations");
 
   const [step, setStep] = useState<"sign-in" | "profile">(
     user && !role ? "profile" : "sign-in",
@@ -83,6 +114,19 @@ function RegisterPageInner() {
   const [entering, setEntering] = useState(true);
   const activeStartRef = useRef(0);
   const credentialReceivedRef = useRef(false);
+
+  // Email + password sign-up for UoN members (an alternative to Google sign-in).
+  // The account is created here; the existing profile step + completeRegistration
+  // run unchanged afterwards. Input focus only flips the ambient surge — it stays
+  // off the Google popup-cancellation watchdog (which keys off window blur).
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [manualVerified, setManualVerified] = useState(false);
+  const [agreedPolicies, setAgreedPolicies] = useState(false);
 
   useEffect(() => {
     if (!entering) return;
@@ -133,6 +177,71 @@ function RegisterPageInner() {
       return "active";
     });
   }, []);
+
+  // Settle the ambient surge back to idle when the user leaves an empty
+  // email/password form and nothing is in flight (mirrors /login).
+  const calmIfEmpty = useCallback(() => {
+    if (!email.trim() && !password && !confirm && !accountBusy) {
+      setSigninPhase("idle");
+    }
+  }, [email, password, confirm, accountBusy]);
+
+  const handleCreateAccount = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      setAccountError(null);
+      if (!email.trim() || !password) {
+        setAccountError("Enter an email and a password.");
+        return;
+      }
+      if (password.length < 6) {
+        setAccountError("Password must be at least 6 characters.");
+        return;
+      }
+      if (password !== confirm) {
+        setAccountError("Those passwords don't match.");
+        return;
+      }
+      setAccountBusy(true);
+      try {
+        await signUpWithEmailPassword(email.trim(), password);
+        // New account → straight to the profile form (mirrors the Google
+        // new-user path, which swaps inline rather than sliding out).
+        setSigninPhase("idle");
+        setStep("profile");
+      } catch (err) {
+        setAccountError(
+          err instanceof Error ? err.message : "Couldn't create your account.",
+        );
+      } finally {
+        setAccountBusy(false);
+      }
+    },
+    [email, password, confirm],
+  );
+
+  // Abandon an incomplete signup (created an account but didn't finish the
+  // profile) so the user can start fresh with a different email. Safe: the
+  // shared helper only deletes a genuine orphan (no users/collaborators doc).
+  const handleStartOver = useCallback(async () => {
+    setResetBusy(true);
+    try {
+      await startOver();
+      setStep("sign-in");
+      setManualVerified(false);
+      setEmail("");
+      setPassword("");
+      setConfirm("");
+    } finally {
+      setResetBusy(false);
+    }
+  }, []);
+
+  const handleVerified = useCallback(() => setManualVerified(true), []);
+  // Email/password members must verify their login email before the profile
+  // form; Google users are already verified (cached emailVerified) → straight
+  // through. manualVerified is the live flip from VerifyEmailStep.
+  const emailVerified = manualVerified || Boolean(user?.emailVerified);
 
   useEffect(() => {
     if (step !== "sign-in") return;
@@ -185,6 +294,24 @@ function RegisterPageInner() {
     }
   }, [authLoading, user, role, router, loading]);
 
+  // Reverse guard: a signed-in collaborator has a collaborators doc but no
+  // users doc, so `role` is null and the bounce above never fires — without
+  // this they'd land on the member profile form and could end up with BOTH a
+  // users and a collaborators doc on one uid. Probe by the `uid` field (the
+  // collaborators doc id is name-slugged), mirroring CollaboratorApply. null =
+  // still resolving.
+  const [hasCollabDoc, setHasCollabDoc] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!user) return;
+    const db = getClientDb();
+    const q = query(collection(db, "collaborators"), where("uid", "==", user.uid));
+    return onSnapshot(
+      q,
+      (snap) => setHasCollabDoc(!snap.empty),
+      () => setHasCollabDoc(false),
+    );
+  }, [user]);
+
   // Profile state
   const [preferredName, setPreferredName] = useState("");
   const [universityEmail, setUniversityEmail] = useState("");
@@ -208,6 +335,13 @@ function RegisterPageInner() {
   const showGraduation = status !== "" && STATUSES_WITH_GRADUATION.includes(status);
   const showStatusOther = status === "other";
   const anyCategoryOn = isSubscribedToAnything(prefs);
+  // A typed-out university email that isn't a Nottingham address (e.g. another
+  // institution, or the .edu.cn/.edu.my campuses — eligibility is .ac.uk-only)
+  // → steer them to the external-collaborator flow. Gated on "@" so it only
+  // fires once they've actually typed a domain, not on every keystroke.
+  const uniEmailRejected =
+    universityEmail.includes("@") &&
+    validateUniversityEmail(universityEmail) !== null;
 
   // Subscribe to the outstanding verification doc. Firestore rules gate read
   // to authUid == request.auth.uid, so only this tab (signed in as the
@@ -348,6 +482,11 @@ function RegisterPageInner() {
   async function handleSubmitProfile(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (registrationsPaused) {
+      // Belt and braces behind the disabled submit — never a silent block.
+      setError(siteNotice.bannerMessage);
+      return;
+    }
     if (!preferredName || !universityEmail || !status || !subject || !motivation) {
       setError("Please fill in every required field.");
       return;
@@ -378,6 +517,11 @@ function RegisterPageInner() {
       return;
     }
 
+    if (!agreedPolicies) {
+      setError("Please agree to the Terms of Use and Privacy Policy to continue.");
+      return;
+    }
+
     setLoading(true);
     try {
       await completeRegistration({
@@ -396,10 +540,52 @@ function RegisterPageInner() {
       router.push("/pending-approval");
     } catch (err) {
       console.error(err);
-      setError("Failed to save your application. Try again.");
+      // During a declared incident the admin-written notice copy is the error
+      // message — the exact sentence that couldn't be changed without a
+      // deploy in the 2026-08-01 registration outage.
+      setError(
+        siteNotice.bannerVisible
+          ? siteNotice.bannerMessage
+          : "Failed to save your application. Try again.",
+      );
     } finally {
       setLoading(false);
     }
+  }
+
+  // Hold the authed render until we know whether they're a collaborator, so a
+  // collaborator never flashes the member profile form before the guard.
+  if (user && !role && hasCollabDoc === null) {
+    return (
+      <Card padding="lg" style={{ width: "100%", maxWidth: "30rem" }}>
+        <p style={{ color: "var(--color-text-muted)" }}>Loading…</p>
+      </Card>
+    );
+  }
+
+  // Signed in as an external collaborator → they can't also register as a
+  // member on the same account. Mirror of CollaboratorApply's member guard.
+  if (user && !role && hasCollabDoc) {
+    return (
+      <Card padding="lg" style={{ width: "100%", maxWidth: "30rem" }}>
+        <h1 style={{ fontSize: "var(--text-2xl)", marginBottom: "var(--space-2)" }}>
+          You&apos;re signed in as a collaborator
+        </h1>
+        <p style={{ color: "var(--color-text-muted)", marginBottom: "var(--space-5)" }}>
+          You&apos;re signed in as an external collaborator ({user.email}). Head to
+          your collaborator space, or sign out to register as a University of
+          Nottingham student or staff member on a different account.
+        </p>
+        <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
+          <Button onClick={() => router.push("/collaborator")}>
+            Go to your collaborator space
+          </Button>
+          <Button variant="secondary" onClick={() => void signOut()}>
+            Sign out
+          </Button>
+        </div>
+      </Card>
+    );
   }
 
   const frameClass = [
@@ -412,16 +598,49 @@ function RegisterPageInner() {
     .join(" ");
 
   return (
-    <div className={frameClass} style={{ maxWidth: "32rem" }}>
-    <Card padding="lg" style={{ width: "100%" }}>
-      <h1 style={{ fontSize: "var(--text-2xl)", marginBottom: "var(--space-2)" }}>
-        Join NAISI
-      </h1>
-      <p style={{ color: "var(--color-text-muted)", marginBottom: "var(--space-6)" }}>
+    <div className={`${frameClass} ${styles.frame}`}>
+    <Card padding="lg" className={styles.card} style={{ width: "100%" }}>
+      <h1 className={styles.heading}>Join NAISI</h1>
+      <p
+        className={styles.subcopy}
+        style={{ color: "var(--color-text-muted)", marginBottom: "var(--space-6)" }}
+      >
         {step === "sign-in"
           ? "Apply to join the Nottingham AI Safety Initiative. We'll review your application and be in touch."
-          : "Tell us a bit about you so the committee can review your application."}
+          : !emailVerified
+            ? "Verify your email address to continue."
+            : "Tell us a bit about you so the committee can review your application."}
       </p>
+
+      {step === "profile" && user && emailVerified && (
+        <p
+          style={{
+            color: "var(--color-text-subtle)",
+            fontSize: "var(--text-sm)",
+            marginBottom: "var(--space-5)",
+          }}
+        >
+          Signed in as {user.email}. Not you?{" "}
+          <button
+            type="button"
+            onClick={() => void handleStartOver()}
+            disabled={resetBusy}
+            style={{
+              background: "none",
+              border: "none",
+              padding: 0,
+              font: "inherit",
+              color: "var(--color-accent)",
+              textDecoration: "underline",
+              cursor: "pointer",
+            }}
+          >
+            {resetBusy ? "Starting over…" : "Start over with a different email"}
+          </button>
+          {" · "}
+          <DeleteAccountButton />
+        </p>
+      )}
 
       {fromSubscriber && (
         <div
@@ -444,22 +663,97 @@ function RegisterPageInner() {
 
       {step === "sign-in" ? (
         <>
-          <div onMouseDown={startSurge}>
+          <div className={styles.googleWrap} onMouseDown={startSurge}>
             <GoogleSignInButton
               onCredential={onCredential}
               onScriptError={onScriptError}
               onReady={handleGisReady}
             />
           </div>
-          <SigningIn
-            active={signinPhase !== "idle"}
-            successStartAt={signinPhase === "success" || signinPhase === "exiting" ? successAt : null}
-          />
           {error && (
             <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)", marginTop: "var(--space-4)" }}>
               {error}
             </p>
           )}
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--space-3)",
+              margin: "var(--space-6) 0 var(--space-4)",
+            }}
+          >
+            <span style={{ flex: 1, height: 1, background: "var(--color-border)" }} />
+            <span
+              style={{
+                color: "var(--color-text-subtle)",
+                fontSize: "var(--text-xs)",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+              }}
+            >
+              or
+            </span>
+            <span style={{ flex: 1, height: 1, background: "var(--color-border)" }} />
+          </div>
+
+          <form
+            id="register-account-form"
+            onSubmit={handleCreateAccount}
+            style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
+          >
+            <Field
+              id="register-email"
+              label="Email"
+              hint="A personal email you'll keep — your university address can't be used to sign in. You'll add your university email separately to confirm eligibility."
+            >
+              <Input
+                id="register-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onFocus={startSurge}
+                onMouseDown={startSurge}
+                onBlur={calmIfEmpty}
+                autoComplete="email"
+                placeholder="you@gmail.com"
+                required
+              />
+            </Field>
+            <Field id="register-password" label="Password" hint="At least 6 characters.">
+              <Input
+                id="register-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onFocus={startSurge}
+                onMouseDown={startSurge}
+                onBlur={calmIfEmpty}
+                autoComplete="new-password"
+                required
+              />
+            </Field>
+            <Field id="register-confirm" label="Confirm password">
+              <Input
+                id="register-confirm"
+                type="password"
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                onFocus={startSurge}
+                onMouseDown={startSurge}
+                onBlur={calmIfEmpty}
+                autoComplete="new-password"
+                required
+              />
+            </Field>
+            {accountError && (
+              <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)" }}>
+                {accountError}
+              </p>
+            )}
+          </form>
+
           <p
             style={{
               color: "var(--color-text-muted)",
@@ -473,7 +767,30 @@ function RegisterPageInner() {
               Sign in
             </Link>
           </p>
+
+          <div className={styles.footer}>
+            <Button
+              type="submit"
+              form="register-account-form"
+              fullWidth
+              size="lg"
+              disabled={accountBusy}
+            >
+              {accountBusy ? "Creating account…" : "Create account & continue"}
+            </Button>
+            <SigningIn
+              active={signinPhase !== "idle"}
+              successStartAt={signinPhase === "success" || signinPhase === "exiting" ? successAt : null}
+            />
+          </div>
         </>
+      ) : !emailVerified ? (
+        <VerifyEmailStep
+          email={user?.email ?? null}
+          onVerified={handleVerified}
+          onStartOver={() => void handleStartOver()}
+          startingOver={resetBusy}
+        />
       ) : (
         <form onSubmit={handleSubmitProfile} style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
           <Field id="preferredName" label="Preferred name">
@@ -492,7 +809,6 @@ function RegisterPageInner() {
             hint="We accept @nottingham.ac.uk (including subdomains like exmail.nottingham.ac.uk). Staff welcome. If your address is a different format, email ai-safety@uonsu.com and we'll add you manually."
           >
             <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "stretch" }}>
-              {/* TEMPORARY (revert before re-locking registration): pattern + title removed so any email passes the client-side check during a demo. */}
               <Input
                 id="universityEmail"
                 type="email"
@@ -500,6 +816,8 @@ function RegisterPageInner() {
                 onChange={(e) => setUniversityEmail(e.target.value)}
                 placeholder="you@nottingham.ac.uk"
                 maxLength={FIELD_LIMITS.universityEmail}
+                pattern="^[^@\s]+@([a-zA-Z0-9-]+\.)*nottingham\.ac\.uk$"
+                title="Use your University of Nottingham email address"
                 required
                 style={{ flex: 1 }}
               />
@@ -533,6 +851,30 @@ function RegisterPageInner() {
               allowUnverifiedSubmit={allowUnverifiedSubmit}
               onToggleAllowUnverified={() => setAllowUnverifiedSubmit((v) => !v)}
             />
+
+            {uniEmailRejected && (
+              <div
+                style={{
+                  marginTop: "var(--space-3)",
+                  padding: "var(--space-3) var(--space-4)",
+                  borderRadius: "var(--radius-md)",
+                  background: "var(--color-bg-elevated)",
+                  border: "1px solid var(--color-border)",
+                  color: "var(--color-text-muted)",
+                  fontSize: "var(--text-sm)",
+                  lineHeight: 1.5,
+                }}
+              >
+                Not a University of Nottingham student or staff member?{" "}
+                <Link
+                  href="/register?type=collaborator"
+                  style={{ color: "var(--color-accent)" }}
+                >
+                  Apply as an external collaborator
+                </Link>{" "}
+                instead — no university email needed.
+              </div>
+            )}
           </Field>
           <Field id="status" label="What do you do at UoN?">
             <StatusSelect id="status" value={status} onChange={setStatus} required />
@@ -665,7 +1007,7 @@ function RegisterPageInner() {
                 <Switch
                   checked={prefs.channels.gmail}
                   onChange={(next) => setPrefs((p) => setChannel(p, "gmail", next))}
-                  label={`Google account email (${user?.email ?? "your sign-in email"})`}
+                  label={`Account email (${user?.email ?? "your sign-in email"})`}
                 />
                 <Switch
                   checked={prefs.channels.uniEmail}
@@ -684,10 +1026,23 @@ function RegisterPageInner() {
               email includes a one-click unsubscribe link.
             </p>
           </fieldset>
+          <PolicyConsent
+            checked={agreedPolicies}
+            onChange={setAgreedPolicies}
+            id="member-consent"
+          />
           {error && (
             <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)" }}>{error}</p>
           )}
-          <Button type="submit" fullWidth size="lg" disabled={loading}>
+          {registrationsPaused && (
+            <SurfacePausedNotice notice={siteNotice} surface="newRegistrations" />
+          )}
+          <Button
+            type="submit"
+            fullWidth
+            size="lg"
+            disabled={loading || registrationsPaused}
+          >
             {loading ? "Submitting…" : "Submit application"}
           </Button>
         </form>

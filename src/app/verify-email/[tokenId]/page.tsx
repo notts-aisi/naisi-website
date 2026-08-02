@@ -1,11 +1,15 @@
 import Link from "next/link";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { confirmUniEmailVerification } from "@/lib/email/confirmUniEmailVerification";
+import { confirmLoginEmailVerification } from "@/lib/email/confirmLoginEmailVerification";
+import { verifyToken } from "@/lib/signedTokens";
+import LoginEmailVerified from "./LoginEmailVerified";
 
 type SearchParams = { t?: string | string[] };
 
 type Result =
   | { status: "ok"; email: string }
+  | { status: "login"; customToken: string; audience: "member" | "collaborator" }
   | { status: "error"; message: string };
 
 /**
@@ -44,6 +48,12 @@ export default async function VerifyEmailLandingPage({
         status: "error",
         message: "We couldn't reach the verification service. Try again in a moment.",
       };
+    } else if (verifyToken(signed, "verify-login-email")) {
+      // Login-email magic link (registration v3): verify + sign in (option A).
+      const r = await confirmLoginEmailVerification(db, signed);
+      result = r.ok
+        ? { status: "login", customToken: r.customToken, audience: r.audience }
+        : { status: "error", message: r.error };
     } else {
       const r = await confirmUniEmailVerification(db, signed);
       result = r.ok
@@ -72,7 +82,12 @@ export default async function VerifyEmailLandingPage({
           textAlign: "center",
         }}
       >
-        {result.status === "ok" ? (
+        {result.status === "login" ? (
+          <LoginEmailVerified
+            customToken={result.customToken}
+            audience={result.audience}
+          />
+        ) : result.status === "ok" ? (
           <>
             <h1 style={{ fontSize: "var(--text-2xl)", margin: "0 0 var(--space-3)" }}>
               University email verified

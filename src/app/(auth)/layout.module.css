@@ -1,8 +1,12 @@
 .shell {
   /* Pin to the visual viewport. 100dvh accounts for mobile chrome
-     showing/hiding (URL bar, keyboard) so the layout doesn't jump. */
-  height: 100dvh;
-  min-height: 100dvh;
+     showing/hiding (URL bar, keyboard) so the layout doesn't jump.
+     Minus the site-notice banner when one is active: AuthBodyLock disables
+     body scrolling here, so without the subtraction an in-flow banner above
+     the shell would push the bottom of the card (the mobile submit bar) off
+     an unscrollable viewport. Absent banner → 0px → unchanged. */
+  height: calc(100dvh - var(--site-notice-height, 0px));
+  min-height: calc(100dvh - var(--site-notice-height, 0px));
   display: flex;
   flex-direction: column;
   padding: var(--space-6);
@@ -27,16 +31,35 @@
 .main {
   flex: 1;
   display: grid;
-  place-items: center;
+  /* `safe` so a card taller than the viewport aligns to the top and stays
+     scrollable (the shell has overflow-y: auto) instead of having its top —
+     e.g. the "Join NAISI" heading — clipped off above the centre line. */
+  place-items: safe center;
   padding: var(--space-10) 0;
 }
 
-/* === Mobile === */
+/* === Mobile: a full-screen app-shell, not a centred card on a big page. The
+   shell stops scrolling and `.main` becomes the scroll container, so the header
+   (logo) stays pinned at the top and never scrolls out of view. === */
 @media (max-width: 48rem) { /* --bp-md */
   .shell {
-    padding: var(--space-4);
+    padding: 0;
+    overflow: hidden;
+  }
+  .header {
+    z-index: 30;
+    padding: var(--space-3) var(--space-4);
+    background: color-mix(in srgb, var(--color-bg-elevated) 92%, transparent);
+    backdrop-filter: saturate(1.4) blur(12px);
+    -webkit-backdrop-filter: saturate(1.4) blur(12px);
+    border-bottom: 1px solid var(--color-border);
   }
   .main {
-    padding: var(--space-6) 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    min-height: 0;
+    /* No bottom padding so a sticky bottom bar sits flush with the screen edge. */
+    padding: var(--space-4) var(--space-4) 0;
   }
 }

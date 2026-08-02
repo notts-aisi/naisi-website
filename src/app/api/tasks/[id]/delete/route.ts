@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAdminDb, getAdminStorage } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { ownedStoragePaths } from "@/lib/firestore/taskAttachments";
 
 /**
  * Cascade-delete a task: every comment, every activity entry, every
@@ -41,7 +42,10 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   const isCreator = viewer.uid === task.creatorUid;
   const canDelete =
     viewer.role === "admin" ||
-    (viewer.role === "committee" && task.visibility === "committee" && isCreator) ||
+    (viewer.role === "committee" &&
+      viewer.suRecognised &&
+      task.visibility === "committee" &&
+      isCreator) ||
     (task.source === "personal" && isCreator);
   if (!canDelete) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -53,9 +57,10 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     taskRef.collection("activity").count().get(),
     taskRef.collection("attachments").get(),
   ]);
-  const storagePaths = attachmentsSnap.docs
-    .map((d) => d.data().storagePath)
-    .filter((p): p is string => typeof p === "string" && p.length > 0);
+  const storagePaths = ownedStoragePaths(
+    taskId,
+    attachmentsSnap.docs.map((d) => d.data().storagePath),
+  );
 
   // BulkWriter-backed recursive delete handles comments + activity + attachments
   // + any nested collections in one call, paginated internally so batch-size

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { collection, onSnapshot } from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
 import { getClientDb } from "@/lib/firebase/client";
+import { useOneShotList } from "./adminList";
 
 /**
  * Display state derived from (confirmed, subscribed) for the admin UI:
@@ -92,37 +92,25 @@ function normaliseRow(id: string, data: Record<string, unknown>): SubscriptionRo
 }
 
 /**
- * Live-streamed subscriptions list. Admin-only — Firestore rules enforce
- * read access. Sorts by createdAt descending (newest first), with rows
- * missing createdAt at the bottom so they don't disappear.
+ * One-shot subscriptions list with manual refresh. Admin-only — Firestore
+ * rules enforce read access. Sorts by createdAt descending (newest first),
+ * with rows missing createdAt at the bottom so they don't disappear.
  */
 export function useSubscriptions() {
-  const [rows, setRows] = useState<SubscriptionRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  const { items, loading, refreshing, error, reload } = useOneShotList<SubscriptionRow>(
+    async () => {
+      const db = getClientDb();
+      const snap = await getDocs(collection(db, "subscriptions"));
+      return snap.docs
+        .map((d) => normaliseRow(d.id, d.data()))
+        .sort((a, b) => {
+          const at = a.createdAt?.getTime() ?? 0;
+          const bt = b.createdAt?.getTime() ?? 0;
+          return bt - at;
+        });
+    },
+    "subscriptions",
+  );
 
-  useEffect(() => {
-    const db = getClientDb();
-    const unsub = onSnapshot(
-      collection(db, "subscriptions"),
-      (snap) => {
-        const out = snap.docs
-          .map((d) => normaliseRow(d.id, d.data()))
-          .sort((a, b) => {
-            const at = a.createdAt?.getTime() ?? 0;
-            const bt = b.createdAt?.getTime() ?? 0;
-            return bt - at;
-          });
-        setRows(out);
-        setLoading(false);
-      },
-      (err) => {
-        setError(err);
-        setLoading(false);
-      },
-    );
-    return unsub;
-  }, []);
-
-  return { rows, loading, error };
+  return { rows: items, loading, refreshing, error, reload };
 }

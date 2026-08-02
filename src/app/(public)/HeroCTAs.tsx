@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { motion } from "motion/react";
+import JoinMenu from "@/components/ui/JoinMenu";
 import { useTilt } from "@/hooks/useTilt";
 import styles from "./landing.module.css";
 
@@ -14,7 +15,9 @@ import styles from "./landing.module.css";
   ran from one CTA to the next.
 */
 export default function HeroCTAs() {
-  const primaryRef = useTilt<HTMLAnchorElement>({ max: 6, perspective: 900 });
+  // The primary CTA is now a JoinMenu (a <button>), so it no longer takes the
+  // anchor tilt ref — selecting opens the UoN-vs-collaborator chooser (popover
+  // on desktop, bottom sheet on mobile).
   const secondaryRef = useTilt<HTMLAnchorElement>({ max: 6, perspective: 900 });
   const tertiaryRef = useTilt<HTMLAnchorElement>({ max: 6, perspective: 900 });
 
@@ -25,9 +28,7 @@ export default function HeroCTAs() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, delay: 2.5, type: "spring", stiffness: 320, damping: 20 }}
       >
-        <Link ref={primaryRef} href="/register" className={styles.primaryCta}>
-          Apply to our platform
-        </Link>
+        <JoinMenu className={styles.primaryCta} label="Apply to our platform" />
       </motion.div>
       <motion.div
         initial={{ opacity: 0, y: 14 }}

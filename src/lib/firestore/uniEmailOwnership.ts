@@ -1,5 +1,5 @@
 import "server-only";
-import type { Firestore } from "firebase-admin/firestore";
+import type { Firestore, Timestamp } from "firebase-admin/firestore";
 
 /**
  * A university email address belongs to at most one NAISI account. This
@@ -54,4 +54,71 @@ export async function findVerifiedUniEmailOwner(
     };
   }
   return null;
+}
+
+/**
+ * Stamp `users/{uid}.profile.uniEmailVerifiedAt` from the SERVER-SIDE proof of
+ * verification, if (and only if) that proof exists. This is the authoritative
+ * replacement for the old client-written stamp.
+ *
+ * `emailVerifications` is server-only (`allow write: if false` in the rules), so
+ * a doc with `verifiedAt` set is an unforgeable record that the user actually
+ * clicked the magic link for that address. The user-doc field, by contrast, was
+ * previously written by the client at registration time (the server couldn't
+ * stamp it then — the user doc didn't exist yet), which let a caller forge
+ * "verified" for an address they don't own. Registration now creates the user
+ * doc first, then calls this (via `/api/verify-email/reconcile`) to stamp the
+ * flag server-side; the client no longer writes it.
+ *
+ * Idempotent and safe to call repeatedly: it no-ops if the flag is already set,
+ * if there's no matching verified token, or if the address's uniqueness can't be
+ * re-confirmed. The verified-token match already implies uniqueness was checked
+ * at confirm time (`confirmUniEmailVerification` rejects a duplicate before
+ * setting `verifiedAt`), but we re-run the owner check to also lose the narrow
+ * race where a concurrent registration stamped the same address first.
+ */
+export async function stampVerifiedUniEmailForUser(
+  db: Firestore,
+  uid: string,
+): Promise<{ stamped: boolean }> {
+  const userRef = db.collection("users").doc(uid);
+  const userSnap = await userRef.get();
+  if (!userSnap.exists) return { stamped: false };
+
+  const profile = (userSnap.data()?.profile ?? {}) as Record<string, unknown>;
+  // Already stamped (e.g. the /profile re-verify path stamped it directly) —
+  // nothing to do.
+  if (profile.uniEmailVerifiedAt) return { stamped: false };
+
+  const uniEmail =
+    (profile.universityEmail as string | undefined)?.trim().toLowerCase() ?? "";
+  if (!uniEmail) return { stamped: false };
+
+  // Find a verified, uni-email (not login-email) token for THIS user and THIS
+  // address. Query by authUid only (a single-field auto-index) and filter the
+  // rest in code, so no composite index is required.
+  const snap = await db
+    .collection("emailVerifications")
+    .where("authUid", "==", uid)
+    .get();
+
+  let verifiedAt: Timestamp | null = null;
+  for (const doc of snap.docs) {
+    const data = doc.data();
+    if (data.kind === "login-email") continue;
+    if (!data.verifiedAt) continue;
+    const docEmail = (data.email as string | undefined)?.trim().toLowerCase() ?? "";
+    if (docEmail !== uniEmail) continue;
+    verifiedAt = data.verifiedAt as Timestamp;
+    break;
+  }
+  if (!verifiedAt) return { stamped: false };
+
+  // Re-confirm no OTHER account already owns this verified address before we
+  // stamp — defence in depth against the concurrent-registration race.
+  const otherOwner = await findVerifiedUniEmailOwner(db, uniEmail, uid);
+  if (otherOwner) return { stamped: false };
+
+  await userRef.update({ "profile.uniEmailVerifiedAt": verifiedAt });
+  return { stamped: true };
 }

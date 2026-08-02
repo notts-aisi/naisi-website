@@ -84,8 +84,16 @@ export async function POST(req: Request) {
     (typeof display === "string" && display.trim()) ||
     undefined;
 
+  // Take the primary address from the SESSION, not the user document. The
+  // session's email comes out of the verified Firebase session cookie; the
+  // document field is client-writable, and every row created below is stamped
+  // `inboxProven: true` (i.e. confirmed with no click). Preferring the document
+  // therefore let a self-registered account point `users/{uid}.email` at a
+  // stranger and mint a confirmed subscription for an inbox it does not own —
+  // forged marketing consent. firestore.rules now pins the field too; this is
+  // the half that does not depend on a rules deploy.
   const verifiedEmails = getVerifiedEmails({
-    email: typeof userData.email === "string" ? userData.email : session.email,
+    email: session.email,
     profile: profile as { universityEmail?: unknown; uniEmailVerifiedAt?: unknown },
   });
 

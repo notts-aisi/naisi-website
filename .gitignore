@@ -2,6 +2,9 @@
 
 # dependencies
 /node_modules
+# Nested packages (scripts/rules-tests) — the rule above is root-anchored, so
+# without this their node_modules would be committed.
+node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -33,11 +36,17 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
+# Template for the e2e harness config. The real .env.e2e.local it is copied to
+# holds dev credentials and stays ignored by the .env* rule above.
+!.env.e2e.local.example
 
 # firebase
 .firebase/
 firebase-debug.log
 firebase-debug.*.log
+# Emulator output from scripts/rules-tests
+firestore-debug.log
+ui-debug.log
 
 # vercel
 .vercel

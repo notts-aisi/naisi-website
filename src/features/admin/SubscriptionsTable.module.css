@@ -635,3 +635,65 @@
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+
+/* === Mobile (--bp-md, 48rem) ===
+   Desktop styles are untouched above. The wide spreadsheet already scrolls
+   horizontally via .tableScroll; this block makes the surrounding chrome
+   (summary strip, toolbar, pagination) usable on a phone and keeps the
+   scroll affordance obvious, with touch targets kept comfortable. */
+
+@media (max-width: 48rem) {
+  .summary {
+    gap: var(--space-4);
+    padding: var(--space-4);
+  }
+
+  .minis {
+    gap: var(--space-4);
+  }
+
+  /* Filter fields stack to full width so the controls are tappable. */
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filterField,
+  .filterFieldGrow {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  /* Actions wrap and stretch, no longer pinned to the right of one row. */
+  .toolbarActions {
+    margin-left: 0;
+    align-self: stretch;
+    flex-wrap: wrap;
+  }
+
+  .toolbarActions > * {
+    flex: 1 1 auto;
+  }
+
+  /* Make the horizontal scroll obvious and smooth on touch. */
+  .tableScroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  /* Pagination controls span the width with finger-sized hit areas. */
+  .pagination {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+
+  .paginationActions {
+    justify-content: space-between;
+  }
+
+  /* Keep the collapse/expand row a comfortable touch target. */
+  .summaryButton {
+    min-height: 44px;
+  }
+}
