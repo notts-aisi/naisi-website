@@ -154,7 +154,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     completerUids.includes(viewer.uid) || reviewerUids.includes(viewer.uid);
   const canAccess =
     viewer.role === "admin" ||
-    (task.visibility === "committee" && viewer.role === "committee") ||
+    (task.visibility === "committee" && viewer.role === "committee" && viewer.suRecognised) ||
     viewerOnTask;
   if (!canAccess) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

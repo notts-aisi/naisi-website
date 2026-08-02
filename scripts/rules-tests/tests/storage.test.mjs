@@ -218,3 +218,51 @@ describe("unmatched paths deny by default", () => {
     await assertFails(s.ref("anything-else/x.png").put(PNG, png));
   });
 });
+
+describe("event-images — per-event scoping, matching firestore.rules", () => {
+  async function seedEvent(id, authorUid, collaboratorUids = []) {
+    const env = await getTestEnv("test");
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const ref = ctx.firestore().collection("events").doc(id);
+      await ref.set({
+        title: "Talk",
+        authorUid,
+        status: "published",
+        collaboratorUids,
+      });
+      await ref.get();
+    });
+  }
+
+  it("FIXED: a drafter cannot overwrite ANOTHER author's event cover", async () => {
+    // The per-document scoping PR #225 added to firestore.rules stopped at the
+    // Firestore boundary: the same actor was denied the event DOCUMENT while
+    // still being allowed to overwrite its world-readable cover IMAGE here.
+    // That is public defacement of the live site and of already-sent emails.
+    await seedUser("drafter", { role: "member", permissions: { draftEvent: true } });
+    await seedEvent("victim-event", "another-person");
+    const s = await storageAsUser("drafter");
+    await assertFails(s.ref("event-images/victim-event/cover.png").put(PNG, png));
+  });
+
+  it("still lets the event's AUTHOR upload its cover (the flow must survive)", async () => {
+    await seedUser("owner", { role: "member", permissions: { draftEvent: true } });
+    await seedEvent("own-event", "owner");
+    const s = await storageAsUser("owner");
+    await assertSucceeds(s.ref("event-images/own-event/cover.png").put(PNG, png));
+  });
+
+  it("still lets a named COLLABORATOR upload to that event", async () => {
+    await seedUser("collab", { role: "member" });
+    await seedEvent("shared-event", "another-person", ["collab"]);
+    const s = await storageAsUser("collab");
+    await assertSucceeds(s.ref("event-images/shared-event/cover.png").put(PNG, png));
+  });
+
+  it("still lets an APPROVER upload to any event under review", async () => {
+    await seedUser("approver", { role: "member", permissions: { approveEvent: true } });
+    await seedEvent("any-event", "another-person");
+    const s = await storageAsUser("approver");
+    await assertSucceeds(s.ref("event-images/any-event/cover.png").put(PNG, png));
+  });
+});

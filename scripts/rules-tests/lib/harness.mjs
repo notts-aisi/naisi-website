@@ -86,10 +86,21 @@ export async function cleanup() {
   }
 }
 
-/** Firestore as a signed-in user with the given uid (no custom claims). */
-export async function asUser(uid) {
+/**
+ * Firestore as a signed-in user with the given uid.
+ *
+ * The fake token carries an `email` claim matching what `seedUser` writes,
+ * because `users` create now pins `request.resource.data.email` to
+ * `request.auth.token.email` — the field is treated downstream as a PROVEN
+ * inbox (subscription sync confirms rows from it without a click), so it must
+ * be the address Firebase Auth actually verified. A token with no email would
+ * make every create test pass or fail for the wrong reason.
+ *
+ * Pass `email` explicitly to test a mismatch.
+ */
+export async function asUser(uid, { email = `${uid}@example.com` } = {}) {
   const env = await getTestEnv();
-  return env.authenticatedContext(uid).firestore();
+  return env.authenticatedContext(uid, { email }).firestore();
 }
 
 /** Firestore as a signed-out visitor. */

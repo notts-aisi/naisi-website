@@ -65,8 +65,31 @@ export async function confirmLoginEmailVerification(
   const auth = getAdminAuth();
   if (!auth) return { ok: false, error: "Server not configured", status: 500 };
 
-  if (!data.verifiedAt) {
-    await ref.update({ verifiedAt: Timestamp.now() });
+  // SINGLE USE. Redeeming this link mints a Firebase custom token, and the
+  // landing page is a server component — so a plain GET yields a full session.
+  // Anything that follows links (a mail-scanning proxy, a corporate link
+  // rewriter, an inbox preview bot) can therefore redeem it, and previously the
+  // link stayed redeemable for its whole 30-minute window because `verifiedAt`
+  // was written and then never read.
+  //
+  // Claimed inside a transaction so the check and the write are atomic: two
+  // concurrent redemptions cannot both observe verifiedAt == null and both
+  // proceed to mint a token. Whoever loses gets the already-used message.
+  let alreadyUsed = false;
+  await db.runTransaction(async (tx) => {
+    const fresh = await tx.get(ref);
+    if (fresh.get("verifiedAt")) {
+      alreadyUsed = true;
+      return;
+    }
+    tx.update(ref, { verifiedAt: Timestamp.now() });
+  });
+  if (alreadyUsed) {
+    return {
+      ok: false,
+      error: "This sign-in link has already been used. Request a new one.",
+      status: 410,
+    };
   }
   try {
     await auth.updateUser(uid, { emailVerified: true });

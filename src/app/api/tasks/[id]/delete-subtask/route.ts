@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb, getAdminStorage } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { ownedStoragePaths } from "@/lib/firestore/taskAttachments";
 
 type Payload = { subtaskId?: unknown };
 
@@ -62,7 +63,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     completerUids.includes(viewer.uid) || reviewerUids.includes(viewer.uid);
   const canDelete =
     viewer.role === "admin" ||
-    (viewer.role === "committee" && task.visibility === "committee") ||
+    (viewer.role === "committee" && viewer.suRecognised && task.visibility === "committee") ||
     onTask ||
     (task.source === "personal" && isCreator);
   if (!canDelete) {
@@ -161,9 +162,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return typeof sid === "string" && sid === subtaskId;
   });
 
-  const storagePaths = doomedAttachments
-    .map((d) => d.data().storagePath)
-    .filter((p): p is string => typeof p === "string" && p.length > 0);
+  const storagePaths = ownedStoragePaths(
+    taskId,
+    doomedAttachments.map((d) => d.data().storagePath),
+  );
 
   // Recompute subtaskStats off survivors — keeps the parent's
   // `done/total` pill in sync without a snapshot bounce.

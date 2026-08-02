@@ -4,10 +4,22 @@
  * need a full .xlsx toolchain.
  */
 
-/** Escape a single CSV cell; wraps in quotes when needed, doubles embedded quotes. */
+/**
+ * Escape a single CSV cell; wraps in quotes when needed, doubles embedded
+ * quotes, and neutralises spreadsheet formulas.
+ *
+ * The formula guard matters because these exports carry text submitted through
+ * UNAUTHENTICATED endpoints — attendee names and free-text RSVP answers from
+ * /api/events/[id]/rsvp, subscriber names from /api/subscriptions — and the
+ * file is then opened by a committee member or admin. Excel and Sheets execute
+ * a cell beginning with =, +, - or @, so a value like `=cmd|'/c calc'!A1`
+ * would run on the reviewer's machine. Prefixing with a tab keeps the value
+ * readable while stopping it being parsed as a formula.
+ */
 export function escapeCsvCell(v: unknown): string {
   const s = v == null ? "" : String(v);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  const safe = /^[=+\-@\t\r]/.test(s) ? `\t${s}` : s;
+  return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
 /** Build a CSV string from a header row + rows of cell values. */

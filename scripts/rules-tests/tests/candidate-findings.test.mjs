@@ -315,7 +315,11 @@ describe("FINDING 3 (FIXED) — consent records are server-authoritative", () =>
     const db = await asUser("retry1");
     await assertSucceeds(
       db.collection("users").doc("retry1").set({
-        email: "r@example.com",
+        // Must match the token's email claim: `users` create/update now pins
+        // this field (it is treated downstream as a proven inbox). The real
+        // client sends the address Firebase Auth verified, which is exactly
+        // what seedUser + asUser model here.
+        email: "retry1@example.com",
         displayName: "R",
         role: "pending",
         showOnMembers: false,
