@@ -48,6 +48,32 @@ service cloud.firestore {
         && !('tracks' in request.resource.data)
         && !('permissions' in request.resource.data)
         && !('suRecognised' in request.resource.data)
+        // `email` is the address the rest of the system treats as PROVEN: the
+        // subscription sync marks rows `confirmed` from it without a click, the
+        // newsletter sender resolves recipients from it, and the application
+        // email routes mail it. It must therefore equal the address Firebase
+        // Auth actually verified, never a value the client picked.
+        && request.resource.data.get('email', '') == request.auth.token.get('email', '')
+        // Consent is an AUDIT RECORD. The update rule below pins both consent
+        // fields; without a matching guard HERE the subject just writes the
+        // record at create time instead, back-dating "when I agreed" to any
+        // value they like — which is the half that matters under UK GDPR.
+        //
+        // `policyAgreedAt` is therefore pinned to the server's own clock
+        // (`request.time` is what a client `serverTimestamp()` resolves to).
+        //
+        // `policyVersion` is deliberately NOT pinned to a literal here. The
+        // re-consent gate compares it for INEQUALITY against
+        // CURRENT_POLICY_VERSION, so a bogus or far-future value TRIGGERS the
+        // gate rather than escaping it — there is nothing to defend. Pinning a
+        // version string in this file would instead mean every policy bump had
+        // to ship a rules deploy in lockstep or ALL new registrations would
+        // fail closed. Given rules already deploy out of band, that failure
+        // mode is far worse than the thing it would prevent.
+        && (
+          !('policyAgreedAt' in request.resource.data)
+          || request.resource.data.policyAgreedAt == request.time
+        )
         // `uniEmailVerifiedAt` is a trusted signal (gates uni-email ownership +
         // the admin "verified" badge). It is stamped SERVER-SIDE from the
         // server-only `emailVerifications` record (via /api/verify-email/reconcile
@@ -72,6 +98,46 @@ service cloud.firestore {
             && request.resource.data.get('tracks', []) == resource.data.get('tracks', [])
             && request.resource.data.get('permissions', {}) == resource.data.get('permissions', {})
             && request.resource.data.get('suRecognised', false) == resource.data.get('suRecognised', false)
+            // `email` is PROVEN-inbox state, not a profile field. Downstream it
+            // is trusted as an address the user demonstrably controls:
+            // /api/subscriptions/sync marks rows `confirmed` from it with no
+            // click, the newsletter sender resolves recipients from it, and
+            // /api/admin/application-emails/send mails it. Leaving it writable
+            // let any self-registered account point it at a stranger and have
+            // the server treat that stranger's inbox as opted in.
+            // No legitimate client flow rewrites it: the profile form touches
+            // only `profile.*`, and registration sets it once at create from
+            // the Auth token. Pinning it costs nothing and closes three paths.
+            && request.resource.data.get('email', '') == resource.data.get('email', '')
+            // Consent is an AUDIT RECORD, so the subject must not be able to
+            // write it. Both fields were absent from these rules entirely, and
+            // with no keys().hasOnly() a member could bump `policyVersion` to
+            // skip the re-consent gate AND fabricate the `policyAgreedAt` that
+            // says they agreed — the half that matters under UK GDPR.
+            // Re-consent is server-stamped (/api/account/reconsent, Admin SDK,
+            // which bypasses these rules), so locking self-updates costs no
+            // legitimate flow. The initial value is still written once at
+            // registration, by the create rule above (signInWithGoogle.ts).
+            // Note this sits INSIDE the self-update disjunct on purpose: the
+            // isAdmin() branch above is unaffected.
+            // The VERSION is the security property — claiming to have accepted
+            // a policy you never saw is the forgery, and skipping the
+            // re-consent gate is the escalation. It is pinned outright.
+            && request.resource.data.get('policyVersion', '')
+              == resource.data.get('policyVersion', '')
+            // The timestamp may only stay put or be re-stamped to the server's
+            // own clock, never back-dated to a value of the caller's choosing.
+            // `request.time` is what a client `serverTimestamp()` resolves to,
+            // which is what makes the registration RETRY work: completeRegistration
+            // writes an unmerged setDoc, so a second attempt re-sends
+            // policyAgreedAt for the SAME version. Requiring strict equality
+            // here denied that retry outright — an over-tightening that would
+            // have stranded anyone whose first attempt failed.
+            && (
+              request.resource.data.get('policyAgreedAt', null)
+                == resource.data.get('policyAgreedAt', null)
+              || request.resource.data.get('policyAgreedAt', null) == request.time
+            )
             && (
               request.resource.data.get(['profile', 'universityEmail'], '')
                 == resource.data.get(['profile', 'universityEmail'], '')
@@ -215,12 +281,21 @@ service cloud.firestore {
           && request.resource.data.get('blocks', []).size() <= 10
         )
         // Creator of a personal task can edit it freely.
+        // `reviewerUids` is pinned empty for the same reason the CREATE rule
+        // requires size() == 0: a personal task is a private to-do for one
+        // person. Without this the create-time check was trivially sidestepped
+        // — create clean, then UPDATE reviewerUids to a list of strangers —
+        // and naming someone as a reviewer both puts the task on their board
+        // (isReviewer() satisfies visibleToMe()) and makes them a recipient of
+        // the notify / send-for-review routes. That turned a private to-do
+        // into a way to push attacker-chosen text at arbitrary members.
         || (
           taskData().source == 'personal'
           && isTaskCreator()
           && request.resource.data.visibility == 'assignees-only'
           && request.resource.data.source == 'personal'
           && request.resource.data.completerUids.hasOnly([request.auth.uid])
+          && request.resource.data.reviewerUids.size() == 0
         );
 
       allow delete: if isAdmin()
@@ -241,13 +316,22 @@ service cloud.firestore {
         allow read: if canAccessParent();
         allow create: if canAccessParent()
           && request.resource.data.authorUid == request.auth.uid
-          && request.resource.data.bodyMarkdown.size() <= 2000;
-        allow update: if isSignedIn()
+          && request.resource.data.bodyMarkdown.size() <= 2000
+          && request.resource.data.get('mentions', []).size() <= 20;
+        // Editing your own comment ALSO requires still being able to reach the
+        // task. Checking authorship alone let someone rotated off a task keep
+        // permanent rewrite rights inside a thread they can no longer read —
+        // silently altering the record for everyone still on it. Same oversight
+        // class as the activity-log create rule.
+        // `mentions` is capped because /api/tasks/[id]/notify emails every uid
+        // in this array; an unbounded list is an unbounded send.
+        allow update: if canAccessParent()
           && resource.data.authorUid == request.auth.uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'bodyMarkdown', 'editedAt', 'deleted', 'mentions'
           ])
-          && request.resource.data.bodyMarkdown.size() <= 2000;
+          && request.resource.data.bodyMarkdown.size() <= 2000
+          && request.resource.data.get('mentions', []).size() <= 20;
         allow delete: if isAdmin();
       }
 
@@ -263,7 +347,16 @@ service cloud.firestore {
             || request.auth.uid in parent().reviewerUids;
         }
         allow read: if canAccessParent();
-        allow create: if isSignedIn()
+        // `canAccessParent()` was defined here and used for read but NOT for
+        // create, while the sibling comments/attachments blocks gate create on
+        // it — an oversight that let any signed-in account (a brand-new
+        // `pending` one included) append arbitrary text to the activity log of
+        // a task it cannot even read, or to a task id that does not exist.
+        // Every legitimate client write batches this alongside an update to a
+        // task the actor can already reach, and canAccessParent() admits
+        // everyone the task update rule does, so this closes the hole without
+        // narrowing a real flow.
+        allow create: if canAccessParent()
           && request.resource.data.actorUid == request.auth.uid;
         allow update, delete: if false;
       }
@@ -280,8 +373,21 @@ service cloud.firestore {
             || request.auth.uid in parent().reviewerUids;
         }
         allow read: if canAccessParent();
+        // `storagePath` MUST be confined to this task's own folder. Three
+        // server routes (tasks/[id]/delete, delete-block, delete-subtask) read
+        // this field and pass it to bucket.file(path).delete() through the
+        // Admin SDK, which bypasses storage.rules entirely — so an unconstrained
+        // value here meant any signed-in account could point it at
+        // `event-images/...` or another task's blobs, delete its own throwaway
+        // task, and have the server destroy arbitrary objects anywhere in the
+        // bucket. The routes now validate the prefix too; this is the other half.
         allow create: if canAccessParent()
-          && request.resource.data.uploadedByUid == request.auth.uid;
+          && request.resource.data.uploadedByUid == request.auth.uid
+          // `[^/]+$` rather than `.*`: a trailing `.*` still matched
+          // `tasks/<id>/<att>/../../../newsletter-images/x.png`, which resolves
+          // straight back out of the folder. One path segment, no traversal.
+          && request.resource.data.get('storagePath', '')
+               .matches('^tasks/' + taskId + '/' + attachmentId + '/[^/]+$');
         allow delete: if isAdmin()
           || (isSignedIn() && resource.data.uploadedByUid == request.auth.uid);
         allow update: if false;
@@ -304,12 +410,22 @@ service cloud.firestore {
     }
 
     // === credentials (committee only, client-side encrypted) ===
+    // THE FEATURE IS NOT BUILT (see CLAUDE.md > What's not built yet): there is
+    // no feature code, only a placeholder page. Until it exists these rules
+    // should grant nothing — a deployed grant for an unbuilt feature is pure
+    // attack surface. Previously `allow read, write: if hasRole([...])` gave
+    // EVERY committee account, including non-SU committee (whom the trust model
+    // scopes to tasks they are named on), unvalidated and uncapped read, write
+    // and delete: free arbitrary storage and write amplification on a
+    // no-billing project.
+    // When the credentials feature lands, add a validated create/update rule
+    // here alongside it, gated on isSuCommittee() rather than bare role.
     match /credentials/{entryId} {
-      allow read, write: if hasRole(['committee', 'admin']);
+      allow read, write: if false;
     }
     match /credentialsMeta/{id} {
-      allow read:  if hasRole(['committee', 'admin']);
-      allow write: if isAdmin();
+      allow read:  if isAdmin() || isSuCommittee();
+      allow write: if false;
     }
 
     // === bookings ===
@@ -352,9 +468,37 @@ service cloud.firestore {
       allow create: if canDraft()
         && request.resource.data.authorUid == request.auth.uid
         && request.resource.data.status == 'draft';
-      allow update: if (canDraft() || canApprove())
-        // 'sent' transitions only happen via admin SDK on the server.
-        && request.resource.data.status != 'sent';
+      // Per-document scoping, mirroring what PR #225 did for `events`. This
+      // block had none: `draftNewsletter` is a GLOBAL permission a plain member
+      // can hold, so any drafter could edit ANY draft, self-approve their own,
+      // and — the sharp end — silently rewrite the subject and body of a draft
+      // ALREADY at status 'approved'. The approver signs off on one newsletter
+      // and the send route ships a different one to the whole list.
+      function isOwnDraft() {
+        return isSignedIn() && resource.data.get('authorUid', '') == request.auth.uid;
+      }
+      allow update: if isAdmin()
+        || (
+          (canApprove() || (canDraft() && isOwnDraft()))
+          // 'sent' transitions only happen via admin SDK on the server.
+          && request.resource.data.status != 'sent'
+          && resource.data.get('status', 'draft') != 'sent'
+          // An APPROVED draft is frozen to its author: re-opening it for edits
+          // requires the approve permission, so content cannot change after
+          // sign-off without a second pair of eyes.
+          && (
+            resource.data.get('status', 'draft') != 'approved'
+            || canApprove()
+          )
+          && (
+            // Content edits that leave the workflow state alone.
+            request.resource.data.status == resource.data.status
+            // Author self-service: park as draft, or send for review.
+            || (isOwnDraft() && request.resource.data.status in ['draft', 'pending'])
+            // Approving or rejecting is the two-person half of review.
+            || canApprove()
+          )
+        );
       allow delete: if isAdmin()
         || (canDraft() && resource.data.authorUid == request.auth.uid);
     }
@@ -391,11 +535,84 @@ service cloud.firestore {
       allow create: if canDraft()
         && request.resource.data.authorUid == request.auth.uid
         && request.resource.data.status == 'draft';
-      allow update: if (canDraft() || canApprove() || isCollaborator())
-        && request.resource.data.status != 'published';
-      allow delete: if isAdmin()
-        || (canDraft() && resource.data.authorUid == request.auth.uid
-            && resource.data.status != 'published');
+      // Per-document scoping. `draftEvent` is a GLOBAL permission a plain
+      // member can hold, so without an ownership test it granted write access
+      // to EVERY event — including cancelling someone else's published one,
+      // because only the INCOMING status was ever checked. A collaborator is
+      // already per-event by construction (they are named on the doc).
+      function isOwnEvent() {
+        return isSignedIn() && resource.data.get('authorUid', '') == request.auth.uid;
+      }
+      // Fields nobody inside the branches below may rewrite from the client.
+      // The per-document scoping added in PR #225 decided WHO may edit and in
+      // WHICH states, but pinned nothing about WHAT — so a named collaborator
+      // (who may be a plain member with no permissions at all, since
+      // isCollaborator() only tests membership of collaboratorUids) could seize
+      // `authorUid`, add accomplices to `collaboratorUids`, or rewrite the
+      // rsvpCount* counters that drive capacity and waitlist decisions.
+      // Ownership and attendance are the server's to change:
+      // /api/events/[id]/collaborators manages the roster and the RSVP routes
+      // own the counters, all Admin SDK.
+      //
+      // `visibility` is deliberately NOT pinned. The editor legitimately
+      // patches it (eventMutations.ts:112) while drafting, and the outer rule
+      // already refuses any client write once the STORED status is published
+      // or cancelled — so a members-only event cannot be flipped public while
+      // it is actually live. Pinning it would break a real flow to prevent
+      // nothing.
+      function pinnedFieldsUnchanged() {
+        return request.resource.data.get('authorUid', '') == resource.data.get('authorUid', '')
+          && request.resource.data.get('collaboratorUids', [])
+               == resource.data.get('collaboratorUids', [])
+          && request.resource.data.get('rsvpCountPending', 0)
+               == resource.data.get('rsvpCountPending', 0)
+          && request.resource.data.get('rsvpCountConfirmed', 0)
+               == resource.data.get('rsvpCountConfirmed', 0)
+          && request.resource.data.get('rsvpCountWaitlisted', 0)
+               == resource.data.get('rsvpCountWaitlisted', 0);
+      }
+      allow update: if isAdmin()
+        || (
+          (canApprove() || isCollaborator() || (canDraft() && isOwnEvent()))
+          && pinnedFieldsUnchanged()
+          // An APPROVED event is frozen to its author for the same reason an
+          // approved newsletter is: otherwise the approver reviews one event
+          // and the publish route ships another. Re-opening it needs canApprove().
+          && (
+            resource.data.get('status', 'draft') != 'approved'
+            || canApprove()
+          )
+          // Once an event is LIVE it is server territory: post-publish edits go
+          // through /api/events/[id]/update (which diffs and sends the change
+          // notices) and cancellation through .../cancel, both Admin SDK. The
+          // STORED status is what matters here — testing only the incoming one
+          // was the original bug, and checking it alone still let an author
+          // quietly unpublish their own live event by reverting it to draft.
+          && resource.data.get('status', 'draft') != 'published'
+          && resource.data.get('status', 'draft') != 'cancelled'
+          && request.resource.data.status != 'published'
+          && (
+            // Content edits that leave the workflow state alone.
+            request.resource.data.status == resource.data.status
+            // Author/collaborator self-service: park as draft, or send for review.
+            || ((isOwnEvent() || isCollaborator())
+                && request.resource.data.status in ['draft', 'pending'])
+            // Every state that CONFERS or WITHDRAWS publication — approved,
+            // rejected, cancelled — requires the approve permission. That is
+            // the two-person half of review: holding `draftEvent` alone must
+            // never move an event through it, not even your own.
+            || canApprove()
+          )
+        );
+      // Deletion goes through /api/events/[id]/delete (Admin SDK), which
+      // cascades the event's RSVPs and images before removing the doc. Client
+      // delete is withdrawn for the same reason `registrations` locks it: a
+      // client can only ever delete the event document — `eventRsvps` denies
+      // client writes outright — so a direct delete stranded every attendee's
+      // name, email and free-text answers with no event left to justify them.
+      // A forensic scan found exactly that on production (6 rows, 6 images).
+      // The route re-implements the authorisation this rule used to express.
+      allow delete: if false;
     }
 
     // === applicationEmailTemplates ===
@@ -564,6 +781,11 @@ service cloud.firestore {
           && (isAdmin() || lockId == ('useredit__' + request.auth.uid))
           && request.resource.data.text is string
           && request.resource.data.text.size() <= 500
+          // `fromName` needs a cap too. hasOnly() fixes WHICH keys may appear,
+          // not how big they are, so with only `text` bounded a member could
+          // write ~1MB documents to their own lock, unbounded in number.
+          && request.resource.data.get('fromName', '') is string
+          && request.resource.data.get('fromName', '').size() <= 120
           && request.resource.data.keys().hasOnly(['fromUid', 'fromName', 'text', 'createdAt']);
         allow update, delete: if false;
       }

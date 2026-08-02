@@ -110,7 +110,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     Array.isArray(task.reviewerUids) && (task.reviewerUids as unknown[]).includes(viewer.uid);
   const canAccess =
     viewerRole === "admin" ||
-    (task.visibility === "committee" && viewerRole === "committee") ||
+    (task.visibility === "committee" && viewerRole === "committee" && viewer.suRecognised) ||
     viewerIsOnTask;
   if (!canAccess) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

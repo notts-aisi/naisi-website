@@ -4,7 +4,6 @@ import {
   Timestamp,
   addDoc,
   collection,
-  deleteDoc,
   deleteField,
   doc,
   serverTimestamp,
@@ -189,7 +188,20 @@ export async function cancelEvent(id: string) {
   });
 }
 
+/**
+ * Delete an event and everything hanging off it.
+ *
+ * Routed through the server rather than a client `deleteDoc` because the
+ * cascade cannot be done from the client at all: `eventRsvps` locks client
+ * writes to `false`, so a client delete removed the event and left every
+ * attendee's name, email and free-text answers behind with nothing pointing at
+ * them. `events` no longer grants client delete either, so this is the only
+ * path. See /api/events/[id]/delete.
+ */
 export async function deleteEvent(id: string) {
-  const db = getClientDb();
-  await deleteDoc(doc(db, "events", id));
+  const res = await fetch(`/api/events/${id}/delete`, { method: "POST" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? "Couldn't delete this event.");
+  }
 }

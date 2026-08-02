@@ -11,13 +11,32 @@ service firebase.storage {
     // writes gated to admins + newsletter drafters + newsletter approvers
     // via a cross-service Firestore lookup on users/{uid}. Belt-and-braces:
     // 5MB size cap + image MIME check.
+    // Scoped per draft for the same reason as event-images below: without an
+    // ownership test any `draftNewsletter` holder could overwrite the imagery
+    // of a draft they do not own, including one already approved and awaiting
+    // send. Approvers keep blanket write so they can fix a draft under review.
     match /newsletter-images/{draftId}/{image=**} {
+      function parentDraft() {
+        return firestore.get(/databases/(default)/documents/newsletterDrafts/$(draftId)).data;
+      }
       allow read: if true;
       allow write: if request.auth != null
         && (
           userData().role == 'admin'
-          || userData().get(['permissions', 'draftNewsletter'], false) == true
           || userData().get(['permissions', 'approveNewsletter'], false) == true
+          || (
+            userData().get(['permissions', 'draftNewsletter'], false) == true
+            // Ownership is enforced only once the draft EXISTS. firestore.get()
+            // on a missing document returns null and `.get()` on null raises,
+            // which would deny-by-error; and the editor can legitimately reach
+            // here before the doc has settled. Uploading under an id that does
+            // not exist is harmless (nothing references it) — the hole this
+            // closes was overwriting the images of a draft owned by SOMEONE ELSE.
+            && (
+              !firestore.exists(/databases/(default)/documents/newsletterDrafts/$(draftId))
+              || parentDraft().get('authorUid', '') == request.auth.uid
+            )
+          )
         )
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
@@ -25,14 +44,37 @@ service firebase.storage {
 
     // Event images: same shape as newsletter — public read so rendered emails
     // and the public /events page work without auth; writes gated to admins +
-    // event drafters + event approvers.
+    // event drafters + event approvers, AND scoped to the specific event.
+    //
+    // The per-document scoping PR #225 added to firestore.rules stopped at the
+    // Firestore boundary: a member holding only the (deliberately low-privilege)
+    // `draftEvent` permission was denied another author's event DOCUMENT while
+    // still being allowed to overwrite that event's cover IMAGE here, because
+    // this block tested only the global permission. Since the path is
+    // world-readable, that is public defacement of the live site and of
+    // already-sent emails that hot-link the image. Mirror the document rule:
+    // author, named collaborator, approver, or admin.
     match /event-images/{eventId}/{image=**} {
+      function parentEvent() {
+        return firestore.get(/databases/(default)/documents/events/$(eventId)).data;
+      }
       allow read: if true;
       allow write: if request.auth != null
         && (
           userData().role == 'admin'
-          || userData().get(['permissions', 'draftEvent'], false) == true
           || userData().get(['permissions', 'approveEvent'], false) == true
+          || (
+            userData().get(['permissions', 'draftEvent'], false) == true
+            // Same null-safety as newsletter-images above.
+            && (
+              !firestore.exists(/databases/(default)/documents/events/$(eventId))
+              || parentEvent().get('authorUid', '') == request.auth.uid
+            )
+          )
+          || (
+            firestore.exists(/databases/(default)/documents/events/$(eventId))
+            && request.auth.uid in parentEvent().get('collaboratorUids', [])
+          )
         )
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
@@ -67,10 +109,22 @@ service firebase.storage {
       function parentTask() {
         return firestore.get(/databases/(default)/documents/tasks/$(taskId)).data;
       }
+      // MUST mirror firestore.rules' canAccessParent() on the attachments
+      // subcollection. It did not: this file checked only
+      // `role in ['committee','admin']`, and the word `suRecognised` appeared
+      // nowhere in it — so Firestore denied a non-SU committee member the task
+      // document AND its attachment metadata, while Storage happily served the
+      // attachment blobs themselves. `suRecognised` is the trust boundary that
+      // decides who sees committee material at all (see CLAUDE.md: non-SU
+      // committee collaborate only on tasks they are explicitly added to), so
+      // the file gate has to honour it too. Being named on the task still
+      // grants access via the completer/reviewer branches below, which is
+      // exactly how a non-SU committee member is meant to reach one.
       function canAccessTask() {
         return request.auth != null && (
           userData().role == 'admin'
-          || (userData().role in ['committee', 'admin']
+          || (userData().role == 'committee'
+              && userData().get('suRecognised', false) == true
               && parentTask().visibility == 'committee')
           || request.auth.uid in parentTask().completerUids
           || request.auth.uid in parentTask().reviewerUids
