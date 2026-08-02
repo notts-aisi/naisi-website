@@ -67,6 +67,25 @@ env:
   - variable: RESEND_WEBHOOK_SECRET
     secret: RESEND_WEBHOOK_SECRET
     availability: [RUNTIME]
+  # reCAPTCHA PRIVATE key, used only by lib/recaptcha/server.ts to validate the
+  # browser's token via Google siteverify. RUNTIME only — it must never be
+  # bundled. Resolved by NAME from each project's own Secret Manager, so prod
+  # and dev pull their own key pair without a yaml difference.
+  #
+  # Was previously a PLAINTEXT env var set in the Firebase console on both
+  # backends, which meant anyone with Cloud Run or console read access could
+  # read it and it appeared in any `gcloud run services describe` output.
+  #
+  # The PUBLIC half (NEXT_PUBLIC_RECAPTCHA_SITE_KEY) deliberately stays a
+  # console var: it differs per project and is meant to ship in the client
+  # bundle, so it needs BUILD availability and has nothing to hide.
+  #
+  # NOTE console values override this file, so this line stays inert until the
+  # plaintext console var is removed from each backend — which is the safe
+  # ordering, since nothing changes until that happens.
+  - variable: RECAPTCHA_SECRET
+    secret: RECAPTCHA_SECRET
+    availability: [RUNTIME]
   - variable: SMTP_FROM_NAME
     value: NAISI
     availability: [RUNTIME]
