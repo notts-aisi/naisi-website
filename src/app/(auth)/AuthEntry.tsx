@@ -22,6 +22,8 @@ import {
   signInWithEmailPassword,
 } from "@/auth/signInWithEmailPassword";
 import { useAuth } from "@/auth/AuthProvider";
+import { hardNavigate } from "@/lib/navigation/hardNavigate";
+import { claimSelfHealAttempt } from "@/lib/navigation/selfHealGuard";
 import {
   RecaptchaInvisible,
   RECAPTCHA_ENABLED,
@@ -241,11 +243,31 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
             : null);
       if (dest) {
         handledNavRef.current = true;
-        router.replace(dest);
+        // Hard nav, not router.replace. We are sitting on /login precisely
+        // BECAUSE `dest` redirected here — proxy.ts:34-37 on a missing cookie,
+        // or an (app)/layout.tsx gate — so this document's route cache maps
+        // dest -> /login and a soft replace replays that redirect with no
+        // network request at all. See lib/navigation/hardNavigate.ts for the
+        // Next-internals detail; a document load is the only thing that
+        // clears it.
+        //
+        // The guard matters because the reload ALSO resets handledNavRef: if
+        // the mint 200s but the cookie never sticks, an unguarded hard nav
+        // loops the page forever. A second attempt inside the window surfaces
+        // an error instead.
+        if (claimSelfHealAttempt()) {
+          // Leave mintingRef latched — the document is going away. The
+          // `return` is load-bearing: window.location.replace does NOT halt
+          // execution, so without it the line below unlatches mintingRef and
+          // a re-render could start a second mint during teardown.
+          hardNavigate(dest, "replace");
+          return;
+        }
+        setFormError("We couldn't restore your session. Please sign in again.");
       }
       mintingRef.current = false;
     })();
-  }, [authLoading, user, role, safeNext, router, phase]);
+  }, [authLoading, user, role, safeNext, phase]);
 
   const onCredential = useCallback(
     async (idToken: string) => {
@@ -285,7 +307,13 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
           setPhase("exiting");
           await sleep(EXIT_DURATION_MS);
         }
-        router.push(safeNext);
+        // Hard nav: `safeNext` comes from ?next=, which is only ever populated
+        // by proxy.ts:36 — so its presence is direct evidence that a protected
+        // route already redirected in this document and left a poisoned route
+        // cache entry behind. The exit animation has finished above, and
+        // "naisi:from-signin" is sessionStorage, which survives the document
+        // load, so AppShell still plays the entering fade.
+        hardNavigate(safeNext);
       } catch (err) {
         console.error(err);
         setFormError("Sign-in failed. Please try again.");
@@ -325,8 +353,19 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
             setPhase("exiting");
             await sleep(EXIT_DURATION_MS);
           }
-          if (result.kind === "collaborator") router.push("/collaborator");
-          else if (result.kind === "member") router.push(safeNext);
+          // Parity with the Google path above — this branch never set the flag,
+          // so email/password sign-in has always jump-cut into the shell.
+          try {
+            sessionStorage.setItem("naisi:from-signin", "1");
+          } catch {
+            /* sessionStorage may be unavailable */
+          }
+          // Hard nav for the two protected destinations (both are in
+          // proxy.ts's PROTECTED_PREFIXES, so both can be poisoned). /register
+          // is neither protected nor a redirect target, so nothing can have
+          // been recorded against it — it stays a soft push.
+          if (result.kind === "collaborator") hardNavigate("/collaborator");
+          else if (result.kind === "member") hardNavigate(safeNext);
           else router.push("/register?type=collaborator");
         } catch (err) {
           setFormError(

@@ -29,6 +29,8 @@ import {
 import { signUpWithEmailPassword, startOver } from "@/auth/signInWithEmailPassword";
 import DeleteAccountButton from "@/components/DeleteAccountButton";
 import { useAuth } from "@/auth/AuthProvider";
+import { hardNavigate } from "@/lib/navigation/hardNavigate";
+import { claimSelfHealAttempt } from "@/lib/navigation/selfHealGuard";
 import { useSiteNotice } from "@/features/maintenance/useSiteNotice";
 import { SurfacePausedNotice } from "@/features/maintenance/SurfacePausedNotice";
 import { isSurfacePaused } from "@/lib/siteNotice";
@@ -286,7 +288,12 @@ function RegisterPageInner() {
     if (!user) return;
     if (loading) return;
     if (role === "member" || role === "committee" || role === "admin") {
-      router.replace("/dashboard");
+      // Hard nav, guarded — the twin of AuthEntry's self-heal bounce. A soft
+      // replace would replay any /dashboard -> /login redirect this document
+      // already recorded (see lib/navigation/hardNavigate.ts), and since a
+      // document load re-runs this effect, it needs the same one-shot guard to
+      // avoid a reload loop.
+      if (claimSelfHealAttempt()) hardNavigate("/dashboard", "replace");
     } else if (role === "pending") {
       router.replace("/pending-approval");
     } else if (role === "rejected") {
@@ -460,7 +467,10 @@ function RegisterPageInner() {
           }
           setSigninPhase("exiting");
           await sleep(EXIT_DURATION_MS);
-          router.push("/dashboard");
+          // Hard nav: /dashboard is protected, so this document may already
+          // hold a poisoned route cache entry for it. The exit animation has
+          // finished and "naisi:from-signin" survives the load.
+          hardNavigate("/dashboard");
         }
       } catch (err) {
         console.error(err);
@@ -472,7 +482,7 @@ function RegisterPageInner() {
         setLoading(false);
       }
     },
-    [router, startSurge],
+    [startSurge],
   );
 
   const onScriptError = useCallback((message: string) => {

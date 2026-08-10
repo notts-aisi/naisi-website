@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import BrandMark from "@/components/BrandMark";
 import Button from "@/components/ui/Button";
@@ -13,6 +12,8 @@ import { signOut } from "@/auth/signInWithGoogle";
 import { usePendingCount } from "@/features/admin/usePendingCount";
 import type { UserPermissions } from "@/lib/firestore/users";
 import { mark, warn } from "@/lib/devMonitor";
+import { hardNavigate } from "@/lib/navigation/hardNavigate";
+import { clearSelfHealAttempt } from "@/lib/navigation/selfHealGuard";
 import styles from "./AppShell.module.css";
 
 /** Banner state supplied by (app)/layout.tsx when a view-as session is live.
@@ -94,7 +95,6 @@ export default function AppShell({
   impersonation?: Impersonation | null;
 }) {
   const pathname = usePathname();
-  const router = useRouter();
   const { user, role, permissions, suRecognised, loading } = useAuth();
   const pendingCount = usePendingCount();
   const [exiting, setExiting] = useState(false);
@@ -110,6 +110,10 @@ export default function AppShell({
   const [enteringFromSignin, setEnteringFromSignin] = useState(false);
   useEffect(() => {
     try {
+      // Reaching the app shell is proof any self-heal worked, so release the
+      // one-shot reload guard — otherwise the next legitimate self-heal within
+      // the window would be suppressed.
+      clearSelfHealAttempt();
       if (sessionStorage.getItem("naisi:from-signin") === "1") {
         sessionStorage.removeItem("naisi:from-signin");
         // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -248,7 +252,12 @@ export default function AppShell({
     setSignoutExiting(true);
     await new Promise((r) => setTimeout(r, SIGNOUT_SLIDE_MS));
     await signOut();
-    router.push("/");
+    // Hard nav: the session cookie is now cleared, but this document still
+    // holds authed RSC payloads in the segment cache and an authed tree in the
+    // bfcache. A soft push would leave both reachable. The slide-out has
+    // already finished, and "naisi:from-signout" is sessionStorage, so the
+    // public layout's fade still fires. See lib/navigation/hardNavigate.ts.
+    hardNavigate("/");
   }
 
   // Shared nav body — rendered both inside the desktop sidebar and inside

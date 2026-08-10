@@ -50,6 +50,13 @@ export default function PublicHeader() {
   async function handleSignOut() {
     closeDrawer();
     await signOut();
+    // Deliberately a soft refresh, not a hard navigation. This runs on a
+    // PUBLIC page, and refreshDynamicData does drop the bfcache + segment
+    // entries. The one thing it cannot clear is the route cache — but the
+    // only entry that could matter here (/dashboard -> /dashboard, recorded
+    // while signed in) is truthful, and forcing a full reload of a marketing
+    // page on every sign-out is the worse trade. NOTE: this is not what clears
+    // protected-route entries; see lib/navigation/hardNavigate.ts.
     router.refresh();
   }
 

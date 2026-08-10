@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { deleteOwnAccount } from "@/auth/signInWithEmailPassword";
+import { hardNavigate } from "@/lib/navigation/hardNavigate";
 
 /**
  * "Delete account" affordance for an UNFINISHED registration — someone who
@@ -22,7 +22,6 @@ const linkStyle: React.CSSProperties = {
 };
 
 export default function DeleteAccountButton() {
-  const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +31,9 @@ export default function DeleteAccountButton() {
     setError(null);
     try {
       await deleteOwnAccount();
-      router.replace("/");
+      // Hard nav: the account is gone, so no cached authed payload in this
+      // document is safe to reuse.
+      hardNavigate("/", "replace");
     } catch (e) {
       // Stay on the confirm UI so the user can read the error and retry/cancel.
       setError(e instanceof Error ? e.message : "Couldn't delete this account.");

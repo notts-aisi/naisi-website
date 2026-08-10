@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import { signOut } from "@/auth/signInWithGoogle";
+import { hardNavigate } from "@/lib/navigation/hardNavigate";
 
 /**
  * Accept / decline controls for the re-consent gate.
@@ -24,7 +24,6 @@ export default function ReConsentActions({
   homeHref: string;
   supportEmail: string;
 }) {
-  const router = useRouter();
   const [busy, setBusy] = useState<null | "accept" | "decline">(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -42,8 +41,14 @@ export default function ReConsentActions({
         const b = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(b?.error ?? "Couldn't save your acceptance. Please try again.");
       }
-      router.replace(homeHref);
-      router.refresh();
+      // Hard nav, and NOT router.refresh(). The user is on /re-consent because
+      // dashboard/layout.tsx threw redirect("/re-consent") on a navigation to
+      // homeHref, so this document's route cache maps homeHref -> /re-consent.
+      // router.refresh() cannot clear that — it invalidates segment entries
+      // only (refresh-reducer.js:29-32) — which is exactly what made the old
+      // code look correct while bouncing the user straight back at the consent
+      // wall they just cleared. See lib/navigation/hardNavigate.ts.
+      hardNavigate(homeHref, "replace");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
       setBusy(null);
@@ -57,7 +62,9 @@ export default function ReConsentActions({
     } catch {
       /* best-effort — redirect regardless */
     }
-    router.replace("/login");
+    // Hard nav: the session cookie was just cleared, so every authed RSC
+    // payload this document holds is stale.
+    hardNavigate("/login", "replace");
   }
 
   async function deleteAccount() {
@@ -78,7 +85,9 @@ export default function ReConsentActions({
       } catch {
         /* the account is gone; redirect regardless */
       }
-      router.replace("/");
+      // Hard nav: the account no longer exists, so nothing cached for it is
+      // safe to reuse.
+      hardNavigate("/", "replace");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
       setBusy(null);
