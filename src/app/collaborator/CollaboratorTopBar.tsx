@@ -1,18 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import BrandMark from "@/components/BrandMark";
 import Button from "@/components/ui/Button";
 import { signOut } from "@/auth/signInWithGoogle";
+import { hardNavigate } from "@/lib/navigation/hardNavigate";
 
 /** Minimal top bar for the collaborator area: brand link home + sign out. */
 export default function CollaboratorTopBar({ name }: { name: string }) {
-  const router = useRouter();
-
   async function handleSignOut() {
     await signOut();
-    router.push("/");
+    // Hard nav: the session cookie is cleared, so the authed /collaborator
+    // payloads this document cached must not stay reachable.
+    hardNavigate("/");
   }
 
   return (
