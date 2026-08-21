@@ -66,6 +66,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: null,
     items: [
       { label: "Dashboard", href: "/dashboard", visible: MEMBER_AND_UP },
+      { label: "Courses", href: "/learn", visible: MEMBER_AND_UP },
       { label: "My work", href: "/tasks", visible: MEMBER_AND_UP },
       { label: "Profile", href: "/profile", visible: MEMBER_AND_UP },
     ],

@@ -8,8 +8,8 @@
  *
  *   1. It can never be aimed at production.
  *   2. It never grants a privilege — no role, no permissions map, no
- *      `suRecognised`. Its accounts are bare Auth users with no Firestore
- *      document, so they hold no role at all.
+ *      `suRecognised`, and none of the admin-set tags. Its accounts are bare
+ *      Auth users with no Firestore document, so they hold no role at all.
  *   3. It never reaches Firestore at all — not to write, not to read.
  *
  * Property 1 is tested BEHAVIOURALLY, by calling the real `assertTarget()`.
@@ -45,6 +45,12 @@ const FORBIDDEN_PRIVILEGE = [
   /\bapproveNewsletter\b/,
   /\bdraftEvent\b/,
   /\bapproveEvent\b/,
+  /\bdraftCourse\b/,
+  /\bapproveCourse\b/,
+  // Not a permission: an admin-set tag marking a paid member for an academic
+  // year. It gates nothing, but it is admin-set data about a real person that
+  // reviewers see on an application, so the harness has no business writing it.
+  /\bpaidMembershipYears\b/,
   /\bsetCustomUserClaims\b/,
 ];
 
@@ -80,7 +86,7 @@ function sourceFiles(dir) {
   return files;
 }
 
-test("the e2e harness never grants a role, permission, or suRecognised", () => {
+test("the e2e harness never grants a role, permission, or admin-set tag", () => {
   const files = sourceFiles(E2E_DIR);
   assert.ok(files.length > 0, `expected harness sources under ${E2E_DIR}`);
   for (const file of files) {
