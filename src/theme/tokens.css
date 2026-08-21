@@ -138,3 +138,52 @@
   --shadow-lg: 0 12px 32px rgba(17, 23, 38, 0.12);
   --btn3d-edge: rgba(0, 0, 0, 0.18);
 }
+
+:root {
+  /*
+    Motion tokens — the shared animation vocabulary. Every new transition/
+    animation should read an easing + duration from here rather than inlining
+    a curve, so the whole app moves on one clock.
+  */
+
+  /* easings */
+  --ease-naisi: cubic-bezier(0.22, 0.61, 0.36, 1);   /* the house curve, lifted from Reveal */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);  /* overshoot pop (arrivals, ratings) */
+  --ease-emphasis: cubic-bezier(0.2, 0.6, 0.2, 1);   /* attention without bounce */
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);           /* accelerate out */
+
+  /* durations */
+  --dur-tap: 80ms;      /* press feedback */
+  --dur-quick: 160ms;   /* hovers, small state flips */
+  --dur-settle: 260ms;  /* progress fills, check-off rings */
+  --dur-panel: 280ms;   /* grid-rows panel open/close */
+  --dur-enter: 420ms;   /* page entrances */
+  --dur-draw: 900ms;    /* the WeekRail signature draw */
+  --dur-fade: 200ms;    /* pure-opacity crossfades */
+
+  /* staggers (per-item delay steps) */
+  --stagger-tight: 45ms;
+  --stagger-card: 70ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    /*
+      Reduced motion, the belt: every geometry duration collapses to 1ms —
+      not 0, because a zero-duration transition can paint one frame in its
+      from-state before snapping (a visible flash), and never fires
+      transitionend for anything listening. --dur-fade survives at 120ms:
+      opacity crossfades are not a vestibular trigger, and keeping them
+      preserves state legibility. Each module still ships its own
+      reduced-motion block (the braces) to null transform/clip-path
+      from-states — this override alone doesn't remove offsets.
+    */
+    --dur-tap: 1ms;
+    --dur-quick: 1ms;
+    --dur-settle: 1ms;
+    --dur-panel: 1ms;
+    --dur-enter: 1ms;
+    --dur-draw: 1ms;
+    --dur-fade: 120ms;
+  }
+}

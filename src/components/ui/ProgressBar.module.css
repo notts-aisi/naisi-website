@@ -1,0 +1,53 @@
+.wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.track {
+  flex: 1;
+  background: var(--color-surface-hover);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.sm { height: 4px; }
+.md { height: 6px; }
+
+/* Full-width + scaleX, never an animated width (width relayouts per frame).
+ * The fill carries its own pill radius: a transformed child can escape the
+ * track's border-radius clip (composited-layer quirk), so it must round
+ * itself rather than rely on the track clipping it. */
+.fill {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  transform-origin: left;
+  transition: transform var(--dur-settle) var(--ease-naisi);
+}
+
+.toneNeutral { background: var(--color-text-muted); }
+.toneAccent { background: var(--color-accent); }
+.toneSuccess { background: var(--color-success); }
+.toneDanger { background: var(--color-danger); }
+.toneWarning { background: var(--color-warning); }
+
+.label {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5rem;
+  text-align: right;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fill {
+    transition-duration: 1ms;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* TODO: mobile pass */
+}

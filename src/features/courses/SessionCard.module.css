@@ -1,0 +1,140 @@
+/* ============================================================
+   SessionCard — the group's session for the slot being viewed.
+
+   Three states, all carried by colour and copy rather than
+   layout: the card must not change height between them, because
+   it sits directly under the week header on a page people open
+   daily and a reflowing card reads as a broken one.
+   ============================================================ */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* The three state classes are written as `.card.state` — two classes, so they
+   beat Card.module.css's single-class `border` shorthand whatever order the
+   two modules land in the stylesheet. A one-class selector here would win or
+   lose on import order, which is not a thing to leave to chance.
+
+   `today` is the one state that earns emphasis: it is the difference between
+   "there is a session this week" and "there is one in a few hours". */
+.card.today {
+  border-color: var(--color-accent);
+}
+
+.card.held {
+  /* Not dimmed as a whole — the location and the link stay legible for
+     anyone catching up. Only the note below carries the past tense. */
+  border-color: var(--color-border);
+}
+
+.card.upcoming {
+  /* Card's default border. Stated so the three states are one closed set
+     rather than two states and an implicit fallthrough. */
+  border-color: var(--color-border);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--color-text);
+}
+
+.group {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  color: var(--color-text);
+}
+
+.facilitators {
+  font-size: var(--text-sm);
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.when {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+
+.location,
+.note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* Anchor styled as the primary action. <Button> renders a real <button> and
+   takes no href, so navigation targets get the styling rather than the
+   component — the CourseCTA call. */
+.button {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: var(--space-2);
+  /* 44px floor — this is the tap target on a phone five minutes before a
+     session starts (docs/touch-targets.md). */
+  min-height: 2.75rem;
+  padding: 0.7rem 1.35rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: #fff;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-decoration: none;
+  transition:
+    background var(--transition-base),
+    transform var(--transition-fast);
+}
+
+.button:hover {
+  background: var(--color-accent-hover);
+  transform: translateY(-1px);
+}
+
+.button:active {
+  transform: translateY(0);
+}
+
+.button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button {
+    transition: background var(--transition-base);
+  }
+  .button:hover {
+    transform: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .head {
+    /* The Chip keeps its own line rather than squeezing the title. */
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .button {
+    align-self: stretch;
+  }
+}

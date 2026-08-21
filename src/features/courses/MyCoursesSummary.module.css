@@ -1,0 +1,104 @@
+/* ============================================================
+   MyCoursesSummary — the courses line on the dashboard.
+
+   Sits directly above MyWorkSummary's card grid, so the bottom
+   margin here matches that grid's gap: the two read as one
+   column rather than as two stacked widgets.
+   ============================================================ */
+
+.card {
+  margin-bottom: var(--space-4);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+}
+
+.viewAll {
+  font-size: var(--text-sm);
+  color: var(--color-accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.viewAll:hover {
+  text-decoration: underline;
+}
+
+.viewAll:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color var(--dur-quick) var(--ease-naisi);
+}
+
+/* Hover-capable pointers only: on touch a :hover rule fires on tap and sticks
+   until the next tap elsewhere, which reads as a stuck selection. */
+@media (hover: hover) {
+  .row:hover {
+    border-color: var(--color-border-strong);
+  }
+}
+
+.row:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The title truncates and the week line does not: "Week 3 of 8" is the thing
+   the member came to read, and it is short enough to always fit. */
+.name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+
+.week {
+  flex-shrink: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* The row stays one line: both halves are short, and stacking them would
+     double the card's height for no gain. */
+}

@@ -1,0 +1,123 @@
+/* ============================================================
+   StarRating.
+
+   Interactive form is a radiogroup of five native radios hidden
+   under star glyphs (SegmentedControl's technique). Read-only
+   form drops the inputs and renders the glyphs alone.
+
+   The star box, not the glyph, carries the touch target: `md`
+   boxes are 2.75rem (the 44px floor) around a 1.5rem glyph, so
+   the row stays visually tight while every star is tappable.
+   ============================================================ */
+
+.group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.option {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The real input, stretched over its star so a tap anywhere in the 44px box
+   hits it. Kept in the a11y tree (not `display: none`) — it IS the control. */
+.radio {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: inherit;
+}
+
+.star {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  color: var(--color-text-subtle);
+  border-radius: var(--radius-md);
+  transition: color var(--transition-fast);
+}
+
+.option:hover .star {
+  color: var(--color-text-muted);
+}
+
+.radio:focus-visible ~ .star {
+  box-shadow: var(--focus-ring);
+}
+
+.glyph {
+  display: block;
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+/* The filled layer sits exactly on the glyph box (not the padded star box) so
+   the clip fraction measures the star itself. `inset: 0; margin: auto` centres
+   it without a transform the commit animation would then have to preserve. */
+.fill {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 1.5rem;
+  height: 1.5rem;
+  color: var(--color-accent);
+  /* Partial fill for cohort averages — clipping the full glyph beats shipping
+     a second half-star asset that would drift from this one. */
+  clip-path: inset(0 calc(100% - var(--star-fill, 100%)) 0 0);
+}
+
+.size_sm .star {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.size_sm .glyph,
+.size_sm .fill {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* === Commit feedback === */
+
+@keyframes starCommit {
+  0% {
+    transform: scale(1);
+  }
+  55% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.pop .star {
+  animation: starCommit var(--dur-settle) var(--ease-spring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pop .star {
+    animation: none;
+  }
+  .star {
+    transition: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 36rem) { /* --bp-sm */
+  /* Nothing to adapt: `md` stars are already at the 44px floor and five of
+     them plus gaps clear 320px with room to spare. `sm` is display-only. */
+}

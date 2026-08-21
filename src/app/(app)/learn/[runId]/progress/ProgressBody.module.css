@@ -1,0 +1,160 @@
+/* ============================================================
+   /learn/[runId]/progress — week-by-week completion.
+
+   A reading surface, not a working one: no motion of its own.
+   The page entrance belongs to PageEnter and the bars belong to
+   ProgressBar, both of which carry their own reduced-motion
+   handling, so this module has nothing to null.
+   ============================================================ */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.summaryHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.summaryTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+}
+
+/* Tabular figures: the count sits at the end of a line whose left edge is
+   fixed, so proportional digits would make it twitch as it climbs. */
+.summaryCount {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: inherit;
+  text-decoration: none;
+  transition:
+    border-color var(--dur-quick) var(--ease-naisi),
+    background var(--dur-quick) var(--ease-naisi);
+}
+
+/* Hover-capable pointers only: on touch this fires on tap and sticks until
+   the next tap elsewhere, which reads as a stuck selection. */
+@media (hover: hover) {
+  .row:hover {
+    border-color: var(--color-border-strong);
+    background: var(--color-surface-hover);
+  }
+}
+
+.row:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Weeks that predate the member's join. Dimmed rather than hidden: a week 1
+   that simply vanished would read as missing data, and the chip beside it is
+   the explanation. Still a link — the material is there to read. */
+.uncounted {
+  opacity: 0.72;
+}
+
+.rowHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.rowTitle {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.rowNote {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* Button-styled anchor for the empty state — <Button> takes no href (the
+   CourseCTA precedent). Secondary here: the empty state is an explanation,
+   not a call to act. */
+.back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: 0.6rem 1.1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--text-base);
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+  transition:
+    background var(--dur-quick) var(--ease-naisi),
+    border-color var(--dur-quick) var(--ease-naisi);
+}
+
+.back:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-strong);
+}
+
+.back:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .summaryHead {
+    /* The count keeps its own line rather than being squeezed against a
+       wrapping title. */
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+  }
+
+  .row {
+    padding: var(--space-3);
+  }
+}

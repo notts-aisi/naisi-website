@@ -1,0 +1,20 @@
+/* Typography for member-authored plain text. pre-wrap is what makes the
+   renderer safe *and* usable: the author's line breaks survive without any
+   parsing step that could turn their characters into markup. */
+
+.text {
+  margin: 0;
+  white-space: pre-wrap;
+  /* `anywhere`, not `break-word`: a pasted 400-character URL or token has no
+     break opportunity and would otherwise widen the whole surface it sits in
+     (a comment thread, a table cell) rather than wrapping. */
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  color: var(--color-text);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* Nothing: the block inherits the width of whatever it is placed in, and
+     `overflow-wrap: anywhere` is exactly what keeps it inside on a phone. */
+}

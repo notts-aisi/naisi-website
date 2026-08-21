@@ -1,0 +1,66 @@
+/* Animated entrance — the class is applied via a rAF swap after the first
+ * paint (which carries a matching inline from-state), eliminating the flash
+ * where CSS-class animations land AFTER React commits visible content.
+ * Keyframe from-states must stay in sync with fromTransform in PageEnter.tsx. */
+
+.enterUp {
+  animation: page-enter-up var(--dur-enter) var(--ease-naisi) both;
+}
+.enterLeft {
+  animation: page-enter-left var(--dur-enter) var(--ease-naisi) both;
+}
+.enterRight {
+  animation: page-enter-right var(--dur-enter) var(--ease-naisi) both;
+}
+
+@keyframes page-enter-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes page-enter-left {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes page-enter-right {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Reduced motion: swap to an opacity-only fade (crossfades aren't a
+ * vestibular trigger) — the directional slide is the part that goes. */
+@media (prefers-reduced-motion: reduce) {
+  .enterUp,
+  .enterLeft,
+  .enterRight {
+    animation: page-enter-rm var(--dur-fade) ease both;
+  }
+  @keyframes page-enter-rm {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* Same entrance on mobile — distances are small enough already. */
+}

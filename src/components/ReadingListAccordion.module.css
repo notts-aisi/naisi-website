@@ -3,9 +3,10 @@
 
    Layout: each entry is a button row (the summary) plus a
    collapsing panel below. Default state is closed. Hovering or
-   focusing the row gives a subtle background tint. Animation
-   uses grid-template-rows from 0fr to 1fr so the panel sizes to
-   its content without a max-height guess.
+   focusing the row gives a subtle background tint. The collapse
+   itself (grid-template-rows 0fr → 1fr) lives in
+   ui/Accordion.module.css; this file styles the row and the
+   panel contents only.
    ============================================================ */
 
 .list {
@@ -27,8 +28,9 @@
   align-items: start;
   /* Generous block padding so the row lives off the divider rules above
      and below. Tighter padding made the title feel like it was sitting
-     on top of the line. */
-  padding: var(--space-7) var(--space-2);
+     on top of the line. (Was --space-7, which tokens.css does not define
+     — the scale jumps 6 → 8 — so this silently rendered as 0.) */
+  padding: var(--space-6) var(--space-2);
   background: transparent;
   border: 0;
   cursor: pointer;
@@ -101,36 +103,7 @@
   background: var(--color-accent-soft);
 }
 
-/* === Collapsing panel === */
-
-.panel {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 280ms ease;
-}
-
-.panelOpen {
-  grid-template-rows: 1fr;
-}
-
-.panelInner {
-  /* The grid-row track does the height; this element clips the content
-     while it is in the closed (0fr) row.
-     - `min-height: 0` overrides the default `min-height: auto` on grid
-       items, which is the bit that prevents the track from actually
-       shrinking past content size. Without this, the panel "collapses"
-       visually but a sliver of the first item leaks through.
-     - `overflow: hidden` then clips whatever natural height the inner
-       content has during the transition so it doesn't paint outside the
-       track. */
-  min-height: 0;
-  overflow: hidden;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .panel {
-    transition: none;
-  }
   .indicator {
     transition: none;
   }
@@ -140,12 +113,12 @@
 
 .items {
   list-style: none;
-  /* Block padding lives on the items list (rather than on .panelInner)
-     so it doesn't contribute to the collapsed-state height of the
-     grid-row track. Top padding gives the first item room above its
-     content; bottom padding does the same below the last item before
-     the divider rule. */
-  padding: var(--space-3) 0 var(--space-7) var(--space-2);
+  /* Block padding lives on the items list (rather than on Accordion's
+     .panelInner) so it doesn't contribute to the collapsed-state height
+     of the grid-row track. Top padding gives the first item room above
+     its content; bottom padding does the same below the last item before
+     the divider rule. (Bottom was --space-7 — undefined, so 0.) */
+  padding: var(--space-3) 0 var(--space-8) var(--space-2);
   margin: 0;
   display: flex;
   flex-direction: column;

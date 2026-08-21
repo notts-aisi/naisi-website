@@ -1,8 +1,6 @@
 import { redirect } from "next/navigation";
 import AdmissionsQueue from "@/features/courses/AdmissionsQueue";
-import { getAdminDb } from "@/lib/firebase/admin";
-import { getCurrentUser } from "@/lib/firebase/session";
-import { normalizeCourseRun } from "@/lib/firestore/courses";
+import { getRunAccess } from "@/features/courses/runAccess";
 
 /**
  * A reviewer's whole course surface: the admissions queue for one run, and
@@ -13,13 +11,13 @@ import { normalizeCourseRun } from "@/lib/firestore/courses";
  * sight of its cohort — there is deliberately no link from here into the
  * learning space, and no other `/learn/[runId]/*` route accepts a reviewer.
  *
- * The gate below is intentionally SELF-CONTAINED rather than inherited: there
- * is no `/learn/[runId]/layout.tsx` yet. P7 adds one (it computes the full
- * `RunAccess` for enrolled members, facilitators, reviewers, track leads and
- * admins) and this page is meant to fold into it then — at which point this
- * block becomes a narrowing check against the layout's access object rather
- * than a fresh read. Until that lands, deleting anything here removes the only
- * thing standing between a signed-in member and a pile of applications.
+ * The gate below is a NARROWING of `[runId]/layout.tsx`, which has already
+ * established that the caller holds some role on this run. Narrowing is the
+ * whole of it: the layout admits facilitators and enrolled members too, and
+ * they have no business here. Deleting the `allowed` check would put a pile of
+ * applications in front of every member of the cohort. `getRunAccess` is
+ * `cache()`-wrapped, so re-asking costs nothing — the layout's reads are
+ * already memoised for this request.
  *
  * Track leads may READ this queue but may not decide; that split lives in the
  * routes (the decide/notes handlers re-check), which is where it belongs —
@@ -36,25 +34,19 @@ export default async function RunAdmissionsPage({
 }) {
   const { runId } = await params;
 
-  // `(app)/layout.tsx` has already established a signed-in, non-pending user;
-  // this re-reads it because the decision below needs the uid and the role.
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
+  const access = await getRunAccess(runId);
+  // Null is no session or no such run; the layout has already sent both of
+  // those somewhere. Re-checked rather than asserted because a page must never
+  // rely on a layout having run — layouts and pages are separately routable
+  // units and a future refactor could reorder them.
+  if (!access) redirect("/learn");
 
-  const db = getAdminDb();
-  if (!db) redirect("/learn");
-
-  const snap = await db.collection("courseRuns").doc(runId).get();
-  if (!snap.exists) redirect("/learn");
-  const run = normalizeCourseRun(snap.id, snap.data() ?? {});
-
-  const allowed =
-    user.role === "admin" ||
-    run.admissionsReviewerUids.includes(user.uid) ||
-    run.trackLeadUids.includes(user.uid);
+  const allowed = access.isAdmin || access.isReviewer || access.isTrackLead;
   // A plain redirect, not a 403: a member who lands here by guessing a run id
   // learns nothing about whether that run exists.
   if (!allowed) redirect("/learn");
+
+  const { run } = access;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-6)" }}>
@@ -75,7 +67,7 @@ export default async function RunAdmissionsPage({
 
       {/* `isAdmin` controls exactly one thing: whether applicant email
           addresses render. The route decides whether any were sent. */}
-      <AdmissionsQueue runId={runId} isAdmin={user.role === "admin"} />
+      <AdmissionsQueue runId={runId} isAdmin={access.isAdmin} />
     </div>
   );
 }

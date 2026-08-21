@@ -9,6 +9,7 @@ import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import CountedTextarea from "@/components/ui/CountedTextarea";
 import { Field, Input } from "@/components/ui/Input";
+import Modal from "@/components/ui/Modal";
 import ResponsiveSelect, {
   type ResponsiveSelectOption,
 } from "@/components/ui/ResponsiveSelect";
@@ -109,6 +110,7 @@ export default function CourseEditor({ courseId }: { courseId: string }) {
 
   // --- Publish control ---
   const [showcaseChoice, setShowcaseChoice] = useState<string | null>(null);
+  const [confirmingPublish, setConfirmingPublish] = useState(false);
   const showcase = showcaseChoice ?? course?.showcaseRunId ?? "";
 
   const showcaseOptions = useMemo<ResponsiveSelectOption[]>(() => {
@@ -182,17 +184,16 @@ export default function CourseEditor({ courseId }: { courseId: string }) {
     );
   }
 
+  /**
+   * The confirmed half of the publish action. The dialog is the guard — this
+   * runs only from its confirm button, and closes it first so the toast (which
+   * dims the page behind it) isn't stacked on a live dialog.
+   */
   async function handlePublish() {
     if (!course) return;
+    setConfirmingPublish(false);
     const target = showcase || null;
     const published = course.status === "published";
-    const question = published
-      ? `Update the public curriculum preview for “${course.title}”?`
-      : `Publish “${course.title}” to the public catalogue? The course page becomes visible to everyone, signed in or not.`;
-    // window.confirm on purpose: the shared Modal primitive lands with the
-    // learning space (P7), and a destructive-ish admin confirm doesn't justify
-    // building it early.
-    if (!window.confirm(question)) return;
     await runAction(
       async () => {
         await publishCourse(courseId, target);
@@ -281,6 +282,11 @@ export default function CourseEditor({ courseId }: { courseId: string }) {
       </AdminPage>
     );
   }
+
+  const published = course.status === "published";
+  const publishQuestion = published
+    ? `Update the public curriculum preview for “${course.title}”?`
+    : `Publish “${course.title}” to the public catalogue? The course page becomes visible to everyone, signed in or not.`;
 
   return (
     <AdminPage>
@@ -465,8 +471,8 @@ export default function CourseEditor({ courseId }: { courseId: string }) {
               )}
 
               <div className={styles.formActions}>
-                <Button onClick={handlePublish} disabled={saving}>
-                  {course.status === "published" ? "Update showcase run" : "Publish course"}
+                <Button onClick={() => setConfirmingPublish(true)} disabled={saving}>
+                  {published ? "Update showcase run" : "Publish course"}
                 </Button>
                 {dirty && (
                   <span className={styles.status}>
@@ -623,6 +629,32 @@ export default function CourseEditor({ courseId }: { courseId: string }) {
           </section>
         </Card>
       </div>
+
+      <Modal
+        open={confirmingPublish}
+        onClose={() => setConfirmingPublish(false)}
+        ariaLabel={published ? "Update the curriculum preview" : "Publish this course"}
+        width="sm"
+      >
+        <div className={styles.confirm}>
+          <h2 className={styles.confirmTitle}>
+            {published ? "Update the preview?" : "Publish this course?"}
+          </h2>
+          <p className={styles.confirmBody}>{publishQuestion}</p>
+          <div className={styles.confirmActions}>
+            <Button
+              variant="ghost"
+              onClick={() => setConfirmingPublish(false)}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={handlePublish} disabled={saving}>
+              {published ? "Update showcase run" : "Publish course"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <ActionToast toast={toast} onDismiss={dismiss} />
     </AdminPage>

@@ -227,6 +227,36 @@
   color: var(--color-text-muted);
 }
 
+/* === Confirm dialog ===
+   Modal owns the panel chrome, the scrim and the focus trap; these classes
+   are only the stack inside it. */
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.confirmTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.confirmBody {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-relaxed);
+}
+
+/* Confirm sits last: the dialog reads left-to-right as "back out / go on". */
+.confirmActions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
 /* === Mobile === */
 @media (max-width: 48rem) { /* --bp-md */
   .formGrid {
@@ -246,7 +276,8 @@
     gap: var(--space-3);
   }
 
-  .formActions > * {
+  .formActions > *,
+  .confirmActions > * {
     flex: 1 1 auto;
   }
 }
