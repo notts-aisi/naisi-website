@@ -564,6 +564,19 @@ export default function RunHome({ runId, isAdmin }: Props) {
                 </ul>
               ))}
 
+            {/* Unconditional, unlike the materials link below: the review queue
+                is where a facilitator's own work is, and it stays reachable
+                even in a week nobody has published yet. */}
+            <Link
+              className={styles.panelLink}
+              href={`/learn/${encodeURIComponent(runId)}/group/${encodeURIComponent(facilitatedGroupId)}/review`}
+            >
+              Review exercises
+              <span className={styles.arrow} aria-hidden="true">
+                →
+              </span>
+            </Link>
+
             {target?.published && (
               <Link className={styles.panelLink} href={weekHref(runId, target.weekNumber)}>
                 Open week {target.weekNumber} materials

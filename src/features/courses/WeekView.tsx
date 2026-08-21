@@ -22,12 +22,14 @@ import {
   type CourseProgressDoc,
   type ProgressItemKind,
 } from "@/lib/firestore/courseProgress";
+import ExerciseSubmit from "./ExerciseSubmit";
 import MaterialCheck from "./MaterialCheck";
 import PacingBanner from "./PacingBanner";
 import SessionCard from "./SessionCard";
 import WeekCurriculum from "./WeekCurriculum";
 import WeekRail from "./WeekRail";
 import { saveProgressReflection, toggleProgressItem } from "./progressMutations";
+import { useMyExercises } from "./useMyExercises";
 import { useRunOverview } from "./useRunOverview";
 import { useRunProgress } from "./useRunProgress";
 import { useWeek } from "./useWeek";
@@ -43,20 +45,27 @@ import styles from "./WeekView.module.css";
  * The member week page: header + ProgressBar (the spatial anchor — they NEVER
  * animate position across week↔week navigation), pacing banner, the shared
  * WeekCurriculum spine with check-off buttons hung off every row, the
- * reflection panel and cohort-notes lane under each material, and the footer
- * week nav. Plan sections: "Placement map — Week page", "Check-off
- * choreography", "Toast vs inline rule" — the timings here are theirs.
+ * reflection panel and cohort-notes lane under each material, the exercise
+ * submission forms under each prompt, and the footer week nav. Plan sections:
+ * "Placement map — Week page", "Check-off choreography", "Toast vs inline
+ * rule" — the timings here are theirs.
  *
  * Data: one overview fetch (run + current week + own enrolment + group), one
- * week-doc get, and the live own-progress listener. The listener is what
- * settles the optimistic check-off; the `overrides` map below only bridges
- * the microtask gap before the local write lands in the snapshot — and, on a
- * refused write, holds the flip until the 200ms revert.
+ * week-doc get, the live own-progress listener, and — for learners only — one
+ * fetch of their own answers for this week. The listener is what settles the
+ * optimistic check-off; the `overrides` map below only bridges the microtask
+ * gap before the local write lands in the snapshot — and, on a refused write,
+ * holds the flip until the 200ms revert.
  *
  * Toast vs inline: check-off FAILURE is the only toast on this page. Saves of
- * the reflection panel are keep-working feedback → inline SavedFlash; an
- * admin hiding or unhiding a cohort comment is a must-not-continue action and
- * takes the toast.
+ * the reflection panel and exercise autosave are keep-working feedback →
+ * inline SavedFlash; an admin hiding or unhiding a cohort comment is a
+ * must-not-continue action and takes the toast.
+ *
+ * PROGRESS SEMANTICS ARE UNCHANGED BY EXERCISES: the fraction counts
+ * non-optional materials plus checklist items and nothing else. An exercise is
+ * work with a verdict on it, not a box to tick, and folding submissions into
+ * the bar would make 100% unreachable until a facilitator got round to it.
  */
 
 type ViewerRole = "learner" | "facilitator" | "admin";
@@ -86,6 +95,12 @@ export default function WeekView({ runId, weekNumber, uid, viewerRole }: Props) 
   const week = useWeek(runId, weekDocId(weekNumber), viewerRole !== "learner");
   const progress = useRunProgress(runId);
   const comments = useWeekComments(runId, weekNumber);
+  // Own exercise answers for this week. IDLE for anyone who isn't a learner
+  // here: the route serves own rows only, so a facilitator's fetch would ask a
+  // question whose answer is always empty. Passing "" is the hook's off switch
+  // — cheaper and clearer than a conditional hook call.
+  const isLearnerViewer = overview.data?.enrolment?.role === "learner";
+  const myExercises = useMyExercises(isLearnerViewer ? runId : "", weekNumber);
   const { toast, run: runToast, dismiss } = useActionToast();
 
   // Travel direction for the entrance, handed over by the PREVIOUS page's nav
@@ -320,6 +335,28 @@ export default function WeekView({ runId, weekNumber, uid, viewerRole }: Props) 
   // ---- Derived page facts -------------------------------------------------
   const hasEnrolment = payload.enrolment !== null;
 
+  // Exercises are a LEARNER surface, and `hasEnrolment` is the wrong test for
+  // it: a facilitator staffed onto this run carries a `facilitator`-role
+  // enrolment and would pass. A learner whose enrolment is no longer active
+  // (a finished cohort) still owns their answers — read-only, never gone.
+  const learnerEnrolment =
+    payload.enrolment?.role === "learner" ? payload.enrolment : null;
+  const canSubmitExercises = learnerEnrolment?.status === "active";
+
+  // Under the exercises list: the "this isn't your homework" note for the
+  // staff reading over a learner's shoulder. A learner's LOAD FAILURE is
+  // deliberately NOT here — a sentence after the closing </ol> is not read by
+  // someone scrolling to their own answer box, so it is rendered per-exercise,
+  // in place of the box it is warning about (see `renderExerciseAction`).
+  const exercisesFooter =
+    learnerEnrolment || viewerRole === "learner" ? null : (
+      <p className={styles.exercisesNote}>
+        You are viewing this week as{" "}
+        {viewerRole === "admin" ? "an admin" : "a facilitator"} — exercises are
+        submitted by the learners on this run.
+      </p>
+    );
+
   // Optional materials are deliberately excluded from BOTH sides of the
   // fraction — `Material.optional` is "excluded from completion percentages"
   // in the data model, and 100% must be reachable without extension reading.
@@ -474,14 +511,57 @@ export default function WeekView({ runId, weekNumber, uid, viewerRole }: Props) 
                 onModerate={moderate}
               />
             )}
-            exercisesFooter={
-              // Honest pre-P8 line, the pre-P4 CourseCTA precedent: name the
-              // gap and the interim path rather than dead-ending.
-              <p className={styles.exercisesNote}>
-                Submitting exercises on the site opens soon — your facilitator
-                will tell you where to send work this week.
-              </p>
+            renderExerciseAction={
+              // Learners only, and THREE states, not two.
+              //
+              // The skeleton keeps the form unmounted until the member's stored
+              // answers have landed, so the field is seeded from the row rather
+              // than being re-seeded under a typing hand.
+              //
+              // The middle state is the one that matters: a fetch that FAILED
+              // is indistinguishable from "you have written nothing here", and
+              // the response doc id is deterministic per (run, member, week,
+              // exercise) — so an empty box rendered on that guess replaces the
+              // answer it could not read, on the first keystroke, with no
+              // warning the member is looking at. `loaded` (a fetch that
+              // actually came back) is the only thing that licenses a writable
+              // field; without it they get the notice below instead.
+              learnerEnrolment
+                ? (x) => {
+                    if (myExercises.loading) {
+                      return (
+                        <Skeleton
+                          lines={2}
+                          height="1.75rem"
+                          ariaLabel="Loading your answer…"
+                        />
+                      );
+                    }
+                    const row = myExercises.byExerciseId.get(x.id) ?? null;
+                    if (!row && !myExercises.loaded) {
+                      return (
+                        <ExerciseUnavailable
+                          detail={myExercises.error?.message ?? null}
+                          canEdit={canSubmitExercises}
+                          onRetry={myExercises.reload}
+                        />
+                      );
+                    }
+                    return (
+                      <ExerciseSubmit
+                        runId={runId}
+                        weekId={weekDoc.id}
+                        weekNumber={weekNumber}
+                        exercise={x}
+                        response={row}
+                        onSaved={myExercises.apply}
+                        readOnly={!canSubmitExercises}
+                      />
+                    );
+                  }
+                : undefined
             }
+            exercisesFooter={exercisesFooter}
           />
 
           {(prevWeek !== null || nextWeek !== null) && (
@@ -520,6 +600,56 @@ export default function WeekView({ runId, weekNumber, uid, viewerRole }: Props) 
       </div>
 
       <ActionToast toast={toast} onDismiss={dismiss} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The un-writable exercise: what stands in for the form when the member's own
+// answers didn't load
+// ---------------------------------------------------------------------------
+
+/**
+ * Rendered INSTEAD of `ExerciseSubmit` when this week's answers failed to load.
+ *
+ * The invariant it exists to hold: never render an empty writable box whose
+ * emptiness is unverified. The stored row is addressed by a deterministic doc
+ * id, so a form that starts blank because the fetch failed does not "start
+ * fresh" — it overwrites, silently, on the first keystroke. A notice with a
+ * retry is the only honest thing to put here, and it goes where the box would
+ * have been rather than in a footnote under the list.
+ */
+function ExerciseUnavailable({
+  detail,
+  canEdit,
+  onRetry,
+}: {
+  /** The route's own sentence, when it gave one. */
+  detail: string | null;
+  /**
+   * Whether a form would have been writable here. A finished cohort's answers
+   * are read-only anyway, so there is nothing to overwrite — the warning is
+   * simply that their work isn't showing.
+   */
+  canEdit: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <div className={styles.exerciseBlocked}>
+      <p className={styles.exerciseBlockedText}>
+        {canEdit
+          ? "We couldn't load your saved answer — reload before editing so you don't overwrite it."
+          : "We couldn't load your saved answer — reload to see it."}
+      </p>
+      {detail && <p className={styles.exerciseBlockedDetail}>{detail}</p>}
+      <Button
+        size="sm"
+        variant="secondary"
+        onClick={onRetry}
+        aria-label="Retry loading your saved answer"
+      >
+        Retry
+      </Button>
     </div>
   );
 }
