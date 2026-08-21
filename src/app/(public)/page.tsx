@@ -181,7 +181,7 @@ export default function Landing() {
               </p>
               <FellowQuotes />
               <p className={styles.tierFooter}>
-                <Link href="/register" className={styles.inlineLink}>
+                <Link href="/courses" className={styles.inlineLink}>
                   Apply for the next cohort →
                 </Link>
               </p>

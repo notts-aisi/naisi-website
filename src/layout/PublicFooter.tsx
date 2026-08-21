@@ -15,6 +15,7 @@ export default function PublicFooter() {
         </div>
         <nav className={styles.col} aria-label="Site">
           <span className={styles.colTitle}>Site</span>
+          <Link href="/courses">Courses</Link>
           <Link href="/members">Members</Link>
           <Link href="/resources">Resources</Link>
           <Link href="/news">News</Link>

@@ -1,0 +1,323 @@
+/* ============================================================
+   WeekAccordion — the public curriculum browser.
+
+   Layout: a divider-ruled list, one week per row. Each row is a
+   button (the summary) plus a collapsing panel. Editorial rather
+   than card-like on purpose: the course page already carries a
+   hero and a CTA panel, and a third boxed surface would flatten
+   the hierarchy.
+
+   Animation: grid-template-rows 0fr → 1fr so the panel sizes to
+   its content without a max-height guess.
+
+   Spacing note: --space-7 does NOT exist in tokens.css (the scale
+   jumps 6 → 8). ReadingListAccordion references it and silently
+   collapses that padding to 0; this module uses --space-6 /
+   --space-8 so the rhythm is what it looks like.
+   ============================================================ */
+
+.empty {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+}
+
+.list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--color-border);
+}
+
+.row:last-child {
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* === Summary row (the click target) === */
+
+.summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-4);
+  align-items: center;
+  /* 44px floor — public surface, enforced (docs/touch-targets.md). The block
+     padding takes the real row well past it; min-height guards the case of a
+     week with no title and no meta. */
+  min-height: 2.75rem;
+  padding: var(--space-6) var(--space-2);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  transition: background var(--transition-fast);
+}
+
+.summary:hover {
+  background: var(--color-surface-hover);
+}
+
+.summary:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}
+
+.summaryText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0; /* let long week titles wrap inside the grid cell */
+}
+
+.summaryTitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+  color: var(--color-text);
+}
+
+/* The week number is the scanning anchor down the left edge — tabular so the
+   numerals line up between single- and double-digit weeks. */
+.weekNumber {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-accent);
+}
+
+.dot {
+  color: var(--color-text-subtle);
+}
+
+.summaryMeta {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.indicator {
+  width: 1.75rem;
+  height: 1.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  transition:
+    transform var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.summary:hover .indicator {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+.indicatorOpen {
+  transform: rotate(180deg);
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+/* === Collapsing panel === */
+
+.panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 280ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.panelOpen {
+  grid-template-rows: 1fr;
+}
+
+.panelInner {
+  /* The grid track does the height; this element clips content while the row
+     is at 0fr.
+     - `min-height: 0` overrides the default `min-height: auto` on grid items,
+       which is what otherwise stops the track shrinking below content size
+       (without it a sliver of the first item leaks through).
+     - `overflow: hidden` clips the natural content height during the
+       transition so it can't paint outside the track. */
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel,
+  .indicator {
+    transition: none;
+  }
+}
+
+/* === Panel contents === */
+
+/* Block padding lives on the inner blocks rather than .panelInner so it
+   doesn't contribute to the collapsed track height. */
+.summaryLine {
+  margin: 0;
+  padding: var(--space-2) var(--space-2) 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  max-width: 44rem;
+}
+
+.materials {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-3) 0 0 var(--space-2);
+  display: flex;
+  flex-direction: column;
+}
+
+.material {
+  display: flex;
+}
+
+.materialLink,
+.materialNote {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  width: 100%;
+  /* 44px floor — public surface, enforced (docs/touch-targets.md). */
+  min-height: 2.75rem;
+  padding-block: var(--space-2);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  text-decoration: none;
+  color: var(--color-text);
+  transition: color var(--transition-fast);
+}
+
+.materialNote {
+  color: var(--color-text-muted);
+}
+
+.materialLink:hover,
+.materialLink:focus-visible {
+  color: var(--color-accent);
+}
+
+.materialLink:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.materialTitle {
+  min-width: 0;
+}
+
+/* Fixed-width kind chip so the titles align into a column. */
+.kind {
+  flex-shrink: 0;
+  width: 4.25rem;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-subtle);
+}
+
+.materialTime {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-subtle);
+}
+
+.more {
+  margin: 0;
+  padding: var(--space-4) var(--space-2) var(--space-8);
+}
+
+.moreLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* 44px floor — public surface, enforced (docs/touch-targets.md). */
+  min-height: 2.75rem;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.moreLink:hover {
+  color: var(--color-accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.moreLink:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Compositor-only nudge, matching the public footer's arrow idiom. */
+.arrow {
+  display: inline-block;
+  transition: transform var(--transition-base);
+}
+
+.moreLink:hover .arrow {
+  transform: translateX(3px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arrow {
+    transition: none;
+  }
+  .moreLink:hover .arrow {
+    transform: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .summary {
+    padding: var(--space-5) var(--space-1);
+    gap: var(--space-3);
+  }
+  .summaryTitle {
+    font-size: var(--text-base);
+  }
+  .materials {
+    padding-left: var(--space-1);
+  }
+  /* The kind chip's fixed column costs too much of a 375px row — let it size
+     to its own text and wrap the title beneath when needed. */
+  .kind {
+    width: auto;
+  }
+  .materialTime {
+    margin-left: 0;
+  }
+  .more {
+    padding: var(--space-3) var(--space-1) var(--space-6);
+  }
+}
