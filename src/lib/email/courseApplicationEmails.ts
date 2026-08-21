@@ -37,29 +37,36 @@ import { sendEmail } from "./send";
  * groups afterwards — so the accepted template says a placement email follows
  * with the group, facilitator, and time slot, and never names one. The
  * group-scoped tokens ({groupName}, {facilitatorNames}, {firstSessionWhen}) are
- * deliberately NOT supplied on this path: an admin who pastes one into a
- * decision template sees the literal `{token}` in a test send and notices,
- * rather than shipping a blank where a group name should be.
+ * deliberately NOT supplied on the application-lifecycle paths: an admin who
+ * pastes one into a decision template sees the literal `{token}` in a test send
+ * and notices, rather than shipping a blank where a group name should be. They
+ * ARE supplied on the `allocated` path (the allocation publish route), which is
+ * exactly the email those tokens exist for.
  */
 
 /**
- * The four application-lifecycle triggers, one per template id. `submitted` is
- * fired by the apply route; the other three are fired by the decide route
+ * The five lifecycle triggers, one per template id. `submitted` is fired by
+ * the apply route; `accepted`/`waitlisted`/`rejected` by the decide route
  * (/api/courses/runs/[runId]/applications/[uid]/decide) once a decision has
  * COMMITTED, one email per status change — a re-decision into the same status
- * sends nothing, so a double-clicked Accept can't mail twice.
+ * sends nothing, so a double-clicked Accept can't mail twice. `allocated` is
+ * fired by the allocation publish route
+ * (/api/courses/runs/[runId]/allocation/publish) once per placement, guarded
+ * by `courseEnrolments.allocatedEmailAt`.
  */
 export type CourseApplicationEmailKind =
   | "submitted"
   | "accepted"
   | "waitlisted"
-  | "rejected";
+  | "rejected"
+  | "allocated";
 
 const TEMPLATE_FOR_KIND: Record<CourseApplicationEmailKind, CourseTemplateId> = {
   submitted: "course-application-submitted",
   accepted: "course-application-accepted",
   waitlisted: "course-application-waitlisted",
   rejected: "course-application-rejected",
+  allocated: "course-allocated",
 };
 
 export type CourseApplicationEmailOptions = {
@@ -78,6 +85,16 @@ export type CourseApplicationEmailOptions = {
    * nobody does).
    */
   startDate?: string;
+  /**
+   * Group-scoped tokens, supplied ONLY by the `allocated` kind (see the module
+   * comment). Each is pre-formatted for humans at the call site; when absent
+   * the `{token}` stays literal in the sent mail, per the house convention.
+   */
+  groupName?: string;
+  /** Comma-joined display names, e.g. "Priya and Sam". */
+  facilitatorNames?: string;
+  /** Human first-session label, e.g. "Tuesday 7 October, 18:00". */
+  firstSessionWhen?: string;
   /** Applicant uid — recorded as the deliverability log's actor. */
   uid: string;
   /** Run id — the deliverability log's reference, so a run's mail is greppable. */
@@ -119,6 +136,12 @@ export async function sendCourseApplicationEmail(
       courseTitle: opts.courseTitle,
       runLabel: opts.runLabel,
       startDate: opts.startDate ?? "",
+      // The group-scoped trio: `buildCourseTokens` omits each key when the
+      // input is undefined, so an unset value leaves the `{token}` literal in
+      // the sent mail (an admin notices) rather than a silent blank.
+      groupName: opts.groupName,
+      facilitatorNames: opts.facilitatorNames,
+      firstSessionWhen: opts.firstSessionWhen,
     }),
   };
   // Leave {startDate} literal rather than substituting an empty string.

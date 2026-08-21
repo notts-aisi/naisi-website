@@ -60,6 +60,15 @@ export type CourseEnrolmentDoc = {
    * anchor week, so the common case is one doc read and zero writes.
    */
   lastTaskSyncedWeek?: number;
+  /**
+   * When the "you've been placed" email for the CURRENT `groupId` was sent.
+   * The idempotency guard for allocation publish: re-publishing a run emails
+   * only enrolments lacking this stamp, so newly placed people get their
+   * email and everyone already told does not get it twice. The allocate route
+   * clears it whenever `groupId` changes — the stamp certifies "emailed about
+   * their current group", and a move invalidates that.
+   */
+  allocatedEmailAt?: Date | null;
   createdAt?: Date | null;
   updatedAt?: Date | null;
 };
@@ -112,5 +121,7 @@ export function normalizeCourseEnrolment(id: string, data: Raw): CourseEnrolment
   ) {
     doc.lastTaskSyncedWeek = Math.floor(data.lastTaskSyncedWeek);
   }
+  const allocatedEmailAt = tsToDate(data.allocatedEmailAt);
+  if (allocatedEmailAt) doc.allocatedEmailAt = allocatedEmailAt;
   return doc;
 }
