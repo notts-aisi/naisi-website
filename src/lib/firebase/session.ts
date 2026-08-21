@@ -43,6 +43,8 @@ export type SessionUser = {
     approveNewsletter: boolean;
     draftEvent: boolean;
     approveEvent: boolean;
+    draftCourse: boolean;
+    approveCourse: boolean;
   };
 };
 
@@ -149,6 +151,8 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
         approveNewsletter: Boolean(perms.approveNewsletter),
         draftEvent: Boolean(perms.draftEvent),
         approveEvent: Boolean(perms.approveEvent),
+        draftCourse: Boolean(perms.draftCourse),
+        approveCourse: Boolean(perms.approveCourse),
       },
     };
   } catch {

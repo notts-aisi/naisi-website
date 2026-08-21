@@ -14,6 +14,7 @@ const TABS = [
   { label: "Collaborators", href: "/admin/collaborators", match: (p: string) => p.startsWith("/admin/collaborators") },
   { label: "Registrations", href: "/admin/registrations", match: (p: string) => p.startsWith("/admin/registrations") },
   { label: "Projects", href: "/admin/projects", match: (p: string) => p.startsWith("/admin/projects") },
+  { label: "Courses", href: "/admin/courses", match: (p: string) => p.startsWith("/admin/courses") },
   { label: "Newsletter", href: "/admin/newsletter", match: (p: string) => p.startsWith("/admin/newsletter") },
   { label: "Subscriptions", href: "/admin/subscriptions", match: (p: string) => p.startsWith("/admin/subscriptions") },
   { label: "Email designs", href: "/admin/email-designs", match: (p: string) => p.startsWith("/admin/email-designs") },

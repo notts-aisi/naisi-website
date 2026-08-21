@@ -19,6 +19,22 @@ service cloud.firestore {
              .data.get('suRecognised', false) == true;
     }
 
+    // Shared permission check for the courses feature: admin, or the named
+    // key set true on the caller's own user doc. The newsletterDrafts and
+    // events blocks each carry a LOCAL copy of this same helper — those
+    // predate this one and are left duplicated on purpose (an inner function
+    // shadows an outer one, so touching them buys nothing and risks two
+    // proven blocks for zero behaviour change). New per-permission helpers
+    // start here instead.
+    function hasPerm(key) {
+      return isSignedIn()
+        && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+            || get(/databases/$(database)/documents/users/$(request.auth.uid))
+                 .data.get(['permissions', key], false) == true);
+    }
+    function canDraftCourse()   { return hasPerm('draftCourse');   }
+    function canApproveCourse() { return hasPerm('approveCourse'); }
+
     // Keep the user doc under a reasonable size cap as a DoS guard;
     // detailed shape validation happens in the React forms.
     function smallEnough() {
@@ -48,6 +64,13 @@ service cloud.firestore {
         && !('tracks' in request.resource.data)
         && !('permissions' in request.resource.data)
         && !('suRecognised' in request.resource.data)
+        // `paidMembershipYears` is the admin-set paid-member tag ("2026/27"),
+        // shown to admissions reviewers as a BADGE when they weigh a course
+        // application. Self-seeding it at create would let any new account
+        // walk into review wearing a paid-member badge it never earned —
+        // same class of forgery as tracks/permissions above, guarded the
+        // same way in both create and self-update.
+        && !('paidMembershipYears' in request.resource.data)
         // `email` is the address the rest of the system treats as PROVEN: the
         // subscription sync marks rows `confirmed` from it without a click, the
         // newsletter sender resolves recipients from it, and the application
@@ -98,6 +121,12 @@ service cloud.firestore {
             && request.resource.data.get('tracks', []) == resource.data.get('tracks', [])
             && request.resource.data.get('permissions', {}) == resource.data.get('permissions', {})
             && request.resource.data.get('suRecognised', false) == resource.data.get('suRecognised', false)
+            // Admin-set paid-member tag: pinned against self-edits exactly
+            // like `tracks` (see the create rule for why it matters — it is
+            // a badge in front of admissions reviewers). The [] default makes
+            // the pin hold on the common absent-vs-absent case.
+            && request.resource.data.get('paidMembershipYears', [])
+              == resource.data.get('paidMembershipYears', [])
             // `email` is PROVEN-inbox state, not a profile field. Downstream it
             // is trusted as an address the user demonstrably controls:
             // /api/subscriptions/sync marks rows `confirmed` from it with no
@@ -270,12 +299,19 @@ service cloud.firestore {
           && request.resource.data.reviewerUids.size() <= 5
           && request.resource.data.get('blocks', []).size() <= 10
         )
+        // `archived` joined the narrow band for the course-week mirrors: an
+        // enrolled member is sole completer on their mirrored task and must be
+        // able to tidy it off the board without asking an admin. `sourceRef`
+        // stays OUTSIDE this list on purpose — it is the pointer binding a
+        // mirror to its (cohort, week), and letting a completer rewrite it
+        // would re-aim the mirror at a different cohort's week and confuse
+        // the idempotent re-sync (courseTasks.ts) into duplicating tasks.
         || (
           (isCompleter() || isReviewer())
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'status', 'subtasks', 'subtaskStats', 'updatedAt',
             'completedAt', 'attachmentCount', 'commentCount',
-            'blocks', 'blockConsents'
+            'blocks', 'blockConsents', 'archived'
           ])
           && request.resource.data.subtasks.size() <= 50
           && request.resource.data.get('blocks', []).size() <= 10
@@ -300,7 +336,15 @@ service cloud.firestore {
 
       allow delete: if isAdmin()
         || (isCommittee() && taskData().visibility == 'committee' && isTaskCreator())
-        || (taskData().source == 'personal' && isTaskCreator());
+        || (taskData().source == 'personal' && isTaskCreator())
+        // A mirrored course-week task ("fellowship-reminder") is dismissible
+        // by the member it mirrors to. Keyed off isCompleter() rather than
+        // isTaskCreator() so it survives however the mirror was materialised
+        // (the sync route makes the member both, but an admin-triggered
+        // backfill might not). Dismissal is safe BECAUSE the mirror is a
+        // one-way projection at a deterministic id: deleting it loses no
+        // course progress, and a later sync simply .create()s it again.
+        || (taskData().source == 'fellowship-reminder' && isCompleter());
 
       // --- comments ---
       match /comments/{commentId} {
@@ -789,6 +833,468 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly(['fromUid', 'fromName', 'text', 'createdAt']);
         allow update, delete: if false;
       }
+    }
+
+    // ========================= COURSES =========================
+    // The BlueDot-style programmes feature. Access model in brief:
+    //  - Curriculum (courses / courseRuns / weeks): signed-in READ only. The
+    //    public catalogue is served by Admin-SDK fetchers on server components
+    //    — there is deliberately NO public read rule, because `allow read`
+    //    also grants `list` and drafts must never be world-enumerable.
+    //  - Authoring is client-direct for `draftCourse` / `approveCourse`
+    //    permission holders (the autosave path), with the events-block
+    //    pattern throughout: per-doc ownership, server-owned fields pinned,
+    //    status transitions gated on the approve permission.
+    //  - Everything member-state-shaped EXCEPT courseProgress (applications,
+    //    enrolments, exercise responses, attendance, nudges) is routes-only:
+    //    those docs carry PII, counters that must move transactionally, or
+    //    validation rules can't express (an exercise response's type vs its
+    //    definition). courseProgress is THE one client-direct member write.
+
+    // === courses ===
+    // Evergreen curriculum shells. Field caps mirror COURSE_FIELD_LIMITS in
+    // src/lib/firestore/courses.ts — keep the two in sync.
+    match /courses/{courseId} {
+      // A per-course collaborator: named on the doc by the author/admin via
+      // the collaborators route, so they can edit THIS course without holding
+      // the global draft permission (events collaboratorUids pattern).
+      function isCourseCollaborator() {
+        return isSignedIn()
+          && request.auth.uid in resource.data.get('collaboratorUids', []);
+      }
+      function isOwnCourse() {
+        return isSignedIn()
+          && resource.data.get('authorUid', '') == request.auth.uid;
+      }
+      // Ownership and the collaborator roster are the server's to change —
+      // /api/courses collaborator/publish routes, Admin SDK. Without these
+      // pins a collaborator (possibly a plain member with no permissions at
+      // all) could seize authorUid or add accomplices to the roster; the
+      // exact hole the events block closed after PR #225.
+      function coursePinnedFieldsUnchanged() {
+        return request.resource.data.get('authorUid', '')
+            == resource.data.get('authorUid', '')
+          && request.resource.data.get('collaboratorUids', [])
+            == resource.data.get('collaboratorUids', []);
+      }
+
+      allow read: if isSignedIn();
+
+      allow create: if canDraftCourse()
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.status == 'draft'
+        && request.resource.data.get('collaboratorUids', []).size() == 0
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.get('summaryBlocks', []).size() <= 40;
+
+      allow update: if isAdmin()
+        || (
+          (canApproveCourse() || isCourseCollaborator()
+            || (canDraftCourse() && isOwnCourse()))
+          && coursePinnedFieldsUnchanged()
+          && request.resource.data.title is string
+          && request.resource.data.title.size() > 0
+          && request.resource.data.title.size() <= 120
+          && request.resource.data.get('summaryBlocks', []).size() <= 40
+          // draft -> published is publication, published -> archived is
+          // withdrawal: every status move is the two-person half of review
+          // and needs the approve permission, never the draft one alone.
+          && (
+            request.resource.data.status == resource.data.status
+            || canApproveCourse()
+          )
+        );
+
+      // Deletion cascades runs/weeks/groups/progress — far too much blast
+      // radius for a client write. /api/courses/[id]/delete (Admin SDK) owns
+      // it, paginated and resumable; soft archive is the primary path.
+      allow delete: if false;
+    }
+
+    // === courseRuns ===
+    // One delivery of a course ("Autumn 2026"). Role arrays, counters and the
+    // cohort channel are server-owned: admissions reviewers / facilitators /
+    // track leads are assigned by routes, applicationCounts moves inside the
+    // apply/decide transactions, and `channel` is what the cohort email send
+    // resolves recipients from — a client-writable channel would let a
+    // drafter aim a run's email at a different cohort's subscribers.
+    match /courseRuns/{runId} {
+      function isOwnRun() {
+        return isSignedIn()
+          && resource.data.get('authorUid', '') == request.auth.uid;
+      }
+      function isRunTrackLead() {
+        return isSignedIn()
+          && request.auth.uid in resource.data.get('trackLeadUids', []);
+      }
+      function runPinnedFieldsUnchanged() {
+        return request.resource.data.get('courseId', '')
+            == resource.data.get('courseId', '')
+          && request.resource.data.get('authorUid', '')
+            == resource.data.get('authorUid', '')
+          && request.resource.data.get('admissionsReviewerUids', [])
+            == resource.data.get('admissionsReviewerUids', [])
+          && request.resource.data.get('runFacilitatorUids', [])
+            == resource.data.get('runFacilitatorUids', [])
+          && request.resource.data.get('trackLeadUids', [])
+            == resource.data.get('trackLeadUids', [])
+          && request.resource.data.get('applicationCounts', {})
+            == resource.data.get('applicationCounts', {})
+          && request.resource.data.get('groupCount', 0)
+            == resource.data.get('groupCount', 0)
+          && request.resource.data.get('channel', '')
+            == resource.data.get('channel', '');
+      }
+      // Content caps shared by create and update. `startDate` must be a
+      // civil "YYYY-MM-DD" — the week maths (weekPlan.ts) runs on civil
+      // dates so DST can't shift week boundaries, and a malformed date here
+      // would poison every derived week number for the whole cohort.
+      function runContentOk() {
+        return request.resource.data.startDate is string
+          && request.resource.data.startDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && request.resource.data.get('label', '').size() <= 80
+          && request.resource.data.get('academicYear', '').size() <= 10
+          && request.resource.data.get('courseTitle', '').size() <= 120
+          && request.resource.data.get('weekPlan', []).size() <= 60
+          && request.resource.data.get('applicationForm', []).size() <= 30;
+      }
+
+      allow read: if isSignedIn();
+
+      // Server-owned state must start CLEAN: empty role arrays, zeroed
+      // counters, and the channel pinned to the deterministic cohort:<runId>
+      // (courseRunChannel() in courses.ts). Requiring emptiness at create
+      // matters because update only PINS these fields — a create that seeded
+      // admissionsReviewerUids would smuggle in reviewers no route assigned.
+      allow create: if canDraftCourse()
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.status == 'draft'
+        && request.resource.data.get('admissionsReviewerUids', []).size() == 0
+        && request.resource.data.get('runFacilitatorUids', []).size() == 0
+        && request.resource.data.get('trackLeadUids', []).size() == 0
+        && request.resource.data.get('applicationCounts', {}).values().hasOnly([0])
+        && request.resource.data.get('groupCount', 0) == 0
+        && request.resource.data.get('channel', 'cohort:' + runId) == 'cohort:' + runId
+        && runContentOk();
+
+      // Status moves (applications-open, running, cancelled, ...) change what
+      // the world sees and what the apply route accepts — approve-gated, same
+      // two-person rule as events. A track lead may adjust run content
+      // (weekPlan tweaks mid-term) but is NOT an approver.
+      allow update: if isAdmin()
+        || (
+          (canApproveCourse() || isRunTrackLead()
+            || (canDraftCourse() && isOwnRun()))
+          && runPinnedFieldsUnchanged()
+          && runContentOk()
+          && (
+            request.resource.data.status == resource.data.status
+            || canApproveCourse()
+          )
+        );
+
+      allow delete: if false;
+
+      // --- weeks (curriculum content, the autosave path) ---
+      match /weeks/{weekId} {
+        function run() {
+          return get(/databases/$(database)/documents/courseRuns/$(runId)).data;
+        }
+        // Who may author curriculum in THIS run: admin, any approver, the
+        // run's drafter-owner, or one of its track leads. Resolved against
+        // the PARENT run doc — weeks carry no role fields of their own, so
+        // there is nothing on the week for a writer to tamper with first.
+        function canEditRun() {
+          return isAdmin()
+            || canApproveCourse()
+            || (canDraftCourse() && run().get('authorUid', '') == request.auth.uid)
+            || (isSignedIn() && request.auth.uid in run().get('trackLeadUids', []));
+        }
+
+        allow read: if isSignedIn();
+
+        // `weekId` is "w01".."w60" — zero-padded so doc order matches week
+        // order and STABLE across clone-weeks (progress rows reference item
+        // ids inside these docs, so ids surviving a copy-forward is what
+        // keeps a re-run's progress references valid). The id-shape check
+        // plus the weekNumber bounds keep a typo'd editor write from minting
+        // an unaddressable week.
+        allow create, update: if canEditRun()
+          && weekId.matches('^w[0-9][0-9]$')
+          && request.resource.data.weekNumber is int
+          && request.resource.data.weekNumber >= 1
+          && request.resource.data.weekNumber <= 60
+          && request.resource.data.get('title', '').size() <= 120
+          && request.resource.data.get('summary', '').size() <= 1000
+          && request.resource.data.get('guideBlocks', []).size() <= 40
+          && request.resource.data.get('materials', []).size() <= 30
+          && request.resource.data.get('exercises', []).size() <= 15
+          && request.resource.data.get('checklist', []).size() <= 15;
+
+        // Destroying authored content outranks editing it: a drafter or
+        // track lead can blank a week's fields but not remove the doc.
+        allow delete: if isAdmin() || canApproveCourse();
+      }
+    }
+
+    // === courseGroups ===
+    // The small facilitated groups inside a run. Groups carry the MEETING
+    // LINK and weekly slot, so read access is the sharp edge: an enumerable
+    // meet link is an open door for anyone signed-in to gatecrash a cohort
+    // call. Reads are restricted to the authoring tier; members get their own
+    // group's session card via a server route, facilitators via theirs.
+    match /courseGroups/{groupId} {
+      function isGroupFacilitator() {
+        return isSignedIn()
+          && request.auth.uid in resource.data.get('facilitatorUids', []);
+      }
+      // Track leads are named on the PARENT run, one get away.
+      function isParentRunTrackLead() {
+        return isSignedIn()
+          && request.auth.uid in
+            get(/databases/$(database)/documents/courseRuns/$(resource.data.get('runId', '')))
+              .data.get('trackLeadUids', []);
+      }
+      // `facilitatorUids` is assigned by /api/courses/groups/[id]/facilitators
+      // (which also upserts the facilitator enrolment); `memberCount` moves
+      // only inside the allocation transaction so it can never drift from the
+      // enrolment docs it summarises. runId/courseId are the group's identity.
+      function groupPinnedFieldsUnchanged() {
+        return request.resource.data.get('runId', '')
+            == resource.data.get('runId', '')
+          && request.resource.data.get('courseId', '')
+            == resource.data.get('courseId', '')
+          && request.resource.data.get('facilitatorUids', [])
+            == resource.data.get('facilitatorUids', [])
+          && request.resource.data.get('memberCount', 0)
+            == resource.data.get('memberCount', 0);
+      }
+      // Caps mirror GROUP_FIELD_LIMITS (courseGroups.ts) — the session fields
+      // are client-editable by facilitators, so these ARE the boundary.
+      // `meetingUrl` is null when the group meets in person, hence the
+      // null-or-capped-string branch rather than a bare size() call (which
+      // would error on null and deny every legitimate in-person write).
+      function groupContentOk() {
+        return request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 80
+          && request.resource.data.get(['session', 'location'], '').size() <= 200
+          && (
+            request.resource.data.get(['session', 'meetingUrl'], null) == null
+            || (request.resource.data.session.meetingUrl is string
+                && request.resource.data.session.meetingUrl.size() <= 300)
+          )
+          && request.resource.data.get(['session', 'notes'], '').size() <= 500
+          && request.resource.data.get('sessionOverrides', {}).size() <= 20;
+      }
+
+      allow read: if isAdmin() || canDraftCourse() || canApproveCourse();
+
+      // Groups exist once a run is being staffed — approver territory. The
+      // roster starts empty and the counter at zero for the same reason the
+      // run's arrays must: update only pins them.
+      allow create: if (isAdmin() || canApproveCourse())
+        && request.resource.data.runId is string
+        && request.resource.data.runId.size() > 0
+        && request.resource.data.get('facilitatorUids', []).size() == 0
+        && request.resource.data.get('memberCount', 0) == 0
+        && groupContentOk();
+
+      // A named facilitator edits their own group's session (move the slot,
+      // change the room, drop the term's overrides) — per-doc by construction,
+      // same trust shape as an event collaborator.
+      allow update: if isAdmin()
+        || (
+          (canApproveCourse() || isParentRunTrackLead() || isGroupFacilitator())
+          && groupPinnedFieldsUnchanged()
+          && groupContentOk()
+        );
+
+      // Deleting a group must re-pool its members (allocation transaction) —
+      // routes only.
+      allow delete: if false;
+    }
+
+    // === courseApplications ===
+    // One application per (run, uid), deterministic doc id. Rows carry email
+    // PII and the paid-membership snapshot; the apply/decide routes own every
+    // write (window/cap checks, counter transactions, lifecycle emails).
+    // Reviewers read applications through the reviewer route, which strips
+    // email — so client read here is OWN ROW ONLY, keyed off the stored uid
+    // field (never parsed out of the doc id), plus admin.
+    match /courseApplications/{docId} {
+      allow read: if isAdmin()
+        || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow write: if false;
+    }
+
+    // === courseEnrolments ===
+    // The no-double-placement invariant lives in this collection's doc id
+    // (one per (run, uid)) and its single scalar groupId — which is exactly
+    // why clients can never write: a client-side "move groups" would bypass
+    // the allocation transaction that keeps memberCount honest. Own-row read
+    // powers the /learn hub's "your runs" view.
+    match /courseEnrolments/{docId} {
+      allow read: if isAdmin()
+        || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow write: if false;
+    }
+
+    // === courseProgress ===
+    // THE one client-direct member write in the courses feature: the
+    // check-off hot path (complete a material, rate it, leave a comment)
+    // commits instantly from the client, because the rules below can express
+    // the entire invariant. Everything hangs off the deterministic doc id —
+    // runId + '__' + auth.uid + '__' + itemId — which makes own-row-only
+    // writes STRUCTURAL: there is no way to address anyone else's row.
+    match /courseProgress/{progressId} {
+      // NEVER use this in a READ rule. `allow read` also covers `list`, and
+      // a list query evaluates its rule per candidate doc — so these lookups
+      // would bill one document access PER ROW against the ~20-access rules
+      // budget and any query over ~20 rows would be REJECTED WHOLESALE, an
+      // outage that only appears once a member has enough progress rows.
+      // Write-side only, where each request touches exactly one doc. The
+      // courses rules test suite pins this with a 25-doc list regression.
+      function isEnrolledActive(runId) {
+        return exists(/databases/$(database)/documents/courseEnrolments/$(runId + '__' + request.auth.uid))
+          && get(/databases/$(database)/documents/courseEnrolments/$(runId + '__' + request.auth.uid))
+               .data.status == 'active';
+      }
+      // The full shape contract, shared by create and update:
+      //  - doc id binds (runId, CALLER's uid, itemId) — the structural bit
+      //  - only enrolled-and-active members write (withdrawn/removed lose
+      //    the pen instantly, whatever the UI still shows)
+      //  - keys are a closed set; optional fields are ABSENT, never null
+      //    (buildProgressWrite in courseProgress.ts omits empties, so a null
+      //    reaching here is a bug surfacing, not a flow to accommodate)
+      //  - `hasPublicComment` is pinned to the actual comment: it is the
+      //    queryable mirror the cohort comments lane filters on (Firestore
+      //    can't query field-existence), and a row allowed to lie about it
+      //    would leak or hide a comment from everyone on the run.
+      function progressShapeOk() {
+        return isSignedIn()
+          && request.resource.data.uid == request.auth.uid
+          && progressId == request.resource.data.runId + '__' + request.auth.uid + '__' + request.resource.data.itemId
+          && request.resource.data.runId is string
+          && request.resource.data.runId.size() > 0
+          && request.resource.data.itemId is string
+          && request.resource.data.itemId.size() > 0
+          && isEnrolledActive(request.resource.data.runId)
+          && request.resource.data.keys().hasOnly([
+            'runId', 'uid', 'weekNumber', 'itemKind', 'itemId', 'completed',
+            'completedAt', 'rating', 'publicComment', 'hasPublicComment',
+            'privateNote', 'moderatedByUid', 'moderatedAt', 'updatedAt'
+          ])
+          && request.resource.data.itemKind in ['material', 'checklist']
+          && request.resource.data.weekNumber is int
+          && request.resource.data.weekNumber >= 1
+          && request.resource.data.weekNumber <= 60
+          && request.resource.data.completed is bool
+          && request.resource.data.hasPublicComment is bool
+          && (
+            !('completedAt' in request.resource.data)
+            || request.resource.data.completedAt is timestamp
+          )
+          && (
+            !('rating' in request.resource.data)
+            || (request.resource.data.rating is int
+                && request.resource.data.rating >= 1
+                && request.resource.data.rating <= 5)
+          )
+          && (
+            !('publicComment' in request.resource.data)
+            || (request.resource.data.publicComment is string
+                && request.resource.data.publicComment.size() <= 1000)
+          )
+          && (
+            !('privateNote' in request.resource.data)
+            || (request.resource.data.privateNote is string
+                && request.resource.data.privateNote.size() <= 2000)
+          )
+          && request.resource.data.hasPublicComment == (
+            'publicComment' in request.resource.data
+            && request.resource.data.get('publicComment', '').size() > 0
+          );
+      }
+
+      // Own-row only, and LIST QUERIES MUST CONSTRAIN uid == self or they
+      // are denied outright. Admins moderate through the server routes
+      // (Admin SDK), so no admin read branch is needed here — keeping the
+      // rule get()-free is what makes big own-progress lists cheap.
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+
+      // Moderation fields are the server's: their absence at create plus the
+      // verbatim carry-through on update means a member can never fabricate,
+      // clear, or launder a moderation stamp by re-saving the row.
+      allow create: if progressShapeOk()
+        && !('moderatedByUid' in request.resource.data)
+        && !('moderatedAt' in request.resource.data);
+
+      // The id pins runId/uid/itemId already (a doc id can't change), but
+      // the field pins are stated anyway so a future id-scheme change can't
+      // silently drop the property. itemKind is pinned because flipping
+      // material <-> checklist would corrupt the completion percentages.
+      allow update: if progressShapeOk()
+        && request.resource.data.runId == resource.data.runId
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.itemId == resource.data.itemId
+        && request.resource.data.itemKind == resource.data.itemKind
+        && request.resource.data.get('moderatedByUid', null)
+          == resource.data.get('moderatedByUid', null)
+        && request.resource.data.get('moderatedAt', null)
+          == resource.data.get('moderatedAt', null);
+
+      // A member may retract their own row (un-check everything, including a
+      // moderated comment — deletion REMOVES content, which is the moderation
+      // outcome, not a way around it). Admin delete backs the moderation route.
+      allow delete: if isAdmin()
+        || (isSignedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    // === courseExerciseResponses ===
+    // Member exercise submissions. Routes-only writes: the response-type gate
+    // (text vs link, per the week's exercise DEFINITION) cannot live in rules
+    // — checking it would mean fetching the week doc and searching an array —
+    // and the URL validation (validateSubmissionUrl) is string-parsing rules
+    // can't do. Own-row read lets the member see their submission state;
+    // facilitators review through the PII-free facilitator routes.
+    match /courseExerciseResponses/{docId} {
+      allow read: if isAdmin()
+        || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow write: if false;
+    }
+
+    // === courseAttendance ===
+    // One register per (group, week), a map of uid -> status. That shape is
+    // why even READS are locked: any row a member could read leaks every
+    // other member's attendance. Facilitators mark and view attendance via
+    // the group routes (Admin SDK), which scope what comes back.
+    match /courseAttendance/{docId} {
+      allow read, write: if false;
+    }
+
+    // === courseNudges ===
+    // Server-side send-dedupe markers for the course reminder emails (the
+    // no-cron lazy-send bookkeeping). Pure machinery, admin SDK both ways.
+    match /courseNudges/{docId} {
+      allow read, write: if false;
+    }
+
+    // === courseEmailTemplates ===
+    // Admin-edited boilerplates for course lifecycle emails, mirroring
+    // applicationEmailTemplates: fixed ids, block bodies, {token}
+    // substitution at send time. Send routes use the Admin SDK; these rules
+    // are for the admin editor client. Caps mirror COURSE_SUBJECT_MAX /
+    // COURSE_TEMPLATE_MAX_BLOCKS in courseEmails.ts.
+    match /courseEmailTemplates/{templateId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin()
+        && request.resource.data.subject is string
+        && request.resource.data.subject.size() > 0
+        && request.resource.data.subject.size() <= 200
+        && request.resource.data.get('blocks', []).size() <= 40;
     }
   }
 }

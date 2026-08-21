@@ -60,6 +60,7 @@ export const FIELD_LIMITS = {
   interests: 1000,
   title: 60,
   bio: 500,
+  maxPaidMembershipYears: 10,
 } as const;
 
 /**
@@ -175,6 +176,8 @@ export type UserPermissions = {
   approveNewsletter?: boolean;
   draftEvent?: boolean;
   approveEvent?: boolean;
+  draftCourse?: boolean;
+  approveCourse?: boolean;
 };
 
 export function canDraftNewsletter(user: Pick<UserDoc, "role" | "permissions">): boolean {
@@ -197,6 +200,65 @@ export function canApproveEvent(
   return user.role === "admin" || Boolean(user.permissions?.approveEvent);
 }
 
+export function canDraftCourse(user: Pick<UserDoc, "role" | "permissions">): boolean {
+  return user.role === "admin" || Boolean(user.permissions?.draftCourse);
+}
+
+export function canApproveCourse(
+  user: Pick<UserDoc, "role" | "permissions">,
+): boolean {
+  return user.role === "admin" || Boolean(user.permissions?.approveCourse);
+}
+
+/**
+ * A UK academic year label: four-digit start year, slash, two-digit end year —
+ * "2026/27". The same shape a course run carries in `academicYear`, and what
+ * Firestore rules check before letting an admin add a paid-membership tag.
+ */
+export const ACADEMIC_YEAR_PATTERN = /^\d{4}\/\d{2}$/;
+
+/** 1-indexed month the UK academic year rolls over on (1 August). */
+const ACADEMIC_YEAR_START_MONTH = 8;
+
+const LONDON_YEAR_MONTH = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  year: "numeric",
+  month: "2-digit",
+});
+
+/**
+ * The academic year containing `now`, e.g. "2026/27". Rolls over on 1 August,
+ * so September 2026 and January 2027 both return "2026/27".
+ *
+ * The month is read in Europe/London rather than off `Date.getMonth()`: App
+ * Hosting runs UTC, and during BST an instant like 23:30 UTC on 31 July is
+ * already 1 August in London. That hour is the whole reason this goes through
+ * Intl. (The courses week-plan helpers carry the fuller civil-date maths for
+ * run pacing; this one stays local so `users.ts` — which auth, admin, and email
+ * code all import — takes on no dependency of its own.)
+ */
+export function currentAcademicYear(now: Date = new Date()): string {
+  const parts = LONDON_YEAR_MONTH.formatToParts(now);
+  const year = Number(parts.find((p) => p.type === "year")?.value);
+  const month = Number(parts.find((p) => p.type === "month")?.value);
+  const startYear = month >= ACADEMIC_YEAR_START_MONTH ? year : year - 1;
+  return `${startYear}/${String((startYear + 1) % 100).padStart(2, "0")}`;
+}
+
+/**
+ * Whether an admin has tagged this user as a paid member for `year`.
+ *
+ * This is a BADGE, never a gate. Course applications are open to every
+ * signed-in user (including `pending` ones) and the tag is surfaced only to
+ * reviewers deciding an application — nothing may branch access on it.
+ */
+export function hasPaidMembership(
+  user: Pick<UserDoc, "paidMembershipYears">,
+  year: string = currentAcademicYear(),
+): boolean {
+  return Boolean(user.paidMembershipYears?.includes(year));
+}
+
 export type UserDoc = {
   uid: string;
   email: string | null;
@@ -208,6 +270,15 @@ export type UserDoc = {
   bio?: string | null;
   showOnMembers?: boolean;
   tracks?: Track[];
+  /**
+   * Academic years ("2026/27") an admin has tagged this user as a paid member
+   * for. Admin-set and pinned against self-edits in Firestore rules, exactly
+   * like `tracks`; array-contains-queryable, capped at
+   * `FIELD_LIMITS.maxPaidMembershipYears`. Absent — not empty — on users who
+   * have never been tagged, so a membership badge never renders off a stray
+   * empty array. Read it through `hasPaidMembership()`.
+   */
+  paidMembershipYears?: string[];
   permissions?: UserPermissions;
   /**
    * True only for committee members the Students' Union formally recognises.
@@ -232,17 +303,35 @@ function tsToDate(v: unknown): Date | null {
   return typeof obj?.toDate === "function" ? obj.toDate() : null;
 }
 
+/**
+ * De-duplicated list of well-formed academic-year tags. Anything that isn't a
+ * string matching ACADEMIC_YEAR_PATTERN is dropped rather than carried through,
+ * so a hand-edited doc can't put junk in front of a reviewer.
+ */
+function asAcademicYearList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set<string>();
+  for (const y of v) {
+    if (typeof y === "string" && ACADEMIC_YEAR_PATTERN.test(y)) seen.add(y);
+  }
+  return Array.from(seen).slice(0, FIELD_LIMITS.maxPaidMembershipYears);
+}
+
 export function normalizeUser(id: string, data: Raw): UserDoc {
   const rawTracks = Array.isArray(data.tracks) ? (data.tracks as unknown[]) : [];
   const tracks = rawTracks.filter(
     (t): t is Track => t === "technical" || t === "governance",
   );
+  // Absent rather than empty when there is nothing to show — see UserDoc.
+  const paidMembershipYears = asAcademicYearList(data.paidMembershipYears);
   const rawPermissions = (data.permissions ?? {}) as Record<string, unknown>;
   const permissions: UserPermissions = {
     draftNewsletter: Boolean(rawPermissions.draftNewsletter),
     approveNewsletter: Boolean(rawPermissions.approveNewsletter),
     draftEvent: Boolean(rawPermissions.draftEvent),
     approveEvent: Boolean(rawPermissions.approveEvent),
+    draftCourse: Boolean(rawPermissions.draftCourse),
+    approveCourse: Boolean(rawPermissions.approveCourse),
   };
   return {
     uid: id,
@@ -255,6 +344,7 @@ export function normalizeUser(id: string, data: Raw): UserDoc {
     bio: (data.bio as string | null | undefined) ?? null,
     showOnMembers: Boolean(data.showOnMembers),
     tracks,
+    ...(paidMembershipYears.length > 0 ? { paidMembershipYears } : {}),
     permissions,
     suRecognised: Boolean(data.suRecognised),
     approvedAt: tsToDate(data.approvedAt),
