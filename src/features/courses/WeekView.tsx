@@ -32,6 +32,7 @@ import { saveProgressReflection, toggleProgressItem } from "./progressMutations"
 import { useMyExercises } from "./useMyExercises";
 import { useRunOverview } from "./useRunOverview";
 import { useRunProgress } from "./useRunProgress";
+import { useSyncTasks } from "./useSyncTasks";
 import { useWeek } from "./useWeek";
 import { useWeekComments, type WeekComments } from "./useWeekComments";
 import {
@@ -101,6 +102,28 @@ export default function WeekView({ runId, weekNumber, uid, viewerRole }: Props) 
   // — cheaper and clearer than a conditional hook call.
   const isLearnerViewer = overview.data?.enrolment?.role === "learner";
   const myExercises = useMyExercises(isLearnerViewer ? runId : "", weekNumber);
+  // P10 — mirror trigger. Deliberately keyed to the RUN and not to
+  // `weekNumber`: the route always materialises the cohort's ANCHOR week,
+  // recomputed server-side, so browsing back to week 2 mirrors week 5 just
+  // the same. Firing here as well as on the run home costs one short-circuit
+  // read and covers the member who deep-links straight to a week from an
+  // email. Fire-and-forget — never blocks this page, never shows an error.
+  //
+  // Gated on an ACTIVE enrolment, the sync-tasks route's own gate — NOT on
+  // `isLearnerViewer`, because the route mirrors for an active facilitator
+  // too. (This is the same predicate as `canWrite` below; it is spelled out
+  // here rather than hoisted so the check-off gate and the mirror gate stay
+  // free to diverge — they answer different questions.)
+  //
+  // The third argument is the COHORT's anchor week, not `weekNumber`: it is
+  // dedupe key material for the session-scoped claim in useSyncTasks, and
+  // browsing back to week 2 must not look like a different sync from reading
+  // week 5. Never sent to the route, which recomputes the week itself.
+  useSyncTasks(
+    runId,
+    overview.data?.enrolment?.status === "active",
+    overview.data?.currentWeek?.anchorWeekNumber ?? null,
+  );
   const { toast, run: runToast, dismiss } = useActionToast();
 
   // Travel direction for the entrance, handed over by the PREVIOUS page's nav
@@ -492,6 +515,17 @@ export default function WeekView({ runId, weekNumber, uid, viewerRole }: Props) 
                   )
                 : undefined
             }
+            renderChecklistNote={
+              // P10 — the member-facing half of the mirror disclosure (see
+              // MIRROR_HINT). `hasEnrolment` rather than `canWrite`: a
+              // withdrawn or finished enrolment still has the mirrored cards
+              // on their board, so the row should still explain them.
+              // `undefined` for everyone else is what keeps the public
+              // catalogue's markup byte-identical.
+              hasEnrolment
+                ? (c) => (c.mirrorToMyWork ? <MirrorHint /> : null)
+                : undefined
+            }
             materialClassName={hasEnrolment ? (m) => rowClass(m.id) : undefined}
             renderMaterialExtra={(m) => (
               <MaterialExtras
@@ -601,6 +635,38 @@ export default function WeekView({ runId, weekNumber, uid, viewerRole }: Props) 
 
       <ActionToast toast={toast} onDismiss={dismiss} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The mirror disclosure, course side
+// ---------------------------------------------------------------------------
+
+/**
+ * The one-way sentence, told from the COURSE end.
+ *
+ * TaskCard already tells it from the board end ("ticking this off here doesn't
+ * check anything off in the course"), which is the misreading that matters for
+ * someone looking at a mirrored card. A learner ticking the row on THIS page
+ * has the same misreading available in reverse — they were never told a copy
+ * exists on My Work, so the second, un-ticked card turns up there looking like
+ * work they have already done. Both halves, or neither.
+ *
+ * Same restraint as TaskCard's note, for the same reason: this is one row on a
+ * page of rows, so what SHOWS is a four-word marker and the sentence itself
+ * rides in a `title` plus visually-hidden text (a `title` alone is unreliable
+ * for screen readers). A standing paragraph on every mirrored row would cost
+ * more attention than the misreading it prevents.
+ */
+const MIRROR_HINT =
+  "A copy of this is on your My Work board — the two tick boxes are separate, and ticking one doesn't tick the other.";
+
+function MirrorHint() {
+  return (
+    <span className={styles.mirrorHint} title={MIRROR_HINT}>
+      Also on My Work
+      <span className={styles.mirrorHintNote}> — {MIRROR_HINT}</span>
+    </span>
   );
 }
 

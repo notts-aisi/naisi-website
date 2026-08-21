@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import Link from "next/link";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import Dropdown, { type DropdownOption } from "@/components/ui/Dropdown";
@@ -49,6 +50,41 @@ const SOURCE_LABELS: Record<string, string> = {
   personal: "Personal",
 };
 
+/**
+ * The one-way sentence, stated once and reused on both course affordances.
+ *
+ * A mirrored task is a PROJECTION of a course week, not a second handle on it:
+ * the tick here and the check-off in the course are separate rows in separate
+ * collections, and nothing propagates either way. A member who assumes
+ * otherwise will close the task and believe their week is marked complete,
+ * which is the single misreading this feature can cause — so the card has to
+ * say so.
+ *
+ * It says so in a `title` and in visually-hidden link text rather than in a
+ * visible paragraph: this is one card type on a board that may show dozens,
+ * and a standing explanation on every one of them would cost far more
+ * attention than the misreading it prevents. Screen-reader users get the whole
+ * sentence in the link's accessible name, where `title` alone is unreliable.
+ */
+const ONE_WAY_NOTE =
+  "One-way copy from your course — ticking this off here doesn't check anything off in the course.";
+
+/**
+ * The mirrored-task marker, or null for every other card.
+ *
+ * Both halves are required. `source` alone is not enough: `fellowship-reminder`
+ * predates courses and is still reachable from other paths, and one of those
+ * without a `sourceRef` has no week to link to. `weekNumber >= 1` guards the
+ * href — a 0 or negative from a malformed doc would build a link to a route
+ * that cannot exist, and no link at all beats a broken one.
+ */
+function courseRefOf(task: TaskDoc): { cohortId: string; weekNumber: number } | null {
+  if (task.source !== "fellowship-reminder") return null;
+  const ref = task.sourceRef;
+  if (!ref || !ref.cohortId || ref.weekNumber < 1) return null;
+  return ref;
+}
+
 export default function TaskCard({
   task,
   projects,
@@ -67,6 +103,8 @@ export default function TaskCard({
     () => (task.projectId ? projects.find((p) => p.id === task.projectId) : null),
     [task.projectId, projects],
   );
+
+  const courseRef = useMemo(() => courseRefOf(task), [task]);
 
   const completers = useMemo(
     () =>
@@ -160,8 +198,19 @@ export default function TaskCard({
           )}
           {task.kind === "instagram-post" && <Badge tone="warning">Insta post</Badge>}
           {task.kind === "instagram-story" && <Badge tone="warning">Insta story</Badge>}
-          {task.source !== "committee" && (
-            <Badge tone="neutral">{SOURCE_LABELS[task.source]}</Badge>
+          {/* A course mirror says "Course" rather than "Fellowship" — the
+              badge row is where markers live, and this is the marker. The
+              week NUMBER is carried by the link below instead: it is longer,
+              it would wrap a 17rem kanban column, and it is only actionable
+              down there. Every other source is untouched. */}
+          {courseRef ? (
+            <Badge tone="neutral" title={ONE_WAY_NOTE}>
+              Course
+            </Badge>
+          ) : (
+            task.source !== "committee" && (
+              <Badge tone="neutral">{SOURCE_LABELS[task.source]}</Badge>
+            )
           )}
           <DueDateBadge dueDate={task.dueDate} done={task.status === "done"} />
         </div>
@@ -192,6 +241,27 @@ export default function TaskCard({
               {task.commentCount > 0 && <span>💬 {task.commentCount}</span>}
               {task.attachmentCount > 0 && <span>📎 {task.attachmentCount}</span>}
             </div>
+          )}
+
+          {/* The way back to the thing this card is a copy of. `stopPropagation`
+              because the whole Card is a click target that opens the task
+              modal — without it the tap would both navigate and open a modal
+              behind it. */}
+          {courseRef && (
+            <Link
+              href={`/learn/${encodeURIComponent(courseRef.cohortId)}/weeks/${courseRef.weekNumber}`}
+              className={styles.courseLink}
+              title={ONE_WAY_NOTE}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* The week number lives here rather than in the title, which a
+                  member may rename — this line stays true either way. */}
+              Week {courseRef.weekNumber} in the course
+              <span className={styles.courseNote}> — {ONE_WAY_NOTE}</span>
+              <span className={styles.courseArrow} aria-hidden="true">
+                ↗
+              </span>
+            </Link>
           )}
         </div>
       </div>

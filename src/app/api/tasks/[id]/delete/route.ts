@@ -14,6 +14,19 @@ import { ownedStoragePaths } from "@/lib/firestore/taskAttachments";
  *   - admin (any task)
  *   - committee who created a committee-visibility task
  *   - creator of a personal task
+ *   - COMPLETER of a `fellowship-reminder` task (the course-week mirror's
+ *     dismissal). This branch is what makes the rules' matching branch
+ *     reachable at all: nothing in the app deletes a task through the client
+ *     SDK, so `deleteTask()` → this route is the only path a member has, and
+ *     without it the Delete button on a mirror rendered and then 403'd.
+ *     Keyed on `isCompleter` rather than `isCreator` so it matches the rules
+ *     predicate byte for byte and survives however the mirror was
+ *     materialised (the sync route makes the member both; an admin-triggered
+ *     backfill might not).
+ *
+ * Every branch reads `source` / `visibility` / the rosters off the EXISTING
+ * document — never off the request — so a caller cannot talk its way into a
+ * delete by claiming a source it does not have.
  *
  * Storage objects for attachments are enumerated BEFORE the recursive doc
  * delete so we still have their `storagePath` values. Storage failures
@@ -40,13 +53,19 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
 
   // Mirror firestore.rules `allow delete` on /tasks/{taskId}
   const isCreator = viewer.uid === task.creatorUid;
+  // The rules' `isCompleter()`: `request.auth.uid in resource.data.completerUids`.
+  // `Array.isArray` because this is raw Firestore data, not a normalised doc —
+  // a legacy row missing the field must read as "not a completer", not throw.
+  const isCompleter =
+    Array.isArray(task.completerUids) && task.completerUids.includes(viewer.uid);
   const canDelete =
     viewer.role === "admin" ||
     (viewer.role === "committee" &&
       viewer.suRecognised &&
       task.visibility === "committee" &&
       isCreator) ||
-    (task.source === "personal" && isCreator);
+    (task.source === "personal" && isCreator) ||
+    (task.source === "fellowship-reminder" && isCompleter);
   if (!canDelete) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

@@ -48,6 +48,16 @@ type Props = {
    */
   renderChecklistAction?: (item: ChecklistItem) => ReactNode;
   /**
+   * Optional quiet marker rendered under a checklist row's text — the member
+   * surface's "this one also lands on My Work" hint. Return null for rows
+   * that don't earn one (which is most of them).
+   *
+   * Absent on the public page, and the prop-presence check below is what keeps
+   * that output byte-identical: with the prop undefined the row renders exactly
+   * the two <p>s it always did. Same precedent as `renderExerciseAction`.
+   */
+  renderChecklistNote?: (item: ChecklistItem) => ReactNode;
+  /**
    * Optional extra class(es) merged onto a material's <li> — how the member
    * surface applies its completed/wash/error row states from its own CSS
    * module. WeekView.module.css targets the row's title through this class
@@ -109,6 +119,7 @@ export default function WeekCurriculum({
   renderMaterialAction,
   renderMaterialExtra,
   renderChecklistAction,
+  renderChecklistNote,
   materialClassName,
   renderExerciseAction,
   exercisesFooter,
@@ -200,6 +211,7 @@ export default function WeekCurriculum({
                 <div className={styles.checkText}>
                   <p className={styles.checkTitle}>{c.title}</p>
                   {c.detail && <p className={styles.checkDetail}>{c.detail}</p>}
+                  {renderChecklistNote ? renderChecklistNote(c) : null}
                 </div>
               </li>
             ))}

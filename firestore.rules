@@ -294,18 +294,40 @@ service cloud.firestore {
           isCommittee()
           && taskData().visibility == 'committee'
           && request.resource.data.visibility == 'committee'
+          // `source` is set once at create and never legitimately rewritten.
+          // Pinning it here is load-bearing: `source` gates BOTH the mirror
+          // delete branch below and the `archived` entry in the completer
+          // narrow band, so a committee member able to relabel a task
+          // 'fellowship-reminder' could hand any completer on it a
+          // recursiveDelete of that task's whole comment and activity history.
+          && request.resource.data.get('source', '') == taskData().get('source', '')
           && request.resource.data.subtasks.size() <= 50
           && request.resource.data.completerUids.size() <= 10
           && request.resource.data.reviewerUids.size() <= 5
           && request.resource.data.get('blocks', []).size() <= 10
         )
-        // `archived` joined the narrow band for the course-week mirrors: an
-        // enrolled member is sole completer on their mirrored task and must be
-        // able to tidy it off the board without asking an admin. `sourceRef`
-        // stays OUTSIDE this list on purpose — it is the pointer binding a
-        // mirror to its (cohort, week), and letting a completer rewrite it
-        // would re-aim the mirror at a different cohort's week and confuse
-        // the idempotent re-sync (courseTasks.ts) into duplicating tasks.
+        // `archived` joined the narrow band for the course-week mirrors, and it
+        // is SCOPED to them: an enrolled member is sole completer on their
+        // mirrored task and must be able to tidy it off the board without
+        // asking an admin. Ungated it was a real widening — the band also
+        // covers reviewers, and a reviewer is not necessarily a completer, so
+        // any ONE person on a committee task could archive it while the My Work
+        // and board queries hide archived tasks by default. That is a
+        // unilateral "delete" of shared work in everything but name.
+        //
+        // Everyone with a legitimate reason to archive still has a branch:
+        // admins above, an SU-committee creator via the committee branch, a
+        // personal task's creator below (the task UI only offers Archive to
+        // admin-or-creator anyway). The gate reads the STORED source — never
+        // `request.resource.data` — so relabelling a task on the way in cannot
+        // unlock it, and the affectedKeys test is evaluated FIRST so an
+        // ordinary status/subtask write never depends on `source` at all.
+        //
+        // `sourceRef` stays OUTSIDE this list on purpose — it is the pointer
+        // binding a mirror to its (cohort, week), and letting a completer
+        // rewrite it would re-aim the mirror at a different cohort's week and
+        // confuse the idempotent re-sync (courseTasks.ts) into duplicating
+        // tasks.
         || (
           (isCompleter() || isReviewer())
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -313,6 +335,10 @@ service cloud.firestore {
             'completedAt', 'attachmentCount', 'commentCount',
             'blocks', 'blockConsents', 'archived'
           ])
+          && (
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['archived'])
+            || taskData().get('source', '') == 'fellowship-reminder'
+          )
           && request.resource.data.subtasks.size() <= 50
           && request.resource.data.get('blocks', []).size() <= 10
         )

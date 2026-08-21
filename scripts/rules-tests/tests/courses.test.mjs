@@ -1006,6 +1006,9 @@ describe("tasks — fellowship-reminder mirrors", () => {
     };
   }
 
+  // The one case `archived` is in the narrow band FOR. Its scope is pinned by
+  // the three negative tests at the bottom of this block — if this one ever has
+  // to change, they are the ones that say what it is allowed to become.
   it("lets the completer ARCHIVE their mirrored task (narrow update band)", async () => {
     await seedCast();
     await seed(async (db) => {
@@ -1056,5 +1059,374 @@ describe("tasks — fellowship-reminder mirrors", () => {
     });
     const db = await asUser("facil");
     await assertFails(db.collection("tasks").doc("course-w03__run1__learner").delete());
+  });
+
+  // A REVIEWER shares the narrow UPDATE band with completers, which is exactly
+  // why delete had to be keyed off isCompleter() alone: the two roles are not
+  // interchangeable here. Dismissing someone else's course reminder off their
+  // own board is not a reviewer's call.
+  it("refuses a REVIEWER on the mirror deleting it", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db
+        .collection("tasks")
+        .doc("course-w03__run1__learner")
+        .set(mirrorTask({ reviewerUids: ["facil"] }));
+    });
+    const db = await asUser("facil");
+    await assertFails(db.collection("tasks").doc("course-w03__run1__learner").delete());
+    // …but the narrow update band still works for them, so the denial above is
+    // the delete rule refusing, not the reviewer being locked out of the doc.
+    await assertSucceeds(
+      db.collection("tasks").doc("course-w03__run1__learner").update({ status: "in-progress" }),
+    );
+  });
+
+  // Committee delete power is scoped to committee-VISIBILITY tasks they created.
+  // A mirror is assignees-only and created for the member, so the SU committee
+  // branch must not reach it even though its holder outranks the member.
+  it("refuses an SU-recognised committee member deleting someone's mirror", async () => {
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+    await seed(async (db) => {
+      await db.collection("tasks").doc("course-w03__run1__learner").set(mirrorTask());
+    });
+    const db = await asUser("sucom");
+    await assertFails(db.collection("tasks").doc("course-w03__run1__learner").delete());
+  });
+
+  // The `personal` delete branch is creator-keyed, not completer-keyed. Adding
+  // the fellowship-reminder branch must not have widened it: being listed as a
+  // completer on someone else's personal to-do confers nothing.
+  it("refuses a completer deleting a PERSONAL task they did not create", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("someones-todo").set(
+        mirrorTask({
+          source: "personal",
+          creatorUid: "facil",
+          completerUids: ["learner"],
+        }),
+      );
+    });
+    const db = await asUser("learner");
+    await assertFails(db.collection("tasks").doc("someones-todo").delete());
+  });
+
+  // `archived` rides in the narrow allowlist, so it must not become a carrier
+  // for the fields that allowlist exists to keep out. completerUids is the
+  // sharpest of those: writing it would add strangers to a task (and to the
+  // notify-route recipient list) or hand yourself delete on a mirror.
+  it("refuses smuggling completerUids alongside the archive flag", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("course-w03__run1__learner").set(mirrorTask());
+    });
+    const db = await asUser("learner");
+    await assertFails(
+      db
+        .collection("tasks")
+        .doc("course-w03__run1__learner")
+        .update({ archived: true, completerUids: ["learner", "facil"] }),
+    );
+    // Same for the visibility flip, which is admin-only everywhere else.
+    await assertFails(
+      db
+        .collection("tasks")
+        .doc("course-w03__run1__learner")
+        .update({ archived: true, visibility: "committee" }),
+    );
+    // The lone-field write is what actually ships, and it still passes.
+    await assertSucceeds(
+      db.collection("tasks").doc("course-w03__run1__learner").update({ archived: true }),
+    );
+  });
+
+  // The delete branch reads resource.data.source — the STORED value — so the
+  // only way to reach it is to already own a real mirror. These two assertions
+  // close the forge-your-own-mirror route: a member can neither create a task
+  // claiming the source, nor relabel one they already own.
+  it("refuses a member CREATING a task that claims source fellowship-reminder", async () => {
+    await seedCast();
+    const db = await asUser("learner");
+    await assertFails(
+      db.collection("tasks").doc("forged").set(mirrorTask({ creatorUid: "learner" })),
+    );
+    // The self-serve quick-add a member IS allowed still works, unchanged.
+    await assertSucceeds(
+      db
+        .collection("tasks")
+        .doc("my-todo")
+        .set(mirrorTask({ source: "personal", kind: null, sourceRef: null })),
+    );
+  });
+
+  it("refuses a member relabelling their own personal task as a mirror", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("my-todo").set(
+        mirrorTask({
+          source: "personal",
+          kind: null,
+          sourceRef: null,
+          creatorUid: "learner",
+        }),
+      );
+    });
+    const db = await asUser("learner");
+    await assertFails(
+      db.collection("tasks").doc("my-todo").update({ source: "fellowship-reminder" }),
+    );
+    // Still theirs to delete via the personal branch — the denial above is the
+    // source pin, not a loss of control over their own to-do.
+    await assertSucceeds(db.collection("tasks").doc("my-todo").delete());
+  });
+
+  // ── the SCOPE of `archived` in the narrow update band ──────────────────────
+  //
+  // `archived` was added to the completer/reviewer allowlist for the mirror
+  // above, and these pin that it reaches no further. It matters because the
+  // band also covers REVIEWERS, who need not be completers, and because the
+  // board and My Work queries hide archived tasks by default: an unscoped
+  // `archived` lets any ONE person on a committee task make it disappear for
+  // everybody, which is a delete in everything but name. The three tests below
+  // are the negative direction; "lets the completer ARCHIVE their mirrored
+  // task" above is the positive one, and both must keep passing.
+  //
+  // Each test also writes a plain `status` afterwards, so a failure here reads
+  // as "the archive scope refused" rather than "this actor lost the band".
+
+  it("refuses a COMPLETER archiving a committee-visibility task", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("committee-task").set(
+        mirrorTask({
+          source: "committee",
+          kind: "generic",
+          visibility: "committee",
+          creatorUid: "someone-else",
+          completerUids: ["learner"],
+          sourceRef: null,
+        }),
+      );
+    });
+    const db = await asUser("learner");
+    await assertFails(
+      db.collection("tasks").doc("committee-task").update({ archived: true }),
+    );
+    // The gate reads the STORED source, so claiming the mirror source in the
+    // same write cannot unlock it (`source` is outside the allowlist too).
+    await assertFails(
+      db
+        .collection("tasks")
+        .doc("committee-task")
+        .update({ archived: true, source: "fellowship-reminder" }),
+    );
+    await assertSucceeds(
+      db.collection("tasks").doc("committee-task").update({ status: "in-progress" }),
+    );
+  });
+
+  it("refuses a REVIEWER who is not a completer archiving a committee task", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("committee-task").set(
+        mirrorTask({
+          source: "committee",
+          kind: "generic",
+          visibility: "committee",
+          creatorUid: "someone-else",
+          completerUids: ["learner"],
+          reviewerUids: ["facil"],
+          sourceRef: null,
+        }),
+      );
+    });
+    const db = await asUser("facil");
+    await assertFails(
+      db.collection("tasks").doc("committee-task").update({ archived: true }),
+    );
+    await assertSucceeds(
+      db.collection("tasks").doc("committee-task").update({ status: "in-progress" }),
+    );
+  });
+
+  // Not a visibility test — an assignees-only PERSONAL task is just as
+  // protected. Archiving someone's private to-do belongs to its creator (the
+  // branch below the band), and being listed as a completer on it confers
+  // nothing, exactly as with delete.
+  it("refuses a completer archiving a PERSONAL task they did not create", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("someones-todo").set(
+        mirrorTask({
+          source: "personal",
+          kind: "generic",
+          creatorUid: "facil",
+          completerUids: ["learner"],
+          sourceRef: null,
+        }),
+      );
+    });
+    const db = await asUser("learner");
+    await assertFails(
+      db.collection("tasks").doc("someones-todo").update({ archived: true }),
+    );
+    await assertSucceeds(
+      db.collection("tasks").doc("someones-todo").update({ status: "in-progress" }),
+    );
+  });
+
+  // ── the `source` pin on the committee update branch ────────────────────────
+  //
+  // Both gates above read the STORED `source`: the delete branch keys the
+  // mirror-dismissal route off it, and the narrow band keys `archived` off it.
+  // Reading the stored value is what makes them safe against a relabel *in the
+  // same write* — but it is only worth anything if the stored value cannot be
+  // rewritten by a LATER write. `source` is set once at create and never
+  // rewritten anywhere in the app (every update path in taskMutations.ts is a
+  // partial `updateDoc` patch and none of them carry the field; the one
+  // `setDoc` is createTask), so pinning it costs no legitimate flow.
+  //
+  // Unpinned it was a two-step: an SU-recognised committee member relabels a
+  // committee task 'fellowship-reminder' via the committee branch, and every
+  // completer on that task immediately gains BOTH the unilateral archive the
+  // section above closes AND the delete branch — which the route serves with a
+  // recursiveDelete, taking the task's whole comment and activity history with
+  // it. The relabel is the pivot; this pin removes it.
+  //
+  // Each test pairs its denial with an ordinary committee edit by the SAME
+  // actor on the SAME doc, so a failure reads as "the source pin refused"
+  // rather than "this actor lost the branch entirely".
+
+  it("refuses an SU committee member relabelling a committee task's source", async () => {
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+    await seed(async (db) => {
+      await db.collection("tasks").doc("committee-task").set(
+        mirrorTask({
+          source: "committee",
+          kind: "generic",
+          visibility: "committee",
+          creatorUid: "someone-else",
+          completerUids: ["learner"],
+          sourceRef: null,
+        }),
+      );
+    });
+    const db = await asUser("sucom");
+    await assertFails(
+      db.collection("tasks").doc("committee-task").update({ source: "fellowship-reminder" }),
+    );
+    // Nor smuggled in under an edit that would otherwise pass on its own.
+    await assertFails(
+      db
+        .collection("tasks")
+        .doc("committee-task")
+        .update({ title: "Term-one comms plan", source: "fellowship-reminder" }),
+    );
+    // The same actor still holds the committee branch on the same doc.
+    await assertSucceeds(
+      db.collection("tasks").doc("committee-task").update({ title: "Term-one comms plan" }),
+    );
+  });
+
+  it("leaves an ordinary committee edit alone — title, description, completers", async () => {
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+    await seed(async (db) => {
+      await db.collection("tasks").doc("committee-task").set(
+        mirrorTask({
+          source: "committee",
+          kind: "generic",
+          visibility: "committee",
+          creatorUid: "someone-else",
+          completerUids: ["learner"],
+          sourceRef: null,
+        }),
+      );
+    });
+    const db = await asUser("sucom");
+    await assertSucceeds(
+      db.collection("tasks").doc("committee-task").update({
+        title: "Draft the term-one comms plan",
+        description: "Owner: comms. Wanted before week 1.",
+        completerUids: ["learner", "facil"],
+        status: "in-progress",
+      }),
+    );
+    // The pin compares VALUES, not affectedKeys, so a client that echoes the
+    // field back unchanged is not collateral damage. Nothing in the app does
+    // this today, but it is the difference between pinning a field and
+    // forbidding a key, and it is the half that would bite if a future editor
+    // started saving whole task documents.
+    await assertSucceeds(
+      db
+        .collection("tasks")
+        .doc("committee-task")
+        .update({ source: "committee", title: "Same source, new title" }),
+    );
+  });
+
+  // `.get('source', '')` defaults BOTH sides, so a row predating the field
+  // compares '' to '' and passes. Worth a test because the obvious spelling of
+  // this pin — `request.resource.data.source == taskData().source` — would
+  // instead throw on the missing field and lock every legacy committee task out
+  // of its own branch, with no failing test to say why.
+  it("still lets a committee member edit a task that has NO source field", async () => {
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+    const legacy = mirrorTask({
+      kind: "generic",
+      visibility: "committee",
+      creatorUid: "someone-else",
+      completerUids: ["learner"],
+      sourceRef: null,
+    });
+    delete legacy.source;
+    await seed(async (db) => {
+      await db.collection("tasks").doc("legacy-task").set(legacy);
+    });
+    const db = await asUser("sucom");
+    await assertSucceeds(
+      db.collection("tasks").doc("legacy-task").update({ title: "Still editable" }),
+    );
+    // The default is a comparison floor, not a blank cheque: adding a `source`
+    // to a row that never had one is still a relabel ('' vs the new value), and
+    // it is refused for the same reason. Backfilling one is an admin job.
+    await assertFails(
+      db.collection("tasks").doc("legacy-task").update({ source: "fellowship-reminder" }),
+    );
+  });
+
+  // The admin arm is a separate `||` branch with no field conditions on it at
+  // all, so the pin does not reach admins: an admin CAN change `source`, and
+  // that is intended. It hands them nothing they lack — admins already hold
+  // unconditional update, archive and delete on every task, so relabelling one
+  // is a longer road to powers they have directly. The only thing it does that
+  // is not already theirs is hand the task's completers a dismissal route, and
+  // that is a deliberate admin act (it is also how an admin-triggered mirror
+  // backfill would legitimately mark a task as a mirror in the first place).
+  it("leaves ADMINS unaffected by the source pin", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("committee-task").set(
+        mirrorTask({
+          source: "committee",
+          kind: "generic",
+          visibility: "committee",
+          creatorUid: "someone-else",
+          completerUids: ["learner"],
+          sourceRef: null,
+        }),
+      );
+    });
+    const db = await asUser("admin1");
+    await assertSucceeds(
+      db.collection("tasks").doc("committee-task").update({ title: "Admin edit" }),
+    );
+    await assertSucceeds(
+      db.collection("tasks").doc("committee-task").update({ source: "fellowship-reminder" }),
+    );
   });
 });
