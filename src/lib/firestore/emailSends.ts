@@ -18,6 +18,19 @@ export type EmailSendKind =
   // broadcast indistinguishable from a test send in the log.
   | "course-facilitator"
   | "course-broadcast"
+  // The weekly course nudge (P11). Its own kind rather than folded into
+  // `course-broadcast` because the two answer different questions in the
+  // deliverability tab: a broadcast is a human deciding to write to a cohort,
+  // a nudge is the recurring template that fires once per cohort week and is
+  // built to be cronned. "Did the week 5 nudge go out?" has to be answerable
+  // without reading subject lines, and a cohort's steady drip of nudges must
+  // not drown out the announcements in the same view.
+  //
+  // There is deliberately no `course-nudge-test`: a rehearsal reaches only its
+  // own sender whichever lane it rehearses, so the nudge route logs test sends
+  // as `course-test` like the rest of the staff course mail. This kind means
+  // mail that actually reached a cohort.
+  | "course-nudge"
   | "course-test"
   | "admin-test"
   | "subscription-confirm"

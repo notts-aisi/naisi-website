@@ -2,16 +2,40 @@ import "server-only";
 import { Timestamp, type Firestore } from "firebase-admin/firestore";
 import ApplicationEmail from "@/emails/ApplicationEmail";
 import NewsletterEmail from "@/emails/NewsletterEmail";
+import { getAdminDb } from "@/lib/firebase/admin";
+import { getCurrentUser, type SessionUser } from "@/lib/firebase/session";
+import {
+  courseEnrolmentId,
+  normalizeCourseEnrolment,
+} from "@/lib/firestore/courseEnrolments";
+import {
+  courseRunChannel,
+  normalizeCourseRun,
+  type CourseRunDoc,
+} from "@/lib/firestore/courses";
 import { newBlockId, type Block } from "@/lib/firestore/newsletterBlocks";
+import { findRecipientsForChannel } from "@/lib/firestore/subscriptions";
+import { filterSuppressed } from "@/lib/firestore/suppression";
 import { sendEmail } from "./send";
 
 /**
- * The send-side machinery for STAFF-AUTHORED course mail — the two P9 email
- * routes (`/api/courses/groups/[groupId]/email`,
- * `/api/courses/runs/[runId]/email`) and nothing else. Templates, payload
- * validation, and the durable send throttle live together because both routes
- * must agree on all three; route handlers don't import from one another by
- * house convention, so this module is where they meet.
+ * The send-side machinery for COHORT- AND GROUP-ADDRESSED course mail — the two
+ * P9 email routes (`/api/courses/groups/[groupId]/email`,
+ * `/api/courses/runs/[runId]/email`) and P11's weekly nudge
+ * (`/api/courses/runs/[runId]/nudge`). Templates, payload validation, the
+ * durable send throttle, the run-staff gate and the cohort audience derivation
+ * live together because the routes must agree on all of them; route handlers
+ * don't import from one another by house convention, so this module is where
+ * they meet.
+ *
+ * ── WHO MAY SEND AND WHO RECEIVES ARE DEFINED ONCE, HERE ────────────────────
+ * `gateRunStaff` and `resolveCohortAudience` were previously written out twice,
+ * line for line, in the announcement route and the nudge route — with a comment
+ * in each saying "IF YOU CHANGE ONE, CHANGE BOTH". They are the same predicate
+ * and the same audience by design (a nudge IS an announcement to the whole run),
+ * so they are now one function each and the comment is retired. The extraction
+ * was a pure move: both routes' status codes, refusal sentences, `skipped`
+ * arithmetic, log tags and read ordering are unchanged.
  *
  * Sits beside `courseApplicationEmails.ts` and takes the same shape (a thin,
  * typed wrapper over `sendEmail` that renders through the shared chrome), with
@@ -109,6 +133,448 @@ export function parseStaffMessage(raw: unknown): ParsedStaffMessage {
   }
 
   return { ok: true, value: { subject, body, testOnly: b.testOnly === true } };
+}
+
+// ---------------------------------------------------------------------------
+// The run-staff gate
+// ---------------------------------------------------------------------------
+
+/** Same one-path-segment guard as `runAccess.ts` and the sibling routes. */
+export function isAddressableId(value: string): boolean {
+  return Boolean(value) && !value.includes("/") && value !== "." && value !== "..";
+}
+
+export type RunStaffGate =
+  | { ok: true; actor: SessionUser; db: Firestore; run: CourseRunDoc; isAdmin: boolean }
+  /** Map straight onto a `NextResponse.json({ error }, { status })`. */
+  | { ok: false; status: number; error: string };
+
+/**
+ * WHO MAY ADDRESS A WHOLE RUN: the run's `runFacilitatorUids` ∪ its
+ * `trackLeadUids` ∪ admins. Facilitating ONE GROUP of the run is deliberately
+ * not enough — a group facilitator mails their own room through the group
+ * route; addressing the whole cohort is a run-level act. Admissions reviewers
+ * get nothing here: admissions is a separate lane from the cohort (locked
+ * decision), and reading applications has never granted the ability to mail
+ * applicants.
+ *
+ * AUTHORIZATION RUNS BEFORE ANY EXISTENCE CHECK — a missing run and a run you
+ * hold no role on are the same 403, so probing run ids discloses nothing (the
+ * same non-disclosure `runAccess.ts` gives). The 404-before-401 ordering on a
+ * malformed id is deliberate too: it never reaches a document.
+ *
+ * Returns a plain status + sentence rather than a `NextResponse` so this module
+ * stays free of `next/server`; each route renders its own response.
+ */
+export async function gateRunStaff(runId: string): Promise<RunStaffGate> {
+  if (!isAddressableId(runId)) {
+    return { ok: false, status: 404, error: "Run not found" };
+  }
+
+  const actor = await getCurrentUser();
+  if (!actor) return { ok: false, status: 401, error: "Not signed in" };
+
+  const db = getAdminDb();
+  if (!db) return { ok: false, status: 500, error: "Server not configured" };
+
+  const runSnap = await db.collection("courseRuns").doc(runId).get();
+  const run = runSnap.exists
+    ? normalizeCourseRun(runSnap.id, runSnap.data() ?? {})
+    : null;
+
+  const isAdmin = actor.role === "admin";
+  const staffsRun = Boolean(
+    run &&
+      (run.runFacilitatorUids.includes(actor.uid) ||
+        run.trackLeadUids.includes(actor.uid)),
+  );
+  if (!isAdmin && !staffsRun) {
+    return { ok: false, status: 403, error: "Forbidden" };
+  }
+  if (!run) {
+    return { ok: false, status: 404, error: "Run not found" };
+  }
+
+  return { ok: true, actor, db, run, isAdmin };
+}
+
+// ---------------------------------------------------------------------------
+// Recipient identity
+// ---------------------------------------------------------------------------
+
+/**
+ * The name a cohort email falls back to when a member has filled in neither a
+ * preferred name nor a display name.
+ *
+ * IT IS NOT ALWAYS THE RIGHT FALLBACK. `NewsletterEmail` renders a greeting of
+ * its own and needs *something*, so the announcement lane uses it. The weekly
+ * nudge greets with `{firstName}`, and `firstWord("NAISI member")` is "NAISI" —
+ * "Hi NAISI," — so it uses `memberNameOf` instead and lets its renderer drop
+ * the greeting line entirely. Hence two functions rather than one.
+ */
+export const COURSE_MEMBER_PLACEHOLDER = "NAISI member";
+
+/**
+ * Preferred name, then account name, then "" — NEVER an email address, and
+ * never a placeholder. "" means "we do not know this person's name".
+ */
+export function memberNameOf(data: Record<string, unknown>): string {
+  const profile = (data.profile as Record<string, unknown> | undefined) ?? {};
+  const preferred = profile.preferredName;
+  const display = data.displayName;
+  return (
+    (typeof preferred === "string" && preferred.trim()) ||
+    (typeof display === "string" && display.trim()) ||
+    ""
+  );
+}
+
+/** `memberNameOf` with the neutral placeholder applied. */
+export function displayNameOf(data: Record<string, unknown>): string {
+  return memberNameOf(data) || COURSE_MEMBER_PLACEHOLDER;
+}
+
+/**
+ * An EXPLICIT refusal, read off the raw stored prefs — deliberately not
+ * `normaliseNotifications`, which collapses "absent" and "false" into the same
+ * `false` and would turn every unanswered profile into an opt-out. Only the
+ * modern `notifications` shape can carry this refusal; the legacy `newsletter`
+ * shape predates the category entirely and never means "no" to it. The
+ * subscription row is the opt-IN; this category is the opt-OUT layered on top.
+ */
+export function hasOptedOutOfCourseAnnouncements(
+  data: Record<string, unknown>,
+): boolean {
+  const profile = (data.profile as Record<string, unknown> | undefined) ?? {};
+  const notifications = profile.notifications;
+  if (!notifications || typeof notifications !== "object") return false;
+  const categories = (notifications as Record<string, unknown>).categories;
+  if (!categories || typeof categories !== "object") return false;
+  return (categories as Record<string, unknown>).courses === false;
+}
+
+/** The sender's own address, for a `testOnly` rehearsal. Never a body field. */
+export function ownAddressFor(
+  data: Record<string, unknown>,
+  sessionEmail: string | null,
+  gmailOnly: boolean,
+): string | null {
+  const account = typeof data.email === "string" ? data.email.trim() : "";
+  if (account) return account;
+  const session = sessionEmail?.trim();
+  if (session) return session;
+  if (gmailOnly) return null;
+  const profile = (data.profile as Record<string, unknown> | undefined) ?? {};
+  const uni =
+    typeof profile.universityEmail === "string" ? profile.universityEmail.trim() : "";
+  return uni && profile.uniEmailVerifiedAt ? uni : null;
+}
+
+// ---------------------------------------------------------------------------
+// Suppression
+// ---------------------------------------------------------------------------
+
+/**
+ * Drop the addresses the suppression list refuses, and say how many went.
+ *
+ * SUPPRESSION OUTRANKS EVERY PREFERENCE: a bounce or a complaint is a
+ * deliverability fact, not a choice. It applies to a one-address rehearsal
+ * exactly as it does to a 200-person cohort — a sender whose own address has
+ * bounced needs to learn that from the test, not from a silent cohort send.
+ */
+export async function dropSuppressed<T extends { address: string }>(
+  db: Firestore,
+  list: readonly T[],
+): Promise<{ deliverable: T[]; dropped: number }> {
+  if (list.length === 0) return { deliverable: [], dropped: 0 };
+  const { suppressed } = await filterSuppressed(
+    db,
+    list.map((r) => r.address),
+  );
+  const suppressedSet = new Set(suppressed.map((a) => a.toLowerCase()));
+  const deliverable = list.filter((r) => !suppressedSet.has(r.address.toLowerCase()));
+  return { deliverable, dropped: list.length - deliverable.length };
+}
+
+// ---------------------------------------------------------------------------
+// The cohort audience — subscription ∩ active enrolment
+// ---------------------------------------------------------------------------
+
+/**
+ * ALWAYS A MEMBER. Every recipient of cohort mail holds an active enrolment on
+ * the run, and an enrolment is uid-keyed, so there is no guest shape here and no
+ * email-shape unsubscribe token: a uid token flips the cohort row for BOTH of
+ * that member's addresses, which an email-shape token could not.
+ */
+export type CohortRecipient = {
+  uid: string;
+  address: string;
+  /** Preferred → display → "NAISI member". What a forced greeting needs. */
+  recipientName: string;
+  /** The same chain WITHOUT the placeholder — "" when we know no name. */
+  ownName: string;
+  /** Their placement on this run; null when accepted but not yet allocated. */
+  groupId: string | null;
+};
+
+export type CohortAudience = {
+  /** Deliverable: deduped, enrolment-verified, opt-out honoured, unsuppressed. */
+  members: CohortRecipient[];
+  /** Everyone dropped along the way. Counts only, never addresses. */
+  skipped: number;
+  /** Deduped + enrolment-verified — the number the recipient cap judges. */
+  enrolledCount: number;
+  /** Non-null when the caller must REFUSE rather than send. */
+  refusal: string | null;
+};
+
+/**
+ * The two strings that differ between the announcement lane and the nudge lane,
+ * and the only reason this function takes a third argument.
+ *
+ * Both are OBSERVABLE: the log tag is what an operator greps for when a cohort
+ * reports missing mail, and the advice completes a sentence a sender reads in
+ * the composer. Unifying them would have been a silent copy change to a live P9
+ * surface, which is a worse trade than two fields.
+ */
+export type CohortAudienceLane = {
+  /** Console prefix, e.g. "courses run email". Named without brackets. */
+  logTag: string;
+  /** Completes "Nothing was sent — {advice} or raise it with an admin." */
+  overCapAdvice: string;
+};
+
+/** Hard ceiling per request. Beyond this a send FAILS — see below. */
+export const MAX_COHORT_RECIPIENTS = 200;
+
+/**
+ * Sanity ceiling on the channel read, above the recipient cap on purpose: it
+ * catches a malformed channel (or a future many-rows-per-member scheme) rather
+ * than sizing a normal cohort. Exceeding it FAILS the request.
+ */
+export const MAX_COHORT_CHANNEL_ROWS = 500;
+
+/**
+ * WHO RECEIVES COHORT MAIL: the rows `findRecipientsForChannel(cohort:<runId>)`
+ * returns, INTERSECTED with the members holding an ACTIVE `courseEnrolments` row
+ * on this run. Both halves are load-bearing and NEITHER IS SUFFICIENT ALONE:
+ *
+ *  · The SUBSCRIPTION is what makes unsubscribe work. An enrolment-derived
+ *    audience would silently re-mail everyone who clicked the footer link,
+ *    because that link flips the row, not the enrolment.
+ *  · The ENROLMENT is what makes the audience TRUE. `/api/subscriptions` is
+ *    public and unauthenticated, run ids are public (the apply page renders
+ *    `runId` into the client), and a signed-in caller subscribing one of their
+ *    own verified addresses is minted confirmed with no click — so a
+ *    subscription row alone is not a membership claim this may trust.
+ *    `isServerManagedChannel` now refuses `cohort:` at that endpoint; THIS is
+ *    the half that does not depend on every future write path remembering to
+ *    ask.
+ *
+ * GUEST ROWS ARE DROPPED, not merely unverified. An enrolment is uid-keyed, so a
+ * guest row can never hold one, and no legitimate producer writes one.
+ *
+ * THE ENROLMENT FILTER RUNS BEFORE THE RECIPIENT CAP, deliberately. Cap first
+ * and anyone able to add rows to the channel could hold a cohort's mail hostage
+ * by pushing the count past the ceiling — a refusal that, by design, refuses the
+ * whole send. Counting the VERIFIED audience makes the cap a statement about the
+ * cohort rather than about whoever wrote rows.
+ *
+ * SUPPRESSION IS APPLIED HERE, not at the call site, so a preview's count and
+ * the send's count are the same number.
+ *
+ * `notifications.categories.courses` defaults FALSE like every other category,
+ * and requiring it to be true would empty the audience on day one — nothing sets
+ * it on placement. That is not what the toggle is for: the OPT-IN is the
+ * subscription row (you were placed in a group; you consented by enrolling), and
+ * the CATEGORY is the opt-out layered on top. So an explicit `courses === false`
+ * skips a recipient and absent means "hasn't answered".
+ * `DEFAULT_NOTIFICATION_PREFS` in notifications.ts carries the other half of this
+ * comment; change neither alone.
+ */
+export async function resolveCohortAudience(
+  db: Firestore,
+  runId: string,
+  lane: CohortAudienceLane,
+): Promise<CohortAudience> {
+  const channel = courseRunChannel(runId);
+  let skipped = 0;
+
+  const rows = await findRecipientsForChannel(db, channel);
+  // Refuse rather than slice. A `slice()` here would be a silent truncation
+  // wearing a cost-ceiling costume: dedupe runs AFTER it, so a cohort with
+  // enough second-address rows could fall under the cap having already lost
+  // people, and the send would look complete. Unreachable in practice (one row
+  // per member) — which is exactly why it must fail loudly if it ever happens.
+  if (rows.length > MAX_COHORT_CHANNEL_ROWS) {
+    console.error(`[${lane.logTag}] channel row count exceeds ceiling`, runId, rows.length);
+    return {
+      members: [],
+      skipped: 0,
+      enrolledCount: 0,
+      refusal:
+        "This cohort's subscriber list is larger than a single send can handle. " +
+        "Nothing was sent — raise it with an admin.",
+    };
+  }
+
+  // Dedupe at the RECIPIENT level, not the address level: a member with both a
+  // claimed guest row and a user row must get one email, not two. Same guard
+  // the newsletter route carries.
+  const seenAudience = new Set<string>();
+  const seenAddress = new Set<string>();
+  type Pending = { uid: string; audience: "user" | "guest"; address: string };
+  const pending: Pending[] = [];
+  for (const row of rows) {
+    const dedupKey = `${row.audience}:${row.audienceId}`;
+    if (seenAudience.has(dedupKey)) continue;
+    seenAudience.add(dedupKey);
+    const address = row.email.trim();
+    if (!address) {
+      skipped += 1;
+      continue;
+    }
+    const addressKey = address.toLowerCase();
+    if (seenAddress.has(addressKey)) {
+      skipped += 1;
+      continue;
+    }
+    seenAddress.add(addressKey);
+    pending.push({
+      uid: row.audience === "user" ? row.audienceId : "",
+      audience: row.audience,
+      address,
+    });
+  }
+
+  // ── THE SUBSCRIPTION ROW IS NOT AUTHORITY. RE-VERIFY THE ENROLMENT. ───────
+  // `courseEnrolmentId(runId, uid)` is deterministic, so this is ONE addressed
+  // `getAll` over the deduped audience — no query, no index, one read per
+  // candidate, bounded by MAX_COHORT_CHANNEL_ROWS above.
+  const guestRows = pending.filter((p) => p.audience !== "user" || !p.uid);
+  if (guestRows.length > 0) {
+    skipped += guestRows.length;
+    // A guest row on a cohort channel has no legitimate producer. Counted and
+    // logged as an anomaly worth noticing, never as an address.
+    console.warn(
+      `[${lane.logTag}] guest rows on a cohort channel, dropped`,
+      runId,
+      guestRows.length,
+    );
+  }
+  const memberPending = pending.filter((p) => p.audience === "user" && p.uid);
+  const pendingByEnrolmentId = new Map<string, Pending>();
+  for (const p of memberPending) {
+    pendingByEnrolmentId.set(courseEnrolmentId(runId, p.uid), p);
+  }
+  const enrolmentIds = [...pendingByEnrolmentId.keys()];
+  const enrolmentDocs = enrolmentIds.length
+    ? await db.getAll(
+        ...enrolmentIds.map((id) => db.collection("courseEnrolments").doc(id)),
+      )
+    : [];
+  // Keyed by doc id rather than by result order, so this doesn't rest on
+  // `getAll` returning documents in the order they were requested.
+  const enrolled: Array<Pending & { groupId: string | null }> = [];
+  for (const doc of enrolmentDocs) {
+    if (!doc.exists) continue;
+    const p = pendingByEnrolmentId.get(doc.id);
+    if (!p) continue;
+    const enrolment = normalizeCourseEnrolment(doc.id, doc.data() ?? {});
+    // `runId` and `uid` are re-read off the document rather than inferred from
+    // the id the lookup was built from — the id is construct-only by contract,
+    // and a row that disagrees with it is not one to mail on.
+    if (
+      enrolment.status === "active" &&
+      enrolment.runId === runId &&
+      enrolment.uid === p.uid
+    ) {
+      enrolled.push({ ...p, groupId: enrolment.groupId });
+    }
+  }
+  const notEnrolled = memberPending.length - enrolled.length;
+  if (notEnrolled > 0) {
+    skipped += notEnrolled;
+    // Counts only. A non-zero value here is either a stale row (someone left and
+    // the remove route's unsubscribe failed) or an attempt to join a cohort by
+    // subscribing to it — both worth seeing, neither worth naming.
+    console.warn(
+      `[${lane.logTag}] subscribed rows with no active enrolment, skipped`,
+      runId,
+      notEnrolled,
+    );
+  }
+
+  // REFUSE, don't truncate. Counted on the deduped, ENROLMENT-VERIFIED audience
+  // BEFORE any preference filtering, so the answer doesn't wobble with who has
+  // opted out this week — and before the cap, so anyone able to write channel
+  // rows can't hold a cohort's mail hostage by pushing the count over.
+  if (enrolled.length > MAX_COHORT_RECIPIENTS) {
+    return {
+      members: [],
+      skipped,
+      enrolledCount: enrolled.length,
+      refusal:
+        `This cohort has ${enrolled.length} subscribers, over the ${MAX_COHORT_RECIPIENTS}-recipient ` +
+        `limit for a single send. Nothing was sent — ${lane.overCapAdvice} or raise it with an admin.`,
+    };
+  }
+
+  // Names + the opt-out check, one `getAll` over the verified members.
+  const memberUids = enrolled.map((p) => p.uid);
+  const userDocs = memberUids.length
+    ? await db.getAll(...memberUids.map((uid) => db.collection("users").doc(uid)))
+    : [];
+  const dataByUid = new Map<string, Record<string, unknown>>();
+  for (const doc of userDocs) {
+    if (doc.exists) dataByUid.set(doc.id, doc.data() ?? {});
+  }
+
+  let optedOut = 0;
+  const members: CohortRecipient[] = [];
+  for (const p of enrolled) {
+    const data = dataByUid.get(p.uid);
+    if (!data) {
+      // Subscribed row whose account is gone. Skip rather than mail an address
+      // we can no longer attribute to a member.
+      skipped += 1;
+      continue;
+    }
+    if (hasOptedOutOfCourseAnnouncements(data)) {
+      optedOut += 1;
+      skipped += 1;
+      continue;
+    }
+    const ownName = memberNameOf(data);
+    members.push({
+      uid: p.uid,
+      address: p.address,
+      recipientName: ownName || COURSE_MEMBER_PLACEHOLDER,
+      ownName,
+      groupId: p.groupId,
+    });
+  }
+  if (optedOut > 0) {
+    // Counts only, never addresses. A cohort where this climbs is the signal
+    // that the profile toggle's default is wrong.
+    console.log(
+      `[${lane.logTag}] recipients opted out of course announcements`,
+      runId,
+      optedOut,
+    );
+  }
+
+  if (members.length === 0) {
+    return { members, skipped, enrolledCount: enrolled.length, refusal: null };
+  }
+
+  const { deliverable, dropped } = await dropSuppressed(db, members);
+  return {
+    members: deliverable,
+    skipped: skipped + dropped,
+    enrolledCount: enrolled.length,
+    refusal: null,
+  };
 }
 
 // ---------------------------------------------------------------------------

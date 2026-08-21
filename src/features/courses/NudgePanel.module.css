@@ -1,0 +1,491 @@
+/* ============================================================
+   NudgePanel — /learn/[runId]/nudge
+
+   The surface a facilitator uses to send this week's prepared
+   nudge. Its sibling is StaffEmailComposer, and the family
+   resemblance is deliberate (accent-ruled recipient callout at
+   the top, send report at the bottom, one entrance animation on
+   the report) — but the centre of the page is different, and the
+   layout says so.
+
+   On the composer, the FIELDS are the middle: you are writing.
+   Here there is nothing to write. The message already exists, so
+   the largest, most solid object on the page is the message
+   itself — `.letter`, a bordered card-within-a-card with the
+   subject sitting above a rule like a header and the body in
+   pre-wrap beneath it. It reads as a thing you are about to hand
+   over rather than a form you are filling in, which is precisely
+   the difference between the two surfaces.
+
+   Two states get colour and nothing else does: `.recipientsBlocked`
+   (nothing can be sent, and the copy has to say why) and
+   `.marker` / `.reportUnknown` (this week is spoken for, or we
+   cannot say what happened). Painting the ordinary state red
+   would make the genuinely blocked one invisible.
+
+   Motion: one entrance, on the report, because it is the only
+   thing here that appears in response to an action and the
+   numbers in it are the point. The letter and the marker are
+   facts present at load — they arrive with the page and animating
+   them would imply something just changed.
+   ============================================================ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* Layout-matched to the real thing: week line, recipient line, the letter,
+   the send button. Arrival costs no reflow, which is the shift a skeleton
+   exists to prevent. */
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* === Nobody sends this for you =============================
+   The first sentence on the surface, and the one nobody may miss: this app has
+   no scheduler, so a nudge that looks automatic would quietly never go. Small
+   and quiet, but at the top and on its own line — a footnote at the bottom
+   would be read after the assumption had already been made. */
+
+.byline {
+  margin: 0;
+  max-width: 62ch;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
+/* === Which week ============================================ */
+
+.week {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.weekEyebrow {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  color: var(--color-text);
+}
+
+.weekSummary {
+  margin: 0;
+  max-width: 66ch;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
+/* === Who this reaches ======================================
+   Accent-ruled, above the message, exactly as on the composer: you read who
+   this reaches before you read what they get. */
+
+.recipients {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-left: 2px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+}
+
+.recipientsLine {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  color: var(--color-text);
+}
+
+/* Nobody to send to. Warning, not danger — nobody has done anything wrong. */
+.recipientsBlocked {
+  margin: 0;
+  max-width: 66ch;
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  color: var(--color-warning);
+}
+
+.recipientsNote {
+  margin: 0;
+  max-width: 66ch;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
+/* === The session line ======================================
+   A labelled fact rather than prose: a facilitator scanning this page wants to
+   confirm the time the message quotes without reading a paragraph. */
+
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.metaLabel {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.metaValue {
+  margin: 0;
+  max-width: 66ch;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text);
+}
+
+/* No slot set. Muted rather than warning-coloured: a nudge with no session
+   time is a lesser message, not a broken one. */
+.metaMissing {
+  color: var(--color-text-muted);
+}
+
+/* === The letter ============================================
+   The message itself, and the biggest object on the page. Full border plus an
+   elevated ground so it separates from the card it sits in; the subject sits
+   above a rule, the way it sits above the body in an inbox. */
+
+.letter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.letterLabel {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+/* Bordered-below rather than italicised, so an empty or whitespace-heavy
+   subject is visible as such rather than as a missing line. */
+.letterSubject {
+  margin: 0;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+/* `pre-wrap` keeps the template's own paragraph breaks without this component
+   parsing anything: the body crosses as text and renders as a text node.
+   `overflow-wrap: anywhere` stops a long pasted URL in the template from
+   widening the card past the page. */
+.letterBody {
+  margin: 0;
+  max-width: 66ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--text-sm);
+  line-height: 1.7;
+  color: var(--color-text);
+}
+
+.letterNote {
+  margin: 0;
+  max-width: 66ch;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--color-text-subtle);
+}
+
+/* === Already sent ==========================================
+   This week is spoken for. Warning-ruled because it is the reason the button
+   below is off, and a disabled button whose explanation looks like body copy
+   sends people hunting for a fault that isn't there. */
+
+.marker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-left: 2px solid var(--color-warning);
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-soft);
+}
+
+.markerHead {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-warning);
+}
+
+.markerBody {
+  margin: 0;
+  max-width: 66ch;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text);
+}
+
+/* === Actions ===============================================
+   Two columns, not a button row: each action carries a sentence underneath it,
+   and side-by-side buttons with stacked notes below them would leave the notes
+   unable to say which button they belong to. */
+
+.actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--space-5);
+  align-items: start;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.testAction,
+.sendAction {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.actionNote {
+  margin: 0;
+  max-width: 44ch;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-text-subtle);
+}
+
+/* The admin override. Its own row BELOW the action grid and never inside it:
+   overriding the once-a-week record is a different act from sending, and a
+   third button in the same row would read as a third ordinary option. */
+.forceAction {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--color-border);
+}
+
+/* === The report ============================================
+   What actually went out. Rises 4px and fades in over --dur-fade: the numbers
+   are the answer to the thing you just did, and a block that simply appears at
+   full opacity in a page you are already looking at is easy to miss. Transform
+   + opacity only, so it stays on the compositor. */
+
+.report {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-left: 2px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  animation: reportIn var(--dur-fade) var(--ease-naisi) both;
+}
+
+@keyframes reportIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.reportHead {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.reportBody {
+  margin: 0;
+  max-width: 66ch;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text);
+}
+
+/* A send whose outcome we can't state. Warning-edged rather than accent-edged
+   because this block is the only one that asks the reader to DO something — go
+   and read the record — before touching send again. */
+.reportUnknown {
+  border-left-color: var(--color-warning);
+}
+
+.reportActions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+/* === Links ================================================= */
+
+.inlineLink {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.inlineLink:hover {
+  color: var(--color-accent-hover);
+}
+
+.inlineLink:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring);
+}
+
+/* === The confirm ===========================================
+   Mirrors the composer's: title asks the question, body restates the
+   consequence, actions are Cancel-then-commit. The force path reuses the same
+   shell and earns its seriousness from `.confirmWarning` plus its own title
+   and button label — a second dialog shape would just be a second thing to
+   keep in sync. */
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.confirmTitle {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  color: var(--color-text);
+}
+
+.confirmBody {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+}
+
+.confirmSubject {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+/* Only rendered on the force path. Danger-ruled, not warning-ruled: this is
+   the one dialog in the feature that knowingly sends a second copy to people
+   who already have the first, and it should not look like the ordinary one. */
+.confirmWarning {
+  margin: 0;
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--color-danger);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text);
+}
+
+.confirmNote {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-text-subtle);
+}
+
+.confirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* === Reduced motion ========================================
+   The token belt collapses durations but cannot remove an animation's
+   from-state, so the entrance is dropped outright here. The report still
+   appears — it just appears rather than arriving. */
+
+@media (prefers-reduced-motion: reduce) {
+  .report {
+    animation: none;
+  }
+}
+
+/* === Mobile ================================================
+   Below --bp-md the two actions stack and go full width. Order matters more
+   than usual: "send a test" is first in the DOM and stays first on a phone, so
+   the irreversible one is never the thumb's default target. */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .actions {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-5);
+  }
+
+  .testAction,
+  .sendAction,
+  .forceAction {
+    align-items: stretch;
+  }
+
+  .actionNote {
+    max-width: none;
+  }
+
+  /* The letter is the page's main object, so it keeps its border and ground
+     but gives back the horizontal padding a 320px screen needs for the body's
+     measure. */
+  .letter {
+    padding: var(--space-3);
+  }
+
+  .letterBody {
+    line-height: 1.65;
+  }
+
+  .confirmActions {
+    /* Two buttons side by side at 320px squeeze "Send to 18 people" onto two
+       lines, and stacking puts a thumb's width between Cancel and the
+       irreversible one. `column-reverse` lands Cancel at the BOTTOM — the easy
+       reach — leaving Send a deliberate stretch. Tab order is unchanged (it
+       follows the DOM), so keyboard users still meet Cancel first. */
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+}
