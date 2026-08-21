@@ -45,7 +45,7 @@ type Props = {
   title?: string;
 };
 
-const WALL_CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
+const WALL_CLOCK = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 /**
  * Module-scoped: constructing an `Intl.DateTimeFormat` is expensive relative

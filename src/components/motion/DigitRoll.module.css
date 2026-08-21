@@ -33,6 +33,10 @@
 
 .suffix {
   margin-left: 0.05em;
+  /* .roll is inline-flex, which blockifies this span — a leading space in a
+     suffix like " of 8" would be collapsed at the start of the new block.
+     pre keeps it, so the counter reads "2 of 8", not "2of 8". */
+  white-space: pre;
 }
 
 @media (prefers-reduced-motion: reduce) {
