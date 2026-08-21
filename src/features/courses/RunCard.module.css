@@ -1,0 +1,82 @@
+/* ============================================================
+   RunCard — one run on the /learn hub.
+
+   The whole card is the link, so the anchor wraps <Card> rather
+   than sitting inside it: one target, no nested interactives,
+   and Card's own `interactive` hover does the lift.
+   ============================================================ */
+
+.link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  /* Matches Card's radius so the focus ring traces the card, not a box
+     slightly larger than it. */
+  border-radius: var(--radius-lg);
+}
+
+.link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100%;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+}
+
+.meta {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+/* The ring is a status token beside the line, not above it: the two are one
+   statement ("week 3 of 8", drawn and written). The row owns the spacing so
+   the line sits identically whether or not a ring is present. */
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+/* The status line is what the member scans the hub for — it outranks the
+   labels above it, so it stays full-contrast while the meta line recedes. */
+.status {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.group {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .title {
+    font-size: var(--text-base);
+  }
+}

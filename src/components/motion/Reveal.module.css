@@ -146,6 +146,21 @@
   .maskWipe::after { display: none; }
 }
 
+/* No JS, no .revealed toggle — without this the from-states would leave the
+ * SEO-critical public catalogue at opacity 0 forever. */
+@media (scripting: none) {
+  .reveal,
+  .reveal > *,
+  .staggered > * {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+    clip-path: none !important;
+    transition: none !important;
+  }
+  .maskWipe::after { display: none; }
+}
+
 /* === Mobile === */
 @media (max-width: 48rem) { /* --bp-md */
   /* Same reveals, same timing on mobile — IO rootMargin self-adjusts. */

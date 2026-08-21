@@ -1,0 +1,541 @@
+/* ============================================================
+   WeekView — the member week page.
+
+   Choreography timeline (plan: "Check-off choreography"):
+     t=0     press scale (MaterialCheck) + optimistic flip
+     t=0     ring draws 260ms, tick overlaps from t=60ms (MaterialCheck)
+     t=0     row wash: in 160ms / out 400ms (.itemWash keyframes)
+     t=0     title settles to opacity 0.72 (.itemDone — dim, never
+             strikethrough: completed ≠ cancelled)
+     t=180   reflection panel grid-rows opens (.panelChoreo delay)
+     t=300   panel contents fade in (.panelChoreo .panelBody delay)
+     t=460   stars stagger-pop, --ease-spring, --stagger-tight apart
+             (the one stagger that earns its keep)
+   Uncheck: faster reverse, no wash, no stagger, panel closes.
+   Failure: revert at 200ms + .itemError border flash + toast.
+
+   The choreography delays are literal ms on purpose — they are offsets in
+   ONE timeline, not reusable durations — so the reduced-motion block below
+   must zero them itself (the tokens.css belt only reaches var() durations).
+   ============================================================ */
+
+/* ---- Header (the spatial anchor: never animates position) ---- */
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-8);
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.eyebrowLink {
+  color: inherit;
+  text-decoration: none;
+}
+
+.eyebrowLink:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.title {
+  margin: 0;
+}
+
+.meta {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* ProgressBar wrapper. The tone flip at 100% (accent → success, once) needs
+   the fill's BACKGROUND to crossfade over 500ms; ProgressBar.module.css only
+   transitions transform. Structural coupling, documented at both ends: the
+   fill is the sole child of the [role="progressbar"] track. If ProgressBar's
+   DOM changes this degrades to an instant tone change — never breaks. */
+.progress {
+  max-width: 40rem;
+}
+
+.progress [role="progressbar"] > div {
+  transition:
+    transform var(--dur-settle) var(--ease-naisi),
+    background 500ms var(--ease-naisi);
+}
+
+/* ---- Two-column layout: main 40rem + aside 16rem in the 64rem cap ---- */
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 40rem) 16rem;
+  grid-template-areas: "main aside";
+  justify-content: space-between;
+  align-items: start;
+  gap: var(--space-10);
+}
+
+.mainCol {
+  grid-area: main;
+  min-width: 0;
+}
+
+.aside {
+  grid-area: aside;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  /* Orientation stays on screen while the materials scroll. AppShell's main
+     scrolls the document, so sticky against the viewport is enough. */
+  position: sticky;
+  top: var(--space-8);
+}
+
+/* ---- Row states (applied to WeekCurriculum's <li> via materialClassName) ---- */
+
+/* Completed title settles to 0.72 opacity — dimmed, NEVER struck through
+   (completed ≠ cancelled). STRUCTURAL selectors by necessity: the title
+   lives in WeekCurriculum's module, out of reach of composed classes. The
+   row div is the li's first child; the only <a> under it is the title link,
+   and a plain title is the direct span child of its inner div (the action
+   slot's direct child is a <button>). The contract is stated on
+   WeekCurriculum's MaterialRow — change one, check the other. */
+.itemDone > div:first-child > div > a,
+.itemDone > div:first-child > div > span:first-child {
+  opacity: 0.72;
+  transition: opacity var(--dur-quick) var(--ease-naisi);
+}
+
+/* Accent wash across the row: in 160ms, out 400ms (160/560 ≈ 28%). */
+.itemWash {
+  animation: rowWash 560ms var(--ease-naisi);
+}
+
+@keyframes rowWash {
+  0% {
+    background: transparent;
+  }
+  28% {
+    background: var(--color-accent-soft);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+/* Failure flash: the danger border rises fast and decays — paired with the
+   200ms revert and the toast, it marks WHICH row snapped back. The row's own
+   border is 1px transparent, so only the colour moves. */
+.itemError {
+  animation: rowError 700ms var(--ease-naisi);
+}
+
+@keyframes rowError {
+  0% {
+    border-color: transparent;
+  }
+  15% {
+    border-color: var(--color-danger);
+  }
+  100% {
+    border-color: transparent;
+  }
+}
+
+/* ---- Reflection panel (grid-rows 0fr→1fr, the named exception) ---- */
+
+.extras {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.reflectOpen {
+  align-self: flex-start;
+  margin: 0;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.reflectOpen:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.reflectOpen:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+.panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-panel) var(--ease-naisi);
+}
+
+.panelOpen {
+  grid-template-rows: 1fr;
+}
+
+/* Check-off choreography: the panel waits its 180ms beat. Only while the
+   open is part of the check gesture — a manual "Edit your reflection" opens
+   immediately. */
+.panelChoreo {
+  transition-delay: 180ms;
+}
+
+.panelInner {
+  /* The grid-row track does the height; this element clips the content
+     while it is in the closed (0fr) row.
+     - `min-height: 0` overrides the default `min-height: auto` on grid
+       items, which is the bit that prevents the track from actually
+       shrinking past content size. Without this, the panel "collapses"
+       visually but a sliver of the first item leaks through.
+     - `overflow: hidden` then clips whatever natural height the inner
+       content has during the transition so it doesn't paint outside the
+       track. */
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panelBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  margin-top: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  opacity: 1;
+  transition: opacity var(--dur-fade) var(--ease-naisi);
+}
+
+.panel:not(.panelOpen) .panelBody {
+  opacity: 0;
+  transition-duration: var(--dur-quick);
+}
+
+.panelChoreo .panelBody {
+  /* Contents fade at t=300ms. */
+  transition-delay: 300ms;
+}
+
+/* Stars stagger-pop at t=460ms, --stagger-tight apart, on the spring curve.
+   Targets StarRating's option labels through the .stars wrapper (they are
+   the only <label> elements inside it); `both` keeps each star hidden until
+   its beat. The choreo class is dropped by a timer once the run ends, and
+   every keyframe's end state equals base styles, so the drop is a no-op. */
+.stars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.panelChoreo .stars label {
+  animation: starPop var(--dur-settle) var(--ease-spring) both;
+}
+
+.panelChoreo .stars label:nth-child(1) { animation-delay: 460ms; }
+.panelChoreo .stars label:nth-child(2) { animation-delay: calc(460ms + 1 * var(--stagger-tight)); }
+.panelChoreo .stars label:nth-child(3) { animation-delay: calc(460ms + 2 * var(--stagger-tight)); }
+.panelChoreo .stars label:nth-child(4) { animation-delay: calc(460ms + 3 * var(--stagger-tight)); }
+.panelChoreo .stars label:nth-child(5) { animation-delay: calc(460ms + 4 * var(--stagger-tight)); }
+
+@keyframes starPop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.moderated {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-soft);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.fieldLabel {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.fieldHint {
+  font-weight: 400;
+  color: var(--color-text-subtle);
+}
+
+.panelActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* ---- Cohort notes disclosure ---- */
+
+.notes {
+  border-top: 1px solid var(--color-border);
+}
+
+.notesSummary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 2.75rem; /* 44px tap floor — this is a daily-use disclosure */
+  padding: var(--space-1) 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.notesSummary:hover {
+  color: var(--color-text);
+}
+
+.notesSummary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+.chevron {
+  display: inline-block;
+  transition: transform var(--dur-quick) var(--ease-naisi);
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+.notesBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-2) 0 var(--space-3);
+}
+
+.notesEmpty {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.noteRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.noteHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* A moderated row, admin-only: dimmed rather than removed, because the whole
+   point of the admin view is seeing what the cohort no longer does. The dim
+   lands on the CONTENT, not the row — opacity composites as a group, so
+   dimming the row would take the chip and the Unhide button down with it. */
+.noteHidden .noteName,
+.noteHidden .noteText {
+  opacity: 0.62;
+}
+
+/* Quiet text button — the reflectOpen idiom in muted tones. Moderation is an
+   admin affordance sitting in a member's reading lane; it must be reachable
+   without competing with the comment it acts on. The 44px floor matches the
+   disclosure summary it sits under, and only admins ever pay its height. */
+.moderate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  margin: 0 0 0 auto;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  background: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.moderate:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.moderate:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+.noteName {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.noteText {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* ---- Exercises pre-P8 note ---- */
+
+.exercisesNote {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-subtle);
+}
+
+/* ---- Footer week nav ---- */
+
+.weekNav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-10);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--color-border);
+}
+
+.weekNavLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2.75rem;
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.weekNavLink:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.weekNavLink:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+/* The footer-arrow nudge from the public placement map — compositor-only. */
+.navArrow {
+  transition: transform var(--dur-quick) var(--ease-naisi);
+}
+
+.weekNavLink:hover .navArrow {
+  transform: translateX(3px);
+}
+
+.weekNavLink:first-child:hover .navArrow {
+  transform: translateX(-3px);
+}
+
+/* === Reduced motion ===================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  /* The literal choreography offsets — the token belt can't reach these.
+     The panel still opens (1ms via the belt), just with no timeline. */
+  .panelChoreo,
+  .panelChoreo .panelBody {
+    transition-delay: 0ms;
+  }
+
+  /* No stagger, no pop: stars are simply present. */
+  .panelChoreo .stars label {
+    animation: none;
+  }
+
+  /* Wash and flash are geometry-adjacent flourishes; the toast and the
+     reverted checkbox carry the failure signal on their own. */
+  .itemWash,
+  .itemError {
+    animation: none;
+  }
+
+  .itemDone > div:first-child > div > a,
+  .itemDone > div:first-child > div > span:first-child {
+    transition: none;
+  }
+
+  .chevron,
+  .navArrow {
+    transition: none;
+  }
+
+  .weekNavLink:hover .navArrow,
+  .weekNavLink:first-child:hover .navArrow {
+    transform: none;
+  }
+}
+
+/* === Mobile ============================================= */
+
+@media (max-width: 48rem) { /* --bp-md */
+  /* Aside stacks under the header, above the main content. */
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "aside"
+      "main";
+    gap: var(--space-8);
+  }
+
+  .aside {
+    position: static;
+  }
+
+  .header {
+    margin-bottom: var(--space-6);
+  }
+
+  .panelBody {
+    padding: var(--space-3);
+  }
+}

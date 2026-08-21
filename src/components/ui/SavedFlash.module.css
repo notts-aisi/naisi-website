@@ -1,0 +1,73 @@
+/* SavedFlash — inline keep-working feedback. Deliberately not a toast: toasts
+   are for actions you must not walk away from (a send, a publish). Saving a
+   check-off or an autosaved draft is not one of those, and a modal for it
+   would interrupt the very work it is confirming. */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  /* Always mounted, empty at idle: the live region has to exist before it
+     updates for the announcement to land, and reserving the line keeps the
+     row from reflowing when feedback appears. */
+  min-height: 1.25rem;
+  font-size: var(--text-xs);
+}
+
+.saving {
+  color: var(--color-text-muted);
+}
+
+.saved {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-success);
+  animation: savedFlashIn 120ms ease-out both;
+}
+
+/* Must stay after .saved — same property, later rule wins when both classes
+   are applied. */
+.leaving {
+  animation: savedFlashOut 200ms ease-in both;
+}
+
+.error {
+  color: var(--color-danger);
+}
+
+.check {
+  font-weight: 700;
+}
+
+@keyframes savedFlashIn {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes savedFlashOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* Reduced motion collapses the in/out transitions only. The 1400ms hold is
+   JS-timed and survives: it is the read time, not an animation, and cutting
+   it would leave the confirmation unreadable for exactly the people most
+   likely to need longer with it. 1ms rather than 0 avoids a one-frame flash
+   of the from-state. */
+@media (prefers-reduced-motion: reduce) {
+  .saved,
+  .leaving {
+    animation-duration: 1ms;
+  }
+
+  .saved {
+    transform: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* Nothing: the flash sits inline next to whatever triggered the save and
+     inherits that row's wrapping. */
+}

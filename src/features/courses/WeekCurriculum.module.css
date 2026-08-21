@@ -179,6 +179,13 @@
   color: var(--color-text-muted);
 }
 
+/* Member-surface slot: the full-width block under a material row (reflection
+   panel + cohort-notes disclosure). Only rendered when `renderMaterialExtra`
+   returns something, so the public page never carries it. */
+.materialExtra {
+  padding: 0 var(--space-3) var(--space-3);
+}
+
 /* Same aspect-ratio wrapper the trusted-block renderer uses (see
    features/events/BlockView.module.css) so embeds match site-wide. */
 .videoWrap {
@@ -288,6 +295,16 @@
   margin-top: 0.15rem;
   border: 1.5px solid var(--color-border-strong);
   border-radius: var(--radius-sm);
+}
+
+/* Member-surface slot replacing .checkBox: holds the 44px check-off button.
+   The negative block margin lets the tap box overhang the row's rhythm so a
+   real button doesn't balloon every checklist row to 44px of text spacing. */
+.checkAction {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  margin: -0.55rem 0;
 }
 
 .checkText {

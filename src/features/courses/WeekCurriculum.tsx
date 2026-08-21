@@ -1,18 +1,21 @@
 import type { ReactNode } from "react";
 import BlockView from "@/features/events/BlockView";
 import { youtubeIdFromUrl } from "@/lib/firestore/newsletterBlocks";
-import type { CourseWeekDoc, Material } from "@/lib/firestore/courses";
+import type { ChecklistItem, CourseWeekDoc, Material } from "@/lib/firestore/courses";
 import styles from "./WeekCurriculum.module.css";
 
 /**
  * The shared week-curriculum spine: guide → materials → exercises → checklist.
  *
  * Rendered on BOTH the public week page (`/courses/[courseId]/weeks/[week]`)
- * and — later — the member learning space, which passes `renderMaterialAction`
- * to hang its check-off control off each material row. Everything here is
- * strictly presentational and server-safe (no `"use client"`, no hooks, no
- * event handlers) so the public page can stay an async Server Component; all
- * interactivity arrives through the render prop.
+ * and the member learning space, which passes the render props below to hang
+ * its check-off controls, reflection panel and cohort-notes lane off each
+ * row. Everything here is strictly presentational and server-safe (no
+ * `"use client"`, no hooks, no event handlers) so the public page can stay an
+ * async Server Component; all interactivity arrives through the render props.
+ * When EVERY optional prop is absent the rendered output is byte-identical to
+ * the public page as originally shipped — that is a contract, not a
+ * coincidence: the public catalogue is SEO-critical and diff-frozen.
  *
  * XSS boundary: the ONLY `dangerouslySetInnerHTML` in the week body lives
  * inside `BlockView`, and only for guide blocks — trusted content authored by
@@ -28,6 +31,30 @@ type Props = {
    * where materials are plain outbound links.
    */
   renderMaterialAction?: (material: Material) => ReactNode;
+  /**
+   * Optional full-width block rendered under a material row (after the note
+   * body / video embed) — the member surface's reflection panel and
+   * cohort-notes disclosure. Return null to render nothing for a material.
+   */
+  renderMaterialExtra?: (material: Material) => ReactNode;
+  /**
+   * Optional replacement for the decorative checklist tick box — the member
+   * surface's real check-off button. The public page keeps the inert span.
+   */
+  renderChecklistAction?: (item: ChecklistItem) => ReactNode;
+  /**
+   * Optional extra class(es) merged onto a material's <li> — how the member
+   * surface applies its completed/wash/error row states from its own CSS
+   * module. WeekView.module.css targets the row's title through this class
+   * with STRUCTURAL selectors (li > first div > div > a/span), so the row's
+   * DOM shape below is load-bearing for it; change one, check the other.
+   */
+  materialClassName?: (material: Material) => string | undefined;
+  /**
+   * Optional node appended inside the exercises section — the member
+   * surface's "submitting opens soon" line. Absent on the public page.
+   */
+  exercisesFooter?: ReactNode;
 };
 
 const KIND_LABEL: Record<Material["type"], string> = {
@@ -63,7 +90,14 @@ function materialMeta(m: Material): string[] {
   return parts;
 }
 
-export default function WeekCurriculum({ week, renderMaterialAction }: Props) {
+export default function WeekCurriculum({
+  week,
+  renderMaterialAction,
+  renderMaterialExtra,
+  renderChecklistAction,
+  materialClassName,
+  exercisesFooter,
+}: Props) {
   const hasGuide = week.guideBlocks.length > 0;
   const hasMaterials = week.materials.length > 0;
   const hasExercises = week.exercises.length > 0;
@@ -96,6 +130,8 @@ export default function WeekCurriculum({ week, renderMaterialAction }: Props) {
                 key={m.id}
                 material={m}
                 action={renderMaterialAction?.(m)}
+                extra={renderMaterialExtra?.(m)}
+                extraClassName={materialClassName?.(m)}
               />
             ))}
           </ul>
@@ -125,6 +161,7 @@ export default function WeekCurriculum({ week, renderMaterialAction }: Props) {
               </li>
             ))}
           </ol>
+          {exercisesFooter}
         </section>
       )}
 
@@ -136,7 +173,11 @@ export default function WeekCurriculum({ week, renderMaterialAction }: Props) {
           <ul className={styles.checklist}>
             {week.checklist.map((c) => (
               <li key={c.id} className={styles.checkItem}>
-                <span className={styles.checkBox} aria-hidden="true" />
+                {renderChecklistAction ? (
+                  <div className={styles.checkAction}>{renderChecklistAction(c)}</div>
+                ) : (
+                  <span className={styles.checkBox} aria-hidden="true" />
+                )}
                 <div className={styles.checkText}>
                   <p className={styles.checkTitle}>{c.title}</p>
                   {c.detail && <p className={styles.checkDetail}>{c.detail}</p>}
@@ -153,9 +194,13 @@ export default function WeekCurriculum({ week, renderMaterialAction }: Props) {
 function MaterialRow({
   material,
   action,
+  extra,
+  extraClassName,
 }: {
   material: Material;
   action: ReactNode | undefined;
+  extra: ReactNode | undefined;
+  extraClassName: string | undefined;
 }) {
   const href = "url" in material ? safeHttpUrl(material.url) : null;
   const meta = materialMeta(material);
@@ -166,7 +211,15 @@ function MaterialRow({
   const title = material.title || "Untitled";
 
   return (
-    <li className={styles.materialItem}>
+    // STRUCTURAL CONTRACT with WeekView.module.css (via `materialClassName`):
+    // the row div is this li's first child, and the title is the only <a>
+    // (or the direct span child of its inner div) under it. Reordering the
+    // children below breaks the member surface's completed-title styling.
+    <li
+      className={
+        extraClassName ? `${styles.materialItem} ${extraClassName}` : styles.materialItem
+      }
+    >
       <div className={styles.materialRow}>
         {action !== undefined && <div className={styles.materialAction}>{action}</div>}
         <span className={styles.kindChip} data-kind={material.type}>
@@ -211,6 +264,8 @@ function MaterialRow({
           />
         </div>
       )}
+
+      {extra ? <div className={styles.materialExtra}>{extra}</div> : null}
     </li>
   );
 }

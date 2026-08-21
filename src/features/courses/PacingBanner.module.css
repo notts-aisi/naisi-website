@@ -1,0 +1,121 @@
+/* ============================================================
+   PacingBanner — the "where is my cohort" note on the week page.
+
+   Two tones only: neutral and success. NEVER danger — pacing is
+   information, not an alarm (plan: Placement map — Week page).
+   Opens via the grid-rows 0fr→1fr track, one of the two named
+   exceptions to compositor-only animation, always paired with
+   min-height: 0 + overflow: hidden on the inner element.
+   ============================================================ */
+
+.shell {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-panel) var(--ease-naisi);
+}
+
+.shellOpen {
+  grid-template-rows: 1fr;
+}
+
+.inner {
+  /* The grid-row track does the height; this element clips the content
+     while it is in the closed (0fr) row.
+     - `min-height: 0` overrides the default `min-height: auto` on grid
+       items, which is the bit that prevents the track from actually
+       shrinking past content size. Without this, the panel "collapses"
+       visually but a sliver of the first item leaks through.
+     - `overflow: hidden` then clips whatever natural height the inner
+       content has during the transition so it doesn't paint outside the
+       track. */
+  min-height: 0;
+  overflow: hidden;
+}
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-6);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  font-size: var(--text-sm);
+}
+
+.neutral {
+  color: var(--color-text-muted);
+}
+
+.success {
+  border-color: var(--color-success);
+  background: var(--color-success-soft);
+  color: var(--color-text);
+}
+
+.text {
+  flex: 1;
+  margin: 0;
+  line-height: 1.6;
+}
+
+.jump {
+  margin-left: var(--space-2);
+  color: var(--color-accent);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.jump:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.dismiss {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  margin: -0.4rem -0.5rem -0.4rem 0; /* overhang the padding, keep the box */
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: var(--radius-md);
+  color: var(--color-text-subtle);
+  font-size: var(--text-sm);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dismiss:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+
+.dismiss:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* === Reduced motion ===================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  /* The token belt already collapses --dur-panel to 1ms; stated here per
+     house convention so this module's answer is explicit. */
+  .shell {
+    transition-duration: 1ms;
+  }
+}
+
+/* === Mobile ============================================= */
+
+@media (max-width: 48rem) { /* --bp-md */
+  /* Touch floor is enforced below --bp-md (docs/touch-targets.md). */
+  .dismiss {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}

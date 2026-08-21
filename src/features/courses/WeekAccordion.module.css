@@ -7,13 +7,13 @@
    hero and a CTA panel, and a third boxed surface would flatten
    the hierarchy.
 
-   Animation: grid-template-rows 0fr → 1fr so the panel sizes to
-   its content without a max-height guess.
+   Animation: the collapse lives in ui/Accordion.module.css
+   (grid-template-rows 0fr → 1fr); this module styles the row and
+   the panel contents only.
 
    Spacing note: --space-7 does NOT exist in tokens.css (the scale
-   jumps 6 → 8). ReadingListAccordion references it and silently
-   collapses that padding to 0; this module uses --space-6 /
-   --space-8 so the rhythm is what it looks like.
+   jumps 6 → 8), so this module uses --space-6 / --space-8 and the
+   rhythm is what it looks like.
    ============================================================ */
 
 .empty {
@@ -139,32 +139,7 @@
   background: var(--color-accent-soft);
 }
 
-/* === Collapsing panel === */
-
-.panel {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 280ms cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-
-.panelOpen {
-  grid-template-rows: 1fr;
-}
-
-.panelInner {
-  /* The grid track does the height; this element clips content while the row
-     is at 0fr.
-     - `min-height: 0` overrides the default `min-height: auto` on grid items,
-       which is what otherwise stops the track shrinking below content size
-       (without it a sliver of the first item leaks through).
-     - `overflow: hidden` clips the natural content height during the
-       transition so it can't paint outside the track. */
-  min-height: 0;
-  overflow: hidden;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .panel,
   .indicator {
     transition: none;
   }
@@ -172,8 +147,8 @@
 
 /* === Panel contents === */
 
-/* Block padding lives on the inner blocks rather than .panelInner so it
-   doesn't contribute to the collapsed track height. */
+/* Block padding lives on the inner blocks rather than Accordion's .panelInner
+   so it doesn't contribute to the collapsed track height. */
 .summaryLine {
   margin: 0;
   padding: var(--space-2) var(--space-2) 0;

@@ -1,5 +1,6 @@
 import { getCurrentUser } from "@/lib/firebase/session";
 import Badge from "@/components/ui/Badge";
+import MyCoursesSummary from "@/features/courses/MyCoursesSummary";
 import MyWorkSummary from "@/features/tasks/components/MyWorkSummary";
 
 export default async function DashboardPage() {
@@ -17,6 +18,7 @@ export default async function DashboardPage() {
         </p>
       </div>
 
+      <MyCoursesSummary />
       <MyWorkSummary />
     </div>
   );

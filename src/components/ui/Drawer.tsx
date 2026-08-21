@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 import styles from "./Drawer.module.css";
 
 const subscribe = () => () => {};
@@ -47,27 +48,7 @@ export default function Drawer({
   // shape for this (vs. useState+useEffect, which trips set-state-in-effect).
   const isClient = useSyncExternalStore(subscribe, getClientSnapshot, getServerSnapshot);
 
-  // iOS-safe body scroll lock: pin body via `position: fixed; top: -scrollY`.
-  // `overflow: hidden` on <html> alone does not stop touch-scroll on iOS.
-  useEffect(() => {
-    if (!open) return;
-    const scrollY = window.scrollY;
-    const body = document.body;
-    const previous = {
-      position: body.style.position,
-      top: body.style.top,
-      width: body.style.width,
-    };
-    body.style.position = "fixed";
-    body.style.top = `-${scrollY}px`;
-    body.style.width = "100%";
-    return () => {
-      body.style.position = previous.position;
-      body.style.top = previous.top;
-      body.style.width = previous.width;
-      window.scrollTo(0, scrollY);
-    };
-  }, [open]);
+  useBodyScrollLock(open);
 
   // Esc to close.
   useEffect(() => {
@@ -80,7 +61,10 @@ export default function Drawer({
   }, [open, onClose]);
 
   // Focus the first interactive child on open; restore the previously
-  // focused element on close (the hamburger button, typically).
+  // focused element on close (the hamburger button, typically). Deliberately
+  // no Tab trap: the drawer IS the page on the viewports it appears at, and
+  // tabbing off the end into the browser chrome is the expected escape. Modal
+  // traps because it overlays a page that stays visible behind it.
   useEffect(() => {
     if (open) {
       previouslyFocused.current = document.activeElement as HTMLElement | null;

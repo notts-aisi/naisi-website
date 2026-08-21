@@ -1,0 +1,111 @@
+/* ============================================================
+   /learn — the hub. Every run the member touches.
+
+   Modest by design: the hub's job is to get out of the way, so
+   the only motion is a page entrance (PageEnter) plus a short
+   per-card stagger. The bold moment lives one route deeper, on
+   the run home's WeekRail draw.
+   ============================================================ */
+
+.header {
+  margin-bottom: var(--space-10);
+}
+
+.title {
+  margin-top: var(--space-3);
+}
+
+.lede {
+  margin-top: var(--space-2);
+  color: var(--color-text-muted);
+}
+
+/* auto-FILL, not auto-fit: a member on one course gets a card the width of a
+   card, not one stretched across the whole main column. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The cell, not the card, is the grid item — RunCard's <a> is display:block
+   and would leave short cards short of their row. `display: grid` makes the
+   anchor stretch, which is what lets RunCard's own `height: 100%` land. */
+.cell {
+  display: grid;
+  /* `both` so the from-state holds through the delay; without it a staggered
+     card paints at full opacity, then jumps back to start when its turn
+     comes. */
+  animation: cardIn var(--dur-enter) var(--ease-naisi) both;
+  animation-delay: calc(var(--card-index, 0) * var(--stagger-card));
+}
+
+@keyframes cardIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.error {
+  color: var(--color-text-muted);
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+/* Button-styled anchor: <Button> renders a real <button> and takes no href,
+   so a navigation target gets the styling rather than the component (the
+   CourseCTA precedent). Values duplicated here rather than imported from
+   Button's module — a page reaching into a component's class names couples
+   the two far harder than a dozen token reads do. */
+.browse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 44px floor (docs/touch-targets.md). */
+  min-height: 2.75rem;
+  padding: 0.6rem 1.1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: var(--color-accent);
+  color: #fff;
+  font-size: var(--text-base);
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+  transition: background var(--transition-fast);
+}
+
+.browse:hover {
+  background: var(--color-accent-hover);
+}
+
+.browse:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The token belt zeroes durations but NOT stagger steps, so a delay would
+     survive as a stack of cards appearing one by one with no motion — worse
+     than no animation at all. Kill the whole thing. */
+  .cell {
+    animation: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .header {
+    margin-bottom: var(--space-8);
+  }
+
+  /* One column below the card's own minimum, so a 320px viewport never gets
+     a card narrower than its content. */
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

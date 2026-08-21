@@ -1,0 +1,50 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useInViewOnce } from "@/hooks/useInViewOnce";
+import styles from "./DigitRoll.module.css";
+
+/*
+  DigitRoll — parses a leading number from `value` and animates each digit
+  position independently from 0 → target on enter view (rolodex feel).
+  Any non-numeric suffix renders static.
+
+  Reduced motion → renders the value as plain text.
+*/
+export default function DigitRoll({ value }: { value: string }) {
+  const { ref, inView } = useInViewOnce<HTMLSpanElement>();
+  const [reduced, setReduced] = useState(false);
+
+  // Cheap enough to run per render — the React Compiler memoizes it, and a
+  // manual useMemo here defeated its compilation of the whole component.
+  const match = value.match(/^(\d+)(.*)$/);
+  const digits = match ? match[1].split("") : null;
+  const suffix = match ? match[2] : value;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    // Deliberate SSR-hydration pattern: the server can't know the media
+    // query, so the first client render must match it and flip after mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setReduced(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }, []);
+
+  if (!digits || reduced) {
+    return <span ref={ref}>{value}</span>;
+  }
+
+  return (
+    <span ref={ref} className={styles.roll}>
+      {digits.map((d, i) => (
+        <span key={i} className={styles.barrel} style={{ "--barrel-delay": `${i * 80}ms` } as React.CSSProperties}>
+          <span className={`${styles.column} ${inView ? styles.settled : ""}`} style={{ "--target": d } as React.CSSProperties}>
+            {Array.from({ length: 10 }, (_, n) => (
+              <span key={n} className={styles.digit}>{n}</span>
+            ))}
+          </span>
+        </span>
+      ))}
+      {suffix && <span className={styles.suffix}>{suffix}</span>}
+    </span>
+  );
+}

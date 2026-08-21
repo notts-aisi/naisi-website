@@ -1,7 +1,8 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
+import Accordion from "@/components/ui/Accordion";
 import type { CourseWeekDoc, Material } from "@/lib/firestore/courses";
 import styles from "./WeekAccordion.module.css";
 
@@ -15,13 +16,10 @@ type Props = {
  * The curriculum browser on a public course page: one collapsed row per week,
  * expanding to the week's material titles and a link through to the full week.
  *
- * Animation is `grid-template-rows` 0fr → 1fr, the same technique as
- * ReadingListAccordion (content-height-aware, no max-height guess). That
- * component is deliberately NOT reused or generalised here — the shared
- * `Accordion` extraction is scheduled with the learning space, and pulling it
- * forward would land a shared primitive in a PR that can't exercise its other
- * two consumers. See WeekAccordion.module.css for the min-height/overflow pair
- * the technique depends on.
+ * The button/panel pair and its `grid-template-rows` 0fr → 1fr collapse come
+ * from the shared `ui/Accordion`; this file owns the row styling and the panel
+ * contents. Open state stays here because the material links and the
+ * read-the-week link need it to leave the tab order while collapsed.
  */
 export default function WeekAccordion({ courseId, weeks }: Props) {
   if (weeks.length === 0) {
@@ -44,9 +42,6 @@ export default function WeekAccordion({ courseId, weeks }: Props) {
 
 function WeekRow({ courseId, week }: { courseId: string; week: CourseWeekDoc }) {
   const [open, setOpen] = useState(false);
-  const reactId = useId();
-  const panelId = `week-panel-${reactId}`;
-  const buttonId = `week-button-${reactId}`;
 
   const meta = [formatMinutes(week.estimatedMinutes), countLabel(week.materials.length)]
     .filter(Boolean)
@@ -54,82 +49,72 @@ function WeekRow({ courseId, week }: { courseId: string; week: CourseWeekDoc }) 
 
   return (
     <li className={styles.row}>
-      <button
-        type="button"
-        id={buttonId}
-        className={styles.summary}
-        aria-expanded={open}
-        aria-controls={panelId}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className={styles.summaryText}>
-          <span className={styles.summaryTitle}>
-            <span className={styles.weekNumber}>Week {week.weekNumber}</span>
-            {week.title ? (
-              <>
-                <span aria-hidden="true" className={styles.dot}>
-                  ·
-                </span>
-                <span>{week.title}</span>
-              </>
-            ) : null}
-          </span>
-          {meta ? <span className={styles.summaryMeta}>{meta}</span> : null}
-        </span>
-        <span
-          className={`${styles.indicator} ${open ? styles.indicatorOpen : ""}`}
-          aria-hidden="true"
-        >
-          {/* Chevron drawn as one polyline so the rotation stays centred and
-              reads as a single element paused mid-animation. */}
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path
-              d="M3 5 L7 9 L11 5"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </span>
-      </button>
-
-      <div
-        id={panelId}
-        role="region"
-        aria-labelledby={buttonId}
-        aria-hidden={!open}
-        className={`${styles.panel} ${open ? styles.panelOpen : ""}`}
-      >
-        <div className={styles.panelInner}>
-          {week.summary ? <p className={styles.summaryLine}>{week.summary}</p> : null}
-
-          {week.materials.length > 0 ? (
-            <ul className={styles.materials}>
-              {week.materials.map((m) => (
-                <li key={m.id} className={styles.material}>
-                  <MaterialTeaser material={m} tabbable={open} />
-                </li>
-              ))}
-            </ul>
-          ) : null}
-
-          <p className={styles.more}>
-            <Link
-              href={`/courses/${courseId}/weeks/${week.weekNumber}`}
-              className={styles.moreLink}
-              // Collapsed panels stay out of the tab order, matching the
-              // material links above.
-              tabIndex={open ? 0 : -1}
-            >
-              Read the full week
-              <span aria-hidden="true" className={styles.arrow}>
-                →
+      <Accordion
+        open={open}
+        onToggle={() => setOpen((v) => !v)}
+        summaryClassName={styles.summary}
+        summary={
+          <>
+            <span className={styles.summaryText}>
+              <span className={styles.summaryTitle}>
+                <span className={styles.weekNumber}>Week {week.weekNumber}</span>
+                {week.title ? (
+                  <>
+                    <span aria-hidden="true" className={styles.dot}>
+                      ·
+                    </span>
+                    <span>{week.title}</span>
+                  </>
+                ) : null}
               </span>
-            </Link>
-          </p>
-        </div>
-      </div>
+              {meta ? <span className={styles.summaryMeta}>{meta}</span> : null}
+            </span>
+            <span
+              className={`${styles.indicator} ${open ? styles.indicatorOpen : ""}`}
+              aria-hidden="true"
+            >
+              {/* Chevron drawn as one polyline so the rotation stays centred and
+                  reads as a single element paused mid-animation. */}
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path
+                  d="M3 5 L7 9 L11 5"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </span>
+          </>
+        }
+      >
+        {week.summary ? <p className={styles.summaryLine}>{week.summary}</p> : null}
+
+        {week.materials.length > 0 ? (
+          <ul className={styles.materials}>
+            {week.materials.map((m) => (
+              <li key={m.id} className={styles.material}>
+                <MaterialTeaser material={m} tabbable={open} />
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        <p className={styles.more}>
+          <Link
+            href={`/courses/${courseId}/weeks/${week.weekNumber}`}
+            className={styles.moreLink}
+            // Collapsed panels stay out of the tab order, matching the
+            // material links above.
+            tabIndex={open ? 0 : -1}
+          >
+            Read the full week
+            <span aria-hidden="true" className={styles.arrow}>
+              →
+            </span>
+          </Link>
+        </p>
+      </Accordion>
     </li>
   );
 }

@@ -1,0 +1,88 @@
+/* Chip — the CSS-module chip primitive. Badge now delegates here, so the
+   `.md` values below are Badge's former inline-style block verbatim: any drift
+   is a silent visual regression across every existing Badge callsite. What the
+   move buys is everything inline styles cannot express — hover, focus-visible,
+   and media queries — which is why the courses surfaces (three chip families
+   across five screens) needed it. */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  /* Ring via inset shadow, never a border: a 1px border would change every
+     existing Badge's box size by 2px. */
+  transition: box-shadow var(--dur-quick) var(--ease-naisi);
+}
+
+/* === Sizes ===
+   The type stays at --text-xs in both — it is the floor of the scale and a
+   chip below it stops being legible. `sm` trims padding only. */
+
+.md {
+  padding: 0.2rem 0.55rem;
+}
+
+.sm {
+  padding: 0.1rem 0.45rem;
+}
+
+/* === Tones (bg/fg pairs are Badge's, unchanged) === */
+
+.neutral {
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+}
+
+.accent {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.success {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.danger {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.warning {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+/* === Interaction ===
+   Hover is opt-in through `data-interactive="true"` (passed as a rest prop by
+   chips that are themselves controls, e.g. filter strips). It is NOT inherited
+   from a clickable ancestor: several Badge callsites sit inside interactive
+   Cards, and a blanket `a:hover .chip` rule would be a visual change on
+   surfaces this refactor promised not to touch. */
+
+.chip[data-interactive="true"] {
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .chip[data-interactive="true"]:hover {
+    box-shadow: inset 0 0 0 1px currentColor;
+  }
+}
+
+/* Applies only when a consumer makes the span focusable (tabIndex); a plain
+   chip is not in the tab order, so this is dormant for existing callsites. */
+.chip:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* No mobile overrides: chips are already sized by the type scale, and
+     shrinking them further would drop them under the legibility floor. */
+}
