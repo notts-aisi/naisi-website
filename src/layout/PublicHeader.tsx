@@ -13,6 +13,7 @@ import { signOut } from "@/auth/signInWithGoogle";
 import styles from "./PublicHeader.module.css";
 
 const NAV = [
+  { label: "Courses", href: "/courses" },
   { label: "Members", href: "/members" },
   { label: "Resources", href: "/resources" },
   { label: "News", href: "/news" },

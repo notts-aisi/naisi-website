@@ -1,0 +1,117 @@
+/* ============================================================
+   CourseCTA — the apply prompt on a public course page.
+
+   Two placements share one block: `hero` sits tight under the
+   course title, `foot` closes the page inside a bordered panel.
+   Deliberately small — the page's weight lives in the curriculum,
+   not in a banner.
+   ============================================================ */
+
+.cta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.hero {
+  margin-top: var(--space-6);
+}
+
+.foot {
+  margin-top: var(--space-12);
+  padding: var(--space-8);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+}
+
+.line {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text);
+}
+
+.open {
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+  max-width: 36rem;
+}
+
+/* Anchor styled as the primary action. <Button> renders a real <button> and
+   takes no href, so navigation targets get the styling rather than the
+   component — the same call the public landing CTAs make. */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 44px floor — public surface, enforced (docs/touch-targets.md). */
+  min-height: 2.75rem;
+  padding: 0.7rem 1.35rem;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: var(--color-accent);
+  color: #fff;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  text-decoration: none;
+  transition:
+    background var(--transition-base),
+    transform var(--transition-fast),
+    box-shadow var(--transition-base);
+}
+
+.button:hover {
+  background: var(--color-accent-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.button:active {
+  transform: translateY(0);
+}
+
+.button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.inlineLink {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.inlineLink:hover {
+  color: var(--color-accent-hover);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button {
+    transition: background var(--transition-base);
+  }
+  .button:hover {
+    transform: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .foot {
+    margin-top: var(--space-10);
+    padding: var(--space-6);
+  }
+  .button {
+    /* Full-bleed tap target on phones — the CTA is the page's one action. */
+    width: 100%;
+  }
+}
