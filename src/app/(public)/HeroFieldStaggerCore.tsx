@@ -489,7 +489,8 @@ export default function HeroFieldStaggerCore(config: StaggerConfig) {
     for (let s = 0; s < STREAM_COUNT; s++) {
       lastBurstAtPerStream.push(startT - BURST_INTERVAL_MS + (s * BURST_INTERVAL_MS / STREAM_COUNT));
     }
-    let frame = 0, visible = true;
+    let frame = 0;
+    const visible = true;
 
     const flowAt = (x: number, y: number, t: number) => ({
       x: (Math.sin(x * FLOW_SCALE_X + t * FLOW_TIME)

@@ -47,9 +47,11 @@ export default function TypewriterText({
   const [isTypingNew, setIsTypingNew] = useState(false);
   const displayedRef = useRef("");
   const onSettledRef = useRef(onSettled);
-  onSettledRef.current = onSettled;
   const onTypingCompleteRef = useRef(onTypingComplete);
-  onTypingCompleteRef.current = onTypingComplete;
+  useEffect(() => {
+    onSettledRef.current = onSettled;
+    onTypingCompleteRef.current = onTypingComplete;
+  });
 
   useEffect(() => {
     let cancelled = false;

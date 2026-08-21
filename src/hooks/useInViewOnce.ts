@@ -21,6 +21,8 @@ export function useInViewOnce<T extends HTMLElement>(
     if (!node || inView) return;
 
     if (typeof IntersectionObserver === "undefined") {
+      // Ancient-browser fallback: reveal immediately rather than never.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setInView(true);
       return;
     }

@@ -39,17 +39,22 @@ export default function GoogleSignInButton({
   // updates (state-dependent routing logic in the caller wouldn't see
   // current state).
   const onCredentialRef = useRef(onCredential);
-  onCredentialRef.current = onCredential;
   const onReadyRef = useRef(onReady);
-  onReadyRef.current = onReady;
+  useEffect(() => {
+    onCredentialRef.current = onCredential;
+    onReadyRef.current = onReady;
+  });
 
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  // A missing client id is a build-time misconfiguration, so the button
+  // can start in the error state instead of flashing "Loading sign-in…".
+  const [status, setStatus] = useState<"loading" | "ready" | "error">(
+    CLIENT_ID ? "loading" : "error",
+  );
 
   useEffect(() => {
     if (!CLIENT_ID) {
       warn("[gsi] NEXT_PUBLIC_GOOGLE_CLIENT_ID is unset — button cannot render");
       onScriptError?.("Sign-in is misconfigured. Please contact support.");
-      setStatus("error");
       onReadyRef.current?.();
       return;
     }
