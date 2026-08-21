@@ -24,8 +24,8 @@ import {
   type CourseRunDoc,
   type CourseRunStatus,
 } from "@/lib/firestore/courses";
-import { setRunStatus, updateRun } from "./courseMutations";
-import { useCourseGroups } from "./useAdminCourses";
+import { cloneWeeksFromRun, setRunStatus, updateRun } from "./courseMutations";
+import { useCourseGroups, useCourseRuns, useCourseWeeks } from "./useAdminCourses";
 import GroupEditor, { NewGroupForm } from "./GroupEditor";
 import RolePickers from "./RolePickers";
 import WeekPlanBuilder from "./WeekPlanBuilder";
@@ -140,6 +140,19 @@ export default function RunEditor({ courseId, runId }: Props) {
     error: groupsError,
     reload: reloadGroups,
   } = useCourseGroups(runId);
+  const {
+    items: weeks,
+    loading: weeksLoading,
+    refreshing: weeksRefreshing,
+    error: weeksError,
+    reload: reloadWeeks,
+  } = useCourseWeeks(runId);
+  // The course's other runs, for copy-forward. Keyed on the RUN's courseId
+  // rather than the URL's: if the two disagree (the warning below), the only
+  // runs worth offering are the ones the clone route would actually accept.
+  const { items: courseRuns, loading: courseRunsLoading } = useCourseRuns(
+    run?.courseId ?? courseId,
+  );
 
   // ---- Run details ----
   const [label, setLabel] = useState("");
@@ -152,6 +165,11 @@ export default function RunEditor({ courseId, runId }: Props) {
   const [closeAt, setCloseAt] = useState<Date | null>(null);
   const [cap, setCap] = useState("");
   const [applicationsError, setApplicationsError] = useState<string | null>(null);
+
+  // ---- Weeks / copy-forward ----
+  const [copyFromRunId, setCopyFromRunId] = useState("");
+  const [copyOverwrite, setCopyOverwrite] = useState(false);
+  const [copySummary, setCopySummary] = useState<string | null>(null);
 
   // ---- Groups ----
   // Archived groups are shown by default, greyed rather than hidden: that is
@@ -216,6 +234,15 @@ export default function RunEditor({ courseId, runId }: Props) {
   const allowedStatuses = RUN_STATUS_TRANSITIONS[currentStatus];
   const visibleGroups = groups.filter((g) => (showArchived ? true : !g.archived));
   const counts = run.applicationCounts;
+
+  // The taught slots of the SAVED plan — the week rows below are the plan's
+  // rows, not the subcollection's, because the plan is what the cohort is paced
+  // by. A week doc with no slot is surfaced separately rather than listed.
+  const plannedWeeks = run.weekPlan.flatMap((e) => (e.kind === "week" ? [e] : []));
+  const weekById = new Map(weeks.map((w) => [w.id, w] as const));
+  const plannedIds = new Set(plannedWeeks.map((e) => e.weekId));
+  const orphanWeeks = weeks.filter((w) => !plannedIds.has(w.id));
+  const otherRuns = courseRuns.filter((r) => r.id !== runId);
 
   async function saveMeta() {
     const trimmedLabel = label.trim();
@@ -282,6 +309,31 @@ export default function RunEditor({ courseId, runId }: Props) {
       },
     );
     if (ok) reload();
+  }
+
+  async function copyWeeks() {
+    if (!copyFromRunId) return;
+    // Held on an object, not a `let`: TypeScript keeps a plain local narrowed to
+    // its initialiser across the await (it can't see that the closure ran),
+    // whereas a property read after a call re-widens to its declared type.
+    const outcome: { summary: string | null } = { summary: null };
+    await runAction(
+      async () => {
+        const res = await cloneWeeksFromRun(runId, copyFromRunId, copyOverwrite);
+        outcome.summary =
+          `Copied ${res.created} week${res.created === 1 ? "" : "s"}` +
+          (res.skipped > 0
+            ? ` · skipped ${res.skipped} that already existed here.`
+            : ".");
+      },
+      { savingMessage: "Copying weeks…", successMessage: "Weeks copied" },
+    );
+    // The toast's wording is fixed before the route answers, so the counts land
+    // here — where they also survive the toast auto-dismissing.
+    if (outcome.summary) {
+      setCopySummary(outcome.summary);
+      reloadWeeks();
+    }
   }
 
   async function changeStatus(next: CourseRunStatus) {
@@ -488,6 +540,136 @@ export default function RunEditor({ courseId, runId }: Props) {
           runAction={runAction}
           onSaved={reload}
         />
+      </Card>
+
+      {/* ---- Weeks ---- */}
+      <Card padding="lg">
+        <div className={styles.sectionHeader}>
+          <h3 className={styles.sectionTitle}>Weeks</h3>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={reloadWeeks}
+            disabled={weeksRefreshing}
+          >
+            {weeksRefreshing ? "Refreshing…" : "Refresh"}
+          </Button>
+        </div>
+        <p className={styles.hint}>
+          One row per taught slot in the saved week plan. Content belongs to the
+          week, not the plan — reordering slots above moves the calendar without
+          moving anyone&apos;s curriculum or progress.
+        </p>
+
+        {weeksError && (
+          <p className={styles.error}>
+            Couldn&apos;t load this run&apos;s weeks: {weeksError.message}
+          </p>
+        )}
+        {weeksLoading && <AdminLoadingBar label="Loading weeks…" />}
+
+        {!weeksLoading && plannedWeeks.length === 0 && (
+          <p className={styles.hint}>
+            No taught weeks in the plan yet — add week slots above, then author
+            them here.
+          </p>
+        )}
+
+        {plannedWeeks.length > 0 && (
+          <ul className={styles.weekRows}>
+            {plannedWeeks.map((entry) => {
+              const week = weekById.get(entry.weekId);
+              return (
+                <li key={entry.weekId} className={styles.weekRow}>
+                  <span className={styles.weekName}>
+                    Week {entry.weekNumber}
+                    <span className={styles.weekId}>{entry.weekId}</span>
+                  </span>
+                  <span
+                    className={
+                      week?.title ? styles.weekTitle : styles.weekTitleEmpty
+                    }
+                  >
+                    {week?.title || "No content yet"}
+                  </span>
+                  <Badge
+                    tone={week?.published ? "success" : "neutral"}
+                    className={styles.weekBadge}
+                  >
+                    {week?.published ? "Published" : "Unpublished"}
+                  </Badge>
+                  <Link
+                    href={`/admin/courses/${encodeURIComponent(courseId)}/runs/${encodeURIComponent(runId)}/weeks/${encodeURIComponent(entry.weekId)}`}
+                    className={styles.weekLink}
+                  >
+                    Edit content →
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {orphanWeeks.length > 0 && (
+          <p className={styles.hint}>
+            {orphanWeeks.length} authored week
+            {orphanWeeks.length === 1 ? " has" : "s have"} no slot in the plan
+            ({orphanWeeks.map((w) => w.id).join(", ")}). Their content is safe —
+            add a week slot above to bring{" "}
+            {orphanWeeks.length === 1 ? "it" : "them"} back into the calendar.
+          </p>
+        )}
+
+        {/* ---- Copy forward ---- */}
+        <div className={styles.copyForward}>
+          <h4 className={styles.subTitle}>Copy weeks from another run</h4>
+          <p className={styles.hint}>
+            There is no curriculum template — the most recent run is the master.
+            Copying keeps week ids and every material, exercise and checklist id,
+            so progress on a re-run still lines up with the item it belongs to.
+          </p>
+
+          {courseRunsLoading ? (
+            <AdminLoadingBar label="Loading runs…" />
+          ) : otherRuns.length === 0 ? (
+            <p className={styles.hint}>
+              This is the only run of this course, so there is nothing to copy
+              from yet.
+            </p>
+          ) : (
+            <>
+              <div className={styles.copyRow}>
+                <span className={styles.copySelect}>
+                  <ResponsiveSelect
+                    value={copyFromRunId}
+                    onChange={setCopyFromRunId}
+                    options={[
+                      { value: "", label: "Choose a run…" },
+                      ...otherRuns.map((r) => ({
+                        value: r.id,
+                        label: r.academicYear
+                          ? `${r.label || r.id} · ${r.academicYear}`
+                          : r.label || r.id,
+                      })),
+                    ]}
+                    ariaLabel="Copy weeks from run"
+                  />
+                </span>
+                <Switch
+                  checked={copyOverwrite}
+                  onChange={setCopyOverwrite}
+                  label="Overwrite"
+                  description="replace weeks that already exist here"
+                />
+                <Button type="button" onClick={copyWeeks} disabled={!copyFromRunId}>
+                  Copy weeks
+                </Button>
+              </div>
+              {copySummary && <p className={styles.muted}>{copySummary}</p>}
+            </>
+          )}
+        </div>
       </Card>
 
       {/* ---- Groups ---- */}

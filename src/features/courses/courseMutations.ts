@@ -3,6 +3,7 @@
 import {
   collection,
   doc,
+  getDoc,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -16,9 +17,13 @@ import {
   COURSE_FIELD_LIMITS,
   EMPTY_APPLICATION_COUNTS,
   courseRunChannel,
+  type ChecklistItem,
   type CourseRunStatus,
   type CourseStatus,
   type CourseTrack,
+  type CourseWeekDoc,
+  type Exercise,
+  type Material,
 } from "@/lib/firestore/courses";
 import {
   GROUP_FIELD_LIMITS,
@@ -455,21 +460,27 @@ export async function setGroupArchived(
 
 // ---- Route-backed helpers ----
 
-/** House shape: read `{ error }` off a failed response, else a generic fallback. */
-async function postJson(
+/**
+ * House shape: read `{ error }` off a failed response, else a generic fallback.
+ * The parsed body is returned so the handful of routes that answer with a
+ * result (clone-weeks' counts) don't need a second, near-identical helper;
+ * callers that ignore it leave `T` at its `void` default.
+ */
+async function postJson<T = void>(
   url: string,
   body: unknown,
   fallback: string,
-): Promise<void> {
+): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  const parsed = (await res.json().catch(() => ({}))) as { error?: string };
   if (!res.ok) {
-    const parsed = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(parsed.error ?? fallback);
   }
+  return parsed as unknown as T;
 }
 
 export type RunRoleAssignment = {
@@ -536,4 +547,156 @@ export async function publishCourse(
     { showcaseRunId },
     "Couldn't publish this course.",
   );
+}
+
+// ---- Weeks (curriculum content) ----
+
+/**
+ * A week doc id: "w01".."w60". Mirrored from firestore.rules
+ * (`weekId.matches('^w[0-9][0-9]$')`) so a typo'd id fails here with a readable
+ * message instead of as a permission-denied write.
+ */
+const WEEK_ID_PATTERN = /^w\d\d$/;
+
+function assertWeekAddress(weekId: string, weekNumber: number): number {
+  if (!WEEK_ID_PATTERN.test(weekId)) {
+    throw new Error(`"${weekId}" isn't a week id (expected w01–w60).`);
+  }
+  const n = Math.floor(weekNumber);
+  if (!Number.isFinite(n) || n < 1 || n > COURSE_FIELD_LIMITS.maxWeekPlanEntries) {
+    throw new Error("Week number must be between 1 and 60.");
+  }
+  return n;
+}
+
+/**
+ * Create the `courseRuns/{runId}/weeks/{weekId}` doc if it isn't there yet, and
+ * do nothing at all if it is. The week editor calls this on open: the week plan
+ * mints slots (`weekId`s) long before anyone authors them, so the editor has to
+ * be able to open a slot that has no document behind it.
+ *
+ * Every field is written in its empty-but-present state so the doc satisfies
+ * the rules' shape checks from the first byte and every later `saveWeek()` is a
+ * plain field update. `published: false` because a fresh week must never be
+ * visible to a cohort before anyone has written it.
+ *
+ * Read-then-create rather than a transaction on purpose: the only losable race
+ * is two editors opening the same brand-new slot within the same few
+ * milliseconds, in which case the loser overwrites a document that is itself
+ * still empty.
+ */
+export async function ensureWeekDoc(
+  runId: string,
+  weekId: string,
+  weekNumber: number,
+): Promise<void> {
+  const n = assertWeekAddress(weekId, weekNumber);
+  const db = getClientDb();
+  const uid = actingUid();
+
+  const ref = doc(db, "courseRuns", runId, "weeks", weekId);
+  const existing = await getDoc(ref);
+  if (existing.exists()) return;
+
+  await setDoc(ref, {
+    weekNumber: n,
+    title: "",
+    summary: "",
+    guideBlocks: [] as Block[],
+    materials: [] as Material[],
+    exercises: [] as Exercise[],
+    checklist: [] as ChecklistItem[],
+    estimatedMinutes: null,
+    published: false,
+    updatedAt: serverTimestamp(),
+    updatedByUid: uid,
+  });
+}
+
+/**
+ * Patch a week's authored content. Only the keys present are written, so the
+ * autosave path can send one field without reading the rest of the document
+ * back first.
+ *
+ * `id`, `updatedAt` and `updatedByUid` are ignored if passed: the first is the
+ * address, not a field, and the last two are stamped here on every save so the
+ * editor can show who touched a week last without trusting the client to say.
+ * The doc must already exist (`ensureWeekDoc()`), which is what makes this an
+ * `updateDoc` — a `setDoc` would silently resurrect a week an admin deleted.
+ */
+export async function saveWeek(
+  runId: string,
+  weekId: string,
+  patch: Partial<CourseWeekDoc>,
+): Promise<void> {
+  const db = getClientDb();
+  const out: Record<string, unknown> = {};
+
+  if (patch.weekNumber !== undefined) {
+    // The plan owns numbering (a week's position among the taught slots); this
+    // is here so the editor can reconcile a doc whose number has drifted from
+    // the plan, not so it can renumber the curriculum.
+    out.weekNumber = Math.min(
+      COURSE_FIELD_LIMITS.maxWeekPlanEntries,
+      Math.max(1, Math.floor(patch.weekNumber) || 1),
+    );
+  }
+  if (patch.title !== undefined) {
+    out.title = capped(patch.title, COURSE_FIELD_LIMITS.weekTitle);
+  }
+  if (patch.summary !== undefined) {
+    out.summary = capped(patch.summary, COURSE_FIELD_LIMITS.weekSummary);
+  }
+  if (patch.guideBlocks !== undefined) {
+    out.guideBlocks = patch.guideBlocks.slice(0, COURSE_FIELD_LIMITS.maxGuideBlocks);
+  }
+  if (patch.materials !== undefined) {
+    out.materials = patch.materials.slice(0, COURSE_FIELD_LIMITS.maxMaterials);
+  }
+  if (patch.exercises !== undefined) {
+    out.exercises = patch.exercises.slice(0, COURSE_FIELD_LIMITS.maxExercises);
+  }
+  if (patch.checklist !== undefined) {
+    out.checklist = patch.checklist.slice(0, COURSE_FIELD_LIMITS.maxChecklistItems);
+  }
+  if (patch.estimatedMinutes !== undefined) {
+    out.estimatedMinutes = positiveIntOrNull(patch.estimatedMinutes);
+  }
+  if (patch.published !== undefined) out.published = patch.published === true;
+
+  if (Object.keys(out).length === 0) return;
+  out.updatedAt = serverTimestamp();
+  out.updatedByUid = actingUid();
+  await updateDoc(doc(db, "courseRuns", runId, "weeks", weekId), out);
+}
+
+/** What the clone-weeks route reports back. `created` counts overwrites too. */
+export type CloneWeeksResult = { created: number; skipped: number };
+
+/**
+ * Copy another run's weeks into this one — the copy-forward path.
+ *
+ * There is deliberately no curriculum template collection: the most recent run
+ * IS the master, so a new year starts by copying last year's weeks and editing
+ * them in place. Route-backed because the copy spans two runs' subcollections
+ * and has to preserve doc ids and every material / exercise / checklist id
+ * (member progress rows are keyed on those ids, so an id-remapping copy would
+ * quietly orphan everyone's history on a re-run).
+ *
+ * Idempotent: weeks that already exist here are skipped unless `overwrite`.
+ */
+export async function cloneWeeksFromRun(
+  runId: string,
+  fromRunId: string,
+  overwrite: boolean,
+): Promise<CloneWeeksResult> {
+  const result = await postJson<Partial<CloneWeeksResult>>(
+    `/api/courses/runs/${runId}/clone-weeks`,
+    { fromRunId, overwrite },
+    "Couldn't copy weeks from that run.",
+  );
+  return {
+    created: typeof result.created === "number" ? result.created : 0,
+    skipped: typeof result.skipped === "number" ? result.skipped : 0,
+  };
 }
