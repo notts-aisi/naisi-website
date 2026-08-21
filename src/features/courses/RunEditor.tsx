@@ -500,6 +500,19 @@ export default function RunEditor({ courseId, runId }: Props) {
                 : "Review applications →"}
             </Button>
           </Link>
+          {/* Allocation is the step after review: it only ever places ACCEPTED
+              applicants, so the accepted figure — not the pending one — is what
+              tells you whether there is anything to do there. Same server-owned
+              counters, so still no extra read. */}
+          <Link
+            href={`/admin/courses/${encodeURIComponent(courseId)}/runs/${encodeURIComponent(runId)}/allocation`}
+          >
+            <Button type="button" variant="secondary">
+              {counts.accepted > 0
+                ? `Allocate places (${counts.accepted} accepted) →`
+                : "Allocate places →"}
+            </Button>
+          </Link>
         </div>
       </div>
 

@@ -88,6 +88,25 @@ const NAV_GROUPS: NavGroup[] = [
 
 const NAV_DRAWER_ID = "app-nav-drawer";
 
+/** Routes whose <main> opts into the wider 100rem cap (`.mainWide`).
+ *  See CLAUDE.md "Main-area width" — the shell cap stays narrow by default and a
+ *  page only joins this list once it owns its own horizontal overflow
+ *  (`overflow-x: auto` + a `min-width: 0` chain down to the wide element).
+ *  Predicates rather than a plain string set because the allocation board is
+ *  per-run: the ids are opaque Firestore doc ids, so those two segments are
+ *  matched as `[^/]+` (ids are URL-encoded, so they never contain a slash) and
+ *  the pattern is anchored at both ends — a deeper sub-route under
+ *  .../allocation would NOT get the wide cap. */
+const WIDE_ROUTES: ((pathname: string) => boolean)[] = [
+  (pathname) => pathname === "/committee/tasks",
+  (pathname) =>
+    /^\/admin\/courses\/[^/]+\/runs\/[^/]+\/allocation$/.test(pathname),
+];
+
+function isWideRoute(pathname: string): boolean {
+  return WIDE_ROUTES.some((matches) => matches(pathname));
+}
+
 export default function AppShell({
   children,
   impersonation,
@@ -336,7 +355,7 @@ export default function AppShell({
             </nav>
           </aside>
           <main
-            className={`${styles.main} ${pathname === "/committee/tasks" ? styles.mainWide : ""}`}
+            className={`${styles.main} ${isWideRoute(pathname) ? styles.mainWide : ""}`}
           >
             <div className={styles.loadingPane} role="status" aria-live="polite">
               <span className={styles.spinner} aria-hidden />
@@ -411,7 +430,7 @@ export default function AppShell({
           {renderUserBlock()}
         </aside>
         <main
-          className={`${styles.main} ${pathname === "/committee/tasks" ? styles.mainWide : ""} ${enteringFromSignin ? styles.entering : ""}`}
+          className={`${styles.main} ${isWideRoute(pathname) ? styles.mainWide : ""} ${enteringFromSignin ? styles.entering : ""}`}
         >
           {impersonation && (
             <div

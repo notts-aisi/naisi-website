@@ -137,6 +137,17 @@ function prettifySlug(slug: string): string {
 }
 
 /**
+ * Cohort/track channel ids embed a `slugId()` doc id (`cohort:<runId>` where
+ * runId is `aisf-autumn-2026__x8k2m1p0`) — strip the trailing `__<base36>`
+ * uniqueness suffix before prettifying so the label reads "Aisf Autumn 2026",
+ * not "Aisf Autumn 2026 X8k2m1p0". Applied only in the scoped branches below;
+ * top-level channel ids never carry a slugId suffix.
+ */
+function stripSlugIdSuffix(slug: string): string {
+  return slug.replace(/__[a-z0-9]{6,10}$/, "");
+}
+
+/**
  * Human-readable label for a channel id, used in emails and the unsubscribe
  * confirmation page. Top-level channels get hand-written labels; scoped
  * channels (`cohort:*`, `track:*`) fall through to a slug-prettify so
@@ -147,10 +158,10 @@ export function channelLabel(channel: string): string {
   if (channel === "newsletter") return "our newsletter";
   if (channel === "events") return "event announcements";
   if (channel.startsWith("cohort:")) {
-    return `the ${prettifySlug(channel.slice("cohort:".length))} cohort updates`;
+    return `the ${prettifySlug(stripSlugIdSuffix(channel.slice("cohort:".length)))} cohort updates`;
   }
   if (channel.startsWith("track:")) {
-    return `the ${prettifySlug(channel.slice("track:".length))} track updates`;
+    return `the ${prettifySlug(stripSlugIdSuffix(channel.slice("track:".length)))} track updates`;
   }
   return prettifySlug(channel);
 }
