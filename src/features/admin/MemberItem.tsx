@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import ActionToast, { useActionToast } from "@/components/ui/ActionToast";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import ResponsiveSelect, {
@@ -14,6 +15,8 @@ import {
   ALL_TRACKS,
   STATUS_LABELS,
   TRACK_LABELS,
+  currentAcademicYear,
+  hasPaidMembership,
   type AffiliationStatus,
   type Track,
   type UserDoc,
@@ -23,6 +26,7 @@ import { startImpersonation } from "@/auth/impersonation";
 import MemberEditForm from "./MemberEditForm";
 import {
   deleteUser,
+  setPaidMembership,
   setPermissions,
   setRole,
   setSuRecognised,
@@ -139,6 +143,13 @@ function applyTier(
 
 export default function MemberItem({ user, currentAdminUid, expanded, onToggleExpand }: Props) {
   const [busy, setBusy] = useState(false);
+  const { toast, run, dismiss } = useActionToast();
+  const academicYear = currentAcademicYear();
+  // The members list is a one-shot fetch, so `user` doesn't refresh after a
+  // write. Remember just this toggle locally (null = no local change yet, read
+  // the doc) so the switch and badge settle on the new value straight away.
+  const [paidOverride, setPaidOverride] = useState<boolean | null>(null);
+  const paidThisYear = paidOverride ?? hasPaidMembership(user, academicYear);
 
   const isSelf = user.uid === currentAdminUid;
   const isRejected = user.role === "rejected";
@@ -195,6 +206,28 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
     } finally {
       setBusy(false);
     }
+  }
+
+  async function onTogglePaidMembership() {
+    const next = !paidThisYear;
+    setBusy(true);
+    // Year-scoped: this only ever adds/removes `academicYear`, so last year's
+    // tag stays on the record as history.
+    await run(
+      async () => {
+        await setPaidMembership(user.uid, academicYear, next);
+        setPaidOverride(next);
+      },
+      {
+        savingMessage: next
+          ? `Marking paid for ${academicYear}…`
+          : `Clearing ${academicYear} membership…`,
+        successMessage: next
+          ? `Paid member for ${academicYear}`
+          : `No longer marked paid for ${academicYear}`,
+      },
+    );
+    setBusy(false);
   }
 
   async function onToggleSuRecognised() {
@@ -336,6 +369,11 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
             {TRACK_LABELS[t]}
           </Badge>
         ))}
+        {paidThisYear && (
+          <Badge tone="success" title={`Tagged as a paid member for ${academicYear}`}>
+            Paid {academicYear}
+          </Badge>
+        )}
         {showCommitteeTitle && user.title && (
           <span className={styles.title}>{user.title}</span>
         )}
@@ -427,6 +465,20 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                     );
                   })}
                 </div>
+              </div>
+
+              <div className={styles.controlBlock}>
+                <span className={styles.controlLabel}>
+                  Paid membership
+                  <span className={styles.hint}>(badge only, never a gate)</span>
+                </span>
+                <Switch
+                  checked={paidThisYear}
+                  onChange={onTogglePaidMembership}
+                  disabled={busy}
+                  tone="success"
+                  label={`Paid ${academicYear}`}
+                />
               </div>
 
               {user.role === "committee" && (
@@ -543,6 +595,10 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
           </>
         )}
       </div>
+
+      {/* Only the expanded panel runs a toasted mutation, and its backdrop
+          covers the summary button, so the row can't collapse mid-toast. */}
+      <ActionToast toast={toast} onDismiss={dismiss} />
     </div>
   );
 }

@@ -31,7 +31,7 @@ import styles from "./PersonSelector.module.css";
  *   column and the inline shape is the right fit).
  */
 
-export type PersonRole = "completer" | "reviewer";
+export type PersonRole = "completer" | "reviewer" | "facilitator";
 export type PersonTone = "accent" | "warning" | "neutral";
 
 type RoleFilter = "all" | "admin" | "committee" | "member";
@@ -46,11 +46,13 @@ const ROLE_FILTER_LABELS: Record<RoleFilter, string> = {
 const ROLE_COPY: Record<PersonRole, { verb: string; countLabel: string }> = {
   completer: { verb: "assigned", countLabel: "completer" },
   reviewer: { verb: "reviewing", countLabel: "reviewer" },
+  facilitator: { verb: "facilitating", countLabel: "facilitator" },
 };
 
 const TONE_FROM_ROLE: Record<PersonRole, PersonTone> = {
   completer: "accent",
   reviewer: "warning",
+  facilitator: "accent",
 };
 
 type Props = {
