@@ -1,0 +1,42 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.pickers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* Three search-and-list pickers side by side stop being usable well before the
+   phone breakpoint — inside the 64rem shell each column is barely 18rem. */
+@media (max-width: 60rem) { /* --bp-lg */
+  .pickers {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* TODO: mobile pass — PersonSelector already switches to its bottom-sheet shape
+   below --bp-md; the full touch review of the course admin surfaces rides its
+   own PR. */
+@media (max-width: 48rem) { /* --bp-md */
+  .pickers {
+    gap: var(--space-4);
+  }
+}

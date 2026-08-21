@@ -1,16 +1,11 @@
-import Card from "@/components/ui/Card";
+import AdminCourseList from "@/features/courses/AdminCourseList";
 
+/**
+ * Admin course catalogue. The `(app)/admin` layout already gates on
+ * `role === "admin"`, so this is a thin server wrapper around the client list —
+ * the reads are client-side Firestore (one-shot + manual refresh), same as the
+ * other admin tabs.
+ */
 export default function CoursesAdminPage() {
-  return (
-    <Card padding="lg">
-      <h3 style={{ fontSize: "var(--text-lg)", marginBottom: "var(--space-2)" }}>
-        Not built yet
-      </h3>
-      <p style={{ color: "var(--color-text-muted)" }}>
-        Course management lands here: courses and their runs, the curriculum builder,
-        groups and facilitators, applications review, and group allocation. Until then,
-        this page is a placeholder so the tab works.
-      </p>
-    </Card>
-  );
+  return <AdminCourseList />;
 }

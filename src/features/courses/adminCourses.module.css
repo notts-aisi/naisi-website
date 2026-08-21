@@ -1,0 +1,252 @@
+/* Admin course management — the /admin/courses list and the per-course editor.
+   One module for both surfaces: they share the same row / section / form
+   vocabulary, and splitting it would mean two copies of the same six rules.
+   Desktop-first, with the mobile adapt block at the bottom (house convention).
+
+   Touch targets here are ASPIRATIONAL, not enforced (docs/touch-targets.md):
+   admin is a desktop-first surface, so rows aim for a comfortable tap area
+   without the 44px floor the member-facing controls hold to. */
+
+/* === Page shell === */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.backLink {
+  align-self: flex-start;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.backLink:hover {
+  color: var(--color-accent);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.headerText {
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-2xl);
+}
+
+.subtitle {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.toolbarText {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* === Sections (editor) === */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.sectionHint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* Sub-heading inside a section, for a field group that isn't a labelled
+   control (the block editor owns its own internal labels). */
+.subheading {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.subheadingHint {
+  margin: var(--space-1) 0 var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* === Rows (course list + run list) === */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: inherit;
+  text-decoration: none;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.row:hover {
+  border-color: var(--color-accent);
+  background: var(--color-surface-hover);
+}
+
+.row:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.rowHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.rowTitle {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  min-width: 0;
+}
+
+.rowTagline {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.rowMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.rowMeta strong {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* === Forms (inline create + meta editor) === */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+/* Full-bleed field inside .formGrid (title, tagline, block editor). */
+.formSpan {
+  grid-column: 1 / -1;
+}
+
+.formActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+}
+
+.status {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* === Empty states === */
+
+.emptyTitle {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-lg);
+}
+
+.emptyBody {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .row {
+    padding: var(--space-3);
+  }
+
+  .header,
+  .sectionHead,
+  .toolbar {
+    /* Stack rather than squeeze the action button onto the title line. */
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+  }
+
+  .formActions > * {
+    flex: 1 1 auto;
+  }
+}
