@@ -474,15 +474,33 @@ export default function RunEditor({ courseId, runId }: Props) {
           </Badge>
           {run.academicYear && <Badge tone="neutral">{run.academicYear}</Badge>}
         </div>
-        {/* Application figures come from the run's server-owned counters. The
-            group figure deliberately does NOT: `groupCount` only moves on the
-            server (recount / allocation), so it lags a group created here,
-            and the fetched list is the honest number. */}
-        <span className={styles.muted}>
-          {counts.pending} pending · {counts.accepted} accepted ·{" "}
-          {counts.waitlisted} waitlisted · {groups.length} group
-          {groups.length === 1 ? "" : "s"}
-        </span>
+        {/* Counts and the way into review, grouped so the flex row reads as
+            two ends rather than three scattered items. `.statusMeta` is a
+            plain wrapping flex row — no second class needed for the same job. */}
+        <div className={styles.statusMeta}>
+          {/* Application figures come from the run's server-owned counters. The
+              group figure deliberately does NOT: `groupCount` only moves on the
+              server (recount / allocation), so it lags a group created here,
+              and the fetched list is the honest number. */}
+          <span className={styles.muted}>
+            {counts.pending} pending · {counts.accepted} accepted ·{" "}
+            {counts.waitlisted} waitlisted · {groups.length} group
+            {groups.length === 1 ? "" : "s"}
+          </span>
+          {/* Admissions is its own surface, not a panel on this page: reviewing
+              never edits the run, and reviewers who aren't admins reach the
+              queue from /learn instead. The pending figure comes from the run
+              doc already loaded above — no second read for a link label. */}
+          <Link
+            href={`/admin/courses/${encodeURIComponent(courseId)}/runs/${encodeURIComponent(runId)}/applications`}
+          >
+            <Button type="button" variant="secondary">
+              {counts.pending > 0
+                ? `Review applications (${counts.pending} pending) →`
+                : "Review applications →"}
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {run.courseId !== courseId && (

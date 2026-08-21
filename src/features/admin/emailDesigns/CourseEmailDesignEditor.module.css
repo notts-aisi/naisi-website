@@ -1,0 +1,149 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-2xl);
+}
+
+.subtitle {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  max-width: 46ch;
+}
+
+/* === Token reference === */
+
+.tokens {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.tokensLead {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.tokenList {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--space-4);
+  row-gap: var(--space-1);
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+/* Each row is a <div> wrapping <dt>/<dd>, so it has to dissolve into the
+   parent grid for the two columns to line up across rows. */
+.tokenRow {
+  display: contents;
+}
+
+.tokenRow dt {
+  margin: 0;
+}
+
+.tokenRow dd {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.tokenRowUnavailable dt,
+.tokenRowUnavailable dd {
+  opacity: 0.55;
+}
+
+.tokens code,
+.tokensNote code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--color-accent-soft);
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+}
+
+.tokensNote {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  max-width: 62ch;
+}
+
+/* === Editor + preview === */
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-5);
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.statusLine {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.statusError {
+  color: var(--color-danger);
+}
+
+.statusSuccess {
+  color: var(--color-success);
+}
+
+/* The editor + live preview stop fitting side by side well before the shell's
+   64rem cap, so this collapse is at lg rather than the mobile breakpoint. */
+@media (max-width: 60rem) { /* --bp-lg */
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .tokens {
+    padding: var(--space-3);
+  }
+
+  /* Token + description stack: the two-column grid squeezes descriptions to a
+     couple of words on a phone. */
+  .tokenList {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--space-2);
+  }
+
+  .tokenRow dd {
+    margin-top: 2px;
+  }
+}
