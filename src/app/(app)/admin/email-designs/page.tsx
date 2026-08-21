@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { ensureTemplatesSeeded } from "@/features/admin/emailDesigns/seedTemplates";
+import Badge from "@/components/ui/Badge";
 import {
   DEFAULT_LABELS,
   RECIPIENT_MODIFIER_LABELS,
@@ -9,6 +10,16 @@ import {
   type TemplateDoc,
   type TemplateId,
 } from "@/lib/firestore/applicationEmails";
+import {
+  COURSE_DEFAULT_LABELS,
+  COURSE_TEMPLATE_IDS,
+  COURSE_TEMPLATE_TRIGGER,
+  courseTemplateDefaults,
+  normalizeCourseTemplate,
+  type CourseTemplateDoc,
+  type CourseTemplateId,
+  type CourseTemplateTrigger,
+} from "@/lib/firestore/courseEmails";
 import styles from "@/features/admin/emailDesigns/EmailDesignsList.module.css";
 
 export const dynamic = "force-dynamic";
@@ -25,11 +36,24 @@ export default async function EmailDesignsPage() {
 
   await ensureTemplatesSeeded(db);
 
-  const snap = await db.collection("applicationEmailTemplates").get();
+  const [snap, courseSnap] = await Promise.all([
+    db.collection("applicationEmailTemplates").get(),
+    db.collection("courseEmailTemplates").get(),
+  ]);
   const byId = new Map<TemplateId, TemplateDoc>();
   for (const doc of snap.docs) {
     const tpl = normalizeTemplate(doc.id, doc.data());
     if (tpl) byId.set(tpl.templateId, tpl);
+  }
+
+  // Course templates are deliberately NOT seeded: the send path is
+  // fallback-first (courseApplicationEmails.ts uses `courseTemplateDefaults`
+  // when the doc is missing, malformed, or empty), so an unedited template is a
+  // normal steady state rather than a gap to fill in.
+  const courseById = new Map<CourseTemplateId, CourseTemplateDoc>();
+  for (const doc of courseSnap.docs) {
+    const tpl = normalizeCourseTemplate(doc.id, doc.data());
+    if (tpl) courseById.set(tpl.templateId, tpl);
   }
 
   const ordered: TemplateDoc[] = TEMPLATE_IDS.map(
@@ -52,7 +76,8 @@ export default async function EmailDesignsPage() {
     <div style={{ width: "100%", maxWidth: "60rem", margin: "0 auto" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-6)" }}>
         <p style={{ color: "var(--color-text-muted)", margin: 0 }}>
-          Boilerplate transactional emails sent automatically on application lifecycle events.
+          Boilerplate transactional emails sent automatically on membership application
+          lifecycle events.
           Edit the subject, body and recipients for each template; rejection reasons are picked
           by the admin at reject time.
         </p>
@@ -60,8 +85,66 @@ export default async function EmailDesignsPage() {
         <Group heading="When an application is submitted" templates={submitted} />
         <Group heading="When an application is approved" templates={approved} />
         <Group heading="Rejection reasons" templates={rejected} />
+        <CourseGroup byId={courseById} />
       </div>
     </div>
+  );
+}
+
+const COURSE_TRIGGER_LABELS: Record<CourseTemplateTrigger, string> = {
+  submitted: "On apply",
+  accepted: "On accept",
+  waitlisted: "On waitlist",
+  rejected: "On reject",
+  allocated: "On placement",
+  "week-nudge": "Each week",
+};
+
+function CourseGroup({ byId }: { byId: Map<CourseTemplateId, CourseTemplateDoc> }) {
+  return (
+    <section className={styles.group}>
+      <h2 className={styles.groupHeader}>Course emails</h2>
+      <p
+        style={{
+          color: "var(--color-text-muted)",
+          fontSize: "var(--text-sm)",
+          margin: 0,
+        }}
+      >
+        Sent to applicants and learners across a course run. Any template you
+        haven&apos;t edited sends NAISI&apos;s default copy — nothing is broken until
+        you touch it, and you can always reset back.
+      </p>
+      {COURSE_TEMPLATE_IDS.map((id) => {
+        const stored = byId.get(id);
+        const subject = stored?.subject || courseTemplateDefaults[id].subject;
+        return (
+          <Link
+            key={id}
+            href={`/admin/email-designs/course/${id}`}
+            className={styles.card}
+          >
+            <p className={styles.cardTitle}>
+              {stored?.label || COURSE_DEFAULT_LABELS[id]}
+            </p>
+            <p className={styles.cardSubject}>{subject}</p>
+            {/* alignItems inline: the shared .cardMeta row is text-only
+                elsewhere, and a stretched Badge next to a line of text reads as
+                a misaligned pill. */}
+            <div className={styles.cardMeta} style={{ alignItems: "center" }}>
+              <Badge tone={stored ? "accent" : "neutral"}>
+                {COURSE_TRIGGER_LABELS[COURSE_TEMPLATE_TRIGGER[id]]}
+              </Badge>
+              <span>
+                {stored?.updatedAt
+                  ? `Edited ${stored.updatedAt.toLocaleDateString()}`
+                  : "Using defaults"}
+              </span>
+            </div>
+          </Link>
+        );
+      })}
+    </section>
   );
 }
 

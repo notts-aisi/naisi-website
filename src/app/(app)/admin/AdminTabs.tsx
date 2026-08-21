@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Drawer from "@/components/ui/Drawer";
 import { usePendingCount } from "@/features/admin/usePendingCount";
 import { useCollaboratorCount } from "@/features/admin/useCollaboratorCount";
+import { useCourseApplicationCount } from "@/features/courses/useCourseApplicationCount";
 import styles from "./AdminTabs.module.css";
 
 const TABS = [
@@ -31,16 +32,21 @@ export default function AdminTabs() {
   const pathname = usePathname();
   const pendingCount = usePendingCount();
   const collaboratorCount = useCollaboratorCount();
+  const courseApplicationCount = useCourseApplicationCount();
   const activeRef = useRef<HTMLAnchorElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
 
+  // `?? 0` for courses: that hook reports an unknown count as null (see its
+  // doc comment), and a badge that hasn't been measured renders as no badge.
   const badgeFor = (href: string): number =>
     href === "/admin"
       ? pendingCount
       : href === "/admin/collaborators"
         ? collaboratorCount
-        : 0;
+        : href === "/admin/courses"
+          ? (courseApplicationCount ?? 0)
+          : 0;
 
   // On the horizontal strip (desktop/tablet) pull the active tab into view so
   // users landing on a deep tab don't have to scroll the strip to find it.

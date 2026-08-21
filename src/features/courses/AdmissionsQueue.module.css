@@ -1,0 +1,396 @@
+/* ============================================================
+   AdmissionsQueue — the review surface for one course run.
+
+   Mounted twice from one component (a reviewer's /learn route and
+   the admin run route), so nothing here may assume the admin
+   shell's chrome: the queue owns its own header, counts strip and
+   sections, and reads only theme tokens.
+
+   Layout intent: a long, scannable column of dense cards. Each
+   card is "who applied → what they said → what you think → what
+   you decide", top to bottom, so the eye never has to travel back
+   up to act. Reviewer tools sit ABOVE the decision row on purpose
+   — notes are written while reading, the decision comes last.
+   ============================================================ */
+
+.queue {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* === Header === */
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.title {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--color-text);
+}
+
+/* === Counts strip === */
+
+.counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 5.5rem;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.statValue {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.statLabel {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.lede {
+  margin: 0;
+  max-width: 44rem;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+}
+
+/* === Sections === */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sectionTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.sectionCount {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.more {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* === Application card === */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.cardHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.name {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.identityBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Admin-only. Reviewers never receive an address to render. */
+.email {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--text-sm);
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+.email:hover {
+  color: var(--color-accent-hover);
+}
+
+.timestamp {
+  margin: 0;
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  color: var(--color-text-subtle);
+}
+
+/* === Availability + labelled blocks === */
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.blockLabel {
+  margin: 0;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Read-only chips (what the applicant ticked), so no touch-target floor and
+   no hover affordance — they are not controls and must not look like any. */
+.chip {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+/* === Answers === */
+
+.answers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.answerRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.answerLabel {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+/* Member-authored text: keeps their line breaks, wraps rather than
+   overflowing, and is a text node — never markup. */
+.answerValue {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* === Decision provenance === */
+
+.decision {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-left: 2px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.decisionReason {
+  color: var(--color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* === Reviewer tools === */
+
+.tools {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.hint {
+  margin: 0;
+  max-width: 40rem;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+/* The two preference selects sit side by side while there is room; the
+   facilitator list depends on the group chosen to its left, so keeping them
+   adjacent is what makes that relationship legible. */
+.preferences {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.rejectBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+/* === Shared text === */
+
+.muted {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+}
+
+.emptyTitle {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.error {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--color-danger);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .counts {
+    /* Five stats never fit across a phone; a two-up grid keeps the numbers
+       aligned instead of leaving one orphan on its own row. */
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .stat {
+    min-width: 0;
+  }
+  .cardHead {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .chip {
+    /* Session labels are long; letting them wrap beats a horizontal overflow. */
+    white-space: normal;
+  }
+  .answers {
+    padding: var(--space-3);
+  }
+  .preferences {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

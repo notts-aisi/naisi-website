@@ -21,23 +21,33 @@ import { sendEmail } from "./send";
  * SAME `ApplicationEmail` component + `EmailChrome` the member-application
  * emails use, so course mail is visually identical to the rest of the estate.
  *
- * Template resolution is FALLBACK-FIRST: the admin editor for
- * `courseEmailTemplates` does not ship until P5 (admissions review), so on a
- * fresh deploy no doc exists and `courseTemplateDefaults` (courseEmails.ts) is
- * what actually sends. A stored template only wins when it is well-formed AND
- * non-empty — an admin who saves a blank body gets the seed copy rather than
- * an empty email. A Firestore read failure degrades the same way: the send
- * still happens, on the defaults.
+ * Template resolution is FALLBACK-FIRST: until an admin saves a template in the
+ * course email designs editor, no `courseEmailTemplates` doc exists and
+ * `courseTemplateDefaults` (courseEmails.ts) is what actually sends. A stored
+ * template only wins when it is well-formed AND non-empty — an admin who saves
+ * a blank body gets the seed copy rather than an empty email. A Firestore read
+ * failure degrades the same way: the send still happens, on the defaults.
  *
  * Errors are the caller's to swallow — every call site fires these after its
  * write has committed, and a failed niceness email must never fail the
  * request that earned it.
+ *
+ * WHAT THE DECISION COPY MAY PROMISE: an acceptance is an OFFER, not a seat.
+ * Deciding does not enrol anyone — allocation places accepted applicants into
+ * groups afterwards — so the accepted template says a placement email follows
+ * with the group, facilitator, and time slot, and never names one. The
+ * group-scoped tokens ({groupName}, {facilitatorNames}, {firstSessionWhen}) are
+ * deliberately NOT supplied on this path: an admin who pastes one into a
+ * decision template sees the literal `{token}` in a test send and notices,
+ * rather than shipping a blank where a group name should be.
  */
 
 /**
- * The application-lifecycle triggers. Only `submitted` is called in P4 (the
- * apply route); P5's decide route reuses this function for the other three,
- * which is why the map is complete rather than a single entry.
+ * The four application-lifecycle triggers, one per template id. `submitted` is
+ * fired by the apply route; the other three are fired by the decide route
+ * (/api/courses/runs/[runId]/applications/[uid]/decide) once a decision has
+ * COMMITTED, one email per status change — a re-decision into the same status
+ * sends nothing, so a double-clicked Accept can't mail twice.
  */
 export type CourseApplicationEmailKind =
   | "submitted"
