@@ -55,13 +55,34 @@ export type MirroredTaskArgs = {
 export type MirroredTaskPayload = Omit<TaskDoc, "id">;
 
 /**
+ * THE ROUND-TRIP GUARD. `normalizeSubtask` (tasks.ts) DROPS any subtask with a
+ * falsy id or title, while `sanitizeChecklist` (courses.ts) happily keeps a
+ * checklist item with `id: ""` or `title: ""` — an author who adds a blank row
+ * and ticks `mirrorToMyWork` produces exactly that. Mirroring such an item
+ * writes a subtask the board can never render, so `subtaskStats.total` counts
+ * rows that do not exist and the member's progress pill reads "0/3" over two
+ * visible rows, permanently and unfixably (a mirror's title is outside the
+ * completer's narrow write band).
+ *
+ * So the filter is part of the projection, not defensive noise: what this
+ * builder emits has to be what `normalizeTask` reads back, or the stats it
+ * computes are lies. A blank id would also collide two rows onto one subtask id
+ * and make toggling one toggle both.
+ */
+function mirrorable(item: ChecklistItem): boolean {
+  return item.mirrorToMyWork && Boolean(item.id) && item.title.trim().length > 0;
+}
+
+/**
  * Build the mirrored task payload. Pure — no Firestore imports, no clock
  * reads — so the sync route stays a thin `.create()` wrapper and tests can
- * assert the exact payload.
+ * assert the exact payload (they do: `tests/course-task-mirror.test.mjs`).
  *
  * Load-bearing choices:
  *  - Subtask ids REUSE the checklist item ids: a re-created task (member
  *    dismissed it, admin re-synced) lines up with the same curriculum items.
+ *  - Every emitted subtask must SURVIVE `normalizeSubtask` on the way back
+ *    out — see `mirrorable()` above for why that is not automatic.
  *  - `initialNotifyAt` is pre-stamped: the task is born "already notified",
  *    so the task-email machinery never emails about a mirror — the course's
  *    own week-nudge email owns that moment.
@@ -71,7 +92,7 @@ export type MirroredTaskPayload = Omit<TaskDoc, "id">;
  */
 export function buildMirroredTask(args: MirroredTaskArgs): MirroredTaskPayload {
   const subtasks: Subtask[] = args.checklist
-    .filter((item) => item.mirrorToMyWork)
+    .filter(mirrorable)
     .map((item) => ({
       id: item.id,
       title: item.title,

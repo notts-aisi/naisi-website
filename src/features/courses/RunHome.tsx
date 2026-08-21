@@ -15,6 +15,7 @@ import SessionCard from "./SessionCard";
 import WeekRail from "./WeekRail";
 import { useGroupRoster } from "./useGroupRoster";
 import { useRunOverview } from "./useRunOverview";
+import { useSyncTasks } from "./useSyncTasks";
 import type { OverviewPayload } from "@/app/api/courses/runs/[runId]/overview/route";
 import type { WeekPlanEntry } from "@/lib/courses/weekPlan";
 import styles from "./RunHome.module.css";
@@ -373,6 +374,34 @@ export default function RunHome({ runId, isAdmin, canEmailCohort }: Props) {
     an empty key and treats as idle: no fetch, no loading state.
   */
   const roster = useGroupRoster(facilitatedGroupId ?? "");
+
+  /*
+    P10 — the primary mirror trigger. This page is the one a member opens when
+    they mean "my course", so it is where the anchor week most often first
+    lands on their My Work board. Fire-and-forget: no state, no spinner, no
+    error surface (see useSyncTasks' header).
+
+    The gate is an ACTIVE ENROLMENT, which is byte-for-byte the sync-tasks
+    route's own: learner or facilitator, and nothing else. Anything looser
+    would ask a question the route answers with 403 (an admin or a reviewer
+    reading over the cohort's shoulder has no enrolment to mirror), and
+    anything tighter would silently deny a facilitator the week's prep task
+    the route is willing to give them.
+
+    `access.isEnrolled` is deliberately NOT the gate: it stays true for a
+    `completed` enrolment, which has no live week, and it is a mirror of the
+    server's decision rather than the enrolment itself.
+
+    The anchor week is dedupe key material only (see useSyncTasks): it is never
+    sent, the route always recomputes the week server-side, and passing it is
+    what lets a tab left open across a week rollover notice the new week
+    instead of resting on a session-wide "already synced this run".
+  */
+  useSyncTasks(
+    runId,
+    data?.enrolment?.status === "active",
+    data?.currentWeek?.anchorWeekNumber ?? null,
+  );
 
   if (!data) {
     if (error) {
