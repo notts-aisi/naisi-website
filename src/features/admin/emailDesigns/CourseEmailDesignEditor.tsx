@@ -22,6 +22,7 @@ import EmailPreview from "@/features/newsletter/editor/EmailPreview";
 import {
   courseSampleTokens,
   courseTemplateUsesGroupTokens,
+  courseTemplateUsesWeekTokens,
 } from "./courseEmailSamples";
 import styles from "./CourseEmailDesignEditor.module.css";
 
@@ -74,6 +75,35 @@ const GROUP_TOKENS: TokenHelp[] = [
   { token: "groupName", description: "The small group they were placed in." },
   { token: "facilitatorNames", description: "Who facilitates that group, e.g. Priya and Sam." },
   { token: "firstSessionWhen", description: "Their group's first session, date and time." },
+];
+
+/**
+ * The weekly nudge's own map. It does NOT resolve {startDate} or
+ * {preferredName} — a different module builds its tokens
+ * (`src/lib/email/courseNudgeEmail.ts`) — so the lifecycle lists above are
+ * replaced rather than added to when this template is open.
+ */
+const WEEK_TOKENS: TokenHelp[] = [
+  { token: "firstName", description: "First word of their name — best for greetings." },
+  { token: "courseTitle", description: "The course's title, e.g. AI Safety Fundamentals." },
+  { token: "runLabel", description: "Which run this is, e.g. Autumn 2026." },
+  { token: "weekNumber", description: "The taught week the cohort is on, e.g. 3." },
+  { token: "weekTitle", description: "That week's title, e.g. Goal misgeneralisation." },
+  { token: "weekSummary", description: "The week's one-line summary, as written in the week editor." },
+  {
+    token: "weekPrep",
+    description:
+      "A sentence counting what is in the week — readings to do, exercises to write up, roughly how long.",
+  },
+  {
+    token: "sessionWhen",
+    description: "When this recipient's group meets that week, e.g. Tuesday 21 October, 18:00–19:30.",
+  },
+  {
+    token: "sessionWhere",
+    description: "Where that session is, e.g. Hallward Library, B12. Online groups say Online — never the meeting link.",
+  },
+  { token: "weekUrl", description: "Link straight to the week page in the learning space." },
 ];
 
 export default function CourseEmailDesignEditor({ templateId }: Props) {
@@ -137,9 +167,12 @@ export default function CourseEmailDesignEditor({ templateId }: Props) {
   }, [overrides, baseSubject, baseBlocks]);
 
   // Stable object identity so EmailPreview's effect doesn't refetch on every
-  // keystroke-driven re-render.
+  // keystroke-driven re-render. `templateId` travels with the tokens because the
+  // preview endpoint renders the weekly nudge through a different component and
+  // a different token pass than the five lifecycle templates — see
+  // `/api/admin/course-emails/preview`.
   const previewPayload = useMemo(
-    () => ({ tokens: courseSampleTokens(templateId, "Alex Taylor") }),
+    () => ({ templateId, tokens: courseSampleTokens(templateId, "Alex Taylor") }),
     [templateId],
   );
 
@@ -217,6 +250,7 @@ export default function CourseEmailDesignEditor({ templateId }: Props) {
   const subjectOver = subject.length > COURSE_SUBJECT_MAX;
   const subjectEmpty = subject.trim().length === 0;
   const showsGroupTokens = courseTemplateUsesGroupTokens(templateId);
+  const showsWeekTokens = courseTemplateUsesWeekTokens(templateId);
 
   return (
     <div className={styles.wrap}>
@@ -243,7 +277,7 @@ export default function CourseEmailDesignEditor({ templateId }: Props) {
           Tokens you can use in the subject and body — each is replaced at send time:
         </p>
         <dl className={styles.tokenList}>
-          {ALWAYS_TOKENS.map((t) => (
+          {(showsWeekTokens ? WEEK_TOKENS : ALWAYS_TOKENS).map((t) => (
             <div key={t.token} className={styles.tokenRow}>
               <dt>
                 <code>{`{${t.token}}`}</code>
@@ -251,23 +285,37 @@ export default function CourseEmailDesignEditor({ templateId }: Props) {
               <dd>{t.description}</dd>
             </div>
           ))}
-          {GROUP_TOKENS.map((t) => (
-            <div
-              key={t.token}
-              className={`${styles.tokenRow} ${showsGroupTokens ? "" : styles.tokenRowUnavailable}`}
-            >
-              <dt>
-                <code>{`{${t.token}}`}</code>
-              </dt>
-              <dd>{t.description}</dd>
-            </div>
-          ))}
+          {!showsWeekTokens &&
+            GROUP_TOKENS.map((t) => (
+              <div
+                key={t.token}
+                className={`${styles.tokenRow} ${showsGroupTokens ? "" : styles.tokenRowUnavailable}`}
+              >
+                <dt>
+                  <code>{`{${t.token}}`}</code>
+                </dt>
+                <dd>{t.description}</dd>
+              </div>
+            ))}
         </dl>
-        {!showsGroupTokens && (
+        {!showsWeekTokens && !showsGroupTokens && (
           <p className={styles.tokensNote}>
             The last three only resolve on the group placement email — nobody has a group
             yet when this one sends. Used here they arrive as the literal{" "}
             <code>{"{groupName}"}</code> text, which the preview shows you.
+          </p>
+        )}
+        {showsWeekTokens && (
+          <p className={styles.tokensNote}>
+            This email behaves differently from the other five, in one way worth knowing:
+            when a token has nothing to resolve to — a week with no summary written yet, a
+            member whose group has no time set — the whole sentence around it is removed
+            rather than left with a gap in it. So keep one of these tokens per paragraph,
+            in plain text rather than inside bold or a link, and the email simply gets
+            shorter instead of reading oddly. The subject line is the one thing that
+            cannot be deleted, so a stranded &ldquo;:&rdquo; or &ldquo;·&rdquo; is tidied
+            away there instead. The preview below fills everything in, so it shows the
+            longest version a recipient could get.
           </p>
         )}
       </section>
@@ -291,7 +339,11 @@ export default function CourseEmailDesignEditor({ templateId }: Props) {
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               maxLength={COURSE_SUBJECT_MAX + 20}
-              placeholder="You're in — {courseTitle} starts {startDate}"
+              placeholder={
+                showsWeekTokens
+                  ? "{weekTitle} · Week {weekNumber} of {courseTitle}"
+                  : "You're in — {courseTitle} starts {startDate}"
+              }
             />
           </Field>
 
@@ -365,18 +417,24 @@ export default function CourseEmailDesignEditor({ templateId }: Props) {
           </div>
         </div>
 
-        {/* Course mail renders through the same ApplicationEmail component and
-            EmailChrome as the membership-application mail (see
-            courseApplicationEmails.ts), so the existing preview endpoint is
-            correct here verbatim — it takes {subject, blocks, tokens} and is
-            admin-gated. A `/api/admin/course-emails/preview` clone would render
-            the identical component from an identical body. */}
+        {/* The five lifecycle templates render through the same
+            ApplicationEmail component as the membership-application mail, so
+            for those this endpoint is the application-email preview verbatim.
+            The weekly nudge is not: different chrome (it carries an unsubscribe
+            footer) and a different token pass (unresolved tokens delete their
+            sentence rather than staying literal). Previewing it through the
+            generic endpoint showed an admin a message no recipient could
+            receive, so the course preview route branches on templateId. */}
         <EmailPreview
           subject={subject || "(no subject)"}
           blocks={blocks}
-          endpoint="/api/admin/application-emails/preview"
+          endpoint="/api/admin/course-emails/preview"
           extraPayload={previewPayload}
-          hint="This is what a recipient sees, with sample course details filled in. Tokens that don't resolve on this email stay visible as {token} — that's what would land in the inbox."
+          hint={
+            showsWeekTokens
+              ? "This is what a recipient sees, with sample course details filled in — including the unsubscribe footer every nudge carries. Every sample below resolves, so this is the LONGEST version anyone gets: a week with no summary, or a member whose group has no time set, receives a shorter email with those sentences removed. A token this email cannot resolve (a typo, or one borrowed from another template) stays visible as {token}."
+              : "This is what a recipient sees, with sample course details filled in. Tokens that don't resolve on this email stay visible as {token} — that's what would land in the inbox."
+          }
         />
       </div>
     </div>

@@ -595,6 +595,22 @@ export default function RunHome({ runId, isAdmin, canEmailCohort }: Props) {
               </Link>
             )}
 
+            {/* Same gate as the cohort link above, and for the same reason: the
+                nudge addresses the whole run. Nothing sends it on a schedule —
+                this app has no scheduler — so the link has to exist for it to
+                go out at all. */}
+            {canEmailCohort && (
+              <Link
+                className={styles.panelLink}
+                href={`/learn/${encodeURIComponent(runId)}/nudge`}
+              >
+                Send this week&apos;s nudge
+                <span className={styles.arrow} aria-hidden="true">
+                  →
+                </span>
+              </Link>
+            )}
+
             {target?.published && (
               <Link className={styles.panelLink} href={weekHref(runId, target.weekNumber)}>
                 Open week {target.weekNumber} materials
@@ -624,6 +640,20 @@ export default function RunHome({ runId, isAdmin, canEmailCohort }: Props) {
               href={`/learn/${encodeURIComponent(runId)}/email`}
             >
               Email the whole cohort
+              <span className={styles.arrow} aria-hidden="true">
+                →
+              </span>
+            </Link>
+
+            {/* The weekly nudge lives in the same lane and behind the same
+                gate. It is prepared for you and sent by you: there is no
+                scheduler here, so nothing goes out until someone presses the
+                button on that page. */}
+            <Link
+              className={styles.panelLink}
+              href={`/learn/${encodeURIComponent(runId)}/nudge`}
+            >
+              Send this week&apos;s nudge
               <span className={styles.arrow} aria-hidden="true">
                 →
               </span>

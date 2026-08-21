@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import ApplicationEmail from "@/emails/ApplicationEmail";
+import CourseNudgeEmail from "@/emails/CourseNudgeEmail";
 import { courseSampleTokens } from "@/features/admin/emailDesigns/courseEmailSamples";
+import {
+  courseNudgeTokensFrom,
+  renderCourseNudge,
+  COURSE_NUDGE_TEMPLATE_ID,
+} from "@/lib/email/courseNudgeEmail";
 import { sendEmail } from "@/lib/email/send";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
@@ -12,6 +18,7 @@ import {
 import {
   personaliseBlocks,
   personaliseString,
+  type Block,
 } from "@/lib/firestore/newsletterBlocks";
 
 /**
@@ -24,8 +31,12 @@ import {
  * no seed step, so "no doc" is a normal state and the defaults are what a real
  * send would use — a test that 404'd there would be testing the wrong thing.
  *
- * The email itself renders through the same `ApplicationEmail` component the
- * real course sends use, so what lands here is what an applicant gets.
+ * Five of the six templates render through the same `ApplicationEmail`
+ * component the real course sends use, so what lands here is what an applicant
+ * gets. THE WEEKLY NUDGE RENDERS THROUGH ITS OWN PATH — `renderCourseNudge` into
+ * `CourseNudgeEmail` — for exactly the same reason: that is the one
+ * implementation a cohort receives, footer and degradation rules included. A
+ * rehearsal that rendered it any other way would be proofing a third email.
  */
 export async function POST(
   _req: Request,
@@ -96,9 +107,41 @@ export async function POST(
     "Alex Taylor";
   const tokens = courseSampleTokens(templateId, name);
 
-  const personalisedSubject = personaliseString(subject, tokens);
-  const personalisedBlocks = personaliseBlocks(blocks, tokens);
+  // The nudge's own renderer, or the shared lifecycle pass. `renderCourseNudge`
+  // does the substitution, the escaping, the drop-the-empty-sentence rule and
+  // the subject tidy in one call — the same call the send route makes.
+  const nudge =
+    templateId === COURSE_NUDGE_TEMPLATE_ID
+      ? renderCourseNudge({ subject, blocks }, courseNudgeTokensFrom(tokens))
+      : null;
+
+  const personalisedSubject = nudge
+    ? nudge.subject
+    : personaliseString(subject, tokens);
+  const personalisedBlocks: Block[] = nudge
+    ? nudge.blocks
+    : personaliseBlocks(blocks, tokens);
   const testSubject = `[TEST] ${personalisedSubject}`;
+
+  /**
+   * The nudge's unsubscribe link is a SAMPLE. A real one is a signed token
+   * scoped to one member and one run's cohort channel, and a rehearsal has
+   * neither — so the footer proofs the copy and the shape without minting
+   * anything that could flip a subscription row. Following it lands on the
+   * unsubscribe page's "Invalid or expired link" state, which changes nothing.
+   */
+  const react = nudge
+    ? CourseNudgeEmail({
+        subject: personalisedSubject,
+        blocks: personalisedBlocks,
+        unsubscribeUrl: `${(process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/+$/, "")}/api/unsubscribe?t=sample-preview-token`,
+        preheader: nudge.preheader || testSubject,
+      })
+    : ApplicationEmail({
+        subject: personalisedSubject,
+        blocks: personalisedBlocks,
+        preheader: testSubject,
+      });
 
   const sentTo: string[] = [];
   const failures: Array<{ address: string; error: string }> = [];
@@ -108,11 +151,7 @@ export async function POST(
       await sendEmail({
         to: address,
         subject: testSubject,
-        react: ApplicationEmail({
-          subject: personalisedSubject,
-          blocks: personalisedBlocks,
-          preheader: testSubject,
-        }),
+        react,
         fromName,
         // A rehearsal of course mail that reached only its own sender — the
         // same thing `course-test` marks on the facilitator routes, so the
