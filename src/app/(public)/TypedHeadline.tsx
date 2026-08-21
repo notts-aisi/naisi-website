@@ -57,6 +57,9 @@ export default function TypedHeadline({
   useEffect(() => {
     if (typeof window === "undefined") return;
     const reducedMatch = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // Deliberate SSR-hydration pattern: the server can't know the media
+    // query, so the first client render must match it and flip after mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setReduced(reducedMatch);
     setMounted(true);
   }, []);
@@ -87,6 +90,9 @@ export default function TypedHeadline({
         timer = window.setTimeout(() => setPhase("underlining"), PRE_UNDERLINE_MS);
       }
     } else if (phase === "underlining") {
+      // Phase machine: entering a phase applies its visual state at once,
+      // then schedules the next transition. The synchronous set is the point.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setUnderlineState("growing");
       timer = window.setTimeout(() => {
         setUnderlineState("full");

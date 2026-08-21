@@ -15,6 +15,9 @@ export default async function UpcomingEvents() {
   } catch {
     return null;
   }
+  // Server Component: renders per request, so reading the clock here is
+  // intentional — "upcoming" is relative to the request time.
+  // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
   const upcoming = events
     .filter(

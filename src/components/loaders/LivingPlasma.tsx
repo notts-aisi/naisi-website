@@ -152,13 +152,17 @@ export default function LivingPlasma({
 }: LivingPlasmaProps) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   const activeRef = useRef(active);
-  activeRef.current = active;
   const successRef = useRef<{ startAt: number | null; durationMs: number }>({
     startAt: successStartAt ?? null,
     durationMs: successDurationMs,
   });
-  successRef.current.startAt = successStartAt ?? null;
-  successRef.current.durationMs = successDurationMs;
+  // Keep the animation loop's refs current. Declared before the main
+  // effect so the loop always reads this commit's values.
+  useEffect(() => {
+    activeRef.current = active;
+    successRef.current.startAt = successStartAt ?? null;
+    successRef.current.durationMs = successDurationMs;
+  });
 
   useEffect(() => {
     const canvas = ref.current;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useInViewOnce } from "@/hooks/useInViewOnce";
 import styles from "./DigitRoll.module.css";
 
@@ -15,14 +15,17 @@ export default function DigitRoll({ value }: { value: string }) {
   const { ref, inView } = useInViewOnce<HTMLSpanElement>();
   const [reduced, setReduced] = useState(false);
 
-  const { digits, suffix } = useMemo(() => {
-    const match = value.match(/^(\d+)(.*)$/);
-    if (!match) return { digits: null, suffix: value };
-    return { digits: match[1].split(""), suffix: match[2] };
-  }, [value]);
+  // Cheap enough to run per render — the React Compiler memoizes it, and a
+  // manual useMemo here defeated its compilation of the whole component.
+  const match = value.match(/^(\d+)(.*)$/);
+  const digits = match ? match[1].split("") : null;
+  const suffix = match ? match[2] : value;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    // Deliberate SSR-hydration pattern: the server can't know the media
+    // query, so the first client render must match it and flip after mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setReduced(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   }, []);
 

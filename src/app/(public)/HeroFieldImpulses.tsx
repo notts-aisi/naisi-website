@@ -166,7 +166,7 @@ export default function HeroFieldImpulses() {
     const ATMOSPHERE_GATE_MS = 2500;
     let lastT = performance.now();
     let lastWaveAt = startMs;
-    let pendingInputFires: Array<{ fireAt: number; nodeIdx: number }> = [];
+    const pendingInputFires: Array<{ fireAt: number; nodeIdx: number }> = [];
     let frame = 0;
     let visible = true;
     let lastCursorFireAt = -Infinity;
