@@ -114,10 +114,10 @@ export async function POST(
           preheader: testSubject,
         }),
         fromName,
-        // `admin-test` rather than a dedicated `course-test`: EmailSendKind
-        // lives in lib/firestore/emailSends.ts, which this PR doesn't own.
-        // Retag when the PR that adds the course send kinds lands (2026-08-21).
-        kind: "admin-test",
+        // A rehearsal of course mail that reached only its own sender — the
+        // same thing `course-test` marks on the facilitator routes, so the
+        // deliverability tab can tell every course test send from a real one.
+        kind: "course-test",
         actorUid: actor.uid,
         referenceId: templateId,
       });

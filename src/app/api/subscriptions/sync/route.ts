@@ -3,9 +3,9 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { normaliseEmail } from "@/lib/firestore/emailDocId";
 import {
-  ALL_CATEGORIES,
   getVerifiedEmails,
-  type NotificationCategory,
+  SUBSCRIPTION_CATEGORIES,
+  type SubscriptionCategory,
 } from "@/lib/firestore/notifications";
 import {
   claimGuestSubscriptions,
@@ -40,6 +40,12 @@ import {
  * For each (verified email, channel) pair: subscribe if `matrix[email][channel]`
  * is true, unsubscribe otherwise. Most-recent-action wins, so flipping a
  * checkbox off in the UI promptly drops the row's subscribed flag.
+ *
+ * Iterates `SUBSCRIPTION_CATEGORIES`, NOT `ALL_CATEGORIES`: the matrix is the
+ * per-address subscription editor, and `courses` is an account-level opt-out
+ * with no subscription row of its own (cohort mail rides `cohort:<runId>`).
+ * Iterating every category here would mint a top-level `courses` row nothing
+ * sends to — see the constant's comment in notifications.ts.
  */
 
 type MatrixCell = { newsletter?: unknown; events?: unknown };
@@ -123,7 +129,7 @@ export async function POST(req: Request) {
   // so the client can't write rows for unverified addresses.
   for (const ve of verifiedEmails) {
     const cell = matrix[ve.email] ?? matrix[normaliseEmail(ve.email)];
-    for (const cat of ALL_CATEGORIES) {
+    for (const cat of SUBSCRIPTION_CATEGORIES) {
       const wants = readMatrixCell(cell, cat);
       if (wants) {
         await subscribe(db, {
@@ -149,9 +155,8 @@ export async function POST(req: Request) {
 
 function readMatrixCell(
   cell: MatrixCell | undefined,
-  cat: NotificationCategory,
+  cat: SubscriptionCategory,
 ): boolean {
   if (!cell) return false;
-  if (cat === "newsletter") return Boolean(cell.newsletter);
-  return Boolean(cell.events);
+  return Boolean(cell[cat]);
 }

@@ -3,9 +3,9 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
-  ALL_CATEGORIES,
   getVerifiedEmails,
   normaliseNotifications,
+  SUBSCRIPTION_CATEGORIES,
   type NotificationCategory,
   type VerifiedEmail,
 } from "@/lib/firestore/notifications";
@@ -18,8 +18,9 @@ import {
 /**
  * Two-pass admin backfill / migration. Idempotent.
  *
- * Pass A: write a row per (verified email, channel) for EVERY user. The
- * verified-email set comes from `getVerifiedEmails(userDoc)`: the Google
+ * Pass A: write a row per (verified email, channel) for EVERY user, over the
+ * SUBSCRIPTION_CATEGORIES channels only (`courses` has no top-level row — see
+ * the loop). The verified-email set comes from `getVerifiedEmails(userDoc)`: the Google
  * account email is always counted; the university email is only counted
  * when `profile.uniEmailVerifiedAt` is set. Members get one row per
  * (email × channel) pair with:
@@ -111,7 +112,17 @@ export async function POST() {
       undefined;
 
     for (const ve of verifiedEmails) {
-      for (const cat of ALL_CATEGORIES) {
+      // `SUBSCRIPTION_CATEGORIES`, never `ALL_CATEGORIES`: this loop MINTS A
+      // SUBSCRIPTION ROW per (verified email, category), and only the top-level
+      // channels have a sender that reads one. `courses` is an account-level
+      // OPT-OUT, not a channel — cohort mail rides `cohort:<runId>` rows the
+      // allocation route writes — so iterating every category here would mint a
+      // top-level `courses` row nothing ever sends to. Those rows are invisible
+      // on /profile but visible and flippable on the admin Subscriptions tab,
+      // where a flip would mirror back onto `categories.courses` and read as a
+      // refusal the member never made. See the constant's comment in
+      // notifications.ts.
+      for (const cat of SUBSCRIPTION_CATEGORIES) {
         const wantsThis = wantsChannelForEmail(prefs, ve, cat);
         const docId = subscriptionDocId({ email: ve.email, channel: cat });
         const ref = db.collection("subscriptions").doc(docId);

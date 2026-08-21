@@ -62,6 +62,14 @@ function transporter(): Transporter {
     // Gmail requires STARTTLS on 587; implicit TLS only on 465.
     secure: port === 465,
     auth: { user, pass },
+    // Nodemailer defaults are 2min connect / 10min socket, which outlive App
+    // Hosting's 60s request ceiling (apphosting.yaml runConfig.timeoutSeconds).
+    // Bulk senders bound their wall clock on a worst-case per-send cost, so one
+    // hung connection must fail fast rather than park a worker past the request
+    // deadline with its rate-limit slot already spent.
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
   });
   return cached;
 }

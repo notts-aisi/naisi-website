@@ -46,9 +46,9 @@ import {
   ALL_CATEGORIES,
   CATEGORY_DESCRIPTIONS,
   CATEGORY_LABELS,
-  isSubscribedToAnything,
   setCategory,
   setChannel,
+  SUBSCRIPTION_CATEGORIES,
   type NotificationPrefs,
 } from "@/lib/firestore/notifications";
 
@@ -328,9 +328,17 @@ function RegisterPageInner() {
   const [expectedGraduation, setExpectedGraduation] = useState("");
   const [motivation, setMotivation] = useState("");
   const [interests, setInterests] = useState("");
+  // Form defaults, not storage defaults — every switch below is rendered, so
+  // whatever is submitted is an answer the registrant saw and could change.
+  // `courses` starts ON because it is an OPT-OUT, not an opt-in: cohort mail
+  // is consented to by enrolling, and the category is the switch that stops
+  // it (see the run email route's module comment). Starting it OFF would
+  // stamp every new member with an explicit `courses: false` refusal at
+  // signup — which the run email route reads as "never mail me about my
+  // cohort" long before they have one.
   const [prefs, setPrefs] = useState<NotificationPrefs>({
     channels: { gmail: true, uniEmail: false },
-    categories: { newsletter: true, events: true },
+    categories: { newsletter: true, events: true, courses: true },
   });
 
   // Verification state
@@ -341,7 +349,26 @@ function RegisterPageInner() {
 
   const showGraduation = status !== "" && STATUSES_WITH_GRADUATION.includes(status);
   const showStatusOther = status === "other";
-  const anyCategoryOn = isSubscribedToAnything(prefs);
+  /**
+   * Whether the "Deliver to" channel panel has anything to control — and
+   * therefore whether it renders at all.
+   *
+   * `SUBSCRIPTION_CATEGORIES` (newsletter + events), NOT every category and
+   * NOT `isSubscribedToAnything`, which counts `courses` too. Those two
+   * channel switches decide which verified address newsletter and event mail
+   * goes to, and nothing else: `completeRegistration` mints subscription rows
+   * for those two only, and both course email routes resolve ONE address per
+   * recipient server-side and never read the channels map. So a registrant who
+   * unticks newsletter and events but leaves course announcements on — the
+   * default, since it is an opt-out — would otherwise be shown a delivery
+   * section that routes nothing.
+   *
+   * The submit-time guard below reads the same value on purpose: an error
+   * demanding a channel while the channel switches are hidden is a dead end.
+   */
+  const anySubscriptionCategoryOn = SUBSCRIPTION_CATEGORIES.some(
+    (cat) => prefs.categories[cat],
+  );
   // A typed-out university email that isn't a Nottingham address (e.g. another
   // institution, or the .edu.cn/.edu.my campuses — eligibility is .ac.uk-only)
   // → steer them to the external-collaborator flow. Gated on "@" so it only
@@ -514,7 +541,11 @@ function RegisterPageInner() {
       setError("Please pick your expected graduation month and year.");
       return;
     }
-    if (anyCategoryOn && !prefs.channels.gmail && !prefs.channels.uniEmail) {
+    if (
+      anySubscriptionCategoryOn &&
+      !prefs.channels.gmail &&
+      !prefs.channels.uniEmail
+    ) {
       setError("Pick at least one email to send messages to, or turn off all subscriptions.");
       return;
     }
@@ -993,7 +1024,11 @@ function RegisterPageInner() {
                 description={CATEGORY_DESCRIPTIONS[cat]}
               />
             ))}
-            {anyCategoryOn && (
+            {/* Only the two subscription categories have a delivery choice —
+                see `anySubscriptionCategoryOn`. Cohort mail is addressed to
+                one proven address by the run itself, so these switches would
+                not move it. */}
+            {anySubscriptionCategoryOn && (
               <div
                 style={{
                   padding: "var(--space-3)",
@@ -1012,7 +1047,11 @@ function RegisterPageInner() {
                     color: "var(--color-text-muted)",
                   }}
                 >
-                  Deliver to
+                  {/* Names the two it actually routes. A bare "Deliver to"
+                      under three switches reads as covering all three, and
+                      course announcements go to whichever address the run has
+                      proven, whatever is picked here. */}
+                  Deliver newsletter and event email to
                 </span>
                 <Switch
                   checked={prefs.channels.gmail}

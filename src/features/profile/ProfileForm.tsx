@@ -14,6 +14,7 @@ import {
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Switch from "@/components/ui/Switch";
 import { Field, Input } from "@/components/ui/Input";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
@@ -24,14 +25,14 @@ import {
   type UserDoc,
 } from "@/lib/firestore/users";
 import {
-  ALL_CATEGORIES,
   CATEGORY_DESCRIPTIONS,
   CATEGORY_LABELS,
   getVerifiedEmails,
-  isSubscribedToAnything,
+  isSubscriptionCategory,
   serialiseNotifications,
-  type NotificationCategory,
+  SUBSCRIPTION_CATEGORIES,
   type NotificationPrefs,
+  type SubscriptionCategory,
   type VerifiedEmail,
 } from "@/lib/firestore/notifications";
 import styles from "./ProfileForm.module.css";
@@ -46,7 +47,36 @@ const KIND_LABEL: Record<VerifiedEmail["kind"], string> = {
   uni: "Uni",
 };
 
-type Matrix = Record<string, { newsletter: boolean; events: boolean }>;
+/**
+ * The per-address matrix covers only the categories that ARE subscription
+ * channels. `courses` is account-level (one opt-out, not one row per address)
+ * and rides the standalone switch below the matrix — see
+ * `SUBSCRIPTION_CATEGORIES` in notifications.ts.
+ */
+type Matrix = Record<string, Record<SubscriptionCategory, boolean>>;
+
+function emptyCell(): Record<SubscriptionCategory, boolean> {
+  return { newsletter: false, events: false };
+}
+
+/**
+ * Read the stored `courses` opt-out RAW, off the untouched document data —
+ * deliberately NOT via `normaliseNotifications`, which collapses "absent" and
+ * "false" into the same `false`. Absent means "hasn't answered", so the switch
+ * starts ON and only an explicit stored `false` unticks it. Getting this wrong
+ * would show every member who has never answered as opted out, and then store
+ * that invented refusal on their next save. Mirror of
+ * `hasOptedOutOfCourseAnnouncements` in the run email route — the two are one
+ * decision spelled in two places.
+ */
+function readCourseAnnouncements(data: Record<string, unknown> | undefined): boolean {
+  const profile = (data?.profile as Record<string, unknown> | undefined) ?? {};
+  const notifications = profile.notifications;
+  if (!notifications || typeof notifications !== "object") return true;
+  const categories = (notifications as Record<string, unknown>).categories;
+  if (!categories || typeof categories !== "object") return true;
+  return (categories as Record<string, unknown>).courses !== false;
+}
 
 function asDate(v: unknown): Date | null {
   if (!v) return null;
@@ -71,6 +101,7 @@ function asDate(v: unknown): Date | null {
 function legacyPrefsFromMatrix(
   matrix: Matrix,
   verifiedEmails: VerifiedEmail[],
+  courseAnnouncements: boolean,
 ): NotificationPrefs {
   const newsletter = verifiedEmails.some(
     (ve) => matrix[ve.email]?.newsletter,
@@ -87,7 +118,11 @@ function legacyPrefsFromMatrix(
     ? Boolean(matrix[uni.email]?.newsletter || matrix[uni.email]?.events)
     : false;
   return {
-    categories: { newsletter, events },
+    // `courses` comes from the standalone switch, not the matrix. It MUST be
+    // carried through: `serialiseNotifications` writes all three booleans, so
+    // dropping it here would store `courses: false` on every save and the run
+    // email route would read that as an explicit refusal.
+    categories: { newsletter, events, courses: courseAnnouncements },
     channels: { gmail: gmailGetsAnything, uniEmail: uniEmailGetsAnything },
   };
 }
@@ -100,6 +135,9 @@ export default function ProfileForm() {
   const [preferredName, setPreferredName] = useState("");
   const [universityEmail, setUniversityEmail] = useState("");
   const [matrix, setMatrix] = useState<Matrix>({});
+  // Account-level, not per-address. Starts ON: absent = "hasn't answered",
+  // and cohort mail is an opt-out. See readCourseAnnouncements.
+  const [courseAnnouncements, setCourseAnnouncements] = useState(true);
 
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -120,6 +158,9 @@ export default function ProfileForm() {
       setMe(normalized);
       setPreferredName(normalized.profile?.preferredName ?? "");
       setUniversityEmail(normalized.profile?.universityEmail ?? "");
+      // Raw data, not the normalized doc: `UserProfile.notifications` is typed
+      // as the full shape, so a missing `courses` reads as `false` through it.
+      setCourseAnnouncements(readCourseAnnouncements(snap.data()));
       setLoading(false);
     });
     return unsub;
@@ -144,9 +185,11 @@ export default function ProfileForm() {
         const channel = typeof data.channel === "string" ? data.channel : "";
         const subscribed = data.subscribed === true;
         if (!email || !channel) continue;
-        if (channel !== "newsletter" && channel !== "events") continue;
-        const cell = next[email] ?? { newsletter: false, events: false };
-        cell[channel as NotificationCategory] = subscribed;
+        // Only the matrix-backed channels. A `cohort:<runId>` row belongs to
+        // the course cohort, not to a checkbox here.
+        if (!isSubscriptionCategory(channel)) continue;
+        const cell = next[email] ?? emptyCell();
+        cell[channel] = subscribed;
         next[email] = cell;
       }
       setMatrix(next);
@@ -164,6 +207,17 @@ export default function ProfileForm() {
     });
   }, [me]);
 
+  /**
+   * Any SUBSCRIPTION at all, across every address — the matrix only.
+   *
+   * Deliberately not counting `courses`: that switch is an opt-out on mail a
+   * cohort sends its own members, not a list anyone subscribed to, so a badge
+   * reading "subscribed" off it would be claiming something the member never
+   * did. It is also why the badge says "no subscriptions" rather than "no
+   * emails": a member with an empty matrix still gets their group's practical
+   * email and everything else transactional, and a badge promising silence
+   * would be a lie the first time a session moved.
+   */
   const anyChecked = useMemo(
     () =>
       Object.values(matrix).some(
@@ -180,11 +234,11 @@ export default function ProfileForm() {
 
   function setCell(
     email: string,
-    cat: NotificationCategory,
+    cat: SubscriptionCategory,
     next: boolean,
   ) {
     setMatrix((prev) => {
-      const cur = prev[email] ?? { newsletter: false, events: false };
+      const cur = prev[email] ?? emptyCell();
       return { ...prev, [email]: { ...cur, [cat]: next } };
     });
   }
@@ -220,7 +274,11 @@ export default function ProfileForm() {
     try {
       if (!user) throw new Error("Not signed in");
       const db = getClientDb();
-      const legacy = legacyPrefsFromMatrix(matrix, verifiedEmails);
+      const legacy = legacyPrefsFromMatrix(
+        matrix,
+        verifiedEmails,
+        courseAnnouncements,
+      );
       const patch: Record<string, unknown> = {
         "profile.preferredName": preferredName.trim(),
         "profile.universityEmail": uniEmailTrimmed,
@@ -229,7 +287,13 @@ export default function ProfileForm() {
         // reading it pre-migration. Both legacy fields are dropped in the
         // follow-up cleanup PR after the new paths settle.
         "profile.newsletter": {
-          subscribed: isSubscribedToAnything(legacy),
+          // Matrix-backed categories only — NOT `isSubscribedToAnything`,
+          // which now counts `courses` too. This field is the legacy
+          // newsletter flag some read paths still show as "newsletter: yes"
+          // (e.g. the admin approval card); a default-on course opt-out must
+          // not flip it. Same value this line produced before `courses`
+          // existed.
+          subscribed: legacy.categories.newsletter || legacy.categories.events,
           deliverToGmail: legacy.channels.gmail,
           deliverToUniEmail: legacy.channels.uniEmail,
         },
@@ -259,10 +323,7 @@ export default function ProfileForm() {
       // actually act on. Server-side helper double-checks regardless.
       const payloadMatrix: Matrix = {};
       for (const ve of verifiedEmails) {
-        payloadMatrix[ve.email] = matrix[ve.email] ?? {
-          newsletter: false,
-          events: false,
-        };
+        payloadMatrix[ve.email] = matrix[ve.email] ?? emptyCell();
       }
       fetch("/api/subscriptions/sync", {
         method: "POST",
@@ -392,12 +453,15 @@ export default function ProfileForm() {
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-1)" }}>
           <h2 style={{ fontSize: "var(--text-xl)" }}>Email preferences</h2>
           <Badge tone={anyChecked ? "success" : "neutral"}>
-            {anyChecked ? "Getting emails" : "No emails"}
+            {anyChecked ? "Subscribed" : "No subscriptions"}
           </Badge>
         </div>
         <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)", marginBottom: "var(--space-5)" }}>
-          Pick which inbox should receive each kind of email. You can unsubscribe from any
-          email with one click.
+          Pick which inbox should receive the newsletter and event announcements —
+          every one of those carries a one-click unsubscribe link. Email about
+          something you are already part of — your reading group&apos;s session
+          moving, an RSVP confirmation — is not a subscription and reaches you
+          either way.
         </p>
 
         {verifiedEmails.length === 0 ? (
@@ -428,7 +492,7 @@ export default function ProfileForm() {
                 </div>
               ))}
 
-              {ALL_CATEGORIES.map((cat) => (
+              {SUBSCRIPTION_CATEGORIES.map((cat) => (
                 <MatrixChannelRow
                   key={cat}
                   cat={cat}
@@ -440,7 +504,7 @@ export default function ProfileForm() {
             </div>
 
             <div className={styles.matrixStacked}>
-              {ALL_CATEGORIES.map((cat) => (
+              {SUBSCRIPTION_CATEGORIES.map((cat) => (
                 <section key={cat} className={styles.matrixStackedSection}>
                   <div className={styles.matrixChannelTitle}>{CATEGORY_LABELS[cat]}</div>
                   <div className={styles.matrixChannelDescription}>
@@ -469,6 +533,37 @@ export default function ProfileForm() {
             </div>
           </div>
         )}
+
+        {/*
+          Account-level, so it sits outside the per-address matrix: cohort mail
+          is addressed by the `cohort:<runId>` subscription written to the one
+          proven address at allocation, and a per-address checkbox here could
+          not move it. Rendered for everyone, not just enrolled members — it is
+          the switch that makes an unticked box mean a refusal the member
+          actually made, which is the whole premise of the opt-out.
+
+          The eyebrow is not decoration. Directly under a grid of per-address
+          checkboxes, a lone switch reads as another row of that grid; this
+          says what it actually is before the label does, and names the one
+          thing it explicitly does NOT reach.
+        */}
+        <div className={styles.accountToggle}>
+          <p className={styles.accountToggleEyebrow}>
+            One setting for the whole account
+          </p>
+          <Switch
+            checked={courseAnnouncements}
+            onChange={setCourseAnnouncements}
+            label={CATEGORY_LABELS.courses}
+            description={CATEGORY_DESCRIPTIONS.courses}
+          />
+          <p className={styles.accountToggleNote}>
+            Not a subscription and not per-inbox: a cohort emails whichever
+            address the course has already proven for you. Leaving it on is not
+            a promise of mail — it just means you have not asked your cohorts to
+            stop.
+          </p>
+        </div>
       </Card>
 
       {error && <p style={{ color: "var(--color-danger)" }}>{error}</p>}
@@ -491,10 +586,10 @@ function MatrixChannelRow({
   matrix,
   onChange,
 }: {
-  cat: NotificationCategory;
+  cat: SubscriptionCategory;
   emails: VerifiedEmail[];
   matrix: Matrix;
-  onChange: (email: string, cat: NotificationCategory, next: boolean) => void;
+  onChange: (email: string, cat: SubscriptionCategory, next: boolean) => void;
 }) {
   return (
     <>
