@@ -271,6 +271,13 @@
   white-space: pre-wrap;
 }
 
+/* The member surface's submission slot (`renderExerciseAction`). Never
+   rendered on the public page — the card keeps its own column flow and gap,
+   so this only opens the extra breathing room the form wants. */
+.exerciseAction {
+  margin-top: var(--space-1);
+}
+
 /* === Checklist ========================================== */
 
 .checklist {

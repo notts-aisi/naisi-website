@@ -1,0 +1,551 @@
+/* ============================================================
+   ReviewQueue — /learn/[runId]/group/[groupId]/review.
+
+   A two-pane working surface: the queue on the left, one
+   member's work on the right. The layout's whole argument is
+   that the right pane NEVER MOVES — same box, same width, same
+   scroll position, different person. Every motion decision below
+   follows from that:
+
+     · selected row  → a ::before hairline scales on Y. The row
+                       itself never shifts, so the eye keeps its
+                       place in the column.
+     · detail pane   → a 200ms-in / 60ms-out CROSSFADE. A slide
+                       would say "you navigated"; nobody did.
+     · reviewed row  → leaves via the grid-rows 1fr→0fr track so
+                       the list closes over the gap instead of
+                       the rest of the queue jumping up.
+
+   grid-rows is one of the two named exceptions to
+   compositor-only animation, and is always paired with
+   `min-height: 0; overflow: hidden` on the inner element (the
+   ReadingListAccordion comment, carried forward verbatim in
+   .rowInner below).
+   ============================================================ */
+
+.queue {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* === Controls ============================================== */
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+}
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.controlLabel {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+/* Refresh, pushed to the far end of the row. `align-items: flex-end` on
+   .controls already sits it on the labelled controls' baseline, so it needs no
+   label of its own to line up. */
+.controlAction {
+  display: flex;
+  margin-left: auto;
+}
+
+.weekSelect {
+  min-width: 10rem;
+}
+
+/* Tallies inside the filter pills. Tabular so the numbers line up down the
+   row — the point of showing them is comparison. */
+.count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.weekTitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--color-danger);
+}
+
+/* === The two panes ========================================= */
+
+/* `minmax(0, …)` on BOTH tracks: a long unbroken answer or a pasted URL in the
+   detail pane would otherwise take the `auto` minimum to mean its own
+   min-content and push the grid wider than the shell's 64rem cap. */
+.panes {
+  display: grid;
+  grid-template-columns: minmax(0, 17rem) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.listPane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.listEmpty {
+  padding: var(--space-2) 0;
+}
+
+/* === The queue list ======================================== */
+
+/* A real listbox driven by aria-activedescendant: focus stays on this element
+   and j/k move the active option, which is what lets Enter hand focus to the
+   feedback box and Escape hand it back. */
+.list {
+  list-style: none;
+  margin: 0;
+  /* No gap: a collapsing row must be able to reach zero height, and a flex gap
+     survives its item shrinking. Separation comes from .rowBody's padding. */
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.list:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.row {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--dur-panel) var(--ease-naisi),
+    opacity var(--dur-fade) var(--ease-exit);
+}
+
+.rowLeaving {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  /* Mid-collapse it is a departing artefact, not a target. */
+  pointer-events: none;
+}
+
+.rowInner {
+  /* The grid-row track does the height; this element clips the content while
+     it is in the closed (0fr) row.
+     - `min-height: 0` overrides the default `min-height: auto` on grid items,
+       which is the bit that prevents the track from actually shrinking past
+       content size. Without this, the row "collapses" visually but a sliver of
+       its first line leaks through.
+     - `overflow: hidden` then clips whatever natural height the inner content
+       has during the transition so it doesn't paint outside the track. */
+  min-height: 0;
+  overflow: hidden;
+}
+
+.rowBody {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* Left padding leaves room for the selection hairline. */
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--dur-quick) var(--ease-naisi);
+}
+
+.rowBody:hover {
+  background: var(--color-surface-hover);
+}
+
+/* The selection indicator. `scaleY` from a centre origin so it grows out from
+   the middle of the row — compositor-only, and it never moves the row it marks
+   (which is the whole reason the indicator is a pseudo-element rather than a
+   border: a border would shift the text by its own width on selection). */
+.rowBody::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: var(--space-1);
+  bottom: var(--space-1);
+  width: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  transform: scaleY(0);
+  transform-origin: center;
+  transition: transform var(--dur-quick) var(--ease-naisi);
+}
+
+.rowSelected {
+  background: var(--color-accent-soft);
+}
+
+.rowSelected::before {
+  transform: scaleY(1);
+}
+
+.rowName {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.rowChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+/* An exercise with nothing submitted: present in the strip (so the positions
+   still line up with the week's exercise order) but visibly hollow. */
+.chipEmpty {
+  opacity: 0.45;
+}
+
+.notStarted {
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  color: var(--color-text-subtle);
+}
+
+/* === Detail pane =========================================== */
+
+/* ONE element, never keyed — the crossfade is a transition on this node, and a
+   keyed remount would start each pane at its final opacity with nothing to
+   transition from. `--dur-fade` is the plan's 200ms in-beat; the 60ms out-beat
+   below is a literal because it sits under the smallest duration token on
+   purpose (it is a get-out-of-the-way beat, not an animation anyone reads). */
+.detailPane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  opacity: 1;
+  transition: opacity var(--dur-fade) var(--ease-naisi);
+}
+
+.detailFading {
+  opacity: 0;
+  transition-duration: 60ms;
+  transition-timing-function: var(--ease-exit);
+}
+
+.detailName {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+/* === One exercise ========================================== */
+
+.exercise {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.exerciseHead {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.exerciseNumber {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.exerciseMeta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.exerciseTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.prompt {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.help {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+/* === Their answer ========================================== */
+
+.answer {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-left: 2px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+  font-size: var(--text-sm);
+}
+
+.answerLink {
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  /* A pasted link has no break opportunity and would widen the pane. */
+  overflow-wrap: anywhere;
+}
+
+.answerLink:hover {
+  color: var(--color-accent-hover);
+}
+
+.answerLink:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring);
+}
+
+/* A URL that failed render-time revalidation. Warning, never danger: the
+   member did not do anything wrong, the link simply cannot be trusted as an
+   anchor. */
+.linkWarning {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-warning);
+}
+
+.submittedAt {
+  margin: 0;
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  color: var(--color-text-subtle);
+}
+
+/* === Feedback + verdicts =================================== */
+
+.feedback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.fieldLabel {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.verdicts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+/* Reopen: the undo for a verdict, deliberately NOT in the verdict row. Its own
+   line, a rule above it, and an explanation beside it — it changes who holds
+   the answer rather than what the facilitator thinks of it, and it should read
+   as the quietest thing on the card. */
+.reopen {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  margin-top: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--color-border);
+}
+
+.reopenNote {
+  margin: 0;
+  flex: 1 1 12rem;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-text-subtle);
+}
+
+/* === Shared text =========================================== */
+
+.muted {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+}
+
+.emptyLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.emptyLink:hover {
+  background: var(--color-surface-hover);
+}
+
+.emptyLink:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The keyboard legend. Sits at the bottom because it is a reminder, not an
+   instruction — the queue works without ever reading it. */
+.keys {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+}
+
+.kbd {
+  display: inline-block;
+  min-width: 1.4rem;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+/* === Reduced motion =======================================
+   The token belt already collapses the geometry durations to 1ms; what it
+   cannot do is remove a from-state or a literal duration, so both are answered
+   here per house convention. Opacity crossfades survive by design — they are
+   not a vestibular trigger — which is why .detailPane keeps its transition. */
+
+@media (prefers-reduced-motion: reduce) {
+  .row {
+    /* --dur-panel is already 1ms under the belt; stated so this module's
+       answer is explicit rather than inherited. */
+    transition-duration: 1ms, var(--dur-fade);
+  }
+
+  .rowBody::before {
+    /* No scale-up: the hairline simply is or isn't there. */
+    transition: none;
+    transform: scaleY(1);
+    opacity: 0;
+  }
+
+  .rowSelected::before {
+    opacity: 1;
+  }
+
+  .rowBody {
+    transition: none;
+  }
+
+  .detailFading {
+    /* Keep the crossfade, drop the asymmetry — at 120ms (the belt's surviving
+       --dur-fade) a separate 60ms out-beat is below perception anyway. */
+    transition-duration: var(--dur-fade);
+  }
+}
+
+/* === Mobile ===============================================
+   Below --bp-md the two panes stack: the queue first, then the selected
+   member's work under it. Tapping a name scrolls nothing — the detail is
+   already the next thing down the page, which is why the list keeps its own
+   height rather than becoming a scroller. */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .panes {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+
+  .controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .weekSelect {
+    min-width: 0;
+  }
+
+  .controlAction {
+    /* Stacked, so "push to the end" has no end to push to. */
+    margin-left: 0;
+  }
+
+  .rowBody {
+    /* Touch floor (docs/touch-targets.md): the row is the tap target. */
+    min-height: 2.75rem;
+    justify-content: center;
+  }
+
+  .exerciseHead {
+    flex-wrap: wrap;
+  }
+
+  .verdicts {
+    /* Three verdicts never fit across a phone without truncating; stacked
+       full-width buttons also make the destructive-ish middle option harder to
+       hit by accident. */
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .reopen {
+    /* Its note is a sentence, not a label; beside a button at 320px it wraps to
+       three lines and drags the button off-centre. Button first, note under. */
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

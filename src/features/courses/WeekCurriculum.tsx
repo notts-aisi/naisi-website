@@ -1,7 +1,12 @@
 import type { ReactNode } from "react";
 import BlockView from "@/features/events/BlockView";
 import { youtubeIdFromUrl } from "@/lib/firestore/newsletterBlocks";
-import type { ChecklistItem, CourseWeekDoc, Material } from "@/lib/firestore/courses";
+import type {
+  ChecklistItem,
+  CourseWeekDoc,
+  Exercise,
+  Material,
+} from "@/lib/firestore/courses";
 import styles from "./WeekCurriculum.module.css";
 
 /**
@@ -51,8 +56,17 @@ type Props = {
    */
   materialClassName?: (material: Material) => string | undefined;
   /**
+   * Optional block rendered under an exercise's prompt — the member surface's
+   * submission form (answer field, autosave, review verdict). Return null to
+   * render nothing for an exercise. Absent on the public page, where an
+   * exercise is a read-only prompt; the prop-presence check below is what
+   * keeps that output byte-identical. Same precedent as
+   * `renderMaterialExtra`.
+   */
+  renderExerciseAction?: (exercise: Exercise) => ReactNode;
+  /**
    * Optional node appended inside the exercises section — the member
-   * surface's "submitting opens soon" line. Absent on the public page.
+   * surface's viewer note / load error. Absent on the public page.
    */
   exercisesFooter?: ReactNode;
 };
@@ -96,6 +110,7 @@ export default function WeekCurriculum({
   renderMaterialExtra,
   renderChecklistAction,
   materialClassName,
+  renderExerciseAction,
   exercisesFooter,
 }: Props) {
   const hasGuide = week.guideBlocks.length > 0;
@@ -144,22 +159,26 @@ export default function WeekCurriculum({
             Exercises
           </h2>
           <ol className={styles.exercises}>
-            {week.exercises.map((x, i) => (
-              <li key={x.id} className={styles.exercise}>
-                <div className={styles.exerciseHead}>
-                  <span className={styles.exerciseNumber} aria-hidden="true">
-                    {i + 1}
-                  </span>
-                  <span className={styles.exerciseKind}>
-                    {x.responseType === "link" ? "Link answer" : "Written answer"}
-                    {x.required ? " · Required" : ""}
-                  </span>
-                </div>
-                {/* Text node, never markup — see the module comment. */}
-                <p className={styles.exercisePrompt}>{x.prompt}</p>
-                {x.helpText && <p className={styles.exerciseHelp}>{x.helpText}</p>}
-              </li>
-            ))}
+            {week.exercises.map((x, i) => {
+              const action = renderExerciseAction?.(x);
+              return (
+                <li key={x.id} className={styles.exercise}>
+                  <div className={styles.exerciseHead}>
+                    <span className={styles.exerciseNumber} aria-hidden="true">
+                      {i + 1}
+                    </span>
+                    <span className={styles.exerciseKind}>
+                      {x.responseType === "link" ? "Link answer" : "Written answer"}
+                      {x.required ? " · Required" : ""}
+                    </span>
+                  </div>
+                  {/* Text node, never markup — see the module comment. */}
+                  <p className={styles.exercisePrompt}>{x.prompt}</p>
+                  {x.helpText && <p className={styles.exerciseHelp}>{x.helpText}</p>}
+                  {action ? <div className={styles.exerciseAction}>{action}</div> : null}
+                </li>
+              );
+            })}
           </ol>
           {exercisesFooter}
         </section>
