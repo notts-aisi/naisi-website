@@ -50,6 +50,11 @@ const SURFACE_LABELS: Record<SiteNoticeSurface, { label: string; description: st
     description:
       "Disables the RSVP submit on event pages. Change/cancel links from RSVP emails stay open on purpose.",
   },
+  courseApplications: {
+    label: "Pause course applications",
+    description:
+      "Rejects new applications on /courses/*/apply (the only surface with a server-side gate). Editing and withdrawing an application stay open on purpose.",
+  },
 };
 
 const EXPIRY_CHOICES = [
@@ -99,6 +104,7 @@ const EMPTY_DRAFT: Draft = {
     newRegistrations: false,
     collaboratorApplications: false,
     eventSignups: false,
+    courseApplications: false,
   },
 };
 
@@ -182,6 +188,8 @@ export default function SiteStatusPanel() {
           [SITE_NOTICE_SURFACE_FLAGS.collaboratorApplications]:
             draft.paused.collaboratorApplications,
           [SITE_NOTICE_SURFACE_FLAGS.eventSignups]: draft.paused.eventSignups,
+          [SITE_NOTICE_SURFACE_FLAGS.courseApplications]:
+            draft.paused.courseApplications,
         },
         new Date(),
       ),
@@ -225,6 +233,8 @@ export default function SiteStatusPanel() {
       [SITE_NOTICE_SURFACE_FLAGS.collaboratorApplications]:
         draft.paused.collaboratorApplications,
       [SITE_NOTICE_SURFACE_FLAGS.eventSignups]: draft.paused.eventSignups,
+      [SITE_NOTICE_SURFACE_FLAGS.courseApplications]:
+        draft.paused.courseApplications,
     });
   }
 
@@ -238,6 +248,7 @@ export default function SiteStatusPanel() {
       [SITE_NOTICE_SURFACE_FLAGS.newRegistrations]: false,
       [SITE_NOTICE_SURFACE_FLAGS.collaboratorApplications]: false,
       [SITE_NOTICE_SURFACE_FLAGS.eventSignups]: false,
+      [SITE_NOTICE_SURFACE_FLAGS.courseApplications]: false,
     });
   }
 

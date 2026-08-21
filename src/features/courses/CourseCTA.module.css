@@ -38,14 +38,6 @@
   font-weight: 600;
 }
 
-.note {
-  margin: 0;
-  font-size: var(--text-sm);
-  line-height: var(--leading-relaxed);
-  color: var(--color-text-muted);
-  max-width: 36rem;
-}
-
 /* Anchor styled as the primary action. <Button> renders a real <button> and
    takes no href, so navigation targets get the styling rather than the
    component — the same call the public landing CTAs make. */

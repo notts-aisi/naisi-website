@@ -103,6 +103,42 @@
   font-size: var(--text-sm);
 }
 
+/* `.warn` is a standalone child of `.editor` in one place (the wrong-course
+   notice), where the flex gap spaces it. Inside a Card it needs its own
+   bottom margin — kept as a second class rather than folded into `.warn` so
+   the standalone use doesn't gain a stray gap. */
+.blockWarn {
+  margin-bottom: var(--space-4);
+}
+
+/* The question budget, read straight after the builder's last card. The
+   global reset zeroes <p> margins, so the spacing is stated here. */
+.formCount {
+  margin-top: var(--space-3);
+}
+
+/* Opens the public apply page in a new tab. Sits in a section header beside
+   the title, so it reads as a destination rather than a save action. */
+.previewLink {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--color-accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.previewLink:hover {
+  background: var(--color-surface-hover);
+}
+
+.previewLink:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .fields {
   display: flex;
   flex-direction: column;
@@ -293,5 +329,9 @@
   .copySelect {
     flex-basis: 100%;
     max-width: none;
+  }
+
+  .previewLink {
+    min-height: 2.75rem;
   }
 }

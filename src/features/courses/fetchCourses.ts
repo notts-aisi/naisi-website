@@ -8,6 +8,10 @@ import {
   type CourseRunDoc,
   type CourseWeekDoc,
 } from "@/lib/firestore/courses";
+import {
+  normalizeCourseGroup,
+  type GroupSession,
+} from "@/lib/firestore/courseGroups";
 
 /**
  * Server-only fetchers for the public course pages (`fetchEvents.ts` pattern).
@@ -212,4 +216,128 @@ export async function getPublicWeek(
     week,
     totalWeeks: found.weeks.length,
   };
+}
+
+// ---- Apply page ----
+
+/**
+ * One group, reduced to what an APPLICANT may see: an id, the group's name,
+ * and its recurring slot as a label. Deliberately NOT the group doc — that
+ * carries the meeting URL, the room, and the facilitator uids, none of which
+ * belong on a public page (`courseGroups` is read-restricted in rules for
+ * exactly that reason, and the Admin SDK bypasses rules here).
+ *
+ * The label is the availability chip's VALUE as well as its text: the apply
+ * route stores availability as member-authored strings, so what the applicant
+ * ticked reads back verbatim in the review queue.
+ */
+export type ApplyGroupOption = {
+  id: string;
+  name: string;
+  /** e.g. "Tuesdays 18:00–19:30". Never empty (slot-less groups are dropped). */
+  sessionLabel: string;
+};
+
+/** Everything the apply page needs, or null when nobody can apply right now. */
+export type ApplyContext = {
+  course: CourseDoc;
+  /** The run in `applications-open` — the one the form submits against. */
+  run: CourseRunDoc;
+  /** Session-time options for the availability chips; empty when unallocated. */
+  groups: ApplyGroupOption[];
+};
+
+/** Index = `Date.getDay()`, matching `GroupSession.weekday` (0 = Sunday). */
+const WEEKDAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+/**
+ * "18:00" + 90 → "19:30". Wall-clock arithmetic for a display label only —
+ * this deliberately duplicates `SessionSlotField`'s helper rather than
+ * importing it (that module is `"use client"`, and this one is `server-only`).
+ * Nothing here reasons about DST: real instants come from
+ * `londonWallClockToInstant()` in `lib/courses/weekPlan.ts`.
+ */
+function endTimeLabel(start: string, minutes: number): string | null {
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(start);
+  if (!m || minutes <= 0) return null;
+  const total = (Number(m[1]) * 60 + Number(m[2]) + minutes) % 1440;
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/** "Tuesdays 18:00–19:30", or null when the slot isn't set up yet. */
+function sessionLabel(session: GroupSession): string | null {
+  const day = WEEKDAY_NAMES[session.weekday];
+  if (!day || !session.startTimeLocal) return null;
+  const end = endTimeLabel(session.startTimeLocal, session.durationMinutes);
+  return `${day}s ${session.startTimeLocal}${end ? `–${end}` : ""}`;
+}
+
+/**
+ * The apply page's one read: a published course, the run taking applications,
+ * and the session times an applicant can say they're free for.
+ *
+ * Returns null whenever there is nothing to apply to — unknown course, draft
+ * course, or no open run — so the page renders one honest "not open" card
+ * instead of three near-identical ones. The run is picked by the SAME
+ * `preferredOpenRun` tie-break the catalogue uses, so the card that said
+ * "Applications open — Autumn 2026" and the form always agree.
+ *
+ * Groups are best-effort context, never a gate: applicants do NOT pick a
+ * group or a facilitator here (admissions records preferences later), and a
+ * run with no groups yet simply renders no availability section.
+ */
+export async function getApplyContext(
+  courseId: string,
+): Promise<ApplyContext | null> {
+  const db = getAdminDb();
+  if (!db) return null;
+
+  // Independent reads, so they go together — the draft-course path throws the
+  // run query away, which is cheaper than serialising every real hit (the same
+  // call the course detail page makes).
+  const [doc, run] = await Promise.all([
+    db.collection("courses").doc(courseId).get(),
+    getOpenRunForCourse(courseId),
+  ]);
+  if (!doc.exists || !run) return null;
+  const course = normalizeCourse(doc.id, doc.data() ?? {});
+  // Same visibility obligation as every fetcher in this file (module comment):
+  // an unpublished course has no public apply page.
+  if (course.status !== "published") return null;
+
+  const groupSnap = await db
+    .collection("courseGroups")
+    .where("runId", "==", run.id)
+    .limit(50)
+    .get();
+
+  const rows: Array<{ option: ApplyGroupOption; day: number; start: string }> = [];
+  for (const d of groupSnap.docs) {
+    const group = normalizeCourseGroup(d.id, d.data());
+    if (group.archived) continue;
+    const label = sessionLabel(group.session);
+    // A group whose slot isn't set yet has no time to offer — dropping it
+    // beats a chip reading "Sundays" for a session nobody has scheduled.
+    if (!label) continue;
+    rows.push({
+      option: { id: group.id, name: group.name, sessionLabel: label },
+      // Monday-first for display: `weekday` is stored Sunday-first
+      // (`Date.getDay()`), which is a timetable nobody in the UK reads.
+      day: (group.session.weekday + 6) % 7,
+      start: group.session.startTimeLocal,
+    });
+  }
+  // Timetable order (day, then start time), not doc order — the chips read as
+  // a week. "HH:MM" is zero-padded, so a string compare IS time order.
+  rows.sort((a, b) => a.day - b.day || a.start.localeCompare(b.start));
+
+  return { course, run, groups: rows.map((r) => r.option) };
 }
