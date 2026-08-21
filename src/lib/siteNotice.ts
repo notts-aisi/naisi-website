@@ -46,6 +46,7 @@ export const SITE_NOTICE_SURFACE_FLAGS = {
   newRegistrations: "pauseNewRegistrations",
   collaboratorApplications: "pauseCollaboratorApplications",
   eventSignups: "pauseEventSignups",
+  courseApplications: "pauseCourseApplications",
 } as const;
 export type SiteNoticeSurface = keyof typeof SITE_NOTICE_SURFACE_FLAGS;
 
@@ -66,6 +67,7 @@ export const SITE_NOTICE_SURFACE_NAMES: Record<SiteNoticeSurface, string> = {
   newRegistrations: "New member registrations",
   collaboratorApplications: "Collaborator applications",
   eventSignups: "Event sign-ups",
+  courseApplications: "Course applications",
 };
 
 /**
@@ -143,6 +145,7 @@ export const DEFAULT_SITE_NOTICE: SiteNotice = Object.freeze({
     newRegistrations: false,
     collaboratorApplications: false,
     eventSignups: false,
+    courseApplications: false,
   }),
   expiresAt: null,
   bannerVisible: false,

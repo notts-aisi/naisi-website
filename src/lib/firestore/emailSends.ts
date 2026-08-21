@@ -8,6 +8,7 @@ export type EmailSendKind =
   | "task"
   | "application"
   | "application-test"
+  | "course-application"
   | "admin-test"
   | "subscription-confirm"
   | "subscription-welcome"

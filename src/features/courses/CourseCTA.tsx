@@ -20,13 +20,17 @@ type Props = {
  * because it branches on whether the visitor is signed in — everything around
  * it stays a server component.
  *
- * Copy discipline: the application FORM lands in a later PR, so a signed-in
- * visitor is told the truth ("open, form arrives here soon") rather than shown
- * a button that goes nowhere. When the form ships, only the signed-in branch
- * changes.
+ * Both branches point at the same place: `/courses/[courseId]/apply` lives in
+ * the PUBLIC route group precisely so a `pending` account can reach it (the
+ * authed layout would bounce them). So this deliberately does NOT branch on
+ * role — every signed-in visitor gets the same button, and the apply page
+ * itself is the one place that says no (to rejected accounts, a closed window,
+ * or a full cohort). Branching here would need `role`, which lands a beat
+ * after `user` and would flicker the button for everyone.
  */
 export default function CourseCTA({ courseId, openRun, placement = "hero" }: Props) {
   const { user, loading } = useAuth();
+  const applyHref = `/courses/${encodeURIComponent(courseId)}/apply`;
 
   const wrap = [styles.cta, placement === "foot" ? styles.foot : styles.hero]
     .filter(Boolean)
@@ -55,16 +59,14 @@ export default function CourseCTA({ courseId, openRun, placement = "hero" }: Pro
           signed-out button first would flash "Sign in to apply" at members
           who are already signed in. */}
       {loading ? null : user ? (
-        <p className={styles.note}>
-          The application form arrives here shortly — check back soon, or{" "}
-          <Link href="/#stay-in-touch" className={styles.inlineLink}>
-            subscribe for updates
-          </Link>
-          .
-        </p>
+        <Link href={applyHref} className={styles.button}>
+          Apply for {openRun.label}
+        </Link>
       ) : (
+        // `next` carries them to the form itself, not back to this page, so
+        // signing in doesn't cost them a second click.
         <Link
-          href={`/login?next=${encodeURIComponent(`/courses/${courseId}`)}`}
+          href={`/login?next=${encodeURIComponent(applyHref)}`}
           className={styles.button}
         >
           Sign in to apply

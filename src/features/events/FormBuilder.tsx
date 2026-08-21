@@ -15,6 +15,15 @@ type Props = {
   questions: FormQuestion[];
   onChange: (next: FormQuestion[]) => void;
   disabled?: boolean;
+  /**
+   * Hide the events preset picker and the food/dietary question type.
+   * Course application forms reuse this builder, where burger presets and
+   * an allergies checklist make no sense.
+   */
+  showPresets?: boolean;
+  hiddenTypes?: FormQuestionType[];
+  /** Replaces the events-flavoured empty-state copy. */
+  emptyStateHint?: string;
 };
 
 const TYPE_LABEL: Record<FormQuestionType, string> = {
@@ -35,7 +44,15 @@ const ADD_MENU: Array<{ type: FormQuestionType; hint: string }> = [
   { type: "dietaryAllergies", hint: "Checkbox list of common allergies" },
 ];
 
-export default function FormBuilder({ questions, onChange, disabled }: Props) {
+export default function FormBuilder({
+  questions,
+  onChange,
+  disabled,
+  showPresets = true,
+  hiddenTypes = [],
+  emptyStateHint,
+}: Props) {
+  const addMenu = ADD_MENU.filter((item) => !hiddenTypes.includes(item.type));
   const [adding, setAdding] = useState(false);
   const [presetWarning, setPresetWarning] = useState<string | null>(null);
 
@@ -79,6 +96,7 @@ export default function FormBuilder({ questions, onChange, disabled }: Props) {
 
   return (
     <div className={styles.wrap}>
+      {showPresets && (
       <Card padding="md">
         <div className={styles.presetRow}>
           <label className={styles.presetLabel} htmlFor="form-preset">
@@ -103,13 +121,13 @@ export default function FormBuilder({ questions, onChange, disabled }: Props) {
         </div>
         {presetWarning && <p className={styles.warn}>{presetWarning}</p>}
       </Card>
+      )}
 
       {questions.length === 0 && (
         <Card padding="md">
           <p style={{ color: "var(--color-text-muted)", margin: 0 }}>
-            No signup questions yet. Pick a preset above or add a question below. Attendees
-            will always be asked their name and email — you only need questions for the
-            extras.
+            {emptyStateHint ??
+              "No signup questions yet. Pick a preset above or add a question below. Attendees will always be asked their name and email — you only need questions for the extras."}
           </p>
         </Card>
       )}
@@ -257,7 +275,7 @@ export default function FormBuilder({ questions, onChange, disabled }: Props) {
             </button>
           </div>
           <div className={styles.addMenuGrid}>
-            {ADD_MENU.map((item) => (
+            {addMenu.map((item) => (
               <button
                 key={item.type}
                 type="button"

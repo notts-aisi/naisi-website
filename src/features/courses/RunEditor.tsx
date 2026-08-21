@@ -14,6 +14,8 @@ import Switch from "@/components/ui/Switch";
 import { getClientDb } from "@/lib/firebase/client";
 import { AdminLoadingBar } from "@/features/admin/adminList";
 import { useMembers } from "@/features/admin/useMembers";
+import FormBuilder from "@/features/events/FormBuilder";
+import { sanitizeSignupForm, type FormQuestion } from "@/lib/firestore/events";
 import { ACADEMIC_YEAR_PATTERN } from "@/lib/firestore/users";
 import { isValidDateKey } from "@/lib/courses/weekPlan";
 import {
@@ -80,6 +82,66 @@ function statusTone(
     case "cancelled":
       return "danger";
   }
+}
+
+/**
+ * Cap on a run's application form. Mirrors the number firestore.rules enforces
+ * on `courseRuns` (`applicationForm.size() <= 30`) and the identical constant
+ * `courseMutations.ts` slices with — this copy exists so the editor can show
+ * the budget and refuse a save before the write is rejected. Keep all three in
+ * sync.
+ */
+const MAX_APPLICATION_FORM_QUESTIONS = 30;
+
+/**
+ * Tidy one authored question for storage.
+ *
+ * Two jobs, both load-bearing on THIS path specifically. Trimming keeps a
+ * stray space out of a label the public apply page renders verbatim, and
+ * dropping blank options stops the renderer drawing an unlabelled radio.
+ *
+ * More important: FormBuilder writes `undefined` into optional keys as you
+ * clear them (`noneOption: e.target.value || undefined`). Events gets away
+ * with that because its form crosses a `JSON.stringify` on the way to a route,
+ * which silently drops undefined keys. A run's form is a CLIENT-DIRECT write,
+ * so an `undefined` nested in the array would be refused by Firestore outright.
+ */
+function cleanQuestion(q: FormQuestion): FormQuestion {
+  const label = q.label.trim();
+  const cleaned =
+    q.type === "singleSelect" || q.type === "multiSelect"
+      ? { ...q, label, options: q.options.map((o) => o.trim()).filter(Boolean) }
+      : { ...q, label };
+  return Object.fromEntries(
+    Object.entries(cleaned).filter(([, v]) => v !== undefined),
+  ) as FormQuestion;
+}
+
+/**
+ * Editor-side validation of the application form. Not a security boundary —
+ * `sanitizeSignupForm` is the shape check and the rules cap the size. This
+ * catches the two half-finished states the builder can leave behind, both of
+ * which would otherwise ship to a public page as a blank question or an
+ * unanswerable choice.
+ */
+function applicationFormError(questions: FormQuestion[]): string | null {
+  if (questions.length > MAX_APPLICATION_FORM_QUESTIONS) {
+    const over = questions.length - MAX_APPLICATION_FORM_QUESTIONS;
+    return `That's ${over} question${over === 1 ? "" : "s"} over the limit of ${MAX_APPLICATION_FORM_QUESTIONS} — remove some before saving.`;
+  }
+  for (let i = 0; i < questions.length; i += 1) {
+    const q = questions[i];
+    if (!q.label.trim()) {
+      return `Question ${i + 1} has no wording yet.`;
+    }
+    if (q.type === "singleSelect" || q.type === "multiSelect") {
+      const filled = q.options.filter((o) => o.trim());
+      if (filled.length < 2) {
+        return `Question ${i + 1} needs at least two options to choose between.`;
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -166,6 +228,10 @@ export default function RunEditor({ courseId, runId }: Props) {
   const [cap, setCap] = useState("");
   const [applicationsError, setApplicationsError] = useState<string | null>(null);
 
+  // ---- Application form ----
+  const [applicationForm, setApplicationForm] = useState<FormQuestion[]>([]);
+  const [formError, setFormError] = useState<string | null>(null);
+
   // ---- Weeks / copy-forward ----
   const [copyFromRunId, setCopyFromRunId] = useState("");
   const [copyOverwrite, setCopyOverwrite] = useState(false);
@@ -193,6 +259,8 @@ export default function RunEditor({ courseId, runId }: Props) {
       setCloseAt(run.applicationsCloseAt);
       setCap(run.applicationCap === null ? "" : String(run.applicationCap));
       setApplicationsError(null);
+      setApplicationForm(run.applicationForm);
+      setFormError(null);
     }
   }
 
@@ -234,6 +302,16 @@ export default function RunEditor({ courseId, runId }: Props) {
   const allowedStatuses = RUN_STATUS_TRANSITIONS[currentStatus];
   const visibleGroups = groups.filter((g) => (showArchived ? true : !g.archived));
   const counts = run.applicationCounts;
+  // Everyone who has actually filled the form in, whatever admissions has
+  // since decided about them. Withdrawn rows count too: the row (and its
+  // answers) is kept, so a question removed now still has their answer behind
+  // it. Only this figure justifies the "form is live" warning.
+  const submittedApplications =
+    counts.pending +
+    counts.accepted +
+    counts.rejected +
+    counts.waitlisted +
+    counts.withdrawn;
 
   // The taught slots of the SAVED plan — the week rows below are the plan's
   // rows, not the subcollection's, because the plan is what the cohort is paced
@@ -306,6 +384,31 @@ export default function RunEditor({ courseId, runId }: Props) {
       {
         savingMessage: "Saving application window…",
         successMessage: "Application window saved",
+      },
+    );
+    if (ok) reload();
+  }
+
+  async function saveApplicationForm() {
+    // Clean first, then validate: trimming is what turns a label of spaces
+    // into the blank the check below is looking for.
+    const cleaned = sanitizeSignupForm(applicationForm.map(cleanQuestion));
+    const problem = applicationFormError(cleaned);
+    if (problem) {
+      setFormError(problem);
+      return;
+    }
+    setFormError(null);
+
+    let ok = false;
+    await runAction(
+      async () => {
+        await updateRun(runId, { applicationForm: cleaned });
+        ok = true;
+      },
+      {
+        savingMessage: "Saving application form…",
+        successMessage: "Application form saved",
       },
     );
     if (ok) reload();
@@ -526,6 +629,65 @@ export default function RunEditor({ courseId, runId }: Props) {
         <div className={styles.actions}>
           <Button type="button" onClick={saveApplications}>
             Save application window
+          </Button>
+        </div>
+      </Card>
+
+      {/* ---- Application form ---- */}
+      <Card padding="lg">
+        <div className={styles.sectionHeader}>
+          <h3 className={styles.sectionTitle}>Application form</h3>
+          {/* Preview only makes sense once the public page will actually
+              render the form — before that the apply route has no open run to
+              show. A plain anchor with target=_blank so the editor (and its
+              unsaved drafts in the other sections) stays put. */}
+          {run.status === "applications-open" && (
+            <a
+              href={`/courses/${encodeURIComponent(run.courseId)}/apply`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.previewLink}
+            >
+              Open the public apply page ↗
+            </a>
+          )}
+        </div>
+        <p className={styles.hint}>
+          These are the questions applicants answer on the public apply page.
+          Their name and email come from their account, so only ask for what
+          admissions will actually read. Applicants don&apos;t pick a
+          facilitator here — group and facilitator preferences are recorded at
+          review, not by the applicant.
+        </p>
+
+        {submittedApplications > 0 && (
+          <p className={`${styles.warn} ${styles.blockWarn}`}>
+            {submittedApplications} application
+            {submittedApplications === 1 ? " has" : "s have"} already been
+            submitted. Editing the questions changes the form for everyone who
+            hasn&apos;t submitted yet; answers already given are kept exactly as
+            they were, so removing a question hides the answers it collected
+            rather than deleting them.
+          </p>
+        )}
+
+        <FormBuilder
+          questions={applicationForm}
+          onChange={setApplicationForm}
+          showPresets={false}
+          hiddenTypes={["dietaryAllergies"]}
+          emptyStateHint="No questions yet. Applicants' name and email come from their account — add only what admissions will actually read."
+        />
+
+        <p className={`${styles.muted} ${styles.formCount}`}>
+          {applicationForm.length} of {MAX_APPLICATION_FORM_QUESTIONS} questions.
+        </p>
+
+        {formError && <p className={styles.error}>{formError}</p>}
+
+        <div className={styles.actions}>
+          <Button type="button" onClick={saveApplicationForm}>
+            Save application form
           </Button>
         </div>
       </Card>
