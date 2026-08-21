@@ -4,7 +4,6 @@ import { verifyToken } from "@/lib/signedTokens";
 import { obfuscateEmail } from "@/lib/obfuscateEmail";
 import {
   ALL_CATEGORIES,
-  normaliseNotifications,
   type NotificationCategory,
 } from "@/lib/firestore/notifications";
 import {
@@ -147,8 +146,6 @@ async function performUnsubscribe(signed: string | null): Promise<{
     const userEmail = (snap.data()?.email as string | undefined) ?? null;
     const uniEmail =
       (profile.universityEmail as string | undefined) ?? null;
-    const current = normaliseNotifications(profile);
-    const nextCategories = { ...current.categories };
 
     const knownCategoriesToFlip: NotificationCategory[] =
       category === "all"
@@ -156,16 +153,41 @@ async function performUnsubscribe(signed: string | null): Promise<{
         : (ALL_CATEGORIES as NotificationCategory[]).includes(category as NotificationCategory)
           ? [category as NotificationCategory]
           : [];
-    for (const c of knownCategoriesToFlip) nextCategories[c] = false;
 
-    await ref.update({
-      "profile.notifications.categories": nextCategories,
-      "profile.newsletter.subscribed":
-        category === "all" || category === "newsletter"
-          ? false
-          : (profile.newsletter as { subscribed?: boolean } | undefined)?.subscribed ??
-            false,
-    });
+    // WRITE ONLY THE KEYS THIS TOKEN ACTUALLY FLIPS, as dotted field paths.
+    //
+    // The previous shape rebuilt the whole `categories` map from
+    // `normaliseNotifications(profile)` and wrote it back wholesale. That
+    // normaliser collapses ABSENT into `false`, so every unsubscribe click
+    // stamped an explicit value on every category — including ones the token
+    // says nothing about. Once `courses` joined ALL_CATEGORIES that stopped
+    // being cosmetic: a member clicking unsubscribe on a NEWSLETTER or EVENTS
+    // email got `categories.courses: false` written to their user doc having
+    // never seen the toggle, and the run email route reads exactly that stored
+    // `false` as a refusal by someone who did (see its module comment and
+    // DEFAULT_NOTIFICATION_PREFS). Absent must stay absent.
+    //
+    // It also fixes the cohort case: a `cohort:<runId>` token names no known
+    // category, so `knownCategoriesToFlip` is empty and NO category key is
+    // written at all — the click drops that one cohort's subscription rows
+    // below and nothing else, which is what `sendCourseRunEmail` promises.
+    //
+    // Newsletter and events are unaffected by the change: the keys the token
+    // names are still set to false, and any category the token does NOT name
+    // was already being written back at its own current effective value.
+    const patch: Record<string, unknown> = {};
+    for (const c of knownCategoriesToFlip) {
+      patch[`profile.notifications.categories.${c}`] = false;
+    }
+    // Legacy dual-write, unchanged: always written, so the older single-bool
+    // field can't drift out of step with the modern shape.
+    patch["profile.newsletter.subscribed"] =
+      category === "all" || category === "newsletter"
+        ? false
+        : (profile.newsletter as { subscribed?: boolean } | undefined)?.subscribed ??
+          false;
+
+    await ref.update(patch);
 
     if (userEmail) {
       if (category === "all") await unsubscribeAllChannels(db, userEmail, actor);

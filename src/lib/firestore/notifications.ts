@@ -12,12 +12,49 @@
 export type NotificationChannel = "gmail" | "uniEmail";
 export const ALL_CHANNELS: NotificationChannel[] = ["gmail", "uniEmail"];
 
-export type NotificationCategory = "newsletter" | "events";
-export const ALL_CATEGORIES: NotificationCategory[] = ["newsletter", "events"];
+export type NotificationCategory = "newsletter" | "events" | "courses";
+export const ALL_CATEGORIES: NotificationCategory[] = [
+  "newsletter",
+  "events",
+  "courses",
+];
+
+/**
+ * The categories that are ALSO top-level subscription channels — one
+ * `subscriptions` row per (verified email, channel), edited as the per-address
+ * matrix on /profile and applied by `/api/subscriptions/sync`.
+ *
+ * `courses` is deliberately NOT one of them, and this is the split that keeps
+ * the two models from colliding. Cohort mail is addressed by `cohort:<runId>`
+ * rows, which the allocation route writes to the ONE proven account address
+ * when it places a member — so a per-address "Course announcements" checkbox
+ * could not change where a cohort email lands. It would only mint a top-level
+ * `courses` row nothing ever sends to. `categories.courses` is an
+ * account-level OPT-OUT instead; see `DEFAULT_NOTIFICATION_PREFS` below and
+ * the module comment on the run email route.
+ *
+ * Iterate THIS, not `ALL_CATEGORIES`, anywhere a category is being turned
+ * into a subscription row.
+ */
+export type SubscriptionCategory = Extract<
+  NotificationCategory,
+  "newsletter" | "events"
+>;
+export const SUBSCRIPTION_CATEGORIES: SubscriptionCategory[] = [
+  "newsletter",
+  "events",
+];
+
+export function isSubscriptionCategory(
+  value: string,
+): value is SubscriptionCategory {
+  return (SUBSCRIPTION_CATEGORIES as string[]).includes(value);
+}
 
 export const CATEGORY_LABELS: Record<NotificationCategory, string> = {
   newsletter: "Newsletter",
   events: "Event announcements",
+  courses: "Course announcements",
 };
 
 export const CATEGORY_DESCRIPTIONS: Record<NotificationCategory, string> = {
@@ -25,6 +62,8 @@ export const CATEGORY_DESCRIPTIONS: Record<NotificationCategory, string> = {
     "Low-frequency updates about our courses, reading groups, and what the committee is working on.",
   events:
     "A short email when we publish a new event — talks, socials, workshops — so you don't have to watch the site or socials.",
+  courses:
+    "Announcements sent to a whole cohort you're enrolled in. Untick to stop them — your own group's practical emails (a moved session, a changed reading) still reach you.",
 };
 
 export const CHANNEL_LABELS: Record<NotificationChannel, string> = {
@@ -37,9 +76,22 @@ export type NotificationPrefs = {
   categories: Record<NotificationCategory, boolean>;
 };
 
+/**
+ * Every category defaults FALSE — nothing is opt-out-by-default.
+ *
+ * `courses` needs one note, because "default false" reads like "nobody ever
+ * gets cohort mail". It doesn't. Cohort mail is addressed by SUBSCRIPTION ROW
+ * (`cohort:<runId>`, written by the allocation route with `inboxProven` when a
+ * member is placed in a group), and being placed IS the opt-in. This category
+ * is the OPT-OUT switch layered on top: the run email route skips a recipient
+ * whose stored prefs say `categories.courses === false`, and treats an absent
+ * value as "hasn't answered", not as a refusal. Read that route's module
+ * comment before changing this default or that check — they are one decision
+ * spelled in two places.
+ */
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   channels: { gmail: true, uniEmail: false },
-  categories: { newsletter: false, events: false },
+  categories: { newsletter: false, events: false, courses: false },
 };
 
 type LegacyNewsletter = {
@@ -50,7 +102,7 @@ type LegacyNewsletter = {
 
 type MaybeNew = {
   channels?: { gmail?: unknown; uniEmail?: unknown };
-  categories?: { newsletter?: unknown; events?: unknown };
+  categories?: { newsletter?: unknown; events?: unknown; courses?: unknown };
 };
 
 /**
@@ -75,6 +127,7 @@ export function normaliseNotifications(profile: {
       categories: {
         newsletter: Boolean(modern.categories?.newsletter),
         events: Boolean(modern.categories?.events),
+        courses: Boolean(modern.categories?.courses),
       },
     };
   }
@@ -87,17 +140,30 @@ export function normaliseNotifications(profile: {
         uniEmail: Boolean(legacy.deliverToUniEmail),
       },
       categories: {
-        // Legacy users were subscribed only to the newsletter; events was never
-        // a separate toggle. They opt into events explicitly later.
+        // Legacy users were subscribed only to the newsletter; events and
+        // courses were never separate toggles on the old shape. They opt into
+        // both explicitly later. (`courses` false here is the same "hasn't
+        // answered" state as an absent field — see DEFAULT_NOTIFICATION_PREFS:
+        // it is the stored `false` under the MODERN shape that the run email
+        // route reads as a refusal, and a legacy profile has no modern shape
+        // at all.)
         newsletter: subscribed,
         events: false,
+        courses: false,
       },
     };
   }
   return DEFAULT_NOTIFICATION_PREFS;
 }
 
-/** True iff the user wants *any* email at all. Cheap pre-filter before a send loop. */
+/**
+ * True iff the user wants *any* email at all. Cheap pre-filter before a send loop.
+ *
+ * Counts EVERY category, including `courses` — which is an announcement opt-out
+ * that defaults ON and is not backed by a subscription row. Callers asking "does
+ * this person have any subscriptions?" want SUBSCRIPTION_CATEGORIES instead; the
+ * two answers diverge for a member who wants neither the newsletter nor events.
+ */
 export function isSubscribedToAnything(prefs: NotificationPrefs): boolean {
   return Object.values(prefs.categories).some(Boolean);
 }
@@ -169,6 +235,7 @@ export function serialiseNotifications(prefs: NotificationPrefs): NotificationPr
     categories: {
       newsletter: Boolean(prefs.categories.newsletter),
       events: Boolean(prefs.categories.events),
+      courses: Boolean(prefs.categories.courses),
     },
   };
 }

@@ -13,8 +13,8 @@ import PageEnter from "@/components/motion/PageEnter";
 import { useMagneticPull } from "@/hooks/useMagneticPull";
 import SessionCard from "./SessionCard";
 import WeekRail from "./WeekRail";
+import { useGroupRoster } from "./useGroupRoster";
 import { useRunOverview } from "./useRunOverview";
-import type { GroupRosterPayload } from "@/app/api/courses/groups/[groupId]/roster/route";
 import type { OverviewPayload } from "@/app/api/courses/runs/[runId]/overview/route";
 import type { WeekPlanEntry } from "@/lib/courses/weekPlan";
 import styles from "./RunHome.module.css";
@@ -49,6 +49,15 @@ type Props = {
    * thing: whether the admissions panel renders.
    */
   isAdmin: boolean;
+  /**
+   * Whether this member may address the WHOLE cohort — a run facilitator, a
+   * track lead, or an admin. From the server gate for the same reason
+   * `isAdmin` is: the payload's `access.isFacilitator` is true for someone who
+   * merely holds one GROUP of the run, and a group facilitator is exactly who
+   * this lane excludes. Purely a link gate; `/learn/[runId]/email` re-derives
+   * it and the send route is the boundary.
+   */
+  canEmailCohort: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -281,72 +290,6 @@ function RunRail({
 }
 
 // ---------------------------------------------------------------------------
-// Facilitator roster (the one conditional fetch)
-// ---------------------------------------------------------------------------
-
-type RosterState = {
-  data: GroupRosterPayload | null;
-  loading: boolean;
-  error: Error | null;
-};
-
-/**
- * Names of the people in the group this member facilitates.
- *
- * A local hook rather than a shared one: this is the only surface on the run
- * home that needs a roster, and the facilitator pages (P9) want attendance and
- * per-member state alongside it — a shared hook shaped by this callsite would
- * be the wrong shape for theirs.
- *
- * Key-tagged state (the `useRunProgress` idiom) so `loading` derives from
- * whether the delivered payload belongs to the group being asked about,
- * instead of being reset by a set-state in the effect body.
- */
-function useGroupRoster(groupId: string | null): RosterState {
-  const key = groupId ?? "";
-  const [state, setState] = useState<{
-    key: string;
-    data: GroupRosterPayload | null;
-    error: Error | null;
-  }>({ key: "", data: null, error: null });
-
-  useEffect(() => {
-    if (!key) return;
-    let cancelled = false;
-    // Same-origin default carries the session cookie; no `credentials` needed.
-    fetch(`/api/courses/groups/${encodeURIComponent(key)}/roster`)
-      .then(async (res) => {
-        const body = (await res.json().catch(() => null)) as
-          | (GroupRosterPayload & { error?: string })
-          | null;
-        if (!res.ok || !body || !body.group) {
-          throw new Error(body?.error ?? `Couldn't load the roster (${res.status}).`);
-        }
-        return body;
-      })
-      .then((payload) => {
-        if (!cancelled) setState({ key, data: payload, error: null });
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) {
-          setState({
-            key,
-            data: null,
-            error: e instanceof Error ? e : new Error(String(e)),
-          });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [key]);
-
-  if (!key) return { data: null, loading: false, error: null };
-  if (state.key !== key) return { data: null, loading: true, error: null };
-  return { data: state.data, loading: false, error: state.error };
-}
-
-// ---------------------------------------------------------------------------
 // Loading state
 // ---------------------------------------------------------------------------
 
@@ -383,7 +326,7 @@ function RunHomeSkeleton() {
 // RunHome
 // ---------------------------------------------------------------------------
 
-export default function RunHome({ runId, isAdmin }: Props) {
+export default function RunHome({ runId, isAdmin, canEmailCohort }: Props) {
   const { data, error, reload } = useRunOverview(runId);
 
   /*
@@ -421,7 +364,15 @@ export default function RunHome({ runId, isAdmin }: Props) {
     data && ownGroup && data.access.isFacilitator && data.enrolment?.groupId !== ownGroup.id
       ? ownGroup.id
       : null;
-  const roster = useGroupRoster(facilitatedGroupId);
+  /*
+    The shared hook — the same one the facilitator group page and the email
+    composer read from. It carries a manual refresh and a null-vs-zero member
+    count that this page uses neither of; what it removes is the second copy of
+    the fetch, the stale-response guard and the error copy that used to live
+    here. `null` groupId means "not facilitating one", which the hook spells as
+    an empty key and treats as idle: no fetch, no loading state.
+  */
+  const roster = useGroupRoster(facilitatedGroupId ?? "");
 
   if (!data) {
     if (error) {
@@ -539,8 +490,8 @@ export default function RunHome({ runId, isAdmin }: Props) {
               <Skeleton lines={2} height="1.25rem" ariaLabel="Loading the roster…" />
             )}
             {roster.error && <p className={styles.panelNote}>{roster.error.message}</p>}
-            {roster.data &&
-              (roster.data.members.length === 0 ? (
+            {roster.group &&
+              (roster.members.length === 0 ? (
                 <p className={styles.panelNote}>
                   No one is placed in this group yet.
                 </p>
@@ -549,7 +500,7 @@ export default function RunHome({ runId, isAdmin }: Props) {
                    is a cohort surface. InitialsChip is decorative and
                    aria-hidden, so the name always renders beside it. */
                 <ul className={styles.roster}>
-                  {roster.data.members.map((member) => (
+                  {roster.members.map((member) => (
                     <li key={member.uid} className={styles.rosterItem}>
                       <InitialsChip
                         name={member.displayName}
@@ -577,6 +528,44 @@ export default function RunHome({ runId, isAdmin }: Props) {
               </span>
             </Link>
 
+            {/* Unconditional for the same reason as the review link above: the
+                register and the roster are a facilitator's own tools, and they
+                stay reachable in a week nobody has published yet. */}
+            <Link
+              className={styles.panelLink}
+              href={`/learn/${encodeURIComponent(runId)}/group/${encodeURIComponent(facilitatedGroupId)}`}
+            >
+              Roster and attendance
+              <span className={styles.arrow} aria-hidden="true">
+                →
+              </span>
+            </Link>
+
+            <Link
+              className={styles.panelLink}
+              href={`/learn/${encodeURIComponent(runId)}/group/${encodeURIComponent(facilitatedGroupId)}/email`}
+            >
+              Email the group
+              <span className={styles.arrow} aria-hidden="true">
+                →
+              </span>
+            </Link>
+
+            {/* Only for someone who staffs the RUN — see the `canEmailCohort`
+                prop. A group facilitator has the link above and not this one:
+                their room is theirs, the cohort is not. */}
+            {canEmailCohort && (
+              <Link
+                className={styles.panelLink}
+                href={`/learn/${encodeURIComponent(runId)}/email`}
+              >
+                Email the whole cohort
+                <span className={styles.arrow} aria-hidden="true">
+                  →
+                </span>
+              </Link>
+            )}
+
             {target?.published && (
               <Link className={styles.panelLink} href={weekHref(runId, target.weekNumber)}>
                 Open week {target.weekNumber} materials
@@ -585,6 +574,31 @@ export default function RunHome({ runId, isAdmin }: Props) {
                 </span>
               </Link>
             )}
+          </Card>
+        )}
+
+        {canEmailCohort && !facilitatedGroupId && (
+          /* The same link as in the facilitator panel above, for the people
+             that panel never renders for — a run facilitator, track lead or
+             admin who holds no group of their own. Without it the announcement
+             lane would be reachable only by typing the URL, which is how the
+             lane shipped dark in the first place. */
+          <Card as="section" padding="md" className={styles.panel}>
+            <h3 className={styles.panelTitle}>Cohort announcements</h3>
+            <p className={styles.panelNote}>
+              One message to everyone subscribed to this run&apos;s channel.
+              Announcements only — anything a single group needs goes out from
+              that group&apos;s own page instead.
+            </p>
+            <Link
+              className={styles.panelLink}
+              href={`/learn/${encodeURIComponent(runId)}/email`}
+            >
+              Email the whole cohort
+              <span className={styles.arrow} aria-hidden="true">
+                →
+              </span>
+            </Link>
           </Card>
         )}
 

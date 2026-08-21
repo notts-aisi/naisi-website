@@ -56,5 +56,18 @@ export default async function RunHomePage({
   // `isAdmin` travels as a prop rather than being read off the overview
   // payload: that payload's `access` block is a mirror of the server's
   // decision, and this one is the decision.
-  return <RunHome runId={runId} isAdmin={access.isAdmin} />;
+  //
+  // `canEmailCohort` is the announcement lane's gate, spelled the same way
+  // here, on `/learn/[runId]/email` and in the send route: run facilitators,
+  // track leads and admins. It CANNOT come off `access.isFacilitator`, which
+  // is also true for someone who merely holds one group — the person that
+  // lane deliberately excludes.
+  const canEmailCohort =
+    access.isAdmin ||
+    access.isTrackLead ||
+    access.run.runFacilitatorUids.includes(access.user.uid);
+
+  return (
+    <RunHome runId={runId} isAdmin={access.isAdmin} canEmailCohort={canEmailCohort} />
+  );
 }

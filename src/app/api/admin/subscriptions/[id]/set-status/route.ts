@@ -3,8 +3,8 @@ import { Timestamp } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
-  ALL_CATEGORIES,
-  type NotificationCategory,
+  SUBSCRIPTION_CATEGORIES,
+  type SubscriptionCategory,
 } from "@/lib/firestore/notifications";
 import { recordSubscriptionEvent } from "@/lib/firestore/subscriptions";
 
@@ -21,7 +21,7 @@ import { recordSubscriptionEvent } from "@/lib/firestore/subscriptions";
  * - subscribed=false: sets subscribed=false, stamps unsubscribedAt.
  *
  * Dual-write to the user doc when the row is owned by a member (audience
- * is "user") and the channel maps to a known legacy NotificationCategory.
+ * is "user") and the channel is one of the SUBSCRIPTION_CATEGORIES.
  * `profile.notifications.categories.<channel>` is the field the legacy
  * sender + useNewsletterSubscribers + bounce webhooks still consult. Soft
  * drift on a multi-email user when only one row is flipped is accepted
@@ -90,12 +90,21 @@ export async function POST(req: Request, ctx: Ctx) {
   const audience = data.audience;
   const channel = typeof data.channel === "string" ? data.channel : "";
   const audienceId = typeof data.audienceId === "string" ? data.audienceId : "";
+  // `SUBSCRIPTION_CATEGORIES`, never `ALL_CATEGORIES`. The mirror only makes
+  // sense for a channel that HAS a subscription row: `courses` does not — it is
+  // an account-level opt-out, and cohort mail rides `cohort:<runId>` rows. A
+  // stray top-level `courses` row (older backfills minted them) is flippable in
+  // this tab, and mirroring it would stamp `categories.courses: false` on a
+  // member who never saw the toggle — which the run email route reads as a
+  // refusal by someone who did. Scoped channels fall out here too, which is
+  // right: unsubscribing a member from ONE cohort must not touch the
+  // account-wide category. See notifications.ts.
   if (
     audience === "user" &&
     audienceId &&
-    (ALL_CATEGORIES as string[]).includes(channel)
+    (SUBSCRIPTION_CATEGORIES as string[]).includes(channel)
   ) {
-    const cat = channel as NotificationCategory;
+    const cat = channel as SubscriptionCategory;
     const userPatch: Record<string, unknown> = {
       [`profile.notifications.categories.${cat}`]: subscribed,
     };

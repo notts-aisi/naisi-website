@@ -214,3 +214,35 @@
   color: var(--color-text-muted);
   font-size: var(--text-sm);
 }
+
+/* Account-level toggles that sit below the per-address matrix, separated so
+   they don't read as another matrix row. */
+.accountToggle {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Says "this is a different kind of control" before the label says anything —
+   the rule above only separates them, it doesn't explain the separation. */
+.accountToggleEyebrow {
+  margin: 0;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+/* Sits under the switch rather than in its description slot: the description
+   belongs to the category (it is shared with the register form), this belongs
+   to the control. */
+.accountToggleNote {
+  margin: 0;
+  max-width: 66ch;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--color-text-subtle);
+}

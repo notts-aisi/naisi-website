@@ -9,6 +9,16 @@ export type EmailSendKind =
   | "application"
   | "application-test"
   | "course-application"
+  // Staff-authored course mail (P9). Split three ways on purpose: the
+  // deliverability tab's whole job is to answer "what did we send and who
+  // sent it", and these three have different blast radii. `course-facilitator`
+  // is operational mail to one small group; `course-broadcast` is an
+  // announcement to a whole run's cohort channel; `course-test` is a rehearsal
+  // that reached only its own sender. Collapsing them would make a 200-person
+  // broadcast indistinguishable from a test send in the log.
+  | "course-facilitator"
+  | "course-broadcast"
+  | "course-test"
   | "admin-test"
   | "subscription-confirm"
   | "subscription-welcome"
