@@ -76,7 +76,21 @@ export async function POST(
   const snap = await ref.get();
   if (!snap.exists) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
-  const raw = (snap.data() ?? {}).status;
+  const data = snap.data() ?? {};
+
+  // A run mid-DESTROY refuses every status move, the same 409 the archive
+  // route gives for the same reason: the cascade has already stamped
+  // `archived` + `destroying` and is deleting rows underneath, so moving the
+  // run back to `running` would advertise a half-emptied cohort on every
+  // surface that reads the status. The destroy owns the doc until it is gone.
+  if (data.destroying === true) {
+    return NextResponse.json(
+      { error: "This run is being destroyed and its status can't be changed." },
+      { status: 409 },
+    );
+  }
+
+  const raw = data.status;
   const currentStatus = COURSE_RUN_STATUSES.includes(raw as CourseRunStatus)
     ? (raw as CourseRunStatus)
     : "draft";

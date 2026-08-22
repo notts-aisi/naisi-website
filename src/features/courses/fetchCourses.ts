@@ -24,9 +24,19 @@ import {
  *
  *  - courses must be `status === "published"`,
  *  - the showcase run must not be a `draft`,
+ *  - runs must not be `archived`,
  *  - weeks must be `published === true`.
  *
  * Any new fetcher added here inherits that obligation.
+ *
+ * `archived` is the V2-1 deletion protocol's everyday soft path, and this
+ * file is where most of its promise is kept: "an archived run drops out of
+ * the public catalogue" is only true because the two run lookups below skip
+ * it and the showcase resolution treats it like a draft. The destroy cascade
+ * sets the same flag in its opening transaction, so a run mid-destroy is off
+ * these surfaces before the first row dies — which is the whole "unreachable
+ * at destroy start" guarantee, and it is worth exactly as much as these
+ * filters are.
  */
 
 /** One catalogue row: a published course plus the run taking applications. */
@@ -117,6 +127,11 @@ export async function listPublishedCourses(): Promise<CourseCatalogueEntry[]> {
   for (const d of runSnap.docs) {
     const run = normalizeCourseRun(d.id, d.data());
     if (!run.courseId) continue;
+    // Archived (and therefore also mid-destroy) runs are withdrawn from the
+    // catalogue — filtered here rather than in the query because a second
+    // equality on a status query is a composite index this feature has not
+    // shipped, and the open-run set is tiny (see the doc comment above).
+    if (run.archived) continue;
     const existing = openByCourse.get(run.courseId);
     openByCourse.set(
       run.courseId,
@@ -157,8 +172,13 @@ export async function getPublishedCourse(
     .get();
   if (!runDoc.exists) return { course, showcaseRun: null, weeks: [] };
   const showcaseRun = normalizeCourseRun(runDoc.id, runDoc.data() ?? {});
-  // A draft run is unfinished authoring, not a shop window.
-  if (showcaseRun.status === "draft") {
+  // A draft run is unfinished authoring, not a shop window. An ARCHIVED run
+  // is a withdrawn one, which is the same answer for a different reason —
+  // and it is the case that matters during a destroy, because the cascade
+  // only clears `showcaseRunId` in its FINAL batch. Between the first deleted
+  // row and that batch the course still points here, and without this the
+  // public page would render the curriculum of a run being emptied out.
+  if (showcaseRun.status === "draft" || showcaseRun.archived) {
     return { course, showcaseRun: null, weeks: [] };
   }
 
@@ -192,6 +212,10 @@ export async function getOpenRunForCourse(
   for (const d of snap.docs) {
     const run = normalizeCourseRun(d.id, d.data());
     if (run.status !== "applications-open") continue;
+    // Archived runs take no applications — the catalogue card, this page and
+    // the apply route all have to agree, or the card offers a form the POST
+    // then refuses.
+    if (run.archived) continue;
     best = best ? preferredOpenRun(best, run) : run;
   }
   return best;

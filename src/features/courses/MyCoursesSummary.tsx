@@ -28,6 +28,13 @@ import styles from "./MyCoursesSummary.module.css";
  *     queue, not a course they are on, and it has no week to report.
  *   • status — no `completed` (history belongs on the hub), no `cancelled`,
  *     no `draft`.
+ *   • archived — never. `courseRuns.archived` is the deletion protocol's soft
+ *     path, and "drops out of members' live sections" is the promise the
+ *     Danger zone makes in so many words; this card is the most live section
+ *     there is. It is checked separately from `status` because the two are
+ *     orthogonal (a run is archived at whatever point in its lifecycle it has
+ *     reached), and a run mid-DESTROY carries the same flag — so this is also
+ *     what keeps a cohort being deleted off the dashboard.
  *
  * A member whose only runs are finished — or whose only run is an offer not
  * yet allocated — therefore gets no card, which is the intended answer, not a
@@ -119,6 +126,7 @@ export default function MyCoursesSummary() {
           (entry) =>
             entry.membership === "enrolled" &&
             (entry.roles.includes("learner") || entry.roles.includes("facilitator")) &&
+            !entry.archived &&
             entry.status !== "completed" &&
             entry.status !== "cancelled" &&
             entry.status !== "draft",

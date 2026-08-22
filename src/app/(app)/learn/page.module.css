@@ -50,6 +50,12 @@
   }
 }
 
+/* The archived bucket, below the live grid. Only the gap is new — the heading
+   and lede reuse .header/.title/.lede so the two sections read as one page. */
+.archivedSection {
+  margin-top: var(--space-10);
+}
+
 .error {
   color: var(--color-text-muted);
   margin: 0;

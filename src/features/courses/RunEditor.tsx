@@ -30,6 +30,7 @@ import { cloneWeeksFromRun, setRunStatus, updateRun } from "./courseMutations";
 import { useCourseGroups, useCourseRuns, useCourseWeeks } from "./useAdminCourses";
 import GroupEditor, { NewGroupForm } from "./GroupEditor";
 import RolePickers from "./RolePickers";
+import RunDangerZone from "./RunDangerZone";
 import WeekPlanBuilder from "./WeekPlanBuilder";
 import styles from "./RunEditor.module.css";
 
@@ -937,6 +938,19 @@ export default function RunEditor({ courseId, runId }: Props) {
           onSaved={reload}
         />
       </Card>
+
+      {/* ---- Archive + destroy ----
+          Last on the page by design: the end-of-life controls sit after
+          everything you might edit instead, and the destroy half is behind its
+          own disclosure inside. `onArchived` re-reads the run; a DESTROY is
+          deliberately not wired to `reload` — the run is gone, and refetching
+          would replace the receipt with "Run not found". */}
+      <RunDangerZone
+        courseId={courseId}
+        run={run}
+        runAction={runAction}
+        onArchived={reload}
+      />
 
       <ActionToast toast={toast} onDismiss={dismiss} />
     </div>

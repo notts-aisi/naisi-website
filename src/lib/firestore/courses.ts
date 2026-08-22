@@ -165,6 +165,17 @@ export type CourseRunDoc = {
   groupCount: number;
   /** Subscription channel for cohort email, always `cohort:<runId>`. */
   channel: string;
+  /**
+   * Soft archive — the everyday half of the v2-1 deletion protocol, mirroring
+   * `courseGroups.archived` and deliberately ORTHOGONAL to `status` (a
+   * completed run and a cancelled run can both be archived; adding an
+   * "archived" status member would have collided with the lifecycle table in
+   * the status route). Archived runs drop out of the admin default list, the
+   * public catalogue, /me live sections and application windows; member
+   * history keeps reading. The destroy cascade also sets it in its opening
+   * write, so a run mid-destroy is already off every discovery surface.
+   */
+  archived: boolean;
   createdAt?: Date | null;
   updatedAt?: Date | null;
 };
@@ -633,6 +644,7 @@ export function normalizeCourseRun(id: string, data: Raw): CourseRunDoc {
       typeof data.channel === "string" && data.channel
         ? data.channel
         : courseRunChannel(id),
+    archived: data.archived === true,
     createdAt: tsToDate(data.createdAt),
     updatedAt: tsToDate(data.updatedAt),
   };
