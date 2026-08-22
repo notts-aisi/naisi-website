@@ -353,41 +353,32 @@ test("GUARD — every member-facing surface addresses a week by weekDocId(number
   assert.equal(courseTaskId("run1", 3, "u1").split("__")[0], `course-${weekDocId(3)}`);
 });
 
-test("PROVEN GAP — exactly two readers still honour the plan entry's own weekId", () => {
-  // The minority doctrine, named so it cannot grow. Both pass a PLAN ENTRY's
-  // `weekId` into `sessionForWeek`, whose keys are otherwise written by
-  // `weekDocId(n)` everywhere else — so on a reordered plan a one-week room or
-  // time change shows on the member's session card and NOT in the register, or
-  // the other way round.
+test("GUARD — no reader resolves sessionOverrides by the plan entry's own weekId", () => {
+  // Closed 2026-08-22 (this test was the PROVEN GAP that demanded it): the
+  // attendance register header and the allocation email were the last two
+  // readers passing a PLAN ENTRY's `weekId` into `sessionForWeek`, whose keys
+  // every member-facing surface writes and reads as `weekDocId(n)`. On a
+  // reordered plan the two doctrines disagree, so staff saw a different
+  // session than members. Both now derive the key from the week NUMBER.
   //
-  // This assertion is a SUBSET test: fixing either outlier keeps it green,
-  // adding a third turns it red.
-  const known = new Map([
-    ["attendance/route.ts", [ATTENDANCE, /sessionForWeek\(group, week\.weekId\)/]],
-    ["allocation/publish/route.ts", [ALLOCATION_PUBLISH, /firstWeek\.kind === "week" \? firstWeek\.weekId/]],
-  ]);
-  const stillDivergent = [...known]
-    .filter(([, [source, pattern]]) => pattern.test(source))
-    .map(([name]) => name);
-  assert.deepEqual(stillDivergent.sort(), [
-    "allocation/publish/route.ts",
-    "attendance/route.ts",
-  ]);
+  // If this goes red, a reader has reverted to (or newly adopted) the plan-id
+  // doctrine — align it with `weekDocId(weekNumber)` instead.
+  assert.doesNotMatch(ATTENDANCE, /sessionForWeek\(group, week\.weekId\)/);
+  assert.match(ATTENDANCE, /sessionForWeek\(group, weekDocId\(week\.weekNumber\)\)/);
+  assert.doesNotMatch(ALLOCATION_PUBLISH, /\? firstWeek\.weekId/);
+  assert.match(ALLOCATION_PUBLISH, /weekDocId\(firstWeek\.weekNumber\)/);
 
-  // The tell that attendance is internally inconsistent rather than merely
-  // choosing the other doctrine: ONE function resolves the override by the plan
-  // entry's weekId while the register beside it is addressed by NUMBER.
+  // Attendance stays internally consistent: the register beside the header is
+  // addressed by NUMBER too.
   assert.match(ATTENDANCE, /attendanceDocId\(runId, groupId, weekNumber\)/);
-
-  // THE FIX, if the owner takes doctrine (a): pass `weekDocId(week.weekNumber)`
-  // in `sessionInstantFor`, and `weekDocId(1)`-from-the-plan-index in
-  // `firstSessionWhen`. Then delete this test.
 });
 
-test("PROVEN GAP — a reordered plan makes sessionForWeek return another week's override", () => {
-  // The consequence, with the real merge function and the real normaliser: an
-  // override written for the week the member sees as week 2 is keyed "w02",
-  // while attendance looks it up under the plan entry's id "w05".
+test("GUARD — the two week keys really do resolve different overrides on a reordered plan", () => {
+  // The data-model property that made the closed gap dangerous, kept as the
+  // reason the doctrine guard above exists: an override written for the week
+  // the member sees as week 2 is keyed "w02", while the plan entry that slot
+  // now holds can carry the id "w05". Any reader that keys by the plan id
+  // resolves a DIFFERENT override than every member surface.
   const group = normalizeCourseGroup("grp1", {
     runId: "run1",
     name: "Group A",
@@ -406,9 +397,9 @@ test("PROVEN GAP — a reordered plan makes sessionForWeek return another week's
   const moved = renumber([added[0], added[4], added[1], added[2], added[3]]);
   const planEntry = moved[1];
 
-  // The member's session card (overview / group page) — the override applies.
+  // The number-derived key (what every reader now uses) — the override applies.
   assert.equal(sessionForWeek(group, weekDocId(planEntry.weekNumber)).location, "Monica Partridge A11");
-  // The register's `sessionAt` (attendance) — it does not.
+  // The plan entry's own id — a different answer, which is why no reader may use it.
   assert.equal(sessionForWeek(group, planEntry.weekId).location, "Hallward B12");
   assert.equal(sessionForWeek(group, planEntry.weekId).startTimeLocal, "18:00");
 });
