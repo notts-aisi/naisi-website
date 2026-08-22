@@ -599,7 +599,20 @@ export async function resolveCohortAudience(
  */
 const THROTTLE_COLLECTION = "courseNudges";
 
-export type SendSlot = { ok: boolean; retryAfterSeconds: number };
+export type SendSlot = {
+  ok: boolean;
+  retryAfterSeconds: number;
+  /**
+   * Slots left in the window AFTER this claim (0 on a refusal). Computed here
+   * because the transaction is the only place that has seen the committed
+   * count — a caller re-reading the counter afterwards would race the next
+   * send and report a number that was never true.
+   *
+   * Surfaced so a composer can warn BEFORE the cap bites ("2 of today's 10
+   * notices left"). Callers that don't care simply ignore it.
+   */
+  remaining: number;
+};
 
 function windowStartMs(v: unknown): number {
   if (v instanceof Timestamp) return v.toMillis();
@@ -636,17 +649,25 @@ export async function reserveSendSlot(
           1,
           Math.ceil((startedAt + args.windowMs - now) / 1000),
         ),
+        remaining: 0,
       };
     }
 
+    const claimed = inWindow ? count + 1 : 1;
     tx.set(ref, {
       kind: "staff-email-throttle",
       key: args.key,
       windowStartAt: Timestamp.fromMillis(inWindow ? startedAt : now),
-      count: inWindow ? count + 1 : 1,
+      count: claimed,
       updatedAt: Timestamp.fromMillis(now),
     });
-    return { ok: true, retryAfterSeconds: 0 };
+    // Floored at 0: a limit lowered between two sends can leave `claimed` above
+    // it, and a negative "remaining" on a composer reads as a bug.
+    return {
+      ok: true,
+      retryAfterSeconds: 0,
+      remaining: Math.max(0, args.limit - claimed),
+    };
   });
 }
 

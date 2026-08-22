@@ -2,7 +2,7 @@ import "server-only";
 import type { Firestore } from "firebase-admin/firestore";
 import CourseNudgeEmail from "@/emails/CourseNudgeEmail";
 import { addDaysToKey, isValidDateKey } from "@/lib/courses/weekPlan";
-import type { GroupSession } from "@/lib/firestore/courseGroups";
+import type { GroupSession, GroupSessionMode } from "@/lib/firestore/courseGroups";
 import {
   courseTemplateDefaults,
   normalizeCourseTemplate,
@@ -508,12 +508,36 @@ export function courseNudgeSessionWhen(
  * an online group gets the word "Online" here and the real link on the page
  * they are one click from. A group with neither a room nor a link returns "",
  * which (paired with `sessionWhen`) removes the sentence.
+ *
+ * ── `mode` OVERRIDES THE STORED FIELDS (v2 decision 7) ──────────────────────
+ * The per-week virtual/in-person switch is the facilitator SAYING which
+ * destination is live this week, and it wins over what the slot happens to
+ * carry — which is the whole reason it exists. A group with a standing room
+ * that meets online for one week has a non-empty `location`, and reading it
+ * here mailed the cohort a room on the night nobody was in it. So:
+ *
+ *   · `"virtual"`   → "Online", whatever the room says. (Never the URL — see
+ *                     above; the link is one click away on the week page.)
+ *   · `"in-person"` → the room, and NEVER the "Online" fallback: a group with
+ *                     a permanent meet link would otherwise be told "Online"
+ *                     for a week their facilitator explicitly put in a room.
+ *                     No room stored → "", which drops the sentence rather
+ *                     than naming a destination that is wrong.
+ *   · `null`        → the legacy resolution, unchanged.
+ *
+ * `courseNudgeSessionWhen` deliberately takes NO mode: a week that moves online
+ * happens at the same hour on the same evening, so the mode cannot change the
+ * `{sessionWhen}` string. Threading it through for symmetry would be a
+ * parameter with no effect, which is the kind of thing a later reader "fixes".
  */
 export function courseNudgeSessionWhere(
   session: GroupSession | null | undefined,
+  mode?: GroupSessionMode | null,
 ): string {
   if (!session) return "";
   const location = session.location.trim();
+  if (mode === "virtual") return "Online";
+  if (mode === "in-person") return location;
   if (location) return location;
   return session.meetingUrl ? "Online" : "";
 }

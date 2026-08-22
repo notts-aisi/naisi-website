@@ -1242,6 +1242,15 @@ service cloud.firestore {
       // (which also upserts the facilitator enrolment); `memberCount` moves
       // only inside the allocation transaction so it can never drift from the
       // enrolment docs it summarises. runId/courseId are the group's identity.
+      //
+      // `paceStartDate`/`paceWeekPlan` (v2 decision 4, the group's calendar
+      // copy-on-write) are server-owned like `memberCount`: only the pace
+      // route writes them, because a plan edit must clear the strand gate (a
+      // taught week with attendance marks cannot vanish from the plan) and a
+      // rule cannot count registers. Pinned with a NULL default — the route
+      // stores a REAL null when the group tracks the run, so absent (legacy
+      // doc) and cleared compare equal and this pin can never wedge a
+      // legitimate session edit (the templateId '' lesson, inverted).
       function groupPinnedFieldsUnchanged() {
         return request.resource.data.get('runId', '')
             == resource.data.get('runId', '')
@@ -1250,7 +1259,26 @@ service cloud.firestore {
           && request.resource.data.get('facilitatorUids', [])
             == resource.data.get('facilitatorUids', [])
           && request.resource.data.get('memberCount', 0)
-            == resource.data.get('memberCount', 0);
+            == resource.data.get('memberCount', 0)
+          && request.resource.data.get('paceStartDate', null)
+            == resource.data.get('paceStartDate', null)
+          && request.resource.data.get('paceWeekPlan', null)
+            == resource.data.get('paceWeekPlan', null);
+      }
+      // The per-week virtual/in-person mode ("v2 decision 7") is server-owned
+      // too — the session route is the writer, so the room-notice prefill and
+      // its audit ride along with every flip. It is stored as its own flat
+      // map `sessionModes: { w03: "virtual" }` PRECISELY so this pin can be
+      // one comparison: the first cut nested `mode` inside each
+      // sessionOverrides value, and pinning a nested field across an
+      // arbitrary-keyed map forced a 60-key enumeration that blew the rules
+      // engine's 1000-expression evaluation budget and denied every
+      // legitimate group write. A `mode` a client smuggles INTO a
+      // sessionOverrides value instead is dead data: `normalizeCourseGroup`
+      // reads modes exclusively from `sessionModes`.
+      function groupSessionModesUnchanged() {
+        return request.resource.data.get('sessionModes', {})
+          == resource.data.get('sessionModes', {});
       }
       // Caps mirror GROUP_FIELD_LIMITS (courseGroups.ts) — the session fields
       // are client-editable by facilitators, so these ARE the boundary.
@@ -1275,27 +1303,52 @@ service cloud.firestore {
 
       // Groups exist once a run is being staffed — approver territory. The
       // roster starts empty and the counter at zero for the same reason the
-      // run's arrays must: update only pins them.
+      // run's arrays must: update only pins them — and the server-owned pace
+      // fields and session modes must start unset too, or a group could be
+      // BORN carrying a calendar or a mode flip its pinned writers never
+      // issued (the templateId birth-pin precedent on courseRuns).
       allow create: if (isAdmin() || canApproveCourse())
         && request.resource.data.runId is string
         && request.resource.data.runId.size() > 0
         && request.resource.data.get('facilitatorUids', []).size() == 0
         && request.resource.data.get('memberCount', 0) == 0
+        && request.resource.data.get('paceStartDate', null) == null
+        && request.resource.data.get('paceWeekPlan', null) == null
+        && request.resource.data.get('sessionModes', {}).size() == 0
         && groupContentOk();
 
       // A named facilitator edits their own group's session (move the slot,
       // change the room, drop the term's overrides) — per-doc by construction,
-      // same trust shape as an event collaborator.
+      // same trust shape as an event collaborator. The `sessionModes` map
+      // rides along UNCHANGED (see groupSessionModesUnchanged): flipping a
+      // week virtual/in-person without the route lane's notice-and-audit
+      // step is exactly what the pin exists to stop.
       allow update: if isAdmin()
         || (
           (canApproveCourse() || isParentRunTrackLead() || isGroupFacilitator())
           && groupPinnedFieldsUnchanged()
+          && groupSessionModesUnchanged()
           && groupContentOk()
         );
 
       // Deleting a group must re-pool its members (allocation transaction) —
       // routes only.
       allow delete: if false;
+
+      // --- weeks (the group's copy-on-write forks; v2 decision 4) ---
+      // `courseGroups/{groupId}/weeks/{wNN}` exists the moment a facilitator
+      // forks a week; its existence IS the resolution signal groupResolve.ts
+      // reads. Signed-in read matches the run weeks rule above — a fork
+      // carries curriculum, not the meet link, so the group doc's restricted
+      // read does not extend down here. ALL writes are server-routed (the
+      // fork POST and the week PATCH): the facilitator trust boundary
+      // (text-safe fields yes, guideBlocks no) and the delete-warning counts
+      // are cross-document checks a rule cannot express, so the simplest safe
+      // boundary is no client pen at all — the courseAttendance stance.
+      match /weeks/{weekId} {
+        allow read: if isSignedIn();
+        allow write: if false;
+      }
     }
 
     // === courseApplications ===

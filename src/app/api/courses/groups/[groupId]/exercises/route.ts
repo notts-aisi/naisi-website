@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { resolveWeekDoc } from "@/lib/courses/groupResolve";
 import { normalizeCourseEnrolment } from "@/lib/firestore/courseEnrolments";
 import { normalizeExerciseResponse } from "@/lib/firestore/courseExercises";
 import { normalizeCourseGroup } from "@/lib/firestore/courseGroups";
-import { normalizeCourseWeek, weekDocId } from "@/lib/firestore/courses";
+import { weekDocId } from "@/lib/firestore/courses";
 import type { ExerciseResponseWire } from "@/app/api/courses/runs/[runId]/exercises/[exerciseId]/submit/route";
 
 /**
@@ -221,13 +222,13 @@ export async function GET(
 
   // Three reads in one round trip, all scoped by the GROUP's own `runId` — never
   // a caller parameter.
-  const [weekSnap, memberSnap, responseSnap] = await Promise.all([
-    db
-      .collection("courseRuns")
-      .doc(group.runId)
-      .collection("weeks")
-      .doc(weekId)
-      .get(),
+  const [resolvedWeek, memberSnap, responseSnap] = await Promise.all([
+    // GROUP-FIRST through the one helper (V2-3). The queue heads each answer
+    // with its prompt, and a group whose facilitator has forked this week is
+    // marking answers to THEIR prompts — reading the run canonical here would
+    // head a member's answer with a question they were never asked, and the
+    // required/optional split would be the wrong one to chase people on.
+    resolveWeekDoc(db, group.runId, groupId, weekId),
     // Exact match for the existing (runId, groupId, status) composite index, and
     // the same query the roster route runs.
     db
@@ -257,10 +258,10 @@ export async function GET(
       .get(),
   ]);
 
-  if (!weekSnap.exists) {
+  const weekDoc = resolvedWeek.week;
+  if (!weekDoc) {
     return NextResponse.json({ error: "Week not found" }, { status: 404 });
   }
-  const weekDoc = normalizeCourseWeek(weekSnap.id, weekSnap.data() ?? {});
 
   const memberUids = memberSnap.docs
     .map((d) => normalizeCourseEnrolment(d.id, d.data() ?? {}).uid)

@@ -33,7 +33,7 @@ import { useMyExercises } from "./useMyExercises";
 import { useRunOverview } from "./useRunOverview";
 import { useRunProgress } from "./useRunProgress";
 import { useSyncTasks } from "./useSyncTasks";
-import { useWeek } from "./useWeek";
+import { useWeek, type WeekSource } from "./useWeek";
 import { useWeekComments, type WeekComments } from "./useWeekComments";
 import {
   clearWeekNavDirection,
@@ -81,6 +81,15 @@ type Props = {
 /** Mirrors weekPlan.ts (not exported there); every slot is 7 civil days. */
 const DAYS_PER_WEEK = 7;
 
+/**
+ * The forked-week disclosure, told from the member's end. Deliberately says
+ * what it MEANS (your group's version, not the run's) rather than naming the
+ * mechanism: "copy-on-write" is a fact about the database, and the fact a
+ * member needs is that their week is theirs.
+ */
+const FORKED_HINT =
+  "Your facilitator has made this week their own — you're reading your group's version, which may differ from the other groups on this run.";
+
 /** How long the row-wash / error-flash classes stay applied (animation + slack). */
 const WASH_MS = 700;
 const ERROR_FLASH_MS = 900;
@@ -93,7 +102,20 @@ const EMPTY_ROWS: ReadonlyArray<never> = [];
 
 export default function WeekView({ runId, weekNumber, uid, viewerRole }: Props) {
   const overview = useRunOverview(runId);
-  const week = useWeek(runId, weekDocId(weekNumber), viewerRole !== "learner");
+  // WHERE THIS READER'S COPY OF THE WEEK LIVES (V2-3 copy-on-write). Their
+  // group's forked document when their facilitator has personalised this week,
+  // the run canonical otherwise — and null until the overview lands, because
+  // only the overview knows which weeks the group has forked. `useWeek` reports
+  // `loading` on null rather than guessing at the canonical and swapping the
+  // page under the reader a moment later.
+  const weekSrc: WeekSource | null = overview.data
+    ? {
+        groupId: overview.data.enrolment?.groupId ?? overview.data.group?.id ?? null,
+        forkedWeekIds: overview.data.forkedWeekIds,
+      }
+    : null;
+  const canSeeDrafts = viewerRole !== "learner";
+  const week = useWeek(runId, weekDocId(weekNumber), canSeeDrafts, weekSrc);
   const progress = useRunProgress(runId);
   const comments = useWeekComments(runId, weekNumber);
   // Own exercise answers for this week. IDLE for anyone who isn't a learner
@@ -400,6 +422,13 @@ export default function WeekView({ runId, weekNumber, uid, viewerRole }: Props) 
       ? addDaysToKey(payload.run.startDate, planIndex * DAYS_PER_WEEK)
       : null;
 
+  // …and the VIEWED week's mode, addressed by `weekDocId(number)` like every
+  // other week read on a member-facing surface. This card is dated to the week
+  // on screen, so it must be told about THAT week: reading one mode resolved
+  // for the CURRENT week — what `group.mode` used to be — put week 5's "Online
+  // this week" over week 3's evening and hid week 3's room behind it.
+  const viewedSessionMode = payload.group?.sessionModes[weekDocId(weekNumber)] ?? null;
+
   // Footer nav walks taught weeks only — breaks are calendar padding, not
   // destinations — and is bounded by the plan.
   const taughtWeeks = payload.run.weekPlan.filter((e) => e.kind === "week");
@@ -434,10 +463,21 @@ export default function WeekView({ runId, weekNumber, uid, viewerRole }: Props) 
           Week {weekNumber} of {payload.run.totalWeeks}
         </p>
         <h1 className={styles.title}>{weekDoc.title || `Week ${weekNumber}`}</h1>
-        {(weekDoc.estimatedMinutes !== null || !weekDoc.published) && (
+        {(weekDoc.estimatedMinutes !== null || !weekDoc.published || week.forked) && (
           <p className={styles.meta}>
             {weekDoc.estimatedMinutes !== null && (
               <span>About {weekDoc.estimatedMinutes} min of materials</span>
+            )}
+            {week.forked && (
+              // The one disclosure copy-on-write owes the reader. Without it a
+              // member comparing notes with a friend in another group finds
+              // two different week 4s and no explanation anywhere — and a
+              // facilitator cannot tell whether they are looking at the run's
+              // week or their own edit of it. Marker-sized, like MirrorHint:
+              // the sentence rides in a `title`, not in a standing paragraph.
+              <Chip tone="neutral" size="sm" title={FORKED_HINT}>
+                Customised by your facilitator
+              </Chip>
             )}
             {!weekDoc.published && (
               // Learners never reach an unpublished week (useWeek gates), so
@@ -465,7 +505,11 @@ export default function WeekView({ runId, weekNumber, uid, viewerRole }: Props) 
       <div className={styles.layout}>
         <aside className={styles.aside}>
           {payload.group && (
-            <SessionCard group={payload.group} slotStartKey={slotStartKey} />
+            <SessionCard
+              group={payload.group}
+              slotStartKey={slotStartKey}
+              mode={viewedSessionMode}
+            />
           )}
           <WeekRail
             plan={payload.run.weekPlan}
@@ -487,6 +531,10 @@ export default function WeekView({ runId, weekNumber, uid, viewerRole }: Props) 
             runId={runId}
             viewedWeek={weekNumber}
             currentWeek={payload.currentWeek}
+            // `currentWeek` is already resolved group-first by the overview
+            // route; this says WHOSE calendar answered, so the banner can name
+            // the group rather than the cohort when the two have parted.
+            pacedByGroup={payload.calendarSource === "group"}
           />
 
           <WeekCurriculum

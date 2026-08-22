@@ -5,11 +5,14 @@ import AttendanceGrid from "@/features/courses/AttendanceGrid";
 import GroupRoster from "@/features/courses/GroupRoster";
 import SessionCard from "@/features/courses/SessionCard";
 import { getRunAccess, getSessionUser } from "@/features/courses/runAccess";
-import { currentWeekFor, type CurrentWeek } from "@/lib/courses/weekPlan";
+import { memberCurrentWeek } from "@/lib/courses/groupResolve";
+import { type CurrentWeek } from "@/lib/courses/weekPlan";
 import { getAdminDb } from "@/lib/firebase/admin";
 import {
   normalizeCourseGroup,
   sessionForWeek,
+  sessionModeForWeek,
+  sessionModesOf,
   type GroupSession,
 } from "@/lib/firestore/courseGroups";
 import { weekDocId } from "@/lib/firestore/courses";
@@ -190,21 +193,25 @@ export default async function GroupHomePage({
   }
 
   /**
-   * The cohort's position, for the session card underneath.
+   * THIS GROUP's position, for the session card underneath — not the run's.
    *
-   * `currentWeekFor` throws `RangeError` on a run with no usable start date,
-   * which is a legitimate half-authored state rather than an error: the card
-   * then falls back to the recurring label and stays stateless. The try wraps
-   * ONLY that call — `redirect()` signals by throwing, so it must never sit
-   * inside a catch.
+   * `memberCurrentWeek` is the group-first replacement for `currentWeekFor`
+   * (V2-3): a group that has re-paced itself is on its own week, and a
+   * facilitator's own page is the last place that should disagree with what
+   * their members are looking at. It resolves to the run's calendar for the
+   * overwhelmingly common group that has overridden nothing.
+   *
+   * It inherits `currentWeekFor`'s `RangeError` contract on a calendar with no
+   * usable start date, which is a legitimate half-authored state rather than an
+   * error: the card then falls back to the recurring label and stays stateless.
+   * The try wraps ONLY that call — `redirect()` signals by throwing, so it must
+   * never sit inside a catch.
    */
   let currentWeek: CurrentWeek | null = null;
-  if (access.run.startDate) {
-    try {
-      currentWeek = currentWeekFor(access.run);
-    } catch {
-      // Unusable start date — no resolved week, and the card says less.
-    }
+  try {
+    currentWeek = memberCurrentWeek(access.run, group);
+  } catch {
+    // Unusable start date — no resolved week, and the card says less.
   }
 
   // A break week and the before/after phases have no week doc of their own, so
@@ -214,7 +221,8 @@ export default async function GroupHomePage({
   const weekNumber = currentWeek
     ? (currentWeek.weekNumber ?? currentWeek.anchorWeekNumber)
     : 0;
-  const session = sessionForWeek(group, weekNumber >= 1 ? weekDocId(weekNumber) : "");
+  const weekId = weekNumber >= 1 ? weekDocId(weekNumber) : "";
+  const session = sessionForWeek(group, weekId);
 
   const sessionGroup: OverviewGroup = {
     id: group.id,
@@ -227,6 +235,12 @@ export default async function GroupHomePage({
     // The gate above is the check the overview route calls `canSeeMeetingUrl`:
     // a facilitator of this group, or an admin. Nobody else reaches this line.
     meetingUrl: session.meetingUrl,
+    // The whole map, exactly as the overview route sends it — this shape IS
+    // `OverviewGroup`, and a divergence here would mean the facilitator's own
+    // card is fed differently from their members'. The card below is handed
+    // the CURRENT week's entry out of it, which is the week the slot fields
+    // above were resolved for.
+    sessionModes: sessionModesOf(group),
     // Left empty on purpose rather than paid for with a second read: the
     // roster below names the facilitators, and repeating them on the card
     // above it would say the same thing twice.
@@ -253,13 +267,26 @@ export default async function GroupHomePage({
           <Link href={`${groupPath}/review`} style={actionLinkStyle}>
             Review exercises
           </Link>
+          {/* The copy-on-write surface: this group's weeks, its schedule, and
+              the notice that tells everyone when either changes. Same gate as
+              this page, restated in its own shell. */}
+          <Link href={`${groupPath}/edit`} style={actionLinkStyle}>
+            Weeks &amp; schedule
+          </Link>
           <Link href={`${groupPath}/email`} style={actionLinkStyle}>
             Email the group
           </Link>
         </div>
       </div>
 
-      <SessionCard group={sessionGroup} slotStartKey={currentWeek?.slotStartKey ?? null} />
+      <SessionCard
+        group={sessionGroup}
+        slotStartKey={currentWeek?.slotStartKey ?? null}
+        // The same week key the slot above was resolved for, so the
+        // facilitator's card swaps exactly as their members' does — this page
+        // is where they check that the flip they just made looks right.
+        mode={sessionModeForWeek(group, weekId)}
+      />
 
       <GroupRoster groupId={groupId} groupName={group.name} />
 

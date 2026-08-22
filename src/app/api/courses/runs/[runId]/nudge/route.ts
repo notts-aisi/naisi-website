@@ -25,8 +25,18 @@ import {
   type CohortRecipient,
 } from "@/lib/email/courseFacilitatorEmails";
 import { currentWeekFor, isValidDateKey } from "@/lib/courses/weekPlan";
+import {
+  memberCurrentWeek,
+  resolveCalendar,
+  resolveWeekDoc,
+} from "@/lib/courses/groupResolve";
 import { courseEnrolmentId, normalizeCourseEnrolment } from "@/lib/firestore/courseEnrolments";
-import { normalizeCourseGroup, sessionForWeek } from "@/lib/firestore/courseGroups";
+import {
+  normalizeCourseGroup,
+  sessionForWeek,
+  sessionModeForWeek,
+  type CourseGroupDoc,
+} from "@/lib/firestore/courseGroups";
 import {
   COURSE_RUN_STATUS_LABEL,
   courseRunChannel,
@@ -117,6 +127,39 @@ import { signToken } from "@/lib/signedTokens";
  * per route, under a comment saying "IF YOU CHANGE ONE, CHANGE BOTH"; they are
  * now written once.
  *
+ * ── V2-3: THE RUN'S CADENCE DECIDES *WHEN*, THE RECIPIENT'S GROUP DECIDES
+ *    *WHAT* ────────────────────────────────────────────────────────────────
+ * Groups can now pace themselves and fork individual weeks (copy-on-write), so
+ * one send can legitimately carry several different weeks. The split is:
+ *
+ *   TRIGGER + IDEMPOTENCY stay RUN-LEVEL. `resolveNudgeWeek` still asks the
+ *   RUN where it is, the marker is still keyed on the RUN's calendar slot, and
+ *   `NudgeSendResult.weekNumber` is still the run's week. A group pacing three
+ *   weeks behind therefore still gets nudged on the RUN's cadence — that is a
+ *   DELIBERATE, OWNER-VISIBLE decision, not an oversight. Making the marker
+ *   per-group would mean a cohort of twelve groups needs twelve claims, twelve
+ *   sends and twelve chances to double-mail, and it would silence a group
+ *   whose calendar has run out entirely. One send, one claim, one record.
+ *
+ *   CONTENT is resolved PER RECIPIENT through `groupResolve.ts`: their group's
+ *   current week number, its title, its summary, its prep line, its URL, and
+ *   the session date computed from THEIR group's slot. Two members of the same
+ *   cohort in different groups can receive genuinely different emails from one
+ *   click, which is the point of per-group autonomy.
+ *
+ *   THE FALLBACK IS THE RUN'S WEEK, and it is used whenever a group's own week
+ *   cannot be nudged about: their calendar is on a break, has not started, has
+ *   finished, is half-authored, or their week is unauthored/unpublished. The
+ *   run's week is the thing the send is already claiming, and it is by
+ *   definition published (the gate proved it). Silence is not an option here —
+ *   the recipient is on a send that has already been claimed, so "no email"
+ *   would mean that member simply never hears about that week at all.
+ *
+ * NOTE the deliberate asymmetry with the SESSION fallback below: an unresolved
+ * group gets the RUN's week (shared curriculum, safe) but NEVER another
+ * group's session time (a room they must not turn up to). Content degrades to
+ * the cohort's; logistics degrade to silence.
+ *
  * ── WHAT IT SAYS ────────────────────────────────────────────────────────────
  * `src/lib/email/courseNudgeEmail.ts` owns every word of it: template
  * resolution, the token map, the escaping, the drop-the-sentence degradation
@@ -158,6 +201,17 @@ import { signToken } from "@/lib/signedTokens";
  * reader's own group's slot for this week if they hold a placement on the run,
  * else the line every active group shares, else null. Real recipients each get
  * their OWN group's line by the same rule (`groupContextFor`).
+ *
+ * V2-3 — `week` IS THE RUN'S WEEK, THE PREVIEW COPY IS THE SENDER'S. `week`
+ * names what this send CLAIMS: the run's slot, which is what the marker is
+ * keyed on and what "already sent" is a fact about. `subjectPreview` and
+ * `bodyPreview` are the sender's own rehearsal and resolve their group's week
+ * (title, number, link) exactly as their test send will. A facilitator whose
+ * group is paced apart from the run therefore sees a body naming a different
+ * week from `week.weekNumber` — that is not a bug and must not be "fixed" by
+ * making the two agree: one is the cohort's claim, the other is one person's
+ * copy, and a preview that hid the difference would hide the divergence the
+ * sender most needs to notice before pressing send.
  */
 export type NudgePreviewPayload = {
   week: {
@@ -421,6 +475,35 @@ async function resolveNudgeWeek(
   };
 }
 
+/**
+ * The run's own resolved week, in the two shapes the per-recipient resolution
+ * needs it: as the CONTENT fallback every unresolved recipient receives, and
+ * as the ADDRESS a group tracking the run resolves to.
+ *
+ * Two thin projections rather than passing `ResolvedWeek` around, so the
+ * run-level facts and a group's facts are the same type at every use site and
+ * nothing can accidentally mail one where it meant the other.
+ */
+function runWeekFacts(resolved: Extract<ResolvedWeek, { ok: true }>): WeekFacts {
+  return {
+    weekNumber: resolved.weekNumber,
+    weekId: resolved.weekId,
+    title: resolved.title,
+    summary: resolved.summary,
+    prep: resolved.prep,
+  };
+}
+
+function runWeekAddress(
+  resolved: Extract<ResolvedWeek, { ok: true }>,
+): GroupWeekAddress {
+  return {
+    weekNumber: resolved.weekNumber,
+    weekId: resolved.weekId,
+    slotStartKey: resolved.slotStartKey,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Group session resolution — one pair of token values per recipient
 // ---------------------------------------------------------------------------
@@ -442,10 +525,26 @@ const SESSION_KEY_SEP = "\u0000";
 
 const NO_SESSION: SessionContext = { sessionWhen: "", sessionWhere: "" };
 
+/**
+ * Where ONE group's own calendar says it is right now — the address its week
+ * content and its session override are both resolved by.
+ */
+type GroupWeekAddress = { weekNumber: number; weekId: string; slotStartKey: string };
+
 type GroupIndex = {
   byGroupId: Map<string, SessionContext>;
   /** The pair every active group shares; null when it varies or none is set. */
   common: SessionContext | null;
+  /**
+   * Per LIVE group, where its own calendar puts it this week. A group tracking
+   * the run resolves to the run's own address, so a lookup here is always the
+   * right one to use and never has to be compared against the run's.
+   *
+   * Groups whose calendar cannot be paced at all (half-authored pacing, on a
+   * break, run finished) are ABSENT, which `groupWeekFor` reads as "give them
+   * the run's week" — see the module header's fallback rule.
+   */
+  addressByGroupId: Map<string, GroupWeekAddress>;
 };
 
 /**
@@ -454,19 +553,27 @@ type GroupIndex = {
  * groups yet).
  *
  * The session is resolved through `sessionForWeek`, so a one-week room or time
- * change is reflected, and dated through the slot the cohort is actually in —
+ * change is reflected, and dated through the slot THE GROUP is actually in —
  * which is what lets `{sessionWhen}` read "Tuesday 26 August, 18:00–19:30"
- * rather than the recurring "Tuesdays 18:00–19:30" a weekly email has no use for.
+ * rather than the recurring "Tuesdays 18:00–19:30" a weekly email has no use
+ * for, and what keeps a group pacing a week behind from being dated to the
+ * run's slot.
+ *
+ * V2-3: both the override KEY and the DATE come from the group's own resolved
+ * calendar (`groupResolve.ts`), falling back to the run's address when that
+ * group tracks the run or cannot be paced. `common` is therefore still the
+ * "every group meets at the same time" case and now correctly stops being one
+ * the moment a group re-paces itself.
  */
 async function loadGroups(
   db: Firestore,
-  runId: string,
-  weekId: string,
-  slotStartKey: string,
+  run: CourseRunDoc,
+  runAddress: GroupWeekAddress,
+  now: Date,
 ): Promise<GroupIndex> {
   const snap = await db
     .collection("courseGroups")
-    .where("runId", "==", runId)
+    .where("runId", "==", run.id)
     .limit(MAX_GROUPS)
     .get();
   const groups = snap.docs
@@ -474,17 +581,29 @@ async function loadGroups(
     .filter((g) => !g.archived);
 
   const byGroupId = new Map<string, SessionContext>();
+  const addressByGroupId = new Map<string, GroupWeekAddress>();
   const distinct = new Set<string>();
   for (const group of groups) {
-    const session = sessionForWeek(group, weekId);
+    const address = groupAddressOf(run, group, now);
+    if (address) addressByGroupId.set(group.id, address);
+    const at = address ?? runAddress;
+    const session = sessionForWeek(group, at.weekId);
     const sessionWhen = courseNudgeSessionWhen(
       session,
-      courseNudgeSessionDateKey(slotStartKey, session.weekday),
+      courseNudgeSessionDateKey(at.slotStartKey, session.weekday),
     );
     if (!sessionWhen) continue;
     const context: SessionContext = {
       sessionWhen,
-      sessionWhere: courseNudgeSessionWhere(session),
+      // The per-week virtual/in-person switch decides WHERE, resolved for the
+      // same week key the slot was (v2 decision 7). A group meeting online this
+      // week is mailed "Online" rather than the room it usually books —
+      // otherwise the one lane that reaches people who do not open the site
+      // sends them to the wrong place.
+      sessionWhere: courseNudgeSessionWhere(
+        session,
+        sessionModeForWeek(group, at.weekId),
+      ),
     };
     byGroupId.set(group.id, context);
     distinct.add(`${context.sessionWhen}${SESSION_KEY_SEP}${context.sessionWhere}`);
@@ -493,7 +612,30 @@ async function loadGroups(
     distinct.size === 1 && byGroupId.size === groups.length
       ? ([...byGroupId.values()][0] ?? null)
       : null;
-  return { byGroupId, common };
+  return { byGroupId, common, addressByGroupId };
+}
+
+/**
+ * One group's own week address, or null when its calendar has nothing to point
+ * at this week (not started, finished, mid-break, half-authored pacing, or a
+ * week number a doc id cannot be built from).
+ *
+ * Pure — no reads. `weekDocId(n)`, never the plan entry's own `weekId`: the
+ * one addressing doctrine, the same one the member's week page resolves.
+ */
+function groupAddressOf(
+  run: CourseRunDoc,
+  group: CourseGroupDoc,
+  now: Date,
+): GroupWeekAddress | null {
+  if (!isValidDateKey(resolveCalendar(run, group).startDate)) return null;
+  const cw = memberCurrentWeek(run, group, now);
+  const weekNumber = cw.weekNumber;
+  if (cw.phase !== "running" || weekNumber === null) return null;
+  if (!Number.isInteger(weekNumber) || weekNumber < 1 || weekNumber > MAX_WEEK_NUMBER) {
+    return null;
+  }
+  return { weekNumber, weekId: weekDocId(weekNumber), slotStartKey: cw.slotStartKey };
 }
 
 /**
@@ -516,6 +658,93 @@ async function loadGroups(
 function groupContextFor(groups: GroupIndex, groupId: string | null): SessionContext {
   if (groupId) return groups.byGroupId.get(groupId) ?? NO_SESSION;
   return groups.common ?? NO_SESSION;
+}
+
+// ---------------------------------------------------------------------------
+// Per-recipient WEEK resolution (V2-3) — the other half of the token map
+// ---------------------------------------------------------------------------
+
+/** The week facts a nudge is built from, for ONE recipient. */
+type WeekFacts = {
+  weekNumber: number;
+  weekId: string;
+  title: string;
+  summary: string;
+  prep: string;
+};
+
+/**
+ * The week each of `groupIds` should be nudged about, resolved GROUP-FIRST.
+ *
+ * ONE read per DISTINCT GROUP — not per recipient — so a 200-person cohort in
+ * six groups costs six reads however it is split. `resolveWeekDoc` is the same
+ * helper the member's own week page resolves through, so the email can never
+ * describe a week the recipient cannot open.
+ *
+ * A group that resolves to nothing usable (no address, no doc, unpublished)
+ * simply does not appear in the map, and `groupWeekFor` hands the caller the
+ * RUN's week — see the module header for why silence is not the answer here.
+ * The unpublished check matters most: a facilitator who has forked a week and
+ * is still writing it must not have a half-finished draft mailed to their room
+ * on the run's cadence.
+ */
+async function resolveGroupWeeks(
+  db: Firestore,
+  runId: string,
+  index: GroupIndex,
+  groupIds: Iterable<string | null>,
+): Promise<Map<string, WeekFacts>> {
+  const wanted = new Set<string>();
+  for (const id of groupIds) {
+    if (id) wanted.add(id);
+  }
+  const out = new Map<string, WeekFacts>();
+  if (wanted.size === 0) return out;
+
+  await Promise.all(
+    [...wanted].map(async (groupId) => {
+      // A group id that is not in the index is archived, deleted, or on another
+      // run — the run's week is the only honest answer, and it is the default.
+      const address = index.addressByGroupId.get(groupId);
+      if (!address) return;
+      // Address unchanged from the run's is NOT a reason to skip the read: a
+      // group can track the run's calendar exactly and still have forked the
+      // week's content, which is the whole point of copy-on-write.
+      const { week } = await resolveWeekDoc(db, runId, groupId, address.weekId);
+      if (!week || !week.published) return;
+      const facts: WeekFacts = {
+        weekNumber: address.weekNumber,
+        weekId: address.weekId,
+        title: week.title,
+        summary: week.summary,
+        prep: courseWeekPrepLine(week),
+      };
+      // Identical to the run's week is worth storing rather than eliding: it
+      // keeps `groupWeekFor` a pure map lookup with one fallback rule.
+      out.set(groupId, facts);
+    }),
+  );
+  return out;
+}
+
+/**
+ * ONE RULE, used by the preview, the rehearsal and every real recipient: a
+ * member whose group resolved a nudgeable week of its own gets THAT week;
+ * everyone else — unplaced, archived group, group mid-break, group whose week
+ * is not published — gets the RUN's week, which is the week this send has
+ * already claimed.
+ *
+ * Deliberately NOT the session rule (`groupContextFor`), which refuses to fall
+ * back across groups. Curriculum is shared and safe to degrade to the cohort's;
+ * a time and a room are not.
+ */
+function groupWeekFor(
+  weeks: Map<string, WeekFacts>,
+  groupId: string | null,
+  runWeek: WeekFacts,
+): WeekFacts {
+  if (!groupId) return runWeek;
+  return weeks.get(groupId) ?? runWeek;
 }
 
 /** The caller's own placement on this run, if they have one. */
@@ -591,7 +820,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ runId: string 
   }
   const { actor, db, run } = gate;
 
-  const resolved = await resolveNudgeWeek(db, run, new Date());
+  // Captured once so the run's position, every group's position and the
+  // preview's session date all describe the same instant.
+  const now = new Date();
+  const resolved = await resolveNudgeWeek(db, run, now);
   if (!resolved.ok) {
     // A success with nothing to send. The reason travels in `bodyPreview` — see
     // NudgePreviewPayload. `alreadySentAt` is null because the marker is per
@@ -607,10 +839,12 @@ export async function GET(_req: Request, ctx: { params: Promise<{ runId: string 
     return NextResponse.json(payload);
   }
 
+  const runWeek = runWeekFacts(resolved);
+  const runAddress = runWeekAddress(resolved);
   const [marker, audience, groups, template, actorSnap, senderGroupId] = await Promise.all([
     findWeekMarker(db, runId, resolved.slotStartKey),
     resolveCohortAudience(db, runId, LANE),
-    loadGroups(db, runId, resolved.weekId, resolved.slotStartKey),
+    loadGroups(db, run, runAddress, now),
     resolveCourseNudgeTemplate(db),
     db.collection("users").doc(actor.uid).get(),
     ownGroupId(db, runId, actor.uid),
@@ -624,20 +858,28 @@ export async function GET(_req: Request, ctx: { params: Promise<{ runId: string 
     ? memberNameOf(actorSnap.data() ?? {})
     : (actor.displayName?.trim() ?? "");
   const sessionContext = groupContextFor(groups, senderGroupId);
+  // ONE read at most (the sender's own group). The preview is a rehearsal of
+  // THEIR copy, so a facilitator whose group has forked this week reads their
+  // own version — exactly what their test send will contain.
+  const senderWeek = groupWeekFor(
+    await resolveGroupWeeks(db, runId, groups, [senderGroupId]),
+    senderGroupId,
+    runWeek,
+  );
 
   const rendered = renderCourseNudge(
     template,
     buildCourseNudgeTokens({
       courseTitle: run.courseTitle,
       runLabel: run.label,
-      weekNumber: resolved.weekNumber,
-      weekTitle: resolved.title,
-      weekSummary: resolved.summary,
-      weekPrep: resolved.prep,
+      weekNumber: senderWeek.weekNumber,
+      weekTitle: senderWeek.title,
+      weekSummary: senderWeek.summary,
+      weekPrep: senderWeek.prep,
       weekUrl: courseWeekUrl(
         process.env.NEXT_PUBLIC_APP_URL ?? "",
         runId,
-        resolved.weekNumber,
+        senderWeek.weekNumber,
       ),
       sessionWhen: sessionContext.sessionWhen,
       sessionWhere: sessionContext.sessionWhere,
@@ -781,8 +1023,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
     ? memberNameOf(actorData)
     : (actor.displayName?.trim() ?? "");
 
+  const runWeek = runWeekFacts(resolved);
   const [groups, template] = await Promise.all([
-    loadGroups(db, runId, resolved.weekId, resolved.slotStartKey),
+    loadGroups(db, run, runWeekAddress(resolved), now),
     resolveCourseNudgeTemplate(db),
   ]);
 
@@ -963,6 +1206,22 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
     }
   }
 
+  // ONE read per distinct group among the recipients, resolved BEFORE the
+  // dispatch loop rather than inside it: a per-recipient read would turn a
+  // 200-person send into 200 extra round trips inside the 60s request ceiling,
+  // and every member of a group gets the same answer anyway.
+  //
+  // Placed AFTER the marker claim on purpose. It is a content read, not a
+  // gate — failing it must not be able to leave the cohort's week unclaimed
+  // and re-sendable, and every recipient it cannot resolve still gets the
+  // run's week rather than nothing.
+  const groupWeeks = await resolveGroupWeeks(
+    db,
+    runId,
+    groups,
+    recipients.map((r) => r.groupId),
+  );
+
   let sent = 0;
   // Bounded concurrency, not a sequential sleep — `dispatchSends` carries the
   // wall-clock arithmetic that keeps a full-size cohort send inside App
@@ -977,6 +1236,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
     );
     const unsubscribeUrl = `${appUrl}/api/unsubscribe?t=${encodeURIComponent(token)}`;
     const sessionContext = groupContextFor(groups, recipient.groupId);
+    // THEIR group's week, or the run's — see the module header. Two recipients
+    // of this one send can legitimately receive different week numbers, titles
+    // and links, and each link points at the document their own week page will
+    // open.
+    const week = groupWeekFor(groupWeeks, recipient.groupId, runWeek);
 
     try {
       // ONE address. One message. Never an array, never a Cc — a cohort is up to
@@ -997,11 +1261,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
         context: {
           courseTitle: run.courseTitle,
           runLabel: run.label,
-          weekNumber: resolved.weekNumber,
-          weekTitle: resolved.title,
-          weekSummary: resolved.summary,
-          weekPrep: resolved.prep,
-          weekUrl: courseWeekUrl(appUrl, runId, resolved.weekNumber),
+          weekNumber: week.weekNumber,
+          weekTitle: week.title,
+          weekSummary: week.summary,
+          weekPrep: week.prep,
+          weekUrl: courseWeekUrl(appUrl, runId, week.weekNumber),
         },
       });
       sent += 1;

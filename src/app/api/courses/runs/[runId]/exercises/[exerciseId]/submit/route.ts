@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { resolveWeekDoc } from "@/lib/courses/groupResolve";
 import {
   courseEnrolmentId,
   normalizeCourseEnrolment,
@@ -13,7 +14,7 @@ import {
   type CourseExerciseResponseDoc,
   type ExerciseReviewStatus,
 } from "@/lib/firestore/courseExercises";
-import { normalizeCourseWeek, validateSubmissionUrl } from "@/lib/firestore/courses";
+import { validateSubmissionUrl } from "@/lib/firestore/courses";
 
 /**
  * A member saving or submitting ONE weekly exercise. This route is the only
@@ -25,13 +26,18 @@ import { normalizeCourseWeek, validateSubmissionUrl } from "@/lib/firestore/cour
  * The exercise DEFINITION on the week doc decides what may be submitted: a
  * `"text"` exercise takes a written answer and rejects a link; a `"link"`
  * exercise takes a URL and rejects prose. Checking that from rules would mean
- * fetching `courseRuns/{runId}/weeks/{weekId}` and searching an array inside a
- * rules expression — and the URL check (`validateSubmissionUrl`) is string
- * parsing rules cannot do at all. So the definition is read here, the type is
- * ASSERTED onto the stored doc from the definition, and a client-sent type is
- * never consulted. The field belonging to the other type is deleted on every
- * write, so an author flipping an exercise from text to link cannot leave a
- * stale answer of the wrong kind behind.
+ * fetching the week doc and searching an array inside a rules expression — and
+ * the URL check (`validateSubmissionUrl`) is string parsing rules cannot do at
+ * all. So the definition is read here, the type is ASSERTED onto the stored doc
+ * from the definition, and a client-sent type is never consulted. The field
+ * belonging to the other type is deleted on every write, so an author flipping
+ * an exercise from text to link cannot leave a stale answer of the wrong kind
+ * behind.
+ *
+ * WHICH week doc is the MEMBER's, resolved group-first through
+ * `groupResolve.ts` (V2-3) — their group's fork when their facilitator has
+ * personalised the week, the run canonical otherwise. The validating end and
+ * the rendering end must read one document; see the resolution below.
  *
  * ── EDITABLE UNTIL REVIEWED ─────────────────────────────────────────────────
  * A row whose `reviewStatus` is anything other than `"unreviewed"` is frozen:
@@ -226,16 +232,30 @@ export async function POST(
   // ---- The exercise DEFINITION is the gate ---------------------------------
   // `published` is deliberately NOT checked: it is the week page's render gate,
   // and a member who has the week open has already been shown these prompts.
-  const weekSnap = await db
-    .collection("courseRuns")
-    .doc(runId)
-    .collection("weeks")
-    .doc(weekId)
-    .get();
-  if (!weekSnap.exists) {
+  //
+  // GROUP-FIRST, THROUGH THE ONE HELPER (V2-3). THE DEFINITION VALIDATED HERE
+  // MUST BE THE DEFINITION THE MEMBER WAS SHOWN. `WeekView` renders their
+  // group's forked week when their facilitator has personalised it, so reading
+  // the run canonical here made the gate and the page disagree about the same
+  // week — three ways, all silent and all costing a member their answer:
+  //
+  //   · a facilitator-ADDED exercise 404s at submit, and because the response
+  //     doc id is deterministic there is nothing to recover it from;
+  //   · a facilitator-REMOVED one still accepts posts, filing work against a
+  //     prompt the group is no longer asked;
+  //   · a `responseType` FLIP rejects an answer against a definition the
+  //     member never saw ("this exercise takes a link, not a written answer"
+  //     under a prose box).
+  //
+  // `enrolment.groupId` is the member's OWN placement, read off the row the
+  // access gate above already fetched — never a caller parameter — so this
+  // resolves exactly what their week page opened. The facilitator review queue
+  // (`groups/[groupId]/exercises`) resolves the same document through the same
+  // helper, so both ends of one exercise now agree by construction.
+  const { week } = await resolveWeekDoc(db, runId, enrolment.groupId, weekId);
+  if (!week) {
     return NextResponse.json({ error: "Week not found" }, { status: 404 });
   }
-  const week = normalizeCourseWeek(weekSnap.id, weekSnap.data() ?? {});
   const exercise = week.exercises.find((x) => x.id === exerciseId);
   if (!exercise) {
     return NextResponse.json({ error: "Exercise not found" }, { status: 404 });

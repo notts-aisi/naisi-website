@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { WeekPlanEntry } from "@/lib/courses/weekPlan";
 
 /**
  * The allocation payload for one course run, plus the three mutations the
@@ -58,6 +59,21 @@ export type AllocGroup = {
   /** NAMES ONLY — no uids to resolve, no users read from this surface. */
   facilitatorNames: string[];
   memberCount: number;
+  /**
+   * ── THE AUTONOMY TRIPLE (V2-3) ────────────────────────────────────────────
+   * Structurally `GroupDivergenceInput` from `src/lib/courses/groupResolve.ts`
+   * — the board passes a column to `groupsDiverge` unchanged, which is what
+   * lets the divergence note fire on a real difference instead of on nothing.
+   * DECLARED, not optional: while these were merely hoped for, the board read
+   * them through a `Partial<>` cast, every column answered "run canonical", and
+   * the note was unreachable. `null` on a pace field means the group tracks the
+   * run; an empty `forkedWeekIds` means it has forked no weeks.
+   *
+   * Week IDS only — no week content reaches this payload.
+   */
+  paceStartDate: string | null;
+  paceWeekPlan: WeekPlanEntry[] | null;
+  forkedWeekIds: string[];
 };
 
 /**

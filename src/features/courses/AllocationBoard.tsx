@@ -41,6 +41,7 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Dropdown, { type DropdownOption } from "@/components/ui/Dropdown";
+import { divergenceNote, type GroupDivergenceInput } from "@/lib/courses/groupResolve";
 import {
   useAllocation,
   type AllocGroup,
@@ -101,6 +102,32 @@ type Props = {
 
 /** Column id for the unallocated pool. Not a group id — there is no such group. */
 const UNALLOCATED = "__unallocated__";
+
+/**
+ * A board column, seen as `groupsDiverge` sees it (V2-3).
+ *
+ * THE UNALLOCATED POOL IS THE RUN CANONICAL. A column with no group behind it
+ * is `null`, which `groupsDiverge` reads as the run canonical — exactly what an
+ * unplaced member gets. So moving someone out of the pool into a group that has
+ * overridden nothing raises no note, and into one that has, correctly does.
+ *
+ * `AllocGroup` now carries the three autonomy fields (`paceStartDate`,
+ * `paceWeekPlan`, `forkedWeekIds`) in exactly `GroupDivergenceInput`'s shape,
+ * so this is a projection and NOT a defaulting layer. It used to read them
+ * through a `Partial<>` cast while the payload was still owed them — which
+ * type-checked, silently answered "run canonical" for every column, and meant
+ * the divergence note could not fire at all. A cast here is the thing that made
+ * a disclosure look shipped while it was dead; if this ever needs one again,
+ * the payload is what to fix.
+ */
+const autonomyOf = (group: AllocGroup | null): GroupDivergenceInput | null =>
+  group
+    ? {
+        paceStartDate: group.paceStartDate,
+        paceWeekPlan: group.paceWeekPlan,
+        forkedWeekIds: group.forkedWeekIds,
+      }
+    : null;
 
 /**
  * The one place a column id becomes the `groupId` the route stores. Module
@@ -721,6 +748,63 @@ export default function AllocationBoard({ courseId, runId }: Props) {
     [groups, byColumn],
   );
 
+  /**
+   * ── THE DIVERGENCE DISCLOSURE (V2-3) ────────────────────────────────────
+   * Groups can run their own calendar and their own forked copies of weeks, so
+   * a MOVE is no longer only a change of room: it can change which week the
+   * member is on, which version of the curriculum they read, and therefore
+   * what their progress percentage means. None of that is visible on a card,
+   * and the allocator is the last person who can catch it.
+   *
+   * `groupsDiverge` is the one helper that answers it — the same module every
+   * content and calendar resolution goes through, so this note can never say
+   * "identical" about two groups the learning space will render differently.
+   *
+   * The note is INFORMATIONAL AND NEVER BLOCKS. Moving someone into a group
+   * that has personalised its weeks is a normal, intended act; the board's job
+   * is to make sure it is not an accidental one. It replaces itself on the
+   * next move and is dismissible, in the rail beside the tally rather than in
+   * a toast, because a single move deliberately has no modal (see `commit`).
+   */
+  const [moveNote, setMoveNote] = useState<string | null>(null);
+
+  /**
+   * The sentence for one (origin → destination) pair, or null when the two
+   * agree. Pure apart from the group lookup, so the bulk path can ask it once
+   * per distinct origin and the single path once.
+   */
+  const divergenceMessage = useCallback(
+    (fromColumnId: string, toColumnId: string, who: string): string | null => {
+      // ONE helper, in the module that owns divergence — deliberately
+      // conservative on the resolver's side (any fork on either side counts,
+      // and a pace override counts even when it resolves to the same dates).
+      // The board does not second-guess it: a spurious sentence costs an
+      // allocator two seconds, and a missing one moves someone across a
+      // curriculum boundary in silence.
+      //
+      // The two facts stay SEPARATE in the copy because they have different
+      // consequences: pacing changes which week they are on TODAY, content
+      // changes what that week contains. A note that merged them would be
+      // wrong about one of them half the time.
+      //
+      // The board's ONLY job here is the labels — and the one that matters is
+      // `target: null` for the pool, which is how `divergenceNote` knows not to
+      // describe a column that has no weeks as though it had some. Everything
+      // about WHICH SIDE diverges is the helper's, because getting that wrong
+      // here is what made this note say three false things about the pool.
+      return divergenceNote(
+        autonomyOf(groupsById.get(fromColumnId) ?? null),
+        autonomyOf(groupsById.get(toColumnId) ?? null),
+        {
+          source: columnNameOf(fromColumnId),
+          target: toColumnId === UNALLOCATED ? null : columnNameOf(toColumnId),
+          who,
+        },
+      );
+    },
+    [columnNameOf, groupsById],
+  );
+
   // -------------------------------------------------------------------------
   // Mutations
   // -------------------------------------------------------------------------
@@ -828,27 +912,42 @@ export default function AllocationBoard({ courseId, runId }: Props) {
   /** Drag, keyboard drop, and the per-card menu all land here. */
   const moveOne = useCallback(
     (uid: string, columnId: string) => {
-      if (columnIdOf(uid) === columnId) return;
+      const fromColumnId = columnIdOf(uid);
+      if (fromColumnId === columnId) return;
+      setMoveNote(divergenceMessage(fromColumnId, columnId, nameOf(uid)));
       void commit([{ uid, groupId: groupIdForColumn(columnId) }], null);
     },
-    [columnIdOf, commit],
+    [columnIdOf, commit, divergenceMessage, nameOf],
   );
 
   const moveSelection = useCallback(
     (columnId: string) => {
-      const placements: Placement[] = [...liveSelection]
-        .filter((uid) => columnIdOf(uid) !== columnId)
-        .map((uid) => ({ uid, groupId: groupIdForColumn(columnId) }));
+      const moving = [...liveSelection].filter((uid) => columnIdOf(uid) !== columnId);
+      const placements: Placement[] = moving.map((uid) => ({
+        uid,
+        groupId: groupIdForColumn(columnId),
+      }));
       if (placements.length === 0) return;
-      const where = columnNameOf(columnId);
       const n = placements.length;
+      // A bulk move can cross several origin columns at once. ONE note, raised
+      // for the first diverging origin: the point is "this destination is not
+      // like where they came from", and twelve copies of that sentence is not
+      // twelve times the warning. A selection where nothing diverges clears it.
+      const who = n === 1 ? nameOf(moving[0]) : `those ${n} people`;
+      let note: string | null = null;
+      for (const from of new Set(moving.map(columnIdOf))) {
+        note = divergenceMessage(from, columnId, who);
+        if (note) break;
+      }
+      setMoveNote(note);
+      const where = columnNameOf(columnId);
       setSelectedUids(new Set());
       void commit(placements, {
         saving: `Moving ${n} ${plural(n, "person", "people")}…`,
         success: `${n} ${plural(n, "person", "people")} → ${where}`,
       });
     },
-    [liveSelection, columnIdOf, columnNameOf, commit],
+    [liveSelection, columnIdOf, columnNameOf, commit, divergenceMessage, nameOf],
   );
 
   const handleRemove = useCallback(
@@ -1239,6 +1338,24 @@ export default function AllocationBoard({ courseId, runId }: Props) {
           {publishNote ? (
             <p className={styles.railSuccess} role="status">
               {publishNote}
+            </p>
+          ) : null}
+
+          {/* The V2-3 divergence disclosure. `role="status"`, not `alert`:
+              nothing has gone wrong, the move already happened, and it must
+              not steal focus from an allocator mid-drag. It sits in the rail
+              beside the tally the move just changed, and replaces itself on
+              the next move. */}
+          {moveNote ? (
+            <p className={styles.railNote} role="status">
+              {moveNote}{" "}
+              <button
+                type="button"
+                className={styles.selectAll}
+                onClick={() => setMoveNote(null)}
+              >
+                Dismiss
+              </button>
             </p>
           ) : null}
 

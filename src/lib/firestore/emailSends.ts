@@ -31,6 +31,14 @@ export type EmailSendKind =
   // as `course-test` like the rest of the staff course mail. This kind means
   // mail that actually reached a cohort.
   | "course-nudge"
+  // The room notice (V2-3, decision 8) — "we've moved to B52", "we're on Zoom
+  // tonight". Its own kind, and NOT folded into `course-facilitator`, because
+  // it is the one course lane that BYPASSES the `courses` opt-out: decision 8's
+  // audit trail is these rows, and "how much un-opt-out-able mail did this
+  // group send" has to be answerable without reading subject lines. It is also
+  // the only kind keyed by GROUP rather than by run — `referenceId` is the
+  // group id, which is what its 10-a-day cap is counted against.
+  | "course-notice"
   | "course-test"
   | "admin-test"
   | "subscription-confirm"

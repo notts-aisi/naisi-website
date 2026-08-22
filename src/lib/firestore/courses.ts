@@ -329,6 +329,28 @@ export function isValidMaterial(raw: unknown): raw is Material {
   }
 }
 
+/**
+ * REBUILT KEY-BY-KEY, like `sanitizeExercises` and `sanitizeChecklist` beside
+ * it — never `{ ...m }`.
+ *
+ * The spread version kept every key the input happened to carry. That is
+ * tolerable on a client-direct write to a doc the rules bound, and it is NOT
+ * tolerable now that a facilitator's fork PATCH runs arbitrary request bodies
+ * through this same sanitiser on its way into `courseGroups/{id}/weeks/{wNN}`:
+ * unknown keys rode straight through, survived the route's per-field validation
+ * (which only inspects the fields it knows), and accumulated in a document
+ * whose only ceiling is Firestore's 1 MB. Thirty materials of junk is a week
+ * nobody can save again.
+ *
+ * The output shape is unchanged for well-formed input, which is what keeps
+ * every existing caller working: `normalizeCourseWeek` (the read path for both
+ * canonical and forked weeks), the group-week PATCH route's
+ * `materials.length !== body.materials.length` malformed check (this drops no
+ * ROWS the old one kept), and `materialError`'s reads of `author`/
+ * `description` — all of which are declared fields and all of which survive.
+ * `isValidMaterial` has already proved `id`, `title`, `type` and the per-type
+ * payload, so the rebuild below can trust exactly those.
+ */
 export function sanitizeMaterials(raw: unknown): Material[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -336,17 +358,39 @@ export function sanitizeMaterials(raw: unknown): Material[] {
     .slice(0, COURSE_FIELD_LIMITS.maxMaterials)
     .map((m) => {
       const extra = m as { estimatedMinutes?: unknown; optional?: unknown };
-      const out = { ...m, optional: Boolean(extra.optional) } as Material;
-      if (
-        typeof extra.estimatedMinutes === "number" &&
-        Number.isFinite(extra.estimatedMinutes) &&
-        extra.estimatedMinutes > 0
-      ) {
-        out.estimatedMinutes = Math.round(extra.estimatedMinutes);
-      } else {
-        delete out.estimatedMinutes;
+      const minutes = extra.estimatedMinutes;
+      const base = {
+        id: m.id,
+        title: m.title,
+        optional: Boolean(extra.optional),
+        // Absent, never `undefined`: Firestore refuses `undefined`, and the
+        // old code expressed this with a `delete` on a spread copy.
+        ...(typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0
+          ? { estimatedMinutes: Math.round(minutes) }
+          : {}),
+      };
+      switch (m.type) {
+        case "video":
+          return { ...base, type: "video", url: m.url };
+        case "reading":
+          return {
+            ...base,
+            type: "reading",
+            url: m.url,
+            ...(typeof m.author === "string" && m.author ? { author: m.author } : {}),
+          };
+        case "link":
+          return {
+            ...base,
+            type: "link",
+            url: m.url,
+            ...(typeof m.description === "string" && m.description
+              ? { description: m.description }
+              : {}),
+          };
+        case "note":
+          return { ...base, type: "note", body: m.body };
       }
-      return out;
     });
 }
 
