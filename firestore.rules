@@ -1075,7 +1075,34 @@ service cloud.firestore {
           && request.resource.data.get('destroying', false)
             == resource.data.get('destroying', false)
           && request.resource.data.get('destroyAuditId', '')
-            == resource.data.get('destroyAuditId', '');
+            == resource.data.get('destroyAuditId', '')
+          // TEMPLATE PROVENANCE (V2-2, v2 decision 3). `templateId` names the
+          // frozen `courseTemplates` snapshot this run's weeks were applied
+          // from and `templateLabel` is the point-in-time copy of what that
+          // snapshot was called. Only
+          // POST /api/courses/runs/[runId]/apply-template (Admin SDK) writes
+          // them, and only alongside the weeks it just copied in.
+          //
+          // Pinned because the actors this branch admits — the drafter-owner
+          // and the run's TRACK LEADS — are precisely the people who spend the
+          // term editing that curriculum. Unpinned, one of them could rewrite
+          // every week of a run by hand and then stamp it "Autumn 2026 final",
+          // or strip the stamp off a run that really was built from a snapshot.
+          // Either way the only surviving record of WHAT A COHORT WAS ACTUALLY
+          // TAUGHT would be a field its editors could set to anything, which
+          // is not provenance. The approveCourse holder is the interesting
+          // case and is NOT carved out, exactly as with `archived`: they may
+          // CALL apply-template, but they may not write the fields, so their
+          // stamp always arrives with the copy that earned it.
+          //
+          // Both sides default to '' so a run predating the field compares
+          // equal and passes. That is also why the route writes STRINGS and
+          // never null — a stored null would compare unequal to the ''
+          // default and wedge every later non-admin edit of the run.
+          && request.resource.data.get('templateId', '')
+            == resource.data.get('templateId', '')
+          && request.resource.data.get('templateLabel', '')
+            == resource.data.get('templateLabel', '');
       }
       // Content caps shared by create and update. `startDate` must be a
       // civil "YYYY-MM-DD" — the week maths (weekPlan.ts) runs on civil
@@ -1118,6 +1145,14 @@ service cloud.firestore {
         // accumulating counts at whatever audit id was seeded with it.
         && request.resource.data.get('destroying', false) == false
         && request.resource.data.get('destroyAuditId', '') == ''
+        // Template provenance must start CLEAN, the `archived` argument
+        // applied to the pin above: update only PINS these, so without this a
+        // run could be BORN claiming to have been built from a snapshot it
+        // never touched — a lie that no later edit can dislodge, because the
+        // pin then protects it. A run is created empty and gets its
+        // provenance from apply-template or not at all.
+        && request.resource.data.get('templateId', '') == ''
+        && request.resource.data.get('templateLabel', '') == ''
         && runContentOk();
 
       // Status moves (applications-open, running, cancelled, ...) change what
@@ -1441,6 +1476,147 @@ service cloud.firestore {
         && request.resource.data.subject.size() > 0
         && request.resource.data.subject.size() <= 200
         && request.resource.data.get('blocks', []).size() <= 40;
+    }
+
+    // === courseTemplates ===
+    // FROZEN CURRICULUM SNAPSHOTS (v2 decision 2) — `{ courseId, courseTitle,
+    // label, sourceRunId, sourceGroupId, savedAt, savedByUid, savedByName,
+    // weekCount, retrospective }` with the snapshotted week docs in a `weeks`
+    // subcollection, ids preserved from the source run.
+    //
+    // EVERY CLIENT WRITE IS DENIED, admins included, on the doc AND on the
+    // subcollection. This is the whole value of the collection, not a
+    // tightening that could be relaxed later:
+    //
+    //  - a template is the record of what a cohort was ACTUALLY taught, and
+    //    the thing next year's run is minted from. A snapshot you can edit
+    //    afterwards is just a second, worse copy of the run;
+    //  - the week docs carry the material / exercise / checklist IDS that
+    //    member progress is keyed on (`courseProgress/{runId}__{uid}__
+    //    {itemId}`). A client able to rewrite an id inside a template would
+    //    be aiming the NEXT run's progress keys, silently, a year early;
+    //  - the collection is APPEND-ONLY: saving mints a new id, so there is no
+    //    legitimate client write to admit in the first place. The routes
+    //    (Admin SDK) are POST /api/courses/[courseId]/templates and
+    //    DELETE /api/courses/templates/[templateId], both admin-only, and
+    //    NOTHING anywhere updates a template week.
+    //
+    // READ is the staff tier: admin, either course permission, or a track
+    // lead — drafters and leads have to browse versions to pick one, and a
+    // snapshot carries no PII (no member ids, no addresses, no per-member
+    // anything; the `retrospective` map is three scalars).
+    match /courseTemplates/{templateId} {
+      // The track-lead branch, resolved against the SOURCE RUN — a template
+      // carries no role fields of its own, so there is nothing on it for a
+      // reader to tamper with first.
+      //
+      // ⚠ COST. This is a get() inside a READ rule, and `allow read` covers
+      // `list`: a list query evaluates its rule PER CANDIDATE DOC, so this
+      // bills one document access per row against the ~20-access budget (the
+      // hazard courseProgress documents at length). Three things keep it
+      // safe rather than lucky:
+      //   * it is the LAST branch of a short-circuiting `||`, so it only ever
+      //     runs for a caller who is not an admin, drafter or approver;
+      //   * the admin UI reads versions through
+      //     GET /api/courses/[courseId]/templates (Admin SDK), not by listing
+      //     this collection — the client-read path exists for a single get();
+      //   * a course holds a handful of snapshots, not hundreds.
+      // A track lead listing more than ~20 snapshots straight from a client
+      // will be denied wholesale. That is the documented ceiling. If a
+      // surface ever needs that list, give it a route, don't widen this.
+      //
+      // A template whose `sourceRunId` names a run that no longer exists
+      // (destroyed run, hand-deleted doc) DENIES this branch — get() on a
+      // missing doc yields null and the lookup errors out, which is a deny.
+      // Correct: nobody can be a track lead of a run that isn't there. The
+      // privileged branches short-circuit before it, so a destroyed source
+      // run never locks staff out of their own history.
+      function isSourceRunTrackLead() {
+        return isSignedIn()
+          && resource.data.get('sourceRunId', '') is string
+          && resource.data.get('sourceRunId', '').size() > 0
+          && request.auth.uid in
+            get(/databases/$(database)/documents/courseRuns/$(resource.data.sourceRunId))
+              .data.get('trackLeadUids', []);
+      }
+
+      allow read: if isAdmin() || canDraftCourse() || canApproveCourse()
+        || isSourceRunTrackLead();
+
+      // Admin-only save/relabel/delete, all through routes. `write` covers
+      // create, update AND delete in one clause on purpose: there is no
+      // half-open door to reason about later.
+      allow write: if false;
+
+      // --- weeks (the frozen curriculum, ids preserved) ---
+      match /weeks/{weekId} {
+        // Same tier, one level down: the parent names the source run, so the
+        // track-lead branch costs TWO gets. Same short-circuit, same ceiling,
+        // same reasoning as above — and the same reason not to widen it.
+        function parentTemplate() {
+          return get(/databases/$(database)/documents/courseTemplates/$(templateId)).data;
+        }
+        allow read: if isAdmin() || canDraftCourse() || canApproveCourse()
+          || (
+            isSignedIn()
+            && parentTemplate().get('sourceRunId', '') is string
+            && parentTemplate().get('sourceRunId', '').size() > 0
+            && request.auth.uid in
+              get(/databases/$(database)/documents/courseRuns/$(parentTemplate().sourceRunId))
+                .data.get('trackLeadUids', [])
+          );
+
+        // IMMUTABLE. Not "server-owned like the role arrays" — immutable:
+        // the snapshot batch is the only write these docs ever receive, and
+        // it happens on the Admin SDK before anyone can see them. Pinned in
+        // scripts/rules-tests/tests/course-templates.test.mjs, including for
+        // admins.
+        allow write: if false;
+      }
+    }
+
+    // === courseMaterialNotes ===
+    // `{runId}__{itemId}__{uid}` — one facilitator's "how did this land" note
+    // on one piece of material, the named half of the retrospective loop
+    // (v2 decision 3).
+    //
+    // WRITES ARE ROUTE-ONLY (POST /api/courses/runs/[runId]/material-notes)
+    // for three reasons rules cannot express:
+    //   * authority is a QUERY — "a facilitator of any group in this run"
+    //     means reading `courseGroups`, which a rule cannot do;
+    //   * `weekNumber` is SERVER-DERIVED from the week doc whose materials
+    //     actually contain `itemId`, so a note cannot be filed against a week
+    //     the material is not in (where the retrospective, which builds its
+    //     rows from the current week definitions, would never render it);
+    //   * `byName` is resolved from the author's user doc, so a note can
+    //     never carry a name its author picked.
+    //
+    // READS are the retrospective's own tier — admin, either course
+    // permission, or the run's track leads. Deliberately NOT the note's own
+    // author on the client: facilitators write notes through the route and
+    // read them back through the retrospective (also a route), so admitting a
+    // client read here would widen the surface for nothing. When V2-3 gives
+    // facilitators their own view, it gets a route too.
+    //
+    // Members are excluded outright, including from their own materials'
+    // notes. These are staff assessments of the curriculum ("this reading
+    // confused everyone"), written on the understanding that the cohort is
+    // not the audience.
+    match /courseMaterialNotes/{noteId} {
+      function isNotedRunTrackLead() {
+        return isSignedIn()
+          && resource.data.get('runId', '') is string
+          && resource.data.get('runId', '').size() > 0
+          && request.auth.uid in
+            get(/databases/$(database)/documents/courseRuns/$(resource.data.runId))
+              .data.get('trackLeadUids', []);
+      }
+      // Same get()-in-a-read-rule caveat as courseTemplates: last branch of a
+      // short-circuiting ||, and the retrospective route (Admin SDK) is what
+      // actually renders these. Don't list this collection from a client.
+      allow read: if isAdmin() || canDraftCourse() || canApproveCourse()
+        || isNotedRunTrackLead();
+      allow write: if false;
     }
 
     // === courseDeletions ===

@@ -9,6 +9,7 @@ import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import DateTimePopover from "@/components/ui/DateTimePopover";
 import { Field, Input } from "@/components/ui/Input";
+import Modal from "@/components/ui/Modal";
 import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import Switch from "@/components/ui/Switch";
 import { getClientDb } from "@/lib/firebase/client";
@@ -26,13 +27,28 @@ import {
   type CourseRunDoc,
   type CourseRunStatus,
 } from "@/lib/firestore/courses";
-import { cloneWeeksFromRun, setRunStatus, updateRun } from "./courseMutations";
+import type { CourseTemplateRow } from "@/lib/firestore/courseTemplates";
+import { formatCivilDate, taughtWeekCount } from "./AdminCourseList";
+import { setRunStatus, updateRun } from "./courseMutations";
 import { useCourseGroups, useCourseRuns, useCourseWeeks } from "./useAdminCourses";
+import {
+  applyCurriculumSource,
+  formatWireStamp,
+  useCourseTemplates,
+  type ApplyOutcome,
+  type CurriculumSource,
+} from "./useTemplates";
 import GroupEditor, { NewGroupForm } from "./GroupEditor";
 import RolePickers from "./RolePickers";
 import RunDangerZone from "./RunDangerZone";
+import SaveTemplateDialog from "./SaveTemplateDialog";
+import TemplatePicker, { type TemplatePickerGroup } from "./TemplatePicker";
 import WeekPlanBuilder from "./WeekPlanBuilder";
 import styles from "./RunEditor.module.css";
+// The template section's own classes. RunEditor.module.css is not this
+// feature's to extend, and the picker, the dialogs and the outcome block are
+// one visual family anyway — see the header of TemplatePicker.module.css.
+import pickerStyles from "./TemplatePicker.module.css";
 
 /**
  * The run editor — everything about one delivery of a course that isn't
@@ -216,6 +232,9 @@ export default function RunEditor({ courseId, runId }: Props) {
   const { items: courseRuns, loading: courseRunsLoading } = useCourseRuns(
     run?.courseId ?? courseId,
   );
+  // Saved snapshots of this course, the other half of the source picker. Same
+  // courseId reasoning as the runs above.
+  const templates = useCourseTemplates(run?.courseId ?? courseId);
 
   // ---- Run details ----
   const [label, setLabel] = useState("");
@@ -233,10 +252,15 @@ export default function RunEditor({ courseId, runId }: Props) {
   const [applicationForm, setApplicationForm] = useState<FormQuestion[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // ---- Weeks / copy-forward ----
-  const [copyFromRunId, setCopyFromRunId] = useState("");
-  const [copyOverwrite, setCopyOverwrite] = useState(false);
-  const [copySummary, setCopySummary] = useState<string | null>(null);
+  // ---- Weeks / curriculum source ----
+  // One selection across both families in the picker, so the id carries which
+  // kind it is: `t:<templateId>` or `r:<runId>`. Template ids and run ids are
+  // both `slugId` output and could otherwise collide.
+  const [sourceId, setSourceId] = useState("");
+  const [replaceWeeks, setReplaceWeeks] = useState(false);
+  const [applyOutcome, setApplyOutcome] = useState<ApplyOutcome | null>(null);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<CourseTemplateRow | null>(null);
 
   // ---- Groups ----
   // Archived groups are shown by default, greyed rather than hidden: that is
@@ -301,6 +325,7 @@ export default function RunEditor({ courseId, runId }: Props) {
   // them (a hoisted function could, in principle, be called before the guard).
   const currentStatus = run.status;
   const allowedStatuses = RUN_STATUS_TRANSITIONS[currentStatus];
+  const saving = toast?.phase === "saving";
   const visibleGroups = groups.filter((g) => (showArchived ? true : !g.archived));
   const counts = run.applicationCounts;
   // Everyone who has actually filled the form in, whatever admissions has
@@ -322,6 +347,91 @@ export default function RunEditor({ courseId, runId }: Props) {
   const plannedIds = new Set(plannedWeeks.map((e) => e.weekId));
   const orphanWeeks = weeks.filter((w) => !plannedIds.has(w.id));
   const otherRuns = courseRuns.filter((r) => r.id !== runId);
+
+  // ---- Curriculum source picker ----
+  // Two families in one control: the frozen snapshots of this course, and its
+  // other deliveries. Built plainly rather than memoised — these are tens of
+  // rows, and the hooks above already sit behind the loaded-run guard, so a
+  // `useMemo` down here would be a hook after an early return.
+  const templateRows = templates.templates.map((t) => ({
+    id: `t:${t.id}`,
+    kind: "template" as const,
+    label: t.label || t.id,
+    meta: [
+      `saved ${formatWireStamp(t.savedAt)}`,
+      t.savedByName ? `by ${t.savedByName}` : null,
+      `${t.weekCount} week${t.weekCount === 1 ? "" : "s"}`,
+    ],
+    hasRetrospective: t.retrospective !== null,
+  }));
+  const runRows = otherRuns.map((r) => {
+    // The PLAN's taught slots, the same figure the course list shows. A run has
+    // no `weekCount` field to read, and counting the authored subcollection
+    // would mean a read per run just to label a picker row.
+    const taught = taughtWeekCount(r);
+    return {
+      id: `r:${r.id}`,
+      kind: "run" as const,
+      label: r.label || r.id,
+      meta: [
+        r.academicYear || null,
+        `starts ${formatCivilDate(r.startDate)}`,
+        `${taught} week${taught === 1 ? "" : "s"}`,
+        r.archived ? "archived" : null,
+      ],
+    };
+  });
+  const sourceGroups: TemplatePickerGroup[] = [
+    {
+      id: "templates",
+      title: `Saved templates · ${run.courseTitle || "this course"}`,
+      count:
+        templateRows.length === 0
+          ? undefined
+          : `${templateRows.length} iteration${templateRows.length === 1 ? "" : "s"}`,
+      rows: templateRows,
+      emptyHint:
+        "No snapshot of this course has been saved yet. Save one from a finished run and it becomes the master to start from.",
+    },
+    {
+      id: "runs",
+      title: "Other runs of this course",
+      count:
+        runRows.length === 0
+          ? undefined
+          : `${runRows.length} run${runRows.length === 1 ? "" : "s"}`,
+      rows: runRows,
+      emptyHint: "This is the only run of this course, so there is nothing to copy from.",
+    },
+  ];
+
+  /** Turn the picker's prefixed id back into the source it names. */
+  function selectedSource(): CurriculumSource | null {
+    if (sourceId.startsWith("t:")) return { kind: "template", id: sourceId.slice(2) };
+    if (sourceId.startsWith("r:")) return { kind: "run", id: sourceId.slice(2) };
+    return null;
+  }
+
+  const selectedTemplate =
+    templates.templates.find((t) => `t:${t.id}` === sourceId) ?? null;
+
+  // Weeks this run holds that the chosen snapshot cannot possibly account for.
+  //
+  // A replace does not only OVERWRITE: apply-template deletes every existing
+  // week the snapshot has no counterpart for, so "replace" can mean "and lose
+  // two weeks". The receipt says so afterwards; this says so BEFORE the press,
+  // which is the only moment the information can change a decision. Both
+  // numbers are already on the client — the run's authored week docs and the
+  // snapshot's `weekCount` — so nothing has to be fetched to ask the question.
+  //
+  // A LOWER BOUND, deliberately: the route removes existing week IDS the
+  // snapshot lacks, and the two id sets need not overlap at all, so the real
+  // figure can be higher than the difference in counts. Never lower — which
+  // is the direction a warning has to err in.
+  const templateWeekCount = selectedTemplate?.weekCount ?? 0;
+  const minWeeksRemoved = selectedTemplate
+    ? Math.max(0, weeks.length - templateWeekCount)
+    : 0;
 
   async function saveMeta() {
     const trimmedLabel = label.trim();
@@ -415,29 +525,65 @@ export default function RunEditor({ courseId, runId }: Props) {
     if (ok) reload();
   }
 
-  async function copyWeeks() {
-    if (!copyFromRunId) return;
+  async function applySource() {
+    const source = selectedSource();
+    if (!source) return;
     // Held on an object, not a `let`: TypeScript keeps a plain local narrowed to
     // its initialiser across the await (it can't see that the closure ran),
     // whereas a property read after a call re-widens to its declared type.
-    const outcome: { summary: string | null } = { summary: null };
+    const outcome: { result: ApplyOutcome | null } = { result: null };
     await runAction(
       async () => {
-        const res = await cloneWeeksFromRun(runId, copyFromRunId, copyOverwrite);
-        outcome.summary =
-          `Copied ${res.created} week${res.created === 1 ? "" : "s"}` +
-          (res.skipped > 0
-            ? ` · skipped ${res.skipped} that already existed here.`
-            : ".");
+        const result = await applyCurriculumSource(runId, source, replaceWeeks);
+        outcome.result = result;
+        // `applyCurriculumSource` returns refusals rather than throwing, so the
+        // rethrow here is what paints the toast red with the ROUTE's sentence.
+        // The same sentence also lands inline below, where it survives the
+        // toast being dismissed — a refusal is a work item, not a notification.
+        if (!result.ok) throw new Error(result.error);
       },
-      { savingMessage: "Copying weeks…", successMessage: "Weeks copied" },
+      { savingMessage: "Copying curriculum…", successMessage: "Curriculum copied" },
     );
-    // The toast's wording is fixed before the route answers, so the counts land
-    // here — where they also survive the toast auto-dismissing.
-    if (outcome.summary) {
-      setCopySummary(outcome.summary);
+    if (!outcome.result) return;
+    setApplyOutcome(outcome.result);
+    if (outcome.result.ok) {
       reloadWeeks();
+      // The run doc too: apply-template stamps `templateId` / `templateLabel`,
+      // and the provenance badge reads them.
+      reload();
     }
+  }
+
+  async function saveAsTemplate(label: string) {
+    let ok = false;
+    await runAction(
+      async () => {
+        await templates.saveTemplate({
+          label,
+          sourceRunId: runId,
+          // Always the run canonical weeks today. The field is reserved for
+          // V2-3, where an admin picks which diverged group copy to freeze.
+          sourceGroupId: null,
+        });
+        ok = true;
+      },
+      { savingMessage: "Saving template…", successMessage: "Template saved" },
+    );
+    if (ok) setSavingTemplate(false);
+  }
+
+  async function confirmDeleteTemplate() {
+    const target = deleteTarget;
+    if (!target) return;
+    setDeleteTarget(null);
+    await runAction(
+      async () => {
+        await templates.deleteTemplate(target.id);
+        // Clear a selection that no longer points at anything.
+        setSourceId((current) => (current === `t:${target.id}` ? "" : current));
+      },
+      { savingMessage: "Deleting template…", successMessage: "Template deleted" },
+    );
   }
 
   async function changeStatus(next: CourseRunStatus) {
@@ -474,6 +620,12 @@ export default function RunEditor({ courseId, runId }: Props) {
             {COURSE_RUN_STATUS_LABEL[run.status]}
           </Badge>
           {run.academicYear && <Badge tone="neutral">{run.academicYear}</Badge>}
+          {/* Provenance (v2 decision 3). A point-in-time copy of the label, so
+              it keeps reading true after the snapshot is relabelled or deleted
+              — which is exactly when "what was this cohort given" gets asked. */}
+          {run.templateLabel && (
+            <Badge tone="accent">Spawned from {run.templateLabel}</Badge>
+          )}
         </div>
         {/* Counts and the way into review, grouped so the flex row reads as
             two ends rather than three scattered items. `.statusMeta` is a
@@ -512,6 +664,17 @@ export default function RunEditor({ courseId, runId }: Props) {
               {counts.accepted > 0
                 ? `Allocate places (${counts.accepted} accepted) →`
                 : "Allocate places →"}
+            </Button>
+          </Link>
+          {/* The look-back surface. It sits with the other "where to go next"
+              links rather than beside the curriculum controls: it is read while
+              drafting the NEXT run's weeks, and the ratings behind it belong to
+              the cohort, not to the editor's week list. */}
+          <Link
+            href={`/admin/courses/${encodeURIComponent(courseId)}/runs/${encodeURIComponent(runId)}/retrospective`}
+          >
+            <Button type="button" variant="secondary">
+              Retrospective →
             </Button>
           </Link>
         </div>
@@ -815,54 +978,150 @@ export default function RunEditor({ courseId, runId }: Props) {
           </p>
         )}
 
-        {/* ---- Copy forward ---- */}
+        {/* ---- Start from a template or another run ---- */}
         <div className={styles.copyForward}>
-          <h4 className={styles.subTitle}>Copy weeks from another run</h4>
+          <h4 className={styles.subTitle}>Start from a template or another run</h4>
           <p className={styles.hint}>
-            There is no curriculum template — the most recent run is the master.
-            Copying keeps week ids and every material, exercise and checklist id,
-            so progress on a re-run still lines up with the item it belongs to.
+            A template is a frozen snapshot of what a finished cohort was taught;
+            a run is another delivery&apos;s live weeks. Either way the copy keeps
+            week ids and every material, exercise and checklist id, so progress on
+            a re-run still lines up with the item it belongs to.
           </p>
 
-          {courseRunsLoading ? (
-            <AdminLoadingBar label="Loading runs…" />
-          ) : otherRuns.length === 0 ? (
-            <p className={styles.hint}>
-              This is the only run of this course, so there is nothing to copy
-              from yet.
+          {templates.error && (
+            <p className={styles.error}>
+              Couldn&apos;t load saved templates: {templates.error.message}
             </p>
-          ) : (
-            <>
-              <div className={styles.copyRow}>
-                <span className={styles.copySelect}>
-                  <ResponsiveSelect
-                    value={copyFromRunId}
-                    onChange={setCopyFromRunId}
-                    options={[
-                      { value: "", label: "Choose a run…" },
-                      ...otherRuns.map((r) => ({
-                        value: r.id,
-                        label: r.academicYear
-                          ? `${r.label || r.id} · ${r.academicYear}`
-                          : r.label || r.id,
-                      })),
-                    ]}
-                    ariaLabel="Copy weeks from run"
-                  />
-                </span>
-                <Switch
-                  checked={copyOverwrite}
-                  onChange={setCopyOverwrite}
-                  label="Overwrite"
-                  description="replace weeks that already exist here"
-                />
-                <Button type="button" onClick={copyWeeks} disabled={!copyFromRunId}>
-                  Copy weeks
-                </Button>
-              </div>
-              {copySummary && <p className={styles.muted}>{copySummary}</p>}
-            </>
           )}
+
+          <TemplatePicker
+            ariaLabel="Curriculum source"
+            groups={sourceGroups}
+            value={sourceId}
+            onChange={setSourceId}
+            loading={templates.loading || courseRunsLoading}
+            emptyState={
+              <p className={styles.hint}>
+                Nothing to copy from yet — this is the only run of this course and
+                no template has been saved.
+              </p>
+            }
+            renderRowAction={(row) =>
+              row.kind === "template" ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={saving}
+                  onClick={() => {
+                    const target = templates.templates.find(
+                      (t) => `t:${t.id}` === row.id,
+                    );
+                    if (target) setDeleteTarget(target);
+                  }}
+                >
+                  Delete
+                </Button>
+              ) : null
+            }
+          />
+
+          <div className={styles.copyRow}>
+            <Switch
+              checked={replaceWeeks}
+              onChange={setReplaceWeeks}
+              label="Replace"
+              description="overwrite weeks that already exist here"
+            />
+            <Button
+              type="button"
+              onClick={applySource}
+              disabled={!sourceId || saving}
+            >
+              Copy curriculum in
+            </Button>
+          </div>
+
+          {selectedTemplate && (
+            <p className={styles.muted}>
+              Copying a template also records it as this run&apos;s provenance.
+            </p>
+          )}
+
+          {/* The two sources are guarded differently, so the warning says which
+              guard you actually have. Only apply-template checks for member
+              work; clone-weeks (the older copy-forward route) does not. And
+              only apply-template DELETES — hence the second sentence, which
+              names the removal before the press rather than in the receipt. */}
+          {replaceWeeks && weeks.length > 0 && (
+            <p className={`${styles.warn} ${styles.blockWarn}`}>
+              This run already has {weeks.length} authored week
+              {weeks.length === 1 ? "" : "s"}. Replacing rewrites{" "}
+              {weeks.length === 1 ? "it" : "them"} from the source.{" "}
+              {selectedTemplate
+                ? "If anyone on this run has already checked an item off or answered an exercise, the server refuses the whole copy rather than orphan their work — you get a refusal here, not a half-applied curriculum."
+                : "Copying from a run isn't guarded that way: if anyone here has already checked an item off, a rewritten week can leave their row pointing at material the week no longer contains."}
+              {minWeeksRemoved > 0 && (
+                <>
+                  {" "}
+                  Replacing also <strong>deletes</strong> weeks the version
+                  doesn&apos;t have: it holds {templateWeekCount} week
+                  {templateWeekCount === 1 ? "" : "s"} against this run&apos;s{" "}
+                  {weeks.length}, so at least {minWeeksRemoved} of this
+                  run&apos;s weeks will be removed rather than overwritten.
+                </>
+              )}
+            </p>
+          )}
+
+          {applyOutcome && (
+            <p
+              className={
+                applyOutcome.ok
+                  ? pickerStyles.outcome
+                  : `${pickerStyles.outcome} ${pickerStyles.outcomeRefused}`
+              }
+            >
+              {applyOutcome.ok
+                ? applyOutcome.message
+                : applyOutcome.refused
+                  ? `${applyOutcome.error} Nothing was copied.`
+                  : applyOutcome.error}
+            </p>
+          )}
+        </div>
+
+        {/* ---- Save this run as a template ---- */}
+        <div className={styles.copyForward}>
+          <h4 className={styles.subTitle}>Save this run as a template</h4>
+          <p className={styles.hint}>
+            Freezes this run&apos;s canonical curriculum as a named iteration
+            under {run.courseTitle || "this course"}, so a future year starts from
+            what was actually taught rather than from whatever the last run has
+            since been edited into. Append-only: saving never overwrites an
+            earlier snapshot.
+          </p>
+          <div className={styles.actions}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setSavingTemplate(true)}
+              disabled={saving || weeks.length === 0}
+            >
+              Save as template
+            </Button>
+            {weeks.length === 0 && (
+              <span className={styles.muted}>
+                Author a week first — there is nothing to snapshot yet.
+              </span>
+            )}
+            {templates.templates.length > 0 && (
+              <span className={styles.muted}>
+                {templates.templates.length} saved iteration
+                {templates.templates.length === 1 ? "" : "s"} of this course.
+              </span>
+            )}
+          </div>
         </div>
       </Card>
 
@@ -951,6 +1210,57 @@ export default function RunEditor({ courseId, runId }: Props) {
         runAction={runAction}
         onArchived={reload}
       />
+
+      <SaveTemplateDialog
+        open={savingTemplate}
+        onClose={() => setSavingTemplate(false)}
+        run={{ label: run.label, courseTitle: run.courseTitle }}
+        weekCount={weeks.length}
+        saving={saving}
+        onSave={saveAsTemplate}
+      />
+
+      {/* Deleting a snapshot is admin-only and irreversible, so it asks. It is
+          NOT in the Danger zone below: that section is about ending this RUN,
+          and a template belongs to the course rather than to any one delivery. */}
+      <Modal
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        ariaLabel="Delete this template"
+        width="sm"
+      >
+        <div className={pickerStyles.dialog}>
+          <h2 className={pickerStyles.dialogTitle}>Delete this template?</h2>
+          <p className={pickerStyles.dialogBody}>
+            {deleteTarget
+              ? `“${deleteTarget.label}” and its ${deleteTarget.weekCount} frozen week${
+                  deleteTarget.weekCount === 1 ? "" : "s"
+                } go for good.`
+              : ""}{" "}
+            Runs already started from it keep their weeks — a template is a copy
+            source, not a live link — but their provenance will name a snapshot
+            nobody can open again.
+          </p>
+          <div className={pickerStyles.dialogActions}>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setDeleteTarget(null)}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              onClick={confirmDeleteTemplate}
+              disabled={saving}
+            >
+              Delete template
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <ActionToast toast={toast} onDismiss={dismiss} />
     </div>

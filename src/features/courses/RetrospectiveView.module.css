@@ -1,0 +1,291 @@
+/* ============================================================
+   RetrospectiveView — one run's curriculum, judged after the fact.
+
+   Layout intent: a reading surface, not a dashboard. Week cards
+   down the page, each a list of materials; every material is one
+   block of "what it is → what the numbers say → what staff said →
+   add to that". The figures sit in a two-column strip so ratings
+   and completion can be compared down the column rather than
+   hunted for per row.
+
+   Nothing here is a control except the composer. Ratings render
+   through StarRating's read-only display form, which is why there
+   are no touch-target floors on them.
+   ============================================================ */
+
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.backLink {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  text-decoration: none;
+}
+
+.backLink:hover {
+  color: var(--color-text);
+}
+
+/* === Header === */
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.title {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.lede {
+  margin: 0;
+  max-width: 46rem;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--color-danger);
+}
+
+.warn {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+/* === Week section === */
+
+.week {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.weekHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.weekTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.weekCount {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* === Material row === */
+
+.materials {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.material {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.materialHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.materialTitle {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+/* === Figures === */
+
+.figures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.figure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.figureLabel {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.ratingRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.figureValue {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Every absence and every denominator: "nobody rated this", "3 of 14 checked
+   it off". Muted because it is context, never the finding. */
+.quiet {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+/* === Facilitator notes === */
+
+.notes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-left: 2px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: var(--text-sm);
+}
+
+.noteMeta {
+  margin: 0;
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  color: var(--color-text-subtle);
+}
+
+/* === Composer === */
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.composerActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.noteError {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+}
+
+/* === Reduced motion ===
+   Nothing in this module animates: ProgressBar and Skeleton carry their own
+   reduced-motion handling, and StarRating's pop only fires on an interactive
+   rating, which this surface never renders. Stated rather than left blank so
+   the next person adding a transition here knows to add the override too. */
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* Ratings and completion stack: side by side, each column is too narrow for
+     five stars plus a count without wrapping mid-figure. */
+  .figures {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+
+  .material {
+    padding: var(--space-3);
+  }
+
+  .note {
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .composerActions {
+    /* The 44px floor for the two composer buttons, which are `size="sm"`
+       everywhere else on the page. */
+    gap: var(--space-3);
+  }
+
+  .composerActions > * {
+    min-height: 2.75rem;
+  }
+}

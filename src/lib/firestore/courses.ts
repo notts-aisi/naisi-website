@@ -176,6 +176,24 @@ export type CourseRunDoc = {
    * write, so a run mid-destroy is already off every discovery surface.
    */
   archived: boolean;
+  /**
+   * TEMPLATE PROVENANCE (v2 decision 3). The `courseTemplates` snapshot this
+   * run's weeks were last applied from, and the label that snapshot carried at
+   * the time. Null on a run authored from scratch or copied run-to-run.
+   *
+   * Server-owned, pinned in rules: only
+   * `POST /api/courses/runs/[runId]/apply-template` (Admin SDK) writes them.
+   * Provenance that the people who edit the curriculum can also edit is not
+   * provenance — a run could claim to be teaching "Autumn 2026 final" while
+   * carrying something else, and the snapshot is the only record of what a
+   * cohort was actually given.
+   *
+   * `templateLabel` is a POINT-IN-TIME copy, deliberately not resolved through
+   * `templateId` at read time: the snapshot doc can be relabelled or deleted,
+   * and "which version did this cohort get" must survive both.
+   */
+  templateId: string | null;
+  templateLabel: string | null;
   createdAt?: Date | null;
   updatedAt?: Date | null;
 };
@@ -645,6 +663,16 @@ export function normalizeCourseRun(id: string, data: Raw): CourseRunDoc {
         ? data.channel
         : courseRunChannel(id),
     archived: data.archived === true,
+    // Absent → null. The apply-template route writes STRINGS and never null,
+    // because firestore.rules pins these with `get(field, '')` — a stored
+    // null would compare unequal to the '' default and wedge every legitimate
+    // non-admin run edit. Absent-or-string is the only shape on the wire.
+    templateId:
+      typeof data.templateId === "string" && data.templateId ? data.templateId : null,
+    templateLabel:
+      typeof data.templateLabel === "string" && data.templateLabel
+        ? data.templateLabel
+        : null,
     createdAt: tsToDate(data.createdAt),
     updatedAt: tsToDate(data.updatedAt),
   };

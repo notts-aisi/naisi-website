@@ -14,6 +14,7 @@ import {
   type CourseDoc,
   type CourseRunDoc,
 } from "./courses";
+import { COURSE_MATERIAL_NOTES_COLLECTION } from "./courseMaterialNotes";
 import { deleteEventsForSubscriptions } from "./subscriptions";
 import { ownedStoragePaths } from "./taskAttachments";
 
@@ -139,6 +140,20 @@ export type RunDestroyCounts = {
   progress: number;
   exerciseResponses: number;
   attendanceRegisters: number;
+  /**
+   * `courseMaterialNotes` rows — the facilitators' free-text "how did this
+   * land" assessments of this run's curriculum (V2-2, v2 decision 3). Keyed
+   * `{runId}__{itemId}__{uid}` with `runId` on the row, so they are addressed
+   * exactly like every other leaf here.
+   *
+   * They are STAFF writing, not member work, and they die with the run
+   * anyway: the note's subject is a `material.id` inside a week document this
+   * cascade is about to delete, so a surviving note describes a curriculum
+   * nothing can render and names a cohort nothing can find. Counting them is
+   * the point of the manifest line — an admin about to destroy a run should
+   * be told that the team's written assessment of it goes too.
+   */
+  materialNotes: number;
   mirroredTasks: number;
   subscriptionRows: number;
   emailSendRows: number;
@@ -545,6 +560,7 @@ export async function countRunDestroyTargets(
     progress,
     exerciseResponses,
     attendanceRegisters,
+    materialNotes,
     mirroredTasks,
     subscriptionRows,
     emailSendCounts,
@@ -555,6 +571,13 @@ export async function countRunDestroyTargets(
     countAgg(db.collection("courseProgress").where("runId", "==", runId)),
     countAgg(db.collection("courseExerciseResponses").where("runId", "==", runId)),
     countAgg(db.collection("courseAttendance").where("runId", "==", runId)),
+    // The note rows carry `runId` as a FIELD as well as inside their doc id
+    // (the id is construct-only, never parsed — see courseMaterialNotes.ts),
+    // so this is the same single-equality shape as every other leaf above and
+    // is served by the automatic single-field index.
+    countAgg(
+      db.collection(COURSE_MATERIAL_NOTES_COLLECTION).where("runId", "==", runId),
+    ),
     // Both halves of the mirror predicate, exactly as drainMirroredTasks
     // deletes them — a manifest that counted forged pointers would promise to
     // destroy rows the cascade (rightly) leaves alone.
@@ -579,6 +602,7 @@ export async function countRunDestroyTargets(
     progress,
     exerciseResponses,
     attendanceRegisters,
+    materialNotes,
     mirroredTasks,
     subscriptionRows,
     emailSendRows: emailSendCounts.reduce((a, b) => a + b, 0),
@@ -849,18 +873,24 @@ function auditIncrements(totals: Record<string, number>): Record<string, unknown
  *  0. Blockers re-checked (fresh destroys only — see DestroyBlockedError),
  *     THEN the audit row + marker transaction. Audit first is crash-safety:
  *     from this point on, an open audit row exists for anything that dies.
- *  1. Leaf rows the run owns — progress, exercise responses, attendance —
- *     BEFORE the enrolments. This is the accountDeletion lesson (its
- *     attendance sweep runs before the enrolment delete because the
- *     enrolments are what name the runs to scan) carried over: keep the rows
- *     that gate or name a step alive until the step is done. Here every leaf
- *     carries `runId` directly, so the dependency is not addressability but
- *     the WRITE GATE: firestore.rules' `isEnrolledActive()` lets a member
- *     client-write courseProgress until their enrolment dies, so a member
- *     racing the sweep can re-create a row AFTER its stage drained. That is
- *     also why attendance is whole-DOC deletion here, unlike account
- *     deletion's per-uid map-key surgery: there the register outlived one
- *     member; here the register itself is dying with its run.
+ *  1. Leaf rows the run owns — progress, exercise responses, attendance,
+ *     facilitator material notes — BEFORE the enrolments. This is the
+ *     accountDeletion lesson (its attendance sweep runs before the enrolment
+ *     delete because the enrolments are what name the runs to scan) carried
+ *     over: keep the rows that gate or name a step alive until the step is
+ *     done. Here every leaf carries `runId` directly, so the dependency is
+ *     not addressability but the WRITE GATE: firestore.rules'
+ *     `isEnrolledActive()` lets a member client-write courseProgress until
+ *     their enrolment dies, so a member racing the sweep can re-create a row
+ *     AFTER its stage drained. That is also why attendance is whole-DOC
+ *     deletion here, unlike account deletion's per-uid map-key surgery: there
+ *     the register outlived one member; here the register itself is dying
+ *     with its run. `courseMaterialNotes` has no such gate (rules deny every
+ *     client write to it) and joins the leaves for consistency, not
+ *     necessity — but it MUST be drained by something: the notes are staff
+ *     assessments of week content this cascade deletes, so left behind they
+ *     describe a curriculum nothing can render, for a cohort nothing can
+ *     find.
  *  2. Enrolments — immediately after the leaves, which SHUTS the member
  *     write gate (and the enrolment-gated routes: exercises, sync-tasks).
  *     No group memberCount decrement, deliberately — accountDeletion
@@ -964,6 +994,24 @@ export async function destroyRunCascade(
     {
       key: "attendanceRegisters",
       drain: () => drainQuery(db, "courseAttendance", byRunId("courseAttendance"), budget),
+    },
+    {
+      key: "materialNotes",
+      // A leaf like the three above it — one `runId` equality, whole-document
+      // deletion — so it drains here with them rather than after the
+      // enrolments. Nothing gates these writes the way `isEnrolledActive()`
+      // gates courseProgress (rules deny every client write to the
+      // collection; only the material-notes route writes it, and that route
+      // refuses a run carrying the destroy marker), so ordering it with the
+      // leaves is consistency rather than necessity — and consistency is what
+      // stops the next reader having to work out which rule this one follows.
+      drain: () =>
+        drainQuery(
+          db,
+          COURSE_MATERIAL_NOTES_COLLECTION,
+          byRunId(COURSE_MATERIAL_NOTES_COLLECTION),
+          budget,
+        ),
     },
     {
       key: "enrolments",
