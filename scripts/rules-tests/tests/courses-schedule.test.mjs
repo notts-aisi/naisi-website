@@ -1,0 +1,392 @@
+/**
+ * Rules tests for THE SCHEDULE ITSELF — who may move a run's dates, its week
+ * plan and its status client-direct, and what the rules do NOT check when they
+ * do.
+ *
+ * `courses.test.mjs` covers write AUTHORISATION for the courses feature. This
+ * file covers the narrower question a schedule-change audit raised: the run's
+ * `startDate` and `weekPlan` are the two fields every derived week number,
+ * every attendance column, every nudge slot key and every mirrored task id are
+ * computed from — and they are **client-writable by a track lead**, with no
+ * server route in the path. So whatever the rules check about them is the only
+ * thing checked at all.
+ *
+ * Two kinds of test in here, following `candidate-findings.test.mjs`:
+ *
+ *  - **GUARD** — a property the rules really hold. Loosen the rule and it
+ *    goes red.
+ *  - **PROVEN GAP** — the audit found a hole. These assert the hole is STILL
+ *    THERE, so they fail the day someone closes it. **When you fix one, invert
+ *    the assertion in the same commit** — and note that two of the three below
+ *    are arguably NOT rules bugs, because the rules cannot express the check.
+ *    Each says which.
+ *
+ * Namespace: `courses-schedule` (see `getTestEnv` — one project id per file, or
+ * a parallel file's `clearFirestore()` wipes these fixtures mid-test).
+ */
+import { after, afterEach, before, describe, it } from "node:test";
+import {
+  asUser,
+  assertFails,
+  assertSucceeds,
+  cleanup,
+  clearData,
+  getTestEnv,
+  seed,
+  seedUser,
+} from "../lib/harness.mjs";
+
+before(async () => {
+  await getTestEnv("courses-schedule");
+});
+after(cleanup);
+afterEach(clearData);
+
+const ZERO_COUNTS = {
+  pending: 0,
+  accepted: 0,
+  rejected: 0,
+  waitlisted: 0,
+  withdrawn: 0,
+};
+
+/** Eight taught weeks, the shape `WeekPlanBuilder` saves. */
+const WEEK_PLAN = Array.from({ length: 8 }, (_, i) => ({
+  kind: "week",
+  weekNumber: i + 1,
+  weekId: `w0${i + 1}`,
+}));
+
+function runDoc(id, overrides = {}) {
+  return {
+    courseId: "course1",
+    courseTitle: "AI Safety Fundamentals",
+    label: "Autumn 2026",
+    academicYear: "2026/27",
+    status: "running",
+    startDate: "2026-09-28",
+    weekPlan: WEEK_PLAN,
+    applicationForm: [],
+    applicationsOpenAt: null,
+    applicationsCloseAt: null,
+    applicationCap: null,
+    authorUid: "drafter",
+    admissionsReviewerUids: [],
+    runFacilitatorUids: [],
+    trackLeadUids: ["lead"],
+    applicationCounts: { ...ZERO_COUNTS, pending: 3, accepted: 12 },
+    groupCount: 2,
+    channel: `cohort:${id}`,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  };
+}
+
+async function seedCast() {
+  await seedUser("admin1", { role: "admin" });
+  await seedUser("drafter", { role: "member", permissions: { draftCourse: true } });
+  await seedUser("approver", { role: "member", permissions: { approveCourse: true } });
+  await seedUser("lead", { role: "member" });
+  await seedUser("learner", { role: "member" });
+  await seedUser("outsider", { role: "member", permissions: { draftCourse: true } });
+}
+
+async function seedRun(id, overrides = {}) {
+  await seed(async (db) => {
+    await db.collection("courseRuns").doc(id).set(runDoc(id, overrides));
+  });
+}
+
+async function seedEnrolment(runId, uid, overrides = {}) {
+  await seed(async (db) => {
+    await db.collection("courseEnrolments").doc(`${runId}__${uid}`).set({
+      runId,
+      courseId: "course1",
+      uid,
+      groupId: "grp1",
+      status: "active",
+      role: "learner",
+      applicationId: null,
+      joinedWeekNumber: 1,
+      createdAt: new Date(),
+      ...overrides,
+    });
+  });
+}
+
+function progressDoc(overrides = {}) {
+  return {
+    runId: "run1",
+    uid: "learner",
+    weekNumber: 3,
+    itemKind: "material",
+    itemId: "m1",
+    completed: true,
+    completedAt: new Date(),
+    hasPublicComment: false,
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The schedule is a CLIENT WRITE
+// ---------------------------------------------------------------------------
+
+describe("courseRuns — who may move the calendar", () => {
+  it("GUARD — a run track lead may reschedule the cohort client-direct", async () => {
+    // Not a finding, a PREMISE: every downstream drift in the schedule-change
+    // audit starts with this write, and it needs no server route. It is
+    // deliberate (a lead tweaks the plan mid-term), but it means the rules are
+    // the ONLY validation these two fields ever get.
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("lead");
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run1").update({
+        startDate: "2026-10-12",
+        weekPlan: [
+          WEEK_PLAN[0],
+          { kind: "break", label: "Reading week" },
+          ...WEEK_PLAN.slice(1),
+        ],
+      }),
+    );
+  });
+
+  it("GUARD — a track lead still may not move the status, or the server-owned fields", async () => {
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("lead");
+    await assertFails(db.collection("courseRuns").doc("run1").update({ status: "completed" }));
+    await assertFails(
+      db
+        .collection("courseRuns")
+        .doc("run1")
+        .update({ applicationCounts: { ...ZERO_COUNTS, accepted: 99 } }),
+    );
+    await assertFails(
+      db.collection("courseRuns").doc("run1").update({ trackLeadUids: ["lead", "learner"] }),
+    );
+  });
+
+  it("GUARD — nobody outside the run's own cast may touch the schedule", async () => {
+    await seedCast();
+    await seedRun("run1");
+    for (const uid of ["learner", "outsider"]) {
+      const db = await asUser(uid);
+      await assertFails(
+        db.collection("courseRuns").doc("run1").update({ startDate: "2026-10-12" }),
+      );
+    }
+  });
+
+  it("GUARD — the week plan cannot be grown past the 60-slot ceiling", async () => {
+    // The cap the week-number bounds everywhere else assume (MAX_WEEK_NUMBER,
+    // `weekDocId` zero-padding, the attendance column filter).
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("lead");
+    const tooMany = Array.from({ length: 61 }, (_, i) => ({
+      kind: "week",
+      weekNumber: i + 1,
+      weekId: `w${String(i + 1).padStart(2, "0")}`,
+    }));
+    await assertFails(db.collection("courseRuns").doc("run1").update({ weekPlan: tooMany }));
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run1").update({ weekPlan: tooMany.slice(0, 60) }),
+    );
+  });
+
+  it("GUARD — a malformed startDate is refused on the UPDATE path too", async () => {
+    // `courses.test.mjs` pins the create path. Rescheduling is the update path,
+    // and it is the one a lead actually uses.
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("lead");
+    for (const bad of ["05/10/2026", "2026-10", "", "next Monday"]) {
+      await assertFails(
+        db.collection("courseRuns").doc("run1").update({ startDate: bad }),
+      );
+    }
+  });
+
+  it("PROVEN GAP — an IMPOSSIBLE date passes, and silently kills the whole run", async () => {
+    // `runContentOk` checks the SHAPE with a regex. `2026-02-31` is the right
+    // shape and is not a day, so it is stored — and then `isValidDateKey`
+    // (which round-trips through Date) rejects it at every single consumer:
+    // no current week on /learn, no rail, no pacing, the nudge refuses, the
+    // task mirror no-ops, the attendance grid loses its anchor. The run looks
+    // alive and does nothing, with no error anywhere to explain it.
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("lead");
+    for (const impossible of ["2026-02-31", "2026-13-01", "2026-00-10", "9999-99-99"]) {
+      await assertSucceeds(
+        db.collection("courseRuns").doc("run1").update({ startDate: impossible }),
+      );
+    }
+
+    // THIS IS NOT A RULES BUG AND MUST NOT BE FIXED HERE. Firestore rules have
+    // no date arithmetic, so the regex is the strongest check this layer can
+    // make; a rule enumerating month lengths would still miss leap years.
+    // The fix belongs in `asCivilDate` (src/lib/firestore/courses.ts), which
+    // should call `isValidDateKey` instead of its own bare regex — one line,
+    // and an impossible date then behaves exactly like an unset one.
+    // When that lands, this test stays green and its sibling in
+    // `tests/course-schedule-changes.test.mjs` is the one to invert.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The status lifecycle exists in ONE place, and it is not this one
+// ---------------------------------------------------------------------------
+
+describe("courseRuns — the status transition table is route-only", () => {
+  it("PROVEN GAP — an approver can walk a run BACKWARDS, or out of a terminal state", async () => {
+    // `/api/courses/runs/[runId]/status` is forward-only and terminal-safe:
+    // draft → applications-open → applications-closed → running → completed,
+    // plus cancelled, and nothing leaves completed or cancelled. The RULES
+    // carry no table at all — `canApproveCourse()` may write any status value.
+    //
+    // The harm is not hypothetical. A run flipped back to `draft` makes
+    // `currentWeekSummary` return null and the overview's `currentWeek` null,
+    // so the week rail, the pacing banner and the Continue CTA all blank; the
+    // dashboard card drops the row entirely; the nudge and the task mirror
+    // refuse on their status allowlists; and the public page hides the
+    // curriculum. The course vanishes from a member's dashboard with nothing
+    // lost and nothing said — a very plausible second cause of "a course
+    // stopped appearing".
+    await seedCast();
+    await seedRun("run1", { status: "running" });
+    const approver = await asUser("approver");
+    await assertSucceeds(
+      approver.collection("courseRuns").doc("run1").update({ status: "draft" }),
+    );
+
+    await clearData();
+    await seedCast();
+    await seedRun("run2", { status: "completed", trackLeadUids: ["lead"] });
+    const db = await asUser("approver");
+    // `completed` is documented as terminal precisely because un-completing it
+    // "would silently re-arm every date-driven surface that reads the status".
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run2").update({ status: "running" }),
+    );
+  });
+
+  it("PROVEN GAP — an admin can do the same, and can drift the counters while they are at it", async () => {
+    // The counters move only as relative increments inside the apply and decide
+    // transactions, and no recount pass exists anywhere. A direct write is
+    // therefore unreconcilable: the admissions queue renders
+    // `run.applicationCounts` as the headline above the independently-fetched
+    // rows, so the two can visibly disagree on one screen with no way back.
+    await seedCast();
+    await seedRun("run1", { status: "running" });
+    const db = await asUser("admin1");
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run1").update({
+        status: "applications-open",
+        applicationCounts: { ...ZERO_COUNTS, accepted: 999 },
+      }),
+    );
+
+    // WHEN YOU FIX THIS: a transition table IS expressible in rules (a map
+    // literal plus an `in` check), so unlike the date above this one could
+    // live here. The question is whether the rules should duplicate a table
+    // the route already owns, or whether status should stop being
+    // client-writable at all and move behind the route like the counters
+    // already have. The second is the smaller surface.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A finished run is not read-only
+// ---------------------------------------------------------------------------
+
+describe("courseProgress — the run's status is invisible to the write gate", () => {
+  it("GUARD — an ACTIVE enrolment is what grants the pen, and losing it revokes instantly", async () => {
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    await seedRun("run1");
+    const db = await asUser("learner");
+    await assertSucceeds(
+      db.collection("courseProgress").doc("run1__learner__m1").set(progressDoc()),
+    );
+
+    for (const status of ["removed", "withdrawn"]) {
+      await seedEnrolment("run1", "learner", { status });
+      const revoked = await asUser("learner");
+      await assertFails(
+        revoked
+          .collection("courseProgress")
+          .doc("run1__learner__m2")
+          .set(progressDoc({ itemId: "m2" })),
+      );
+    }
+  });
+
+  it("PROVEN GAP — a COMPLETED or CANCELLED run stays fully writable by its members", async () => {
+    // The overview route and `runAccess.ts` both state that a completed run is
+    // "read-only by construction", and both mean it: they gate the check-off
+    // path on an ACTIVE enrolment. But nothing anywhere ever writes
+    // `status: "completed"` or `"withdrawn"` onto a `courseEnrolments` row —
+    // the only writers are allocate ("active"), remove ("removed") and the
+    // facilitators route. So every enrolment stays `active` forever, and
+    // `isEnrolledActive(runId)` reads the ENROLMENT, never the run.
+    //
+    // Two of the four declared ENROLMENT_STATUSES are unreachable, and every
+    // behaviour documented as keying off them is dead code.
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    for (const status of ["completed", "cancelled"]) {
+      await seedRun("run1", { status });
+      const db = await asUser("learner");
+      await assertSucceeds(
+        db
+          .collection("courseProgress")
+          .doc(`run1__learner__m-${status}`)
+          .set(progressDoc({ itemId: `m-${status}` })),
+      );
+    }
+
+    // WHEN YOU FIX THIS: do NOT add a run `get()` to `progressShapeOk`.
+    // `isEnrolledActive` is already two document accesses, the courses suite
+    // pins a 25-doc list regression against exactly this class of change, and
+    // the rules access budget is ~20 per request. The fix is that completing a
+    // run should settle its enrolments — which makes the existing gate correct
+    // rather than adding a second one.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Why an orphaned register cannot be repaired
+// ---------------------------------------------------------------------------
+
+describe("courseAttendance — no client repair path exists", () => {
+  it("GUARD — the register is server-routed for everyone, admins included", async () => {
+    // This is what makes an orphaned register (a week removed from the plan
+    // after it was marked) PERMANENT rather than merely awkward: the route
+    // refuses to write a non-taught week, and there is no second door.
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("courseAttendance").doc("run1__grp1__w08").set({
+        runId: "run1",
+        groupId: "grp1",
+        weekNumber: 8,
+        records: { learner: "present" },
+        markedByUid: "lead",
+        updatedAt: new Date(),
+      });
+    });
+
+    for (const uid of ["admin1", "approver", "lead", "learner"]) {
+      const db = await asUser(uid);
+      await assertFails(db.collection("courseAttendance").doc("run1__grp1__w08").get());
+      await assertFails(
+        db.collection("courseAttendance").doc("run1__grp1__w08").update({ records: {} }),
+      );
+      await assertFails(db.collection("courseAttendance").doc("run1__grp1__w08").delete());
+    }
+  });
+});

@@ -503,9 +503,19 @@ async function loadGroups(
  * sit in — falls back to the session every group shares. Neither available
  * resolves both tokens to "", and the renderer then deletes the sentence rather
  * than shipping "Your group meets ." — see `courseNudgeEmail.ts`.
+ *
+ * THE SHARED-SESSION FALLBACK IS FOR THE UNPLACED ONLY. A member who HAS a
+ * `groupId` that is absent from the index — their group was archived after
+ * they were placed, or deleted, or has no time set — must get NO session
+ * sentence rather than another group's. `loadGroups` filters archived groups
+ * out, so before this guard an archived-group member was mailed a time and
+ * room they must not turn up to, which is worse than the silence the drop rule
+ * gives them. Placement is the question; "some group meets then" is not an
+ * answer to it.
  */
 function groupContextFor(groups: GroupIndex, groupId: string | null): SessionContext {
-  return (groupId ? groups.byGroupId.get(groupId) : undefined) ?? groups.common ?? NO_SESSION;
+  if (groupId) return groups.byGroupId.get(groupId) ?? NO_SESSION;
+  return groups.common ?? NO_SESSION;
 }
 
 /** The caller's own placement on this run, if they have one. */

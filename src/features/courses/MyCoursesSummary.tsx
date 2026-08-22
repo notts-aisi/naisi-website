@@ -17,13 +17,21 @@ import styles from "./MyCoursesSummary.module.css";
  * "Live" is narrower than the hub's list on purpose. The hub answers "every
  * run I touch, ever"; the dashboard answers "what is running now":
  *
+ *   • membership — `enrolled` only. An OFFER is not a course in progress:
+ *     there is no group, no week to be on and nowhere to go, so a row here
+ *     would be a link to a redirect under a heading that says otherwise. The
+ *     hub is where an offer is answered, in a card built to say it properly
+ *     (RunCard). This test is explicit rather than left to the role filter
+ *     below — an offer happens to carry no role today, and a summary that
+ *     stayed honest only by accident is one field away from lying.
  *   • roles — learner or facilitator only. An admissions reviewer's run is a
  *     queue, not a course they are on, and it has no week to report.
  *   • status — no `completed` (history belongs on the hub), no `cancelled`,
  *     no `draft`.
  *
- * A member whose only runs are finished therefore gets no card, which is the
- * intended answer, not a bug to fix by loosening the filter.
+ * A member whose only runs are finished — or whose only run is an offer not
+ * yet allocated — therefore gets no card, which is the intended answer, not a
+ * bug to fix by loosening the filter.
  */
 
 /** Rows past this are one scroll too many on a summary card; the hub has all. */
@@ -94,7 +102,8 @@ function weekLine(entry: MyRunEntry): string {
  */
 function shouldMirror(entry: MyRunEntry): boolean {
   const enrolled =
-    entry.roles.includes("learner") || entry.roles.includes("facilitator");
+    entry.membership === "enrolled" &&
+    (entry.roles.includes("learner") || entry.roles.includes("facilitator"));
   if (!enrolled) return false;
   const week = entry.currentWeek;
   return week?.phase === "running" && week.anchorWeekNumber > 0;
@@ -108,6 +117,7 @@ export default function MyCoursesSummary() {
       runs
         .filter(
           (entry) =>
+            entry.membership === "enrolled" &&
             (entry.roles.includes("learner") || entry.roles.includes("facilitator")) &&
             entry.status !== "completed" &&
             entry.status !== "cancelled" &&

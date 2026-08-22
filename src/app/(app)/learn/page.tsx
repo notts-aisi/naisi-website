@@ -38,7 +38,8 @@ export default function LearnPage() {
         <h1 className={styles.title}>Your courses</h1>
         <p className={styles.lede}>
           Every fellowship and reading group you&apos;re on: the week your cohort is
-          on, the materials for it, and the exercises you owe.
+          on, the materials for it, and the exercises you owe. A place you&apos;ve
+          been offered shows here too, until your group is confirmed.
         </p>
       </div>
 
