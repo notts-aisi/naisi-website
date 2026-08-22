@@ -23,6 +23,7 @@ import {
 import {
   normalizeCourseRun,
   normalizeCourseWeek,
+  weekDocId,
   type CourseRunDoc,
 } from "@/lib/firestore/courses";
 
@@ -246,7 +247,11 @@ function sessionInstantFor(
       (e) => e.kind === "week" && e.weekNumber === week.weekNumber,
     );
     if (index < 0) return null;
-    const session = sessionForWeek(group, week.weekId);
+    // weekDocId(weekNumber), NOT the plan entry's weekId: every member-facing
+    // surface resolves sessionOverrides by the number-derived id, and a plan
+    // that has been renumbered can legitimately have the two disagree. The
+    // register header must show the same session the members were shown.
+    const session = sessionForWeek(group, weekDocId(week.weekNumber));
     if (!session.startTimeLocal) return null;
 
     const slotStartKey = addDaysToKey(run.startDate, index * DAYS_PER_WEEK);

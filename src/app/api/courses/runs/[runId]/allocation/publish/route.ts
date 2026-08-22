@@ -111,8 +111,12 @@ function firstSessionWhen(run: CourseRunDoc, group: CourseGroupDoc): string | un
   const planIndex = run.weekPlan.findIndex((e) => e.kind === "week");
   if (planIndex < 0) return undefined;
   const firstWeek = run.weekPlan[planIndex];
+  // weekDocId(weekNumber), NOT the plan entry's weekId — the number-derived id
+  // is what every member-facing surface resolves sessionOverrides by, and the
+  // two can disagree on a renumbered plan. The allocation email's "first
+  // session" must match what the member will see on their week page.
   const weekId =
-    firstWeek.kind === "week" ? firstWeek.weekId : weekDocId(1); // narrowing aid; findIndex guarantees "week"
+    firstWeek.kind === "week" ? weekDocId(firstWeek.weekNumber) : weekDocId(1); // narrowing aid; findIndex guarantees "week"
   const session = sessionForWeek(group, weekId);
   if (!session.startTimeLocal) return undefined;
 
