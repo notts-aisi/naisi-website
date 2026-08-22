@@ -12,13 +12,18 @@ import type { MePayload, MyRunEntry } from "@/app/api/courses/me/route";
  *
  *  1. It spans collections the client cannot read. `courseEnrolments` is
  *     own-row-read only, `courseGroups` is restricted (it carries the meeting
- *     link), and the run's role arrays live on `courseRuns`. The route is the
- *     one place those join, and it is also what keeps the payload PII-free —
- *     names and labels, never addresses.
- *  2. Nothing here moves while the hub is open. Enrolments arrive at
- *     allocation-publish time, and the current week is a pure function of
- *     `(run, now)` recomputed server-side on each request — there is no
- *     document that flips to listen for.
+ *     link), `courseApplications` is own-row-read + admin, and the run's role
+ *     arrays live on `courseRuns`. The route is the one place those join, and
+ *     it is also what keeps the payload PII-free — names and labels, never
+ *     addresses. (The application row is the sharpest case: it carries the
+ *     applicant's email and their answers, and the route reads exactly two
+ *     fields off it.)
+ *  2. Nothing here moves while the hub is open. The two rows that appear —
+ *     an OFFER when a reviewer accepts, an enrolment when allocation
+ *     publishes — are both minutes-to-days apart from the member opening this
+ *     page, and both are followed by an email; the current week is a pure
+ *     function of `(run, now)` recomputed server-side on each request. There
+ *     is no document worth holding a channel open for.
  *
  * The type comes from the route module (`import type`, so it is erased at
  * compile and no server code reaches the bundle): the payload shape and the

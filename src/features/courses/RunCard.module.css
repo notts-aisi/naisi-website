@@ -74,9 +74,47 @@
   color: var(--color-text-muted);
 }
 
+/* An OFFER card is not a link (there is no cohort to open yet), so it has to
+   look different STANDING STILL — a card that only differs on hover reads as
+   broken to someone who never hovers it. The accent wash is the whole signal:
+   same card, marked. Deliberately not `interactive`, so there is no lift and
+   no pointer, which is the honest affordance for a card that does nothing.
+
+   Written as `.card.offer` (0,2,0) rather than `.offer` (0,1,0) on purpose:
+   both properties below are ones Card's own `.card` sets, and the two modules'
+   classes tie on specificity — which would leave the winner decided by
+   stylesheet ORDER, i.e. by import order in a bundle. Doubling the selector
+   settles it here instead of in the bundler. */
+.card.offer {
+  border-color: var(--color-accent-ring);
+  /* Longhands, not the `background` shorthand: layering the wash OVER Card's
+     surface (rather than replacing it) is what keeps the card readable in both
+     themes without this file naming a colour of its own — and the shorthand
+     would reset the other half every time either side moved. */
+  background-color: var(--color-surface);
+  background-image: linear-gradient(
+    var(--color-accent-soft),
+    var(--color-accent-soft)
+  );
+}
+
+/* The sentence the member came for. Full contrast, not muted: on an offer card
+   this outranks everything above it — the title is a course they already know
+   they applied to, and this is the news. */
+.note {
+  margin: 0;
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-text);
+}
+
 /* === Mobile === */
 @media (max-width: 48rem) { /* --bp-md */
   .title {
     font-size: var(--text-base);
   }
+
+  /* `.note` stays full size: it is the one thing on this card that has to be
+     read rather than scanned, and the card is already one column here. */
 }

@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import Card from "@/components/ui/Card";
-import Chip from "@/components/ui/Chip";
+import Chip, { type ChipTone } from "@/components/ui/Chip";
 import ProgressRing from "@/components/ui/ProgressRing";
-import type { MyRunEntry } from "@/app/api/courses/me/route";
+import type { MyRunEntry, MyRunMembership } from "@/app/api/courses/me/route";
 import { COURSE_RUN_STATUS_LABEL } from "@/lib/firestore/courses";
 import styles from "./RunCard.module.css";
 
@@ -16,6 +16,21 @@ import styles from "./RunCard.module.css";
  * Plain `next/link`, never `TransitionLink`: that component's ~960ms exit
  * choreography belongs to the public site's page transitions and would read as
  * a hang on a hub whose whole job is getting out of the way.
+ *
+ * ── TWO KINDS OF CARD, AND WHY ONE OF THEM IS NOT A LINK ────────────────────
+ * A run the caller holds a ROLE on opens: they are enrolled, facilitating,
+ * reviewing or leading, and `/learn/[runId]` will let them in. A run they only
+ * hold an OFFER on does not: accepting an application mints no enrolment (the
+ * seat arrives when allocation publishes), so `runAccess`'s `canLearn` is
+ * false, the run layout's `hasRunRole` is false, and the route would bounce
+ * them straight back to the hub they came from.
+ *
+ * So the offer card is deliberately inert — a statement, not a door — and it
+ * carries the sentence nothing else on the authed site was saying: you are in,
+ * the group is still being worked out, and this is where it will appear. The
+ * link test is `roles.length > 0`, which is the same predicate the layout
+ * gates on (see MyRunEntry.roles); a card that opens onto a redirect is worse
+ * than no card, because it reads as the software being broken.
  */
 
 type RunRole = MyRunEntry["roles"][number];
@@ -34,6 +49,37 @@ const ROLE_META: Record<
 
 /** Roles in a fixed order so a member's chips don't reshuffle between loads. */
 const ROLE_ORDER: RunRole[] = ["learner", "facilitator", "reviewer", "lead"];
+
+/**
+ * The two memberships that are NOT a role. `enrolled` is absent because the
+ * `Learner` / `Facilitator` role chip already says it, and `none` is absent
+ * because a reviewer's row is about the run, not about them being on it.
+ *
+ * The copy is the whole point of this component's change, so it is written to
+ * be read by someone who has an acceptance email open in another tab and is
+ * checking whether the site agrees with it.
+ */
+const OFFER_META: Record<
+  Extract<MyRunMembership, "offered" | "waitlisted">,
+  { chip: string; tone: ChipTone; note: string }
+> = {
+  offered: {
+    chip: "Place offered",
+    tone: "success",
+    note: "You're in. We're still finalising groups — your group and your first session time will appear here once they're set.",
+  },
+  waitlisted: {
+    chip: "Waitlisted",
+    tone: "warning",
+    note: "You're on the waitlist. If a place comes free we'll email you, and it will show up here.",
+  },
+};
+
+function offerMeta(membership: MyRunMembership) {
+  return membership === "offered" || membership === "waitlisted"
+    ? OFFER_META[membership]
+    : null;
+}
 
 /**
  * `timeZone: "UTC"` because a run's `startDate` is a civil date parsed at UTC
@@ -92,6 +138,9 @@ function statusLine(entry: Props["entry"]): string {
 export default function RunCard({ entry }: Props) {
   const roles = ROLE_ORDER.filter((role) => entry.roles.includes(role));
   const meta = [entry.label, entry.academicYear].filter(Boolean).join(" · ");
+  const offer = offerMeta(entry.membership);
+  // Same predicate as the run layout's `hasRunRole` — see the module comment.
+  const linked = roles.length > 0;
 
   /**
    * The ring shows the COHORT's progress through the run — the week everyone
@@ -109,44 +158,76 @@ export default function RunCard({ entry }: Props) {
       ? week.anchorWeekNumber
       : 0;
 
-  return (
-    <Link
-      href={`/learn/${encodeURIComponent(entry.runId)}`}
-      className={styles.link}
+  /**
+   * The offer note is a promise about a cohort that is still ahead of them, so
+   * it is withdrawn the moment the cohort isn't. Three ways a run stops being
+   * ahead, and the calendar one matters as much as the status: `statusLine`
+   * already reports a run whose last week has passed as "Completed" whatever
+   * the status field still says, and a card that reads "Completed / your group
+   * will appear here" is the same class of lie this component exists to end.
+   * The CHIP survives all three — they did hold a place, and the card is the
+   * only record of it they have.
+   */
+  const showOfferNote =
+    entry.status !== "cancelled" &&
+    entry.status !== "completed" &&
+    week?.phase !== "after";
+
+  const card = (
+    <Card
+      as="article"
+      padding="md"
+      interactive={linked}
+      className={[styles.card, offer ? styles.offer : ""].filter(Boolean).join(" ")}
     >
-      <Card as="article" padding="md" interactive className={styles.card}>
-        <h3 className={styles.title}>{entry.courseTitle}</h3>
-        {meta && <p className={styles.meta}>{meta}</p>}
+      <h3 className={styles.title}>{entry.courseTitle}</h3>
+      {meta && <p className={styles.meta}>{meta}</p>}
 
-        {roles.length > 0 && (
-          <div className={styles.chips}>
-            {roles.map((role) => (
-              <Chip key={role} tone={ROLE_META[role].tone} size="sm">
-                {ROLE_META[role].label}
-              </Chip>
-            ))}
-          </div>
-        )}
-
-        <div className={styles.statusRow}>
-          {ringWeek >= 1 && (
-            <ProgressRing
-              value={ringWeek}
-              max={entry.totalWeeks}
-              size={24}
-              // Normally silent: the line beside it already reads "Week 3 of
-              // 8", and naming the same numbers twice is noise. A break slot
-              // is the exception — the line names the break instead, so the
-              // ring becomes the only place those numbers appear.
-              ariaLabel={
-                week?.breakLabel ? `Week ${ringWeek} of ${entry.totalWeeks}` : undefined
-              }
-            />
+      {(roles.length > 0 || offer) && (
+        <div className={styles.chips}>
+          {roles.map((role) => (
+            <Chip key={role} tone={ROLE_META[role].tone} size="sm">
+              {ROLE_META[role].label}
+            </Chip>
+          ))}
+          {offer && (
+            <Chip tone={offer.tone} size="sm">
+              {offer.chip}
+            </Chip>
           )}
-          <p className={styles.status}>{statusLine(entry)}</p>
         </div>
-        {entry.groupName && <p className={styles.group}>{entry.groupName}</p>}
-      </Card>
+      )}
+
+      <div className={styles.statusRow}>
+        {ringWeek >= 1 && (
+          <ProgressRing
+            value={ringWeek}
+            max={entry.totalWeeks}
+            size={24}
+            // Normally silent: the line beside it already reads "Week 3 of
+            // 8", and naming the same numbers twice is noise. A break slot
+            // is the exception — the line names the break instead, so the
+            // ring becomes the only place those numbers appear.
+            ariaLabel={
+              week?.breakLabel ? `Week ${ringWeek} of ${entry.totalWeeks}` : undefined
+            }
+          />
+        )}
+        <p className={styles.status}>{statusLine(entry)}</p>
+      </div>
+      {entry.groupName && <p className={styles.group}>{entry.groupName}</p>}
+
+      {offer && showOfferNote && <p className={styles.note}>{offer.note}</p>}
+    </Card>
+  );
+
+  // An offer opens onto nothing (see the module comment), so it is rendered as
+  // the bare card rather than wrapped in an anchor to a route that redirects.
+  if (!linked) return card;
+
+  return (
+    <Link href={`/learn/${encodeURIComponent(entry.runId)}`} className={styles.link}>
+      {card}
     </Link>
   );
 }

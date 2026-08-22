@@ -289,7 +289,18 @@ export async function POST(
     // Every mount lands here. Two reads, no write, no week doc, no `tasks`
     // touch. See DISMISSAL STICKS for why this deliberately does not verify
     // that the task is still there.
-    if (enrolment.lastTaskSyncedWeek === weekNumber) {
+    //
+    // `>=`, NOT `===`. The mark is a HIGH-WATER MARK and DISMISSAL STICKS
+    // depends on it only ever moving forward — but the anchor it is compared
+    // against is recomputed from the run's dates on every request, and those
+    // dates are editable. Push `startDate` a fortnight later mid-run (or drop
+    // a break in ahead of the cohort's position) and the anchor moves
+    // BACKWARDS past the mark; on `===` that falls through and re-`.create()`s
+    // the card for a week the member has already had — resurrecting one they
+    // deliberately dismissed, which is exactly the guarantee this mark exists
+    // to give. A week at or below the mark has been delivered; delivered is
+    // not undone by an admin editing the calendar.
+    if ((enrolment.lastTaskSyncedWeek ?? 0) >= weekNumber) {
       const result: SyncTasksResult = {
         ok: true,
         weekNumber,
