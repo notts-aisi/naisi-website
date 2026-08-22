@@ -266,6 +266,15 @@ service cloud.firestore {
         && request.resource.data.completerUids.size() <= 10
         && request.resource.data.reviewerUids.size() <= 5
         && request.resource.data.get('blocks', []).size() <= 10
+        // `sourceRef` is the pointer that binds a MIRROR to its (cohort,
+        // week), and no client creates a mirror: courseTasks.ts writes them
+        // on the Admin SDK, and the one client create path (taskMutations
+        // createTask, both the committee board and the My Work quick-add)
+        // writes `sourceRef: null`. So nothing legitimate sets it here, and
+        // leaving it open let ANY signed-in user mint a task stamped
+        // `sourceRef.cohortId = <someone's run>` — which is the id a run
+        // destroy sweeps on. Pinned null on both lanes, committee included.
+        && request.resource.data.get('sourceRef', null) == null
         && (
           isCommittee()
           || (
@@ -301,6 +310,18 @@ service cloud.firestore {
           // 'fellowship-reminder' could hand any completer on it a
           // recursiveDelete of that task's whole comment and activity history.
           && request.resource.data.get('source', '') == taskData().get('source', '')
+          // `sourceRef` rides the same clause, and for a sharper reason. A
+          // run DESTROY sweeps `tasks` by `sourceRef.cohortId` and
+          // recursiveDeletes what it finds — comments, activity log,
+          // attachments and their Storage blobs. Left writable on this
+          // branch, an SU-committee member could stamp a doomed run's id onto
+          // any committee task and have the next admin destroy erase it for
+          // them, with the audit row recording it as one of the run's own
+          // mirrors. (The engine also filters that sweep on `source ==
+          // 'fellowship-reminder'`, which is the half that protects rows
+          // written before this pin; this is the half that stops the field
+          // being aimed in the first place.)
+          && request.resource.data.get('sourceRef', null) == taskData().get('sourceRef', null)
           && request.resource.data.subtasks.size() <= 50
           && request.resource.data.completerUids.size() <= 10
           && request.resource.data.reviewerUids.size() <= 5
@@ -358,6 +379,11 @@ service cloud.firestore {
           && request.resource.data.source == 'personal'
           && request.resource.data.completerUids.hasOnly([request.auth.uid])
           && request.resource.data.reviewerUids.size() == 0
+          // "Freely" stops short of the destroy pointer, same as the committee
+          // branch above: a personal task is created with `sourceRef: null`,
+          // nothing in the UI edits it, and a member who could set it would be
+          // volunteering their own task into someone else's cascade.
+          && request.resource.data.get('sourceRef', null) == taskData().get('sourceRef', null)
         );
 
       allow delete: if isAdmin()
@@ -901,7 +927,31 @@ service cloud.firestore {
         return request.resource.data.get('authorUid', '')
             == resource.data.get('authorUid', '')
           && request.resource.data.get('collaboratorUids', [])
-            == resource.data.get('collaboratorUids', []);
+            == resource.data.get('collaboratorUids', [])
+          // The destroy MARKER, pinned exactly as it is on courseRuns and for
+          // the same reasons — with one extra edge that makes it sharper here.
+          // The update branch below admits COLLABORATORS, who may be plain
+          // members with no course permission at all. Left unpinned, such an
+          // actor could set `destroying: true` + `destroyAuditId` on a course
+          // and point it at an EXISTING courseDeletions row: the next real
+          // cascade would then read the marker as a resume, skip its blockers,
+          // and accumulate its counts and its completedAt onto an unrelated
+          // audit record — falsifying the only surviving evidence of somebody
+          // else's destroy. They could also wedge the course's own destroy,
+          // since a marked course never re-checks the blockers that protect
+          // its runs.
+          && request.resource.data.get('destroying', false)
+            == resource.data.get('destroying', false)
+          && request.resource.data.get('destroyAuditId', '')
+            == resource.data.get('destroyAuditId', '')
+          // A course has no `archived` BOOLEAN today — it withdraws through
+          // `status: 'archived'`, which the status clause below already gates
+          // on approveCourse. The pin is here so that stays true: if a course
+          // ever grows the run's soft-archive flag, it is born pinned rather
+          // than born client-writable, which is the way round that gets
+          // noticed.
+          && request.resource.data.get('archived', false)
+            == resource.data.get('archived', false);
       }
 
       allow read: if isSignedIn();
@@ -913,13 +963,23 @@ service cloud.firestore {
         && request.resource.data.title is string
         && request.resource.data.title.size() > 0
         && request.resource.data.title.size() <= 120
-        && request.resource.data.get('summaryBlocks', []).size() <= 40;
+        && request.resource.data.get('summaryBlocks', []).size() <= 40
+        // Clean start, the courseRuns rule's twin: update only PINS the
+        // marker, so a course could otherwise be BORN mid-destroy — pointing
+        // at an audit row it does not own, and skipping the blocker check on
+        // its first real destroy.
+        && request.resource.data.get('destroying', false) == false
+        && request.resource.data.get('destroyAuditId', '') == ''
+        && request.resource.data.get('archived', false) == false;
 
       allow update: if isAdmin()
         || (
           (canApproveCourse() || isCourseCollaborator()
             || (canDraftCourse() && isOwnCourse()))
           && coursePinnedFieldsUnchanged()
+          // Frozen to non-admins mid-destroy, same as runs: the course destroy
+          // confirms by TITLE on every pass, so a retitle wedges the cascade.
+          && resource.data.get('destroying', false) == false
           && request.resource.data.title is string
           && request.resource.data.title.size() > 0
           && request.resource.data.title.size() <= 120
@@ -934,8 +994,10 @@ service cloud.firestore {
         );
 
       // Deletion cascades runs/weeks/groups/progress — far too much blast
-      // radius for a client write. /api/courses/[id]/delete (Admin SDK) owns
-      // it, paginated and resumable; soft archive is the primary path.
+      // radius for a client write. The destroy routes (Admin SDK) own it:
+      // /api/courses/[courseId]/destroy for the course, with every run
+      // destroyed first through /api/courses/runs/[runId]/destroy, each
+      // paginated, resumable and audited. Soft archive is the primary path.
       allow delete: if false;
     }
 
@@ -971,7 +1033,49 @@ service cloud.firestore {
           && request.resource.data.get('groupCount', 0)
             == resource.data.get('groupCount', 0)
           && request.resource.data.get('channel', '')
-            == resource.data.get('channel', '');
+            == resource.data.get('channel', '')
+          // `archived` is the everyday soft path of the V2-1 deletion protocol
+          // (mirroring courseGroups.archived, orthogonal to `status` — the run
+          // status union has no archived member). An archived run drops out of
+          // the admin default list, the public catalogue, the /me live sections
+          // and the application windows, while member history keeps reading it.
+          // That is a WITHDRAWAL, so it belongs to the same lane as a status
+          // move, not to run content: PATCH /api/courses/runs/[runId]/archive
+          // (Admin SDK, admin or approveCourse) is the only writer. Pinning it
+          // here is what stops a drafter or a track lead — who legitimately edit
+          // weekPlan and label all term — from unpublishing a live cohort with
+          // one field, silently, from the client. Both sides default so a run
+          // predating the field compares false to false and passes.
+          //
+          // NOTE the admin carve-out: like every other pin in this function, it
+          // sits on the non-admin branch only, so an admin CAN still flip the
+          // flag directly. That hands them nothing — admins already hold
+          // unconditional update on runs, including `status: cancelled`, which
+          // withdraws a run harder than archiving it. The approveCourse holder
+          // is the interesting case and is NOT carved out: they may call the
+          // archive route but may not write the field, so their archive always
+          // goes through the route.
+          && request.resource.data.get('archived', false)
+            == resource.data.get('archived', false)
+          // The destroy MARKER, stamped by beginDestroy() in the same
+          // transaction that opens the courseDeletions audit row. It is the
+          // resume cursor: `destroying` says a cascade is in flight and
+          // `destroyAuditId` names the row it accumulates into. Both are
+          // pinned for the same reason `archived` is, only harder —
+          //   * clearing `destroying` makes the NEXT invocation look fresh, so
+          //     it opens a SECOND audit row and the first is left dangling at
+          //     completedAt: null, indistinguishable from a real interruption;
+          //   * repointing `destroyAuditId` aims the accumulating counts (and
+          //     the resumeCount increment) at somebody else's audit row, which
+          //     is how you falsify the only surviving record of a destroy;
+          //   * setting either one on a live run wedges the archive route,
+          //     which refuses to touch a run that says it is being destroyed.
+          // Nothing outside the cascade ever writes these, so pinning them
+          // costs no legitimate flow.
+          && request.resource.data.get('destroying', false)
+            == resource.data.get('destroying', false)
+          && request.resource.data.get('destroyAuditId', '')
+            == resource.data.get('destroyAuditId', '');
       }
       // Content caps shared by create and update. `startDate` must be a
       // civil "YYYY-MM-DD" — the week maths (weekPlan.ts) runs on civil
@@ -1003,6 +1107,17 @@ service cloud.firestore {
         && request.resource.data.get('applicationCounts', {}).values().hasOnly([0])
         && request.resource.data.get('groupCount', 0) == 0
         && request.resource.data.get('channel', 'cohort:' + runId) == 'cohort:' + runId
+        // Same reason the arrays must start empty: update only PINS `archived`,
+        // so without this it is the one pinned field a client could seed dirty —
+        // minting a run that is born withdrawn and that only the archive route
+        // can ever bring back. A run is created to be run.
+        && request.resource.data.get('archived', false) == false
+        // Likewise the destroy marker: a run created already claiming to be
+        // mid-destroy would skip the blocker check on its first real destroy
+        // (beginDestroy treats a marker as a resume) and would point the
+        // accumulating counts at whatever audit id was seeded with it.
+        && request.resource.data.get('destroying', false) == false
+        && request.resource.data.get('destroyAuditId', '') == ''
         && runContentOk();
 
       // Status moves (applications-open, running, cancelled, ...) change what
@@ -1015,6 +1130,11 @@ service cloud.firestore {
             || (canDraftCourse() && isOwnRun()))
           && runPinnedFieldsUnchanged()
           && runContentOk()
+          // A run mid-destroy is frozen to non-admins entirely: every destroy
+          // pass re-checks the typed confirmation against the CURRENT label,
+          // so a rename here would wedge a half-finished cascade — the same
+          // insider class the marker pins close. Admins ride their own branch.
+          && resource.data.get('destroying', false) == false
           && (
             request.resource.data.status == resource.data.status
             || canApproveCourse()
@@ -1321,6 +1441,36 @@ service cloud.firestore {
         && request.resource.data.subject.size() > 0
         && request.resource.data.subject.size() <= 200
         && request.resource.data.get('blocks', []).size() <= 40;
+    }
+
+    // === courseDeletions ===
+    // The DESTROY audit log of the V2-1 deletion protocol: one doc per destroy
+    // attempt, `{ kind: "run" | "course", targetId, targetLabel, startedAt,
+    // startedByUid, startedByName, manifestCounts, deleted, completedAt,
+    // resumeCount }`. Written ONLY by the destroy routes
+    // (/api/courses/runs/[runId]/destroy, /api/courses/[courseId]/destroy) on
+    // the Admin SDK, which open the row BEFORE the first delete and accumulate
+    // into it on every resume — the impersonations `audit-first` pattern, for
+    // the same reason: a cascade that dies mid-page must still leave a record
+    // naming what it was told to destroy and how far it got.
+    //
+    // Reads are admin-only and writes are shut to EVERY client, admins
+    // included. This log is the only surviving evidence of a destroy — the
+    // rows it describes are gone — so a client able to touch it could rewrite
+    // or erase the record of its own cascade, and an append-only log that its
+    // own actor can amend is not an audit trail. Counts are also read back by
+    // the resumable-cascade UI, which is exactly the kind of consumer that
+    // makes a writable log tempting; it reads through the route instead.
+    //
+    // ⚠ A `firebase deploy --only firestore:rules` IS OWED when this merges.
+    // Until it lands, this collection hits deny-by-default: the destroy routes
+    // are Admin SDK and keep working, but the admin Danger-zone client cannot
+    // read a single audit row, so a completed destroy renders as if it never
+    // ran. Deploy rules to the target project BEFORE (or with) the rollout,
+    // dev and prod each — the standing "RULES FIRST" order for this platform.
+    match /courseDeletions/{auditId} {
+      allow read:  if isAdmin();
+      allow write: if false;
     }
   }
 }

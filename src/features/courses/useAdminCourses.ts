@@ -48,9 +48,19 @@ export function useCourses() {
 }
 
 /**
- * Runs of one course, most recent start date first. An empty `courseId`
- * resolves to `[]` without a query — the course editor mounts these hooks
- * before it has an id to ask about.
+ * Runs of one course: live ones first (most recent start date first), then the
+ * archived ones in the same order. An empty `courseId` resolves to `[]`
+ * without a query — the course editor mounts these hooks before it has an id
+ * to ask about.
+ *
+ * ARCHIVED RUNS ARE RETURNED, not filtered — the `useCourseGroups` precedent
+ * below, and for the same reason: a soft-archived thing has to be reachable
+ * from admin or it can never be brought back, and this hook is the only read
+ * of the collection the editor has. What the hook owns is the ORDER, so the
+ * list a caller renders by default is the live one and the archived tail is
+ * something it can choose to hide behind an affordance (CourseEditor does
+ * exactly that). `archived` is orthogonal to `status`, so this partition
+ * cannot be expressed as a status sort.
  */
 export function useCourseRuns(courseId: string) {
   return useOneShotList<CourseRunDoc>(async () => {
@@ -61,7 +71,11 @@ export function useCourseRuns(courseId: string) {
     );
     const rows = snap.docs.map((d) => normalizeCourseRun(d.id, d.data()));
     // startDate is a civil "YYYY-MM-DD" key, so string compare IS date order.
-    rows.sort((a, b) => b.startDate.localeCompare(a.startDate));
+    rows.sort(
+      (a, b) =>
+        Number(a.archived) - Number(b.archived) ||
+        b.startDate.localeCompare(a.startDate),
+    );
     return rows;
   }, `courseRuns:${courseId}`);
 }

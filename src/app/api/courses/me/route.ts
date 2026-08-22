@@ -109,6 +109,26 @@ export type MyRunEntry = {
   /** Enrolled, offered a place, waitlisted, or here by role alone. */
   membership: MyRunMembership;
   /**
+   * The run's soft-archive flag (V2-1 deletion protocol). Rows are NOT
+   * filtered out here, deliberately: this route is "every run you touch,
+   * ever", and archiving is explicitly the path that keeps member history
+   * readable — dropping the row would take a member's own record of a
+   * finished cohort away from them, which is the one thing archive promises
+   * not to do.
+   *
+   * What archiving costs a run is its place in the LIVE surfaces, and those
+   * are the callers' to enforce: the dashboard summary drops archived rows
+   * entirely, and the hub renders them in a separate archived section rather
+   * than among the courses someone is currently on. Sending the flag rather
+   * than pre-filtering is what lets both of them do that from one payload.
+   *
+   * A run mid-DESTROY also reads `archived: true` (the cascade's opening
+   * write), so it leaves the live sections here for the same reason it leaves
+   * the catalogue — but its card, like every other, links into a learning
+   * space that refuses a destroying run outright (runAccess.ts).
+   */
+  archived: boolean;
+  /**
    * Recomputed server-side on every request (there is no cron; the current
    * week is a pure function of the run's civil dates — see weekPlan.ts). Null
    * for a draft run or one whose `startDate` is not yet a valid civil date.
@@ -407,6 +427,7 @@ export async function GET() {
         hasEnrolmentDoc: Boolean(enrolment) || supersededOfferRunIds.has(run.id),
         applicationStatus: applicationStatusByRun.get(run.id) ?? null,
       }),
+      archived: run.archived,
       currentWeek: currentWeekSummary(run),
       totalWeeks: run.weekPlan.filter((entry) => entry.kind === "week").length,
       groupName: enrolment?.groupId
@@ -423,6 +444,10 @@ export async function GET() {
 
   runs.sort(
     (a, b) =>
+      // Archived last, whatever their status: an archived run is history the
+      // member keeps, not something they are on, and the hub renders the tail
+      // of this list as its archived section.
+      Number(a.archived) - Number(b.archived) ||
       STATUS_RANK[a.status] - STATUS_RANK[b.status] ||
       a.label.localeCompare(b.label) ||
       // Total order, so two runs sharing a label never swap between loads.

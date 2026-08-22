@@ -228,12 +228,23 @@ async function loadRun(db: Db, runId: string): Promise<CourseRunDoc | null> {
 }
 
 /**
- * The application window: the run's status is the switch, the dates are
- * optional bounds on either side of it. Each bound applies only when set —
- * a null `applicationsCloseAt` means "open until an admin closes it", not
- * "closed".
+ * The application window: the run's status is the switch, `archived` closes
+ * it regardless, and the dates are optional bounds on either side. Each bound
+ * applies only when set — a null `applicationsCloseAt` means "open until an
+ * admin closes it", not "closed".
+ *
+ * An ARCHIVED run refuses applications with the same sentence as a run that
+ * was never open, deliberately: archiving is a withdrawal (it takes the run
+ * off the catalogue and out of the apply page's lookup), and the destroy
+ * cascade sets the same flag before it deletes anything — so this is also
+ * what stops an application landing on a run whose rows are being deleted, in
+ * the window before its status or its document goes. The copy does not
+ * distinguish the two, because an applicant has no business learning which.
  */
 function windowError(run: CourseRunDoc, now: Date): string | null {
+  if (run.archived) {
+    return "This course run isn't accepting applications.";
+  }
   if (run.status !== "applications-open") {
     return "This course run isn't accepting applications.";
   }

@@ -104,7 +104,26 @@ export const getRunAccess = cache(
     ]);
 
     if (!runSnap.exists) return null;
-    const run = normalizeCourseRun(runSnap.id, runSnap.data() ?? {});
+    const runRaw = runSnap.data() ?? {};
+
+    // A run mid-DESTROY is refused to EVERYONE, enrolled members and admins
+    // alike, and it is refused here so that every surface under
+    // /learn/[runId] fails closed at once rather than each one remembering.
+    //
+    // This is the gate half of the destroy protocol's "unreachable the moment
+    // the cascade starts" claim: `archived` (set in the same opening write)
+    // takes the run off the discovery surfaces, but discovery is not access —
+    // anyone holding the URL still walks in. And what they would walk into is
+    // a cohort being emptied out one page at a time: weeks that answer, then
+    // don't; a group card whose group has just gone; progress writes landing
+    // on rows the next pass deletes. Fused with "no such run" like every other
+    // null from this function, so the layout redirects to /learn.
+    //
+    // ARCHIVED alone is deliberately NOT refused: archive keeps member history
+    // readable, which is the whole difference between the two paths.
+    if (runRaw.destroying === true) return null;
+
+    const run = normalizeCourseRun(runSnap.id, runRaw);
 
     const enrolment: CourseEnrolmentDoc | null = enrolSnap.exists
       ? normalizeCourseEnrolment(enrolSnap.id, enrolSnap.data() ?? {})

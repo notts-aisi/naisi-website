@@ -36,6 +36,7 @@ import {
   taughtWeekCount,
 } from "./AdminCourseList";
 import { createRun, publishCourse, updateCourse } from "./courseMutations";
+import CourseDangerZone from "./CourseDangerZone";
 import { useCourseRuns, useCourses } from "./useAdminCourses";
 import styles from "./adminCourses.module.css";
 
@@ -140,6 +141,27 @@ export default function CourseEditor({ courseId }: { courseId: string }) {
   const [runYear, setRunYear] = useState(() => currentAcademicYear());
   const [runStart, setRunStart] = useState("");
   const [runError, setRunError] = useState<string | null>(null);
+
+  /**
+   * Archived runs are HIDDEN by default and shown on request — the second
+   * half of what the run's Danger zone promises when it says archiving takes
+   * a run "out of the admin list's default view". They are never dropped from
+   * the read (a soft-archived thing has to be reachable or it can never be
+   * un-archived), so this is a view toggle over the list `useCourseRuns`
+   * already returns with the archived rows sorted to the end.
+   */
+  const [showArchivedRuns, setShowArchivedRuns] = useState(false);
+  const archivedRunCount = useMemo(
+    () => runs.items.filter((r: CourseRunDoc) => r.archived).length,
+    [runs.items],
+  );
+  const visibleRuns = useMemo(
+    () =>
+      showArchivedRuns
+        ? runs.items
+        : runs.items.filter((r: CourseRunDoc) => !r.archived),
+    [runs.items, showArchivedRuns],
+  );
 
   async function handleSave() {
     if (!course) return;
@@ -580,9 +602,17 @@ export default function CourseEditor({ courseId }: { courseId: string }) {
               </p>
             )}
 
-            {runs.items.length > 0 && (
+            {/* Every run is archived, and none is shown: say so, rather than
+                leaving the section looking like the "no runs yet" case. */}
+            {!runs.loading && !runs.error && visibleRuns.length === 0 && archivedRunCount > 0 && (
+              <p className={styles.emptyBody}>
+                Every run of this course is archived.
+              </p>
+            )}
+
+            {visibleRuns.length > 0 && (
               <ul className={styles.list}>
-                {runs.items.map((run: CourseRunDoc) => (
+                {visibleRuns.map((run: CourseRunDoc) => (
                   <li key={run.id}>
                     <Link
                       href={`/admin/courses/${encodeURIComponent(courseId)}/runs/${encodeURIComponent(run.id)}`}
@@ -593,6 +623,9 @@ export default function CourseEditor({ courseId }: { courseId: string }) {
                         <Badge tone={runStatusTone(run.status)}>
                           {COURSE_RUN_STATUS_LABEL[run.status]}
                         </Badge>
+                        {/* `archived` is orthogonal to `status`, so it gets its
+                            own badge rather than replacing the status one. */}
+                        {run.archived && <Badge tone="neutral">Archived</Badge>}
                         {course.showcaseRunId === run.id && (
                           <Badge tone="accent">Showcased</Badge>
                         )}
@@ -614,8 +647,21 @@ export default function CourseEditor({ courseId }: { courseId: string }) {
             {!runs.loading && runs.items.length > 0 && (
               <div className={styles.formActions}>
                 <span className={styles.status}>
-                  {runs.refreshing ? "Refreshing…" : `${runs.items.length} run${runs.items.length === 1 ? "" : "s"}`}
+                  {runs.refreshing
+                    ? "Refreshing…"
+                    : `${visibleRuns.length} run${visibleRuns.length === 1 ? "" : "s"}`}
                 </span>
+                {archivedRunCount > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowArchivedRuns((s) => !s)}
+                  >
+                    {showArchivedRuns
+                      ? "Hide archived"
+                      : `Show archived (${archivedRunCount})`}
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -628,6 +674,14 @@ export default function CourseEditor({ courseId }: { courseId: string }) {
             )}
           </section>
         </Card>
+
+        {/* === Archive + destroy ===
+            Last on the page by design: end-of-life controls sit after
+            everything you might edit instead, and the destroy half is behind
+            its own disclosure inside. `onArchived` re-reads the course; a
+            DESTROY is deliberately not wired to `reload` — the course is gone,
+            and refetching would replace the receipt with "Course not found". */}
+        <CourseDangerZone course={course} runAction={runAction} onArchived={reload} />
       </div>
 
       <Modal

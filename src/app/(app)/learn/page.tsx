@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import { useMemo, type CSSProperties } from "react";
 import Link from "next/link";
 import PageEnter from "@/components/motion/PageEnter";
 import Badge from "@/components/ui/Badge";
@@ -23,6 +23,16 @@ import styles from "./page.module.css";
  * PageEnter-wrapped content. PageEnter mounts on the first render WITH data —
  * never on the loading render with an `animation-delay` standing in for the
  * wait, which animates a guess rather than an arrival.
+ *
+ * ── ARCHIVED RUNS SIT BELOW, NOT AMONG ──────────────────────────────────────
+ * `courseRuns.archived` is the deletion protocol's reversible path, and what
+ * it promises is precisely this: the run leaves the live surfaces while the
+ * member keeps their history. Dropping the card would break the second half,
+ * and leaving it in the main grid would break the first — an archived cohort
+ * would keep sitting next to the one somebody is actually on. So it moves to
+ * its own section under its own heading, which is also where a run being
+ * DESTROYED goes (the cascade sets the same flag before it deletes anything),
+ * and the card keeps working as history right up until its rows are gone.
  */
 
 /** Enough cards to fill the fold at the widest main column (64rem cap). */
@@ -30,6 +40,16 @@ const SKELETON_COUNT = 3;
 
 export default function LearnPage() {
   const { runs, loading, error } = useMyRuns();
+
+  // The route already sorts archived rows last, so this is a partition of an
+  // ordered list rather than a re-sort.
+  const { live, archived } = useMemo(
+    () => ({
+      live: runs.filter((entry) => !entry.archived),
+      archived: runs.filter((entry) => entry.archived),
+    }),
+    [runs],
+  );
 
   return (
     <div>
@@ -75,21 +95,47 @@ export default function LearnPage() {
         />
       ) : (
         <PageEnter>
-          <ul className={styles.grid}>
-            {runs.map((entry, i) => (
-              <li
-                key={entry.runId}
-                className={styles.cell}
-                // The stagger STEP is the --stagger-card token; only the index
-                // comes from JS. Clamped at Reveal's `staggerMax` default so a
-                // long list arrives as a group past the cap rather than
-                // tailing off for seconds.
-                style={{ "--card-index": Math.min(i, 7) } as CSSProperties}
-              >
-                <RunCard entry={entry} />
-              </li>
-            ))}
-          </ul>
+          {live.length > 0 && (
+            <ul className={styles.grid}>
+              {live.map((entry, i) => (
+                <li
+                  key={entry.runId}
+                  className={styles.cell}
+                  // The stagger STEP is the --stagger-card token; only the index
+                  // comes from JS. Clamped at Reveal's `staggerMax` default so a
+                  // long list arrives as a group past the cap rather than
+                  // tailing off for seconds.
+                  style={{ "--card-index": Math.min(i, 7) } as CSSProperties}
+                >
+                  <RunCard entry={entry} />
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {archived.length > 0 && (
+            <section className={styles.archivedSection}>
+              <div className={styles.header}>
+                <h2 className={styles.title}>Archived</h2>
+                <p className={styles.lede}>
+                  Runs that have been taken out of the way. Nothing was
+                  deleted — your progress, your answers and your group are
+                  exactly as you left them.
+                </p>
+              </div>
+              <ul className={styles.grid}>
+                {archived.map((entry, i) => (
+                  <li
+                    key={entry.runId}
+                    className={styles.cell}
+                    style={{ "--card-index": Math.min(i, 7) } as CSSProperties}
+                  >
+                    <RunCard entry={entry} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </PageEnter>
       )}
     </div>
