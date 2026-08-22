@@ -16,6 +16,7 @@ import WeekRail from "./WeekRail";
 import { useGroupRoster } from "./useGroupRoster";
 import { useRunOverview } from "./useRunOverview";
 import { useSyncTasks } from "./useSyncTasks";
+import { weekDocId } from "@/lib/firestore/courses";
 import type { OverviewPayload } from "@/app/api/courses/runs/[runId]/overview/route";
 import type { WeekPlanEntry } from "@/lib/courses/weekPlan";
 import styles from "./RunHome.module.css";
@@ -419,6 +420,18 @@ export default function RunHome({ runId, isAdmin, canEmailCohort }: Props) {
   }
 
   const { run, currentWeek, group, access } = data;
+  // The card below is dated to the CURRENT slot, so it is told the CURRENT
+  // week's mode — the same `weekDocId(number)` doctrine, and the same
+  // fall-back-to-the-anchor rule the overview route resolves the slot fields
+  // with, so the room, the link and the "Online this week" chip on this card
+  // all describe one session. (`WeekView` asks the same map for the week the
+  // reader is actually on; one mode resolved server-side for everybody is the
+  // bug that made this a map.)
+  const cardWeekNumber = currentWeek
+    ? (currentWeek.weekNumber ?? currentWeek.anchorWeekNumber)
+    : 0;
+  const cardSessionMode =
+    cardWeekNumber >= 1 ? (group?.sessionModes[weekDocId(cardWeekNumber)] ?? null) : null;
   const target = weekTargetFor(data);
   const { headline, sub } = heroCopy(data, target);
 
@@ -507,6 +520,7 @@ export default function RunHome({ runId, isAdmin, canEmailCohort }: Props) {
           <SessionCard
             group={group}
             slotStartKey={currentWeek?.slotStartKey ?? null}
+            mode={cardSessionMode}
             title={currentWeek?.phase === "before" ? "Your first session" : undefined}
           />
         )}

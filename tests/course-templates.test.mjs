@@ -789,7 +789,15 @@ test("MODEL §5.4 the note route derives weekNumber and byName server-side", () 
   assert.match(NOTES_CODE, /const claimedWeek = body\.weekNumber;/);
   assert.match(NOTES_CODE, /week\.materials\.some\(\(m\) => m\.id === itemId\)/);
   assert.match(NOTES_CODE, /weekNumber = week\.weekNumber;/);
-  assert.match(NOTES_CODE, /"That material isn't in this run's curriculum\."/);
+  // The refusal for an id that is in NO week the caller can note on. Widened
+  // in V2-3 when the scan gained the group forks (see the group-first scan
+  // GUARD in `course-schedule-changes.test.mjs`): the old sentence said "isn't
+  // in this run's curriculum" while refusing a facilitator's own swapped-in
+  // reading, which was untrue from their side.
+  assert.match(
+    NOTES_CODE,
+    /"That material isn't in this run's curriculum, or in any week you can note on\."/,
+  );
   // …and the name comes off the user doc, never the body.
   assert.match(NOTES_CODE, /byName: displayNameOf\(actorSnap\.data\(\) \?\? \{\}\)/);
   assert.equal(/body\.byName/.test(NOTES_CODE), false);

@@ -78,6 +78,14 @@
   color: var(--color-text-muted);
 }
 
+/* The virtual/in-person chip row. A <p> wrapper rather than a bare Chip so it
+   takes the same block rhythm as the lines either side of it — the card's
+   `gap` does the spacing, and the chip must not stretch to the card's width. */
+.mode {
+  display: flex;
+  margin: 0;
+}
+
 /* Anchor styled as the primary action. <Button> renders a real <button> and
    takes no href, so navigation targets get the styling rather than the
    component — the CourseCTA call. */

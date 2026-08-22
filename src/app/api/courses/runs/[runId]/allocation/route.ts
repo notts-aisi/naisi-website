@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import type { WeekPlanEntry } from "@/lib/courses/weekPlan";
 import { normalizeCourseApplication } from "@/lib/firestore/courseApplications";
 import {
   courseEnrolmentId,
@@ -52,6 +53,27 @@ export type AllocGroup = {
   facilitatorNames: string[];
   /** The server-owned counter maintained by the allocation transaction. */
   memberCount: number;
+  /**
+   * ── THE AUTONOMY FIELDS (V2-3) ────────────────────────────────────────────
+   * Exactly `GroupDivergenceInput` in `src/lib/courses/groupResolve.ts`, so the
+   * board hands a column straight to `groupsDiverge` with no defaulting and no
+   * cast. A move between two columns can now change which WEEK a member is on
+   * and which VERSION of it they read; none of that shows on a card, and the
+   * allocator is the last person who can catch it.
+   *
+   * Not member data: a group's pacing and the ids of the weeks its facilitator
+   * has forked are staffing facts about the group, the same tier as
+   * `sessionLabel` and `facilitatorNames` this payload already carries to
+   * non-admin track leads. No week CONTENT travels — ids only.
+   *
+   * `null` on either pace field means "tracks the run", which is also what an
+   * unplaced member reads, so the unallocated pool compares equal to a group
+   * that has overridden nothing and the note stays silent on the common move.
+   */
+  paceStartDate: string | null;
+  paceWeekPlan: WeekPlanEntry[] | null;
+  /** Doc ids ("w03") under `courseGroups/{id}/weeks`. Order irrelevant. */
+  forkedWeekIds: string[];
 };
 
 export type AllocRow = {
@@ -87,6 +109,14 @@ export type AllocationPayload = {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Ceiling on the keys-only fork read per group. A plan holds at most
+ * `COURSE_FIELD_LIMITS.maxWeekPlanEntries` (60) slots, so a group cannot have
+ * more forks than that — the limit is a cost guard on a corrupt subcollection,
+ * not a real bound anyone reaches.
+ */
+const MAX_FORKED_WEEKS = 60;
 
 /** Index = `GroupSession.weekday` (`Date.getDay()`, 0 = Sunday). */
 const WEEKDAY_NAMES = [
@@ -246,6 +276,32 @@ export async function GET(
     enrolmentByUid.set(e.uid, e);
   }
 
+  // THE FORKED WEEK IDS, one keys-only read per group (V2-3). `select()` with
+  // no field mask returns the doc IDS and nothing else — no week content
+  // crosses this boundary, and the fan-out is bounded by the same 50-group
+  // ceiling the query above already imposes, times the 60-slot plan ceiling.
+  //
+  // It cannot be derived any more cheaply: "has this group forked anything" is
+  // the existence of documents in a subcollection, and there is no denormalised
+  // counter on the group doc to read instead (adding one would be a second
+  // source of truth for the fork state that the fork route would have to keep
+  // in step). Groups are read in parallel with each other, in one round trip.
+  const forkedIdsByGroup = new Map<string, string[]>();
+  const forkSnaps = await Promise.all(
+    groups.map((g) =>
+      db
+        .collection("courseGroups")
+        .doc(g.id)
+        .collection("weeks")
+        .select()
+        .limit(MAX_FORKED_WEEKS)
+        .get(),
+    ),
+  );
+  groups.forEach((g, i) => {
+    forkedIdsByGroup.set(g.id, forkSnaps[i].docs.map((d) => d.id));
+  });
+
   // One `getAll` for every name this payload needs: applicants, the groups'
   // facilitators, and each row's reviewer-preferred facilitator. Names only —
   // see the PII note in the module comment.
@@ -319,6 +375,13 @@ export async function GET(
         (uid) => nameByUid.get(uid) ?? "NAISI member",
       ),
       memberCount: g.memberCount,
+      // The autonomy triple, straight off the normalised doc plus the keys-only
+      // subcollection read above. `normalizeCourseGroup` already coerces a
+      // garbled pace date and a malformed plan to `null` (= tracks the run), so
+      // the board never has to interpret these — see AllocGroup.
+      paceStartDate: g.paceStartDate,
+      paceWeekPlan: g.paceWeekPlan,
+      forkedWeekIds: forkedIdsByGroup.get(g.id) ?? [],
     })),
     people,
   };

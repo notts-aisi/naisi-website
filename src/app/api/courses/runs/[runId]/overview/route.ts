@@ -2,11 +2,15 @@ import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
-  currentWeekFor,
   isValidDateKey,
   type CurrentWeek,
   type WeekPlanEntry,
 } from "@/lib/courses/weekPlan";
+import {
+  memberCurrentWeek,
+  resolveCalendar,
+  resolveWeekDocs,
+} from "@/lib/courses/groupResolve";
 import {
   courseEnrolmentId,
   normalizeCourseEnrolment,
@@ -17,12 +21,13 @@ import {
 import {
   normalizeCourseGroup,
   sessionForWeek,
+  sessionModesOf,
   type CourseGroupDoc,
   type GroupSession,
+  type GroupSessionMode,
 } from "@/lib/firestore/courseGroups";
 import {
   normalizeCourseRun,
-  normalizeCourseWeek,
   weekDocId,
   type CourseRunStatus,
 } from "@/lib/firestore/courses";
@@ -56,6 +61,27 @@ import {
  *
  * PII: facilitators travel as NAMES only (displayNameOf, never an email), and
  * no other member of the cohort appears in this payload at all.
+ *
+ * ── V2-3: THIS PAYLOAD IS THE MEMBER'S VIEW, NOT THE RUN'S ──────────────────
+ * Per-group autonomy (copy-on-write) means a group can run its own calendar
+ * and its own version of individual weeks. `run.startDate`, `run.weekPlan`,
+ * `run.totalWeeks`, `currentWeek` and the `weeks` index below are therefore
+ * all RESOLVED FOR THE CALLER through `groupResolve.ts` — their group's
+ * override when it has one, the run canonical otherwise — rather than being
+ * the run document's raw fields.
+ *
+ * That is deliberate and it is the cheap way to hold THE ONE DESIGN RULE:
+ * every surface fed by this route (the run home, the WeekRail, the pacing
+ * banner, the week page's session date, the Continue CTA) becomes group-aware
+ * without any of them learning that groups can diverge. `calendarSource` says
+ * WHICH calendar answered so a surface can disclose it; `forkedWeekIds` says
+ * which weeks the caller must read out of their group's subcollection instead
+ * of the run's (the client SDK can address either, and `useWeek` picks using
+ * exactly this list).
+ *
+ * A caller with no group — unallocated, an admin, a facilitator of two groups
+ * — resolves to the run canonical by construction, because `ownGroup` is null
+ * and `resolveCalendar(run, null)` is the run's own calendar.
  * ────────────────────────────────────────────────────────────────────────────
  */
 
@@ -80,6 +106,33 @@ export type OverviewGroup = {
    * simply meets in person.
    */
   meetingUrl: string | null;
+  /**
+   * HOW EACH WEEK MEETS (v2 decision 7), by week doc id: `{ w03: "virtual" }`.
+   * `"virtual"` = the link is the destination and the room is not;
+   * `"in-person"` = the reverse; a MISSING key = the facilitator has never set
+   * one for that week and the card shows whatever the slot carries (the legacy
+   * state, and NOT the same thing as `"in-person"`).
+   *
+   * THE WHOLE MAP, not the current week's answer, and that is the fix for a
+   * real bug: the slot fields above are resolved for ONE week (the current
+   * one), but the week page renders ANY week, so a single resolved `mode`
+   * rendered week 5's "Online this week" over week 3's evening and hid week
+   * 3's room with it. Every surface now picks the week IT is drawing —
+   * `WeekView` the viewed week, the run home the current one — through
+   * `sessionModesOf`, which is also where the ≤20 bound lives.
+   *
+   * This travels because the flip is a MEMBER-FACING promise: the facilitator
+   * editor says in as many words that switching it "changes what your group
+   * sees on the week page and in the reminder emails". Without this field the
+   * setting was written, audited and read by nobody but staff.
+   *
+   * It is NOT a second meeting-link gate, and widening it from one week to all
+   * of them does not make it one: a mode is a display fact of the same tier as
+   * `sessionLabel`, `meetingUrl` is redacted above by `canSeeMeetingUrl`
+   * exactly as before, and a caller who may not see the link still may not see
+   * it on a `"virtual"` week.
+   */
+  sessionModes: Record<string, GroupSessionMode>;
   /** Names only. */
   facilitatorNames: string[];
 };
@@ -92,12 +145,23 @@ export type OverviewPayload = {
     label: string;
     academicYear: string;
     status: CourseRunStatus;
-    /** Civil date "YYYY-MM-DD" (Europe/London), empty on a half-authored run. */
+    /**
+     * Civil date "YYYY-MM-DD" (Europe/London), empty on a half-authored run.
+     *
+     * THE CALLER'S EFFECTIVE calendar, not necessarily the run's — see the
+     * module header. `calendarSource` says which one answered.
+     */
     startDate: string;
     weekPlan: WeekPlanEntry[];
-    /** Taught weeks in the plan (breaks excluded). */
+    /** Taught weeks in the EFFECTIVE plan (breaks excluded). */
     totalWeeks: number;
   };
+  /**
+   * Which calendar the three fields above came from. `"group"` means the
+   * caller's group has set its own pacing and is no longer tracking the run;
+   * surfaces that say "your cohort" should say "your group" when they read it.
+   */
+  calendarSource: "run" | "group";
   /** Recomputed here on every request; null for a draft/undated run. */
   currentWeek: CurrentWeek | null;
   /**
@@ -105,6 +169,11 @@ export type OverviewPayload = {
    * gate, not a confidentiality boundary — `courseRuns/{id}/weeks` is
    * signed-in-readable in the rules, so withholding titles here would buy
    * nothing while breaking the rail's "week 6 is ready" affordance.
+   *
+   * Group forks are laid OVER the canonical index by week id, so a rail row
+   * whose group has personalised that week shows the group's title, its
+   * estimate and its own `published` flag — the same document the week page
+   * will open.
    */
   weeks: Array<{
     id: string;
@@ -112,7 +181,21 @@ export type OverviewPayload = {
     title: string;
     published: boolean;
     estimatedMinutes: number | null;
+    /** True when this row came from the caller's group's forked copy. */
+    forked: boolean;
   }>;
+  /**
+   * Week doc ids that exist under `courseGroups/{ownGroup}/weeks` — i.e. the
+   * weeks this caller must read from their group rather than from the run.
+   * Always empty for a caller with no group of their own.
+   *
+   * The client CANNOT derive this: a group's forked weeks are the only thing
+   * distinguishing "read the fork" from "read the canonical", and a wrong
+   * guess shows the wrong curriculum. So the list travels, and `useWeek`
+   * resolves against it rather than probing for a document that usually isn't
+   * there.
+   */
+  forkedWeekIds: string[];
   /** The caller's OWN enrolment summary; null when they read as facilitator/admin. */
   enrolment: {
     status: CourseEnrolmentStatus;
@@ -221,13 +304,10 @@ export async function GET(
   //
   // The enrolment is addressed by construction (`courseEnrolmentId`), never
   // by query — one doc read, and no way to spell another member's row.
-  const [runSnap, enrolSnap, groupSnap, weekSnap] = await Promise.all([
+  const [runSnap, enrolSnap, groupSnap] = await Promise.all([
     db.collection("courseRuns").doc(runId).get(),
     db.collection("courseEnrolments").doc(courseEnrolmentId(runId, actor.uid)).get(),
     db.collection("courseGroups").where("runId", "==", runId).limit(50).get(),
-    // Week ids are "w01".."w60", so default `__name__` order already is week
-    // order; no `orderBy` on `weekNumber`, which a half-authored doc may lack.
-    db.collection("courseRuns").doc(runId).collection("weeks").limit(60).get(),
   ]);
 
   if (!runSnap.exists) {
@@ -267,33 +347,33 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // SERVERS ALWAYS RECOMPUTE. A half-authored run (created, no start date
-  // chosen) is a legitimate state and `currentWeekFor` throws on a malformed
-  // key by design, so the guard is required, not defensive noise.
-  const currentWeek =
-    run.status !== "draft" && isValidDateKey(run.startDate)
-      ? currentWeekFor({ startDate: run.startDate, weekPlan: run.weekPlan })
-      : null;
-
-  const weeks = weekSnap.docs
-    .map((d) => normalizeCourseWeek(d.id, d.data() ?? {}))
-    .map((w) => ({
-      id: w.id,
-      weekNumber: w.weekNumber,
-      title: w.title,
-      published: w.published,
-      estimatedMinutes: w.estimatedMinutes,
-    }))
-    .sort((a, b) => a.weekNumber - b.weekNumber || a.id.localeCompare(b.id));
-
   // The card is the caller's OWN group: their placement if they have one,
   // otherwise the single group they facilitate. Facilitating two groups yields
   // no card — there is no "current" one to show, and the roster route is the
   // per-group surface.
+  //
+  // RESOLVED BEFORE THE CALENDAR, and that ordering is now load-bearing: the
+  // group is the first half of every resolution below it (V2-3).
   const ownGroup =
     (liveEnrolment?.groupId
       ? (groups.find((g) => g.id === liveEnrolment.groupId) ?? null)
       : null) ?? (facilitates.length === 1 ? facilitates[0] : null);
+
+  // GROUP-FIRST, THROUGH THE ONE HELPER. `resolveCalendar` returns the group's
+  // pacing override when it has set one and the run's calendar otherwise, so
+  // an unallocated member and a group that has never touched its pacing are
+  // byte-identical to the pre-V2-3 payload.
+  const calendar = resolveCalendar(run, ownGroup);
+
+  // SERVERS ALWAYS RECOMPUTE. A half-authored run (created, no start date
+  // chosen) is a legitimate state and the week maths throws on a malformed key
+  // by design, so the guard is required, not defensive noise — and it guards
+  // the RESOLVED date, since a group's own start date is just as capable of
+  // being half-authored as the run's.
+  const currentWeek =
+    run.status !== "draft" && isValidDateKey(calendar.startDate)
+      ? memberCurrentWeek(run, ownGroup)
+      : null;
 
   // Stated as its own predicate rather than left implicit: every future edit to
   // how `ownGroup` is chosen has to answer this question again.
@@ -306,17 +386,52 @@ export async function GET(
     );
 
   const facilitatorUids = ownGroup?.facilitatorUids ?? [];
-  const userDocs = facilitatorUids.length
-    ? await db.getAll(...facilitatorUids.map((uid) => db.collection("users").doc(uid)))
-    : [];
+  // One round trip for both: the facilitator names and the caller's own week
+  // index, canonical with their group's forks laid over it by doc id. The fork
+  // read is scoped to the ONE group this caller belongs to (never the run's
+  // groups), so a member learns nothing about how anybody else's room has been
+  // personalised.
+  //
+  // `resolveWeekDocs` is THE overlay — the same one every other week reader
+  // resolves through — rather than a second merge written out here. A forked
+  // week REPLACES its canonical row (same id, same number, the group's own
+  // title and published flag), which is what makes the rail agree with the
+  // page each row links to.
+  const [userDocs, weekEntries] = await Promise.all([
+    facilitatorUids.length
+      ? db.getAll(...facilitatorUids.map((uid) => db.collection("users").doc(uid)))
+      : Promise.resolve([]),
+    resolveWeekDocs(db, runId, ownGroup?.id ?? null),
+  ]);
   const nameByUid = new Map<string, string>();
   for (const doc of userDocs) {
     if (doc.exists) nameByUid.set(doc.id, displayNameOf(doc.data() ?? {}));
   }
 
+  const forkedWeekIds: string[] = [];
+  const weeks = weekEntries
+    .map(({ source, week: w }) => {
+      if (source === "group") forkedWeekIds.push(w.id);
+      return {
+        id: w.id,
+        weekNumber: w.weekNumber,
+        title: w.title,
+        published: w.published,
+        estimatedMinutes: w.estimatedMinutes,
+        forked: source === "group",
+      };
+    })
+    .sort((a, b) => a.weekNumber - b.weekNumber || a.id.localeCompare(b.id));
+
   let group: OverviewGroup | null = null;
   if (ownGroup) {
-    const session = sessionForWeek(ownGroup, currentWeekId(currentWeek));
+    // ONE week key for the slot fields — they describe the session the run
+    // home is about to name, which is the CURRENT one. The modes deliberately
+    // do NOT collapse to this key: see `sessionModes` on the wire type. A
+    // surface that draws another week reads that map and gets the room-vs-link
+    // swap for the week it is actually showing.
+    const weekId = currentWeekId(currentWeek);
+    const session = sessionForWeek(ownGroup, weekId);
     group = {
       id: ownGroup.id,
       name: ownGroup.name,
@@ -326,6 +441,7 @@ export async function GET(
       durationMinutes: session.durationMinutes,
       location: session.location,
       meetingUrl: canSeeMeetingUrl ? session.meetingUrl : null,
+      sessionModes: sessionModesOf(ownGroup),
       facilitatorNames: facilitatorUids.map(
         (uid) => nameByUid.get(uid) ?? "NAISI member",
       ),
@@ -340,12 +456,17 @@ export async function GET(
       label: run.label,
       academicYear: run.academicYear,
       status: run.status,
-      startDate: run.startDate,
-      weekPlan: run.weekPlan,
-      totalWeeks: run.weekPlan.filter((entry) => entry.kind === "week").length,
+      // THE RESOLVED calendar, not the run document's own — see the module
+      // header. Identical to the run's for every caller without a group that
+      // has overridden its pacing.
+      startDate: calendar.startDate,
+      weekPlan: calendar.weekPlan,
+      totalWeeks: calendar.weekPlan.filter((entry) => entry.kind === "week").length,
     },
+    calendarSource: calendar.source,
     currentWeek,
     weeks,
+    forkedWeekIds,
     enrolment: enrolment
       ? {
           status: enrolment.status,

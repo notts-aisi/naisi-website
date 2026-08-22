@@ -13,6 +13,7 @@ import { getClientDb } from "@/lib/firebase/client";
 import { normalizeCourseWeek } from "@/lib/firestore/courses";
 import useRunOverview from "@/features/courses/useRunOverview";
 import useRunProgress from "@/features/courses/useRunProgress";
+import type { WeekSource } from "@/features/courses/useWeek";
 import styles from "./ProgressBody.module.css";
 
 /**
@@ -24,9 +25,28 @@ import styles from "./ProgressBody.module.css";
  * The overview payload's week INDEX carries titles and publish flags but no
  * item counts, so a bar built from it alone would have a numerator and no
  * denominator — which is not progress, it is a tally. The week docs
- * themselves (`courseRuns/{runId}/weeks`) are `allow read: if isSignedIn()`
- * in the rules, so this reads them directly: one `getDocs`, no route needed,
- * and the counts are the real ones.
+ * themselves are `allow read: if isSignedIn()` in the rules (both the run's
+ * and a group's forks), so this reads them directly: no route needed, and the
+ * counts are the real ones.
+ *
+ * ── AND WHOSE DEFINITION THAT IS (V2-3, decision 6) ─────────────────────────
+ * THE GROUP'S. `useRunWeekItems` used to read `courseRuns/{runId}/weeks` alone
+ * while the row TITLES beside its numbers came from the overview's fork-overlaid
+ * index — so a member of a group whose facilitator had swapped a week's
+ * materials read their own week's title above the RUN's item count. Decision 6
+ * is explicit that denominators come from the group's current definition
+ * (it is the same rule the fork PATCH route's orphan warning leans on when it
+ * says orphaned rows are tolerated because "denominators are always recomputed
+ * from the group's current week definition"), so the ids are resolved
+ * group-first here too and the two halves of a row describe one document.
+ *
+ * THE CHEAPER OF THE TWO HONEST FIXES, stated: the overview already sends
+ * `forkedWeekIds`, so this hook reads the group's fork subcollection ONLY when
+ * that list is non-empty — one extra `getDocs` for a group that has
+ * personalised something, and NONE at all for the overwhelmingly common group
+ * that has not. The alternative was to put item ids in the overview payload,
+ * which would have meant shipping every week's full item list to every member
+ * on every run-home mount, for a page most of them never open.
  *
  * Completion is counted against the CURRENT item list rather than by grouping
  * progress rows on `weekNumber`: a row left behind by a material the author
@@ -50,40 +70,74 @@ type WeekItems = {
 };
 
 /**
- * The run's check-offable item ids, one shot. Local to this file on purpose:
- * it exists to supply a denominator on one page, and a week page that needs
- * the full week document wants the document, not this projection of it.
+ * THIS MEMBER's check-offable item ids, one shot, resolved group-first. Local
+ * to this file on purpose: it exists to supply a denominator on one page, and a
+ * week page that needs the full week document wants the document, not this
+ * projection of it.
+ *
+ * `source` is the same pair `useWeek` resolves against — the reader's group and
+ * the ids of the weeks it has forked, both straight off the overview payload,
+ * neither derivable client-side. `null` means the overview has not landed yet,
+ * and the hook reports `loading` rather than counting the run's items and
+ * swapping the numbers under the reader a moment later.
+ *
+ * A fork REPLACES its canonical week by doc id — the fork route copies through
+ * `templateWeekFields`, so ids and `weekNumber` survive it — which is exactly
+ * how `resolveWeekDocs` overlays them server-side for the overview's own index.
+ * Same overlay, same order, so the count and the title on a row agree.
  *
  * Key-tagged state (the `useRunProgress` idiom) so `loading` derives on a run
- * switch instead of being reset by a setState in the effect body.
+ * or group switch instead of being reset by a setState in the effect body.
  */
-function useRunWeekItems(runId: string): WeekItems {
+function useRunWeekItems(runId: string, source: WeekSource | null): WeekItems {
   const [state, setState] = useState<{
     key: string;
     byWeek: Map<number, string[]>;
     error: Error | null;
   }>({ key: "", byWeek: EMPTY_ITEMS, error: null });
 
+  // Read the group's forks only when the overview says there ARE some: an
+  // unforked group is the common case and must cost no extra read (see the
+  // module comment's note on which of the two fixes this is).
+  const groupId = source?.groupId ?? "";
+  const hasForks = Boolean(groupId) && (source?.forkedWeekIds.length ?? 0) > 0;
+  const key = runId && source ? `${runId}/${hasForks ? groupId : ""}` : "";
+
   useEffect(() => {
-    if (!runId) return;
+    if (!key) return;
     let cancelled = false;
-    getDocs(collection(getClientDb(), "courseRuns", runId, "weeks"))
-      .then((snap) => {
+    const db = getClientDb();
+    Promise.all([
+      getDocs(collection(db, "courseRuns", runId, "weeks")),
+      hasForks
+        ? getDocs(collection(db, "courseGroups", groupId, "weeks"))
+        : Promise.resolve(null),
+    ])
+      .then(([canonical, forks]) => {
         if (cancelled) return;
+        // Overlaid by DOC ID first, then projected — a fork and its canonical
+        // share an id, so laying them into one map is what makes "the group's
+        // definition" a single list rather than two competing ones.
+        const byId = new Map<string, ReturnType<typeof normalizeCourseWeek>>();
+        for (const doc of canonical.docs) {
+          byId.set(doc.id, normalizeCourseWeek(doc.id, doc.data()));
+        }
+        for (const doc of forks?.docs ?? []) {
+          byId.set(doc.id, normalizeCourseWeek(doc.id, doc.data()));
+        }
         const byWeek = new Map<number, string[]>();
-        for (const doc of snap.docs) {
-          const week = normalizeCourseWeek(doc.id, doc.data());
+        for (const week of byId.values()) {
           byWeek.set(week.weekNumber, [
             ...week.materials.filter((m) => !m.optional).map((m) => m.id),
             ...week.checklist.map((c) => c.id),
           ]);
         }
-        setState({ key: runId, byWeek, error: null });
+        setState({ key, byWeek, error: null });
       })
       .catch((e: unknown) => {
         if (cancelled) return;
         setState({
-          key: runId,
+          key,
           byWeek: EMPTY_ITEMS,
           error: e instanceof Error ? e : new Error(String(e)),
         });
@@ -91,11 +145,12 @@ function useRunWeekItems(runId: string): WeekItems {
     return () => {
       cancelled = true;
     };
-  }, [runId]);
+  }, [key, runId, groupId, hasForks]);
 
-  const fresh = state.key === runId;
   if (!runId) return { byWeek: EMPTY_ITEMS, loading: false, error: null };
-  if (!fresh) return { byWeek: EMPTY_ITEMS, loading: true, error: null };
+  if (!key || state.key !== key) {
+    return { byWeek: EMPTY_ITEMS, loading: true, error: null };
+  }
   return { byWeek: state.byWeek, loading: false, error: state.error };
 }
 
@@ -114,7 +169,17 @@ const SKELETON_ROWS = 4;
 export default function ProgressBody({ runId }: Props) {
   const overview = useRunOverview(runId);
   const progress = useRunProgress(runId);
-  const weekItems = useRunWeekItems(runId);
+  // WHOSE week definitions supply the denominators — the reader's group's forks
+  // where it has them, the run canonical otherwise. Null until the overview
+  // lands, which is the only thing that knows either half (same pair, same
+  // reason, as `WeekView` hands `useWeek`).
+  const weekSrc: WeekSource | null = overview.data
+    ? {
+        groupId: overview.data.enrolment?.groupId ?? overview.data.group?.id ?? null,
+        forkedWeekIds: overview.data.forkedWeekIds,
+      }
+    : null;
+  const weekItems = useRunWeekItems(runId, weekSrc);
 
   const loading = overview.loading || progress.loading || weekItems.loading;
   // The overview's message is the most specific one available (it carries the

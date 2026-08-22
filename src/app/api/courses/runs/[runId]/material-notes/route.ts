@@ -32,6 +32,31 @@ import {
  *    not in, where the retrospective — which builds its rows from the current
  *    week definitions — would never render it. A note silently lost is worse
  *    than a note refused, so an unknown `itemId` is a 400.
+ *
+ * ## Where it looks for that material (V2-3: GROUP-FIRST)
+ *
+ * A group's forked week is that group's curriculum, and a facilitator writing
+ * "how did this land" about a reading THEY swapped in is the exact lane this
+ * route exists for. Scanning only `courseRuns/{runId}/weeks` refused those
+ * notes with "that material isn't in this run's curriculum" — a sentence that
+ * was, from the facilitator's side, simply untrue.
+ *
+ * So the scan is ordered, and stops at the first week holding the id:
+ *
+ *   1. THE ACTOR'S OWN GROUPS' forks — group-first, and for a plain
+ *      facilitator this is the only place their own swap-ins live. Usually one
+ *      collection read, because a facilitator staffs one room.
+ *   2. THE RUN CANONICAL — where the overwhelming majority of materials are.
+ *   3. EVERY OTHER GROUP'S forks, for admins / track leads / run facilitators
+ *      ONLY. "Leads may note any group's fork" is the decision; a plain
+ *      facilitator gets no reach into a room they do not staff, which is the
+ *      same boundary the review queue draws. Bounded by `MAX_GROUPS_SCANNED`
+ *      and reached only when the first two missed.
+ *
+ * A fork preserves ids AND its week doc id (`templateWeekFields`), so a
+ * material present in both a fork and the canonical resolves to the same
+ * `weekNumber` either way — the ordering matters for materials that exist in
+ * exactly one of them, which is the case that was broken.
  *  - **`byName` is resolved from the author's user doc**, never taken from
  *    the body, and it is a DISPLAY NAME: the retrospective is the one place a
  *    name appears, and it must be a name, never an address.
@@ -125,15 +150,26 @@ export async function POST(
   ]);
 
   const runRaw = runSnap.exists ? (runSnap.data() ?? {}) : {};
-  const isGroupFacilitator = groupSnap.docs.some((d) =>
-    asUidList((d.data() ?? {}).facilitatorUids).includes(actor.uid),
-  );
-  const allowed =
+  // Split once and reused by the scan below: which rooms are the actor's own,
+  // and which are everyone else's.
+  const ownGroupIds: string[] = [];
+  const otherGroupIds: string[] = [];
+  for (const d of groupSnap.docs) {
+    if (asUidList((d.data() ?? {}).facilitatorUids).includes(actor.uid)) {
+      ownGroupIds.push(d.id);
+    } else {
+      otherGroupIds.push(d.id);
+    }
+  }
+  const isGroupFacilitator = ownGroupIds.length > 0;
+  // The trusted tier, named once: it is both an access lane AND the thing that
+  // licenses scanning a group the actor does not staff (see the module header).
+  const isTrusted =
     runSnap.exists &&
     (actor.role === "admin" ||
       asUidList(runRaw.trackLeadUids).includes(actor.uid) ||
-      asUidList(runRaw.runFacilitatorUids).includes(actor.uid) ||
-      isGroupFacilitator);
+      asUidList(runRaw.runFacilitatorUids).includes(actor.uid));
+  const allowed = runSnap.exists && (isTrusted || isGroupFacilitator);
   if (!allowed) {
     // ONE refusal, whether the run is missing or the caller has no standing.
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -151,24 +187,45 @@ export async function POST(
   // one collection read is the cheap way to make the stored `weekNumber` a
   // fact rather than a claim. Materials live inside the week doc, so there is
   // nothing a field mask could save here.
-  const weekSnap = await db
-    .collection("courseRuns")
-    .doc(runId)
-    .collection("weeks")
-    .get();
+  //
+  // ORDERED AND SHORT-CIRCUITING (see the module header): the actor's own
+  // groups' forks, then the run canonical, then — for the trusted tier only —
+  // the remaining groups' forks. Each step is one collection read and the loop
+  // stops at the first hit, so the common case (a canonical material, a
+  // facilitator with one group) costs two reads and the expensive tail is
+  // reached only by a material that exists nowhere else.
+  const scans: Array<() => FirebaseFirestore.Query> = [
+    ...ownGroupIds.map(
+      (gid) => () => db.collection("courseGroups").doc(gid).collection("weeks"),
+    ),
+    () => db.collection("courseRuns").doc(runId).collection("weeks"),
+    ...(isTrusted
+      ? otherGroupIds.map(
+          (gid) => () => db.collection("courseGroups").doc(gid).collection("weeks"),
+        )
+      : []),
+  ];
+
   let weekNumber = 0;
   let found = false;
-  for (const d of weekSnap.docs) {
-    const week = normalizeCourseWeek(d.id, d.data() ?? {});
-    if (week.materials.some((m) => m.id === itemId)) {
-      weekNumber = week.weekNumber;
-      found = true;
-      break;
+  for (const scan of scans) {
+    const snap = await scan().get();
+    for (const d of snap.docs) {
+      const week = normalizeCourseWeek(d.id, d.data() ?? {});
+      if (week.materials.some((m) => m.id === itemId)) {
+        weekNumber = week.weekNumber;
+        found = true;
+        break;
+      }
     }
+    if (found) break;
   }
   if (!found) {
     return NextResponse.json(
-      { error: "That material isn't in this run's curriculum." },
+      {
+        error:
+          "That material isn't in this run's curriculum, or in any week you can note on.",
+      },
       { status: 400 },
     );
   }

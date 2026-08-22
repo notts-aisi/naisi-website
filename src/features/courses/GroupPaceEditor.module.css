@@ -1,0 +1,298 @@
+/* ============================================================
+   GroupPaceEditor — the group's own calendar, or the course's.
+
+   THE VISUAL ARGUMENT
+   The default state is not a form. A group that follows the
+   course's schedule should see the course's schedule, plainly,
+   with one button — because the overwhelmingly common answer
+   is "we meet when everyone else meets", and putting a start
+   date and twelve editable rows in front of that person is an
+   invitation to drift for no reason.
+
+   Once a group HAS its own schedule, the divergence is the
+   headline: every row that lands on a different date from the
+   course's says so, in the same place, in the same words. A
+   facilitator should never have to hold two calendars in their
+   head to notice they are a fortnight behind.
+
+   Colour is spent once — on the row the group is in NOW, and
+   on the divergence chips. Nothing else is tinted.
+   ============================================================ */
+
+.sectionTitle {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  margin: 0 0 var(--space-3);
+  color: var(--color-text);
+}
+
+.hint {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-relaxed);
+  max-width: var(--prose-max-width);
+}
+
+.state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.stateValue {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.error {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+}
+
+.warn {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: minmax(0, 18rem) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+/* === Rows === */
+
+.rows {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1.75rem minmax(0, 1fr) minmax(0, 15rem) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.rowNow {
+  border-color: var(--color-accent);
+}
+
+.index {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.body {
+  min-width: 0;
+}
+
+.weekName {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+
+.weekId {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  font-family: var(--font-mono);
+}
+
+.preview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.window {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.windowMuted {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+}
+
+.drift {
+  font-size: var(--text-xs);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-pill);
+  color: var(--color-warning);
+  white-space: nowrap;
+}
+
+.nowChip {
+  font-size: var(--text-xs);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-pill);
+  color: var(--color-accent);
+  white-space: nowrap;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.iconBtn {
+  width: 1.75rem;
+  height: 1.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.iconBtn:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+.iconBtnDanger:hover:not(:disabled) {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.iconBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+}
+
+.spacer {
+  margin-left: auto;
+}
+
+.count {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* === Confirm === */
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+}
+
+.confirmTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.confirmBody {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+}
+
+.confirmActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 48rem) { /* --bp-md */
+  .fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .row {
+    grid-template-columns: 1.75rem minmax(0, 1fr);
+    row-gap: var(--space-2);
+  }
+
+  .preview {
+    grid-column: 2 / -1;
+  }
+
+  .controls {
+    grid-column: 2 / -1;
+  }
+
+  .iconBtn {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+
+  .spacer {
+    margin-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iconBtn {
+    transition: none;
+  }
+}
+
+/* Vertical breathing room for a block that follows a list or a paragraph.
+   Composed onto .hint / .warn / .empty / .fields rather than inlined at the
+   callsite, so spacing stays a stylesheet decision. */
+.spaced {
+  margin-top: var(--space-4);
+}

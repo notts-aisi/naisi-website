@@ -2,10 +2,15 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import {
   addDaysToKey,
-  currentWeekFor,
   isValidDateKey,
   londonWallClockToInstant,
+  type WeekPlanEntry,
 } from "@/lib/courses/weekPlan";
+import {
+  memberCurrentWeek,
+  resolveCalendar,
+  type ResolvedCalendar,
+} from "@/lib/courses/groupResolve";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser, type SessionUser } from "@/lib/firebase/session";
 import {
@@ -71,6 +76,19 @@ import {
  * grid: the UI renders the cells before it as inert, and POST REFUSES to write
  * them (see the write gate). Without that, someone who joined in week 5 reads
  * as four weeks absent — a record that is not merely unkind but false.
+ *
+ * ── V2-3: THE COLUMNS ARE THE GROUP'S RHYTHM ────────────────────────────────
+ * Every calendar question here is asked of `resolveCalendar(run, group)` — the
+ * group's own pacing when its facilitator has set one, the run's otherwise.
+ * That is not cosmetic: a group that inserted its own reading week is a group
+ * that did not meet that week, and a register offering a column for a session
+ * nobody held invites a facilitator to mark a room full of people absent from
+ * a class that never happened. Its own plan, its own columns, its own anchor.
+ *
+ * Column TITLES resolve group-first too, so a week the facilitator has forked
+ * and renamed reads under the name their members see. The register documents
+ * themselves are unchanged and stay keyed by (run, group, weekNumber): the
+ * mark is a fact about a person and a week, not about a curriculum revision.
  */
 
 // ---------------------------------------------------------------------------
@@ -168,7 +186,12 @@ function parseWeekParam(raw: string | null): number | null {
 type TaughtWeek = { weekNumber: number; weekId: string };
 
 /**
- * The run's taught weeks, in PLAN ORDER, defended against a corrupt plan.
+ * The taught weeks of a RESOLVED plan, in PLAN ORDER, defended against a
+ * corrupt plan.
+ *
+ * Takes the plan rather than the run because V2-3 may hand it the GROUP's own
+ * plan (see the module header) — the defence is a property of week-plan data,
+ * not of where the data came from.
  *
  * `sanitizeWeekPlan` checks types but neither the range nor uniqueness of
  * `weekNumber`, and `weekId` is a free string that this route turns into a doc
@@ -177,10 +200,10 @@ type TaughtWeek = { weekNumber: number; weekId: string };
  * column itself — the register is keyed by NUMBER, and a week whose curriculum
  * doc cannot be addressed is still a week the group met in.
  */
-function taughtWeeksOf(run: CourseRunDoc): TaughtWeek[] {
+function taughtWeeksOf(weekPlan: WeekPlanEntry[]): TaughtWeek[] {
   const out: TaughtWeek[] = [];
   const seen = new Set<number>();
-  for (const entry of run.weekPlan) {
+  for (const entry of weekPlan) {
     if (entry.kind !== "week") continue;
     const n = entry.weekNumber;
     if (!Number.isInteger(n) || n < 1 || n > MAX_WEEK_NUMBER || seen.has(n)) continue;
@@ -209,15 +232,19 @@ function taughtWeeksOf(run: CourseRunDoc): TaughtWeek[] {
  */
 function columnsFor(
   run: CourseRunDoc,
+  group: CourseGroupDoc,
+  calendar: ResolvedCalendar,
   taught: TaughtWeek[],
   requestedWeek: number | null,
 ): TaughtWeek[] {
   let anchor = 0;
-  // `currentWeekFor` throws RangeError on an unusable start date, which is a
+  // The week maths throws RangeError on an unusable start date, which is a
   // legitimate half-authored state rather than an error — the guard is the
-  // module's own prescribed one, and a run with no date simply has no anchor.
-  if (isValidDateKey(run.startDate)) {
-    anchor = currentWeekFor(run).anchorWeekNumber;
+  // module's own prescribed one, and a calendar with no date simply has no
+  // anchor. Guarded on the RESOLVED date, since a group's pacing override can
+  // be half-authored exactly as a run's can.
+  if (isValidDateKey(calendar.startDate)) {
+    anchor = memberCurrentWeek(run, group).anchorWeekNumber;
   }
   const first = taught[0]?.weekNumber ?? 0;
   const upTo = Math.max(anchor, requestedWeek ?? 0, first);
@@ -237,13 +264,16 @@ function columnsFor(
  * timestamp rather than a wrong one.
  */
 function sessionInstantFor(
-  run: CourseRunDoc,
+  calendar: ResolvedCalendar,
   group: CourseGroupDoc,
   week: TaughtWeek,
 ): Date | null {
   try {
-    if (!isValidDateKey(run.startDate)) return null;
-    const index = run.weekPlan.findIndex(
+    // The GROUP's calendar (see the module header): a group pacing a week
+    // behind the run met a week later, and a register stamped with the run's
+    // instant would date every one of its sessions wrongly.
+    if (!isValidDateKey(calendar.startDate)) return null;
+    const index = calendar.weekPlan.findIndex(
       (e) => e.kind === "week" && e.weekNumber === week.weekNumber,
     );
     if (index < 0) return null;
@@ -254,7 +284,7 @@ function sessionInstantFor(
     const session = sessionForWeek(group, weekDocId(week.weekNumber));
     if (!session.startTimeLocal) return null;
 
-    const slotStartKey = addDaysToKey(run.startDate, index * DAYS_PER_WEEK);
+    const slotStartKey = addDaysToKey(calendar.startDate, index * DAYS_PER_WEEK);
     // Civil weekday of the slot's first day. Parsed at UTC midnight (the same
     // convention `weekPlan.ts` parses every date key with), so no zone offset
     // enters the arithmetic and `getUTCDay()` is the London calendar weekday.
@@ -426,17 +456,30 @@ export async function GET(
     return NextResponse.json({ error: "Run not found" }, { status: 404 });
   }
   const run = normalizeCourseRun(runSnap.id, runSnap.data() ?? {});
-  const weeks = columnsFor(run, taughtWeeksOf(run), requestedWeek);
+  // ONE resolution, reused by the columns and by every session instant below.
+  const calendar = resolveCalendar(run, group);
+  const weeks = columnsFor(
+    run,
+    group,
+    calendar,
+    taughtWeeksOf(calendar.weekPlan),
+    requestedWeek,
+  );
 
-  // Two `getAll`s, one round trip: the week docs (titles only) and the
-  // registers themselves. Both are addressed — no queries, no indexes, and the
-  // register ids are `attendanceDocId`, which is construct-only by contract.
+  // Three `getAll`s, one round trip: the canonical week docs (titles only),
+  // this group's forked copies of the same weeks, and the registers
+  // themselves. All addressed — no queries, no indexes, and the register ids
+  // are `attendanceDocId`, which is construct-only by contract.
   const weekCollection = db.collection("courseRuns").doc(runId).collection("weeks");
-  const titleRefs = weeks
-    .filter((w) => isAddressableId(w.weekId))
-    .map((w) => weekCollection.doc(w.weekId));
-  const [weekDocs, registerDocs] = await Promise.all([
-    titleRefs.length ? db.getAll(...titleRefs) : Promise.resolve([]),
+  const forkCollection = db.collection("courseGroups").doc(groupId).collection("weeks");
+  const titleWeekIds = weeks.map((w) => w.weekId).filter((id) => isAddressableId(id));
+  const [weekDocs, forkDocs, registerDocs] = await Promise.all([
+    titleWeekIds.length
+      ? db.getAll(...titleWeekIds.map((id) => weekCollection.doc(id)))
+      : Promise.resolve([]),
+    titleWeekIds.length
+      ? db.getAll(...titleWeekIds.map((id) => forkCollection.doc(id)))
+      : Promise.resolve([]),
     weeks.length
       ? db.getAll(
           ...weeks.map((w) =>
@@ -448,8 +491,10 @@ export async function GET(
       : Promise.resolve([]),
   ]);
 
+  // Canonical first, the group's fork laid over it — the same overlay the
+  // overview route applies to the rail, so staff and members read one title.
   const titleByWeekId = new Map<string, string>();
-  for (const doc of weekDocs) {
+  for (const doc of [...weekDocs, ...forkDocs]) {
     if (doc.exists) {
       titleByWeekId.set(doc.id, normalizeCourseWeek(doc.id, doc.data() ?? {}).title);
     }
@@ -602,12 +647,16 @@ export async function POST(
   const run = normalizeCourseRun(runSnap.id, runSnap.data() ?? {});
 
   // WEEK VALIDITY IS RECOMPUTED, never trusted: the week must be a TAUGHT week
-  // of this run's own plan. A break has no session to attend, and a number
-  // outside the plan would mint a register for a week that does not exist.
-  const week = taughtWeeksOf(run).find((w) => w.weekNumber === weekNumber);
+  // of THIS GROUP'S effective plan. A break has no session to attend, and a
+  // number outside the plan would mint a register for a week that does not
+  // exist. Resolved rather than read off the run, so a group that moved a week
+  // into a break of its own cannot be marked present for it — and a group that
+  // added a taught week the run does not have can be.
+  const calendar = resolveCalendar(run, group);
+  const week = taughtWeeksOf(calendar.weekPlan).find((w) => w.weekNumber === weekNumber);
   if (!week) {
     return NextResponse.json(
-      { error: `Week ${weekNumber} isn't a taught week of this run.` },
+      { error: `Week ${weekNumber} isn't a taught week of this group's schedule.` },
       { status: 400 },
     );
   }
@@ -641,7 +690,7 @@ export async function POST(
   const ref = db
     .collection("courseAttendance")
     .doc(attendanceDocId(runId, groupId, weekNumber));
-  const sessionAt = sessionInstantFor(run, group, week);
+  const sessionAt = sessionInstantFor(calendar, group, week);
 
   try {
     // A TRANSACTION for one document, because the 40-key cap is a property of

@@ -4,7 +4,10 @@ import Card from "@/components/ui/Card";
 import Chip from "@/components/ui/Chip";
 import type { OverviewGroup } from "@/app/api/courses/runs/[runId]/overview/route";
 import { validateSubmissionUrl } from "@/lib/firestore/courses";
-import { GROUP_FIELD_LIMITS } from "@/lib/firestore/courseGroups";
+import {
+  GROUP_FIELD_LIMITS,
+  type GroupSessionMode,
+} from "@/lib/firestore/courseGroups";
 import {
   addDaysToKey,
   isValidDateKey,
@@ -30,6 +33,35 @@ import styles from "./SessionCard.module.css";
  * session is a slot inside a plan — the recurring rule, the per-week
  * overrides and the break weeks have no counterpart in that helper. A
  * calendar feed for a cohort is its own piece of work, not a prop on this card.
+ *
+ * ── VIRTUAL vs IN-PERSON (v2 decision 7), THE MEMBER'S END ──────────────────
+ * `mode` is the facilitator's per-week switch, and this card is where it
+ * cashes out. THE POINT IS THE SUPPRESSION, not the addition: an online week
+ * hides the room, an in-person week hides the join button. Showing both — the
+ * old behaviour — is precisely what sends half a group to a room nobody is in.
+ *
+ * IT IS A PROP, NOT A FIELD ON `group`, and required rather than defaulted.
+ * The card renders whichever week its caller dated it to, and the payload can
+ * only resolve one — so a `group.mode` read here showed the CURRENT week's
+ * mode against the VIEWED week's date, announcing "Online this week" over an
+ * evening three weeks earlier and hiding that evening's room. One mode in, for
+ * the one session this card describes; picking it is the caller's job, because
+ * only the caller knows which week it is drawing (`OverviewGroup.sessionModes`
+ * is the map they pick from).
+ *
+ *   · `"virtual"`  → the joining link, and NO location line.
+ *   · `"in-person"`→ the room, and NO join button, even when a link is stored
+ *                    (every group with a standing link would otherwise offer
+ *                    one on the night everybody is meant to turn up).
+ *   · `null`       → nothing set for this week: show whatever the slot carries,
+ *                    byte-identical to the pre-V2-3 card.
+ *
+ * HONEST FALLBACKS, both directions. An online week with no stored link and an
+ * in-person week with no room each say so in a sentence a member can act on
+ * ("your facilitator will send it") rather than rendering an empty card that
+ * reads as "there is nowhere to be". The `meetingUrl` PII gate is upstream and
+ * untouched: `null` here can also mean "not yours to see", and the fallback
+ * copy is written so it is true either way.
  */
 
 type SessionState = "upcoming" | "today" | "held";
@@ -42,6 +74,13 @@ type Props = {
    * recurring label and stays stateless rather than inventing a date.
    */
   slotStartKey: string | null;
+  /**
+   * How the session this card is dated to meets. `null` = nothing set for that
+   * week; the card shows whatever the slot carries. REQUIRED, so that adding a
+   * caller is a decision about which week it is showing rather than a silent
+   * fall-through to the legacy state (see the header).
+   */
+  mode: GroupSessionMode | null;
   title?: string;
 };
 
@@ -105,6 +144,7 @@ function facilitatorLine(names: string[]): string | null {
 export default function SessionCard({
   group,
   slotStartKey,
+  mode,
   title = "This week's session",
 }: Props) {
   const occurrence = sessionWindow(group, slotStartKey);
@@ -137,6 +177,18 @@ export default function SessionCard({
 
   const facilitators = facilitatorLine(group.facilitatorNames);
 
+  // THE SWAP. `mode` decides which of the two destinations this week HAS; the
+  // stored values decide whether it can be shown. Keeping the two questions
+  // apart is what makes the fallbacks honest rather than blank.
+  const showLocation = mode !== "virtual" && Boolean(group.location);
+  const showJoin = mode !== "in-person" && Boolean(meetingUrl);
+  const missing =
+    mode === "virtual" && !meetingUrl
+      ? "Online this week — your facilitator will send the joining link."
+      : mode === "in-person" && !group.location
+        ? "In person this week — your facilitator will confirm the room."
+        : null;
+
   return (
     <Card
       as="section"
@@ -154,13 +206,25 @@ export default function SessionCard({
       </p>
 
       {when && <p className={styles.when}>{when}</p>}
-      {group.location && <p className={styles.location}>{group.location}</p>}
+      {/* The mode chip is the DISCLOSURE: a week that has swapped says so in a
+          word, so a member who remembers a room does not have to work out why
+          it has gone. Nothing is shown when no mode is set — an unswitched
+          week must read exactly as it did before. */}
+      {mode !== null && (
+        <p className={styles.mode}>
+          <Chip tone={mode === "virtual" ? "accent" : "neutral"} size="sm">
+            {mode === "virtual" ? "Online this week" : "In person this week"}
+          </Chip>
+        </p>
+      )}
+      {showLocation && <p className={styles.location}>{group.location}</p>}
+      {missing && <p className={styles.note}>{missing}</p>}
 
       {state === "held" && (
         <p className={styles.note}>This week&apos;s session has happened.</p>
       )}
 
-      {meetingUrl && (
+      {showJoin && meetingUrl && (
         // <Button> renders a real <button> and takes no href, so a navigation
         // target gets the styling rather than the component (the CourseCTA call).
         <a

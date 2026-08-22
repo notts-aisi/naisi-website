@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
-import { currentWeekFor, isValidDateKey } from "@/lib/courses/weekPlan";
+import { isValidDateKey } from "@/lib/courses/weekPlan";
+import { memberCurrentWeek, resolveCalendar } from "@/lib/courses/groupResolve";
 import {
   normalizeCourseApplication,
   type CourseApplicationStatus,
@@ -11,7 +12,10 @@ import {
   normalizeCourseEnrolment,
   type CourseEnrolmentDoc,
 } from "@/lib/firestore/courseEnrolments";
-import { normalizeCourseGroup } from "@/lib/firestore/courseGroups";
+import {
+  normalizeCourseGroup,
+  type CourseGroupDoc,
+} from "@/lib/firestore/courseGroups";
 import {
   normalizeCourseRun,
   type CourseRunDoc,
@@ -130,8 +134,15 @@ export type MyRunEntry = {
   archived: boolean;
   /**
    * Recomputed server-side on every request (there is no cron; the current
-   * week is a pure function of the run's civil dates — see weekPlan.ts). Null
-   * for a draft run or one whose `startDate` is not yet a valid civil date.
+   * week is a pure function of the caller's civil dates — see weekPlan.ts).
+   * Null for a draft run or one whose resolved `startDate` is not yet a valid
+   * civil date.
+   *
+   * V2-3: resolved GROUP-FIRST. A member whose group has set its own pacing is
+   * told where THEIR group is, not where the run is — the hub is a member's
+   * own record, and a card that says "Week 5" while their group is on week 3
+   * is simply wrong for them. Unallocated members keep the run's cadence,
+   * because `resolveCalendar(run, null)` IS the run's calendar.
    */
   currentWeek: {
     phase: "before" | "running" | "after";
@@ -141,8 +152,14 @@ export type MyRunEntry = {
     anchorWeekNumber: number;
     breakLabel: string | null;
   } | null;
-  /** Taught weeks in the plan (breaks excluded). */
+  /** Taught weeks in the caller's EFFECTIVE plan (breaks excluded). */
   totalWeeks: number;
+  /**
+   * True when the two fields above came from the caller's group's own pacing
+   * rather than the run's. The hub can then say "your group" where it would
+   * otherwise say "your cohort".
+   */
+  pacedByGroup: boolean;
   /** Only ever the caller's OWN group, and only when they are enrolled in one. */
   groupName: string | null;
 };
@@ -210,16 +227,22 @@ const STATUS_RANK: Record<CourseRunStatus, number> = {
 };
 
 /**
- * The hub's slice of `currentWeekFor` — phase, week, anchor, break label.
+ * The hub's slice of the caller's current week — phase, week, anchor, break
+ * label — resolved GROUP-FIRST through the one shared helper.
  *
- * `startDate` is validated at write time by the run normaliser, but a run can
- * legitimately be half-authored (created, no date chosen yet), and
- * `currentWeekFor` THROWS on a malformed key by design. Guarding with
- * `isValidDateKey` is what the week-maths module header asks of render paths.
+ * `startDate` is validated at write time by the run normaliser, but a run (or
+ * a group's pacing override) can legitimately be half-authored, and the week
+ * maths THROWS on a malformed key by design. Guarding with `isValidDateKey` on
+ * the RESOLVED date is what the week-maths module header asks of render paths.
  */
-function currentWeekSummary(run: CourseRunDoc): MyRunEntry["currentWeek"] {
-  if (run.status === "draft" || !isValidDateKey(run.startDate)) return null;
-  const cw = currentWeekFor({ startDate: run.startDate, weekPlan: run.weekPlan });
+function currentWeekSummary(
+  run: CourseRunDoc,
+  group: CourseGroupDoc | null,
+): MyRunEntry["currentWeek"] {
+  if (run.status === "draft" || !isValidDateKey(resolveCalendar(run, group).startDate)) {
+    return null;
+  }
+  const cw = memberCurrentWeek(run, group);
   return {
     phase: cw.phase,
     weekNumber: cw.weekNumber,
@@ -407,33 +430,45 @@ export async function GET() {
   const groupSnaps = groupIds.length
     ? await db.getAll(...groupIds.map((id) => db.collection("courseGroups").doc(id)))
     : [];
-  const groupNameById = new Map<string, string>();
+  // The whole doc, not just the name: V2-3 resolves each row's pacing through
+  // the caller's own group, and `resolveCalendar` needs the group's override
+  // fields. Still only ever the caller's OWN placements — no other member's
+  // group is read, and nothing but the name reaches the wire.
+  const groupById = new Map<string, CourseGroupDoc>();
   for (const snap of groupSnaps) {
     if (!snap.exists) continue;
-    groupNameById.set(snap.id, normalizeCourseGroup(snap.id, snap.data() ?? {}).name);
+    groupById.set(snap.id, normalizeCourseGroup(snap.id, snap.data() ?? {}));
   }
 
   const runs: MyRunEntry[] = [...merged.values()]
-    .map(({ run, roles, enrolment }) => ({
-      runId: run.id,
-      courseId: run.courseId,
-      courseTitle: run.courseTitle,
-      label: run.label,
-      academicYear: run.academicYear,
-      status: run.status,
-      roles: ROLE_ORDER.filter((role) => roles.has(role)),
-      membership: membershipFor({
-        hasLiveEnrolment: Boolean(enrolment),
-        hasEnrolmentDoc: Boolean(enrolment) || supersededOfferRunIds.has(run.id),
-        applicationStatus: applicationStatusByRun.get(run.id) ?? null,
-      }),
-      archived: run.archived,
-      currentWeek: currentWeekSummary(run),
-      totalWeeks: run.weekPlan.filter((entry) => entry.kind === "week").length,
-      groupName: enrolment?.groupId
-        ? (groupNameById.get(enrolment.groupId) ?? null)
-        : null,
-    }))
+    .map(({ run, roles, enrolment }): MyRunEntry => {
+      // Resolved ONCE per row: the pacing, the taught-week total and the
+      // "whose calendar is this?" flag all have to describe the SAME calendar,
+      // so they come from one `resolveCalendar` rather than three.
+      const group = enrolment?.groupId
+        ? (groupById.get(enrolment.groupId) ?? null)
+        : null;
+      const calendar = resolveCalendar(run, group);
+      return {
+        runId: run.id,
+        courseId: run.courseId,
+        courseTitle: run.courseTitle,
+        label: run.label,
+        academicYear: run.academicYear,
+        status: run.status,
+        roles: ROLE_ORDER.filter((role) => roles.has(role)),
+        membership: membershipFor({
+          hasLiveEnrolment: Boolean(enrolment),
+          hasEnrolmentDoc: Boolean(enrolment) || supersededOfferRunIds.has(run.id),
+          applicationStatus: applicationStatusByRun.get(run.id) ?? null,
+        }),
+        archived: run.archived,
+        currentWeek: currentWeekSummary(run, group),
+        totalWeeks: calendar.weekPlan.filter((entry) => entry.kind === "week").length,
+        pacedByGroup: calendar.source === "group",
+        groupName: group?.name ?? null,
+      };
+    })
     // A row has to be SOMETHING to be worth a card: a role to open, or a
     // membership to report. Nothing reaching this filter before offers existed
     // could fail it (every row came from an enrolment or a role array), so it

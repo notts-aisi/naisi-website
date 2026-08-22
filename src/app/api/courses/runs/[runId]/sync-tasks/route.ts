@@ -3,18 +3,22 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
   addDaysToKey,
-  currentWeekFor,
   isValidDateKey,
   londonWallClockToInstant,
 } from "@/lib/courses/weekPlan";
 import {
+  memberCurrentWeek,
+  resolveCalendar,
+  resolveWeekDoc,
+} from "@/lib/courses/groupResolve";
+import {
   courseEnrolmentId,
   normalizeCourseEnrolment,
 } from "@/lib/firestore/courseEnrolments";
+import { normalizeCourseGroup } from "@/lib/firestore/courseGroups";
 import { buildMirroredTask, courseTaskId } from "@/lib/firestore/courseTasks";
 import {
   normalizeCourseRun,
-  normalizeCourseWeek,
   weekDocId,
   type CourseRunStatus,
 } from "@/lib/firestore/courses";
@@ -97,9 +101,30 @@ import { TASK_FIELD_LIMITS } from "@/lib/firestore/tasks";
  * member poking at run ids learns nothing about which ones exist.
  *
  * SERVERS ALWAYS RECOMPUTE. This route reads no body and accepts no week
- * number; the week is derived from `(run, now)` by `currentWeekFor`. A client
- * cannot ask to have a future week materialised early, nor backfill a term's
- * worth of missed weeks — only the ANCHOR week is ever written.
+ * number; the week is derived from `(run, group, now)` by `memberCurrentWeek`.
+ * A client cannot ask to have a future week materialised early, nor backfill a
+ * term's worth of missed weeks — only the ANCHOR week is ever written.
+ *
+ * ── V2-3: THE MEMBER'S WEEK, NOT THE RUN'S ──────────────────────────────────
+ * Everything above still holds, with one substitution: the week this route
+ * mirrors is the caller's OWN — their group's pacing if it has any, and their
+ * group's forked copy of that week's content if it has one. Both resolutions
+ * go through `groupResolve.ts`, the same helper the week page and the overview
+ * use, so a mirrored card can never describe a week the member cannot open.
+ *
+ * The COST is one extra addressed read (`courseGroups/{id}`) for a member who
+ * has been placed, and none at all for one who has not — the group is read
+ * only when the enrolment carries a `groupId`. It sits on the hot path because
+ * it has to: the short-circuit compares the high-water mark against the
+ * member's anchor week, and a group pacing a fortnight behind the run has a
+ * different anchor. Comparing against the run's would re-mirror week 5 to a
+ * group still on week 3.
+ *
+ * IDEMPOTENCY IS UNCHANGED. `courseTaskId(runId, weekNumber, uid)` is already
+ * per-member, so two members of two groups on two different weeks aim at two
+ * different documents, and the high-water mark lives on the member's own
+ * enrolment. Nothing about the guarantee depends on the cohort agreeing about
+ * what week it is.
  */
 
 // ---------------------------------------------------------------------------
@@ -253,19 +278,31 @@ export async function POST(
 
     if (!MIRRORING_STATUSES.has(run.status)) return nothingToMirror();
 
-    // SERVERS ALWAYS RECOMPUTE — the week is a pure function of (run, now), and
-    // `now` is captured once so the pacing decision, the due date and the
-    // task's own timestamps all describe the same instant.
+    // THE MEMBER'S GROUP, when they have one. Addressed, never queried — the
+    // id comes off their own enrolment. A group that has been deleted out from
+    // under a placement resolves to null, which is the run's calendar: the
+    // same answer an unallocated member gets, and the only safe one.
+    const groupId = enrolment.groupId;
+    const groupSnap = groupId
+      ? await db.collection("courseGroups").doc(groupId).get()
+      : null;
+    const group =
+      groupSnap?.exists === true
+        ? normalizeCourseGroup(groupSnap.id, groupSnap.data() ?? {})
+        : null;
+
+    // SERVERS ALWAYS RECOMPUTE — the week is a pure function of
+    // (run, group, now), and `now` is captured once so the pacing decision,
+    // the due date and the task's own timestamps all describe the same instant.
     //
-    // `currentWeekFor` throws `RangeError` on a malformed start date by design,
-    // and a half-authored run (created, no start date chosen) is a legitimate
-    // state, so the guard is required rather than defensive noise.
-    if (!isValidDateKey(run.startDate)) return nothingToMirror();
+    // The week maths throws `RangeError` on a malformed start date by design,
+    // and a half-authored calendar (a run created with no start date, or a
+    // group whose facilitator has typed half a pacing override) is a legitimate
+    // state, so the guard is required rather than defensive noise — and it
+    // guards the RESOLVED date, which is the one the maths will consume.
+    if (!isValidDateKey(resolveCalendar(run, group).startDate)) return nothingToMirror();
     const now = new Date();
-    const currentWeek = currentWeekFor(
-      { startDate: run.startDate, weekPlan: run.weekPlan },
-      now,
-    );
+    const currentWeek = memberCurrentWeek(run, group, now);
 
     // ONLY THE ANCHOR WEEK MATERIALISES. `anchorWeekNumber` is the last taught
     // week that has STARTED, so a cohort mid-break stays anchored to the week
@@ -318,18 +355,18 @@ export async function POST(
     // purpose: it can drift from the display number across a copy-forward, and
     // a mirror built from a different doc than the page shows would carry
     // subtask ids the member never sees.
-    const weekSnap = await db
-      .collection("courseRuns")
-      .doc(runId)
-      .collection("weeks")
-      .doc(weekDocId(weekNumber))
-      .get();
+    //
+    // GROUP-FIRST through the one helper: if this member's group has forked
+    // that week, the mirror is built from the FORK — the same document their
+    // week page opens, so the checklist on their board matches the checklist
+    // they will tick. Ids are preserved at fork time, so a card mirrored from
+    // the canonical last week and from the fork this week keeps stable subtask
+    // ids either way.
+    const { week } = await resolveWeekDoc(db, runId, groupId, weekDocId(weekNumber));
     // An unpublished or unauthored week mirrors NOTHING — a titleless card with
     // no checklist is worse than no card, and the high-water mark is left
     // unstamped so the mirror appears on the first mount after publication.
-    if (!weekSnap.exists) return nothingToMirror();
-    const week = normalizeCourseWeek(weekSnap.id, weekSnap.data() ?? {});
-    if (!week.published) return nothingToMirror();
+    if (!week || !week.published) return nothingToMirror();
 
     // Due at the end of the CURRENT slot, 23:59 Europe/London. The slot is the
     // one the cohort is in right now rather than the anchor week's own slot:

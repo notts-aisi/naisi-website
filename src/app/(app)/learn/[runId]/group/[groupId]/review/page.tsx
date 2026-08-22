@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import ReviewQueue from "@/features/courses/ReviewQueue";
 import { getRunAccess, getSessionUser } from "@/features/courses/runAccess";
-import { currentWeekFor } from "@/lib/courses/weekPlan";
+import { memberCurrentWeek, resolveCalendar } from "@/lib/courses/groupResolve";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { normalizeCourseGroup } from "@/lib/firestore/courseGroups";
 
@@ -85,33 +85,38 @@ export default async function GroupReviewPage({
     redirect(runHome);
   }
 
-  // The run's authored weeks, in plan order. Breaks carry no week doc at all,
-  // so they are not reviewable and never appear in the selector.
-  const weeks = access.run.weekPlan.flatMap((entry) =>
+  // THIS GROUP's taught weeks, in ITS plan order — the group's own calendar
+  // where it has re-paced itself, the run's otherwise (V2-3, through the one
+  // resolver). A group that has cut a week out of its schedule must not be
+  // offered it in the picker: there is nothing to review there, because its
+  // members were never asked. Breaks carry no week doc at all, so they are not
+  // reviewable and never appear either.
+  const calendar = resolveCalendar(access.run, group);
+  const weeks = calendar.weekPlan.flatMap((entry) =>
     entry.kind === "week" ? [entry.weekNumber] : [],
   );
 
   /**
-   * Open on the cohort's week — the one a facilitator is almost always here
-   * about. During a break that is the anchor (the last taught week), which is
-   * exactly where the outstanding work lives.
+   * Open on THE GROUP's week — the one a facilitator is almost always here
+   * about, and for a re-paced group that is emphatically not the run's. During
+   * a break that is the anchor (the last taught week), which is exactly where
+   * the outstanding work lives.
    *
-   * `currentWeekFor` throws `RangeError` on a run with no usable start date,
-   * which is a legitimate half-authored state rather than an error: fall back
-   * to the first authored week. The try wraps ONLY that call — `redirect()`
-   * signals by throwing, so it must never sit inside a catch.
+   * `memberCurrentWeek` inherits `currentWeekFor`'s `RangeError` contract on a
+   * calendar with no usable start date, which is a legitimate half-authored
+   * state rather than an error: fall back to the first authored week. The try
+   * wraps ONLY that call — `redirect()` signals by throwing, so it must never
+   * sit inside a catch.
    */
   let initialWeek = weeks[0] ?? 1;
-  if (access.run.startDate) {
-    try {
-      const current = currentWeekFor(access.run);
-      const target =
-        current.weekNumber ??
-        (current.anchorWeekNumber > 0 ? current.anchorWeekNumber : null);
-      if (target !== null && weeks.includes(target)) initialWeek = target;
-    } catch {
-      // Unusable start date — the first authored week stands.
-    }
+  try {
+    const current = memberCurrentWeek(access.run, group);
+    const target =
+      current.weekNumber ??
+      (current.anchorWeekNumber > 0 ? current.anchorWeekNumber : null);
+    if (target !== null && weeks.includes(target)) initialWeek = target;
+  } catch {
+    // Unusable start date — the first authored week stands.
   }
 
   const eyebrow = [access.run.courseTitle, access.run.label].filter(Boolean).join(" · ");

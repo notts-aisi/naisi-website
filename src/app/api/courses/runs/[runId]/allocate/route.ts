@@ -2,14 +2,18 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
-import { currentWeekFor, isValidDateKey } from "@/lib/courses/weekPlan";
+import { isValidDateKey } from "@/lib/courses/weekPlan";
+import { memberCurrentWeek, resolveCalendar } from "@/lib/courses/groupResolve";
 import { courseApplicationId } from "@/lib/firestore/courseApplications";
 import {
   courseEnrolmentId,
   normalizeCourseEnrolment,
 } from "@/lib/firestore/courseEnrolments";
-import { normalizeCourseGroup } from "@/lib/firestore/courseGroups";
-import { normalizeCourseRun } from "@/lib/firestore/courses";
+import {
+  normalizeCourseGroup,
+  type CourseGroupDoc,
+} from "@/lib/firestore/courseGroups";
+import { normalizeCourseRun, type CourseRunDoc } from "@/lib/firestore/courses";
 
 /**
  * Place accepted applicants into groups — the write half of the allocation
@@ -81,6 +85,38 @@ function dedupeByUid(placements: Placement[]): Placement[] {
   return [...byUid.values()];
 }
 
+/**
+ * The cohort week a fresh enrolment joins at — ON THE TARGET GROUP'S CLOCK.
+ *
+ * `anchorWeekNumber` is the last taught week that has started (0 before the
+ * run — clamped to week 1 so pre-term allocation, the normal case, anchors
+ * everyone to the beginning). A run or group with no usable start date also
+ * anchors to week 1 rather than throwing: `memberCurrentWeek` inherits
+ * `currentWeekFor`'s `RangeError` contract, so the RESOLVED start date is what
+ * has to be guarded, not the run's.
+ *
+ * ── WHY IT IS PER PLACEMENT AND NOT PER REQUEST (V2-3) ──────────────────────
+ * This was one value hoisted out of the loop, computed from the RUN's calendar
+ * for everybody in the request. Groups pace themselves now, so that stamped a
+ * number from a clock the member does not live on: allocate someone mid-run
+ * into a group paced three weeks BEHIND and they join at the run's week 5
+ * while their group is on week 3. `joinedWeekNumber` is a floor, and the
+ * attendance route enforces it — so weeks 3 and 4, the weeks their group is
+ * actually about to sit through, come back "hadn't joined the group in week
+ * 3", the grid renders those cells inert, and `ProgressBody` leaves them out
+ * of the member's own total. The group doc is already read inside the
+ * transaction for the capacity check, so resolving through it costs nothing.
+ *
+ * `group === null` (un-placing) resolves the run canonical, which is exactly
+ * what an ungrouped member is paced by.
+ */
+function joinedWeekFor(run: CourseRunDoc, group: CourseGroupDoc | null): number {
+  const calendar = resolveCalendar(run, group);
+  return isValidDateKey(calendar.startDate)
+    ? Math.max(1, memberCurrentWeek(run, group).anchorWeekNumber)
+    : 1;
+}
+
 export async function POST(req: Request, ctx: Ctx) {
   const { runId } = await ctx.params;
 
@@ -123,14 +159,6 @@ export async function POST(req: Request, ctx: Ctx) {
   if (!isAdmin && !isTrackLead) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-
-  // The cohort week a fresh enrolment joins at. `anchorWeekNumber` is the
-  // last taught week that has started (0 before the run — clamp to week 1 so
-  // pre-term allocation, the normal case, anchors everyone to the beginning).
-  // A draft run with no start date yet also anchors to week 1.
-  const joinedWeekNumber = isValidDateKey(run.startDate)
-    ? Math.max(1, currentWeekFor(run).anchorWeekNumber)
-    : 1;
 
   let placed = 0;
   const rejected: Rejection[] = [];
@@ -234,16 +262,23 @@ export async function POST(req: Request, ctx: Ctx) {
             continue;
           }
 
-          if (groupId) {
-            const groupSnap = groupById.get(groupId);
-            const group = groupSnap?.exists
-              ? normalizeCourseGroup(groupSnap.id, groupSnap.data() ?? {})
+          // Normalised ONCE per placement and reused by every decision below
+          // that needs the group — existence, archived, capacity, and the
+          // member's own joining week. It used to be normalised twice and the
+          // joining week not at all, which is how the run's clock ended up
+          // stamped on a member of a group that runs on its own.
+          const targetGroupSnap = groupId ? groupById.get(groupId) : undefined;
+          const targetGroup =
+            targetGroupSnap && targetGroupSnap.exists
+              ? normalizeCourseGroup(targetGroupSnap.id, targetGroupSnap.data() ?? {})
               : null;
-            if (!group || group.runId !== runId) {
+
+          if (groupId) {
+            if (!targetGroup || targetGroup.runId !== runId) {
               chunkRejected.push({ uid, reason: "group-not-found" });
               continue;
             }
-            if (group.archived) {
+            if (targetGroup.archived) {
               chunkRejected.push({ uid, reason: "group-archived" });
               continue;
             }
@@ -279,14 +314,13 @@ export async function POST(req: Request, ctx: Ctx) {
           // within capacity. The board surfaces a "group-full" rejection;
           // admins raise the cap in the group editor if the group really
           // should take more.
-          if (groupId) {
-            const group = normalizeCourseGroup(
-              groupId,
-              groupById.get(groupId)?.data() ?? {},
-            );
+          if (groupId && targetGroup) {
             // A same-group reactivation adds a seat too, so it is checked the
             // same as any other placement.
-            if (group.capacity !== null && effectiveCount(groupId) >= group.capacity) {
+            if (
+              targetGroup.capacity !== null &&
+              effectiveCount(groupId) >= targetGroup.capacity
+            ) {
               chunkRejected.push({ uid, reason: "group-full" });
               continue;
             }
@@ -309,7 +343,8 @@ export async function POST(req: Request, ctx: Ctx) {
               status: "active",
               role: "learner",
               applicationId: courseApplicationId(runId, uid),
-              joinedWeekNumber,
+              // THEIR group's clock, not the run's — see `joinedWeekFor`.
+              joinedWeekNumber: joinedWeekFor(run, targetGroup),
               createdAt: FieldValue.serverTimestamp(),
               updatedAt: FieldValue.serverTimestamp(),
             });
