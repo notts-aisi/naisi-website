@@ -14,13 +14,36 @@ import {
  * Copy-forward: clone one run's `weeks` subcollection into another run of the
  * SAME course.
  *
- * There is deliberately no curriculum template collection. A course's most
- * recent run IS the master copy, so "run it again next year" means: create the
- * new run, copy last year's weeks into it, edit what changed. A template
- * collection would add a third place curriculum can live and a fourth way for
- * the three to disagree.
+ * ## Where this sits now (updated in V2-2 — the old rule here was abandoned)
  *
- * Two properties make this safe to press twice:
+ * This comment used to argue that there was deliberately NO curriculum
+ * template collection, and that a course's most recent run WAS the master
+ * copy. That is no longer the design and must not be read as guidance:
+ * `courseTemplates` exists (v2 decision 2) as append-only frozen SNAPSHOTS —
+ * a saved iteration is what a finished cohort was actually taught, and it
+ * cannot be edited afterwards, which is exactly the property a live run
+ * cannot offer. `POST /api/courses/runs/[runId]/apply-template` is the
+ * template-shaped counterpart of this route.
+ *
+ * Copy-forward SURVIVES alongside it, deliberately, because the two answer
+ * different questions:
+ *
+ *  - a TEMPLATE answers "start next year from the version we agreed was
+ *    finished", and carries its retrospective evidence with it;
+ *  - THIS ROUTE answers "start from what that other delivery has right now",
+ *    which is what an author wants mid-term, between snapshots, or when the
+ *    run worth copying was never frozen.
+ *
+ * The old objection — a third place curriculum can live — is answered by
+ * making every copy go through ONE id-preserving shape
+ * (`templateWeekFields()`, which both directions of the snapshot copy and the
+ * apply route also use) rather than by refusing to have a second place. Note
+ * the one real difference in behaviour: `apply-template` REMOVES target weeks
+ * its snapshot has no counterpart for, and refuses outright while any member
+ * work exists on the run; this route only skips or overwrites and has no such
+ * gate. A caller choosing between them is choosing between those guarantees.
+ *
+ * Two properties make this route safe to press twice:
  *
  *  - **Id-preserving.** Week doc ids ("w01".."w60") are copied verbatim, and so
  *    is every `material.id` / `exercise.id` / `checklist.id` inside them.

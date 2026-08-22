@@ -9,9 +9,9 @@
  * pressing something else. `accountDeletion.ts` earned its paragraphs the hard
  * way — an ordering rationale, a drained-throw guard, a step SKIPPED OUTRIGHT
  * when its predecessor fails — and none of it was executable. This cascade is
- * bigger (ten collections, a shared document budget, a resume cursor living on
- * the doomed document itself) and it is driven by an ADMIN reading numbers on a
- * screen. So the parts that can be pinned without a database are pinned here:
+ * bigger (eleven collections, a shared document budget, a resume cursor living
+ * on the doomed document itself) and it is driven by an ADMIN reading numbers on
+ * a screen. So the parts that can be pinned without a database are pinned here:
  *
  *  - manifest count assembly — the numbers read immediately before the point
  *    of no return, and the fates that say which of them actually die;
@@ -255,6 +255,11 @@ const RUN_COUNT_KEYS = [
   "progress",
   "exerciseResponses",
   "attendanceRegisters",
+  // `courseMaterialNotes` — the facilitators' written assessment of this run's
+  // curriculum (V2-2). Added to the manifest in the same change that gave the
+  // cascade a stage for it: before that the rows outlived the run they
+  // described and the dialog never mentioned them.
+  "materialNotes",
   "mirroredTasks",
   "subscriptionRows",
   "emailSendRows",
@@ -305,10 +310,12 @@ test("GUARD — the survivors are not counted as deaths, and the arithmetic foll
   const counts = Object.fromEntries(
     [...RUN_COUNT_KEYS, ...COURSE_COUNT_KEYS].map((k) => [k, 10]),
   );
-  assert.equal(sumCounts(counts), 120);
+  // Twelve counters at ten rows each: ten run counters that die, `materialNotes`
+  // among them, plus the two survivors.
+  assert.equal(sumCounts(counts), 130);
   // The progress denominator counts only what actually dies, so a large
   // retained counter cannot inflate it into a bar that never fills.
-  assert.equal(destroyedTotal(counts), 100);
+  assert.equal(destroyedTotal(counts), 110);
 });
 
 test("MODEL — every key the cascade can report has copy, including the ones the manifest never shows", () => {
@@ -454,6 +461,11 @@ test("MODEL — the cascade's declared stage order is the one the contract needs
     "progress",
     "exerciseResponses",
     "attendanceRegisters",
+    // A run-keyed leaf like the three above it, so it drains with them rather
+    // than after the enrolments. Unlike courseProgress it has no client write
+    // gate to shut (rules deny every client write to courseMaterialNotes), so
+    // its position here is consistency, not necessity.
+    "materialNotes",
     "enrolments",
     "applications",
     "mirroredTasks",
@@ -483,11 +495,16 @@ test("MODEL — leaf before index: every dependent stage precedes the one that n
   }
 
   // 2. The STRUCTURAL CONTAINERS go after everything that referenced them.
+  //    `materialNotes` is in this list rather than the write-gate one above:
+  //    nothing gates its writes (rules deny every client write), but every
+  //    note names a `material.id` that lives INSIDE a week document, so it
+  //    must go before the weeks that define what it is talking about.
   for (const container of ["groups", "weeks"]) {
     for (const dependent of [
       "progress",
       "exerciseResponses",
       "attendanceRegisters",
+      "materialNotes",
       "enrolments",
       "applications",
       "mirroredTasks",

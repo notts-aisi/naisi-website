@@ -1,0 +1,338 @@
+/* ============================================================
+   TemplatePicker — the nested curriculum-source picker, and the
+   two surfaces that hang off it.
+
+   THIS MODULE IS SHARED, deliberately:
+     - TemplatePicker.tsx     the disclosure list itself
+     - SaveTemplateDialog.tsx the save-a-snapshot dialog
+     - RunEditor.tsx          the template section it mounts them in
+
+   The run editor's own module belongs to another surface's owner,
+   so the classes the template section needs (`.outcome`,
+   `.dialog*`, `.stack`) live here instead of being bolted onto it.
+   They are grouped under their own heading below and are the only
+   classes another file may reach for.
+
+   Layout intent: a quiet stack of families that opens into dense,
+   scannable version rows. Nothing here is a card — the picker sits
+   INSIDE a Card already, and a second border would read as a
+   nested panel rather than a list.
+   ============================================================ */
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* === Family === */
+
+.group {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.groupSummary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  /* The 44px touch floor, met on every viewport rather than only in the mobile
+     block: this is the control that reveals everything else on the surface. */
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-quick) var(--ease-naisi);
+}
+
+.groupSummary:hover {
+  background: var(--color-surface-hover);
+}
+
+.groupSummary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.groupSummaryOpen {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.chevron {
+  display: inline-flex;
+  flex: none;
+  width: 1rem;
+  justify-content: center;
+  color: var(--color-text-subtle);
+  transition: transform var(--dur-quick) var(--ease-naisi);
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.groupTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.groupCount {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.groupPanel {
+  /* The Accordion owns the collapse; this only paints the opened well. */
+  background: var(--color-bg-elevated);
+}
+
+/* === Version rows === */
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.rowItem {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  /* Ring via inset shadow, never a border: a selected row must not be 2px
+     taller than its neighbours. */
+  box-shadow: inset 0 0 0 1px transparent;
+  transition:
+    background var(--dur-quick) var(--ease-naisi),
+    box-shadow var(--dur-quick) var(--ease-naisi);
+}
+
+.row:hover {
+  background: var(--color-surface-hover);
+}
+
+.rowSelected {
+  background: var(--color-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+/* Focus lands on the hidden radio; the ring is painted on its label so the
+   keyboard user sees the row, not a 1px dot. */
+.row:focus-within {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Visually hidden, still focusable and still announced — the SegmentedControl
+   technique. `appearance: none` rather than `display: none`, which would take
+   it out of the tab order and out of the accessibility tree. */
+.radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  appearance: none;
+}
+
+.rowBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rowLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.rowMeta {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.rowAction {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
+.emptyHint {
+  margin: 0;
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+/* ============================================================
+   Shared with SaveTemplateDialog + the run editor's template
+   section. See the module header for why they live here.
+   ============================================================ */
+
+/** Vertical rhythm for a block of prose + control + outcome. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/**
+ * The result of a copy, kept on screen after the toast has gone. The refused
+ * variant is danger-toned on purpose: the server changed nothing, and that is
+ * a fact the reader has to be able to come back to.
+ */
+.outcome {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-left-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--color-text);
+}
+
+.outcomeRefused {
+  border-color: var(--color-danger);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+/* Provenance line: which snapshot this run's weeks came from. */
+.provenance {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* === Dialogs (save a template, confirm a delete) === */
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.dialogTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.dialogBody {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+}
+
+/* The "what this actually does" note under the label field. Bordered rather
+   than muted-italic: it is the sentence that explains why ids matter, and it
+   has to survive being skimmed. */
+.dialogNote {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-left: 2px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+}
+
+.dialogError {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* === Reduced motion ===
+   The Accordion handles its own panel. What is left here is the chevron and
+   the two hover/selection tints — all of them state changes rather than
+   ambient movement, so they go instant rather than disappearing. */
+@media (prefers-reduced-motion: reduce) {
+  .groupSummary,
+  .chevron,
+  .row {
+    transition: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .rows {
+    padding: var(--space-1);
+  }
+
+  /* Stack the action under the row rather than squeezing a 44px button in
+     beside a wrapping label. */
+  .rowItem {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .rowAction {
+    justify-content: flex-end;
+    padding: 0 var(--space-3) var(--space-2);
+  }
+
+  .dialogActions {
+    flex-direction: column-reverse;
+  }
+
+  /* Full-width stacked buttons: the reversed column puts the primary action
+     at the bottom, where the thumb is. */
+  .dialogActions > * {
+    width: 100%;
+  }
+}
