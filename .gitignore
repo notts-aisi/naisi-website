@@ -68,3 +68,8 @@ src/app/(public)/HeroField*.tsx
 !src/app/(public)/HeroFieldImpulses.tsx
 !src/app/(public)/HeroFieldParticles.tsx
 !src/app/(public)/HeroFieldTfStyle.tsx
+
+# Claude Code local config. Scoped to the personal file rather than the whole
+# .claude/ directory so a shared .claude/settings.json stays possible later.
+# Claude's memory lives in ~/.claude/, outside this working tree entirely.
+.claude/settings.local.json
