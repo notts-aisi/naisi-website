@@ -3,6 +3,7 @@
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
+import { useHistoryDismiss } from "@/hooks/useHistoryDismiss";
 import styles from "./Modal.module.css";
 
 const subscribe = () => () => {};
@@ -45,6 +46,11 @@ export default function Modal({ open, onClose, ariaLabel, children, width = "md"
   const isClient = useSyncExternalStore(subscribe, getClientSnapshot, getServerSnapshot);
 
   useBodyScrollLock(open);
+
+  // Back gesture to close. Unconditional, matching the focus trap: a modal
+  // that traps Tab should also swallow Back rather than let it navigate the
+  // page out from under a half-filled form.
+  useHistoryDismiss(open, onClose);
 
   // Esc to close, plus the Tab/Shift-Tab loop. Bound to the window rather than
   // the panel so a Tab pressed while focus has drifted outside still lands

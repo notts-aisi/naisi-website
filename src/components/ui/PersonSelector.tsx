@@ -9,6 +9,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { maxWidth } from "@/theme/breakpoints";
+import { useHistoryDismiss } from "@/hooks/useHistoryDismiss";
 import type { UserDoc } from "@/lib/firestore/users";
 import styles from "./PersonSelector.module.css";
 
@@ -168,6 +169,12 @@ export default function PersonSelector({
     () => false,
   );
   const [expanded, setExpanded] = useState(false);
+
+  // Back gesture closes the bottom sheet. Gated on isMobile for the same
+  // reason as Dropdown: the desktop render is inline in the form, not an
+  // overlay, so there is nothing for Back to dismiss.
+  const collapseSheet = useCallback(() => setExpanded(false), []);
+  useHistoryDismiss(isMobile && expanded, collapseSheet);
 
   // Body scroll-lock while the mobile sheet is open. Same pattern as
   // Drawer.tsx — the cleanup restores the previous overflow value so we

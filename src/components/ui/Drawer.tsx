@@ -3,6 +3,7 @@
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
+import { useHistoryDismiss } from "@/hooks/useHistoryDismiss";
 import styles from "./Drawer.module.css";
 
 const subscribe = () => () => {};
@@ -49,6 +50,11 @@ export default function Drawer({
   const isClient = useSyncExternalStore(subscribe, getClientSnapshot, getServerSnapshot);
 
   useBodyScrollLock(open);
+
+  // Back gesture to close. Unconditional: a drawer is screen-occupying at
+  // every width it appears at, and in an installed app the back gesture is
+  // the primary way people expect to dismiss it.
+  useHistoryDismiss(open, onClose);
 
   // Esc to close.
   useEffect(() => {
