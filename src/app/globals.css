@@ -18,7 +18,11 @@ body {
    * edge stop in heroOptionBg.ts) so cold-load + cross-layout transitions
    * don't flash between two different darks. Card/surface tokens still
    * use --color-bg (a touch lighter), giving them subtle elevation
-   * against this page floor. */
+   * against this page floor.
+   *
+   * Mirrored as PAGE_FLOOR in src/theme/brandColors.ts, which the web app
+   * manifest (background_color + theme_color) and the <meta name="theme-color">
+   * tag both read. Keep the two in sync. */
   background: #050810;
   color: var(--color-text);
   -webkit-font-smoothing: antialiased;
