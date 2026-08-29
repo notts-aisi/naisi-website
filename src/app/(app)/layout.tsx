@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getCurrentCollaborator, getCurrentUser } from "@/lib/firebase/session";
 import { getImpersonator } from "@/lib/firebase/impersonation";
 import AppShell from "@/layout/AppShell";
+import { SessionSanityGuard } from "@/auth/SessionSanityGuard";
 
 export default async function AuthedLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
@@ -32,5 +33,17 @@ export default async function AuthedLayout({ children }: { children: React.React
         }
       : null;
 
-  return <AppShell impersonation={impersonation}>{children}</AppShell>;
+  return (
+    <>
+      {/*
+        Reaching this layout proves getCurrentUser() accepted the session
+        cookie. The guard watches for the client half being absent anyway and
+        repairs it. Mounted as a SIBLING of AppShell rather than a child so it
+        still runs while the shell is showing its loading skeleton, which is
+        exactly the state a stale session gets stuck in.
+      */}
+      <SessionSanityGuard />
+      <AppShell impersonation={impersonation}>{children}</AppShell>
+    </>
+  );
 }
