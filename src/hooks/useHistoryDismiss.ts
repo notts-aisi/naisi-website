@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 /**
  * Makes the system back gesture close an overlay instead of navigating away.
@@ -10,61 +10,48 @@ import { useEffect, useRef } from "react";
  * merely inconvenient on a phone. In an installed home-screen app there is no
  * browser chrome at all, and the Android back gesture (and the iOS left-edge
  * swipe) becomes the primary "close this" gesture. Without a history entry to
- * pop, that gesture navigates the page away instead, which on TaskDetailModal,
+ * pop, that gesture navigates the page away, which on TaskDetailModal,
  * EventEditor and the newsletter block editor means losing unsaved work.
  *
  * The mechanism: while the overlay is open we push one history entry carrying
- * a marker. Back pops it, we see our marker is gone, and we close. A close
- * that happens any other way (Escape, the scrim, picking an option) unwinds
- * that entry so the user's next Back still goes where they expect.
+ * a marker. Back pops it, we see our marker is gone, and we close.
  *
- * Four things this has to get right, all of which are easy to miss:
+ * DIRECTION OF CONTROL, learned the hard way: user-initiated dismissals
+ * (Escape, the scrim, a sheet's close button) must go THROUGH history via the
+ * returned `dismiss`, which calls history.back() and lets the popstate close
+ * the overlay. The hook must NEVER call history.back() itself when `active`
+ * flips false, because it cannot tell a user dismissal from a close caused by
+ * NAVIGATION: the drawer's nav links close the drawer and push a route in the
+ * same tap, Next's pushState has not landed when the effect runs, and an
+ * unwind fired there pops the in-flight navigation. Shipped briefly, the
+ * symptom was "drawer closes but the page never changes".
  *
- * 1. NESTING. A Dropdown inside a Modal inside a Drawer is reachable here, so
- *    the marker is a STACK of ids rather than a single value. Back closes only
- *    the topmost: each instance acts only when its own id has left the stack.
+ * Consequences of that rule, both deliberate:
+ *   - A close that bypasses `dismiss` (a parent flipping `open` during
+ *     navigation, an option-select a consumer has not routed through
+ *     `dismiss`) leaves the marker entry in history. It is inert (no listener
+ *     once inactive) and costs one silent Back press later. Strictly better
+ *     than eating a navigation.
+ *   - `dismiss` falls back to a plain onClose when the marker is not the top
+ *     of the stack (a lower overlay closed while a higher one is open) or was
+ *     never pushed (desktop popover mode). Consumers can therefore call it
+ *     unconditionally as their only close path.
  *
- * 2. NEXT'S ROUTER STATE. window.history.state carries the App Router's tree.
- *    Pushing a bare object would strip it and break client navigation from an
- *    open overlay, so the previous state is always spread through.
+ * Also load-bearing:
+ *   - NESTING: the marker is a stack of ids; each instance acts only when its
+ *     own id has left the stack, so Back closes the topmost overlay only.
+ *   - NEXT'S ROUTER STATE: window.history.state carries the App Router tree,
+ *     so the previous state is spread through, never replaced.
+ *   - STRICT MODE: the pushed id lives in a ref and is created once per open,
+ *     so the development double-invoke does not stack two entries.
  *
- * 3. REACT STRICT MODE. Effects double-invoke in development. Pushing on every
- *    invocation would stack two entries per open and need two Backs to close.
- *    The pushed id lives in a ref and is only created once per open, so the
- *    second invocation re-attaches the listener without pushing again.
- *
- * 4. NOT UNWINDING IN CLEANUP. The unwind runs in the effect body of the
- *    inactive pass, not in the cleanup of the active one. Cleanup cannot tell
- *    a genuine close from Strict Mode's simulated remount, and calling
- *    history.back() during a remount pops an entry that is about to be pushed
- *    again, which closes the overlay the instant it opens.
- *
- * KNOWN WART, in two shapes, both costing one extra Back press and neither
- * worth the complexity of fixing:
- *
- *   - Navigating while an overlay is open (tapping a link in the nav drawer)
- *     strands our entry behind the new route. Next's pushState replaces the
- *     state object, so our marker is no longer current and we correctly
- *     decline to unwind it. Fixing it properly would mean every consumer
- *     closing its overlay before navigating.
- *   - Unmounting while open. Modal's docblock invites callers to
- *     conditionally render it rather than flip `open`, so this is reachable.
- *     Unwinding from an unmount cleanup is not safe, because Strict Mode's
- *     simulated remount is indistinguishable from a real unmount and the
- *     resulting back() would pop the entry the remount just pushed, closing
- *     the overlay the instant it opens. Prefer toggling `active` over
- *     unmounting where you have the choice.
- *
- * Both are strictly better than the alternative, which is Back discarding
- * whatever the overlay was holding.
- *
- * @param active whether the overlay is open AND is screen-occupying. Pass a
- *   narrowed value for components that are only app-shaped at some widths:
- *   Dropdown and PersonSelector should pass `open && isSheet`, because a
- *   desktop popover is not something Back should close.
- * @param onClose the same close handler Escape and the scrim call.
+ * @param active whether the overlay is open AND screen-occupying. Components
+ *   that are only app-shaped at some widths pass a narrowed value: Dropdown
+ *   and PersonSelector pass `open && isSheet`.
+ * @param onClose the close handler.
+ * @returns dismiss: THE function user-dismissal paths must call.
  */
-export function useHistoryDismiss(active: boolean, onClose: () => void) {
+export function useHistoryDismiss(active: boolean, onClose: () => void): () => void {
   const pushedId = useRef<number | null>(null);
   // Kept in a ref so a consumer passing an inline arrow does not detach and
   // re-attach the popstate listener on every render.
@@ -77,14 +64,10 @@ export function useHistoryDismiss(active: boolean, onClose: () => void) {
     if (typeof window === "undefined") return;
 
     if (!active) {
-      // Closed some way other than Back (Escape, scrim, picking an option).
-      // Drop our entry so the user's next Back goes somewhere real rather
-      // than silently unwinding a stale overlay entry.
-      const id = pushedId.current;
+      // Forget the entry but leave history alone; see the docblock for why
+      // unwinding here is unsafe. The stale entry, if any, has no listener
+      // and pops silently.
       pushedId.current = null;
-      if (id !== null && currentStack().includes(id)) {
-        window.history.back();
-      }
       return;
     }
 
@@ -102,7 +85,6 @@ export function useHistoryDismiss(active: boolean, onClose: () => void) {
       if (id === null) return;
       // Still in the stack means something above us was popped, not us.
       if (currentStack().includes(id)) return;
-      // Our entry is already gone, so there is nothing left to unwind.
       pushedId.current = null;
       onCloseRef.current();
     };
@@ -110,6 +92,19 @@ export function useHistoryDismiss(active: boolean, onClose: () => void) {
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, [active]);
+
+  return useCallback(() => {
+    const id = pushedId.current;
+    const stack = typeof window === "undefined" ? [] : currentStack();
+    if (id !== null && stack.length > 0 && stack[stack.length - 1] === id) {
+      // Our entry is on top: pop it, and the popstate handler above closes
+      // the overlay. One history action, one close, nothing stale.
+      window.history.back();
+    } else {
+      // Not in history (desktop popover mode), or not on top: close directly.
+      onCloseRef.current();
+    }
+  }, []);
 }
 
 const STACK_KEY = "__naisiOverlays";

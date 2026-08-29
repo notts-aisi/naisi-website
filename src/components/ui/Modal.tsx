@@ -49,8 +49,9 @@ export default function Modal({ open, onClose, ariaLabel, children, width = "md"
 
   // Back gesture to close. Unconditional, matching the focus trap: a modal
   // that traps Tab should also swallow Back rather than let it navigate the
-  // page out from under a half-filled form.
-  useHistoryDismiss(open, onClose);
+  // page out from under a half-filled form. Escape and the scrim close
+  // through dismiss so the history entry unwinds with them.
+  const dismiss = useHistoryDismiss(open, onClose);
 
   // Esc to close, plus the Tab/Shift-Tab loop. Bound to the window rather than
   // the panel so a Tab pressed while focus has drifted outside still lands
@@ -59,7 +60,7 @@ export default function Modal({ open, onClose, ariaLabel, children, width = "md"
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        dismiss();
         return;
       }
       if (e.key !== "Tab") return;
@@ -94,7 +95,7 @@ export default function Modal({ open, onClose, ariaLabel, children, width = "md"
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, dismiss]);
 
   // Focus the first interactive child on open (the panel itself if the dialog
   // is pure content); restore the previously focused element on close.
@@ -113,7 +114,7 @@ export default function Modal({ open, onClose, ariaLabel, children, width = "md"
 
   return createPortal(
     <div className={styles.root} aria-hidden={!open} inert={!open}>
-      <div className={`${styles.scrim} ${open ? styles.scrimOpen : ""}`} onClick={onClose} />
+      <div className={`${styles.scrim} ${open ? styles.scrimOpen : ""}`} onClick={dismiss} />
       <div
         ref={panelRef}
         role="dialog"

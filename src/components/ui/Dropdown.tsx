@@ -128,7 +128,18 @@ export default function Dropdown<T extends string = string>({
    * only exists on touch, where there is no visible focus ring to return.
    */
   const closeSheet = useCallback(() => setOpen(false), []);
-  useHistoryDismiss(open && isSheet, closeSheet);
+  const dismissSheet = useHistoryDismiss(open && isSheet, closeSheet);
+
+  /*
+   * The close every user-facing path funnels through. Sheet mode unwinds the
+   * history entry (via dismiss, so Back and Escape stay in sync); popover
+   * mode closes directly. The popover-only auto-closes (outside pointerdown,
+   * scroll, resize) bypass this on purpose: they only run when !isSheet.
+   */
+  const closeMenu = useCallback(() => {
+    if (isSheet) dismissSheet();
+    else setOpen(false);
+  }, [isSheet, dismissSheet]);
 
   const [activeValue, setActiveValue] = useState<T>(value);
   const [position, setPosition] = useState({
@@ -221,10 +232,10 @@ export default function Dropdown<T extends string = string>({
     const target = options.find((o) => o.value === activeValue);
     if (!target || target.disabled) return;
     if (target.value !== value) onChange(target.value);
-    setOpen(false);
+    closeMenu();
     // Restore focus to the trigger after selection.
     triggerRef.current?.focus();
-  }, [activeValue, onChange, options, value]);
+  }, [activeValue, onChange, options, value, closeMenu]);
 
   const handleKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLButtonElement>) => {
@@ -244,7 +255,7 @@ export default function Dropdown<T extends string = string>({
       // Menu open.
       if (e.key === "Escape") {
         e.preventDefault();
-        setOpen(false);
+        closeMenu();
         triggerRef.current?.focus();
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -313,7 +324,7 @@ export default function Dropdown<T extends string = string>({
           e.stopPropagation();
           if (opt.disabled) return;
           if (opt.value !== value) onChange(opt.value);
-          setOpen(false);
+          closeMenu();
           triggerRef.current?.focus();
         }}
         onMouseEnter={() => {
@@ -387,7 +398,7 @@ export default function Dropdown<T extends string = string>({
                   // mounted) and fires THIS handler, instead of
                   // re-targeting to the trigger underneath.
                   e.stopPropagation();
-                  setOpen(false);
+                  dismissSheet();
                 }}
               />
               <div
@@ -405,7 +416,7 @@ export default function Dropdown<T extends string = string>({
                   className={styles.sheetCancel}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setOpen(false);
+                    dismissSheet();
                     triggerRef.current?.focus();
                   }}
                 >
