@@ -40,6 +40,8 @@ Rules that keep it working, all encoded in the code and worth not re-learning:
 - Every profile visit re-syncs the existing subscription to the server. Safari iOS never fires `pushsubscriptionchange`, so server-side 404/410 pruning plus client re-assertion is the entire liveness story.
 - Never `unsubscribe()` on sign-out: Safari will not re-permit a subscribe without a fresh gesture, and the subscription belongs to the device, not the session.
 
+Provisioned on both projects 2026-08-29; the yaml block below is live. Kept as the runbook for any future secret.
+
 **The feature is dormant until VAPID keys are provisioned.** The routes return 503 and the profile card renders nothing. Local dev reads the keypair from `.env.local`.
 
 ### Provisioning a backend (dev shown; prod identically at promotion time)
@@ -48,12 +50,12 @@ The dev keypair lives in `.env.local` so localhost and dev.naisi.uk share one pa
 
 ```
 firebase apphosting:secrets:set NEXT_PUBLIC_VAPID_PUBLIC_KEY --project default
-firebase apphosting:secrets:grantaccess NEXT_PUBLIC_VAPID_PUBLIC_KEY --backend naisi-website --project default
+firebase apphosting:secrets:grantaccess NEXT_PUBLIC_VAPID_PUBLIC_KEY --backend naisi --project default
 firebase apphosting:secrets:set VAPID_PRIVATE_KEY --project default
-firebase apphosting:secrets:grantaccess VAPID_PRIVATE_KEY --backend naisi-website --project default
+firebase apphosting:secrets:grantaccess VAPID_PRIVATE_KEY --backend naisi --project default
 ```
 
-(`--project dev` for the dev backend.) Then add to `apphosting.yaml` — ONLY after the secrets exist on BOTH projects, because a referenced secret that does not exist fails the next rollout:
+(`--project dev --backend naisi-website` for the dev backend: the backend IDs differ per project, `naisi` on prod and `naisi-website` on dev.) Then add to `apphosting.yaml` — ONLY after the secrets exist on BOTH projects, because a referenced secret that does not exist fails the next rollout:
 
 ```yaml
   - variable: NEXT_PUBLIC_VAPID_PUBLIC_KEY
