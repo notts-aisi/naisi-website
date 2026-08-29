@@ -45,7 +45,7 @@
  * scripts/pwa/sw-kill.js as public/sw.js. See docs/pwa.md.
  */
 
-const SW_VERSION = "v1";
+const SW_VERSION = "v2";
 const CACHE_NAME = `naisi-${SW_VERSION}`;
 const OFFLINE_URL = "/offline.html";
 
@@ -137,13 +137,18 @@ self.addEventListener("push", (event) => {
   } catch {
     payload = { body: event.data ? event.data.text() : "" };
   }
-  const title = payload.title || "NAISI";
+  // The server sends the Declarative Web Push envelope (web_push: 8030 with
+  // a `notification` member; see src/lib/push/send.ts). Safari 18.4+ renders
+  // that WITHOUT waking this handler; Chromium and Firefox land here, so the
+  // envelope's fields are read first with the bare legacy shape as fallback.
+  const n = payload.notification || payload;
+  const title = n.title || "NAISI";
   event.waitUntil(
     self.registration.showNotification(title, {
-      body: payload.body || "",
+      body: n.body || "",
       icon: "/icons/icon-192.png",
       badge: "/icons/icon-192.png",
-      data: { url: payload.url || "/" },
+      data: { url: n.navigate || n.url || "/" },
     }),
   );
 });

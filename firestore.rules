@@ -1701,5 +1701,16 @@ service cloud.firestore {
       allow read:  if isAdmin();
       allow write: if false;
     }
+
+    // Web push subscriptions: one row per device endpoint, written ONLY by
+    // the Admin SDK routes under /api/push/*. Clients never touch it — the
+    // endpoint plus its keys IS the capability to push to that device's
+    // lock screen, so a readable row would let any member push at any other.
+    // NOTE unlike the block above, no rules deploy is owed for this: with no
+    // allow, the match is identical to Firestore's implicit deny. It exists
+    // so the collection's lockdown is visible here rather than inferred.
+    match /pushSubscriptions/{subId} {
+      allow read, write: if false;
+    }
   }
 }

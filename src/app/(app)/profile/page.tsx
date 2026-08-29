@@ -1,6 +1,7 @@
 import Badge from "@/components/ui/Badge";
 import { MaintenanceNotice } from "@/features/admin/AdminLockUI";
 import ProfileForm from "@/features/profile/ProfileForm";
+import { PushSettings } from "@/features/pwa/PushSettings";
 
 export default function ProfilePage() {
   return (
@@ -13,6 +14,9 @@ export default function ProfilePage() {
         </p>
       </div>
       <ProfileForm />
+      {/* Per-device push opt-in. Renders nothing until VAPID keys are
+          provisioned (docs/pwa.md) and on browsers without push. */}
+      <PushSettings />
       {/* Shows a notice while an admin is editing this member's details. */}
       <MaintenanceNotice />
     </div>
