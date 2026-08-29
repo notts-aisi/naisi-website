@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 
 /*
@@ -25,6 +25,9 @@ export type StoredSubscription = {
   keys: { p256dh: string; auth: string };
   uid: string;
   userAgent?: string;
+  /** When this endpoint was first stored. Read-only on the way out; the
+   *  sender uses it for the fresh-subscription grace window (see send.ts). */
+  createdAt?: Date;
 };
 
 export function subscriptionDocId(endpoint: string): string {
@@ -81,6 +84,16 @@ export async function subscriptionsForUid(uid: string): Promise<StoredSubscripti
   if (!db) return [];
   const snap = await db.collection("pushSubscriptions").where("uid", "==", uid).get();
   return snap.docs
-    .map((d) => d.data() as StoredSubscription)
+    .map((d) => {
+      const data = d.data();
+      const createdAt = data.createdAt;
+      return {
+        endpoint: data.endpoint,
+        keys: data.keys,
+        uid: data.uid,
+        userAgent: data.userAgent,
+        createdAt: createdAt instanceof Timestamp ? createdAt.toDate() : undefined,
+      } as StoredSubscription;
+    })
     .filter((s) => typeof s.endpoint === "string" && s.keys?.p256dh && s.keys?.auth);
 }
