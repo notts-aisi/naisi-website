@@ -15,6 +15,10 @@ Everything here is progressive enhancement: a browser that ignores every PWA fil
 | Session repair | `src/auth/SessionSanityGuard.tsx` | Fixes the cookie-without-client-user state installed apps can land in |
 | Back-gesture dismissal | `src/hooks/useHistoryDismiss.ts` | The system back gesture closes overlays instead of navigating away |
 | Safe areas | see `docs/mobile-conventions.md` | The idiom, the border-box trap, and the full inventory |
+| Install affordances | `src/features/pwa/InstallCard.tsx`, `InstallLink.tsx`, `installPrompt.ts` | A dismissible dashboard card (one localStorage key, no timers) and a permanent drawer row. Both vanish when installed |
+| Relaunch restore | `src/features/pwa/lastRoute.ts`, `LastRouteTracker.tsx`, `RelaunchRestore.tsx` | iOS relaunches killed apps at start_url; this returns signed-in members to their last authed route. Android is handled by the manifest's `launch_handler` instead. The tracker's placement in the (app) layout is what scopes recording to signed-in members |
+| Google sign-in | `GoogleSignInButton.tsx`, `/api/auth/google/callback` | Popup in every browser tab, redirect ONLY when installed (the one context that cannot popup). The gate was briefly "all mobile" and real devices argued it back down; the reasoning is in the button |
+| Back gesture | `src/hooks/useHistoryDismiss.ts` | Closes overlays instead of navigating. Dismissals must go THROUGH the returned dismiss(); the hook never unwinds on close, because a close during navigation cannot be told apart and an unwind there cancels the navigation. That bug shipped for a few hours; the docblock has the full story |
 
 ## The service worker contract
 

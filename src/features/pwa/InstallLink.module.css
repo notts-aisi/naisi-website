@@ -1,0 +1,33 @@
+.row {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.installButton {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 2.75rem;
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--color-accent);
+  font-weight: 600;
+  transition: background var(--transition-fast);
+}
+
+.installButton:hover {
+  background: var(--color-surface-hover);
+}
+
+.iosHint {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  padding-inline: var(--space-3);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* Drawer-hosted at every width it renders; nothing to adapt. */
+}

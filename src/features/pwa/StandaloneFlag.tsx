@@ -27,8 +27,15 @@
 //     if (/iPad|iPhone|iPod/.test(ua) || (ua.includes('Macintosh') && navigator.maxTouchPoints > 1)) {
 //       root.dataset.standaloneIos = 'true';
 //     }
+//     // Ask the browser not to evict our storage under pressure. Fire and
+//     // forget: the Firebase Auth session lives in IndexedDB, and losing it
+//     // is what strands an installed app on a signed-out screen (the
+//     // SessionSanityGuard repairs that state, but not needing the repair
+//     // is better). Installed apps are the one context where persistence is
+//     // usually granted without a prompt.
+//     navigator.storage?.persist?.();
 //   }
-const SCRIPT = `try{var m=window.matchMedia,u=navigator.userAgent;if(m('(display-mode: standalone)').matches||m('(display-mode: fullscreen)').matches||navigator.standalone===true){var d=document.documentElement;d.dataset.standalone='true';if(/iPad|iPhone|iPod/.test(u)||(u.indexOf('Macintosh')>-1&&navigator.maxTouchPoints>1)){d.dataset.standaloneIos='true'}}}catch(e){}`;
+const SCRIPT = `try{var m=window.matchMedia,u=navigator.userAgent;if(m('(display-mode: standalone)').matches||m('(display-mode: fullscreen)').matches||navigator.standalone===true){var d=document.documentElement;d.dataset.standalone='true';if(/iPad|iPhone|iPod/.test(u)||(u.indexOf('Macintosh')>-1&&navigator.maxTouchPoints>1)){d.dataset.standaloneIos='true'}if(navigator.storage&&navigator.storage.persist){navigator.storage.persist()}}}catch(e){}`;
 
 export function StandaloneFlag() {
   return <script dangerouslySetInnerHTML={{ __html: SCRIPT }} />;

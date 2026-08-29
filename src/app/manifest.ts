@@ -92,6 +92,14 @@ export default function manifest(): MetadataRoute.Manifest {
      * All three are role-gated, so a signed-out tap lands on /login?next=...,
      * which is a reasonable outcome rather than a broken one.
      */
+    /*
+     * Android: launching from the icon focuses the existing app window
+     * instead of navigating it back to start_url, which preserves where the
+     * member was with no code at all. Safari ignores this member entirely,
+     * which is why RelaunchRestore.tsx exists for iOS.
+     */
+    launch_handler: { client_mode: "focus-existing" },
+
     shortcuts: [
       { name: "Dashboard", url: "/dashboard" },
       { name: "My work", url: "/tasks" },
