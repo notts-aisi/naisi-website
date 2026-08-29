@@ -375,12 +375,14 @@ Two separate Firebase projects, each with its own App Hosting backend (both back
 - **Email infrastructure**: Resend send pipeline, deliverability dashboard, bounce/complaint webhook, application lifecycle emails, transactional emails as JSX templates in `src/emails/`.
 - **Users-collection lockdown**: member PII is readable only by SU-recognised committee + admins (and each user's own doc); `suRecognised` enforced as a trust boundary in Firestore rules.
 - **Brand**: real NAISI emblem integrated across the site, favicon, and email logo.
+- **Courses**: the full BlueDot-style programme surface (catalogue, applications, allocation, member `/learn` area, facilitator tooling, weekly nudge emails). Landed as the P/V2 course series through 2026-08.
+- **Installable app (PWA)**: manifest + icons, write-nothing service worker with offline fallback, back-gesture overlay dismissal, standalone safe-area chrome, stale-session repair, Google sign-in via redirect inside installed apps (popup elsewhere), install affordances, relaunch restore, and web push with task-email mirroring (dormant until VAPID secrets are provisioned per environment). Reference: [docs/pwa.md](docs/pwa.md).
 
 ## What's not built yet
 
 1. **Credentials store** — committee-only encrypted credentials (social accounts, API keys). Plan: client-side AES-GCM with a PBKDF2-derived key from a shared master password. The `credentials` / `credentialsMeta` Firestore rules are deployed and the `/credentials` route exists as a placeholder, but there is no feature code.
 2. **1-1 booking calendar + meeting calendar** — `bookings` has a read rule only; all client writes are locked, and there is no UI or server route. The intended model: per-committee-member availability → bookings, group meetings created by track leads / committee (visible to committee as greyed-out slots unless they're on the invite), private admin meetings hidden from committee, ICS export, and a Firestore transaction for conflict prevention.
-3. **Course/homework viewer** (BlueDot-style) — a member-facing view of the courses/homework someone is enrolled in. Nothing built.
+3. ~~Course/homework viewer~~ BUILT (the V2 course series, 2026-08): public `/courses` catalogue + application flow, member-facing `/learn` with per-run weeks, exercises, attendance and progress, admin course/run/group management, per-group curricula and pacing, templates, the retrospective loop, and the archive/destroy protocol. See `src/features/courses/` and the `courses/*` API tree.
 4. **Track-lead sub-role** — admins designating a member or committee member as head of a specific reading group / fellowship track / project, orthogonal to the governance role. No data field, UI, or rules exist. (The existing `users.tracks` field is unrelated: it is an admin `technical` / `governance` tag, not a leadership role.)
 5. **Cohort channels** — the subscriptions junction collection already accepts `cohort:<id>`-style channel strings as data, but no cohort feature creates or sends to them yet.
 
