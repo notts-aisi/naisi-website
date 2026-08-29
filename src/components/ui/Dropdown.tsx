@@ -14,6 +14,7 @@ import {
 // inside those effects so they don't trip set-state-in-effect).
 import { createPortal } from "react-dom";
 import { maxWidth, type BreakpointKey } from "@/theme/breakpoints";
+import { useHistoryDismiss } from "@/hooks/useHistoryDismiss";
 import styles from "./Dropdown.module.css";
 
 /**
@@ -115,6 +116,20 @@ export default function Dropdown<T extends string = string>({
   );
 
   const [open, setOpen] = useState(false);
+
+  /*
+   * Back gesture closes the bottom sheet, but NOT the desktop popover.
+   * The sheet is screen-occupying and reads as a thing you dismiss; a
+   * popover anchored to its trigger does not, and making the browser Back
+   * button close a dropdown on a laptop would be surprising. The popover
+   * already closes on outside click, scroll and resize.
+   *
+   * No focus restore here, unlike the Escape and select paths: the sheet
+   * only exists on touch, where there is no visible focus ring to return.
+   */
+  const closeSheet = useCallback(() => setOpen(false), []);
+  useHistoryDismiss(open && isSheet, closeSheet);
+
   const [activeValue, setActiveValue] = useState<T>(value);
   const [position, setPosition] = useState({
     top: 0,

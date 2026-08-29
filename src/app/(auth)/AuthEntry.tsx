@@ -611,7 +611,20 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
             onReady={handleGisReady}
           />
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", margin: "var(--space-6) 0 var(--space-4)" }}>
+        {/*
+          Always rendered, hidden by CSS unless <html data-standalone-ios>.
+          Doing it in CSS rather than behind useIsStandalone keeps the server
+          HTML identical for everyone and means no flash on the first screen
+          of a freshly launched app. The stylesheet also reorders this card so
+          the email and password form comes FIRST in that case; see the
+          "Installed app on iOS" block in registerSignIn.module.css.
+        */}
+        <p className={styles.standaloneNote}>
+          Google sign-in does not work inside the installed app, because iOS
+          blocks the sign-in window it needs. Use your email and password
+          above, or open naisi.uk in Safari to sign in with Google.
+        </p>
+        <div className={styles.divider} style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", margin: "var(--space-6) 0 var(--space-4)" }}>
           <span style={{ flex: 1, height: 1, background: "var(--color-border)" }} />
           <span style={{ color: "var(--color-text-subtle)", fontSize: "var(--text-xs)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
             or

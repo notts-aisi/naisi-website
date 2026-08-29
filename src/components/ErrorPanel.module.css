@@ -1,0 +1,69 @@
+.panel {
+  max-width: 32rem;
+  margin: var(--space-16) auto;
+  padding-inline: var(--space-6);
+  text-align: center;
+}
+
+.title {
+  font-size: var(--text-3xl);
+  margin-bottom: var(--space-3);
+}
+
+.description {
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+  margin-bottom: var(--space-8);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* Matches Button's ghost weight without pulling in a second variant. */
+.secondary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding-inline: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  font-weight: 600;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.secondary:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-hover);
+}
+
+.digest {
+  margin-top: var(--space-10);
+  color: var(--color-text-subtle);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+}
+
+/* === Mobile === */
+@media (max-width: 36rem) { /* --bp-sm */
+  .panel {
+    margin-block: var(--space-12);
+    padding-inline: var(--space-4);
+  }
+
+  .title {
+    font-size: var(--text-2xl);
+  }
+
+  /* Stack the two actions so neither is a cramped half-width tap target. */
+  .actions {
+    flex-direction: column;
+  }
+
+  .secondary {
+    justify-content: center;
+  }
+}

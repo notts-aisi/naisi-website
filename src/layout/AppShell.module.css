@@ -472,6 +472,34 @@
   padding-inline: var(--space-1);
 }
 
+/* Escape hatch shown by StuckLoadingEscape after the shell has sat loading
+   for 10s. Sits inside .loadingPane, which is already centred. Invisible in
+   the normal case, so it costs nothing until something is actually wrong. */
+.stuckLoading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--color-border);
+  max-width: 22rem;
+  text-align: center;
+}
+
+.stuckLoadingText {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.stuckLoadingActions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
 /* ===== Below --bp-lg: hide sidebar, show top strip, full-bleed main ===== */
 @media (max-width: 60rem) { /* --bp-lg */
   .shell {
