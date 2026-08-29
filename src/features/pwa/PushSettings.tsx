@@ -161,15 +161,21 @@ export function PushSettings() {
   }, []);
 
   const sendTest = useCallback(async () => {
-    setNote(null);
+    // The route may hold the request for ~12s while it waits out the push
+    // service's fresh-subscription lag, so say something meanwhile.
+    setNote("Sending…");
     try {
       const res = await fetch("/api/push/test", { method: "POST" });
-      const body = (await res.json()) as { sent?: number };
-      setNote(
-        body.sent && body.sent > 0
-          ? "Sent. It can take a few seconds to arrive."
-          : "Nothing was sent. Try disabling and re-enabling notifications.",
-      );
+      const body = (await res.json()) as { sent?: number; deferred?: number };
+      if (body.sent && body.sent > 0) {
+        setNote("Sent. It can take a few seconds to arrive.");
+      } else if (body.deferred && body.deferred > 0) {
+        setNote(
+          "This device registered moments ago and the push service is still catching up. Try again in a few seconds.",
+        );
+      } else {
+        setNote("Nothing was sent. Try disabling and re-enabling notifications.");
+      }
     } catch {
       setNote("The test could not be sent.");
     }

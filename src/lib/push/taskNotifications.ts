@@ -23,6 +23,11 @@ import { sendPushToUid } from "./send";
  * see: a push failure must not mark an email send as failed, and a member
  * with zero enabled devices costs one Firestore query. Callers await it (so
  * Cloud Run cannot reap the work after the response) but need no try/catch.
+ *
+ * No retryFresh here, deliberately: a task push that coincides with the
+ * first seconds of a device's subscription (send.ts explains the push
+ * service's lag) is dropped rather than holding a task route open. The
+ * email still goes, so nothing is lost.
  */
 export async function mirrorTaskEmailToPush(
   uid: string,

@@ -17,10 +17,18 @@ export async function POST() {
   if (!user || user.role === "pending" || user.role === "rejected") {
     return NextResponse.json({ error: "Not authorised" }, { status: 401 });
   }
-  const counts = await sendPushToUid(user.uid, {
-    title: "NAISI notifications are working",
-    body: "This device will now receive notifications from NAISI.",
-    url: "/profile",
-  });
+  // retryFresh: the common case for this route is a tap seconds after
+  // "Enable notifications", inside the window where the push service still
+  // answers 410 for a live subscription (see send.ts). Waiting it out here
+  // is what makes the first test succeed instead of reporting nothing sent.
+  const counts = await sendPushToUid(
+    user.uid,
+    {
+      title: "NAISI notifications are working",
+      body: "This device will now receive notifications from NAISI.",
+      url: "/profile",
+    },
+    { retryFresh: true },
+  );
   return NextResponse.json({ ok: true, ...counts });
 }

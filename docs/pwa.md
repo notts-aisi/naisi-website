@@ -39,6 +39,7 @@ Rules that keep it working, all encoded in the code and worth not re-learning:
 - Permission is requested only inside a tap handler; Safari silently ignores anything else.
 - Every profile visit re-syncs the existing subscription to the server. Safari iOS never fires `pushsubscriptionchange`, so server-side 404/410 pruning plus client re-assertion is the entire liveness story.
 - Never `unsubscribe()` on sign-out: Safari will not re-permit a subscribe without a fresh gesture, and the subscription belongs to the device, not the session.
+- A 404/410 from the push service is NOT believed for the first two minutes of a row's life. Measured against FCM (2026-08-29): a subscription Chrome had just created answered 410 "unsubscribed or expired" for roughly its first nine seconds, then 201 forever after. Pruning on that first 410 deleted the row the member had just registered, so "Enable" then "Send a test" always reported nothing sent. `send.ts` keys a grace window to `createdAt`, and the self-test route retries inside it; task mirrors just drop that one push. `tests/push-prune-grace.test.mjs` guards the window.
 
 Provisioned on both projects 2026-08-29; the yaml block below is live. Kept as the runbook for any future secret.
 
