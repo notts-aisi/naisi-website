@@ -80,6 +80,38 @@ export default function manifest(): MetadataRoute.Manifest {
      * which is what web.dev recommends anyway: a maskable icon needs a much
      * larger safe zone and looks over-padded when used as a plain icon.
      */
+    /*
+     * Chrome's richer install sheet (the one that reads like an app listing
+     * rather than a bare Add-to-Home-Screen row) is driven by screenshots.
+     * Captured from the live site by Playwright; retake them when a surface
+     * they show is redesigned, and only ever from PUBLIC pages, since these
+     * ship in a world-readable manifest. Narrow drives the phone dialog,
+     * wide the desktop one; each form factor's entries must share one size.
+     */
+    screenshots: [
+      {
+        src: "/icons/screenshot-narrow-home.png",
+        sizes: "390x844",
+        type: "image/png",
+        form_factor: "narrow",
+        label: "Make AI go well. From Nottingham.",
+      },
+      {
+        src: "/icons/screenshot-narrow-resources.png",
+        sizes: "390x844",
+        type: "image/png",
+        form_factor: "narrow",
+        label: "Curated AI safety resources",
+      },
+      {
+        src: "/icons/screenshot-wide-home.png",
+        sizes: "1280x800",
+        type: "image/png",
+        form_factor: "wide",
+        label: "The Nottingham AI Safety Initiative",
+      },
+    ],
+
     icons: [
       { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
       { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
