@@ -174,7 +174,10 @@ export default function PersonSelector({
   // reason as Dropdown: the desktop render is inline in the form, not an
   // overlay, so there is nothing for Back to dismiss.
   const collapseSheet = useCallback(() => setExpanded(false), []);
-  useHistoryDismiss(isMobile && expanded, collapseSheet);
+  // All three in-sheet close paths (scrim, the X, Done) go through dismiss
+  // so the pushed history entry unwinds with them; the Back gesture arrives
+  // through popstate and closes via collapseSheet.
+  const dismissSheet = useHistoryDismiss(isMobile && expanded, collapseSheet);
 
   // Body scroll-lock while the mobile sheet is open. Same pattern as
   // Drawer.tsx — the cleanup restores the previous overflow value so we
@@ -331,7 +334,7 @@ export default function PersonSelector({
                 // sheet scrim behaviour so iOS doesn't re-target the
                 // synthetic click to the trigger underneath.
                 e.stopPropagation();
-                setExpanded(false);
+                dismissSheet();
               }}
             />
             <div
@@ -347,7 +350,7 @@ export default function PersonSelector({
                 </h3>
                 <button
                   type="button"
-                  onClick={() => setExpanded(false)}
+                  onClick={dismissSheet}
                   aria-label="Close picker"
                   className={styles.sheetCloseIcon}
                 >
@@ -361,7 +364,7 @@ export default function PersonSelector({
               {renderPickerControls()}
               <button
                 type="button"
-                onClick={() => setExpanded(false)}
+                onClick={dismissSheet}
                 className={styles.doneButton}
               >
                 Done

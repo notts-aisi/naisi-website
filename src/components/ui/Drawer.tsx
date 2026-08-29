@@ -53,18 +53,20 @@ export default function Drawer({
 
   // Back gesture to close. Unconditional: a drawer is screen-occupying at
   // every width it appears at, and in an installed app the back gesture is
-  // the primary way people expect to dismiss it.
-  useHistoryDismiss(open, onClose);
+  // the primary way people expect to dismiss it. Escape and the scrim close
+  // THROUGH dismiss so the pushed history entry unwinds; a close caused by
+  // navigation (a nav link's onClick flipping `open`) deliberately does not.
+  const dismiss = useHistoryDismiss(open, onClose);
 
   // Esc to close.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") dismiss();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, dismiss]);
 
   // Focus the first interactive child on open; restore the previously
   // focused element on close (the hamburger button, typically). Deliberately
@@ -102,7 +104,7 @@ export default function Drawer({
     <div className={styles.root} aria-hidden={!open} inert={!open}>
       <div
         className={`${styles.scrim} ${open ? styles.scrimOpen : ""}`}
-        onClick={onClose}
+        onClick={dismiss}
       />
       <div
         ref={panelRef}
