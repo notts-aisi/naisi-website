@@ -155,7 +155,7 @@
     margin-top: auto;
     margin-inline: calc(-1 * var(--space-4));
     padding: var(--space-4) var(--space-4)
-      calc(var(--space-4) + env(safe-area-inset-bottom));
+      calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
     background: var(--color-bg-elevated);
   }
   /* Feather so the content dissolves into the bar instead of hard-clipping. */

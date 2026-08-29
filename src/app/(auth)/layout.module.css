@@ -9,7 +9,14 @@
   min-height: calc(100dvh - var(--site-notice-height, 0px));
   display: flex;
   flex-direction: column;
-  padding: var(--space-6);
+  /* Viewport-pinned under viewport-fit: cover, so it reaches the physical
+     edges and needs the insets itself. Deliberately NO extra bottom inset:
+     registerSignIn.module.css's sticky action bar already adds
+     env(safe-area-inset-bottom) and a second one would double it. */
+  padding: max(var(--space-6), env(safe-area-inset-top, 0px))
+    max(var(--space-6), env(safe-area-inset-right, 0px))
+    var(--space-6)
+    max(var(--space-6), env(safe-area-inset-left, 0px));
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;

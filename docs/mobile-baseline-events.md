@@ -4,7 +4,7 @@ The public events RSVP/registration flow is the site's most mobile-mature surfac
 
 ## Mobile-frozen modules
 
-These CSS modules back the public events flow. Any PR that touches them — or touches a shared token (`tokens.css`, `typography.css`, breakpoints) that they consume — must re-verify the baseline below before merging.
+These CSS modules back the public events flow. Any PR that touches them, or touches anything shared that they consume, must re-verify the baseline below before merging.
 
 - [src/features/events/EventDetailView.module.css](../src/features/events/EventDetailView.module.css)
 - [src/features/events/RsvpForm.module.css](../src/features/events/RsvpForm.module.css)
@@ -14,12 +14,22 @@ These CSS modules back the public events flow. Any PR that touches them — or t
 
 The components consuming these modules live in `src/features/events/` and are rendered by the public route `src/app/(public)/events/[id]/` and its sub-routes (`rsvp/[rsvpId]/change`, `rsvp/[rsvpId]/cancel`, `rsvp/submitted`).
 
+### What counts as "shared" here
+
+Naming the shared surfaces explicitly, because the original wording said only "a shared token" and that read narrower than it is. All five events routes wrap their content in `className="container"`, so a change to that one rule in `globals.css` reaches every page in this flow and is the single highest-blast-radius edit available.
+
+- [src/theme/tokens.css](../src/theme/tokens.css), [src/theme/typography.css](../src/theme/typography.css), [src/theme/breakpoints.ts](../src/theme/breakpoints.ts)
+- [src/app/globals.css](../src/app/globals.css) — in particular `.container` and the `body` rules
+- [src/app/(public)/layout.tsx](../src/app/(public)/layout.tsx), [src/layout/PublicHeader.module.css](../src/layout/PublicHeader.module.css), [src/layout/PublicFooter.module.css](../src/layout/PublicFooter.module.css) — the chrome every one of these pages renders inside
+- The root `viewport` export in [src/app/layout.tsx](../src/app/layout.tsx)
+
 ## Viewports to verify at
 
 - **375 × 667** — iPhone SE / iPhone 12 mini portrait. The narrow-phone reference.
 - **414 × 896** — iPhone Plus / Pro Max portrait. Most-common large phone.
 - **768 × 1024** — iPad portrait. The exact `--bp-md` boundary; verify the layout transition is clean.
 - **1024 × 1366** — iPad landscape / small laptop. Above `--bp-lg`; should match desktop.
+- **844 × 390** — iPhone 14/15 **landscape**, on a notched device. Added because the four viewports above are all portrait phone or iPad, and a notch only intrudes on the left and right edges in landscape. `viewport-fit: cover` is on at the root, so safe-area regressions are invisible at every other viewport in this list. Verify on real hardware or a simulator: DevTools does not model the inset.
 
 ## Flows to re-run
 
