@@ -329,7 +329,8 @@ export default function AppShell({
     </div>
   );
 
-  // Gate the entire authed UI on auth+role+permissions being ready. Otherwise
+  // Gate the entire authed UI on auth+role+permissions being ready.
+  // (StuckLoadingEscape is defined below, outside this component.) Otherwise
   // on a fresh navigation the server-rendered HTML (which has full auth context
   // via getCurrentUser in the layout) hydrates against a client AuthProvider
   // that starts with {loading: true}, causing children to briefly render with
@@ -360,6 +361,7 @@ export default function AppShell({
             <div className={styles.loadingPane} role="status" aria-live="polite">
               <span className={styles.spinner} aria-hidden />
               <span className={styles.loadingText}>Loading your workspace…</span>
+              <StuckLoadingEscape />
             </div>
           </main>
         </div>
@@ -505,6 +507,67 @@ export default function AppShell({
         {renderNav(() => setDrawerOpen(false))}
         {renderUserBlock()}
       </Drawer>
+    </div>
+  );
+}
+
+/** How long the shell may sit loading before we offer a way out. */
+const STUCK_LOADING_MS = 10_000;
+
+/**
+ * Visible escape hatch for a wedged shell.
+ *
+ * There is already a `warn("[shell] still loading after 5s")` watchdog, but it
+ * only reaches the console, which nobody stuck on a spinner is reading. The
+ * paths that can wedge here are real and documented elsewhere in the codebase:
+ * AuthProvider's onAuthStateChanged failing to fire against a jammed
+ * IndexedDB, the user-doc snapshot never arriving, or a session cookie whose
+ * Firebase Auth half is missing.
+ *
+ * This matters much more once the site is installed to a home screen. In a
+ * browser tab a wedged page still has a URL bar and a reload button; in a
+ * standalone window it has neither, so without something on screen the only
+ * way out is force-quitting the app.
+ *
+ * Deliberately its own component rather than state on AppShell: it mounts only
+ * while the loading pane is rendered, so the timer state is discarded when
+ * loading resolves and there is no reset to forget. Sign out here skips
+ * AppShell's exit choreography, because the shell it would animate is the
+ * thing that is broken.
+ */
+function StuckLoadingEscape() {
+  const [stuck, setStuck] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setStuck(true), STUCK_LOADING_MS);
+    return () => clearTimeout(t);
+  }, []);
+
+  if (!stuck) return null;
+
+  return (
+    <div className={styles.stuckLoading}>
+      <p className={styles.stuckLoadingText}>
+        This is taking longer than it should. Reloading usually clears it.
+      </p>
+      <div className={styles.stuckLoadingActions}>
+        <Button onClick={() => window.location.reload()}>Reload</Button>
+        <Button
+          variant="ghost"
+          onClick={async () => {
+            // Best effort: if signOut throws (the wedge may be auth itself),
+            // still get the user off this screen.
+            try {
+              await signOut();
+            } catch {
+              // Intentionally ignored.
+            }
+            hardNavigate("/");
+          }}
+        >
+          Sign out
+        </Button>
+      </div>
     </div>
   );
 }
