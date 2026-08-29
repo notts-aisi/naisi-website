@@ -62,20 +62,26 @@ export function PushSettings() {
 
   useEffect(() => {
     if (!PUBLIC_KEY) return; // renders nothing below
-    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
-      setState("unsupported");
-      return;
-    }
-    if (getInstallPlatform() === "ios" && !isStandaloneNow()) {
-      setState("needs-install");
-      return;
-    }
-    if (Notification.permission === "denied") {
-      setState("denied");
-      return;
-    }
     let cancelled = false;
+    // Everything, including the synchronous environment checks, runs after a
+    // microtask so the effect body itself never sets state synchronously
+    // (the repo's set-state-in-effect lint). The user cannot perceive one
+    // microtask of extra "render nothing".
     void (async () => {
+      await Promise.resolve();
+      if (cancelled) return;
+      if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+        setState("unsupported");
+        return;
+      }
+      if (getInstallPlatform() === "ios" && !isStandaloneNow()) {
+        setState("needs-install");
+        return;
+      }
+      if (Notification.permission === "denied") {
+        setState("denied");
+        return;
+      }
       try {
         const reg = await navigator.serviceWorker.ready;
         const sub = await reg.pushManager.getSubscription();

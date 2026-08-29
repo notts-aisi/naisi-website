@@ -66,7 +66,7 @@ firebase apphosting:secrets:grantaccess VAPID_PRIVATE_KEY --backend naisi-websit
 
 The public key rides Secret Manager not for secrecy (it ships in the client bundle by design) but because secret references resolve by name per project, which is what gives each environment its own keypair without console-UI steps. Same pattern as `naisi-web-api-key`.
 
-What actually SENDS pushes today: only the self-test. Wiring task notifications, event reminders or course nudges into `sendPushToUid` is deliberately separate work, and it must respect the warning in `src/lib/firestore/notifications.ts`: `profile.notifications.channels` means email-address routing, not transport, so push preferences need a sibling field, not a new channel value.
+What sends pushes: the self-test, and the TASK pipeline. Every task email (added-to-task, comment, mention, review request, review outcome) is mirrored to the recipient's enabled devices by `src/lib/push/taskNotifications.ts`. The policy is mirror-the-email exactly: having enabled notifications on a device is the opt-in, the config/task-emails kill switch covers push for free because every route early-returns before its sends, and volume is bounded by the existing email budget. No preference field was added, which honours the warning in `src/lib/firestore/notifications.ts` that `channels` means email-address routing, not transport; if per-category push preferences are ever wanted, they need a sibling field there. Event reminders and course nudges are still email-only, deliberately.
 
 ### Rolling it back
 
