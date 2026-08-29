@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter, Space_Grotesk } from "next/font/google";
 import { AuthProvider } from "@/auth/AuthProvider";
 import { SiteNoticeBanner } from "@/features/maintenance/SiteNoticeBanner";
+import { ServiceWorkerRegistrar } from "@/features/pwa/ServiceWorkerRegistrar";
 import { StandaloneFlag } from "@/features/pwa/StandaloneFlag";
 import { PAGE_FLOOR } from "@/theme/brandColors";
 import "./globals.css";
@@ -87,6 +88,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <SiteNoticeBanner />
           {children}
         </AuthProvider>
+        {/* After the app content: registration is not urgent and must never
+            delay first paint. Renders nothing. */}
+        <ServiceWorkerRegistrar />
       </body>
     </html>
   );
