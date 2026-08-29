@@ -28,7 +28,45 @@ Why: Firebase App Hosting rebuilds a container per rollout and does not keep the
 
 `public/offline.html` is generated from `scripts/offline-template.html` by `npm run brand`, with the emblem inlined as a data URI. Edit the template, never the output. It must stay fully self-contained; the test enforces that too.
 
-The push and notificationclick handlers ship in the worker now, inert, so adding web push later is a server-side project rather than a worker rework. The `event.waitUntil(showNotification)` wrapping is mandatory: iOS treats a push with no visible notification as a broken promise and revokes the subscription after roughly three.
+The push and notificationclick handlers are live. The server sends the Declarative Web Push envelope (`web_push: 8030`, built in `src/lib/push/send.ts`), which Safari 18.4+ renders without waking the worker at all; Chromium and Firefox land in the handler, which reads the same envelope. The `event.waitUntil(showNotification)` wrapping is mandatory and test-enforced: iOS treats a push with no visible notification as a broken promise and revokes the subscription after roughly three.
+
+## Web push
+
+Per-device opt-in on `/profile` (`src/features/pwa/PushSettings.tsx`), a server pipeline in `src/lib/push/`, and a server-only `pushSubscriptions` collection keyed by endpoint hash, holding the member's uid as "who most recently claimed this device". Members can send themselves a test from the same card. On iOS, notifications only exist inside the installed app, and the card says so rather than showing a dead button.
+
+Rules that keep it working, all encoded in the code and worth not re-learning:
+
+- Permission is requested only inside a tap handler; Safari silently ignores anything else.
+- Every profile visit re-syncs the existing subscription to the server. Safari iOS never fires `pushsubscriptionchange`, so server-side 404/410 pruning plus client re-assertion is the entire liveness story.
+- Never `unsubscribe()` on sign-out: Safari will not re-permit a subscribe without a fresh gesture, and the subscription belongs to the device, not the session.
+
+**The feature is dormant until VAPID keys are provisioned.** The routes return 503 and the profile card renders nothing. Local dev reads the keypair from `.env.local`.
+
+### Provisioning a backend (dev shown; prod identically at promotion time)
+
+The dev keypair lives in `.env.local` so localhost and dev.naisi.uk share one pair; generate a fresh pair for prod with `npx web-push generate-vapid-keys`. Then, per project (needs `firebase login --reauth` first):
+
+```
+firebase apphosting:secrets:set NEXT_PUBLIC_VAPID_PUBLIC_KEY --project default
+firebase apphosting:secrets:grantaccess NEXT_PUBLIC_VAPID_PUBLIC_KEY --backend naisi-website --project default
+firebase apphosting:secrets:set VAPID_PRIVATE_KEY --project default
+firebase apphosting:secrets:grantaccess VAPID_PRIVATE_KEY --backend naisi-website --project default
+```
+
+(`--project dev` for the dev backend.) Then add to `apphosting.yaml` — ONLY after the secrets exist on BOTH projects, because a referenced secret that does not exist fails the next rollout:
+
+```yaml
+  - variable: NEXT_PUBLIC_VAPID_PUBLIC_KEY
+    secret: NEXT_PUBLIC_VAPID_PUBLIC_KEY
+    availability: [BUILD, RUNTIME]
+  - variable: VAPID_PRIVATE_KEY
+    secret: VAPID_PRIVATE_KEY
+    availability: [RUNTIME]
+```
+
+The public key rides Secret Manager not for secrecy (it ships in the client bundle by design) but because secret references resolve by name per project, which is what gives each environment its own keypair without console-UI steps. Same pattern as `naisi-web-api-key`.
+
+What actually SENDS pushes today: only the self-test. Wiring task notifications, event reminders or course nudges into `sendPushToUid` is deliberately separate work, and it must respect the warning in `src/lib/firestore/notifications.ts`: `profile.notifications.channels` means email-address routing, not transport, so push preferences need a sibling field, not a new channel value.
 
 ### Rolling it back
 
