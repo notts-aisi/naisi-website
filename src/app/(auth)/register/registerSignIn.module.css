@@ -54,6 +54,47 @@
   display: none;
 }
 
+/* ===== Installed app on iOS =====
+
+   Inside a home-screen web app, window.open() returns null on iOS and opens
+   nothing (documented by Google on web.dev), so the GIS button's popup never
+   appears and its credential callback never fires. The tap is a silent dead
+   end. Every registered account has a password (registration sets one after
+   the university-email verification step), so email and password is a
+   complete route in, and it becomes the primary one here.
+
+   Done entirely in CSS, keyed off the attribute StandaloneFlag stamps on
+   <html> before first paint, so the server HTML is identical for every
+   visitor and there is no reorder flash on the app's first screen.
+
+   Order values: the header rows keep the default 0 and so stay on top. The
+   footer needs an explicit order too, or its default 0 would float the submit
+   bar up above the form. */
+
+.standaloneNote {
+  display: none;
+}
+
+:global(html[data-standalone-ios="true"]) .card {
+  display: flex;
+  flex-direction: column;
+}
+
+:global(html[data-standalone-ios="true"]) .authForm { order: 1; }
+:global(html[data-standalone-ios="true"]) .divider { order: 2; }
+:global(html[data-standalone-ios="true"]) .standaloneNote { order: 3; }
+:global(html[data-standalone-ios="true"]) .googleWrap { order: 4; }
+:global(html[data-standalone-ios="true"]) .footer { order: 5; }
+
+:global(html[data-standalone-ios="true"]) .standaloneNote {
+  display: block;
+  margin-bottom: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  text-align: center;
+}
+
 @media (max-width: 48rem) { /* --bp-md */
   /* Fill the scroll area so the bottom bar reaches the bottom of the screen even
      when the form is short (.main is a flex column on mobile — see layout.module

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter, Space_Grotesk } from "next/font/google";
 import { AuthProvider } from "@/auth/AuthProvider";
 import { SiteNoticeBanner } from "@/features/maintenance/SiteNoticeBanner";
+import { StandaloneFlag } from "@/features/pwa/StandaloneFlag";
 import { PAGE_FLOOR } from "@/theme/brandColors";
 import "./globals.css";
 
@@ -79,6 +80,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" data-theme="dark" className={`${inter.variable} ${spaceGrotesk.variable}`}>
       <body>
+        {/* Must be the first thing in <body>: it stamps the standalone
+            attributes on <html> before any styled content paints. */}
+        <StandaloneFlag />
         <AuthProvider>
           <SiteNoticeBanner />
           {children}
