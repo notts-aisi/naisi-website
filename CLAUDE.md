@@ -331,7 +331,7 @@ If asked to "commit and push" a change, default to creating a branch + PR unless
 
 ## Deploy
 
-Two separate Firebase projects, each with its own App Hosting backend (both backends happen to be named `naisi-website` — not a bug, disambiguated by project):
+Two separate Firebase projects, each with its own App Hosting backend. The backend IDs DIFFER: prod's is `naisi`, dev's is `naisi-website` (verified via `apphosting:backends:list` 2026-08-29 after the old "both are naisi-website" claim here caused a failed grantaccess):
 
 - **Production** — push to `main` → project `naisi-website` → `https://naisi.uk`
 - **Dev / staging** — push to `dev` → project `naisi-website-dev` → `https://dev.naisi.uk`. Separate Firestore / Auth / Storage / Secret Manager — fully isolated from prod data.
@@ -353,8 +353,8 @@ Two separate Firebase projects, each with its own App Hosting backend (both back
 **CLI cheatsheet:**
 
 - **Firestore rules/indexes**: `npx firebase deploy --only firestore:rules,firestore:indexes --project <default|dev>`
-- **App Hosting secrets**: `firebase apphosting:secrets:set <NAME> --project <default|dev>` creates the secret; `firebase apphosting:secrets:grantaccess <NAME> --backend naisi-website --project <default|dev>` grants the backend access once it exists.
-- **Trigger a rollout from current branch tip**: `firebase apphosting:rollouts:create naisi-website --project <default|dev> --git-branch <branch>` (or just push a commit — deploys happen on push).
+- **App Hosting secrets**: `firebase apphosting:secrets:set <NAME> --project <default|dev>` creates the secret; `firebase apphosting:secrets:grantaccess <NAME> --backend <naisi|naisi-website> --project <default|dev>` grants the backend access once it exists (`naisi` on prod, `naisi-website` on dev).
+- **Trigger a rollout from current branch tip**: `firebase apphosting:rollouts:create <naisi|naisi-website> --project <default|dev> --git-branch <branch>` (or just push a commit — deploys happen on push).
 - **Local dev**: `npm run dev`, needs `.env.local` with `NEXT_PUBLIC_FIREBASE_*` + `FIREBASE_ADMIN_*` + `EVENTS_TOKEN_SECRET` values (see `.env.example`). Point at prod or dev project depending on what you're debugging.
 
 **Dev-env discipline**: dev uses the same email sender as prod (display name tagged `NAISI (dev)`). Any user doc in dev Firestore can receive real mail on the next test send. Only seed dev with email addresses you personally own.

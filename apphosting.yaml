@@ -86,6 +86,20 @@ env:
   - variable: RECAPTCHA_SECRET
     secret: RECAPTCHA_SECRET
     availability: [RUNTIME]
+  # Web push (VAPID). Provisioned on BOTH projects 2026-08-29; the secrets
+  # resolve by name from each project's own Secret Manager, so dev and prod
+  # each run their own keypair with no yaml difference (same pattern as
+  # naisi-web-api-key). The PUBLIC key needs BUILD availability because it is
+  # inlined into the client bundle; the private key is runtime-only and is
+  # what signs each push to the browser vendors' push services. Do NOT
+  # reference a secret here before it exists on both projects: an
+  # unresolvable secret fails the rollout.
+  - variable: NEXT_PUBLIC_VAPID_PUBLIC_KEY
+    secret: NEXT_PUBLIC_VAPID_PUBLIC_KEY
+    availability: [BUILD, RUNTIME]
+  - variable: VAPID_PRIVATE_KEY
+    secret: VAPID_PRIVATE_KEY
+    availability: [RUNTIME]
   - variable: SMTP_FROM_NAME
     value: NAISI
     availability: [RUNTIME]
