@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { mark, warn } from "@/lib/devMonitor";
-import { isIos, isStandaloneNow } from "@/lib/pwa/displayMode";
+import { isStandaloneNow } from "@/lib/pwa/displayMode";
 import styles from "./GoogleSignInButton.module.css";
 
 type Props = {
@@ -141,27 +141,32 @@ export default function GoogleSignInButton({
 
       mark("[gsi] script loaded, initializing");
       /*
-       * Popup on desktop, redirect on phones and installed apps.
+       * Redirect ONLY when running as an installed app; popup everywhere
+       * else, including phone browser tabs.
        *
+       * The installed case is forced: window.open returns null inside an
+       * iOS home-screen web app, so popup mode is a silent dead end there.
        * Redirect navigates the top frame to Google, which then form-POSTs
        * the credential to /api/auth/google/callback (which must be listed
        * as an Authorized redirect URI on each project's OAuth Web client).
-       * Two reasons for the split:
        *
-       *   - Installed iOS apps cannot open the popup at all: window.open
-       *     returns null there, so popup mode is a silent dead end.
-       *   - Google's own guidance is that redirect mode is required for
-       *     iOS Safari generally, because ITP interferes with the popup's
-       *     storage. itp_support papers over some of it; redirect does not
-       *     need the paper.
+       * Browser tabs keep popup DELIBERATELY, including iOS Safari. A
+       * first cut of this gated redirect on "any mobile", on Google's
+       * guidance that redirect is required for iOS because of ITP; in
+       * practice popup with itp_support has worked in Safari tabs here all
+       * along, and the wider gate surfaced a redirect_uri_mismatch from
+       * Safari on a device where the installed app's redirect worked, on
+       * the same origin and the same registered URI. Empirical beats
+       * documented: the popup path is battle-tested in tabs, so redirect
+       * stays scoped to the one context that cannot popup. If the mismatch
+       * ever reappears, Google's "error details" link on that page prints
+       * the exact redirect URI it received.
        *
-       * Desktop keeps popup because the click staying inline is a better
-       * experience and nothing there breaks it. The callback config below
-       * is unused in redirect mode (the credential goes to the server) but
-       * is kept unconditional so the object shape never forks.
+       * The callback config below is unused in redirect mode (the
+       * credential goes to the server) but is kept unconditional so the
+       * object shape never forks.
        */
-      const useRedirect =
-        isStandaloneNow() || isIos() || /Android/i.test(navigator.userAgent);
+      const useRedirect = isStandaloneNow();
       mark("[gsi] ux mode", { mode: useRedirect ? "redirect" : "popup" });
       window.google.accounts.id.initialize({
         client_id: CLIENT_ID!,
