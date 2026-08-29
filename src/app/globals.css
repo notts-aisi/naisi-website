@@ -54,15 +54,24 @@ input, textarea, select {
 }
 
 /* Utility wrappers used across layouts */
+/* Side insets: under viewport-fit: cover the container already reaches the
+   physical edges, so in landscape on a notched device the first character of
+   every line sits under the notch. max() means the inset only ever widens
+   the existing padding, so this is byte-identical on desktop, on
+   non-notched devices and in DevTools. */
 .container {
   width: 100%;
   max-width: var(--content-max-width);
   margin-inline: auto;
-  padding-inline: var(--space-6);
+  padding-left: max(var(--space-6), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--space-6), env(safe-area-inset-right, 0px));
 }
 
 @media (max-width: 48rem) {
-  .container { padding-inline: var(--space-4); }
+  .container {
+    padding-left: max(var(--space-4), env(safe-area-inset-left, 0px));
+    padding-right: max(var(--space-4), env(safe-area-inset-right, 0px));
+  }
 }
 
 .stack { display: flex; flex-direction: column; }

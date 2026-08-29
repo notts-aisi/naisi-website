@@ -1,0 +1,69 @@
+<!doctype html>
+<!--
+  TEMPLATE for public/offline.html. Edit THIS file, then run `npm run brand`
+  to regenerate the committed output with the emblem data URI inlined.
+  Editing public/offline.html directly gets overwritten.
+
+  Contract: the output must be fully self-contained. It is the one document
+  the service worker precaches and serves when a navigation fails offline,
+  so nothing in it may reference the network: no stylesheet, no font file,
+  no /_next/* asset (those are content-hashed and die with each deploy), no
+  image URL. Colours are literal hex mirroring tokens.css because there is
+  no tokens.css here.
+
+  The copy deliberately says nothing about the session. This page cannot
+  know whether the __session cookie is still valid, and home-screen web apps
+  are documented (WebKit 272325) to lose session cookies unpredictably, so a
+  reassurance could be false on reconnect.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Offline · NAISI</title>
+<style>
+  html { color-scheme: dark; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
+    background: #050810;
+    color: #e6eaf2;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-align: center;
+  }
+  main { max-width: 24rem; }
+  img { display: block; width: 72px; height: auto; margin: 0 auto 1.5rem; }
+  h1 { margin: 0 0 0.75rem; font-size: 1.5rem; font-weight: 600; }
+  p { margin: 0 0 1.5rem; color: #8b94ac; line-height: 1.55; }
+  button {
+    appearance: none;
+    -webkit-appearance: none;
+    min-height: 2.75rem;
+    padding: 0 1.25rem;
+    border: none;
+    border-radius: 999px;
+    background: #6a82ff;
+    color: #ffffff;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<main>
+  <img src="__EMBLEM_DATA_URI__" alt="" width="72">
+  <h1>You are offline</h1>
+  <p>Nothing is stored on this device, so there is nothing to show until you are back online.</p>
+  <button type="button" onclick="location.reload()">Try again</button>
+</main>
+</body>
+</html>

@@ -11,6 +11,7 @@ import GoogleSignInButton from "@/components/GoogleSignInButton";
 import SigningIn from "@/components/SigningIn";
 import signinStyles from "@/components/SigningIn.module.css";
 import styles from "./register/registerSignIn.module.css";
+import { mark, warn } from "@/lib/devMonitor";
 import RegisterAudienceToggle, {
   type RegisterAudience,
 } from "./register/RegisterAudienceToggle";
@@ -269,6 +270,47 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
     })();
   }, [authLoading, user, role, safeNext, phase]);
 
+  /*
+   * Redirect-mode return leg, part 1: the latch. On phones and installed
+   * apps the Google button navigates to Google, which POSTs the credential
+   * to /api/auth/google/callback; that route verifies it and lands back
+   * here with the token in a short-lived single-use cookie. The consume
+   * effect lives below onCredential (it calls it directly); this ref stops
+   * a Strict Mode double-invoke or an identity-keyed re-run from consuming
+   * twice. Mirrored constants: the cookie names live in the route file.
+   */
+  const redirectConsumedRef = useRef(false);
+
+  /*
+   * Stash ?next= so it survives the redirect round trip through Google (GIS
+   * redirect mode carries no state). The callback route reads this cookie,
+   * re-applies the open-redirect guard server-side, and puts next back on
+   * the /login URL it redirects to.
+   */
+  useEffect(() => {
+    if (!params.get("next")) return;
+    try {
+      document.cookie = `__auth_next=${encodeURIComponent(safeNext)}; path=/; max-age=600; samesite=lax`;
+    } catch {
+      /* fine: the user just lands on /dashboard instead */
+    }
+  }, [params, safeNext]);
+
+  /* Surface a redirect-leg failure. The google_error values are set by the
+     callback route; csrf-cookie-missing is the diagnostic one for installed
+     iOS apps (see the route's docblock). */
+  useEffect(() => {
+    const err = params.get("google_error");
+    if (!err) return;
+    warn("[signin] google redirect leg failed", { err });
+    // Reacting to a URL param the server callback set: same shape as the
+    // close-on-pathname effects elsewhere in the codebase.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFormError(
+      "Google sign-in could not be completed. Try again, or use your email and password.",
+    );
+  }, [params]);
+
   const onCredential = useCallback(
     async (idToken: string) => {
       credentialReceivedRef.current = true;
@@ -324,6 +366,37 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
     },
     [mode, audience, safeNext, router, startSurge, playSuccessSweep, loaderOpen],
   );
+
+  /*
+   * Redirect-mode return leg, part 2: consume the credential the callback
+   * route left in a cookie and feed it to the SAME onCredential path popup
+   * mode uses, so everything downstream is one code path.
+   *
+   * Keyed on onCredential's identity, which changes across renders; that is
+   * safe because the cookie is deleted before use and the ref latches, so
+   * re-runs consume nothing. Declared after onCredential because it calls it
+   * directly.
+   */
+  useEffect(() => {
+    if (redirectConsumedRef.current) return;
+    let credential: string | null = null;
+    try {
+      const m = document.cookie.match(/(?:^|; )__google_credential=([^;]*)/);
+      if (!m || !m[1]) return;
+      redirectConsumedRef.current = true;
+      credential = decodeURIComponent(m[1]);
+      document.cookie = "__google_credential=; path=/login; max-age=0";
+    } catch {
+      return; /* cookie access unavailable; nothing to consume */
+    }
+    mark("[signin] consuming redirect-mode credential");
+    // Deferred a tick: onCredential's synchronous prologue sets state, and
+    // kicking it off outside the effect body keeps the effect itself pure
+    // (and satisfies the set-state-in-effect lint honestly rather than
+    // suppressing it).
+    const t = setTimeout(() => void onCredential(credential as string), 0);
+    return () => clearTimeout(t);
+  }, [onCredential]);
 
   // Stable identity so GoogleSignInButton's init effect (keyed on onScriptError)
   // doesn't re-run on every keystroke — that was re-initialising GSI repeatedly.
@@ -620,9 +693,9 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
           "Installed app on iOS" block in registerSignIn.module.css.
         */}
         <p className={styles.standaloneNote}>
-          Google sign-in does not work inside the installed app, because iOS
-          blocks the sign-in window it needs. Use your email and password
-          above, or open naisi.uk in Safari to sign in with Google.
+          Google sign-in opens a secure Google page and returns here. If it
+          does not complete, use your email and password above, or open
+          naisi.uk in Safari.
         </p>
         <div className={styles.divider} style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", margin: "var(--space-6) 0 var(--space-4)" }}>
           <span style={{ flex: 1, height: 1, background: "var(--color-border)" }} />

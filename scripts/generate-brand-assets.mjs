@@ -16,6 +16,8 @@
  *   public/icons/icon-192.png            web app manifest icon, purpose "any"
  *   public/icons/icon-512.png            web app manifest icon, purpose "any"
  *   public/icons/icon-maskable-512.png   web app manifest icon, purpose "maskable"
+ *   public/offline.html                  offline fallback, emblem inlined as a
+ *                                        data URI from scripts/offline-template.html
  *
  * Why a white emblem is generated here: the master logo is a dark navy/cyan
  * colorway that sinks into the near-black site background. The emblem is a
@@ -32,7 +34,7 @@
  * show two different icons across platforms.
  */
 import { fileURLToPath } from "node:url";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 
@@ -173,6 +175,30 @@ async function main() {
     path.join(iconsDir, "icon-maskable-512.png"),
   );
 
+  // Offline fallback page. Rendered from the committed template with the
+  // white emblem inlined as a data URI, because this is the one document the
+  // service worker serves with no network: it cannot reference an image URL,
+  // and /_next/* asset paths die with every deploy. 72px display size, 144px
+  // bitmap for retina.
+  const emblemSmall = await sharp(emblemWhite)
+    .resize({ height: 144, fit: "inside" })
+    .png({ palette: true, compressionLevel: 9 })
+    .toBuffer();
+  const template = await readFile(
+    path.join(root, "scripts/offline-template.html"),
+    "utf8",
+  );
+  const banner =
+    "<!-- GENERATED from scripts/offline-template.html by scripts/generate-brand-assets.mjs. Do not edit directly. -->\n";
+  await writeFile(
+    path.join(root, "public/offline.html"),
+    banner +
+      template.replace(
+        "__EMBLEM_DATA_URI__",
+        `data:image/png;base64,${emblemSmall.toString("base64")}`,
+      ),
+  );
+
   console.log("Brand assets generated:");
   await report("public/brand/naisi-emblem", path.join(root, "public/brand/naisi-emblem.png"));
   await report("public/brand/...-white", path.join(root, "public/brand/naisi-emblem-white.png"));
@@ -182,6 +208,8 @@ async function main() {
   await report("public/icons/icon-192", path.join(root, "public/icons/icon-192.png"));
   await report("public/icons/icon-512", path.join(root, "public/icons/icon-512.png"));
   await report("public/icons/...maskable", path.join(root, "public/icons/icon-maskable-512.png"));
+  const offlineBytes = (await readFile(path.join(root, "public/offline.html"))).length;
+  console.log(`  ${"public/offline.html".padEnd(26)} ${(offlineBytes / 1024).toFixed(1)} KB`);
 }
 
 main().catch((err) => {

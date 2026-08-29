@@ -375,6 +375,36 @@ export default function AppShell({
         <Link href="/" className={styles.topStripBrand} aria-label="NAISI home">
           <BrandMark size={28} />
         </Link>
+        {/*
+          Reload, shown ONLY in an installed app. A standalone window has no
+          URL bar and no reload button, so when a page half-renders or goes
+          stale the user's only option is force-quitting. Android keeps
+          pull-to-refresh (which is why no overscroll-behavior rule was
+          added), but iOS standalone has no refresh gesture at all.
+
+          Always in the DOM and hidden by CSS keyed on the attribute
+          StandaloneFlag stamps before first paint, rather than rendered
+          behind useIsStandalone: the hook is false on the first client
+          render, so a JS-gated button would pop into the strip after
+          hydration and shove the hamburger sideways.
+        */}
+        <button
+          type="button"
+          className={styles.standaloneReload}
+          aria-label="Reload this page"
+          onClick={() => window.location.reload()}
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden focusable="false">
+            <path
+              d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
         <button
           type="button"
           className={styles.hamburger}

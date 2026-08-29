@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { mark, warn } from "@/lib/devMonitor";
+import { isIos, isStandaloneNow } from "@/lib/pwa/displayMode";
 import styles from "./GoogleSignInButton.module.css";
 
 type Props = {
@@ -139,6 +140,29 @@ export default function GoogleSignInButton({
       }
 
       mark("[gsi] script loaded, initializing");
+      /*
+       * Popup on desktop, redirect on phones and installed apps.
+       *
+       * Redirect navigates the top frame to Google, which then form-POSTs
+       * the credential to /api/auth/google/callback (which must be listed
+       * as an Authorized redirect URI on each project's OAuth Web client).
+       * Two reasons for the split:
+       *
+       *   - Installed iOS apps cannot open the popup at all: window.open
+       *     returns null there, so popup mode is a silent dead end.
+       *   - Google's own guidance is that redirect mode is required for
+       *     iOS Safari generally, because ITP interferes with the popup's
+       *     storage. itp_support papers over some of it; redirect does not
+       *     need the paper.
+       *
+       * Desktop keeps popup because the click staying inline is a better
+       * experience and nothing there breaks it. The callback config below
+       * is unused in redirect mode (the credential goes to the server) but
+       * is kept unconditional so the object shape never forks.
+       */
+      const useRedirect =
+        isStandaloneNow() || isIos() || /Android/i.test(navigator.userAgent);
+      mark("[gsi] ux mode", { mode: useRedirect ? "redirect" : "popup" });
       window.google.accounts.id.initialize({
         client_id: CLIENT_ID!,
         callback: (res) => {
@@ -151,7 +175,10 @@ export default function GoogleSignInButton({
         // so the credential flow doesn't depend on third-party storage
         // access the browser would partition.
         itp_support: true,
-        ux_mode: "popup",
+        ux_mode: useRedirect ? "redirect" : "popup",
+        ...(useRedirect
+          ? { login_uri: `${window.location.origin}/api/auth/google/callback` }
+          : {}),
         context: "signin",
       });
 

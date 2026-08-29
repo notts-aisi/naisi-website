@@ -1,6 +1,14 @@
+/* viewport-fit: cover has been on at the root all along, so this sticky bar
+   already runs under the status bar and, in landscape, under the notch. That
+   is a live bug in an ordinary Safari tab, not something installing causes;
+   installing only makes it permanent. Each inset resolves to 0 elsewhere, so
+   this is a no-op on desktop and on non-notched devices. */
 .header {
   position: sticky;
   top: 0;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
   z-index: 10;
   background: color-mix(in srgb, var(--color-bg) 85%, transparent);
   backdrop-filter: saturate(1.4) blur(12px);

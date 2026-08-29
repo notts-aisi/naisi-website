@@ -60,8 +60,18 @@
 }
 
 /* === Mobile === */
+/* The footer is the last thing on every public page, so it is what sits
+   under the home indicator in an installed app and under the collapsed
+   toolbar in Safari. Resolves to 0 everywhere else. */
+.footer {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 @media (max-width: 48rem) { /* --bp-md */
-  .footer { padding-block: var(--space-10) var(--space-6); }
+  .footer {
+    padding-block: var(--space-10)
+      calc(var(--space-6) + env(safe-area-inset-bottom, 0px));
+  }
   .inner {
     grid-template-columns: 1fr 1fr;
     gap: var(--space-6);

@@ -34,7 +34,9 @@ export default function robots(): MetadataRoute.Robots {
 
   return {
     rules: [
-      { userAgent: "*", allow: "/" },
+      // The offline fallback also carries a noindex meta, but belt and
+      // braces: it is a contentless utility page.
+      { userAgent: "*", allow: "/", disallow: "/offline.html" },
       { userAgent: aiTrainingBots, disallow: "/" },
     ],
   };
