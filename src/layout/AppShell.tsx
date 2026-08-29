@@ -14,6 +14,7 @@ import type { UserPermissions } from "@/lib/firestore/users";
 import { mark, warn } from "@/lib/devMonitor";
 import { hardNavigate } from "@/lib/navigation/hardNavigate";
 import { clearSelfHealAttempt } from "@/lib/navigation/selfHealGuard";
+import { InstallLink } from "@/features/pwa/InstallLink";
 import styles from "./AppShell.module.css";
 
 /** Banner state supplied by (app)/layout.tsx when a view-as session is live.
@@ -535,6 +536,9 @@ export default function AppShell({
           <BrandMark size={32} />
         </div>
         {renderNav(() => setDrawerOpen(false))}
+        {/* Quiet, permanent install route. Renders nothing when installed,
+            on desktop, or on Android before Chrome offers its prompt. */}
+        <InstallLink />
         {renderUserBlock()}
       </Drawer>
     </div>
