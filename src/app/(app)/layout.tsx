@@ -3,6 +3,7 @@ import { getCurrentCollaborator, getCurrentUser } from "@/lib/firebase/session";
 import { getImpersonator } from "@/lib/firebase/impersonation";
 import AppShell from "@/layout/AppShell";
 import { SessionSanityGuard } from "@/auth/SessionSanityGuard";
+import { LastRouteTracker } from "@/features/pwa/LastRouteTracker";
 
 export default async function AuthedLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
@@ -43,6 +44,10 @@ export default async function AuthedLayout({ children }: { children: React.React
         exactly the state a stale session gets stuck in.
       */}
       <SessionSanityGuard />
+      {/* Records the route for installed-app relaunch restoration. Mounted
+          here rather than the root layout ON PURPOSE: only authed-area
+          paths should ever be recorded. See lastRoute.ts. */}
+      <LastRouteTracker />
       <AppShell impersonation={impersonation}>{children}</AppShell>
     </>
   );
