@@ -3,6 +3,7 @@ import TaskCommentEmail from "@/emails/TaskCommentEmail";
 import { sendEmail } from "@/lib/email/send";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isTaskEmailEnabled } from "@/lib/firestore/taskEmailConfig";
+import { mirrorTaskEmailToPush } from "@/lib/push/taskNotifications";
 import { getCurrentUser } from "@/lib/firebase/session";
 
 type NotifyPayload = {
@@ -227,6 +228,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           taskLink,
           reason,
         }),
+      });
+      // Mirror to the recipient's enabled devices. After the email so a
+      // failed email (caught below) sends no push; swallows its own errors
+      // so a push failure cannot mark the email as failed.
+      await mirrorTaskEmailToPush(uid, {
+        title: subject,
+        body: commentPreview,
+        taskId,
       });
       sent += 1;
     } catch (err) {

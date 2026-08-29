@@ -287,7 +287,7 @@ export default function Dropdown<T extends string = string>({
         if (match) setActiveValue(match.value);
       }
     },
-    [disabled, enabledOptions, moveActive, open, selectActive],
+    [disabled, enabledOptions, moveActive, open, selectActive, closeMenu],
   );
 
   const current = options.find((o) => o.value === value);

@@ -9,6 +9,7 @@ import {
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isTaskEmailEnabled } from "@/lib/firestore/taskEmailConfig";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { mirrorTaskEmailToPush } from "@/lib/push/taskNotifications";
 
 type Payload = { uid?: unknown };
 
@@ -144,6 +145,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         preassignments: slice.preassignments,
         otherCompleterNames: slice.otherCompleterNames,
       }),
+    });
+    await mirrorTaskEmailToPush(target, {
+      title: `You've been added to "${taskTitle}"`,
+      body: "Open the task to see your part.",
+      taskId,
     });
     sent = 1;
   } catch (err) {
