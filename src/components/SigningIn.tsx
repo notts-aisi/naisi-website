@@ -93,7 +93,10 @@ export default function SigningIn({ active, successStartAt = null }: Props) {
   const text = inSuccess ? SUCCESS_TEXT : active ? ACTIVE_PHRASES[phraseIdx] : IDLE_TEXT;
 
   return (
-    <div className={styles.container} role="status" aria-live="polite">
+    /* No live region here — TypewriterText owns the (single) one. With the
+       loader now visible by default, a polite region wrapping the whole
+       thing would announce every cycling phrase to screen readers. */
+    <div className={styles.container}>
       <div className={styles.networkWrap}>
         <LivingPlasma
           active={active}
@@ -108,6 +111,7 @@ export default function SigningIn({ active, successStartAt = null }: Props) {
           text={text}
           ellipsisStyle={inSuccess ? "blink" : active ? "spinner" : "pulse"}
           tone={inSuccess ? "success" : "default"}
+          live={inSuccess ? "polite" : "off"}
           typingSpeedMs={95}
           eraseSpeedMs={60}
           holdMs={1800}

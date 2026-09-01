@@ -83,6 +83,43 @@
 :global(html[data-standalone-ios="true"]) .authForm { order: 1; }
 :global(html[data-standalone-ios="true"]) .divider { order: 2; }
 :global(html[data-standalone-ios="true"]) .standaloneNote { order: 3; }
+.googleWrap {
+  position: relative;
+}
+.googleWrap > div {
+  transition: opacity 200ms ease, filter 200ms ease;
+}
+/* Credential exchange in flight: freeze and dim the button (GIS renders an
+   iframe, so the grey has to come from our wrapper) while the ring spins
+   beside it. The dim targets the button's container div only, so the ring —
+   a sibling span — stays crisp. */
+.googleWrapBusy {
+  pointer-events: none;
+}
+.googleWrapBusy > div {
+  opacity: 0.55;
+  filter: saturate(0.6);
+}
+.googleSpinner {
+  position: absolute;
+  top: 50%;
+  /* Just right of the centred 320px GIS button, clamped inside the card on
+     very narrow screens. */
+  left: min(calc(50% + 172px), calc(100% - 24px));
+  width: 18px;
+  height: 18px;
+  margin-top: -9px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+  border-top-color: var(--color-accent);
+  animation: googleSpin 0.8s linear infinite;
+}
+@keyframes googleSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 :global(html[data-standalone-ios="true"]) .googleWrap { order: 4; }
 :global(html[data-standalone-ios="true"]) .footer { order: 5; }
 
@@ -219,5 +256,93 @@
      it when scrolled to the bottom. */
   .authForm {
     padding-bottom: 2.5rem;
+  }
+}
+
+/* ---- Post-sign-in handoff pane ---------------------------------------- */
+/* Fullscreen fixed overlay that owns the window between "signed in" and the
+   destination document painting (see NavigatingPane in AuthEntry.tsx). The
+   background matches the global body (#050810) so the eventual document swap
+   is seamless rather than a flash. Sits above the auth layout's logo (z 30)
+   and the mobile footer bar (z 20). */
+.navPane {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom, 0px));
+  background: #050810;
+  text-align: center;
+}
+.navPaneRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.navPaneTitle {
+  color: hsla(142, 80%, 70%, 1);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.navPaneText {
+  margin: 0;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+/* Indeterminate slider — a looping keyframe is fine here (the
+   transition-over-animation rule is about enter/exit hand-offs). */
+.navPaneBar {
+  position: relative;
+  width: 200px;
+  height: 3px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: hsla(142, 70%, 50%, 0.16);
+}
+.navPaneBarFill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  border-radius: 999px;
+  background: hsla(142, 80%, 62%, 0.9);
+  animation: navPaneSlide 1.15s ease-in-out infinite;
+}
+@keyframes navPaneSlide {
+  from {
+    left: -40%;
+  }
+  to {
+    left: 100%;
+  }
+}
+.navPaneSlow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+.navPaneSlowText {
+  margin: 0;
+  color: var(--color-text-subtle);
+  font-size: var(--text-sm);
+}
+@media (prefers-reduced-motion: reduce) {
+  .navPaneBarFill {
+    animation: none;
+    left: 0;
+    width: 100%;
+    opacity: 0.5;
+  }
+  .googleSpinner {
+    animation: none;
+    border-top-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
   }
 }
