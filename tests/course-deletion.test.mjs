@@ -1491,7 +1491,12 @@ test("GUARD — the mirrored-task sweep is filtered on `source`, not just the po
   // an unfiltered sweep aimed the admin's own destroy at anything a committee
   // member chose. The source filter is the half that also protects rows
   // written before the rules pin.
-  assert.match(ENGINE, /const MIRRORED_TASK_SOURCE = "fellowship-reminder"/);
+  // The constant now lives in `courseTasks.ts`, beside the code that STAMPS
+  // the value on a mirror, and is imported here. What the guard is actually
+  // about is the two filters below and their order; this line only pins that
+  // the sweep is still bound to one named source rather than to a literal
+  // somebody could widen in passing.
+  assert.match(ENGINE, /import \{ MIRRORED_TASK_SOURCE \} from "\.\/courseTasks"/);
   const drain = ENGINE.slice(
     ENGINE.indexOf("async function drainMirroredTasks"),
     ENGINE.indexOf("async function drainSubscriptionRows"),

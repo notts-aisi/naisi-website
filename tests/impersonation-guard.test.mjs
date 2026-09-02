@@ -89,7 +89,9 @@ const MUST_GUARD = [
   ["src/app/api/courses/runs/[runId]/clone-weeks/route.ts", "copies a whole week plan onto a run"],
   ["src/app/api/courses/runs/[runId]/destroy/route.ts", "destroys a run and every row under it"],
   ["src/app/api/courses/runs/[runId]/email/route.ts", "sends email to a cohort"],
+  ["src/app/api/courses/runs/[runId]/enrol/route.ts", "takes, moves and gives up a seat on an open-enrolment run in the member's own name"],
   ["src/app/api/courses/runs/[runId]/enrolments/[uid]/remove/route.ts", "removes a learner from a run"],
+  ["src/app/api/courses/runs/[runId]/enrolments/[uid]/reinstate/route.ts", "puts a member who left back on a run, taking a seat back off the group"],
   ["src/app/api/courses/runs/[runId]/enrol-mode/route.ts", "flips a run between admissions and open enrolment, which changes what the enrol route accepts"],
   ["src/app/api/courses/runs/[runId]/exercises/[exerciseId]/submit/route.ts", "submits a learner's answer in their own name"],
   ["src/app/api/courses/runs/[runId]/material-notes/route.ts", "records feedback attributed to the reader"],
@@ -108,6 +110,10 @@ const MUST_GUARD = [
   ["src/app/api/admissions/rounds/[roundId]/stages/[stageId]/route.ts", "writes and deletes the questions a stage asks"],
   ["src/app/api/admissions/rounds/[roundId]/stages/[stageId]/release/route.ts", "releases a stage's questions to applicants, which cannot be undone"],
   ["src/app/api/admissions/rounds/[roundId]/roles/route.ts", "appoints reviewers and the final decider, which grants access to applications"],
+  // Outside the scanned trees above (it lives under /api/admin), so it is
+  // named here or it is checked by nothing: it writes `config/courses`, whose
+  // knobs reach every course surface at once.
+  ["src/app/api/admin/courses-config/route.ts", "changes site-wide course settings"],
 ];
 
 /**

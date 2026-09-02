@@ -16,6 +16,9 @@ import {
 } from "./courses";
 import { COURSE_AUDIT_COLLECTION } from "./courseAudit";
 import { COURSE_PAGES_COLLECTION } from "./coursePages";
+// The ONLY `tasks.source` a run's cascade may delete. See drainMirroredTasks
+// for why this is a security filter rather than a tidier query.
+import { MIRRORED_TASK_SOURCE } from "./courseTasks";
 import { COURSE_MATERIAL_NOTES_COLLECTION } from "./courseMaterialNotes";
 import { SCHEDULER_MARKERS_COLLECTION } from "./schedulerMarkers";
 import { deleteEventsForSubscriptions } from "./subscriptions";
@@ -111,14 +114,6 @@ const MAX_PASSES = 5;
  * and short enough that a crashed pass does not strand the resume for long.
  */
 const PASS_LEASE_MS = 3 * 60 * 1000;
-
-/**
- * The ONLY `tasks.source` a run's cascade may delete — the value
- * `courseTasks.ts` stamps on a week mirror (`TaskSource`'s
- * "fellowship-reminder"). See drainMirroredTasks for why this is a security
- * filter rather than a tidier query.
- */
-const MIRRORED_TASK_SOURCE = "fellowship-reminder";
 
 export const COURSE_DELETIONS_COLLECTION = "courseDeletions";
 

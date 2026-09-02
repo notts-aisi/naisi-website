@@ -575,6 +575,15 @@ export async function deleteAccountCascade(
     //     only by an enrolment that is both active AND grouped — the
     //     allocate/remove routes' definition — so a withdrawn row releases
     //     nothing here; its seat went when it left "active".
+    //
+    //     The run's `enrolledCount` rides along too, and its condition is
+    //     NARROWER: `selfEnrolled` as well as active. That field is moved only
+    //     by the open-enrol route, which increments it when somebody takes a
+    //     seat themselves and decrements it when they leave. Decrementing it
+    //     for an allocated admissions learner, whose row nothing ever counted,
+    //     would drive it negative and then wedge the enrol-mode route, which
+    //     reads it as "is anybody on this run". Rows the counter never counted
+    //     are rows it must not uncount.
     if (!attendanceSwept) {
       console.error(
         "[deleteAccount] courseEnrolments delete SKIPPED — the attendance sweep failed and these rows are the only index back to the runs to re-scan:",
@@ -583,9 +592,17 @@ export async function deleteAccountCascade(
     } else {
       try {
         const seats = new Map<string, number>();
+        const selfEnrolledByRun = new Map<string, number>();
         for (const e of enrolments) {
-          if (e.status === "active" && e.groupId) {
+          if (e.status !== "active") continue;
+          if (e.groupId) {
             seats.set(e.groupId, (seats.get(e.groupId) ?? 0) + 1);
+          }
+          if (e.selfEnrolled && e.runId) {
+            selfEnrolledByRun.set(
+              e.runId,
+              (selfEnrolledByRun.get(e.runId) ?? 0) + 1,
+            );
           }
         }
         // A group doc that has since been deleted would make `batch.update`
@@ -597,6 +614,15 @@ export async function deleteAccountCascade(
           : [];
         const liveGroupIds = new Set(groupDocs.filter((d) => d.exists).map((d) => d.id));
 
+        // Same absent-doc rule as the groups above: a run deleted since the
+        // enrolment was written must not make `batch.update` reject the whole
+        // batch and strand every row in it.
+        const runIds = [...selfEnrolledByRun.keys()];
+        const runDocs = runIds.length
+          ? await db.getAll(...runIds.map((id) => db.collection("courseRuns").doc(id)))
+          : [];
+        const liveRunIds = new Set(runDocs.filter((d) => d.exists).map((d) => d.id));
+
         if (enrolSnap.size > 0) {
           const batch = db.batch();
           for (const d of enrolSnap.docs) batch.delete(d.ref);
@@ -604,6 +630,13 @@ export async function deleteAccountCascade(
             if (!liveGroupIds.has(groupId)) continue;
             batch.update(db.collection("courseGroups").doc(groupId), {
               memberCount: FieldValue.increment(-count),
+              updatedAt: FieldValue.serverTimestamp(),
+            });
+          }
+          for (const [runId, count] of selfEnrolledByRun) {
+            if (!liveRunIds.has(runId)) continue;
+            batch.update(db.collection("courseRuns").doc(runId), {
+              enrolledCount: FieldValue.increment(-count),
               updatedAt: FieldValue.serverTimestamp(),
             });
           }

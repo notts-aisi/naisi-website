@@ -1,5 +1,10 @@
 import type { DocumentReference, Firestore } from "firebase-admin/firestore";
-import { currentWeekFor, type CurrentWeek, type WeekPlanEntry } from "./weekPlan";
+import {
+  currentWeekFor,
+  isValidDateKey,
+  type CurrentWeek,
+  type WeekPlanEntry,
+} from "./weekPlan";
 import { normalizeCourseWeek, type CourseWeekDoc } from "../firestore/courses";
 import { normalizeGroupWeek, type GroupWeekDoc } from "../firestore/courseGroups";
 
@@ -103,6 +108,44 @@ export function memberCurrentWeek(
 ): CurrentWeek {
   const calendar = resolveCalendar(run, group);
   return currentWeekFor(calendar, now);
+}
+
+/**
+ * The cohort week a FRESH enrolment joins at, ON THE TARGET GROUP'S CLOCK.
+ *
+ * `anchorWeekNumber` is the last taught week that has started (0 before the
+ * run, clamped to week 1 so a pre-term join, the normal case, anchors
+ * everyone to the beginning). A run or group with no usable start date also
+ * anchors to week 1 rather than throwing: `memberCurrentWeek` inherits
+ * `currentWeekFor`'s `RangeError` contract, so the RESOLVED start date is
+ * what has to be guarded, not the run's.
+ *
+ * ── WHY THE GROUP AND NOT THE RUN ───────────────────────────────────────────
+ * `joinedWeekNumber` is a FLOOR, and the attendance route enforces it. Stamp
+ * the run's week onto someone joining a group paced three weeks behind and
+ * they join at run-week 5 while their group sits on week 3: weeks 3 and 4,
+ * the weeks they are about to attend, come back "hadn't joined the group in
+ * week 3", the grid renders those cells inert, and `ProgressBody` leaves them
+ * out of the member's own total.
+ *
+ * `group === null` (unplaced) resolves the run canonical, which is exactly
+ * what an ungrouped member is paced by.
+ *
+ * SHARED, not copied: both writers of a fresh enrolment call this one
+ * function. The allocation route stamps it for an accepted applicant; the
+ * open-enrol route stamps it for someone who picked their own session. Two
+ * copies of this arithmetic is how the two writers end up disagreeing about
+ * which week a person joined in.
+ */
+export function joinedWeekFor(
+  run: RunCalendarSource,
+  group: GroupPaceSource | null,
+  now: Date = new Date(),
+): number {
+  const calendar = resolveCalendar(run, group);
+  return isValidDateKey(calendar.startDate)
+    ? Math.max(1, memberCurrentWeek(run, group, now).anchorWeekNumber)
+    : 1;
 }
 
 // ---------------------------------------------------------------------------

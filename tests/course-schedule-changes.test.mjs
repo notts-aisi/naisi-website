@@ -224,6 +224,7 @@ const DECIDE = api("runs", "[runId]", "applications", "[uid]", "decide", "route.
 const APPLY_ROUTE = api("runs", "[runId]", "apply", "route.ts");
 const STATUS_ROUTE = api("runs", "[runId]", "status", "route.ts");
 const REMOVE_ROUTE = api("runs", "[runId]", "enrolments", "[uid]", "remove", "route.ts");
+const ENROL_ROUTE = api("runs", "[runId]", "enrol", "route.ts");
 const FACILITATORS = api("groups", "[groupId]", "facilitators", "route.ts");
 
 const MATERIAL_NOTES = api("runs", "[runId]", "material-notes", "route.ts");
@@ -1569,10 +1570,17 @@ test("GUARD — allocation clamps joinedWeekNumber to a real week", () => {
   // Pre-term allocation is the NORMAL case: the anchor is 0 before the run
   // starts, and an unclamped 0 would make every week "before you joined" and
   // exclude the entire course from the member's own progress total.
+  // The clamp moved with the helper: `joinedWeekFor` now lives in
+  // `groupResolve.ts` and is called by BOTH writers of a fresh enrolment (the
+  // allocation route, and the open-enrol route a member drives themselves).
+  // Two copies of this arithmetic is how the two writers end up disagreeing
+  // about which week somebody joined in, so the guard follows the function.
   assert.match(
-    ALLOCATE,
-    /Math\.max\(1, memberCurrentWeek\(run, group\)\.anchorWeekNumber\)/,
+    GROUP_RESOLVE,
+    /Math\.max\(1, memberCurrentWeek\(run, group, now\)\.anchorWeekNumber\)/,
   );
+  assert.match(ALLOCATE, /joinedWeekFor\(run, targetGroup\)/);
+  assert.match(ENROL_ROUTE, /joinedWeekFor\(freshRun, group\)/);
   const beforeStart = new Date(`${addDaysToKey(START, -3)}T12:00:00Z`);
   assert.equal(memberCurrentWeek(run(), null, beforeStart).anchorWeekNumber, 0);
   assert.equal(joinedWeekFor(run(), null, beforeStart), 1);
@@ -1581,8 +1589,11 @@ test("GUARD — allocation clamps joinedWeekNumber to a real week", () => {
   // just as capable of being half-authored as the run's.
   assert.equal(isValidDateKey(""), false);
   assert.equal(joinedWeekFor(run({ startDate: "" }), null, beforeStart), 1);
-  assert.match(ALLOCATE, /isValidDateKey\(calendar\.startDate\)\s*\?[\s\S]{0,90}:\s*1;/);
-  assert.match(ALLOCATE, /const calendar = resolveCalendar\(run, group\);/);
+  assert.match(
+    GROUP_RESOLVE,
+    /isValidDateKey\(calendar\.startDate\)\s*\?[\s\S]{0,90}:\s*1;/,
+  );
+  assert.match(GROUP_RESOLVE, /const calendar = resolveCalendar\(run, group\);/);
 });
 
 test("GUARD — a mid-run joiner is stamped with THEIR GROUP's week, not the run's", () => {
@@ -1640,7 +1651,13 @@ test("GUARD — a mid-run joiner is stamped with THEIR GROUP's week, not the run
   // the group doc is already read there for the capacity check, so this costs
   // no extra read.
   assert.match(ALLOCATE, /joinedWeekNumber: joinedWeekFor\(run, targetGroup\),/);
-  assert.match(ALLOCATE, /function joinedWeekFor\(run: CourseRunDoc, group: CourseGroupDoc \| null\)/);
+  assert.match(
+    GROUP_RESOLVE,
+    /export function joinedWeekFor\(\s*run: RunCalendarSource,\s*group: GroupPaceSource \| null,/,
+  );
+  // The open-enrol route resolves it the same way, against the group the
+  // member picked, inside the same transaction that reads it for capacity.
+  assert.match(ENROL_ROUTE, /joinedWeekNumber: joinedWeekFor\(freshRun, group\),/);
   // …and NOT hoisted out of the loop any more. A bare `const joinedWeekNumber =`
   // at request scope is exactly the shape of the bug.
   assert.doesNotMatch(codeOf(ALLOCATE), /const joinedWeekNumber =/);
@@ -1747,7 +1764,12 @@ test("GUARD — an offer survives admissions closing the run, which is what brok
   // after the deadline (`getApplyContext` returns a closed run rather than
   // null). Neither is where an ACCEPTED member learns they got in, which is
   // the property this test holds: that answer comes from /api/courses/me.
-  assert.match(COURSE_CTA, /Applications aren&apos;t open right now\./);
+  // The sentence lost its admissions-only noun when open enrolment landed,
+  // and then its sign-ups-only one: with no run there is no mode either, so
+  // the branch covers a course between intakes and an unscheduled pre-course
+  // alike. What the guard is about is that the branch still EXISTS and still
+  // fires on a run the fetcher dropped, not on which noun it uses.
+  assert.match(COURSE_CTA, /This course isn&apos;t taking new people right now\./);
   assert.match(COURSE_CTA, /if \(!run \|\| run\.state === "inactive"\)/);
   assert.match(APPLY_FORM, /You're in\. We'll email you your group/);
   // The CTA and the apply route read ONE window predicate, so discovery and
@@ -1864,11 +1886,15 @@ test("GUARD — every date-driven consumer guards with isValidDateKey before pac
     [NUDGE, "nudge"],
     [SYNC_TASKS, "sync-tasks"],
     [ATTENDANCE, "attendance"],
-    [ALLOCATE, "allocate"],
     [ALLOCATION_PUBLISH, "allocation/publish"],
+    // `allocate` and the open-enrol route both reach the guard through
+    // `joinedWeekFor`, which holds it once for both of them.
+    [GROUP_RESOLVE, "groupResolve (joinedWeekFor)"],
   ]) {
     assert.match(source, /isValidDateKey\(/, `${name} no longer guards its date`);
   }
+  assert.match(ALLOCATE, /joinedWeekFor\(/, "allocate no longer resolves a joining week");
+  assert.match(ENROL_ROUTE, /joinedWeekFor\(/, "open enrol no longer resolves a joining week");
   assert.throws(() => currentWeekFor({ startDate: "2026-02-31", weekPlan: [] }), RangeError);
   assert.throws(() => currentWeekFor({ startDate: "", weekPlan: [] }), RangeError);
 });

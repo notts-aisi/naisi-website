@@ -211,12 +211,36 @@ export type CourseRunDoc = {
   /** Server-owned (see `CourseRunStream`). Empty = a run with no streams. */
   streams: CourseRunStream[];
   /**
-   * Server-owned counter: how many enrolments this run currently holds. Moved
-   * only by the transactions that write `courseEnrolments`, so it can never
-   * drift from the rows it summarises, following the `groupCount` /
-   * `memberCount`
-   * precedent. Read by the open-enrol picker and by the enrol-mode route,
-   * which refuses to change the mode once anybody is on the run.
+   * Server-owned counter: how many people are on this run through OPEN
+   * ENROLMENT right now. Moved only by the transactions that write
+   * `courseEnrolments`, so it can never drift from the rows it summarises,
+   * following the `groupCount` / `memberCount` precedent.
+   *
+   * ── WHAT IT COUNTS, EXACTLY ─────────────────────────────────────────────
+   * Enrolments that are BOTH `status: "active"` AND `selfEnrolled`. Every
+   * writer agrees on that definition, and there are four of them:
+   *
+   *  1. the open-enrol route, +1 on the seat and -1 on the drop-out;
+   *  2. the remove route, -1 when the row it retires was active and
+   *     self-enrolled (a removed open-enrol cohort that still read as
+   *     populated is how the enrol-mode route ends up refusing to reopen a
+   *     run nobody is on);
+   *  3. the reinstate route, +1 when it flips a withdrawn self-enrolled row
+   *     back to active;
+   *  4. the account-deletion sweep, -1 per self-enrolled active row it
+   *     deletes.
+   *
+   * Nothing counts an allocated admissions learner, so nothing may uncount
+   * one either: a decrement for a row that was never counted drives this
+   * negative.
+   *
+   * KNOWN GAP, stated rather than hidden: the allocation route does NOT move
+   * it, so an ADMISSIONS run reads 0 however many learners it has. Nothing
+   * may use this to answer "is anybody on this run": the enrol-mode route
+   * asks that question with an aggregate `count()` over the enrolments
+   * themselves, precisely because this number cannot answer it. Widening the
+   * definition means teaching the allocation route to move it in the same
+   * transaction as the row it writes.
    */
   enrolledCount: number;
   /**
