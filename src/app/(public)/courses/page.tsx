@@ -5,8 +5,10 @@ import Card from "@/components/ui/Card";
 import { COURSE_TRACK_LABELS } from "@/lib/firestore/courses";
 import {
   listPublishedCourses,
+  roundOwnsDates,
   type CourseCatalogueEntry,
 } from "@/features/courses/fetchCourses";
+import CourseVisual from "@/features/courses/CourseVisual";
 import {
   formatRunStartShort,
   formatWindowDate,
@@ -70,8 +72,8 @@ export default async function CourseCataloguePage() {
 }
 
 function CourseCard({ entry }: { entry: CourseCatalogueEntry }) {
-  const { course, featuredRun } = entry;
-  const state = featuredRun?.window.state ?? null;
+  const { course } = entry;
+  const state = cardState(entry);
   const dates = cardDates(entry);
   return (
     // Plain next/link, never TransitionLink: the public transition's ~960ms
@@ -79,6 +81,16 @@ function CourseCard({ entry }: { entry: CourseCatalogueEntry }) {
     // broken tap on a grid of cards.
     <Link href={`/courses/${course.id}`} className={styles.cardLink}>
       <Card padding="lg" interactive className={styles.card}>
+        {/* The same seed and cover the course page's hero uses, read in one
+            batch by the fetcher, so a course is one picture across the site. */}
+        <CourseVisual
+          seed={entry.visual.seed}
+          track={course.track}
+          coverImageUrl={entry.visual.coverImageUrl}
+          coverAlt={entry.visual.coverAlt}
+          className={styles.visual}
+        />
+
         <div className={styles.cardTop}>
           <Badge tone="accent">{COURSE_TRACK_LABELS[course.track]}</Badge>
           {course.level ? <span className={styles.level}>{course.level}</span> : null}
@@ -108,6 +120,18 @@ function CourseCard({ entry }: { entry: CourseCatalogueEntry }) {
   );
 }
 
+/**
+ * The window state the card speaks about, from whichever object owns the
+ * dates. `roundOwnsDates` is that decision, shared with the sort key inside
+ * the fetcher and with the programme page, so a card cannot be sorted into
+ * one band and painted in another.
+ */
+function cardState(entry: CourseCatalogueEntry): ApplicationWindowState | null {
+  return roundOwnsDates(entry.liveRound, entry.featuredRun?.run.enrolMode ?? null)
+    ? (entry.liveRound?.state ?? null)
+    : (entry.featuredRun?.window.state ?? null);
+}
+
 /** Open is live, not-yet is upcoming, everything else is over. */
 function stateClass(state: ApplicationWindowState | null): string {
   if (state === "open") return styles.stateOpen;
@@ -130,14 +154,19 @@ function stateClass(state: ApplicationWindowState | null): string {
  * and "Applications open for wd" is what that reads like in the wild.
  */
 function applicationState(entry: CourseCatalogueEntry): string {
+  const round = entry.liveRound;
   const found = entry.featuredRun;
-  if (!found) return "Next run TBA";
-  const noun = found.run.enrolMode === "open" ? "Sign-ups" : "Applications";
-  if (found.window.state === "open") return `${noun} open`;
-  if (found.window.state === "not-yet") {
-    return found.window.opensAt
-      ? `${noun} open ${formatWindowDate(found.window.opensAt)}`
-      : `${noun} open soon`;
+  if (!round && !found) return "Next run TBA";
+  // An open-enrolment run is never spoken for by a round, so the noun is only
+  // ever "Sign-ups" on the run's own window.
+  const noun = found?.run.enrolMode === "open" ? "Sign-ups" : "Applications";
+  // Which object is speaking: `roundOwnsDates`, the one rule.
+  const viaRound = roundOwnsDates(round, found?.run.enrolMode ?? null);
+  const state = cardState(entry);
+  const opensAt = viaRound ? (round?.opensAt ?? null) : (found?.window.opensAt ?? null);
+  if (state === "open") return `${noun} open`;
+  if (state === "not-yet") {
+    return opensAt ? `${noun} open ${formatWindowDate(opensAt)}` : `${noun} open soon`;
   }
   return `${noun} closed`;
 }
@@ -151,14 +180,25 @@ function applicationState(entry: CourseCatalogueEntry): string {
  * and the state line above has already said it has passed.
  */
 function cardDates(entry: CourseCatalogueEntry): string {
+  const round = entry.liveRound;
   const found = entry.featuredRun;
-  if (!found) return "";
+  if (!round && !found) return "";
+
   const bits: string[] = [];
-  if (found.window.state !== "closed" && found.window.closesAt) {
-    const noun = found.run.enrolMode === "open" ? "Sign-ups" : "Applications";
-    bits.push(`${noun} close ${formatWindowDate(found.window.closesAt)}`);
+  const viaRound = roundOwnsDates(round, found?.run.enrolMode ?? null);
+  const state = cardState(entry);
+  const closesAt = viaRound ? (round?.closesAt ?? null) : (found?.window.closesAt ?? null);
+  if (state !== "closed" && closesAt) {
+    const noun = found?.run.enrolMode === "open" ? "Sign-ups" : "Applications";
+    bits.push(`${noun} close ${formatWindowDate(closesAt)}`);
   }
-  const starts = formatRunStartShort(found.run.startDate);
+  // The start date belongs to whichever run the card is speaking for. When a
+  // round owns the card that is the run the round will place people onto,
+  // which is normally still `draft` and so is never the featured run; the
+  // fetcher resolves it as `roundRun`. No target run means no start date,
+  // rather than the featured run's, which would be a different intake's.
+  const startingRun = viaRound ? entry.roundRun : (found?.run ?? null);
+  const starts = startingRun ? formatRunStartShort(startingRun.startDate) : undefined;
   if (starts) bits.push(`Starts ${starts}`);
   return bits.join(" · ");
 }

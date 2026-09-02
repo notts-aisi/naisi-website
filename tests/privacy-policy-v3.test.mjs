@@ -26,7 +26,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -310,22 +310,57 @@ describe("the re-consent gate", () => {
  * record who read it". The in-form notice says the same thing on the page
  * where the answer is typed.
  *
- * No route reads that collection yet: the reveal lands in PR33, and the
+ * No STAFF route reads that collection yet: the reveal lands in PR33, and the
  * `access-requirements-read` audit kind is sitting in `CourseAuditKind`
  * waiting for it. So the sentence is a promise about code that does not
  * exist, which is exactly the shape of claim a policy quietly breaks.
  *
  * This guard is what keeps it honest. It walks EVERY route file under
  * src/app/api and refuses one that reaches `admissionApplicationPrivate` (by
- * collection name, or through the shared id helper) without also naming the
- * audit kind. A reveal route that forgets the log cannot ship, so the two
- * always land together and the policy stays true the day the feature does.
+ * collection name, through the shared id helper, or through the apply tree's
+ * shared context module, which addresses the collection on a route's behalf)
+ * without also naming the audit kind. A reveal route that forgets the log
+ * cannot ship, so the two always land together and the policy stays true the
+ * day the feature does.
  *
  * A route that only DELETES these rows should go through
  * `accountDeletion.ts` rather than naming the collection itself, which is
- * what the account-deletion cascade already does; if a future one has a real
- * reason to address the collection directly, it can say so in the same
- * commit that widens this guard.
+ * what the account-deletion cascade already does.
+ *
+ * ## The owner lane, and why it is exempt
+ *
+ * The promise the policy makes is about somebody ELSE reading the answer:
+ * "only the person making the final decision and site admins can open it, and
+ * every time one of them does we record who read it". The applicant's own
+ * apply routes read the row back to put the applicant's own words in their own
+ * textarea, which is not a disclosure to anybody and is not what the sentence
+ * is about. Logging it would also drown the real audit: a two-minute autosave
+ * writes and reads the row on every cycle, so one applicant writing an essay
+ * would generate more rows than the whole decision week.
+ *
+ * The exemption is therefore a NAMED LIST, not a pattern. Each entry is a
+ * route that may address the collection only in the owner's own lane, and
+ * adding one is a decision somebody made rather than a wildcard a later route
+ * slides through. Every entry is checked to still exist, so a rename shows up
+ * here rather than silently widening the allowance.
+ *
+ * ## What "the owner's own lane" rests on, and the one thing that breaks it
+ *
+ * The whole exemption is the claim that the session the route reads from IS
+ * the person whose answer it is. Admin "view as" is the one mechanism on this
+ * site that makes that claim false: it swaps the `__session` cookie for the
+ * TARGET's, so `getCurrentUser()` returns the member and the doc id the route
+ * builds is the member's. Without a guard the owner lane would hand an admin
+ * somebody's disability and health information with nothing recording the
+ * read, and the exemption would be laundering exactly the disclosure the
+ * policy sentence is about.
+ *
+ * So every entry below calls `assertNotImpersonating()` before it touches the
+ * collection, and the test after this list checks that rather than trusting
+ * the prose. The server-rendered `/apply/[roundId]` page is the same lane
+ * without a route handler in it, and it answers the same question its own way:
+ * it checks the marker and omits the private join, which is pinned in
+ * `tests/admissions-apply-flow.test.mjs`.
  */
 function routeFilesUnder(dir, out = []) {
   if (!existsSync(dir)) return out;
@@ -338,8 +373,29 @@ function routeFilesUnder(dir, out = []) {
 }
 
 const REACHES_PRIVATE =
-  /["'`]admissionApplicationPrivate["'`]|admissionApplicationPrivateId\b/;
+  /["'`]admissionApplicationPrivate["'`]|admissionApplicationPrivateId\b|admissions\/applyContext/;
 const NAMES_AUDIT_KIND = /access-requirements-read/;
+
+/**
+ * Routes that may reach the collection WITHOUT a log, because they only ever
+ * read the caller's own answer back to the caller. See the section comment.
+ */
+const OWNER_LANE = [
+  [
+    "src/app/api/admissions/rounds/[roundId]/apply/route.ts",
+    "reads and writes the applicant's own access-requirements answer, addressed by their own uid, and shows it back to them in their own form; every handler including the GET refuses while a view-as session is live, so the session it reads from is always really the owner's",
+  ],
+  [
+    "src/app/api/admissions/rounds/[roundId]/apply/submit/route.ts",
+    "re-reads the caller's own row after committing the submission, to answer with their own application, and refuses during a view-as session",
+  ],
+  [
+    "src/app/api/admissions/rounds/[roundId]/apply/stage/[stageId]/route.ts",
+    "same, for one later-released stage, and refuses during a view-as session",
+  ],
+];
+
+const OWNER_LANE_PATHS = new Set(OWNER_LANE.map(([file]) => file));
 
 describe("the access-requirements read log", () => {
   const routes = routeFilesUnder(join(SRC, "app/api"));
@@ -356,8 +412,44 @@ describe("the access-requirements read log", () => {
     assert.match(audit, NAMES_AUDIT_KIND);
   });
 
+  test("every owner-lane exemption still exists and carries a reason", () => {
+    for (const [file, reason] of OWNER_LANE) {
+      assert.ok(
+        existsSync(join(REPO_ROOT, ...file.split("/"))),
+        `${file} is exempt from the access-requirements read log but no longer exists. Drop the entry.`,
+      );
+      assert.ok(
+        typeof reason === "string" && reason.length > 20,
+        `${file} is exempt with no reason a reader can weigh.`,
+      );
+    }
+  });
+
+  test("every owner-lane handler refuses a view-as session, reads included", () => {
+    // The exemption's whole premise is that the session is the owner's. A
+    // view-as session makes that false, so a handler in this lane that did not
+    // guard would be an unlogged disclosure of the one answer the policy
+    // singles out. READS are included deliberately: the private join is a
+    // read, and it is the disclosure.
+    for (const [file] of OWNER_LANE) {
+      const src = readFileSync(join(REPO_ROOT, ...file.split("/")), "utf8");
+      const handlers = [...src.matchAll(/export\s+async\s+function\s+([A-Z]+)\s*\(/g)];
+      assert.ok(handlers.length > 0, `${file} exports no handlers the scan can see`);
+      for (const match of handlers) {
+        const window = src.slice(match.index, match.index + 500);
+        assert.match(
+          window,
+          /assertNotImpersonating\(\)/,
+          `${file} ${match[1]} is in the owner lane but does not refuse a view-as session at the top of the handler`,
+        );
+      }
+    }
+  });
+
   test("no route reaches admissionApplicationPrivate without logging the read", () => {
     const offenders = routes.filter((file) => {
+      const relative = file.slice(REPO_ROOT.length + 1).split(sep).join("/");
+      if (OWNER_LANE_PATHS.has(relative)) return false;
       const source = readFileSync(file, "utf8");
       return REACHES_PRIVATE.test(source) && !NAMES_AUDIT_KIND.test(source);
     });
