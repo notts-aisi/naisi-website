@@ -97,7 +97,10 @@
    with a picture inset by the card padding reads as a thumbnail rather than
    as the card's own face. `Card padding="lg"` is var(--space-8), and
    var(--space-6) below 48rem, which the mobile block matches. */
-.visual {
+/* `.card .visual`, not `.visual`: CourseVisual's own module gives the same
+   class a border and a radius at the same specificity, and which of two equal
+   selectors wins would then depend on stylesheet order. */
+.card .visual {
   margin: calc(var(--space-8) * -1) calc(var(--space-8) * -1) 0;
   border-radius: 0;
   border-left: 0;
@@ -186,7 +189,7 @@
   .cardFoot {
     margin-top: var(--space-1);
   }
-  .visual {
+  .card .visual {
     margin: calc(var(--space-6) * -1) calc(var(--space-6) * -1) 0;
   }
 }

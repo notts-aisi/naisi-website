@@ -364,11 +364,17 @@ function buildFacts(
   round: CourseLiveRound | null,
   run: RunWindow | null,
 ): CourseFact[] {
-  const opensAt = round ? round.opensAt : (run?.window.opensAt ?? null);
-  const closesAt = round ? round.closesAt : (run?.window.closesAt ?? null);
-  const state = round?.state ?? run?.window.state ?? null;
-  const past = state === "closed";
+  // The same precedence the CTA applies, and for the same reason: an
+  // open-enrolment run has no round, so the picker's window wins there and the
+  // round wins everywhere else. Two components disagreeing about which object
+  // is speaking is how a page ends up showing a round's deadline beside a
+  // run's state.
   const openMode = run?.run.enrolMode === "open";
+  const viaRound = !openMode && round !== null;
+  const opensAt = viaRound ? round.opensAt : (run?.window.opensAt ?? null);
+  const closesAt = viaRound ? round.closesAt : (run?.window.closesAt ?? null);
+  const state = viaRound ? round.state : (run?.window.state ?? null);
+  const past = state === "closed";
   const noun = openMode ? "Sign-ups" : "Applications";
 
   return [
@@ -389,9 +395,12 @@ function buildFacts(
     },
     {
       label: "Decisions by",
-      value: round?.decisionsByDate
-        ? (formatRunStartShort(round.decisionsByDate) ?? "")
-        : "",
+      // Only a round promises a decision date. An open-enrolment run has no
+      // decision to make, which is why this row simply disappears there.
+      value:
+        viaRound && round.decisionsByDate
+          ? (formatRunStartShort(round.decisionsByDate) ?? "")
+          : "",
     },
     {
       label: "Starts",
