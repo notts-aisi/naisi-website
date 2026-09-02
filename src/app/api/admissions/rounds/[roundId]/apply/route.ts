@@ -144,7 +144,7 @@ export async function GET(_req: Request, ctx: Ctx) {
       round: serialiseRoundForApplicant(round, now),
       stages: stages.map((stage) => serialiseStageForApplicant(stage, round, now)),
       application: loaded
-        ? serialiseApplicationForOwner(loaded.application, loaded.accessRequirements)
+        ? serialiseApplicationForOwner(loaded.application, round, loaded.accessRequirements)
         : null,
     });
   } catch (err) {
@@ -270,7 +270,7 @@ export async function POST(req: Request, ctx: Ctx) {
 
     const loaded = await loadOwnApplication(db, round, user.uid);
     const application = loaded
-      ? serialiseApplicationForOwner(loaded.application, loaded.accessRequirements)
+      ? serialiseApplicationForOwner(loaded.application, round, loaded.accessRequirements)
       : null;
 
     if (outcome === "exists") {
@@ -472,7 +472,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       ok: true,
       savedAt: new Date().toISOString(),
       application: saved
-        ? serialiseApplicationForOwner(saved.application, saved.accessRequirements)
+        ? serialiseApplicationForOwner(saved.application, round, saved.accessRequirements)
         : null,
     });
   } catch (err) {
@@ -565,7 +565,7 @@ export async function DELETE(req: Request, ctx: Ctx) {
       ok: true,
       alreadyWithdrawn: already,
       application: loaded
-        ? serialiseApplicationForOwner(loaded.application, loaded.accessRequirements)
+        ? serialiseApplicationForOwner(loaded.application, round, loaded.accessRequirements)
         : null,
     });
   } catch (err) {

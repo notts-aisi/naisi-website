@@ -170,19 +170,44 @@ export function releasedStages(
 // The applicant's view of their own row
 // ---------------------------------------------------------------------------
 
+/**
+ * The applicant's own row, projected for them.
+ *
+ * ## Stages the round no longer has are pruned on the way out
+ *
+ * A round can delete a stage (`DELETE .../stages/[stageId]` takes it off
+ * `round.stageIds`), and a draft written before that still carries the
+ * deleted stage's answers under its old key. Sending those keys back would
+ * wedge the form: the apply island seeds its answer state from this payload
+ * and sends the whole map on every save, so an orphan key would ride out on
+ * every PATCH forever. Pruning here means the client is never handed a key it
+ * cannot use, and `readStageAnswers` drops the same keys on the way in for the
+ * client that already has one in state.
+ *
+ * Nothing is lost by it: the stored answers stay on the row, and the questions
+ * they answered are gone from the round either way.
+ */
 export function serialiseApplicationForOwner(
   application: AdmissionApplicationDoc,
+  round: AdmissionRoundDoc,
   accessRequirements: string,
 ): ApplicantApplication {
+  const onRound = new Set(round.stageIds);
   const stageSubmittedAt: Record<string, string | null> = {};
   for (const [stageId, at] of Object.entries(application.stageSubmittedAt)) {
+    if (!onRound.has(stageId)) continue;
     stageSubmittedAt[stageId] = iso(at);
+  }
+  const stageAnswers: Record<string, Record<string, RsvpAnswer>> = {};
+  for (const [stageId, answers] of Object.entries(application.stageAnswers)) {
+    if (!onRound.has(stageId)) continue;
+    stageAnswers[stageId] = answers;
   }
   return {
     id: application.id,
     roundId: application.roundId,
     status: application.status,
-    stageAnswers: application.stageAnswers,
+    stageAnswers,
     stageSubmittedAt,
     availability: application.availability,
     availabilityConfigVersion: application.availabilityConfigVersion,
@@ -214,11 +239,22 @@ function isFieldError(v: unknown): v is FieldError {
 /**
  * Validate the answers a client sent for the stages it names.
  *
- * REFUSES rather than ignores a stage that is not on the round, or is on it
- * but not released, or is already frozen. A silent drop is the failure mode
- * that costs an applicant their essay: they type into a stage the server has
- * decided to discard, watch "Saved" appear, and find the box empty tomorrow.
- * Every refusal here names the stage.
+ * REFUSES rather than ignores a stage that is on the round but not released,
+ * or one already frozen. A silent drop is the failure mode that costs an
+ * applicant their essay: they type into a stage the server has decided to
+ * discard, watch "Saved" appear, and find the box empty tomorrow. Both
+ * refusals name the stage.
+ *
+ * A stage id that is NOT ON THE ROUND AT ALL is the one case that is dropped
+ * instead, and the reason is that refusing it makes the draft permanently
+ * unsaveable. When a round deletes a stage, a draft written before the
+ * deletion still holds answers under the old key; the apply island seeds its
+ * state from the row and sends the whole map on every save, so a refusal would
+ * come back on every autosave and every press of Save with nothing the
+ * applicant could do about it. There is nothing to lose by dropping it either:
+ * the key names no stage, so there is no question it could be an answer to and
+ * no writer that could ever store it. `serialiseApplicationForOwner` prunes
+ * the same keys on the way out, so a fresh load never carries one.
  *
  * `enforceRequired` is the draft/submit split: a draft is half written by
  * definition, so a blank required question is fine on the way in and refused
@@ -242,9 +278,9 @@ export function readStageAnswers(
   const out: Record<string, Record<string, RsvpAnswer>> = {};
   for (const [stageId, answers] of Object.entries(raw as Record<string, unknown>)) {
     const stage = byId.get(stageId);
-    if (!stage) {
-      return { error: "That part of the form is not on this round any more. Reload the page.", stageId };
-    }
+    // Dropped, not refused: see the note above. An unknown id is unwritable,
+    // and refusing it would wedge the whole save forever.
+    if (!stage) continue;
     if (!isStageReleased(stage, round, now)) {
       return { error: `"${stage.label}" has not been released yet.`, stageId };
     }

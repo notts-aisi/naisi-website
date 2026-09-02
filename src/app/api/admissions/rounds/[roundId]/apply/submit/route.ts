@@ -182,7 +182,7 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({
       ok: true,
       application: loaded
-        ? serialiseApplicationForOwner(loaded.application, loaded.accessRequirements)
+        ? serialiseApplicationForOwner(loaded.application, round, loaded.accessRequirements)
         : null,
     });
   } catch (err) {

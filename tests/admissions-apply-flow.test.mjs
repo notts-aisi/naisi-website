@@ -258,6 +258,51 @@ function makeStage(overrides = {}) {
 
 const DURING_WINDOW = new Date("2026-10-01T12:00:00Z");
 
+/**
+ * A stored application row, carrying every field the collection's
+ * `read: if false` rule exists for: the reviewer's private notes, the
+ * unshared rejection reason, the membership snapshot, and the applicant's
+ * address. What the owner projection must NOT put on the wire.
+ */
+const OWNED_ROW = {
+  id: "r__u",
+  roundId: "r",
+  uid: "u",
+  email: "someone@example.com",
+  displayName: "Someone",
+  stageAnswers: { s1: { q1: "hello" } },
+  stageSubmittedAt: { s1: new Date("2026-10-02T09:00:00Z") },
+  availability: availability.emptyMask(GRID),
+  availabilityConfigVersion: 1,
+  programmePreference: {
+    streamId: null,
+    rankedFellowshipIds: [],
+    openToFellowship: false,
+  },
+  evidence: {
+    runs: [],
+    facilitatorNotes: "Did not turn up to two sessions.",
+    computedAt: null,
+  },
+  membershipAtApply: true,
+  reapplyCount: 0,
+  status: "submitted",
+  submittedAt: new Date("2026-10-02T09:00:00Z"),
+  withdrawnAt: null,
+  outcome: {
+    decision: "reject",
+    targetRunId: null,
+    streamId: null,
+    decidedByUid: "decider-1",
+    decidedAt: new Date("2026-10-25T09:00:00Z"),
+    reason: "Not this time, and here is the bit we never shared.",
+    reasonShared: false,
+  },
+  seatApplicationId: null,
+  createdAt: null,
+  updatedAt: null,
+};
+
 // ---------------------------------------------------------------------------
 // 1. The release boundary
 // ---------------------------------------------------------------------------
@@ -461,17 +506,42 @@ describe("stage answers", () => {
     assert.match(out.error, /not been released/i);
   });
 
-  test("answers for a stage that is not on the round are refused", () => {
+  test("answers for a stage that is not on the round are DROPPED, not refused", () => {
+    // The one case that is dropped rather than refused, and the reason is that
+    // refusing it wedges the form for good. When a round deletes a stage, a
+    // draft written before the deletion still holds that key; the island seeds
+    // its state from the row and sends the whole map on every save, so a
+    // refusal would come back on every autosave with nothing the applicant
+    // could do. There is nothing to lose either: the key names no stage.
     const out = apply.readStageAnswers(
-      { s9: { q1: "hello" } },
+      { s9: { q1: "hello" }, s1: { q1: "kept" } },
       stages,
       round,
       DURING_WINDOW,
       {},
       false,
     );
-    assert.ok(apply.isFieldError(out));
-    assert.equal(out.stageId, "s9");
+    assert.equal(apply.isFieldError(out), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(out, "s9"), false);
+    assert.deepEqual(out.s1, { q1: "kept" });
+  });
+
+  test("the owner projection prunes the same orphan key, so a fresh load never carries one", () => {
+    // The other half of the fix. Dropping on the way in stops the save being
+    // refused; pruning on the way out stops the key being handed back to the
+    // client to send again. Without both, one round trip re-seeds it.
+    const wire = apply.serialiseApplicationForOwner(
+      {
+        ...OWNED_ROW,
+        stageAnswers: { s1: { q1: "kept" }, s9: { q1: "orphan" } },
+        stageSubmittedAt: { s1: new Date("2026-10-02T09:00:00Z"), s9: new Date() },
+      },
+      makeRound({ stageIds: ["s1", "s2"] }),
+      "",
+    );
+    assert.deepEqual(Object.keys(wire.stageAnswers), ["s1"]);
+    assert.deepEqual(Object.keys(wire.stageSubmittedAt), ["s1"]);
+    assert.equal(JSON.stringify(wire).includes("orphan"), false);
   });
 
   test("a frozen stage cannot be edited again", () => {
@@ -672,44 +742,8 @@ describe("access requirements", () => {
 
   test("the owner projection carries the answer and nothing reviewer-only", () => {
     const wire = apply.serialiseApplicationForOwner(
-      {
-        id: "r__u",
-        roundId: "r",
-        uid: "u",
-        email: "someone@example.com",
-        displayName: "Someone",
-        stageAnswers: { s1: { q1: "hello" } },
-        stageSubmittedAt: { s1: new Date("2026-10-02T09:00:00Z") },
-        availability: availability.emptyMask(GRID),
-        availabilityConfigVersion: 1,
-        programmePreference: {
-          streamId: null,
-          rankedFellowshipIds: [],
-          openToFellowship: false,
-        },
-        evidence: {
-          runs: [],
-          facilitatorNotes: "Did not turn up to two sessions.",
-          computedAt: null,
-        },
-        membershipAtApply: true,
-        reapplyCount: 0,
-        status: "submitted",
-        submittedAt: new Date("2026-10-02T09:00:00Z"),
-        withdrawnAt: null,
-        outcome: {
-          decision: "reject",
-          targetRunId: null,
-          streamId: null,
-          decidedByUid: "decider-1",
-          decidedAt: new Date("2026-10-25T09:00:00Z"),
-          reason: "Not this time, and here is the bit we never shared.",
-          reasonShared: false,
-        },
-        seatApplicationId: null,
-        createdAt: null,
-        updatedAt: null,
-      },
+      OWNED_ROW,
+      makeRound({ stageIds: ["s1", "s2"] }),
       "a step-free room",
     );
 

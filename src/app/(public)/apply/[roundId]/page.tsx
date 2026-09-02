@@ -137,6 +137,7 @@ async function loadRound(
           appSnap.data() ?? {},
           round.availabilityGrid,
         ),
+        round,
         privateSnap?.exists
           ? normalizeAdmissionApplicationPrivate(privateSnap.id, privateSnap.data() ?? {})
               .accessRequirements
