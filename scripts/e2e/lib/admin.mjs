@@ -3,11 +3,13 @@
  * module can obtain credentials).
  *
  * Scope discipline, deliberately narrow:
- * - This harness creates Auth users and nothing else. It writes NO Firestore
- *   documents, so it cannot grant a role, a permission, or `suRecognised` —
- *   there is no code path here that writes to `users/`. The offline guard at
- *   tests/e2e-no-privilege-grants.test.mjs enforces that as a build-time fact
- *   rather than a convention.
+ * - This harness creates Auth users. It writes NO Firestore document, so it
+ *   can grant no role, no permission and no admin-set flag. The only
+ *   Firestore call here is `deleteHarnessUserDoc`, a DELETE of the users
+ *   document belonging to an account this harness made, behind the same
+ *   namespace check as the Auth deletion. The offline guard at
+ *   tests/e2e-no-privilege-grants.test.mjs enforces both as build-time facts
+ *   rather than conventions.
  * - Teardown refuses to delete any account whose email does not match this
  *   harness's own namespace. dev Firestore holds real people's data; a
  *   cleanup helper that trusted a uid argument could wipe a real test account
@@ -15,6 +17,7 @@
  */
 import { applicationDefault, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
+import { getFirestore } from "firebase-admin/firestore";
 import { loadEnv } from "./env.mjs";
 
 /**
@@ -120,6 +123,40 @@ export async function deleteHarnessUser(uid) {
     );
   }
   await auth.deleteUser(uid);
+  return { deleted: true };
+}
+
+/**
+ * Deletes the `users/{uid}` document belonging to an account this harness
+ * created, under the SAME namespace check `deleteHarnessUser` applies.
+ *
+ * It exists because the check has to happen before the delete, not after. The
+ * funnel teardown used to remove the document by the uid its state file named
+ * and only then call `deleteHarnessUser`, which would refuse a real member's
+ * uid: by then the document was already gone, and the refusal was a rejection
+ * nobody was catching for a reason. Resolving the account here and reading the
+ * address off the Auth record means a state file that pairs a harness email
+ * with somebody else's uid deletes nothing.
+ *
+ * An account that no longer exists is left alone rather than guessed at: with
+ * no record there is no address to check, and the funnel's manifest counts
+ * `users` documents so a stranded one is reported instead of silently removed.
+ */
+export async function deleteHarnessUserDoc(uid) {
+  const auth = adminAuth();
+  let record;
+  try {
+    record = await auth.getUser(uid);
+  } catch {
+    return { deleted: false, reason: "not-found" };
+  }
+  if (!isHarnessAccount(record.email)) {
+    throw new Error(
+      `REFUSING to delete users/${uid}: its email is not a harness account. ` +
+        "Only documents belonging to accounts this harness created may be removed.",
+    );
+  }
+  await getFirestore(adminApp()).collection("users").doc(record.uid).delete();
   return { deleted: true };
 }
 

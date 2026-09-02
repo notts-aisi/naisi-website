@@ -11,6 +11,12 @@ so it stops being hand-verified. Two modes:
   test secret and SMTP pointed at a loopback **Mailpit**, runs every battery
   against it, and tears it all down. `-- --skip-build` reuses the previous
   local build. See "The local server" below before trusting or changing it.
+- **`npm run e2e:funnel`**: the APPLICANT FUNNEL in a real browser (Chromium
+  only): seed a throwaway intake and pre-course, drive a fake applicant through
+  apply, withdraw, re-apply, enrol and drop out, then tear the fixture down and
+  prove its manifest reads zero. It sits beside these batteries but is a
+  different kind of test and needs Playwright, which this repo deliberately
+  does not depend on. See "The applicant funnel" below.
 
 Plain Node — `node --test`, no new npm dependencies, **zero files under `src/`**
 (one exception: the optional `FIREBASE_ADMIN_SERVICE_ACCOUNT_ID` hook in
@@ -195,6 +201,193 @@ harness's Firestore allowlist deliberately excludes those collections. The
 Auth users, `registrations` rows and `emailVerifications` docs it causes ARE
 cleaned up. This is the same residue a human testing registration against dev
 leaves, minus the accounts.
+
+## The applicant funnel (`npm run e2e:funnel`)
+
+A browser-driven run over the whole applicant journey, so a dress rehearsal is
+one command rather than an afternoon of clicking. Different in kind from the
+batteries above: those are `fetch()` against routes, this one is Chromium
+driving the actual pages.
+
+**The exact sequence, both modes:**
+
+```sh
+# one-time, per machine (see "Credentials" above for the gcloud half)
+cp .env.e2e.local.example .env.e2e.local
+npm install --no-save playwright     # NOT a dependency: see below
+npx playwright install chromium
+
+# against the deployed dev backend
+npm run e2e:funnel
+
+# against a server the run starts itself (captcha relaxed, SMTP on loopback)
+npm run e2e:funnel -- --local
+npm run e2e:funnel -- --local --skip-build   # reuse the previous local build
+
+# fewer or more fake applicants (1 to 10, default 5)
+npm run e2e:funnel -- --applicants 2
+
+# the fixture on its own, when you want to click around it by hand
+node scripts/seed-fake-applicants.mjs up
+node scripts/seed-fake-applicants.mjs status   # the manifest, right now
+node scripts/seed-fake-applicants.mjs down     # must end with total: 0
+```
+
+**What it drives**, in order, as one ordered test with named steps
+(`tests/e2e/applicant-funnel.spec.mjs`):
+
+1. the public course page renders the seeded session slots;
+2. `/apply/[roundId]` gives a signed-out visitor the sign-in gate and does NOT
+   render the form behind it;
+3. applicant 1 signs in through the real `/login` form;
+4. starting an application opens an editable draft;
+5. the draft saves, and the save bar says so;
+6. a reload brings the answer back off the server;
+7. the availability grid paints under a real pointer drag, and the marks
+   survive a save and a reload;
+8. submitting moves the application to view-only, with the controls gone
+   rather than disabled;
+9. withdrawing is refused until the confirmation word is typed;
+10. picking it back up restores every answer, and it submits again;
+11. the status hub at `/applications` lists the round;
+12. taking a place in a pre-course session;
+13. leaving the course, behind the typed course title.
+
+Step 11 **skips with a message** while `/applications` 404s: the status hub is
+PR14's, and the assertion arms itself the moment that route exists rather than
+being a red suite about a page nobody has written.
+
+**CHROMIUM ONLY.** Playwright drives Chromium here and nothing else, so this is
+a regression net and **never** a substitute for the manual Safari pass before
+`dev` goes to `main`. This codebase has already shipped a Safari-only defect (a
+`<button>` whose inline background WebKit painted its own grey face over), and
+Google sign-in is not automatable at all by design (see "Known holes").
+
+**Playwright is not a dependency, on purpose.** The root `package.json` is what
+App Hosting runs `npm ci` against on the critical path of every production
+deploy, and a browser-automation library plus a downloaded Chromium has no
+business there. That is the same argument that put the rules tests in
+`scripts/rules-tests/` with their own manifest. So `npm install --no-save`
+keeps it out of `package.json` and the lockfile, and the runner **refuses to
+run** without it: it prints the install line and exits non-zero before seeding
+anything, because a run that cannot open a browser has nothing to say about the
+funnel and is not worth the rows on a shared project. (Running the spec file
+directly still skips, which is what a bare `node --test tests/` needs.)
+
+**A run that drove no browser fails.** Every way the spec can decline to run
+(no Playwright, no fixture, a skip) exits `node --test` at 0, which is
+indistinguishable from a pass. So each step records its name as it finishes,
+the list is written to `.e2e-funnel-steps.json`, and the runner deletes that
+file before the run and refuses to report success unless it comes back naming
+every step in `FUNNEL_STEPS`. When it does not, the run exits non-zero with the
+step it stopped at.
+
+Both scratch files (`.e2e-funnel-state.json`, the fixture ledger, and
+`.e2e-funnel-steps.json`) sit at the repo root and are gitignored. They are
+deliberately **not** under `.next/`: `next build` clears that directory, so in
+`--local` mode the ledger was deleted by the build before the spec ever looked
+for it, and the run skipped its way to a green exit. `tests/funnel-harness-guards.test.mjs`
+pins both paths out of the build output.
+
+### The fixture, and why teardown is the headline
+
+`scripts/seed-fake-applicants.mjs` creates, in the dev project:
+
+- N throwaway accounts (`e2e-<id>@e2e.invalid`, the auth harness's own
+  namespace) each with a `users` document at role `pending`;
+- one `admissionRounds` document in status `open` with one released stage, the
+  default 09:00 to 18:00 quarter-hour availability grid, and no reviewers or
+  final decider;
+- one open-enrolment `courseRuns` pre-course under a published `courses`, with
+  two capped `courseGroups` (2 places and 1, so "full" is reachable in a single
+  run).
+
+Teardown removes all of it, plus everything the ROUTES created underneath
+(applications and their private rows, enrolments, audit rows, cohort
+subscription rows and their event lines, mirrored tasks, progress), and then
+**counts every one of those collections again**. A run whose suite was green
+but whose teardown left rows behind still exits non-zero: the fixture lives on
+a shared dev project, so a stray open round on the catalogue is as much a
+defect as a failed assertion. The manifest counts the `users` document and the
+Auth account each fixture applicant owns alongside the thirteen collections, so
+a teardown that stranded either is a non-zero total rather than a clean one,
+and a delete it refused (an account whose address is outside the harness
+namespace) is recorded in the manifest instead of logged and forgotten.
+Teardown runs in a `finally`, leaves the state file in place when anything is
+still standing, and an interrupted run says exactly which command clears up
+(`node scripts/seed-fake-applicants.mjs down`).
+
+### Its own fence, and why it is not inside this directory
+
+`tests/e2e-no-privilege-grants.test.mjs` holds the AUTH harness to three
+Firestore collections. The funnel fixture needs thirteen, so it cannot live
+inside that fence without tearing it down, and it sits at `scripts/` with a
+fence of its own shape, enforced by `tests/funnel-harness-guards.test.mjs`
+under `npm test`:
+
+- **It can never be aimed at production.** The spec resolves its origin through
+  the auth harness's own `assertTarget()`, and the guard asserts the production
+  origin appears nowhere in the harness as a literal.
+- **It grants no privilege.** Accounts are role `pending`, written by the auth
+  harness's hard-coded seeder. The guard forbids any other role literal, a
+  `permissions` map, `suRecognised`, `setCustomUserClaims`, and (specific to
+  this fixture) a non-empty `reviewerUids`, a non-null `finalDeciderUid`, or a
+  populated facilitator array: naming a reviewer would be minting a review
+  permission.
+- **It reaches only its declared collections.** One checked chokepoint,
+  `assertFixtureCollection()`, which throws before any credential is obtained,
+  tested behaviourally against both the list and a battery of collections it
+  must refuse. The grep half then insists every `.collection(...)` in the
+  harness is a literal on the list, the checked `collection` parameter of
+  `fixtureDoc` / `fixtureQuery`, or one of exactly two named exceptions: the
+  literal `users` (the document each fixture account owns, written by the auth
+  harness's guarded seeder and deleted under a namespace re-check on the
+  account it belongs to, and counted by the manifest so a stranded one shows
+  up), and the identifier `STAGES_SUBCOLLECTION`, which names a subcollection
+  reached off a document reference the chokepoint already produced. The guard
+  pins that constant's value so the name cannot quietly become something else.
+
+### It cannot cause real email
+
+The drop-out route emails the member. Fixture addresses are `.invalid`
+(RFC 2606, no DNS and no inbox), but against the deployed dev backend that
+would still be a real hand-off to Resend and a hard bounce logged against the
+sending domain. So seeding writes a `suppressedEmails` row for every fixture
+address FIRST. The rows are ledgered and removed by teardown like everything
+else.
+
+Be precise about what that buys, because the suppression check is **not**
+universal. `sendEmail()` in `src/lib/email/send.ts` does not consult the list
+at all; the per-feature helpers do, individually. On the paths this run drives,
+`sendCourseDroppedOutEmail()` in `courseEnrolmentEmails.ts` returns early on
+`isSuppressed()` before it builds a message, and `courseFacilitatorEmails.ts`
+drops suppressed addresses through `filterSuppressed()`. So the guarantee holds
+for the routes the funnel touches, and `tests/funnel-harness-guards.test.mjs`
+keeps it holding: it reads the `@/lib/email/*` imports of every route the spec
+drives and fails if one of those helpers stops checking the list. That check
+arms itself for new helpers automatically, which is what matters as the submit
+route grows an `admissionEmails.ts`.
+
+### It cannot be pointed at production, including "just once before launch"
+
+The delivery plan carries a line about running this again against production on
+19 Sep. That is structurally impossible and the harness refuses it, by design:
+the spec resolves its origin through `assertTarget()`, which allowlists the dev
+origin and loopback and nothing else, and the fixture calls `loadEnv()`, which
+exact-matches the project against `naisi-website-dev` before any credential is
+obtained. Nor would relaxing either be wanted: this run CREATES accounts,
+applications, enrolments and an open admission round on the catalogue, and
+proves itself by deleting them again. Rehearse on dev; the production pass
+before launch stays a human clicking through.
+
+### Local mode reuses `run.mjs` rather than copying it
+
+`--local` delegates the whole server bootstrap to `scripts/e2e/run.mjs`: the
+loopback bind, the always-pass captcha secret, the Mailpit SMTP override, the
+effective-environment dev assertion, the build marker. The only hook it needed
+was `E2E_TEST_PATHS`, which defaults to `scripts/e2e/tests/`, so `npm run
+e2e:local` is unchanged. Two places that must agree about which environment is
+safe to relax is exactly what that file exists to prevent.
 
 ## Known holes — green here does NOT mean covered
 
