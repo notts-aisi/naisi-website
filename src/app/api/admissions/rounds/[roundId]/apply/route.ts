@@ -515,6 +515,9 @@ export async function DELETE(req: Request, ctx: Ctx) {
   if (caller instanceof NextResponse) return caller;
   const { db, user } = caller;
 
+  const uidBlocked = throttleUid(user.uid, "create");
+  if (uidBlocked) return uidBlocked;
+
   const body = (await readJson(req)) ?? {};
   const typed = typeof body.confirm === "string" ? body.confirm.trim().toUpperCase() : "";
   if (typed !== WITHDRAW_CONFIRMATION) {

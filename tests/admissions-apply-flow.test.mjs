@@ -1074,7 +1074,14 @@ describe("the route prologue", () => {
         const uid = body.indexOf("throttleUid(user.uid,");
         assert.ok(ip !== -1, `${file} ${method} has no per-IP throttle`);
         assert.ok(ip < session, `${file} ${method} looks up the session before throttling by IP`);
-        if (uid !== -1) assert.ok(session < uid, `${file} ${method} throttles by uid before it has one`);
+        // BOTH axes on every mutating handler. The IP budget is deliberately
+        // generous because a campus shares one NAT address, so a handler with
+        // only that axis is effectively unthrottled for one signed-in account.
+        assert.ok(
+          uid !== -1,
+          `${file} ${method} throttles by IP but not by account, so one signed-in caller can spend the whole campus budget`,
+        );
+        assert.ok(session < uid, `${file} ${method} throttles by uid before it has one`);
       }
     }
   });
