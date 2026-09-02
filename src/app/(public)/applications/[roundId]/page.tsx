@@ -116,6 +116,10 @@ export default async function ApplicationDetailPage({ params }: Params) {
   if (loaded.roundMissing) notFound();
 
   const row = loaded.row;
+  // A draft or archived round is not a public object, so somebody who did not
+  // apply to it learns nothing from this page, not even that it exists.
+  // Somebody who DID apply still reads their own row below.
+  if (!row && !loaded.roundPublic) notFound();
 
   if (!row) {
     return (

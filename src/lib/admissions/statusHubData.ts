@@ -133,15 +133,25 @@ export async function loadStatusRows(
  * applied yet has, and the detail page renders that as an invitation rather
  * than as a 404. `roundMissing` is the different thing, and the caller draws
  * the distinction: no round at all is a 404, no application is an empty state.
+ *
+ * `roundPublic` is the third: a draft or archived round is not a public object
+ * (`/apply/[roundId]` answers 404 for one), so a stranger who guesses the id
+ * must be told nothing about it. Somebody who APPLIED to it still sees their
+ * own row, which is why this is a separate flag rather than a filter.
  */
 export async function loadStatusRowForRound(
   db: Db,
   uid: string,
   roundId: string,
   now: Date,
-): Promise<{ roundMissing: true } | { roundMissing: false; row: ApplicationStatusRow | null }> {
+): Promise<
+  | { roundMissing: true }
+  | { roundMissing: false; roundPublic: boolean; row: ApplicationStatusRow | null }
+> {
   const bundle = await loadRoundBundle(db, roundId);
   if (!bundle) return { roundMissing: true };
+
+  const roundPublic = !bundle.round.archived && bundle.round.status !== "draft";
 
   const snap = await db
     .collection(APPLICATIONS_COLLECTION)
@@ -149,7 +159,7 @@ export async function loadStatusRowForRound(
     // can only ever be the caller's own row.
     .doc(admissionApplicationId(roundId, uid))
     .get();
-  if (!snap.exists) return { roundMissing: false, row: null };
+  if (!snap.exists) return { roundMissing: false, roundPublic, row: null };
 
   const application = normalizeAdmissionApplication(
     snap.id,
@@ -158,6 +168,7 @@ export async function loadStatusRowForRound(
   );
   return {
     roundMissing: false,
+    roundPublic,
     row: buildStatusRow(application, bundle.round, bundle.stages, now),
   };
 }
