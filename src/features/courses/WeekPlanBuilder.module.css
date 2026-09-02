@@ -146,6 +146,46 @@
   cursor: not-allowed;
 }
 
+/* The week-id reconciliation panel. Warning-toned rather than danger: nothing
+   is broken yet on a draft, but it will be the moment the run goes live. */
+.drift {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.driftTitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-warning);
+}
+
+.driftList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.driftRow {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.driftActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
 .error {
   margin: 0;
   font-size: var(--text-sm);
@@ -206,5 +246,10 @@
   .iconBtn {
     width: 2.25rem;
     height: 2.25rem;
+  }
+
+  /* The drift panel's two buttons stack rather than wrap awkwardly mid-word. */
+  .driftActions > * {
+    flex: 1 1 100%;
   }
 }
