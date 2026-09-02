@@ -228,7 +228,11 @@ export default function RoundEditor({
                 onRoundChange={(stageIds) => setRound({ ...round, stageIds })}
               />
             </SectionCard>
-            <ProgrammeSection round={round} runs={runs} patch={patch} />
+            {round.kind === "enrolment" ? (
+              <ProgrammeSection round={round} runs={runs} patch={patch} />
+            ) : (
+              <AppointmentProgrammeNote />
+            )}
             <OutcomesSection round={round} runs={runs} patch={patch} />
             <AvailabilitySection round={round} patch={patch} />
             <AccessSection round={round} patch={patch} />
@@ -470,19 +474,27 @@ function OutcomesSection({
 }) {
   const [outcomeRunIds, setOutcomeRunIds] = useState(round.outcomeRunIds);
   const [evidenceRunIds, setEvidenceRunIds] = useState(round.evidenceRunIds);
+  const appointment = round.kind === "appointment";
 
   return (
     <SectionCard
       id="outcomes"
-      title="Outcomes and evidence"
+      title={appointment ? "Evidence" : "Outcomes and evidence"}
       note={
-        round.kind === "appointment"
+        appointment
           ? "An appointment round places nobody on a run, so it has no outcome runs. Evidence runs still apply: a facilitator applicant's attendance on the pre-course is worth seeing."
           : "Outcome runs are the courses this round can offer places on. Evidence runs are the ones whose attendance and submissions reviewers should see alongside an application."
       }
-      onSave={() => patch({ outcomeRunIds, evidenceRunIds })}
+      /* The outcome half is not merely hidden on an appointment round, it is
+         left out of the body of the save. The PATCH route refuses a non-empty
+         `outcomeRunIds` on this kind, and sending the field anyway would put a
+         refusal one bad document away from a section whose visible controls
+         are all evidence runs. */
+      onSave={() =>
+        patch(appointment ? { evidenceRunIds } : { outcomeRunIds, evidenceRunIds })
+      }
     >
-      {round.kind === "enrolment" && (
+      {!appointment && (
         <Field id="outcome-runs" label="Outcome runs">
           <RunPicker
             runs={runs}
@@ -500,6 +512,30 @@ function OutcomesSection({
           cap={L.maxEvidenceRuns}
         />
       </Field>
+    </SectionCard>
+  );
+}
+
+/**
+ * What stands where the programme section would be on an appointment round.
+ *
+ * A note rather than nothing. The section is absent by design, and an author
+ * who has just met the kind selector has no way to tell a deliberate omission
+ * from a page that failed to render half of itself. It carries the same `id`
+ * as the real section so an old anchor still lands somewhere that explains
+ * itself, and it has no save because there is nothing here to write.
+ */
+function AppointmentProgrammeNote() {
+  return (
+    <SectionCard
+      id="programme"
+      title="Programme preference"
+      note="An appointment round asks nothing about programme choice: an applicant is offering to run a group, not choosing which one to take. The form leaves this section out, and the server refuses to store a preference on a round of this kind."
+    >
+      <p className={styles.hint}>
+        Nothing to set here. Create an enrolment round if you need applicants to
+        pick a stream or rank fellowships.
+      </p>
     </SectionCard>
   );
 }

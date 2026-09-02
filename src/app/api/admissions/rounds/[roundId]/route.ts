@@ -63,9 +63,41 @@ import {
  * into a window is a real thing that happens. It is forced, with a typed
  * confirmation on the client, so it is a decision somebody made rather than a
  * side effect of pressing save.
+ *
+ * ## What an appointment round cannot have
+ *
+ * The facilitator intake is a round of kind `appointment`: it appoints people
+ * to run a group rather than placing them on one. Two sections of the document
+ * therefore have nothing legitimate to hold on it, and both are REFUSED with a
+ * sentence rather than normalised away:
+ *
+ *  - `outcomeRunIds`, because the decide route has no seat to mint and would be
+ *    reading a target nobody meant.
+ *  - `programmePreference`, because the apply flow renders no programme section
+ *    for this kind, so anything stored here is an answer to a question no
+ *    applicant was ever shown.
+ *
+ * Refusing is what makes the apply flow's kind check and this route agree. A
+ * quiet normalise would leave the console showing a section it had apparently
+ * saved, which is the same class of failure as the dropped reviewer list.
  */
 
 const L = ADMISSION_ROUND_FIELD_LIMITS;
+
+/**
+ * Fields fixed when the round is created.
+ *
+ * `kind` decides which half of this route's own validation a body is held to,
+ * which sections the console draws and which form an applicant is shown, and
+ * an appointment round that had already collected facilitator applications
+ * would answer none of those questions the same way after a flip. There is no
+ * migration behind such a change and no honest one to write, so the kind is
+ * chosen once, on the create form, and refused here rather than ignored: a
+ * console that believed it changed the kind and a server that dropped the key
+ * is the failure nobody notices until an applicant is looking at the wrong
+ * form.
+ */
+const IMMUTABLE_FIELDS = ["kind"];
 
 /** Fields that exist on the document but are written elsewhere. */
 const FOREIGN_FIELDS = [
@@ -278,6 +310,17 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  const immutable = IMMUTABLE_FIELDS.filter((f) => f in body);
+  if (immutable.length > 0) {
+    return NextResponse.json(
+      {
+        error:
+          "A round's kind is fixed when it is created. Create a new round if you need the other one.",
+      },
+      { status: 400 },
+    );
+  }
+
   const foreign = FOREIGN_FIELDS.filter((f) => f in body);
   if (foreign.length > 0) {
     return NextResponse.json(
@@ -407,6 +450,16 @@ export async function PATCH(
     }
 
     if ("programmePreference" in body) {
+      if (current.kind === "appointment") {
+        // The companion refusal to the outcome-runs one above, and it is a
+        // refusal rather than a silent normalise for the same reason: an
+        // appointment round asks somebody to run a group, not to pick which
+        // programme they would like a place on. The apply flow renders no
+        // programme section for this kind, so a preference stored here would
+        // be a question no applicant was ever asked, sitting on the document
+        // the decide route reads.
+        bad("An appointment round does not ask applicants to choose a programme.");
+      }
       update.programmePreference = readProgrammePreference(body.programmePreference);
     }
 

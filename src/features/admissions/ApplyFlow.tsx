@@ -12,6 +12,7 @@ import {
   type RecaptchaHandle,
 } from "@/components/ui/RecaptchaInvisible";
 import FormRenderer from "@/features/events/FormRenderer";
+import { applyCopy } from "@/lib/admissions/applyCopy";
 import { formatRoundDeadline } from "@/lib/admissions/window";
 import { ADMISSION_PRIVATE_FIELD_LIMITS } from "@/lib/firestore/admissionApplicationPrivate";
 import {
@@ -72,6 +73,17 @@ import styles from "./ApplyFlow.module.css";
  * a five-hundred-word answer is well past that, so a page-load token would
  * fail the very submission it was there to protect. The autosave deliberately
  * carries no token at all (see `applyRoutes.ts`).
+ *
+ * ## An appointment round is a different form, not a differently-worded one
+ *
+ * A round of kind `appointment` is the facilitator intake. It mounts NO
+ * programme-preference section at all: the gate is the kind, not
+ * `programmePreference.enabled`, so a stray enabled flag on an appointment
+ * round cannot put a "which programme would you like" block in front of
+ * somebody who is volunteering to run one. The PATCH route refuses to store
+ * that flag on this kind, and this check means the form would still be right
+ * if it ever did. Everything the applicant is asked to CALL the form comes
+ * from `applyCopy`, so the wording cannot drift between here and the page.
  *
  * ## Everything a member typed renders through MemberText
  *
@@ -153,6 +165,14 @@ export default function ApplyFlow({
 
   const recaptcha = useRef<RecaptchaHandle | null>(null);
 
+  const copy = applyCopy(round.kind);
+  /**
+   * THE gate on the programme section, and it is the round's kind rather than
+   * the section's own `enabled` flag. See the note above: an appointment round
+   * has no programme choice to offer, so the section is absent by kind and a
+   * misauthored flag cannot resurrect it.
+   */
+  const asksProgramme = round.kind !== "appointment" && round.programmePreference.enabled;
   const windowOpen = round.windowState === "open";
   const status = application?.status ?? null;
   const isDraft = status === "draft";
@@ -350,7 +370,7 @@ export default function ApplyFlow({
         {stageStrip}
         <Card padding="lg" className={styles.card}>
           <h2 className={styles.cardTitle}>
-            {windowOpen ? "Start your application" : "Nothing to fill in yet"}
+            {windowOpen ? copy.startTitle : "Nothing to fill in yet"}
           </h2>
           <p className={styles.body}>
             {windowOpen
@@ -364,7 +384,7 @@ export default function ApplyFlow({
           {windowOpen ? (
             <>
               <Button type="button" onClick={() => void onStart()} disabled={busy === "start"}>
-                {busy === "start" ? "Starting" : "Start your application"}
+                {busy === "start" ? "Starting" : copy.startAction}
               </Button>
               {errorNote}
             </>
@@ -434,7 +454,7 @@ export default function ApplyFlow({
         <Card padding="lg" className={styles.card}>
           <h2 className={styles.cardTitle}>
             {status === "submitted"
-              ? "Your application is in"
+              ? copy.submittedTitle
               : isDraft
                 ? "This one was never sent"
                 : "Your application"}
@@ -511,7 +531,7 @@ export default function ApplyFlow({
         );
       })}
 
-      {round.programmePreference.enabled ? (
+      {asksProgramme ? (
         <section className={styles.stage}>
           <h2 className={styles.stageTitle}>What you would like to be considered for</h2>
           <ProgrammePreference
@@ -593,7 +613,7 @@ export default function ApplyFlow({
               onClick={() => void onSubmit()}
               disabled={busy === "submit" || saving}
             >
-              {busy === "submit" ? "Submitting" : "Submit application"}
+              {busy === "submit" ? "Submitting" : copy.submitAction}
             </Button>
             <p className={styles.note}>
               {round.closesAt

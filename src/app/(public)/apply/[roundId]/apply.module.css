@@ -55,6 +55,17 @@
   line-height: 1.7;
 }
 
+/* What kind of form this is, for a round whose label does not say. Sits above
+   the round's own standfirst and reads a step firmer than it, because it is
+   the site talking rather than the round. */
+.kindNote {
+  margin: 0;
+  max-width: var(--prose-max-width);
+  color: var(--color-text);
+  font-size: var(--text-base);
+  line-height: 1.7;
+}
+
 /* === Signed-out and refused gates === */
 
 .gate {
@@ -140,6 +151,10 @@
 
   .lede {
     font-size: var(--text-base);
+  }
+
+  .kindNote {
+    font-size: var(--text-sm);
   }
 
   .button {

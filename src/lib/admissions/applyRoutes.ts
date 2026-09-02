@@ -331,13 +331,23 @@ export function readAvailability(
  * Read the programme-preference answer against what the round actually
  * offers. A ranking of a fellowship the round does not run is a stored
  * preference nobody can honour, and the decide route would have to guess.
+ *
+ * An APPOINTMENT round drops the answer whole, on the kind rather than on the
+ * section's `enabled` flag. The facilitator form shows no programme section, so
+ * a payload carrying one is either a stale tab or a hand-made request, and in
+ * both cases storing it would leave the decide route reading a preference
+ * nobody was asked for. The authoring PATCH refuses to enable the section on
+ * this kind; this is the same rule enforced on the way in, so the two cannot
+ * come apart.
  */
 export function readProgrammePreference(
   raw: unknown,
   round: AdmissionRoundDoc,
 ): ApplicationProgrammePreference | FieldError {
   const section = round.programmePreference;
-  if (!section.enabled) return { ...EMPTY_APPLICATION_PROGRAMME_PREFERENCE };
+  if (round.kind === "appointment" || !section.enabled) {
+    return { ...EMPTY_APPLICATION_PROGRAMME_PREFERENCE };
+  }
   if (raw === undefined || raw === null) {
     return { ...EMPTY_APPLICATION_PROGRAMME_PREFERENCE };
   }
