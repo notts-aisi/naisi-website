@@ -122,6 +122,13 @@ const MUST_GUARD = [
   // named here or it is checked by nothing: it writes `config/courses`, whose
   // knobs reach every course surface at once.
   ["src/app/api/admin/courses-config/route.ts", "changes site-wide course settings"],
+  // Also outside the scanned trees. It writes a conduct record about a named
+  // member, which reviewers act on, and it is the only writer of a collection
+  // no client can read back to check what happened.
+  [
+    "src/app/api/admin/members/[uid]/conduct-flag/route.ts",
+    "sets and clears a member's conduct flag",
+  ],
 ];
 
 /**

@@ -89,3 +89,50 @@ export function normalizeMemberConductFlag(
 export function conductChip(flag: MemberConductFlagDoc | null): { flagged: boolean } {
   return { flagged: flag?.flagged === true };
 }
+
+/**
+ * What the reviewer queue (and the admin Members row) may carry, decided in
+ * ONE place from one boolean rather than at each call site.
+ *
+ * For a non-admin viewer the returned object has NO `reason` key at all. Not
+ * an empty string, not `null`, not `undefined`: absent. A key that is present
+ * and empty is one careless `Object.keys` away from being logged, exported or
+ * rendered as "reason: (blank)", and a payload with the key missing cannot
+ * regain a value by accident downstream.
+ *
+ * `flaggedAt` is an ISO string rather than a `Date` because this projection's
+ * destination is a JSON route payload; a `Date` would arrive at the browser as
+ * a string anyway, and the conversion is better done once here than guessed at
+ * by each reader.
+ */
+export type ConductFlagChip = { flagged: boolean };
+
+export type ConductFlagAdminView = ConductFlagChip & {
+  reason: string;
+  flaggedAt: string | null;
+};
+
+export function conductFlagForQueue(
+  flag: MemberConductFlagDoc | null,
+  viewerIsAdmin: false,
+): ConductFlagChip;
+export function conductFlagForQueue(
+  flag: MemberConductFlagDoc | null,
+  viewerIsAdmin: true,
+): ConductFlagAdminView;
+export function conductFlagForQueue(
+  flag: MemberConductFlagDoc | null,
+  viewerIsAdmin: boolean,
+): ConductFlagChip | ConductFlagAdminView;
+export function conductFlagForQueue(
+  flag: MemberConductFlagDoc | null,
+  viewerIsAdmin: boolean,
+): ConductFlagChip | ConductFlagAdminView {
+  const chip = conductChip(flag);
+  if (!viewerIsAdmin) return chip;
+  return {
+    ...chip,
+    reason: flag?.reason ?? "",
+    flaggedAt: flag?.at ? flag.at.toISOString() : null,
+  };
+}
