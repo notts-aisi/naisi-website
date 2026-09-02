@@ -245,8 +245,20 @@ async function loadRun(db: Db, runId: string): Promise<CourseRunDoc | null> {
  * anything, so this is also what stops an application landing on a run whose
  * rows are being deleted. The copy does not distinguish the two, because an
  * applicant has no business learning which.
+ *
+ * OPEN-ENROLMENT RUNS ARE REFUSED BEFORE THE DATES ARE READ, and that check
+ * is first for a reason. `applicationsOpenAt` / `applicationsCloseAt` are the
+ * ENROLMENT window on such a run (the dual role documented on `CourseRunDoc`),
+ * so an open run inside its dates would sail through `applicationWindow()`
+ * and mint a `courseApplications` row for a run whose every admissions
+ * surface, from the queue to the allocation board, will never look at it. The
+ * seat comes from the session picker on the course page instead, and the
+ * sentence says so.
  */
 function windowError(run: CourseRunDoc, now: Date): string | null {
+  if (run.enrolMode === "open") {
+    return "This course doesn't take applications. Pick a session on the course page and the place is yours.";
+  }
   const { state } = applicationWindow(run, now);
   if (state === "open") return null;
   if (state === "not-yet") return "Applications for this run haven't opened yet.";

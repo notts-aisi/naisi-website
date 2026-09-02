@@ -378,6 +378,18 @@ export type ApplyContext = {
   window: ApplicationWindow;
   /** Session-time options for the availability chips; empty when unallocated. */
   groups: ApplyGroupOption[];
+  /**
+   * True when the run this course would send an applicant to is an
+   * OPEN-ENROLMENT run, which has no application form at all.
+   *
+   * The apply page redirects on it rather than rendering a form: people get
+   * onto an open run by picking a session on the course page, and the apply
+   * route refuses a POST against one. Before this flag existed the page read
+   * the window through `courseRunWindow()`, so an open run sitting in
+   * `applications-closed` or `running` reported `open` and rendered a live
+   * form whose submit the route then turned away.
+   */
+  openEnrol: boolean;
 };
 
 /** Index = `Date.getDay()`, matching `GroupSession.weekday` (0 = Sunday). */
@@ -451,6 +463,14 @@ export async function getApplyContext(
   // an unpublished course has no public apply page.
   if (course.status !== "published") return null;
 
+  // OPEN ENROLMENT short-circuits everything below. There is no application
+  // to show, no availability to tick, and no form to render, so the group
+  // read is skipped too and the page sends the visitor to the course page
+  // where the session picker lives.
+  if (run.enrolMode === "open") {
+    return { course, run, window, groups: [], openEnrol: true };
+  }
+
   const groupSnap = await db
     .collection("courseGroups")
     .where("runId", "==", run.id)
@@ -477,5 +497,5 @@ export async function getApplyContext(
   // a week. "HH:MM" is zero-padded, so a string compare IS time order.
   rows.sort((a, b) => a.day - b.day || a.start.localeCompare(b.start));
 
-  return { course, run, window, groups: rows.map((r) => r.option) };
+  return { course, run, window, groups: rows.map((r) => r.option), openEnrol: false };
 }

@@ -55,6 +55,18 @@ const ACCOUNT_DELETION = readFileSync(
   join(SRC, "lib", "firestore", "accountDeletion.ts"),
   "utf8",
 );
+const APPLY_ROUTE = readFileSync(
+  join(SRC, "app", "api", "courses", "runs", "[runId]", "apply", "route.ts"),
+  "utf8",
+);
+const APPLY_PAGE = readFileSync(
+  join(SRC, "app", "(public)", "courses", "[courseId]", "apply", "page.tsx"),
+  "utf8",
+);
+const FETCH_COURSES = readFileSync(
+  join(SRC, "features", "courses", "fetchCourses.ts"),
+  "utf8",
+);
 
 /** Every module specifier in transpiled output, in either quote style. */
 const SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"']+)\2/g;
@@ -617,4 +629,47 @@ test("SOURCE — the enrol route moves both counters in the seat transaction", (
   assert.match(patch, /memberCount: FieldValue\.increment\(-1\)/);
   assert.match(patch, /memberCount: FieldValue\.increment\(1\)/);
   assert.doesNotMatch(patch, /enrolledCount/);
+});
+
+// ---------------------------------------------------------------------------
+// The apply lane and the enrol lane do not overlap
+// ---------------------------------------------------------------------------
+
+test("SOURCE: the apply route refuses an open-enrolment run outright", () => {
+  // The two date fields are the ENROLMENT window on an open run, so an open
+  // run inside its dates passes `applicationWindow()` and would mint a
+  // `courseApplications` row nothing in admissions ever reads: not the queue,
+  // not the allocation board, not the decide route. The refusal comes BEFORE
+  // the dates are consulted, because the dates are the thing that misleads.
+  const at = APPLY_ROUTE.indexOf("function windowError(");
+  assert.ok(at > 0, "the apply route's window predicate is gone");
+  const fn = APPLY_ROUTE.slice(at, APPLY_ROUTE.indexOf("\n}", at));
+  const modeCheck = fn.indexOf('run.enrolMode === "open"');
+  const dateCheck = fn.indexOf("applicationWindow(");
+  assert.ok(modeCheck > 0, "an open-mode run is no longer refused an application");
+  assert.ok(
+    modeCheck < dateCheck,
+    "the mode check must precede the window read: the dates are what mislead",
+  );
+  // A sentence the applicant can act on, pointing at the surface that works.
+  assert.match(fn, /doesn't take applications/);
+});
+
+test("SOURCE: the apply page sends an open-enrolment run to the picker", () => {
+  // `getApplyContext` reads the window through `courseRunWindow()`, so an
+  // open run in `applications-closed` or `running` reports `open` and used to
+  // render a live application form whose submit the route refused.
+  assert.match(FETCH_COURSES, /openEnrol: boolean;/);
+  assert.match(FETCH_COURSES, /run\.enrolMode === "open"/);
+  assert.match(
+    FETCH_COURSES,
+    /return \{ course, run, window, groups: \[\], openEnrol: true \};/,
+  );
+  assert.match(APPLY_PAGE, /if \(context\.openEnrol\) redirect\(/);
+  // The redirect has to come before the form's own props are read, or the
+  // page renders on the way past it.
+  const redirectAt = APPLY_PAGE.indexOf("if (context.openEnrol) redirect(");
+  const destructureAt = APPLY_PAGE.indexOf("const { course, run, groups, window } = context;");
+  assert.ok(redirectAt > 0 && destructureAt > 0);
+  assert.ok(redirectAt < destructureAt);
 });

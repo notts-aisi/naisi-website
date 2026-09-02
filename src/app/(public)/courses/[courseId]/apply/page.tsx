@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import { getCurrentUser } from "@/lib/firebase/session";
@@ -46,6 +47,16 @@ export async function generateMetadata({
   const { courseId } = await params;
   const context = await getApplyContext(courseId);
   if (!context) return { title: "Applications closed" };
+  // An open-enrolment run has no application: the page below redirects to the
+  // course page, so the title says what the reader will actually land on
+  // rather than promising a form.
+  if (context.openEnrol) {
+    return {
+      title: `Sign up: ${context.course.title || "Course"}`,
+      description: `${context.course.title || "This course"} takes sign-ups on the course page: pick a session and the place is yours.`,
+      robots: { index: false, follow: true },
+    };
+  }
   // THREE states, not two. A window that has not opened yet is still an APPLY
   // page: the form is ahead of the reader, not behind them. Collapsing it into
   // "closed" is how a run that opens next month gets a title asserting the
@@ -111,6 +122,14 @@ export default async function CourseApplyPage({
       </section>
     );
   }
+
+  // OPEN ENROLMENT HAS NO APPLICATION FORM. People get onto such a run by
+  // picking a session on the course page, and the apply route refuses a POST
+  // against one, so rendering the form here would be an invitation to write
+  // an application that is turned away on submit. The redirect is what the
+  // window state alone could not give: an open run in `applications-closed`
+  // or `running` is enrolling, so its window reads `open`.
+  if (context.openEnrol) redirect(`/courses/${encodeURIComponent(courseId)}`);
 
   const { course, run, groups, window } = context;
   const applyPath = `/courses/${courseId}/apply`;
