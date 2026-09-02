@@ -193,7 +193,7 @@ export const courseTemplateDefaults: Record<
       h("Thanks for applying, {firstName}"),
       rt(
         "<p>Your application for <strong>{courseTitle}</strong> ({runLabel}) has been received. The committee reviews applications before the cohort starts on {startDate} — we'll email you as soon as there's a decision.</p>" +
-          "<p>There's nothing else you need to do for now. If your availability changes, you can edit your application from the course page any time before we review it.</p>",
+          "<p>There's nothing else you need to do for now. If your availability changes, you can edit your application from the course page any time before the deadline.</p>",
       ),
     ],
   },

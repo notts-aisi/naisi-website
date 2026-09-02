@@ -342,6 +342,12 @@ export default function ApplyForm({
   if (application && !editing) {
     const badge = STATUS_BADGE[application.status];
     const editable = isEditable(application.status);
+    // D5: the deadline ends self-serve EDITS, not the card. Once the window
+    // shuts, the application stays readable and withdrawable and the Edit
+    // button goes, because the route now refuses the PATCH behind it. Offering
+    // a button that opens a form whose save is guaranteed to fail is the same
+    // shape of lie the window predicate was extracted to end.
+    const canEdit = editable && runWindow.state === "open";
     const answered = questions
       .map((q) => ({
         id: q.id,
@@ -357,7 +363,13 @@ export default function ApplyForm({
             <h2 className={styles.h2}>Your application</h2>
             <Badge tone={badge.tone}>{badge.label}</Badge>
           </div>
-          <p className={styles.blurb}>{STATUS_BLURB[application.status]}</p>
+          {/* The pending blurb promises self-serve edits "until then", which
+              is true right up to the deadline and not after it. */}
+          <p className={styles.blurb}>
+            {application.status === "pending" && !canEdit
+              ? "It's with the admissions team. They read every application, and you'll get an email when there's a decision."
+              : STATUS_BLURB[application.status]}
+          </p>
           {/* The deadline, restated on the card, because this is the surface
               someone opens in the fortnight between applying and hearing
               back. It used to be unreachable in exactly that fortnight: the
@@ -368,8 +380,8 @@ export default function ApplyForm({
               {runWindow.closesOn
                 ? `Applications closed on ${runWindow.closesOn}.`
                 : "Applications for this run have closed."}{" "}
-              Yours is still in the queue, and you can keep editing it until
-              the team reviews it.
+              Yours is still in the queue. It can no longer be edited, but you
+              can withdraw it if your plans have changed.
             </p>
           ) : null}
 
@@ -406,7 +418,7 @@ export default function ApplyForm({
 
           {inlineError ? <p className={styles.error}>{inlineError}</p> : null}
           {pausedMessage ? <PausedNotice message={pausedMessage} /> : null}
-          {editable && paused ? (
+          {canEdit && paused ? (
             <div className={styles.pausedSlot}>
               <SurfacePausedNotice notice={siteNotice} surface="courseApplications" />
             </div>
@@ -414,9 +426,11 @@ export default function ApplyForm({
 
           {editable ? (
             <div className={styles.actions}>
-              <Button onClick={startEdit} disabled={busy || paused}>
-                Edit your answers
-              </Button>
+              {canEdit ? (
+                <Button onClick={startEdit} disabled={busy || paused}>
+                  Edit your answers
+                </Button>
+              ) : null}
               {/* Withdraw stays live through a pause, on the same reasoning
                   the RSVP cancel flow does: stranding someone trying to free
                   up a place helps nobody. If the route disagrees it 503s, and

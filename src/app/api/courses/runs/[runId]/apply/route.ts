@@ -254,6 +254,31 @@ function windowError(run: CourseRunDoc, now: Date): string | null {
 }
 
 /**
+ * The same predicate, asked the EDIT question.
+ *
+ * Owner decision D5: once the window is closed an applicant may still VIEW
+ * their application, and withdraw it, but no longer edit it. Editing after the
+ * deadline meant the version the admissions team read could change under them
+ * mid-review, and there was nothing on either side saying when that stopped.
+ * Now the deadline says it.
+ *
+ * `PATCH` is the only lane this closes. `DELETE` is untouched: trapping
+ * someone in a queue with no self-service exit helps nobody, and a withdrawal
+ * takes work off the team rather than changing it underneath them.
+ */
+function editWindowError(run: CourseRunDoc, now: Date): string | null {
+  const { state } = applicationWindow(run, now);
+  if (state === "open") return null;
+  if (state === "closed") {
+    return "Applications for this run have closed, so this one can't be edited now. It's still in the queue, and you can withdraw it if your plans have changed.";
+  }
+  if (state === "not-yet") {
+    return "Applications for this run aren't open yet, so this one can't be edited right now.";
+  }
+  return "This course run isn't accepting changes to applications.";
+}
+
+/**
  * Server-side read of the maintenance notice, normalised with the same shared
  * helper the banner and every client surface use — so a paused surface reads
  * identically wherever it is checked, and cannot diverge.
@@ -594,10 +619,18 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ runId: string
     return NextResponse.json({ error: "Course run not found." }, { status: 404 });
   }
 
-  // Deliberately NOT gated on the application window or the maintenance pause.
-  // Both exist to stop NEW applications arriving; an applicant already in the
-  // queue tidying their answers costs nothing, and the submitted email promises
-  // they can edit "any time before we review it". Status `pending` is the gate.
+  // GATED on the application window, and deliberately NOT on the maintenance
+  // pause. The two are different promises: the pause exists to stop writes
+  // while something is being fixed, and stranding a queued applicant mid-edit
+  // for that helps nobody; the DEADLINE is a commitment to the applicant and to
+  // the team reading them (owner decision D5). The submitted email says "any
+  // time before the deadline", the status card drops its Edit button when the
+  // window shuts, and this is the enforcement under both.
+  const editError = editWindowError(run, new Date());
+  if (editError) {
+    return NextResponse.json({ error: editError }, { status: 403 });
+  }
+
   const payload = await validatePayload(db, run, body);
   if ("error" in payload) {
     return NextResponse.json({ error: payload.error }, { status: 400 });
