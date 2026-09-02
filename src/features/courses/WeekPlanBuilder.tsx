@@ -1,11 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { doc, getDoc } from "firebase/firestore";
 import Button from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { getClientDb } from "@/lib/firebase/client";
+import { useAuth } from "@/auth/AuthProvider";
 import {
   COURSE_FIELD_LIMITS,
+  COURSE_RUN_STATUS_LABEL,
+  normalizeCourseRun,
   weekDocId,
+  type CourseRunStatus,
   type WeekPlanEntry,
 } from "@/lib/firestore/courses";
 import {
@@ -13,7 +19,12 @@ import {
   currentWeekFor,
   isValidDateKey,
 } from "@/lib/courses/weekPlan";
-import { updateRun } from "./courseMutations";
+import {
+  normaliseRunWeekIds,
+  updateRun,
+  weekAddressDrift,
+  type WeekIdMove,
+} from "./courseMutations";
 import styles from "./WeekPlanBuilder.module.css";
 
 /**
@@ -43,6 +54,16 @@ type Props = {
   startDate: string;
   /** The saved plan. A change of identity (a reload) reseeds the draft. */
   weekPlan: WeekPlanEntry[];
+  /**
+   * The run's lifecycle status, which decides whether the plan is still
+   * reshapeable (see the lock below).
+   *
+   * Optional, and resolved by a single `getDoc` when it isn't given, so the
+   * lock is live whether or not the parent editor threads it through. Pass it
+   * and the read goes away; the one-line integration is
+   * `status={run.status}` on the `<WeekPlanBuilder>` in `RunEditor.tsx`.
+   */
+  status?: CourseRunStatus;
   runAction: ToastRun;
   onSaved: () => void;
   disabled?: boolean;
@@ -59,6 +80,9 @@ const DAY_MONTH = new Intl.DateTimeFormat("en-GB", {
 function formatDateKey(key: string): string {
   return DAY_MONTH.format(new Date(`${key}T00:00:00Z`));
 }
+
+/** Hover copy on every control the week-plan lock has taken away. */
+const LOCK_TITLE = "The week plan is locked once a run leaves draft";
 
 /**
  * Week numbers are positional: the Nth `kind:"week"` row is week N, whatever
@@ -100,6 +124,7 @@ export default function WeekPlanBuilder({
   runId,
   startDate,
   weekPlan,
+  status: statusProp,
   runAction,
   onSaved,
   disabled,
@@ -107,6 +132,8 @@ export default function WeekPlanBuilder({
   const [plan, setPlan] = useState<WeekPlanEntry[]>(weekPlan);
   const [syncedPlan, setSyncedPlan] = useState<WeekPlanEntry[]>(weekPlan);
   const [planError, setPlanError] = useState<string | null>(null);
+  const { role } = useAuth();
+  const isAdmin = role === "admin";
 
   // Reseed whenever the saved plan changes identity (first load, or a reload
   // after any save). Adjusted during render rather than in an effect, per the
@@ -125,6 +152,33 @@ export default function WeekPlanBuilder({
   // a loading bar until then), so there is no server pass to disagree with.
   const [now] = useState<Date>(() => new Date());
 
+  // The status fallback for a parent that doesn't pass one. Starts null, which
+  // reads as LOCKED — a plan that is briefly un-reorderable is a much smaller
+  // harm than one that offers a reorder the rules are about to refuse, and the
+  // read resolves in a round trip. A parent that passes `status` never gets
+  // here at all.
+  const [fetchedStatus, setFetchedStatus] = useState<CourseRunStatus | null>(null);
+  useEffect(() => {
+    if (statusProp !== undefined) return;
+    let live = true;
+    void (async () => {
+      try {
+        const snap = await getDoc(doc(getClientDb(), "courseRuns", runId));
+        if (!live || !snap.exists()) return;
+        setFetchedStatus(normalizeCourseRun(snap.id, snap.data()).status);
+      } catch {
+        // Leave it locked. The run doc is already on screen via the parent, so
+        // a failure here is a transient read, not a missing run.
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [runId, statusProp]);
+
+  const [normalising, setNormalising] = useState(false);
+  const [preview, setPreview] = useState<WeekIdMove[] | null>(null);
+
   const hasStart = isValidDateKey(startDate);
 
   const windows = useMemo(() => {
@@ -142,35 +196,93 @@ export default function WeekPlanBuilder({
     return currentWeekFor({ startDate, weekPlan: plan }, now);
   }, [hasStart, now, startDate, plan]);
 
+  // THE LOCK. Weeks are reorderable before publishing, not after. Once a run
+  // leaves draft the plan's positions are load-bearing: the Nth taught slot IS
+  // week N to every member surface, so moving or removing one renumbers every
+  // slot after it and repoints the cohort's week pages, registers, mirrored
+  // tasks and exercise answers at documents nobody arranged. `firestore.rules`
+  // pins `weekPlan` for non-admins from the same boundary; this is the
+  // affordance half, so the button is gone before the write is refused.
+  //
+  // Adding at the END and inserting a break are not the same hazard (they
+  // renumber nothing already taught, they only shift later dates), so they
+  // stay reachable to admins with the warning below.
+  const status = statusProp ?? fetchedStatus;
+  const locked = status !== "draft";
+  const canReshape = !locked;
+  const canGrow = !locked || isAdmin;
+
   const full = plan.length >= COURSE_FIELD_LIMITS.maxWeekPlanEntries;
   const dirty = plan !== weekPlan;
+
+  // The two spellings of a week, and where they disagree. Only actionable in
+  // draft, so the affordance is scoped to exactly that.
+  const drift = useMemo(() => weekAddressDrift(weekPlan), [weekPlan]);
 
   function mutate(next: WeekPlanEntry[]) {
     setPlan(renumber(next));
   }
 
   function addWeek() {
-    if (full) return;
+    if (full || !canGrow) return;
     mutate([...plan, { kind: "week", weekNumber: 0, weekId: nextWeekId(plan) }]);
   }
 
   function addBreak() {
-    if (full) return;
+    if (full || !canGrow) return;
     mutate([...plan, { kind: "break", label: "" }]);
   }
 
   function removeAt(index: number) {
+    if (!canReshape) return;
     const next = plan.slice();
     next.splice(index, 1);
     mutate(next);
   }
 
   function move(index: number, dir: -1 | 1) {
+    if (!canReshape) return;
     const target = index + dir;
     if (target < 0 || target >= plan.length) return;
     const next = plan.slice();
     [next[index], next[target]] = [next[target], next[index]];
     mutate(next);
+  }
+
+  /**
+   * Ask the route what it WOULD move, then, on a second press, let it move it.
+   * Two presses rather than a confirm dialog because the interesting content
+   * is the list of moves, and a dialog would either hide it or repeat it.
+   */
+  async function normalise(apply: boolean) {
+    setPlanError(null);
+    setNormalising(true);
+    try {
+      if (!apply) {
+        const result = await normaliseRunWeekIds(runId, { dryRun: true });
+        setPreview(result.moves);
+        return;
+      }
+      let ok = false;
+      await runAction(
+        async () => {
+          await normaliseRunWeekIds(runId);
+          ok = true;
+        },
+        {
+          savingMessage: "Normalising week ids…",
+          successMessage: "Week ids normalised",
+        },
+      );
+      if (ok) {
+        setPreview(null);
+        onSaved();
+      }
+    } catch (err) {
+      setPlanError(err instanceof Error ? err.message : "Couldn't read the moves.");
+    } finally {
+      setNormalising(false);
+    }
   }
 
   function setBreakLabel(index: number, label: string) {
@@ -230,7 +342,79 @@ export default function WeekPlanBuilder({
         {current && current.phase === "after" && (
           <p className={styles.hint}>Every slot in this plan has now elapsed.</p>
         )}
+
+        {locked && (
+          <p className={styles.warn}>
+            {status
+              ? `This run is ${COURSE_RUN_STATUS_LABEL[status].toLowerCase()}, so its weeks can no longer be reordered or removed.`
+              : "Checking whether this run is still a draft…"}{" "}
+            {status &&
+              (isAdmin
+                ? "You can still add a slot at the end, which shifts every date after it."
+                : "An admin can still add a slot at the end.")}
+          </p>
+        )}
+        {locked && status && isAdmin && (
+          <p className={styles.hint}>
+            Adding a slot to a live run moves every later week by seven days.
+            Tell the cohort before you save.
+          </p>
+        )}
       </div>
+
+      {!locked && drift.length > 0 && (
+        <div className={styles.drift}>
+          <p className={styles.driftTitle}>
+            {drift.length === 1
+              ? "One week is addressed two different ways."
+              : `${drift.length} weeks are addressed two different ways.`}
+          </p>
+          <p className={styles.hint}>
+            Reordering a plan keeps each slot&apos;s document id so authored
+            content follows the slot, but every learner page derives the id from
+            the week number instead. On a live run the two would resolve
+            different documents. While the run is a draft there is nothing keyed
+            on the old ids, so they can still be lined up for free.
+          </p>
+          <ul className={styles.driftList}>
+            {drift.map((d) => (
+              <li key={d.weekNumber} className={styles.driftRow}>
+                Week {d.weekNumber}: editors open{" "}
+                <span className={styles.weekId}>{d.planWeekId}</span>, learners
+                open <span className={styles.weekId}>{d.canonicalWeekId}</span>
+              </li>
+            ))}
+          </ul>
+          {preview && (
+            <p className={styles.hint}>
+              {preview.length === 0
+                ? "Nothing to move. The plan is already lined up."
+                : `Will move ${preview
+                    .map((m) => `${m.from} to ${m.to}`)
+                    .join(", ")}.`}
+            </p>
+          )}
+          <div className={styles.driftActions}>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => void normalise(false)}
+              disabled={disabled || normalising}
+            >
+              {preview ? "Re-check moves" : "Preview the moves"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void normalise(true)}
+              disabled={disabled || normalising || !preview || preview.length === 0}
+            >
+              Normalise week ids
+            </Button>
+          </div>
+        </div>
+      )}
 
       {plan.length === 0 && (
         <p className={styles.empty}>
@@ -264,7 +448,7 @@ export default function WeekPlanBuilder({
                     onChange={(e) => setBreakLabel(i, e.target.value)}
                     placeholder="Break label, e.g. Reading week"
                     maxLength={COURSE_FIELD_LIMITS.runLabel}
-                    disabled={disabled}
+                    disabled={disabled || !canGrow}
                     aria-label={`Break label for slot ${i + 1}`}
                   />
                 )}
@@ -290,9 +474,9 @@ export default function WeekPlanBuilder({
                   type="button"
                   className={styles.iconBtn}
                   onClick={() => move(i, -1)}
-                  disabled={disabled || i === 0}
+                  disabled={disabled || !canReshape || i === 0}
                   aria-label={`Move slot ${i + 1} earlier`}
-                  title="Move up"
+                  title={canReshape ? "Move up" : LOCK_TITLE}
                 >
                   ▲
                 </button>
@@ -300,9 +484,9 @@ export default function WeekPlanBuilder({
                   type="button"
                   className={styles.iconBtn}
                   onClick={() => move(i, 1)}
-                  disabled={disabled || i === plan.length - 1}
+                  disabled={disabled || !canReshape || i === plan.length - 1}
                   aria-label={`Move slot ${i + 1} later`}
-                  title="Move down"
+                  title={canReshape ? "Move down" : LOCK_TITLE}
                 >
                   ▼
                 </button>
@@ -310,9 +494,9 @@ export default function WeekPlanBuilder({
                   type="button"
                   className={`${styles.iconBtn} ${styles.iconBtnDanger}`}
                   onClick={() => removeAt(i)}
-                  disabled={disabled}
+                  disabled={disabled || !canReshape}
                   aria-label={`Remove slot ${i + 1}`}
-                  title="Remove"
+                  title={canReshape ? "Remove" : LOCK_TITLE}
                 >
                   ✕
                 </button>
@@ -330,7 +514,8 @@ export default function WeekPlanBuilder({
           variant="secondary"
           size="sm"
           onClick={addWeek}
-          disabled={disabled || full}
+          disabled={disabled || full || !canGrow}
+          title={canGrow ? undefined : LOCK_TITLE}
         >
           Add week
         </Button>
@@ -339,7 +524,8 @@ export default function WeekPlanBuilder({
           variant="secondary"
           size="sm"
           onClick={addBreak}
-          disabled={disabled || full}
+          disabled={disabled || full || !canGrow}
+          title={canGrow ? undefined : LOCK_TITLE}
         >
           Add break
         </Button>

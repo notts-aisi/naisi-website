@@ -536,10 +536,16 @@ describe("courseRuns — template provenance is pinned to the apply-template rou
     const db = await asUser("lead");
     // The positive control. A pin that blocked the everyday edit would be
     // found in production, not here.
+    //
+    // The week plan is deliberately NOT part of this edit: the seeded run is
+    // live, and `weekPlanLockRespected()` pins the plan once a run leaves
+    // draft (see courses-schedule.test.mjs, which owns both sides of that
+    // boundary). Provenance pinning is orthogonal to it, so the control uses
+    // the run fields a lead really does edit all term.
     await assertSucceeds(
       db.collection("courseRuns").doc("run1").update({
         label: "Autumn 2026 (moved)",
-        weekPlan: [{ kind: "week", weekNumber: 1, weekId: "w01" }],
+        academicYear: "2026/27",
       }),
     );
     await assertSucceeds(
