@@ -222,6 +222,27 @@ describe("the courses section", () => {
     assert.match(V3_FLAT, /Deleting your account deletes/);
   });
 
+  test("retention does not claim account deletion removes certificates", () => {
+    // Two sentences on this page have to agree with each other and with the
+    // cascade. The Certificates bullet says a verification page stays online
+    // until it is withdrawn on request; `accountDeletion.ts` has no
+    // certificate sweep. So the retention paragraph must NOT fold
+    // certificates into "deleting your account deletes all of it", and it
+    // must say what does happen to the page instead.
+    assert.match(V3_FLAT, /Certificates are the exception/);
+    assert.match(
+      V3_FLAT,
+      /A certificate and its verification page are not removed when your account is deleted/,
+    );
+    const cascade = read("src/lib/firestore/accountDeletion.ts");
+    assert.ok(
+      !/collection\(\s*"certificates"\s*\)/.test(cascade),
+      "account deletion now sweeps certificates, so the policy's carve-out " +
+        "is wrong. Change the Retention and Certificates wording in the same " +
+        "commit, and take the choice off the OWNER TO CONFIRM list.",
+    );
+  });
+
   test("the export sentence is not upgraded to a promise the code cannot keep", () => {
     // A reviewer's queue already renders the whole applications payload in
     // their browser, so "every export is logged" would be false. The wording

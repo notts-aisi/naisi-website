@@ -30,13 +30,24 @@
  *  6. "A certificate page stays online unless you ask us to withdraw it."
  *     (Courses.) States what happens to a published verification page, which
  *     names the recipient.
- *  7. "Facilitators are students. They can see your attendance, your written
+ *  7. "Deleting your account does not take a certificate down." (Retention,
+ *     and Courses.) This is a CHOICE, and the opposite choice is just as
+ *     defensible, so it is the one item here most worth a second look. The
+ *     case for it: the verification page exists so somebody the holder sent
+ *     the link to can check the certificate is real, and that is precisely
+ *     the moment they are least likely to still have an account. The case
+ *     against: a page naming a person outlives the account they closed.
+ *     Whichever way this goes, the page and the code must agree.
+ *     `accountDeletion.ts` has no certificate sweep today, so the wording
+ *     below matches the build; reversing the decision means writing that
+ *     sweep in the same change as the sentence, not after it.
+ *  8. "Facilitators are students. They can see your attendance, your written
  *     work and the notes their colleagues wrote about you in their group."
  *     (Courses.) Deliberately blunt, because it is the fact a participant is
  *     least likely to guess. Confirm it is the level of frankness wanted.
- *  8. "We do not publish anything you write to the rest of your group unless
+ *  9. "We do not publish anything you write to the rest of your group unless
  *     you choose to share it." (Courses.)
- *  9. The date on this version (see POLICIES in src/lib/legal/policies.ts) is
+ * 10. The date on this version (see POLICIES in src/lib/legal/policies.ts) is
  *     the planned live date, 16 September 2026. If the merge slips, move it.
  *
  * =========================================================================
@@ -382,7 +393,11 @@ export default function PrivacyContentV3({
                   employer can check the certificate is real. The link is not
                   guessable and the page is not listed anywhere. A certificate
                   page stays online unless you ask us to withdraw it, which you
-                  can do at any time by emailing us.
+                  can do at any time by emailing us. That includes after you
+                  delete your account: deleting the account does not take the
+                  page down, because the page is there for the people you sent
+                  the link to. Ask us and we will withdraw it, account or no
+                  account.
                 </li>
               </ul>
 
@@ -614,12 +629,20 @@ export default function PrivacyContentV3({
                 sense of a later application from the same person. We do not
                 strip them after a fixed period. The same goes for the rest of
                 your course record: attendance, written work, feedback you gave
-                us, notes written about you, and certificates. If you want any
-                of it removed sooner, email us. Deleting your account deletes
-                all of it, including your access-requirements answer, your
-                applications and drafts, the review scores and notes written
-                about you, your marks on registers and the notes about you on
-                them.
+                us, and notes written about you. If you want any of it removed
+                sooner, email us. Deleting your account deletes all of that,
+                including your access-requirements answer, your applications
+                and drafts, the review scores and notes written about you, your
+                marks on registers and the notes about you on them.
+              </p>
+              <p>
+                <strong>Certificates are the exception.</strong> A certificate
+                and its verification page are not removed when your account is
+                deleted. The page exists so that somebody you sent the link to
+                can check the certificate is real, and that is the moment you
+                are least likely to still have an account with us. It stays
+                online until you ask us to withdraw it, which you can do at any
+                time by emailing us, whether or not you still have an account.
               </p>
               <p>
                 <strong>For up to 30 days after deletion.</strong> When your
