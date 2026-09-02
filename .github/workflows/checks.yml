@@ -9,8 +9,10 @@
 name: Checks
 
 on:
+  # Every pull request, whatever it targets. Work that lands on `dev` as one
+  # change is often assembled on a staging branch first, and those pull
+  # requests need the same checks as the one that finally opens against `dev`.
   pull_request:
-    branches: [main, dev]
   push:
     branches: [main, dev]
 
