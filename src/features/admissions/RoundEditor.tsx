@@ -154,10 +154,20 @@ export default function RoundEditor({
     };
   }, [load]);
 
-  // Course runs are `allow read: if isSignedIn()`, so the run pickers read them
-  // straight from Firestore. Tens of documents at NAISI scale: one unfiltered
-  // read beats a route that would only re-serve the same rows.
+  /**
+   * The run pickers, read straight from Firestore. Tens of documents at NAISI
+   * scale: one read beats a route that would only re-serve the same rows.
+   *
+   * Gated on `canAuthor`, and that gate is the rule rather than a tidy-up.
+   * An unfiltered list of `courseRuns` is allowed to admins, to a run's own
+   * author, and to `draftCourse` / `approveCourse` holders; everybody else may
+   * only list runs with a status filter on the query. An admissions reviewer
+   * appointed to this round holds none of those, so firing this on mount would
+   * hand them a permission-denied on every visit for rows the page never shows
+   * them: `runs` is consumed only inside the `canAuthor` branch below.
+   */
   useEffect(() => {
+    if (!canAuthor) return;
     let cancelled = false;
     getDocs(collection(getClientDb(), "courseRuns"))
       .then((snap) => {
@@ -170,7 +180,7 @@ export default function RoundEditor({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [canAuthor]);
 
   const patch = useCallback(
     async (fields: Record<string, unknown>) => {
