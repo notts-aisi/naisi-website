@@ -41,6 +41,7 @@ export default function FormRenderer({
   return (
     <div className={styles.wrap}>
       {questions.map((q) => {
+        const fieldId = `${q.id}-input`;
         const helpId = `${q.id}-help`;
         const errorId = `${q.id}-error`;
         const error = errors?.[q.id];
@@ -51,11 +52,21 @@ export default function FormRenderer({
         const invalid = error ? true : undefined;
         const limit = answerMaxLength(q);
 
+        /**
+         * The single-control question types use an explicit `htmlFor` label
+         * rather than wrapping the control. A wrapping label takes its text
+         * from every descendant, so the help sentence, the validation message
+         * and CountedTextarea's live "0 / 500" would all become part of the
+         * control's accessible name, and the name would change on every
+         * keystroke. Help and error reach the control through
+         * `aria-describedby` instead, which is announced separately and after
+         * the name.
+         */
         const label = (
-          <span className={styles.label}>
+          <label className={styles.label} htmlFor={fieldId}>
             {q.label}
             {q.required && <span className={styles.required}> *</span>}
-          </span>
+          </label>
         );
         const help = q.helpText ? (
           <p id={helpId} className={styles.help}>
@@ -72,10 +83,11 @@ export default function FormRenderer({
           case "shortText": {
             const value = (answers[q.id] as string | undefined) ?? "";
             return (
-              <label key={q.id} className={styles.field}>
+              <div key={q.id} className={styles.field}>
                 {label}
                 {help}
                 <input
+                  id={fieldId}
                   type="text"
                   className={styles.input}
                   value={value}
@@ -88,16 +100,17 @@ export default function FormRenderer({
                   aria-describedby={describedBy}
                 />
                 {errorNote}
-              </label>
+              </div>
             );
           }
           case "longText": {
             const value = (answers[q.id] as string | undefined) ?? "";
             return (
-              <label key={q.id} className={styles.field}>
+              <div key={q.id} className={styles.field}>
                 {label}
                 {help}
                 <CountedTextarea
+                  id={fieldId}
                   className={styles.textarea}
                   value={value}
                   max={limit}
@@ -110,17 +123,18 @@ export default function FormRenderer({
                   aria-describedby={describedBy}
                 />
                 {errorNote}
-              </label>
+              </div>
             );
           }
           case "singleSelect": {
             const value = (answers[q.id] as string | undefined) ?? "";
             const opts = q.options.map((o) => o.trim()).filter(Boolean);
             return (
-              <label key={q.id} className={styles.field}>
+              <div key={q.id} className={styles.field}>
                 {label}
                 {help}
                 <ResponsiveSelect
+                  id={fieldId}
                   value={value}
                   onChange={(next) => set(q.id, next)}
                   options={[
@@ -129,9 +143,10 @@ export default function FormRenderer({
                   ]}
                   disabled={disabled}
                   ariaLabel={q.label || "Pick one"}
+                  describedBy={describedBy}
                 />
                 {errorNote}
-              </label>
+              </div>
             );
           }
           case "multiSelect": {
