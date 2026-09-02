@@ -107,8 +107,26 @@ async function applicantName(db: Db, user: SessionUser): Promise<string> {
  * decision reason that are the reason the collection is `read: if false` in
  * the first place. `accessRequirements` is joined in from the private
  * collection only here, only for the person who wrote it.
+ *
+ * ## Guarded against view-as, even though it only reads
+ *
+ * "Only for the person who wrote it" is exactly what a view-as session breaks.
+ * Impersonation swaps the `__session` cookie for the TARGET's, so the uid this
+ * handler addresses is the member's, and the private join would hand an admin
+ * the member's access-requirements answer: disability and health information,
+ * filed apart from the application precisely so that nobody reads it without
+ * the read being logged. The read log covers the staff route that reveals it;
+ * the owner lane is exempt from that log because it only ever shows somebody
+ * their own words, which is only true while the session really is theirs.
+ *
+ * So the guard is on the GET as well as on the writes, and the refusal is the
+ * ordinary one: exit the view-as session and read it under the staff route,
+ * where the read is recorded.
  */
 export async function GET(_req: Request, ctx: Ctx) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { roundId } = await ctx.params;
 
   const caller = await requireApplicant();

@@ -343,6 +343,24 @@ describe("the re-consent gate", () => {
  * adding one is a decision somebody made rather than a wildcard a later route
  * slides through. Every entry is checked to still exist, so a rename shows up
  * here rather than silently widening the allowance.
+ *
+ * ## What "the owner's own lane" rests on, and the one thing that breaks it
+ *
+ * The whole exemption is the claim that the session the route reads from IS
+ * the person whose answer it is. Admin "view as" is the one mechanism on this
+ * site that makes that claim false: it swaps the `__session` cookie for the
+ * TARGET's, so `getCurrentUser()` returns the member and the doc id the route
+ * builds is the member's. Without a guard the owner lane would hand an admin
+ * somebody's disability and health information with nothing recording the
+ * read, and the exemption would be laundering exactly the disclosure the
+ * policy sentence is about.
+ *
+ * So every entry below calls `assertNotImpersonating()` before it touches the
+ * collection, and the test after this list checks that rather than trusting
+ * the prose. The server-rendered `/apply/[roundId]` page is the same lane
+ * without a route handler in it, and it answers the same question its own way:
+ * it checks the marker and omits the private join, which is pinned in
+ * `tests/admissions-apply-flow.test.mjs`.
  */
 function routeFilesUnder(dir, out = []) {
   if (!existsSync(dir)) return out;
@@ -365,15 +383,15 @@ const NAMES_AUDIT_KIND = /access-requirements-read/;
 const OWNER_LANE = [
   [
     "src/app/api/admissions/rounds/[roundId]/apply/route.ts",
-    "reads and writes the applicant's own access-requirements answer, addressed by their own uid, and shows it back to them in their own form",
+    "reads and writes the applicant's own access-requirements answer, addressed by their own uid, and shows it back to them in their own form; every handler including the GET refuses while a view-as session is live, so the session it reads from is always really the owner's",
   ],
   [
     "src/app/api/admissions/rounds/[roundId]/apply/submit/route.ts",
-    "re-reads the caller's own row after committing the submission, to answer with their own application",
+    "re-reads the caller's own row after committing the submission, to answer with their own application, and refuses during a view-as session",
   ],
   [
     "src/app/api/admissions/rounds/[roundId]/apply/stage/[stageId]/route.ts",
-    "same, for one later-released stage",
+    "same, for one later-released stage, and refuses during a view-as session",
   ],
 ];
 
@@ -404,6 +422,27 @@ describe("the access-requirements read log", () => {
         typeof reason === "string" && reason.length > 20,
         `${file} is exempt with no reason a reader can weigh.`,
       );
+    }
+  });
+
+  test("every owner-lane handler refuses a view-as session, reads included", () => {
+    // The exemption's whole premise is that the session is the owner's. A
+    // view-as session makes that false, so a handler in this lane that did not
+    // guard would be an unlogged disclosure of the one answer the policy
+    // singles out. READS are included deliberately: the private join is a
+    // read, and it is the disclosure.
+    for (const [file] of OWNER_LANE) {
+      const src = readFileSync(join(REPO_ROOT, ...file.split("/")), "utf8");
+      const handlers = [...src.matchAll(/export\s+async\s+function\s+([A-Z]+)\s*\(/g)];
+      assert.ok(handlers.length > 0, `${file} exports no handlers the scan can see`);
+      for (const match of handlers) {
+        const window = src.slice(match.index, match.index + 500);
+        assert.match(
+          window,
+          /assertNotImpersonating\(\)/,
+          `${file} ${match[1]} is in the owner lane but does not refuse a view-as session at the top of the handler`,
+        );
+      }
     }
   });
 

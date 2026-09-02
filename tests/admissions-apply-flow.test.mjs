@@ -998,6 +998,36 @@ describe("the route prologue", () => {
     }
   });
 
+  test("the GET guards against view-as too, because the private join IS a disclosure", () => {
+    // View-as swaps the session cookie for the target's, so this handler would
+    // address the MEMBER's row and join their access-requirements answer,
+    // which is disability and health information filed apart precisely so
+    // nobody reads it unrecorded. The owner-lane exemption in
+    // tests/privacy-policy-v3.test.mjs rests on this guard.
+    const body = handler(source(APPLY_ROUTE), "GET");
+    const guard = body.indexOf("assertNotImpersonating()");
+    assert.ok(guard !== -1, "the apply GET does not call the view-as guard");
+    assert.ok(
+      guard < 200,
+      "the apply GET calls the view-as guard, but not before it reads anything",
+    );
+    assert.ok(
+      guard < body.indexOf("loadOwnApplication("),
+      "the apply GET joins the private row before it has decided whose session this is",
+    );
+  });
+
+  test("the server-rendered apply page omits the private join during a view-as session", () => {
+    const page = source("src/app/(public)/apply/[roundId]/page.tsx");
+    assert.match(page, /markerIsLive\(await getImpersonator\(\), user\?\.uid \?\? null\)/);
+    assert.match(page, /loadRound\(roundId, user\?\.uid \?\? null, !viewingAs\)/);
+    // The join itself is conditional, rather than the answer being read and
+    // then blanked: an answer that was never fetched cannot be leaked by a
+    // later refactor of whatever does the blanking.
+    assert.match(page, /joinPrivate\s*\n?\s*\?\s*db/);
+    assert.match(page, /privateSnap\?\.exists/);
+  });
+
   test("the throttle runs before any datastore read", () => {
     for (const [file, methods] of files) {
       const src = source(file);

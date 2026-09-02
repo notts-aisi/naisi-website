@@ -5,6 +5,7 @@ import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { getImpersonator, markerIsLive } from "@/lib/firebase/impersonation";
 import {
   ROUNDS_COLLECTION,
   STAGES_SUBCOLLECTION,
@@ -55,6 +56,18 @@ import styles from "./apply.module.css";
  * the Admin SDK and hands the island its opening state. The same serialisers
  * the API routes use are called here, so the two cannot disagree about what an
  * applicant may see, and the release filter is applied in exactly one place.
+ *
+ * ## The one thing a view-as session does not get to see
+ *
+ * Admin "view as" is a full impersonation: the session cookie is the target's,
+ * so this page renders the member's own application, which is the whole point
+ * of the tool. The exception is the access-requirements answer. It lives in
+ * `admissionApplicationPrivate` because it will in practice carry disability
+ * and health information, and the privacy policy promises that the people who
+ * can open it are the final decider and site admins, through a route that
+ * records the read. An admin who is standing in a member's session is neither
+ * of those, so the join is skipped while a view-as session is live and the
+ * field renders empty. `GET .../apply` refuses outright for the same reason.
  */
 
 export const dynamic = "force-dynamic";
@@ -76,8 +89,20 @@ type Loaded = {
  * Returns null for a round that does not exist, is still a draft, or has been
  * archived. All three answer the same way: which of them it is says something
  * about NAISI's plans that a visitor has no business reading off a page.
+ *
+ * `joinPrivate` is the view-as switch. Impersonation swaps the session cookie
+ * for the TARGET's, so `uid` here is the member's during a view-as session and
+ * the private join would put their access-requirements answer, in practice
+ * disability and health information, on an admin's screen with nothing
+ * recording the read. During a live view-as the join is skipped and the field
+ * renders as the empty string, which is the same thing the page shows an
+ * applicant who never answered it.
  */
-async function loadRound(roundId: string, uid: string | null): Promise<Loaded | null> {
+async function loadRound(
+  roundId: string,
+  uid: string | null,
+  joinPrivate: boolean,
+): Promise<Loaded | null> {
   const db = getAdminDb();
   if (!db) return null;
 
@@ -98,10 +123,12 @@ async function loadRound(roundId: string, uid: string | null): Promise<Loaded | 
   if (uid) {
     const [appSnap, privateSnap] = await Promise.all([
       db.collection("admissionApplications").doc(admissionApplicationId(roundId, uid)).get(),
-      db
-        .collection("admissionApplicationPrivate")
-        .doc(admissionApplicationPrivateId(roundId, uid))
-        .get(),
+      joinPrivate
+        ? db
+            .collection("admissionApplicationPrivate")
+            .doc(admissionApplicationPrivateId(roundId, uid))
+            .get()
+        : null,
     ]);
     if (appSnap.exists) {
       application = serialiseApplicationForOwner(
@@ -110,7 +137,7 @@ async function loadRound(roundId: string, uid: string | null): Promise<Loaded | 
           appSnap.data() ?? {},
           round.availabilityGrid,
         ),
-        privateSnap.exists
+        privateSnap?.exists
           ? normalizeAdmissionApplicationPrivate(privateSnap.id, privateSnap.data() ?? {})
               .accessRequirements
           : "",
@@ -129,7 +156,7 @@ async function loadRound(roundId: string, uid: string | null): Promise<Loaded | 
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { roundId } = await params;
-  const loaded = await loadRound(roundId, null);
+  const loaded = await loadRound(roundId, null, false);
   if (!loaded) return { title: "Applications", robots: { index: false, follow: true } };
   const { round } = loaded;
   const state = round.windowState;
@@ -150,7 +177,10 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 export default async function ApplyPage({ params }: Params) {
   const { roundId } = await params;
   const user = await getCurrentUser();
-  const loaded = await loadRound(roundId, user?.uid ?? null);
+  // The session is already in hand, so this is `markerIsLive` rather than
+  // `getLiveImpersonator`, which would read the session a second time.
+  const viewingAs = markerIsLive(await getImpersonator(), user?.uid ?? null);
+  const loaded = await loadRound(roundId, user?.uid ?? null, !viewingAs);
 
   // A draft or archived round is a 404 rather than a "closed" card: unlike a
   // course, whose curriculum stays up between runs, a round nobody has opened
