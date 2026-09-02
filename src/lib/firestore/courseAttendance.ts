@@ -1,4 +1,4 @@
-import { weekDocId } from "./courses";
+import { sessionKey } from "@/lib/courses/sessions";
 
 /**
  * `courseAttendance/{runId}__{groupId}__wNN` — one register per (group,
@@ -15,32 +15,30 @@ import { weekDocId } from "./courses";
  */
 
 /*
- * V3 SEAM, AND WHAT IS DELIBERATELY NOT BUILT HERE.
+ * THE OCCURRENCE DIMENSION, AND WHAT IT COST TO ADD.
  *
- * The contract specifies ONE field on this document that this PR does not
- * ship:
+ * A register belongs to one SESSION, not to one week: a group that meets
+ * twice in a week holds two, and each needs its own marks, its own held
+ * switch and its own push. `occurrence` is which of the week's sessions this
+ * one is, and `src/lib/courses/sessions.ts` is what resolves them.
  *
- *   courseAttendance.occurrence: int, default 1
- *     Which of the week's sessions this register is for. Readers would be
- *     the register grid, the push transaction and the reviewer evidence.
+ * IDS ARE BYTE-IDENTICAL FOR OCCURRENCE 1. `attendanceDocId` now builds its
+ * suffix from `sessionKey(weekNumber, occurrence)`, and `sessionKey(n, 1)` is
+ * `weekDocId(n)` exactly, so every register already written keeps its id,
+ * nothing migrates, and account deletion's `documentId()` scan keeps working
+ * unchanged. Occurrence 2 and up get a `-2` suffix, an id no week has ever
+ * produced. That invariant is pinned by a test rather than left to care.
  *
- * It is not built because it has a BLOCKING PRECONDITION that is an owner
- * decision, not a coding one: the pre-course cadence (does a group ever meet
- * twice in a week). Until that is answered there is nothing for a second
- * register to belong to.
- *
- * THE KEY SHAPE, stated exactly, because it is the thing the decision moves.
- * Register ids are `{runId}__{groupId}__wNN` today (`attendanceDocId`), one
- * register per (run, group, WEEK). When `occurrence` lands, ids stay
- * BYTE-IDENTICAL for occurrence 1 and gain a suffix from occurrence 2 up, so
- * nothing already written moves and account deletion's `documentId()` scan
- * keeps working unchanged. That is the whole reason the field is an int with
- * a default rather than part of the id for everybody.
- *
- * The other half of the same decision is `courseGroups.extraSession`, whose
- * absence is why `sessionOverrides` and `sessionModes` are keyed by week id
- * with no occurrence component; see the matching note in `courseGroups.ts`.
- * They land together or not at all. Start at both.
+ * WHAT IS STILL BLOCKED, and it is the other half of the same decision:
+ * `courseGroups.extraSession` (the second slot itself) is not written by
+ * `normalizeCourseGroup` yet, because the pre-course cadence is an owner
+ * decision and the field is birth-pinned in rules. `sessionOverrides` and
+ * `sessionModes` are likewise still keyed by week id with no occurrence
+ * component, so a per-week room move or virtual switch reaches the week's
+ * FIRST session only. Until those land every group resolves exactly one
+ * session per taught week and every register is an occurrence-1 register. The
+ * resolver, the ids, the register and the push are ready for the second one;
+ * the data field is what is owed.
  */
 
 /**
@@ -91,6 +89,14 @@ export type CourseAttendanceDoc = {
   runId: string;
   groupId: string;
   weekNumber: number;
+  /**
+   * Which of the week's sessions this register is for, 1-based. Defaults to
+   * 1, so every register written before the field existed reads correctly.
+   * See the module header for why the doc id does not change for 1.
+   */
+  occurrence: number;
+  /** `sessionKey(weekNumber, occurrence)`: the id's own suffix, as a field. */
+  sessionKey: string;
   /** Per-member status, keyed by uid. Max 40 entries. */
   records: Record<string, AttendanceStatus>;
   /**
@@ -141,17 +147,19 @@ export type CourseAttendanceDoc = {
 };
 
 /**
- * Deterministic doc id — one register per (run, group, week), structurally
- * (see module comment). Reuses `weekDocId` so the suffix sorts in week order
- * in the console. CONSTRUCT-ONLY — the parts are stored as fields; never
- * parse the id (`slugId`-made ids already contain `__`).
+ * Deterministic doc id: one register per (run, group, SESSION), structurally
+ * (see module comment). The suffix is `sessionKey`, which sorts in week order
+ * in the console and is BYTE-IDENTICAL to the old `weekDocId` suffix for
+ * occurrence 1. CONSTRUCT-ONLY: the parts are stored as fields; never parse
+ * the id (`slugId`-made ids already contain `__`).
  */
 export function attendanceDocId(
   runId: string,
   groupId: string,
   weekNumber: number,
+  occurrence: number = 1,
 ): string {
-  return `${runId}__${groupId}__${weekDocId(weekNumber)}`;
+  return `${runId}__${groupId}__${sessionKey(weekNumber, occurrence)}`;
 }
 
 type Raw = Record<string, unknown>;
@@ -201,14 +209,27 @@ function asParticipantNotes(v: unknown): Record<string, string> {
 }
 
 export function normalizeCourseAttendance(id: string, data: Raw): CourseAttendanceDoc {
+  const weekNumber =
+    typeof data.weekNumber === "number" && Number.isFinite(data.weekNumber)
+      ? Math.floor(data.weekNumber)
+      : 0;
+  // Absent means the FIRST session of the week, which is what every register
+  // written before the field existed was. Anything below 1 is corrupt input
+  // and clamps to 1 rather than minting a register id nothing can address.
+  const occurrence =
+    typeof data.occurrence === "number" && Number.isFinite(data.occurrence)
+      ? Math.max(1, Math.floor(data.occurrence))
+      : 1;
   const doc: CourseAttendanceDoc = {
     id,
     runId: str(data.runId),
     groupId: str(data.groupId),
-    weekNumber:
-      typeof data.weekNumber === "number" && Number.isFinite(data.weekNumber)
-        ? Math.floor(data.weekNumber)
-        : 0,
+    weekNumber,
+    occurrence,
+    // DERIVED, never read off the document: the key is a function of the two
+    // fields above, and a stored value that disagreed with them would name a
+    // different session from the one this register is.
+    sessionKey: sessionKey(weekNumber, occurrence),
     records: asRecords(data.records),
     // Absent means HELD: every register written before this field existed
     // recorded a session that happened, and defaulting the other way would
