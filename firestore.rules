@@ -812,6 +812,54 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ========================================================================
+    // V3 W3 PR6: scheduler
+    // ========================================================================
+    // Two collections behind POST /api/scheduler/tick. Both are shut to EVERY
+    // client, admins included, and both are read back through
+    // GET /api/admin/scheduler on the Admin SDK.
+    //
+    // `schedulerMarkers` is the claim-before-send marker for every tick job:
+    // a deterministic, construct-only doc id per unit of work, created BEFORE
+    // the send and stamped `sentAt` after it. A client able to WRITE here
+    // could pre-create a marker id and permanently suppress a send it does
+    // not want — its own application-deadline reminder, a facilitator's
+    // unmarked-register follow-up task — and nothing downstream would notice,
+    // because "marker exists" is exactly how every job decides the work is
+    // already done. Suppression by forgery is the threat this rule exists
+    // for, and it is why these markers do NOT live in `courseNudges`
+    // (different collection, different threat model). A client able to READ
+    // here would learn which named applicants have unsubmitted drafts and
+    // which groups have unmarked registers, since every id component is also
+    // stored as a field.
+    //
+    // `schedulerRuns` is the tick receipt, `tick__{bucket}__d{depth}`. It is
+    // the DEDUPE for duplicate external deliveries as well as the log, so a
+    // client write is a way to make the next scheduled tick believe it has
+    // already run: a forged receipt for the current 15-minute bucket makes
+    // the real delivery return `deduped: true` and do nothing.
+    //
+    // NOTE ⚠ `config/scheduler` (the kill switch and per-job state) is NOT
+    // covered here. The `config` collection has no match block at all today,
+    // so it is default-deny and safe; PR5 adds an explicit
+    // `match /config/{doc}` deny block so that lockdown is visible in this
+    // file rather than inferred. That is a documentation change, not a
+    // behaviour change, and nothing in this region depends on it landing.
+    //
+    // NOTE ⚠ no rules deploy is strictly owed for this region: with `allow
+    // read, write: if false` both matches are identical to Firestore's
+    // implicit deny. They are written out so the lockdown is stated rather
+    // than assumed, and so a later PR cannot casually relax one by adding a
+    // block that looks like it is filling a gap.
+    match /schedulerMarkers/{markerId} {
+      allow read, write: if false;
+    }
+
+    match /schedulerRuns/{runId} {
+      allow read, write: if false;
+    }
+    // ===================== end V3 W3 PR6: scheduler ==========================
+
     // === eventRsvps ===
     // RSVPs are attendee PII - never public read. All writes go through the
     // server route `/api/events/[id]/rsvp` (admin SDK), so rules are a safety

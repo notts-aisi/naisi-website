@@ -295,6 +295,14 @@
         { "fieldPath": "groupId", "order": "ASCENDING" },
         { "fieldPath": "weekNumber", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "schedulerMarkers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "job", "order": "ASCENDING" },
+        { "fieldPath": "claimedAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
