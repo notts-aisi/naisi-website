@@ -6,9 +6,10 @@ import WeekEditor from "@/features/courses/WeekEditor";
  * it, and copy-forward clones ids into the next run rather than sharing them.
  * The route mirrors that shape so the breadcrumb and the data model agree.
  *
- * The `(app)/admin` layout already gates on `role === "admin"` server-side, so
+ * `courses/layout.tsx` gates the tree server-side with
+ * `requireCourseAuthorPage()` (admin, `draftCourse` or `approveCourse`), so
  * this page only resolves params and hands off to the client editor (which
- * reads and writes Firestore directly — rules are the real boundary).
+ * reads and writes Firestore directly: rules are the real boundary).
  */
 export default async function AdminCourseWeekPage({
   params,

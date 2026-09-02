@@ -2,10 +2,16 @@ import Link from "next/link";
 import AdmissionsQueue from "@/features/courses/AdmissionsQueue";
 
 /**
- * The admin mount of the admissions queue. A thin wrapper on purpose: the
- * `(app)/admin` layout already gates on `role === "admin"` server-side, so this
- * page owes nothing but the breadcrumb and the same component the reviewers'
- * `/learn/[runId]/admissions` page renders.
+ * The admin mount of the admissions queue. A thin wrapper on purpose:
+ * `courses/layout.tsx` gates the tree server-side with
+ * `requireCourseAuthorPage()` (admin, `draftCourse` or `approveCourse`), so
+ * this page owes nothing but the breadcrumb and the same component the
+ * reviewers' `/learn/[runId]/admissions` page renders.
+ *
+ * That gate is WIDER than the applications route's, which answers to admins,
+ * the run's `admissionsReviewerUids` and its `trackLeadUids`. A course drafter
+ * who holds no role on this run can open the URL and will see the queue's own
+ * error, so RunEditor hides the link for exactly those callers.
  *
  * One component, two mounts, and the ONLY difference between what an admin and
  * a reviewer see is `isAdmin` plus what the route chose to put in the payload
