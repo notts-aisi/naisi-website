@@ -433,6 +433,23 @@ test("the round PATCH refuses fields that belong to another route", () => {
   );
 });
 
+test("a fellowship choice and the outcome runs are checked as one merged pair", () => {
+  const src = source(ROUND_ROUTE);
+  assert.match(
+    src,
+    /"outcomeRunIds" in body \|\| "programmePreference" in body/,
+    "the console saves a section at a time, so taking a run out of the " +
+      "outcomes section arrives with no programmePreference beside it. A check " +
+      "that only ran when the preference was in the body would let that save " +
+      "orphan a fellowship choice and nothing would notice until decision day.",
+  );
+  assert.match(
+    src,
+    /"programmePreference" in update\s*\?\s*update\.programmePreference\s*:\s*current\.programmePreference/,
+    "the STORED preference is what gets re-validated when only the runs moved.",
+  );
+});
+
 test("the roles route is admin only and moves the nav flag both ways", () => {
   const src = source(ROLES_ROUTE);
   assert.match(

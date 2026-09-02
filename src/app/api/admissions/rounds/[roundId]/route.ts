@@ -407,19 +407,37 @@ export async function PATCH(
     }
 
     if ("programmePreference" in body) {
-      const preference = readProgrammePreference(body.programmePreference);
-      // Fellowship choices ARE runs: the option id is the run id, so the
-      // decide route can offer a fellowship place without a second lookup
-      // table nobody would remember to keep in step. A choice pointing at a
-      // run this round cannot place onto is refused here rather than
-      // discovered on decision day.
+      update.programmePreference = readProgrammePreference(body.programmePreference);
+    }
+
+    /**
+     * Fellowship choices ARE runs: the option id is the run id, so the decide
+     * route can offer a fellowship place without a second lookup table nobody
+     * would remember to keep in step.
+     *
+     * So the pair has to agree, and the check is ONE check over the MERGED
+     * pair rather than one hung off the programme section. The console saves a
+     * section at a time: taking a run out of the outcomes section sends
+     * `outcomeRunIds` with no `programmePreference` beside it, and a check
+     * that only ran when the preference was in the body would let that save
+     * through and leave a fellowship choice pointing at a run this round can
+     * no longer place onto. That is the same orphan, discovered on decision
+     * day instead of now.
+     */
+    if ("outcomeRunIds" in body || "programmePreference" in body) {
+      const preference = (
+        "programmePreference" in update
+          ? update.programmePreference
+          : current.programmePreference
+      ) as RoundProgrammePreference;
       const stray = preference.fellowships.find((f) => !outcomeRunIds.includes(f.id));
       if (stray) {
         bad(
-          `"${stray.label}" is not one of this round's outcome runs. Add the run to the outcomes section first.`,
+          "programmePreference" in body
+            ? `"${stray.label}" is not one of this round's outcome runs. Add the run to the outcomes section first.`
+            : `"${stray.label}" is offered as a fellowship on this round, and the run behind it is not in the outcomes you are saving. Put that run back, or take the choice out of the programme section first.`,
         );
       }
-      update.programmePreference = preference;
     }
 
     if ("criteria" in body) update.criteria = readCriteria(body.criteria);
