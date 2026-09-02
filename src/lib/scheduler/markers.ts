@@ -205,28 +205,53 @@ export async function stampSkipped(
     .set({ skippedReason: reason.slice(0, 200) }, { merge: true });
 }
 
+/** What an admin Retry did, and when it did nothing, why. */
+export type RetryOutcome =
+  | { retried: true }
+  | { retried: false; reason: "missing" | "sent" | "in-flight" };
+
 /**
- * Admin Retry, from the scheduler panel: put a failed marker back in play.
+ * Admin Retry, from the scheduler panel: put a SETTLED marker back in play.
  *
  * Attempts go back to 0 rather than being decremented, so an admin who
  * retries three times gets three more attempts each time. That is the right
  * shape: the attempt counter exists to stop an UNATTENDED loop, and a human
  * clicking Retry is attendance.
+ *
+ * TWO REFUSALS, and they guard different things:
+ *
+ *  - `sentAt` set: the work went out. Clearing the marker would let the next
+ *    tick re-derive it and send it again, which is the duplicate the whole
+ *    claim-before-send order exists to prevent.
+ *  - neither `failedAt` nor `skippedReason` set: the marker is IN FLIGHT. A
+ *    tick may be between its claim and its stamp at this very moment, and
+ *    resetting `attempts` in front of it hands the same unit of work to the
+ *    next tick while the first one is still doing it. An in-flight marker
+ *    that is genuinely stuck needs no button: the re-claim rule picks it up
+ *    after `reclaimAfterMinutes`, and this is only reachable at all because
+ *    the panel takes a marker id.
+ *
+ * A skipped marker IS resettable, deliberately: the panel never offers Retry
+ * on one (Stuck sends lists failures), but "skipped as stale" is a judgement
+ * the job made about the clock, and an admin who decides the send is still
+ * worth making is entitled to overrule it.
  */
 export async function retryFailedMarker(
   db: Firestore,
   markerId: string,
   actorUid: string,
-): Promise<boolean> {
+): Promise<RetryOutcome> {
   const docRef = db.collection(SCHEDULER_MARKERS_COLLECTION).doc(markerId);
   const snap = await docRef.get();
-  if (!snap.exists) return false;
+  if (!snap.exists) return { retried: false, reason: "missing" };
   const marker = normalizeSchedulerMarker(
     markerId,
     snap.data() as Record<string, unknown>,
   );
-  // Never "retry" something that actually went out.
-  if (marker.sentAt !== null) return false;
+  if (marker.sentAt !== null) return { retried: false, reason: "sent" };
+  if (marker.failedAt === null && marker.skippedReason === null) {
+    return { retried: false, reason: "in-flight" };
+  }
   await docRef.set(
     {
       failedAt: null,
@@ -238,5 +263,5 @@ export async function retryFailedMarker(
     },
     { merge: true },
   );
-  return true;
+  return { retried: true };
 }

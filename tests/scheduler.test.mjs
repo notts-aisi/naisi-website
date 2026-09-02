@@ -566,3 +566,55 @@ describe("POST /api/scheduler/tick source guards", () => {
     assert.ok(!/headers\.get\("host"\)/.test(source));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Source-level guards on the admin manual-override route
+// ---------------------------------------------------------------------------
+
+describe("POST /api/admin/scheduler/run source guards", () => {
+  const source = readFileSync(
+    fileURLToPath(
+      new URL("../src/app/api/admin/scheduler/run/route.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+
+  test("admin only, and the check is the session, not a header", () => {
+    assert.match(source, /getCurrentUser\(\)/);
+    assert.match(source, /actor\.role !== "admin"/);
+  });
+
+  test("validates the marker id before it reaches Firestore", () => {
+    // Marker ids are construct-only everywhere else. This route is the only
+    // place a request string becomes one, so the character set is checked
+    // here: an id Firestore refuses outright would otherwise surface as a
+    // thrown 500 instead of an answer.
+    assert.match(source, /\/\^\[A-Za-z0-9_\.~:@\+-\]\{1,1500\}\$\//);
+    assert.match(source, /MARKER_ID\.test\(markerId\)/);
+    assert.match(source, /status: 400/);
+  });
+
+  test("the retry cannot throw out of the route", () => {
+    // An unhandled rejection out of a route handler is a blank 500 page. The
+    // job branch below already had a try/catch; the marker branch needs the
+    // same, because it is the one an admin reaches during an incident.
+    const branch = source.slice(
+      source.indexOf("Retry one failed marker"),
+      source.indexOf("Run one job now"),
+    );
+    assert.ok(branch.length > 0, "the marker branch is gone");
+    assert.match(branch, /try \{/);
+    assert.match(branch, /catch \(err\)/);
+    assert.match(branch, /status: 500/);
+  });
+
+  test("an in-flight marker is refused, not reset", () => {
+    // The refusal itself lives in retryFailedMarker (see
+    // tests/scheduler-markers.test.mjs); what is pinned here is that the
+    // route reports it as its own outcome rather than collapsing all three
+    // refusals into one sentence about a marker being "gone or already sent".
+    assert.match(source, /RETRY_REFUSALS/);
+    assert.match(source, /"in-flight"/);
+    assert.match(source, /status: 409/);
+  });
+});

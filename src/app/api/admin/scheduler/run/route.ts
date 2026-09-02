@@ -42,6 +42,28 @@ export const maxDuration = 45;
 /** Same shape as the tick's budget, a little tighter: no re-arm follows this. */
 const MANUAL_BUDGET_MS = 30_000;
 
+/**
+ * The shape of a marker id, checked before it reaches Firestore.
+ *
+ * Marker ids are CONSTRUCT-ONLY: the builders in `schedulerMarkers.ts` mint
+ * them from platform ids and this route is the only place a string from a
+ * request becomes one. A doc id Firestore refuses (a `/`, a bare `.` or
+ * `..`, an empty string, one over the 1500-byte limit) would come back as a
+ * thrown 500 rather than an answer, so the character set is checked here and
+ * anything else is a plain 400. Nothing is sanitised: a mangled id would
+ * address a DIFFERENT unit of work, and the retry would silently clear a
+ * marker the admin never asked about.
+ */
+const MARKER_ID = /^[A-Za-z0-9_.~:@+-]{1,1500}$/;
+
+/** Why a Retry did nothing, in the words the panel shows the admin. */
+const RETRY_REFUSALS: Record<"missing" | "sent" | "in-flight", string> = {
+  missing: "There is no marker with that id, so there is nothing to retry.",
+  sent: "That send already went out. Retrying it would send it a second time.",
+  "in-flight":
+    "That marker is still in flight — a tick has claimed it and has not finished. Leave it: if the send really is stuck, the next tick re-claims it once the claim goes stale, and it appears under Stuck sends if it runs out of attempts.",
+};
+
 export async function POST(req: Request) {
   const actor = await getCurrentUser();
   if (!actor || actor.role !== "admin") {
@@ -62,19 +84,31 @@ export async function POST(req: Request) {
 
   // ---- Retry one failed marker -------------------------------------------
   if (typeof body.markerId === "string" && body.markerId !== "") {
-    const reset = await retryFailedMarker(db, body.markerId, actor.uid);
-    if (!reset) {
+    const markerId = body.markerId;
+    if (!MARKER_ID.test(markerId)) {
       return NextResponse.json(
-        {
-          error:
-            "That marker is gone or already sent, so there is nothing to retry.",
-        },
-        { status: 409 },
+        { error: "That is not a marker id." },
+        { status: 400 },
       );
+    }
+    let outcome;
+    try {
+      outcome = await retryFailedMarker(db, markerId, actor.uid);
+    } catch (err) {
+      // Same treatment as a job that throws below: an unhandled rejection out
+      // of a route hands the admin a blank 500 page rather than a sentence.
+      console.error(`[scheduler] retry of marker ${markerId} threw:`, err);
+      return NextResponse.json(
+        { error: `That retry threw: ${errorText(err, SCHEDULER_LAST_ERROR_MAX)}` },
+        { status: 500 },
+      );
+    }
+    if (!outcome.retried) {
+      return NextResponse.json({ error: RETRY_REFUSALS[outcome.reason] }, { status: 409 });
     }
     return NextResponse.json({
       ok: true,
-      markerId: body.markerId,
+      markerId,
       note: "Marker cleared. The next tick will re-derive the work and re-claim it.",
     });
   }

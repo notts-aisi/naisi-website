@@ -529,7 +529,7 @@ describe("retryFailedMarker", () => {
       }),
     );
 
-    assert.equal(await retryFailedMarker(db, REF.id, "admin1"), true);
+    assert.deepEqual(await retryFailedMarker(db, REF.id, "admin1"), { retried: true });
 
     const stored = db.read(REF.id);
     assert.equal(stored.failedAt, null);
@@ -548,22 +548,45 @@ describe("retryFailedMarker", () => {
     const db = makeDb();
     db.seed(REF.id, seededMarker({ attempts: 1, sentAt: minutesAgo(30) }));
 
-    assert.equal(await retryFailedMarker(db, REF.id, "admin1"), false);
+    assert.deepEqual(await retryFailedMarker(db, REF.id, "admin1"), {
+      retried: false,
+      reason: "sent",
+    });
 
     const stored = db.read(REF.id);
     assert.deepEqual(stored.sentAt, minutesAgo(30), "the marker is untouched");
     assert.equal(stored.retriedAt, undefined);
   });
 
+  test("refuses a marker still IN FLIGHT, which is neither failed nor skipped", async () => {
+    // A tick may be between its claim and its stamp right now. Resetting
+    // `attempts` in front of it hands the same unit of work to the next tick
+    // while the first one is still doing it, which is the duplicate this
+    // whole module is arranged to avoid. A genuinely stuck claim needs no
+    // button: the re-claim rule collects it once it goes stale.
+    const db = makeDb();
+    db.seed(REF.id, seededMarker({ attempts: 1, claimedAt: minutesAgo(2) }));
+
+    assert.deepEqual(await retryFailedMarker(db, REF.id, "admin1"), {
+      retried: false,
+      reason: "in-flight",
+    });
+    assert.equal(db.read(REF.id).attempts, 1, "the claim is left alone");
+    assert.equal(db.read(REF.id).retriedAt, undefined);
+  });
+
   test("refuses a marker that is not there", async () => {
     const db = makeDb();
-    assert.equal(await retryFailedMarker(db, REF.id, "admin1"), false);
+    assert.deepEqual(await retryFailedMarker(db, REF.id, "admin1"), {
+      retried: false,
+      reason: "missing",
+    });
   });
 
   test("clears a consciously skipped marker, which is the admin overruling the skip", async () => {
     const db = makeDb();
     db.seed(REF.id, seededMarker({ attempts: 1, skippedReason: "stale" }));
-    assert.equal(await retryFailedMarker(db, REF.id, "admin1"), true);
+    assert.deepEqual(await retryFailedMarker(db, REF.id, "admin1"), { retried: true });
     assert.equal(db.read(REF.id).skippedReason, null);
   });
 });
