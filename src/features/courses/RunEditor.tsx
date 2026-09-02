@@ -761,9 +761,14 @@ export default function RunEditor({ courseId, runId }: Props) {
             }))}
             ariaLabel="Run status"
           />
+          {/* Both terminal states have an empty transition row, and they are
+              not the same news: a cancelled cohort was called off, not
+              delivered. Saying "finished" over it read as a run that had run. */}
           {allowedStatuses.length === 0 && (
             <span className={styles.muted}>
-              This run is finished. Start a new run to deliver the course again.
+              {run.status === "cancelled"
+                ? "This cohort was cancelled. Start a new run to deliver the course again."
+                : "This run is finished. Start a new run to deliver the course again."}
             </span>
           )}
         </div>

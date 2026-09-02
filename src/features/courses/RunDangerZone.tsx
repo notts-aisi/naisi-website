@@ -13,7 +13,7 @@ import {
   type CourseRunDoc,
   type CourseRunStatus,
 } from "@/lib/firestore/courses";
-import { canTransition } from "@/lib/courses/runStatus";
+import { ALLOWED_TRANSITIONS } from "@/lib/courses/runStatus";
 import { setRunStatus } from "./courseMutations";
 import useDestroy, {
   countRows,
@@ -248,7 +248,12 @@ export default function RunDangerZone({ courseId, run, runAction, onRunChanged }
   // The server's own table decides whether cancelling is even on the menu, so
   // this card disappears on a run that is already finished or cancelled rather
   // than offering a button the route would refuse.
-  const canCancel = canTransition(run.status, "cancelled");
+  //
+  // Read straight off the table, NOT through `canTransition`: that helper
+  // answers true for a same-status move (the route treats a re-send as an
+  // idempotent no-op), so asking it "can a cancelled run be cancelled" got a
+  // yes and drew the whole danger card on a cohort that was already called off.
+  const canCancel = ALLOWED_TRANSITIONS[run.status].includes("cancelled");
   const cancelMatches = cancelText === run.label && run.label.length > 0;
   const cancelWhitespaceOnly =
     !cancelMatches && cancelText.length > 0 && cancelText.trim() === run.label.trim();

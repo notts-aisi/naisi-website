@@ -216,9 +216,9 @@ export type OverviewPayload = {
    *
    * `group` alone was the bug. A facilitator holding two groups had no
    * "current" one, so the single field was null and the run home drew nothing
-   * no roster, no register, no review queue, no group email, for the person
-   * who most needs all four. Running two sessions is ordinary here, so the
-   * payload carries the list and the page draws a card each.
+   * for the person who most needs it: no roster, no register, no review queue,
+   * no group email. Running two sessions is ordinary here, so the payload
+   * carries the list and the page draws a card each.
    *
    * Never empty when `group` is set, and `group`, when set, is its first
    * entry.
