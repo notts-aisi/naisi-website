@@ -267,6 +267,37 @@ export function groupCapacityError(
   return null;
 }
 
+/**
+ * The sentence a member reads when the session they picked has no seat left,
+ * or null when it has one.
+ *
+ * PURE, and exported, for one reason: the open-enrol transaction's capacity
+ * gate has to be testable without a Firestore emulator. The route calls this
+ * against the count it read INSIDE the transaction, and
+ * `tests/course-enrol.test.mjs` calls the same function while modelling two
+ * concurrent enrols into a group holding one seat. If the gate lived inline
+ * in the route, the concurrency test could only assert its own model of it.
+ *
+ * `memberCount` is the count of enrolments that are BOTH active AND grouped
+ * (the allocate route's definition), so a withdrawn member's seat is already
+ * back before this is asked.
+ *
+ * An uncapped group is never full: the open-enrol run REFUSES to exist with
+ * one (see `groupCapacityError`), so `capacity === null` here means an
+ * admissions group, where seats are decided by allocation rather than by
+ * whoever clicks first.
+ */
+export function groupFullError(group: {
+  name: string;
+  capacity: number | null;
+  memberCount: number;
+}): string | null {
+  if (group.capacity === null) return null;
+  if (group.memberCount < group.capacity) return null;
+  const name = group.name || "That session";
+  return `${name} is full. Pick another session, or email the team and we'll let you know if a place opens up.`;
+}
+
 type Raw = Record<string, unknown>;
 
 function tsToDate(v: unknown): Date | null {

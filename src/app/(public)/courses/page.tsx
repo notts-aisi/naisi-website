@@ -116,10 +116,15 @@ function stateClass(state: ApplicationWindowState | null): string {
 }
 
 /**
- * The card's one-line state, keyed on the application WINDOW rather than the
- * run's status. Keying on status alone is what put "Applications open" on a
- * card whose deadline had passed and whose form the apply route then refused,
- * and on one whose window had not started yet.
+ * The card's one-line state, keyed on the WINDOW rather than the run's
+ * status. Keying on status alone is what put "Applications open" on a card
+ * whose deadline had passed and whose form the apply route then refused, and
+ * on one whose window had not started yet.
+ *
+ * The noun changes with the run's `enrolMode`. An open-enrolment run (the
+ * pre-course) has no application: telling a fresher they can "apply" to
+ * something that admits everybody promises a wait and a decision that are
+ * never coming.
  *
  * The run LABEL never appears here. It is an internal handle an admin typed,
  * and "Applications open for wd" is what that reads like in the wild.
@@ -127,13 +132,14 @@ function stateClass(state: ApplicationWindowState | null): string {
 function applicationState(entry: CourseCatalogueEntry): string {
   const found = entry.featuredRun;
   if (!found) return "Next run TBA";
-  if (found.window.state === "open") return "Applications open";
+  const noun = found.run.enrolMode === "open" ? "Sign-ups" : "Applications";
+  if (found.window.state === "open") return `${noun} open`;
   if (found.window.state === "not-yet") {
     return found.window.opensAt
-      ? `Applications open ${formatWindowDate(found.window.opensAt)}`
-      : "Applications open soon";
+      ? `${noun} open ${formatWindowDate(found.window.opensAt)}`
+      : `${noun} open soon`;
   }
-  return "Applications closed";
+  return `${noun} closed`;
 }
 
 /**
@@ -149,7 +155,8 @@ function cardDates(entry: CourseCatalogueEntry): string {
   if (!found) return "";
   const bits: string[] = [];
   if (found.window.state !== "closed" && found.window.closesAt) {
-    bits.push(`Applications close ${formatWindowDate(found.window.closesAt)}`);
+    const noun = found.run.enrolMode === "open" ? "Sign-ups" : "Applications";
+    bits.push(`${noun} close ${formatWindowDate(found.window.closesAt)}`);
   }
   const starts = formatRunStartShort(found.run.startDate);
   if (starts) bits.push(`Starts ${starts}`);

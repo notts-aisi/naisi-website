@@ -39,6 +39,13 @@ export type EmailSendKind =
   // the only kind keyed by GROUP rather than by run — `referenceId` is the
   // group id, which is what its 10-a-day cap is counted against.
   | "course-notice"
+  // The enrolment lifecycle's own mail: today the drop-out confirmation. Kept
+  // apart from `course-application` because that kind means the ADMISSIONS
+  // funnel (applied, decided, placed) and this one means somebody joining or
+  // leaving a run with no application behind it at all. "Did the person who
+  // left get their confirmation" is a question the deliverability tab has to
+  // answer without reading subject lines.
+  | "course-enrolment"
   | "course-test"
   | "admin-test"
   | "subscription-confirm"

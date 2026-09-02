@@ -22,6 +22,7 @@ export const COURSE_PREVIEW_SAMPLE = {
   groupName: "Tuesday 6pm — Group B",
   facilitatorNames: "Priya and Sam",
   firstSessionWhen: "Tuesday 7 October, 6pm",
+  feedbackUrl: "https://example.com/naisi-course-feedback",
 } as const;
 
 /**
@@ -96,6 +97,27 @@ export function courseTemplateUsesWeekTokens(templateId: CourseTemplateId): bool
 }
 
 /**
+ * Templates whose send path resolves `{feedbackUrl}`. One today: the drop-out
+ * confirmation, which reads it from `config/courses.dropOutFeedbackUrl`.
+ *
+ * A caution the preview cannot show: on a REAL send with no form configured
+ * the token stays literal, because `personaliseBlocks` never blanks an
+ * unresolved token. That is why the seed copy does not use it and the email
+ * component renders the link itself. An admin who chooses to put
+ * `{feedbackUrl}` in the body is choosing to depend on the config doc being
+ * set, and the sample below is what they will get when it is.
+ */
+export const COURSE_FEEDBACK_TOKEN_TEMPLATES: readonly CourseTemplateId[] = [
+  "course-dropped-out",
+];
+
+export function courseTemplateUsesFeedbackToken(
+  templateId: CourseTemplateId,
+): boolean {
+  return COURSE_FEEDBACK_TOKEN_TEMPLATES.includes(templateId);
+}
+
+/**
  * Build the sample token map for one template. Routed through
  * `buildCourseTokens` rather than hand-written so the preview cannot drift from
  * the real send-time shape (`preferredName` / `firstName` derivation included).
@@ -130,6 +152,10 @@ export function courseSampleTokens(
       }
     : {};
 
+  const feedback = courseTemplateUsesFeedbackToken(templateId)
+    ? { feedbackUrl: COURSE_PREVIEW_SAMPLE.feedbackUrl }
+    : {};
+
   return {
     ...buildCourseTokens({
       user: { displayName: name },
@@ -137,6 +163,7 @@ export function courseSampleTokens(
       runLabel: COURSE_PREVIEW_SAMPLE.runLabel,
       startDate: COURSE_PREVIEW_SAMPLE.startDate,
       ...group,
+      ...feedback,
     }),
   };
 }

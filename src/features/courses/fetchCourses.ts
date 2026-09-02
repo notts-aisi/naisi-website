@@ -12,10 +12,8 @@ import {
   normalizeCourseGroup,
   type GroupSession,
 } from "@/lib/firestore/courseGroups";
-import {
-  applicationWindow,
-  type ApplicationWindow,
-} from "@/lib/courses/window";
+import { type ApplicationWindow } from "@/lib/courses/window";
+import { courseRunWindow } from "@/lib/courses/enrolWindow";
 
 /**
  * Server-only fetchers for the public course pages (`fetchEvents.ts` pattern).
@@ -35,10 +33,17 @@ import {
  *
  * There is a SECOND obligation, added when the read-time application window
  * landed: nothing in this file may decide whether a run is taking
- * applications by looking at `status` on its own. `applicationWindow()` in
- * `lib/courses/window.ts` is the only predicate, and the apply route calls the
- * same one. Keying on status alone is what let a run sit past its deadline
- * advertising an open application and then refuse the POST.
+ * applications by looking at `status` on its own. `courseRunWindow()` in
+ * `lib/courses/enrolWindow.ts` is the only predicate, and the routes call the
+ * predicate it dispatches to. Keying on status alone is what let a run sit
+ * past its deadline advertising an open application and then refuse the POST.
+ *
+ * `courseRunWindow()` rather than `applicationWindow()` directly, because
+ * there are now TWO ways onto a run. An `open` run (the pre-course) has no
+ * application at all and admits people while it is `applications-closed` or
+ * even `running`; asking the application predicate about one would report
+ * "closed" about a bootcamp taking sign-ups that evening. The dispatcher
+ * picks by `enrolMode`, and every window in this file goes through it.
  *
  * `archived` is the V2-1 deletion protocol's everyday soft path, and this
  * file is where most of its promise is kept: "an archived run drops out of
@@ -171,33 +176,47 @@ function preferredRunWindow(a: RunWindow, b: RunWindow): RunWindow {
  * courseId. The site runs a handful of courses a year, so the set is tiny and
  * this stays cheaper than a per-course lookup.
  *
- * The query still asks for `applications-open`, because that is the only
- * status whose window can be `open` or `not-yet`. What changed is that the
- * STATUS no longer decides the copy: each run's window is computed here, and
- * a run sitting past its deadline comes back `closed` so the card says so
- * instead of inviting an application the route would refuse.
+ * The status query still asks for `applications-open`, because for an
+ * ADMISSIONS run that is the only status whose window can be `open` or
+ * `not-yet`. What changed first is that the STATUS no longer decides the copy:
+ * each run's window is computed here, and a run sitting past its deadline
+ * comes back `closed` so the card says so instead of inviting an application
+ * the route would refuse.
+ *
+ * A SECOND QUERY covers open-enrolment runs, and it is not an optimisation.
+ * A pre-course keeps taking sign-ups in `applications-closed` and in
+ * `running` (its parent intake shuts on 18 October while its own sessions
+ * keep going), so the status query alone would drop the one run on the site
+ * that is most obviously open. `enrolMode` is a single equality on an
+ * auto-indexed field, so this needs no composite index; duplicates between
+ * the two result sets are folded by the same per-course ranking.
  */
 export async function listPublishedCourses(): Promise<CourseCatalogueEntry[]> {
   const db = getAdminDb();
   if (!db) return [];
 
-  const [courseSnap, runSnap] = await Promise.all([
+  const [courseSnap, runSnap, openRunSnap] = await Promise.all([
     db.collection("courses").where("status", "==", "published").limit(100).get(),
     db
       .collection("courseRuns")
       .where("status", "==", "applications-open")
       .limit(200)
       .get(),
+    db.collection("courseRuns").where("enrolMode", "==", "open").limit(200).get(),
   ]);
 
   // One clock reading for the whole page, so two cards can never land on
   // opposite sides of the same deadline within one render.
   const now = new Date();
   const byCourse = new Map<string, RunWindow>();
-  for (const d of runSnap.docs) {
+  // A run in `applications-open` AND `enrolMode: open` appears in both
+  // snapshots; `preferredRunWindow` is a total order, so seeing it twice is
+  // idempotent and no de-duplication pass is needed.
+  const runDocs = [...runSnap.docs, ...openRunSnap.docs];
+  for (const d of runDocs) {
     const run = normalizeCourseRun(d.id, d.data());
     if (!run.courseId) continue;
-    const window = applicationWindow(run, now);
+    const window = courseRunWindow(run, now);
     // Archived (and therefore also mid-destroy) runs come back `inactive` and
     // are withdrawn from the catalogue. Filtered here rather than in the query
     // because a second equality on a status query is a composite index this
@@ -295,7 +314,7 @@ export async function getApplicationRunForCourse(
   let best: RunWindow | null = null;
   for (const d of snap.docs) {
     const run = normalizeCourseRun(d.id, d.data());
-    const window = applicationWindow(run, now);
+    const window = courseRunWindow(run, now);
     // Draft and archived alike: unfinished authoring and withdrawn runs are
     // not public, and the destroy cascade sets `archived` first, so this is
     // also what keeps a run mid-destroy off the page.

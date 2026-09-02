@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useAuth } from "@/auth/AuthProvider";
 import type { ApplicationWindowState } from "@/lib/courses/window";
+import type { CourseEnrolMode } from "@/lib/firestore/courses";
+import type { GroupPickerOption } from "./fetchGroupPicker";
+import GroupPicker, { type GroupPickerStream } from "./GroupPicker";
 import styles from "./CourseCTA.module.css";
 
 /**
@@ -23,6 +26,16 @@ export type CourseCTARun = {
   closesOn: string | null;
   /** "Mon 26 Oct", or null when the run has no start date authored yet. */
   startsOn: string | null;
+  /**
+   * How people get onto this run. `open` swaps the apply link for the session
+   * picker, and `state` is then the ENROLMENT window
+   * (`lib/courses/enrolWindow.ts`) rather than the application one. The server
+   * resolves which predicate produced it; this component only branches on the
+   * mode.
+   */
+  enrolMode: CourseEnrolMode;
+  /** The run's strands. Empty on a run with no streams. Open mode only. */
+  streams: GroupPickerStream[];
 };
 
 type Props = {
@@ -36,6 +49,12 @@ type Props = {
    * page and gets the fuller framing line.
    */
   placement?: "hero" | "foot";
+  /**
+   * Session slots for an OPEN-mode run, projected server-side
+   * (`fetchGroupPicker.ts`). Empty for an admissions run, and for an open one
+   * whose groups have no times yet.
+   */
+  groups?: GroupPickerOption[];
 };
 
 /**
@@ -60,16 +79,26 @@ type Props = {
  *    signed-in visitor gets the same link, and the apply page itself is the
  *    one place that says no. Branching here would need `role`, which lands a
  *    beat after `user` and would flicker the button for everyone.
+ * 4. **Two ways onto a run, one component.** An `admissions` run sends people
+ *    to the application form; an `open` one (the pre-course) puts the session
+ *    picker right here, because there is nothing to review and no decision to
+ *    wait for. The copy differs throughout: an open run is not "taking
+ *    applications", it is taking sign-ups, and telling a fresher they have
+ *    applied to something that admits everyone is a promise of a wait that
+ *    will never come.
  */
 export default function CourseCTA({
   courseId,
   courseTitle,
   run,
   placement = "hero",
+  groups = [],
 }: Props) {
   const { user, loading } = useAuth();
   const applyHref = `/courses/${encodeURIComponent(courseId)}/apply`;
+  const coursePath = `/courses/${encodeURIComponent(courseId)}`;
   const title = courseTitle || "this course";
+  const open = run?.enrolMode === "open";
 
   const wrap = [styles.cta, placement === "foot" ? styles.foot : styles.hero]
     .filter(Boolean)
@@ -81,7 +110,7 @@ export default function CourseCTA({
     return (
       <div className={wrap}>
         <p className={styles.line}>
-          Applications aren&apos;t open right now.{" "}
+          Sign-ups aren&apos;t open right now.{" "}
           <Link href="/#stay-in-touch" className={styles.inlineLink}>
             Subscribe for updates
           </Link>{" "}
@@ -92,7 +121,9 @@ export default function CourseCTA({
   }
 
   const dates = [
-    run.state !== "closed" && run.closesOn ? `Applications close ${run.closesOn}` : null,
+    run.state !== "closed" && run.closesOn
+      ? `${open ? "Sign-ups close" : "Applications close"} ${run.closesOn}`
+      : null,
     run.startsOn ? `Starts ${run.startsOn}` : null,
   ].filter(Boolean) as string[];
 
@@ -104,19 +135,31 @@ export default function CourseCTA({
 
       {run.state === "open" ? (
         <p className={styles.line}>
-          <span className={styles.open}>Applications are open</span> for {title}.
+          <span className={styles.open}>
+            {open ? "Sign-ups are open" : "Applications are open"}
+          </span>{" "}
+          for {title}.
+          {open ? " Everyone who signs up gets a place." : ""}
         </p>
       ) : run.state === "not-yet" ? (
         <p className={styles.line}>
-          {run.opensOn
-            ? `Applications for ${title} open on ${run.opensOn}.`
-            : `Applications for ${title} open soon.`}
+          {open
+            ? run.opensOn
+              ? `Sign-ups for ${title} open on ${run.opensOn}.`
+              : `Sign-ups for ${title} open soon.`
+            : run.opensOn
+              ? `Applications for ${title} open on ${run.opensOn}.`
+              : `Applications for ${title} open soon.`}
         </p>
       ) : (
         <p className={styles.line}>
-          {run.closesOn
-            ? `Applications for ${title} closed on ${run.closesOn}.`
-            : `Applications for ${title} have closed.`}
+          {open
+            ? run.closesOn
+              ? `Sign-ups for ${title} closed on ${run.closesOn}.`
+              : `Sign-ups for ${title} have closed.`
+            : run.closesOn
+              ? `Applications for ${title} closed on ${run.closesOn}.`
+              : `Applications for ${title} have closed.`}
         </p>
       )}
 
@@ -138,7 +181,19 @@ export default function CourseCTA({
       {/* While auth resolves, show the state lines alone. Rendering the
           signed-out button first would flash "Sign in to apply" at members
           who are already signed in. */}
-      {loading ? null : run.state === "open" ? (
+      {/* OPEN MODE: the picker IS the call to action, and it handles the
+          signed-out case itself (a sign-in link carrying `next`), so it is
+          rendered whether or not auth has resolved. Gating it on `loading`
+          would blank the timetable on every first paint. */}
+      {open && run.state === "open" ? (
+        <GroupPicker
+          runId={run.id}
+          courseTitle={courseTitle}
+          groups={groups}
+          streams={run.streams}
+          nextPath={coursePath}
+        />
+      ) : loading ? null : run.state === "open" ? (
         user ? (
           <Link href={applyHref} className={styles.button}>
             Start your application
@@ -167,7 +222,7 @@ export default function CourseCTA({
               own application, and it stays reachable once the window shuts.
               Signed-out visitors get no such link: there is nothing behind it
               for them. */}
-          {user ? (
+          {user && !open ? (
             <p className={styles.line}>
               Already applied?{" "}
               <Link href={applyHref} className={styles.inlineLink}>

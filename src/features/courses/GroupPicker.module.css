@@ -1,0 +1,254 @@
+/* ============================================================
+   GroupPicker — the open-enrolment sign-up on a public course
+   page. Radio-style session cards, a strand select when the run
+   has streams, and the state of the visitor's own place.
+
+   Sits inside CourseCTA's block, so it inherits that block's
+   left alignment and stays visually part of the one call to
+   action rather than becoming a second panel.
+   ============================================================ */
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-4);
+  width: 100%;
+}
+
+/* Native fieldset carries a default border and padding in every browser. */
+.fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.legend {
+  padding: 0;
+  margin-bottom: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.slotList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.slot,
+.slotStatic {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  /* 44px floor — public surface, enforced (docs/touch-targets.md). */
+  min-height: 2.75rem;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.slot {
+  cursor: pointer;
+  transition:
+    border-color var(--transition-base),
+    background var(--transition-base);
+}
+
+.slot:hover {
+  border-color: var(--color-accent);
+}
+
+.slotChosen {
+  border-color: var(--color-accent);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.slotDisabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.slotDisabled:hover {
+  border-color: var(--color-border);
+}
+
+.slot:focus-within {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.radio {
+  /* Kept in the DOM and focusable: the card is a <label>, so the real input
+     is what carries the roving focus, the keyboard behaviour and the
+     accessible name. Only its default chrome is hidden. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.slotBody {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.slotName {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.slotWhen {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.slotSeats {
+  flex: 0 0 auto;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.slotStatic .slotName {
+  flex: 1 1 auto;
+}
+
+.currentTag {
+  padding: 0.1rem var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.streamField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.streamLabel {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.mine {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text);
+}
+
+.tick {
+  color: var(--color-success);
+  font-weight: 700;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-danger);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.button,
+.secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 44px floor — public surface, enforced (docs/touch-targets.md). */
+  min-height: 2.75rem;
+  padding: 0.7rem 1.35rem;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  text-decoration: none;
+  cursor: pointer;
+  /* Safari paints its own grey button face over an inline background unless
+     appearance is reset. */
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background var(--transition-base);
+}
+
+.button {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.secondary {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.secondary:hover:not(:disabled) {
+  border-color: var(--color-accent);
+}
+
+.button:disabled,
+.secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.button:focus-visible,
+.secondary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .slot,
+  .slotStatic {
+    /* Seats drop under the name rather than squeezing the slot label. */
+    flex-wrap: wrap;
+    row-gap: var(--space-1);
+  }
+  .button,
+  .secondary {
+    width: 100%;
+  }
+}
