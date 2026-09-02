@@ -618,3 +618,37 @@ describe("POST /api/admin/scheduler/run source guards", () => {
     assert.match(source, /status: 409/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Source-level guards on the admin panel
+// ---------------------------------------------------------------------------
+
+describe("SchedulerPanel source guards", () => {
+  const source = readFileSync(
+    fileURLToPath(new URL("../src/features/admin/SchedulerPanel.tsx", import.meta.url)),
+    "utf8",
+  );
+
+  test("renders every instant in UTC, and says so", () => {
+    // The receipt buckets on this panel are floored in UTC and labelled UTC
+    // by formatBucketKey, and the external scheduler is armed on Etc/UTC. An
+    // unlabelled local time beside them reads as a tick that fired an hour
+    // late for the half of the year London is ahead.
+    assert.match(source, /timeZone: "UTC"/);
+    assert.match(source, /`\$\{rendered\} UTC`/);
+    assert.equal(
+      [...source.matchAll(/toLocaleString\(/g)].length,
+      1,
+      "a second time formatter on this panel needs the same UTC treatment",
+    );
+    assert.equal(
+      [...source.matchAll(/toLocaleTimeString\(|toLocaleDateString\(/g)].length,
+      0,
+    );
+  });
+
+  test("the bucket label it shares with the receipt id is UTC too", () => {
+    assert.equal(formatBucketKey("20260902T1415Z"), "2026-09-02 14:15 UTC");
+    assert.match(source, /formatBucketKey/);
+  });
+});

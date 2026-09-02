@@ -85,16 +85,32 @@ type ServerState = {
   failedMarkers: MarkerRow[];
 };
 
+/**
+ * Every instant on this panel, in UTC and labelled UTC.
+ *
+ * The receipt bucket is floored in UTC and rendered as a UTC label by
+ * `formatBucketKey`, and the external scheduler is armed on `Etc/UTC`. An
+ * unlabelled local time next to those is not a smaller inconsistency than it
+ * looks: for half the year London is an hour ahead, so a job that last ran in
+ * the 08:45 bucket would read "09:47" beside it, and the obvious reading of
+ * that pair is that the tick fired an hour late.
+ *
+ * So the whole panel speaks one clock. It is an admin debugging surface read
+ * next to Cloud Logging and gcloud, both of which default to UTC too; the
+ * places that show a member a time are elsewhere and keep local time.
+ */
 function formatWhen(iso: string | null): string {
   if (iso === null) return "never";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "unknown";
-  return date.toLocaleString("en-GB", {
+  const rendered = date.toLocaleString("en-GB", {
     day: "2-digit",
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: "UTC",
   });
+  return `${rendered} UTC`;
 }
 
 function receiptSummary(receipt: ReceiptRow): string {
