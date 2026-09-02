@@ -327,8 +327,8 @@ export default function FormBuilder({
                   q.maxLength > QUESTION_MAX_LENGTH_MAX ? (
                   <span className={styles.warn}>
                     Must be between {QUESTION_MAX_LENGTH_MIN} and{" "}
-                    {QUESTION_MAX_LENGTH_MAX}. Saving will be refused until you
-                    fix it.
+                    {QUESTION_MAX_LENGTH_MAX}. This number will not be saved as
+                    typed.
                   </span>
                 ) : (
                   <span className={styles.helper}>
