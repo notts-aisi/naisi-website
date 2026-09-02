@@ -329,23 +329,37 @@ leave them, since they stop accumulating the moment the policy is on.
 
 ### What changed
 
-`courses` and `courseRuns` used to be `allow read: if isSignedIn()`. A course
-with `status: 'draft'` and a run with `status: 'draft'` are now readable only
-by staff:
+`courses`, `courseRuns` and `coursePages` used to be
+`allow read: if isSignedIn()`. A course with `status: 'draft'` and a run with
+`status: 'draft'` are now readable only by staff, and the authored programme
+page follows the course it belongs to:
 
 | Collection | Who may read a DRAFT |
 | --- | --- |
 | `courses` | admins, `draftCourse` or `approveCourse` holders, the `authorUid`, anyone in the course's `collaboratorUids` |
 | `courseRuns` | admins, `draftCourse` or `approveCourse` holders, the run's `authorUid` |
+| `coursePages` | admins, `draftCourse` or `approveCourse` holders, at EVERY status |
 
-Every other status stays readable by any signed-in account. For `courseRuns`
-the predicate is `status != 'draft'`, not "published or archived": there is no
-`published` member of `CourseRunStatus` (it is `draft`, `applications-open`,
-`applications-closed`, `running`, `completed`, `cancelled`), and `archived` is
-a separate boolean orthogonal to status. A pending applicant reading an
-`applications-open` run is unaffected, which is what the funnel needs.
+Every other status stays readable by any signed-in account for the first two.
+For `courseRuns` the predicate is `status != 'draft'`, not "published or
+archived": there is no `published` member of `CourseRunStatus` (it is `draft`,
+`applications-open`, `applications-closed`, `running`, `completed`,
+`cancelled`), and `archived` is a separate boolean orthogonal to status. A
+pending applicant reading an `applications-open` run is unaffected, which is
+what the funnel needs.
 
-### Two consequences worth knowing before you debug something
+`coursePages` is the flat staff predicate rather than a status test because
+the page document carries no status of its own: the status lives on the parent
+course, and resolving it would need a `get()` billed once per candidate
+document on a list, which is the pattern the rest of `firestore.rules`
+refuses. Nothing loses a surface. The only client-direct reader is
+`useCoursePage`, mounted by `CoursePageEditor` at
+`/admin/courses/[courseId]/page`, whose gate is `requireCourseAuthorPage()`
+(admin, `draftCourse` or `approveCourse`), exactly the predicate. The
+logged-out marketing page is served by `fetchCoursePage.ts` on a server
+component through the Admin SDK, which bypasses rules.
+
+### Three consequences worth knowing before you debug something
 
 **1. A course collaborator without a course permission cannot read a draft
 run.** `collaboratorUids` lives on the COURSE document; a run carries only
@@ -366,13 +380,25 @@ fine today because no such list is issued: `useCourses()` and
 `AdminCourseList` both run inside `/admin/courses`, and every public and
 learner surface reads through the Admin SDK fetchers in
 `src/features/courses`, which bypass rules. A future member-facing list must
-constrain on status, for example
-`where("status", "==", "published")`, which narrows the candidate set to
-documents the rule already allows. `RoundEditor` is the one caller that can
+constrain on status, and the constraint DIFFERS by collection because the two
+rules do: `where("status", "==", "published")` for `courses`, and
+`where("status", "!=", "draft")` for `courseRuns`, which has no `published`
+member to ask for. Either narrows the candidate set to documents the rule
+already allows. `RoundEditor` is the one caller that can
 run as a permissionless account (an appointed admissions reviewer who is SU
 committee and holds no course key): its unfiltered `courseRuns` read now fails
 for that person, it already catches its own rejection, and the run pickers it
 feeds render only for `canAuthor`, so nothing they were shown disappears.
+
+**3. A read of a course or run document that does not exist now returns
+`permission-denied` to a non-staff caller, not `exists === false`.** Both
+rules dereference `resource.data` to test the status, and on a missing
+document `resource` is null, so the clause cannot pass and Firestore refuses
+rather than returning an empty snapshot. A staff caller is unaffected, because
+the permission clauses that follow are resource-independent and one of them
+still matches. So a client that distinguishes "no such course" from "not
+allowed" by catching the error has to stop: for a plain member the two are now
+the same response, and the honest message is "we couldn't load that course".
 
 ### What was deliberately NOT narrowed
 
@@ -400,6 +426,7 @@ No index is owed.
 
 **Rollback** is a rules-only deploy of the previous file; there is no data
 migration and no code depends on the narrowing. If a surface breaks after the
-deploy, the symptom is a `permission-denied` on a `courses` or `courseRuns`
-read, and the first question is whether the caller holds `draftCourse` or
-`approveCourse`, followed by whether the failing read is an unfiltered list.
+deploy, the symptom is a `permission-denied` on a `courses`, `courseRuns` or
+`coursePages` read, and the first question is whether the caller holds
+`draftCourse` or `approveCourse`, followed by whether the failing read is an
+unfiltered list, and then whether the document exists at all (consequence 3).
