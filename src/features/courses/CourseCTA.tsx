@@ -79,9 +79,11 @@ type Props = {
   /** The run to describe, or null when the course has no public run. */
   run: CourseCTARun | null;
   /**
-   * The admission round the course's applications go through, when one names
-   * any of its runs. Outranks `run` for the dates and the apply link; see
-   * `CourseCTARound`.
+   * The admission round the course's applications go through, ALREADY
+   * PRECEDENCE-RESOLVED by the server: it is non-null exactly when
+   * `roundOwnsDates` (fetchCourses.ts) says the round speaks for this course,
+   * and null when the run's own window does. Passing it means "the round owns
+   * the dates and the apply link"; see `CourseCTARound`.
    */
   round?: CourseCTARound | null;
   /**
@@ -139,9 +141,13 @@ export default function CourseCTA({
   const coursePath = `/courses/${encodeURIComponent(courseId)}`;
   const title = courseTitle || "this course";
   const open = run?.enrolMode === "open";
-  // An open-enrolment run has no application and never gets a round, so the
-  // picker branch below wins outright and the round is ignored there.
-  const viaRound = !open && round !== null;
+  // PRECEDENCE IS THE SERVER'S. `roundOwnsDates` in `fetchCourses.ts` is the
+  // one rule for whether the round or the run's own window speaks for a
+  // course, and the page passes `round` only when the round is the answer
+  // (never for an open-enrolment run, which no round places anybody onto). A
+  // second copy of that condition here is how the catalogue and this page came
+  // to disagree about it in the first place.
+  const viaRound = round !== null;
   const applyHref = viaRound
     ? `/apply/${encodeURIComponent(round.id)}`
     : `/courses/${encodeURIComponent(courseId)}/apply`;

@@ -170,7 +170,9 @@ const { currentJourneyStepIndex, journeyStepStates } = await loadTs(
   "lib/courses/journeyStep.ts",
 );
 const { londonDateKey } = await loadTs("lib/courses/weekPlan.ts");
-const { compareCatalogueEntries } = await loadTs("features/courses/fetchCourses.ts");
+const { compareCatalogueEntries, roundOwnsDates } = await loadTs(
+  "features/courses/fetchCourses.ts",
+);
 const { default: WeekCurriculum } = await loadTs(
   "features/courses/WeekCurriculum.tsx",
 );
@@ -555,6 +557,46 @@ test("§5 GUARD the ROUND outranks the run when the two disagree", () => {
 
   const closedByRound = entry("shut", { roundState: "closed", runState: "open" });
   assert.equal(compareCatalogueEntries(runOpen, closedByRound) < 0, true);
+});
+
+test("§5 GUARD ONE precedence rule, and an open-enrolment run is its exception", () => {
+  // The bug this pins: the catalogue applied "round first, always" while the
+  // programme page applied "round first UNLESS the run is open enrolment", so
+  // a pre-course that a round happened to name sorted by the round's deadline
+  // on one page and by its own sign-up window on the other.
+  const live = { state: "open" };
+
+  // The ordinary case: a round exists, so the round speaks.
+  assert.equal(roundOwnsDates(live, "admissions"), true);
+  // A run with no mode recorded is not an open-enrolment run.
+  assert.equal(roundOwnsDates(live, null), true);
+  assert.equal(roundOwnsDates(live, undefined), true);
+
+  // THE exception. A pre-course admits everybody from the session picker on
+  // the course page; an application deadline is not a true thing about it.
+  assert.equal(roundOwnsDates(live, "open"), false);
+
+  // No round at all is the ordinary answer for an open-enrolment course and
+  // for an admissions course between intakes.
+  assert.equal(roundOwnsDates(null, "admissions"), false);
+
+  // A draft or archived round is not a public thing, so it speaks for nothing
+  // even though the ranking should never have handed one over.
+  assert.equal(roundOwnsDates({ state: "inactive" }, "admissions"), false);
+
+  // And the sort key asks the same question: a round-open pre-course sorts on
+  // its own closed sign-up window, not on the round's open one.
+  const preCourse = {
+    course: { id: "pre", title: "pre", track: "general" },
+    liveRound: { id: "r", state: "open", opensAt: null, closesAt: null, decisionsByDate: null },
+    featuredRun: {
+      run: { id: "pre-run", enrolMode: "open" },
+      window: { state: "closed", opensAt: null, closesAt: null },
+    },
+    visual: { seed: "pre", coverImageUrl: null, coverAlt: "" },
+  };
+  const openIntake = entry("intake", { roundState: "open" });
+  assert.equal(compareCatalogueEntries(openIntake, preCourse) < 0, true);
 });
 
 test("§5 MODEL inside a band, track order then title", () => {

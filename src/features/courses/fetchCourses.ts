@@ -5,9 +5,11 @@ import {
   normalizeCourseRun,
   normalizeCourseWeek,
   type CourseDoc,
+  type CourseEnrolMode,
   type CourseRunDoc,
   type CourseWeekDoc,
 } from "@/lib/firestore/courses";
+import type { RoundWindowState } from "@/lib/admissions/window";
 import {
   normalizeCourseGroup,
   type GroupSession,
@@ -310,13 +312,50 @@ export async function listPublishedCourses(): Promise<CourseCatalogueEntry[]> {
 }
 
 /**
- * How openly a catalogue row is taking people, as a sort key. The ROUND wins
- * when there is one, for the reason `liveRound` documents: it is the object
- * people apply to, and the run's own window is the pre-round mechanism that
- * open-enrolment courses still use.
+ * WHICH OBJECT SPEAKS FOR A COURSE'S DATES: the admission round, or the run's
+ * own window. THE one rule, and every public surface asks it rather than
+ * writing the condition out again.
+ *
+ * The ROUND wins whenever there is one. It is the object an applicant applies
+ * to, it carries the dates an admin typed, and the run's
+ * `applicationsOpenAt` / `applicationsCloseAt` are the pre-round mechanism.
+ *
+ * The ONE exception is an OPEN-ENROLMENT run. It has no application, nobody
+ * is placed onto it by a decision, and people join it from the session picker
+ * on the course page, so its own enrolment window is the only thing that can
+ * be true about it. A round that happened to name it would otherwise put an
+ * application deadline on a pre-course that admits everyone.
+ *
+ * An `inactive` round is not a public thing at all (draft or archived), so it
+ * speaks for nothing. `pickLiveRound` already drops those, and this is the
+ * belt to that braces: the type still admits the state.
+ *
+ * The two surfaces disagreeing about this is how a page ends up showing a
+ * round's deadline beside a run's state, which is the drift V3 exists to stop.
+ * The catalogue used to apply it round-first with no exception while the
+ * programme page applied the exception, so an open-enrolment course with a
+ * round would have sorted and read differently on the two pages.
+ */
+export function roundOwnsDates(
+  round: { state: RoundWindowState } | null,
+  enrolMode: CourseEnrolMode | null | undefined,
+): boolean {
+  if (!round || round.state === "inactive") return false;
+  return enrolMode !== "open";
+}
+
+/**
+ * How openly a catalogue row is taking people, as a sort key. Which object
+ * decides that is `roundOwnsDates`'s question, not this function's.
  */
 function opennessRank(entry: CourseCatalogueEntry): number {
-  const state = entry.liveRound?.state ?? entry.featuredRun?.window.state ?? null;
+  const viaRound = roundOwnsDates(
+    entry.liveRound,
+    entry.featuredRun?.run.enrolMode ?? null,
+  );
+  const state = viaRound
+    ? (entry.liveRound?.state ?? null)
+    : (entry.featuredRun?.window.state ?? null);
   if (state === "open") return 0;
   if (state === "not-yet") return 1;
   return 2;

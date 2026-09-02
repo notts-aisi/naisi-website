@@ -5,6 +5,7 @@ import Card from "@/components/ui/Card";
 import { COURSE_TRACK_LABELS } from "@/lib/firestore/courses";
 import {
   listPublishedCourses,
+  roundOwnsDates,
   type CourseCatalogueEntry,
 } from "@/features/courses/fetchCourses";
 import CourseVisual from "@/features/courses/CourseVisual";
@@ -71,8 +72,8 @@ export default async function CourseCataloguePage() {
 }
 
 function CourseCard({ entry }: { entry: CourseCatalogueEntry }) {
-  const { course, featuredRun, liveRound } = entry;
-  const state = liveRound?.state ?? featuredRun?.window.state ?? null;
+  const { course } = entry;
+  const state = cardState(entry);
   const dates = cardDates(entry);
   return (
     // Plain next/link, never TransitionLink: the public transition's ~960ms
@@ -119,6 +120,18 @@ function CourseCard({ entry }: { entry: CourseCatalogueEntry }) {
   );
 }
 
+/**
+ * The window state the card speaks about, from whichever object owns the
+ * dates. `roundOwnsDates` is that decision, shared with the sort key inside
+ * the fetcher and with the programme page, so a card cannot be sorted into
+ * one band and painted in another.
+ */
+function cardState(entry: CourseCatalogueEntry): ApplicationWindowState | null {
+  return roundOwnsDates(entry.liveRound, entry.featuredRun?.run.enrolMode ?? null)
+    ? (entry.liveRound?.state ?? null)
+    : (entry.featuredRun?.window.state ?? null);
+}
+
 /** Open is live, not-yet is upcoming, everything else is over. */
 function stateClass(state: ApplicationWindowState | null): string {
   if (state === "open") return styles.stateOpen;
@@ -144,13 +157,13 @@ function applicationState(entry: CourseCatalogueEntry): string {
   const round = entry.liveRound;
   const found = entry.featuredRun;
   if (!round && !found) return "Next run TBA";
-  // An open-enrolment run has no round and never will, so the noun is only
+  // An open-enrolment run is never spoken for by a round, so the noun is only
   // ever "Sign-ups" on the run's own window.
   const noun = found?.run.enrolMode === "open" ? "Sign-ups" : "Applications";
-  // The ROUND wins when there is one: it is the object people apply to, and
-  // its dates are the ones an admin typed. See `CourseCatalogueEntry`.
-  const state = round?.state ?? found?.window.state ?? null;
-  const opensAt = round ? round.opensAt : (found?.window.opensAt ?? null);
+  // Which object is speaking: `roundOwnsDates`, the one rule.
+  const viaRound = roundOwnsDates(round, found?.run.enrolMode ?? null);
+  const state = cardState(entry);
+  const opensAt = viaRound ? (round?.opensAt ?? null) : (found?.window.opensAt ?? null);
   if (state === "open") return `${noun} open`;
   if (state === "not-yet") {
     return opensAt ? `${noun} open ${formatWindowDate(opensAt)}` : `${noun} open soon`;
@@ -171,8 +184,9 @@ function cardDates(entry: CourseCatalogueEntry): string {
   const found = entry.featuredRun;
   if (!round && !found) return "";
   const bits: string[] = [];
-  const state = round?.state ?? found?.window.state ?? null;
-  const closesAt = round ? round.closesAt : (found?.window.closesAt ?? null);
+  const viaRound = roundOwnsDates(round, found?.run.enrolMode ?? null);
+  const state = cardState(entry);
+  const closesAt = viaRound ? (round?.closesAt ?? null) : (found?.window.closesAt ?? null);
   if (state !== "closed" && closesAt) {
     const noun = found?.run.enrolMode === "open" ? "Sign-ups" : "Applications";
     bits.push(`${noun} close ${formatWindowDate(closesAt)}`);

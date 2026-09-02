@@ -7,6 +7,7 @@ import { COURSE_TRACK_LABELS, type CourseTrack } from "@/lib/firestore/courses";
 import {
   getCourseRunSet,
   getPublishedCourse,
+  roundOwnsDates,
   type RunWindow,
 } from "@/features/courses/fetchCourses";
 import {
@@ -157,11 +158,22 @@ export default async function PublicCoursePage({
   // backwards from `outcomeRunIds` until PR17 adds the forward pointer.
   const round = await fetchLiveRoundForRuns(runSet.runIds);
 
+  // ONE precedence decision for the whole page, made by the one helper the
+  // catalogue also asks. `speakingRound` is null when the run's own window is
+  // the truth (no round, or an open-enrolment pre-course), and every branch
+  // below reads that rather than re-deriving the rule.
+  const speakingRound = roundOwnsDates(
+    round,
+    applicationRun?.run.enrolMode ?? null,
+  )
+    ? round
+    : null;
+
   // Dates are formatted HERE, on the server, in Europe/London. The CTA is a
   // client island, and formatting a Nottingham deadline in the visitor's own
   // timezone is how someone reads "closes Sat 17 Oct" and applies a day late.
   const ctaRun = toCTARun(applicationRun);
-  const ctaRound = toCTARound(round);
+  const ctaRound = toCTARound(speakingRound);
 
   // OPEN-ENROLMENT runs put the session picker on this page, so the slots are
   // fetched with the page rather than by the client island: a signed-out
@@ -252,7 +264,7 @@ export default async function PublicCoursePage({
         </header>
 
         <CourseFactsRail
-          facts={buildFacts(page, round, applicationRun)}
+          facts={buildFacts(page, speakingRound, applicationRun)}
           notes={buildNotes(page)}
         />
 
@@ -355,22 +367,20 @@ function pickSampleWeek<T extends { weekNumber: number }>(
 }
 
 /**
- * The facts rail's short answers. Dates come from the ROUND when there is one
- * and from the run otherwise, decided here rather than in the component so
- * there is one place to read for "which object is speaking".
+ * The facts rail's short answers.
+ *
+ * `round` here is the SPEAKING round: the caller has already applied
+ * `roundOwnsDates`, so a non-null round means the round owns every date on
+ * this rail and a null one means the run's own window does. The rail does not
+ * re-derive that rule, and neither does the CTA.
  */
 function buildFacts(
   page: PublicCoursePage,
   round: CourseLiveRound | null,
   run: RunWindow | null,
 ): CourseFact[] {
-  // The same precedence the CTA applies, and for the same reason: an
-  // open-enrolment run has no round, so the picker's window wins there and the
-  // round wins everywhere else. Two components disagreeing about which object
-  // is speaking is how a page ends up showing a round's deadline beside a
-  // run's state.
   const openMode = run?.run.enrolMode === "open";
-  const viaRound = !openMode && round !== null;
+  const viaRound = round !== null;
   const opensAt = viaRound ? round.opensAt : (run?.window.opensAt ?? null);
   const closesAt = viaRound ? round.closesAt : (run?.window.closesAt ?? null);
   const state = viaRound ? round.state : (run?.window.state ?? null);
