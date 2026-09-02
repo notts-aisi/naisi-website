@@ -161,16 +161,34 @@ export async function POST(req: Request) {
       createdAt: FieldValue.serverTimestamp(),
       createdByUid: user.uid,
     });
-  } catch {
-    // `create()` throws on an existing document. Treat any failure as the
-    // collision rather than a 500: the only other cause here is a datastore
-    // outage, and the honest reading of "the write did not land" for a
-    // deterministic id is that something is already there.
+  } catch (err) {
+    // `create()` rejects with ALREADY_EXISTS when the document is there, which
+    // is the one failure the deterministic id makes likely and the only one a
+    // 409 describes. Every other rejection is the datastore refusing the
+    // write, and answering that with "already exists" would send an admin
+    // looking for a period nothing ever wrote.
+    if (isAlreadyExists(err)) {
+      return NextResponse.json(
+        { error: `A membership period for ${year} already exists.` },
+        { status: 409 },
+      );
+    }
+    console.error("[membership/periods] create failed:", periodId, err);
     return NextResponse.json(
-      { error: `A membership period for ${year} already exists.` },
-      { status: 409 },
+      { error: "Could not create that membership period." },
+      { status: 500 },
     );
   }
 
   return NextResponse.json({ id: periodId, year });
+}
+
+/**
+ * ALREADY_EXISTS, however the Admin SDK hands it over: the numeric gRPC status
+ * on `code`, or the string form the REST transport and the client SDK use.
+ * Everything else is a 500.
+ */
+function isAlreadyExists(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null | undefined)?.code;
+  return code === 6 || code === "already-exists" || code === "ALREADY_EXISTS";
 }

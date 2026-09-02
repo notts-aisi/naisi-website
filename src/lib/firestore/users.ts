@@ -233,6 +233,12 @@ export function canApproveCourse(
  * `finalDeciderUid` on the round itself, plus this gate for authoring, and a
  * third axis would only be a thing to forget to grant.
  */
+export function canAuthorAdmissionRound(
+  user: Pick<UserDoc, "role" | "permissions">,
+): boolean {
+  return user.role === "admin" || Boolean(user.permissions?.approveCourse);
+}
+
 /**
  * Who may create and edit membership periods, grant and revoke tiers, and
  * open the membership console. Admins implicitly, like every other key.
@@ -244,12 +250,6 @@ export function canManageMembership(
   user: Pick<UserDoc, "role" | "permissions">,
 ): boolean {
   return user.role === "admin" || Boolean(user.permissions?.manageMembership);
-}
-
-export function canAuthorAdmissionRound(
-  user: Pick<UserDoc, "role" | "permissions">,
-): boolean {
-  return user.role === "admin" || Boolean(user.permissions?.approveCourse);
 }
 
 /**

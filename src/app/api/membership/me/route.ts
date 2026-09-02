@@ -5,7 +5,6 @@ import {
   MEMBERSHIPS_COLLECTION,
   MEMBERSHIP_CONFIG_PATH,
   MEMBERSHIP_PERIODS_COLLECTION,
-  membershipId,
   normalizeMembership,
   normalizeMembershipPeriod,
   projectMembershipForMe,
@@ -62,27 +61,26 @@ export async function GET() {
       ? normalizeMembershipPeriod(periodSnap.id, periodSnap.data() ?? {})
       : null;
 
-  const currentSnap = currentPeriodId
-    ? await db
-        .collection(MEMBERSHIPS_COLLECTION)
-        .doc(membershipId(user.uid, currentPeriodId))
-        .get()
-    : null;
-  const current =
-    currentSnap && currentSnap.exists
-      ? normalizeMembership(currentSnap.id, currentSnap.data() ?? {})
-      : null;
-
   // Every row this account holds. Equality on one field, so the automatic
   // single-field index serves it and no composite index is owed. The year is
   // derived from the period id rather than joined, so a ten-year history is
   // still one query.
+  //
+  // The CURRENT row is picked out of this rather than read at its address:
+  // there is one row per period, `paidMembershipYears` caps a member at ten
+  // years, and the limit is 50, so the current period's row is in here
+  // whenever it exists and an addressed `get` would only be the same document
+  // fetched twice.
   const historySnap = await db
     .collection(MEMBERSHIPS_COLLECTION)
     .where("uid", "==", user.uid)
     .limit(50)
     .get();
   const history = historySnap.docs.map((d) => normalizeMembership(d.id, d.data() ?? {}));
+
+  const current = currentPeriodId
+    ? (history.find((row) => row.periodId === currentPeriodId) ?? null)
+    : null;
 
   return NextResponse.json(projectMembershipForMe(period, current, history));
 }

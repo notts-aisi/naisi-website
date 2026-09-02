@@ -123,6 +123,24 @@ export default async function AdminLayout({ children }: { children: React.ReactN
  *  the page identifies itself the same way in both. The title follows the
  *  caller: a course drafter and an appointed reviewer are both in here for one
  *  section, and "Committee controls" would be a promise neither can act on. */
+/**
+ * The title for one caller, most-specific capability first.
+ *
+ * Every branch TESTS the capability it names, membership included. Reaching
+ * "Membership" as the last else of a chain would have promised a section to
+ * whoever falls through it next, which is exactly how a new capability gets
+ * mislabelled. The final fallback names no section at all: the layout has
+ * already turned away anybody holding none of these, so it is a floor rather
+ * than a claim.
+ */
+function adminHeadingTitle(access: AdminTabAccess): string {
+  if (access.isAdmin) return "Committee controls";
+  if (access.canAuthorCourses) return "Course admin";
+  if (access.isAdmissionsReviewer || access.canAuthorRounds) return "Admissions";
+  if (access.canManageMembership) return "Membership";
+  return "Admin tools";
+}
+
 function AdminHeading({ access }: { access: AdminTabAccess }) {
   return (
     <div style={{ marginBottom: "var(--space-8)" }}>
@@ -137,15 +155,7 @@ function AdminHeading({ access }: { access: AdminTabAccess }) {
       >
         Admin
       </div>
-      <h1 style={{ fontSize: "var(--text-3xl)" }}>
-        {access.isAdmin
-          ? "Committee controls"
-          : access.canAuthorCourses
-            ? "Course admin"
-            : access.isAdmissionsReviewer || access.canAuthorRounds
-              ? "Admissions"
-              : "Membership"}
-      </h1>
+      <h1 style={{ fontSize: "var(--text-3xl)" }}>{adminHeadingTitle(access)}</h1>
     </div>
   );
 }

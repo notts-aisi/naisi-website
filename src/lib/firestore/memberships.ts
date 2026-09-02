@@ -29,6 +29,15 @@
  * person, and it never enters the cache, because they are not a member of the
  * society this year.
  *
+ * ## A revoke DELETES the row
+ *
+ * Taking a membership away removes `memberships/{uid}__{periodId}` and the
+ * cache entry together rather than stamping `revokedAt`, because a row that
+ * survives its revoke reads as a membership to anything that forgets to check
+ * the field. `MembershipDoc.revokedAt` and `revokedByUid` are normalised for a
+ * row written by hand or by a later importer that prefers to keep history;
+ * nothing in the shipped code writes them.
+ *
  * ## Membership gates nothing
  *
  * It is a badge and a record. No route, rule or page may branch access on it:
