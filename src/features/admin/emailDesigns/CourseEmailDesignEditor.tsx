@@ -20,6 +20,7 @@ import {
 import BlockEditor from "@/features/newsletter/editor/BlockEditor";
 import EmailPreview from "@/features/newsletter/editor/EmailPreview";
 import {
+  admissionsTokensFor,
   courseSampleTokens,
   courseTemplateUsesAdmissionsTokens,
   courseTemplateUsesGroupTokens,
@@ -109,11 +110,17 @@ const WEEK_TOKENS: TokenHelp[] = [
 
 /**
  * The admissions map. Same story as the nudge's: a different send path
- * (`src/lib/email/admissionEmails.ts`) builds these, and it deletes the three
+ * (`src/lib/email/admissionEmails.ts`) builds these, and it drops the three
  * course tokens before substituting anything, so the lifecycle list is
  * REPLACED rather than added to when one of these templates is open. A round
  * is not a run: there is no course title, no run label and no start date to
  * name yet.
+ *
+ * The list is then narrowed to what the OPEN template's trigger supplies
+ * (`admissionsTokensFor`), because the two triggers differ: reopening an
+ * application knows neither the decisions-by date nor which part of the form
+ * this is. Advertising a token the send path never resolves is how an admin
+ * writes a sentence that arrives with `{decisionsBy}` still in it.
  */
 const ADMISSIONS_TOKENS: TokenHelp[] = [
   { token: "firstName", description: "First word of their name, best for greetings." },
@@ -285,6 +292,9 @@ export default function CourseEmailDesignEditor({ templateId }: Props) {
   const showsGroupTokens = courseTemplateUsesGroupTokens(templateId);
   const showsWeekTokens = courseTemplateUsesWeekTokens(templateId);
   const showsAdmissionsTokens = courseTemplateUsesAdmissionsTokens(templateId);
+  const admissionsTokens = showsAdmissionsTokens
+    ? ADMISSIONS_TOKENS.filter((t) => admissionsTokensFor(templateId).has(t.token))
+    : [];
 
   return (
     <div className={styles.wrap}>
@@ -312,7 +322,7 @@ export default function CourseEmailDesignEditor({ templateId }: Props) {
         </p>
         <dl className={styles.tokenList}>
           {(showsAdmissionsTokens
-            ? ADMISSIONS_TOKENS
+            ? admissionsTokens
             : showsWeekTokens
               ? WEEK_TOKENS
               : ALWAYS_TOKENS

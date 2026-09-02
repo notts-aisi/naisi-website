@@ -57,9 +57,42 @@ import { sendEmail } from "./send";
 
 export type AdmissionEmailKind = "submitted" | "reinstated";
 
-const TEMPLATE_FOR_KIND: Record<AdmissionEmailKind, CourseTemplateId> = {
+export const TEMPLATE_FOR_KIND: Record<AdmissionEmailKind, CourseTemplateId> = {
   submitted: "admissions-submitted",
   reinstated: "admissions-reinstated",
+};
+
+/**
+ * The tokens each TRIGGER actually supplies, and the list is per kind rather
+ * than per helper on purpose.
+ *
+ * `AdmissionEmailOptions` describes what this function CAN be passed; a call
+ * site decides what it DOES pass, and the two are not the same list. The
+ * reinstate branch of `POST .../apply` sends no `decisionsBy` and no
+ * `stageLabel`, so seed copy or an admin's rewrite using `{decisionsBy}` would
+ * arrive as those nine literal characters in somebody's inbox, and a test that
+ * asked the helper what it supports would have called that fine.
+ *
+ * So the map is the contract, the filter below enforces it, and
+ * `tests/admissions-status-hub.test.mjs` checks each template's copy against
+ * its own kind's set. A trigger that starts supplying a token adds it here in
+ * the same commit as the call site.
+ *
+ * The three COURSE tokens are absent from every entry, which is what drops
+ * them: a round is not a run, so `{courseTitle}` stays literal rather than
+ * resolving to a blank and cutting a hole in a sentence.
+ */
+export const TOKENS_BY_KIND: Record<AdmissionEmailKind, readonly string[]> = {
+  submitted: [
+    "preferredName",
+    "firstName",
+    "roundLabel",
+    "applicationUrl",
+    "deadline",
+    "decisionsBy",
+    "stageLabel",
+  ],
+  reinstated: ["preferredName", "firstName", "roundLabel", "applicationUrl", "deadline"],
 };
 
 export type AdmissionEmailOptions = {
@@ -132,27 +165,30 @@ export async function sendAdmissionEmail(opts: AdmissionEmailOptions): Promise<v
       }
     }
 
-    const tokens: TokenValues = {
-      ...buildCourseTokens({
-        // `name` is already the resolved preferredName / displayName fallback
-        // at the call site, so it feeds the builder as the display name.
-        user: { displayName: opts.name },
-        // A round is not a run. These three are passed empty and then DELETED
-        // below, so a course token pasted into admissions copy stays literal
-        // in a test send instead of resolving to a blank.
-        courseTitle: "",
-        runLabel: "",
-        startDate: "",
-        applicationUrl: opts.applicationUrl,
-        roundLabel: opts.roundLabel,
-        stageLabel: opts.stageLabel,
-        deadline: opts.deadline,
-        decisionsBy: opts.decisionsBy,
-      }),
-    };
-    delete tokens.courseTitle;
-    delete tokens.runLabel;
-    delete tokens.startDate;
+    const built = buildCourseTokens({
+      // `name` is already the resolved preferredName / displayName fallback
+      // at the call site, so it feeds the builder as the display name.
+      user: { displayName: opts.name },
+      // A round is not a run. These three are passed empty and then dropped by
+      // the filter below, so a course token pasted into admissions copy stays
+      // literal in a test send instead of resolving to a blank.
+      courseTitle: "",
+      runLabel: "",
+      startDate: "",
+      applicationUrl: opts.applicationUrl,
+      roundLabel: opts.roundLabel,
+      stageLabel: opts.stageLabel,
+      deadline: opts.deadline,
+      decisionsBy: opts.decisionsBy,
+    });
+    // THE FILTER, by kind: anything this trigger does not supply is dropped
+    // rather than resolved, so an unsupplied token stays visible as `{token}`
+    // to whoever wrote the copy instead of blanking mid-sentence.
+    const allowed = new Set<string>(TOKENS_BY_KIND[opts.kind]);
+    const tokens: TokenValues = {};
+    for (const [key, value] of Object.entries(built)) {
+      if (allowed.has(key)) tokens[key] = value;
+    }
 
     const personalisedSubject = personaliseString(subject, tokens);
     const personalisedBlocks = personaliseBlocks(blocks, tokens);

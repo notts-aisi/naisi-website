@@ -95,6 +95,49 @@ export const ADMISSIONS_TEMPLATES: readonly CourseTemplateId[] = [
   "admissions-reinstated",
 ];
 
+/**
+ * Which admissions tokens each template's TRIGGER actually supplies.
+ *
+ * The two triggers are not the same: submitting an application knows the
+ * decisions-by date and, on a round asking in parts, which part this is;
+ * reopening one knows neither, because the reopen branch of
+ * `POST .../apply` passes neither. A preview that filled both in would show an
+ * admin a resolved `{decisionsBy}` and let them write a sentence around it
+ * that arrives as nine literal characters in an applicant's inbox.
+ *
+ * MIRRORS `TOKENS_BY_KIND` in `src/lib/email/admissionEmails.ts`, which is the
+ * send path's own copy and the one that actually filters. Two copies because
+ * that module is `server-only` and this one is imported by the editor;
+ * `tests/admissions-status-hub.test.mjs` asserts they agree.
+ */
+export const ADMISSIONS_TOKENS_BY_TEMPLATE: Partial<
+  Record<CourseTemplateId, readonly string[]>
+> = {
+  "admissions-submitted": [
+    "preferredName",
+    "firstName",
+    "roundLabel",
+    "applicationUrl",
+    "deadline",
+    "decisionsBy",
+    "stageLabel",
+  ],
+  "admissions-reinstated": [
+    "preferredName",
+    "firstName",
+    "roundLabel",
+    "applicationUrl",
+    "deadline",
+  ],
+};
+
+/** The tokens one admissions template resolves, as a set the callers can ask. */
+export function admissionsTokensFor(
+  templateId: CourseTemplateId,
+): ReadonlySet<string> {
+  return new Set(ADMISSIONS_TOKENS_BY_TEMPLATE[templateId] ?? []);
+}
+
 export function courseTemplateUsesAdmissionsTokens(
   templateId: CourseTemplateId,
 ): boolean {
@@ -176,10 +219,11 @@ export function courseSampleTokens(
   name: string,
 ): TokenValues {
   if (courseTemplateUsesAdmissionsTokens(templateId)) {
-    return {
-      // Same derivation the send path does, through the same builder, with no
-      // course tokens: `sendAdmissionEmail` deletes those three keys before it
-      // substitutes anything, so the preview must not resolve them either.
+    // Same derivation the send path does, with no course tokens
+    // (`sendAdmissionEmail` drops those three keys before it substitutes
+    // anything) and no token this template's trigger does not supply.
+    const supplied = admissionsTokensFor(templateId);
+    const all: TokenValues = {
       firstName: firstWord(name),
       preferredName: name,
       applicationUrl: ADMISSIONS_PREVIEW_SAMPLE.applicationUrl,
@@ -188,6 +232,11 @@ export function courseSampleTokens(
       deadline: ADMISSIONS_PREVIEW_SAMPLE.deadline,
       decisionsBy: ADMISSIONS_PREVIEW_SAMPLE.decisionsBy,
     };
+    const out: TokenValues = {};
+    for (const [key, value] of Object.entries(all)) {
+      if (supplied.has(key)) out[key] = value;
+    }
+    return out;
   }
 
   if (courseTemplateUsesWeekTokens(templateId)) {
