@@ -322,3 +322,27 @@ Deletion begins within 24 hours of a document's `expiresAt` and is a background
 sweep, not an instant. Rows already written before this shipped carry no
 `expiresAt` and are never collected; delete them by hand if they matter, or
 leave them, since they stop accumulating the moment the policy is on.
+
+## Cutover: membership periods
+
+Membership is a period-per-year object (`membershipPeriods/{periodId}`), and
+one of them has to be marked CURRENT before any badge on the site can say
+anything. Without that step every membership badge reads "not recorded", which
+is indistinguishable from a broken deploy.
+
+So, on each environment, as part of cutover and before anyone looks at a
+profile:
+
+1. Open **Admin, Membership** and create the period for the year. The year goes
+   in as `2026/27`; the document id is derived (`2026-27`) and the `year` field
+   keeps the slash, which is the same string `users.paidMembershipYears` has
+   always stored.
+2. Set the dates from the SU's membership year, and use the note for anything
+   the next admin should know about that year.
+3. Press **Make current**. That button is admin-only, and the route refuses
+   anyone else: moving the pointer re-badges every member at once.
+
+Then record members from their rows on the Members tab. Nothing needs a rules
+or index deploy: both collections are `allow read, write: if false`, which is
+identical to Firestore's implicit deny, and the `/me` query is a single-field
+equality served by the automatic index.

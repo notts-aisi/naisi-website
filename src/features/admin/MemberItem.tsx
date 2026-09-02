@@ -453,7 +453,7 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                 </span>
                 <MembershipChip
                   uid={user.uid}
-                  paidMembershipYears={user.paidMembershipYears}
+                  recordedYears={user.paidMembershipYears}
                 />
               </div>
 

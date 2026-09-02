@@ -63,10 +63,10 @@ function loadCurrentPeriod(): Promise<CurrentPeriod> {
 
 export default function MembershipChip({
   uid,
-  paidMembershipYears,
+  recordedYears,
 }: {
   uid: string;
-  paidMembershipYears: string[] | undefined;
+  recordedYears: string[] | undefined;
 }) {
   const [period, setPeriod] = useState<CurrentPeriod>(null);
   const [resolved, setResolved] = useState(false);
@@ -92,7 +92,7 @@ export default function MembershipChip({
   }, []);
 
   const recorded =
-    override ?? (period ? (paidMembershipYears ?? []).includes(period.year) : false);
+    override ?? (period ? (recordedYears ?? []).includes(period.year) : false);
 
   async function send(body: Record<string, unknown>, next: boolean) {
     setBusy(true);
