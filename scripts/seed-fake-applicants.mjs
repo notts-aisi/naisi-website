@@ -28,8 +28,10 @@
  *     `createHarnessUser` plus its `seedPendingUserDoc`, whose role is the
  *     hard-coded literal "pending". There is no code path here that writes a
  *     role, a `permissions` map, `suRecognised`, or a custom claim.
- *   - It refuses any project that is not the dev project or a Firestore
- *     emulator, through the auth harness's own `assertProject`.
+ *   - It refuses any project that is not the dev project, through the auth
+ *     harness's own `loadEnv()`. There is no emulator escape hatch: one that
+ *     keyed off FIRESTORE_EMULATOR_HOST alone would have pointed the
+ *     documents at a local database while creating the Auth accounts for real.
  *   - Every document it writes is ledgered, and `down` verifies the ledger
  *     drained to zero by counting the fixture's rows again afterwards.
  *
@@ -40,35 +42,88 @@
  * so such a send cannot reach a person, but against the DEPLOYED dev backend
  * it would still be a real hand-off to Resend and a hard bounce logged against
  * the sending domain. So seeding writes a `suppressedEmails` row for every
- * fixture address FIRST: `isSuppressed()` is checked before every send helper
- * builds a message, which turns "this run cannot cause mail" into a property
- * of the fixtures rather than a property of the mode it runs in. The rows are
- * self-identifying, ledgered, and removed by teardown like everything else.
+ * fixture address FIRST.
+ *
+ * Be precise about what that buys, because the check is NOT universal:
+ * `sendEmail()` in `src/lib/email/send.ts` does not consult the suppression
+ * list at all. The helpers do. `sendCourseDroppedOutEmail()` in
+ * `courseEnrolmentEmails.ts` (the one send this run can actually trigger)
+ * returns early on `isSuppressed()` before it builds a message, and
+ * `courseFacilitatorEmails.ts` drops suppressed addresses through
+ * `filterSuppressed()`. So the property holds for the routes this run drives,
+ * and `tests/funnel-harness-guards.test.mjs` keeps it holding: it reads the
+ * email helpers those routes import and fails if one of them stops checking.
+ * The rows are self-identifying, ledgered, and removed by teardown like
+ * everything else.
  *
  * ## Ids are constructed, never parsed
  *
  * Every fixture id is `{slug}__{runId}`, the repo's `slugId` shape with the
  * random suffix replaced by this run's id so a crashed run is sweepable by
  * eye and by query. Nothing here ever splits an id back apart to recover the
- * run id: the ledger in `.next/e2e-funnel-state.json` is the record, and the
+ * run id: the ledger at `.e2e-funnel-state.json` is the record, and the
  * `e2eFunnelRunId` field on every document is the query key.
  */
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getFirestore } from "firebase-admin/firestore";
 import {
   adminApp,
+  adminAuth,
   createHarnessUser,
   deleteHarnessUser,
+  deleteHarnessUserDoc,
   isHarnessAccount,
 } from "./e2e/lib/admin.mjs";
 import { createLedger, seedPendingUserDoc } from "./e2e/lib/firestore.mjs";
 import { REPO_ROOT, loadEnv, runId } from "./e2e/lib/env.mjs";
 
-/** Where the ledger lives. `.next/` is gitignored and already holds the auth
-    harness's own build marker and server log, so a funnel run leaves its
-    scratch in the same place. */
-export const STATE_PATH = join(REPO_ROOT, ".next", "e2e-funnel-state.json");
+/**
+ * Where the ledger lives: the repo root, gitignored by name.
+ *
+ * NOT `.next/`, which is where it started out. `next build` clears that
+ * directory on every build (it keeps only cache, dev and lock), so a `--local`
+ * run wrote its ledger and then had the build delete it out from under the
+ * spec, which found no fixture and skipped. The ledger has to outlive a build,
+ * so it sits beside the repo rather than inside its build output.
+ */
+export const STATE_PATH = join(REPO_ROOT, ".e2e-funnel-state.json");
+
+/**
+ * Where the spec records the steps it actually completed.
+ *
+ * The ledger above only says a fixture exists; this says a browser really
+ * drove it. Without it every way the spec can decline to run (no Playwright,
+ * no fixture, a skip) reads to the runner exactly like a pass, because
+ * `node --test` exits 0 over a skipped file. The runner deletes this before
+ * the spec starts and refuses to report success unless it comes back naming
+ * every step below.
+ */
+export const MARKER_PATH = join(REPO_ROOT, ".e2e-funnel-steps.json");
+
+/**
+ * Every step the spec must complete, in order.
+ *
+ * Shared rather than restated on both sides: the spec records what it
+ * finished and the runner checks the record against this list, so a step
+ * renamed in one place and not the other fails loudly instead of quietly
+ * shrinking what a green run means.
+ */
+export const FUNNEL_STEPS = [
+  "the public course page shows the seeded session slots",
+  "a signed-out visitor gets the sign-in gate on the apply page",
+  "applicant 1 signs in",
+  "starting an application opens an editable draft",
+  "the draft saves",
+  "the draft survives a reload",
+  "the availability grid paints and the marks persist",
+  "submitting moves the application to view-only",
+  "withdrawing needs the typed word and then takes it back",
+  "picking it back up restores the answers and submits again",
+  "the applicant status hub lists the round",
+  "taking a pre-course seat",
+  "leaving the course needs the typed course title",
+];
 
 /**
  * How many fake applicants `up` creates when none is asked for.
@@ -163,21 +218,24 @@ function fixtureQuery(collection) {
 }
 
 /**
- * Refuses every project that is not dev or an emulator.
+ * Refuses every project that is not dev.
  *
  * `loadEnv()` already asserts `FIREBASE_ADMIN_PROJECT_ID === "naisi-website-dev"`
  * and refuses a downloaded service-account key, so calling it IS the check;
- * this wrapper exists to name the emulator escape hatch and to give the guard
- * test one exported function to call. Production is unreachable from here in
- * the same way it is unreachable from the auth harness, and for the same
- * reason: the assertion runs before any credential is obtained.
+ * this wrapper exists to give the guard test one exported function to call.
+ * Production is unreachable from here in the same way it is unreachable from
+ * the auth harness, and for the same reason: the assertion runs before any
+ * credential is obtained.
  */
 export function assertFixtureTarget() {
-  if (process.env.FIRESTORE_EMULATOR_HOST) {
-    return { projectId: process.env.FIREBASE_ADMIN_PROJECT_ID ?? "emulator", emulator: true };
-  }
+  // No emulator escape hatch. An earlier draft returned early on
+  // FIRESTORE_EMULATOR_HOST, before `loadEnv()` and without ever requiring
+  // FIREBASE_AUTH_EMULATOR_HOST, so a shell exporting only the Firestore host
+  // would have run the whole fixture against a local database while creating
+  // its Auth accounts for real in the dev project. Nothing here needs an
+  // emulator, so the safe shape is not to offer one.
   const env = loadEnv();
-  return { projectId: env.projectId, emulator: false };
+  return { projectId: env.projectId };
 }
 
 // ---------------------------------------------------------------------------
@@ -200,17 +258,17 @@ export function enrolmentId(runIdValue, uid) {
 }
 
 /** `emailDocId` from src/lib/firestore/emailDocId.ts, re-stated for plain Node. */
-function emailDocId(email) {
+export function emailDocId(email) {
   return email.trim().toLowerCase().replace(/[^a-z0-9@._+-]/g, "_");
 }
 
 /** `courseRunChannel` from src/lib/firestore/courses.ts, re-stated. */
-function cohortChannel(runIdValue) {
+export function cohortChannel(runIdValue) {
   return `cohort:${runIdValue}`;
 }
 
-/** `subscriptionId` from src/lib/firestore/subscriptions.ts, re-stated. */
-function subscriptionId(email, channel) {
+/** `subscriptionDocId` from src/lib/firestore/subscriptions.ts, re-stated. */
+export function subscriptionId(email, channel) {
   return `sub_${emailDocId(email)}__${channel}`;
 }
 
@@ -338,7 +396,9 @@ function courseDoc({ title, now, funnelRunId }) {
     summaryBlocks: [
       {
         id: "b1",
-        type: "paragraph",
+        // `richText` is a real BlockType; "paragraph" is not, and sanitizeBlocks
+        // drops what it does not recognise, so the seeded page rendered nothing.
+        type: "richText",
         // The public course page renders this. Saying what it is beats a lorem
         // ipsum somebody has to go and identify.
         html: "<p>This course exists only while an automated funnel run is in flight.</p>",
@@ -376,7 +436,12 @@ function runDoc({ runIdValue, courseIdValue, courseTitle, label, now, funnelRunI
     enrolledCount: 0,
     startDate: londonDateKey(now),
     weekPlan: [{ kind: "week", weekNumber: 1 }],
-    cohort: null,
+    // `cohort`, `templateId` and `templateLabel` are ABSENT rather than null,
+    // matching what the authoring routes store and what normalizeCourseRun
+    // round-trips. firestore.rules pins all three with a `.get()` default, and
+    // a stored null compares unequal to that default, which would wedge every
+    // later non-admin edit of the seeded run in RunEditor. `applicationCap` is
+    // null on purpose: RunEditor writes null for "no cap" and no rule pins it.
     startHereBlocks: [],
     applicationForm: [],
     applicationsOpenAt: new Date(now.getTime() - DAY_MS),
@@ -392,8 +457,6 @@ function runDoc({ runIdValue, courseIdValue, courseTitle, label, now, funnelRunI
     // one run's teardown sweep another list's subscription rows.
     channel: cohortChannel(runIdValue),
     archived: false,
-    templateId: null,
-    templateLabel: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -463,7 +526,6 @@ export async function seedFunnelFixtures({ applicants = DEFAULT_APPLICANTS } = {
   const state = {
     funnelRunId,
     projectId: target.projectId,
-    emulator: target.emulator,
     createdAt: now.toISOString(),
     courseId: courseIdValue,
     courseTitle,
@@ -652,6 +714,31 @@ export async function countFunnelRows(state) {
   }
   counts.suppressedEmails = suppressionRows;
 
+  // The two rows a fixture account leaves behind that live OUTSIDE the fixture
+  // collection list, and the two a teardown is most likely to strand: a users
+  // document is a ghost member in the admin list, and a live Auth account can
+  // still sign in. Counting only the thirteen collections meant a teardown
+  // that failed to remove either still reported a clean total of zero, which
+  // is the one number this whole harness asks anybody to trust.
+  let userDocs = 0;
+  for (const applicant of state.applicants ?? []) {
+    const snap = await db().collection("users").doc(applicant.uid).get();
+    if (snap.exists) userDocs += 1;
+  }
+  counts.users = userDocs;
+
+  let authAccounts = 0;
+  for (const applicant of state.applicants ?? []) {
+    try {
+      await adminAuth().getUser(applicant.uid);
+      authAccounts += 1;
+    } catch {
+      // Not found is the wanted state after teardown, and the only error the
+      // Admin SDK raises for an id that is simply gone.
+    }
+  }
+  counts.authAccounts = authAccounts;
+
   // Event-log lines are addressed through the subscription rows they describe,
   // which is why they are counted after them and swept before them.
   let eventRows = 0;
@@ -691,6 +778,10 @@ export async function teardownFunnelFixtures(state) {
   assertFixtureTarget();
   const { roundId, runId: runIdValue, channel } = state;
   log(`Tearing down fixture ${state.funnelRunId}.`);
+  /** Anything that refused or failed to delete, reported rather than logged
+      and forgotten: a swallowed rejection here is an account or a document
+      left on a shared project under a manifest that says everything went. */
+  const failures = [];
 
   for (const applicant of state.applicants ?? []) {
     const subId = subscriptionId(applicant.email, channel);
@@ -737,16 +828,32 @@ export async function teardownFunnelFixtures(state) {
       );
     }
     // The users document first: an Auth account whose document outlives it is
-    // a ghost row in the admin members list, and the namespace check above is
-    // what makes deleting the document safe.
-    await db().collection("users").doc(applicant.uid).delete();
-    await deleteHarnessUser(applicant.uid).catch((err) => {
-      log(`Could not delete Auth user ${applicant.uid}: ${err.message}`);
-    });
+    // a ghost row in the admin members list.
+    //
+    // Both deletes resolve the account BY UID and re-check the namespace on
+    // the address that comes back, rather than trusting the address this
+    // state file happens to sit next to. The check above is on the state
+    // file's own pairing, which a hand-edited or stale file can get wrong;
+    // these two are on what Auth actually says the uid is.
+    try {
+      await deleteHarnessUserDoc(applicant.uid);
+      await deleteHarnessUser(applicant.uid);
+    } catch (err) {
+      failures.push(`${applicant.uid}: ${err.message}`);
+      log(`Could not tear down ${applicant.uid}: ${err.message}`);
+    }
   }
 
   const counts = await countFunnelRows(state);
-  clearState();
+  if (failures.length > 0) {
+    // Folded into the manifest so the exit code carries it: a refusal that
+    // only printed would let a green-looking run end on a live account.
+    counts.teardownFailures = failures;
+    counts.total += failures.length;
+  }
+  // The state file is the only way back to a fixture that did not fully
+  // drain, so it survives a failed teardown for `down` to retry against.
+  if (counts.total === 0) clearState();
   return counts;
 }
 
@@ -755,7 +862,6 @@ export async function teardownFunnelFixtures(state) {
 // ---------------------------------------------------------------------------
 
 export function writeState(state) {
-  mkdirSync(join(REPO_ROOT, ".next"), { recursive: true });
   writeFileSync(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
