@@ -25,6 +25,14 @@ import type { RoundWindowState } from "@/lib/admissions/window";
  * admin-facing handle ("autumn intake v2 DO NOT OPEN"), the same class of
  * string as `courseRuns.label` that V3 stopped showing visitors.
  *
+ * That is a smaller claim than "the label never reaches a visitor", which
+ * would be false: a round's doc id is `slugId(label)`, so a slugified copy of
+ * whatever an admin typed is already in the `/apply/[roundId]` URL this page
+ * links to. What this projection guarantees is that no surface PRINTS the
+ * label as prose, which is where an admin handle reads as copy. The round
+ * console's Name field says so where it is typed, because the discipline that
+ * keeps the URL respectable lives there rather than here.
+ *
  * ## Why the query is backwards
  *
  * `courseRuns.admissionRoundIds` (the forward pointer) does not exist yet, so
