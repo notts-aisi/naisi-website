@@ -57,7 +57,7 @@ export default async function ReConsentPage() {
   // anyone with a doc to stamp: a member, a collaborator, and now also a
   // role-pending applicant who has finished registering, because an applicant
   // holding a course place reaches authed pages and must be asked like anybody
-  // else. What is still turned away is a session with NOTHING to stamp — an
+  // else. What is still turned away is a session with NOTHING to stamp: an
   // unfinished signup that never wrote a users doc, which resolves to a default
   // role of "pending" here and would otherwise sit on a dead-end gate whose
   // accept button has no document to write to. A rejected account is not an
