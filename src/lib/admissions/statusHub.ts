@@ -110,8 +110,16 @@ export function buildStatusRow(
     .sort((a, b) => a.order - b.order)
     .map((stage) => serialiseStageForApplicant(stage, round, now));
 
+  // "resume" IS A PROMISE THAT THE FORM STILL TAKES WRITES, so it asks the
+  // window and not just the status. A draft the deadline overtook is still a
+  // draft, and offering "carry on writing it" directly under "this was never
+  // sent to us" would be the site contradicting itself in two consecutive
+  // lines. `/apply/[roundId]` renders that draft read-only ("This one was
+  // never sent", every answer still there), so the link stays and only its
+  // meaning changes.
   const isDraft = application.status === "draft";
-  const hrefKind: StatusLinkKind = isDraft ? "resume" : "view";
+  const hrefKind: StatusLinkKind =
+    isDraft && serialisedRound.windowState === "open" ? "resume" : "view";
   // `inactive` is a draft or archived round, which `/apply/[roundId]` answers
   // 404 for. A link there would be a dead end, so the row has none and says
   // so in its own words instead.

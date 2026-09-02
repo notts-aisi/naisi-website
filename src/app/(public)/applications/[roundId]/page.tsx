@@ -162,10 +162,7 @@ export default async function ApplicationDetailPage({ params }: Params) {
             {ADMISSION_APPLICATION_STATUS_LABEL[row.application.status]}
           </Badge>
           <p className={styles.lede}>
-            {applicationStatusBlurb(
-              row.application.status,
-              row.round.windowState === "closed",
-            )}
+            {applicationStatusBlurb(row.application.status, row.round.windowState)}
           </p>
         </header>
 

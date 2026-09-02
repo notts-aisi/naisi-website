@@ -103,6 +103,27 @@ function opensLine(row: ApplicationStatusRow): string | null {
   return `Opens ${formatRoundDate(at)}`;
 }
 
+/** What the page says when it cannot read, which is not what it says when there is nothing to read. */
+function Unavailable() {
+  return (
+    <section className={styles.page}>
+      <div className="container">
+        <header className={styles.hero}>
+          <h1 className={styles.title}>Your applications</h1>
+        </header>
+        <Card padding="lg" className={styles.empty}>
+          <h2 className={styles.emptyTitle}>We cannot read your applications right now</h2>
+          <p className={styles.emptyBody}>
+            This is a fault at our end, not anything you have done, and nothing
+            you have sent us has been affected. Try again in a few minutes; if
+            it keeps happening, reply to any email from us.
+          </p>
+        </Card>
+      </div>
+    </section>
+  );
+}
+
 export default async function ApplicationsPage() {
   const user = await getCurrentUser();
   // The proxy already redirects a caller with no session cookie. This is the
@@ -111,7 +132,14 @@ export default async function ApplicationsPage() {
   if (!user) redirect("/login?next=%2Fapplications");
 
   const db = getAdminDb();
-  const rows = db ? await loadStatusRows(db, user.uid, new Date()) : [];
+  // NOT the empty state. An unconfigured Admin SDK means this page cannot read
+  // anything, and "you have not applied to anything" is the one sentence it
+  // must never say in that case: somebody who applied last week would read it
+  // as the site having lost their application. Denied and absent are different
+  // answers, which is the whole reason this surface is server-side.
+  if (!db) return <Unavailable />;
+
+  const rows = await loadStatusRows(db, user.uid, new Date());
 
   return (
     <section className={styles.page}>
@@ -164,7 +192,7 @@ export default async function ApplicationsPage() {
                     <p className={styles.rowBlurb}>
                       {applicationStatusBlurb(
                         row.application.status,
-                        row.round.windowState === "closed",
+                        row.round.windowState,
                       )}
                     </p>
 

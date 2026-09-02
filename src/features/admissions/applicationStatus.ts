@@ -1,4 +1,5 @@
 import type { ChipTone } from "@/components/ui/Chip";
+import type { RoundWindowState } from "@/lib/admissions/window";
 import type { AdmissionApplicationStatus } from "@/lib/firestore/admissionApplications";
 
 /**
@@ -33,20 +34,29 @@ export const APPLICATION_STATUS_TONE: Record<AdmissionApplicationStatus, ChipTon
 };
 
 /**
- * The sentence under the chip. `deadlinePassed` matters for exactly one
- * status: a draft nobody submitted before the window shut is not a piece of
- * work in progress, and telling somebody to finish it would be worse than
- * telling them plainly that it was not sent.
+ * The sentence under the chip. The WINDOW STATE, not a boolean, and it matters
+ * for exactly one status: a draft nobody submitted before the window shut is
+ * not a piece of work in progress, and telling somebody to finish it would be
+ * worse than telling them plainly that it was not sent.
+ *
+ * A boolean was the earlier shape and it collapsed two different endings into
+ * "still open": a round that has been archived, or taken back to draft, is
+ * `inactive` rather than `closed`, so a draft on one read as work waiting to
+ * be finished on a form that answers 404. Each state gets its own sentence.
  */
 export function applicationStatusBlurb(
   status: AdmissionApplicationStatus,
-  deadlinePassed: boolean,
+  windowState: RoundWindowState,
 ): string {
   switch (status) {
     case "draft":
-      return deadlinePassed
-        ? "This was still a draft when applications closed, so it was never sent to us. Nobody has read it."
-        : "Saved but not sent. It stays exactly as you left it until you submit it.";
+      if (windowState === "closed") {
+        return "This was still a draft when applications closed, so it was never sent to us. Nobody has read it.";
+      }
+      if (windowState === "inactive") {
+        return "This round is no longer taking applications, so this draft was never sent to us. Everything you wrote is still here.";
+      }
+      return "Saved but not sent. It stays exactly as you left it until you submit it.";
     case "submitted":
       return "Sent. It is in the queue to be read, and you do not need to do anything else.";
     case "accepted":
