@@ -594,10 +594,137 @@ test("GUARD — the normalise route refuses outside the one window where it is f
 
   // Copy THEN delete, in one batch: the moves are a permutation, so a source
   // id is very often also a destination id and deleting as it goes would drop
-  // a week it had just written.
-  assert.match(NORMALISE_WEEKS, /const destinations = new Set\(moves\.map\(\(m\) => m\.to\)\)/);
-  assert.match(NORMALISE_WEEKS, /if \(destinations\.has\(move\.from\)\) continue;/);
+  // a week it had just written. The skip set is built from the moves that
+  // actually WRITE, which is the whole of the fix modelled two tests below.
+  assert.match(
+    NORMALISE_WEEKS,
+    /const written = new Set\(moves\.filter\(\(m\) => m\.hasDoc\)\.map\(\(m\) => m\.to\)\)/,
+  );
+  assert.match(NORMALISE_WEEKS, /if \(written\.has\(move\.from\)\) continue;/);
   assert.match(NORMALISE_WEEKS, /await batch\.commit\(\)/);
+});
+
+/**
+ * The normalise route's move computation, reproduced. Pinned to the real one by
+ * the source assertions in the test below, the same way `renumber()` and
+ * `weekAddressDrift()` are: nothing here may quietly become a model of code
+ * that no longer exists.
+ *
+ * `stored` is a Map of week doc id to `{ title }`, standing in for the
+ * documents the route reads out of `courseRuns/{id}/weeks`.
+ */
+function normalisationOf(plan, stored) {
+  const moves = [];
+  const restamps = [];
+  let taught = 0;
+  for (const entry of plan) {
+    if (entry.kind !== "week") continue;
+    taught += 1;
+    const to = weekDocId(taught);
+    if (entry.weekId !== to) {
+      moves.push({
+        from: entry.weekId,
+        to,
+        weekNumber: taught,
+        hasDoc: stored.has(entry.weekId),
+      });
+    } else {
+      const doc = stored.get(to);
+      if (doc && doc.weekNumber !== taught) {
+        restamps.push({ weekId: to, from: doc.weekNumber, to: taught });
+      }
+    }
+  }
+  return { moves, restamps };
+}
+
+/**
+ * The route's batch, in the order it commits: every copy first, then the
+ * deletes that no copy claimed. `skip` is the set a delete consults, and it is
+ * the whole subject of the guard below.
+ */
+function commitMoves(stored, moves, skip) {
+  const after = new Map(stored);
+  for (const move of moves) {
+    const doc = stored.get(move.from);
+    if (!doc) continue;
+    after.set(move.to, { ...doc, weekNumber: move.weekNumber });
+  }
+  for (const move of moves) {
+    if (!move.hasDoc) continue;
+    if (skip.has(move.from)) continue;
+    after.delete(move.from);
+  }
+  return after;
+}
+
+/** Every move's destination, including the ones that write nothing. The BUG. */
+const everyDestination = (moves) => new Set(moves.map((m) => m.to));
+
+/** Only the destinations a copy actually lands on. The fix. */
+const writtenDestinations = (moves) =>
+  new Set(moves.filter((m) => m.hasDoc).map((m) => m.to));
+
+test("GUARD — a plan-only move cannot leave a week authored at two addresses", () => {
+  // The permutation that broke it, from the builder's own affordances: four
+  // weeks with only w01 and w02 actually authored, add a fifth slot (it takes
+  // the lowest free id, w05), then move it to position 1.
+  const added = renumber([...plainPlan(4), { kind: "week", weekNumber: 0, weekId: "w05" }]);
+  const moved = renumber([added[4], added[0], added[1], added[2], added[3]]);
+  const stored = new Map([
+    ["w01", { title: "Intro", weekNumber: 1 }],
+    ["w02", { title: "Second", weekNumber: 2 }],
+  ]);
+
+  const { moves } = normalisationOf(moved, stored);
+  assert.deepEqual(
+    moves.map((m) => [m.from, m.to, m.hasDoc]),
+    [
+      ["w05", "w01", false],
+      ["w01", "w02", true],
+      ["w02", "w03", true],
+      ["w03", "w04", false],
+      ["w04", "w05", false],
+    ],
+  );
+
+  // THE BUG, kept here so the guard is about something. Skipping a delete
+  // whenever the source id appears as ANY move's destination protected w01
+  // from deletion on the strength of "w05 -> w01", a move that writes nothing
+  // at all. The copy w01 -> w02 had already run, so "Intro" ended up at both
+  // addresses, and w01 is the one every learner page opens for week 1.
+  const buggy = commitMoves(stored, moves, everyDestination(moves));
+  assert.equal(buggy.get("w01")?.title, "Intro");
+  assert.equal(buggy.get("w02")?.title, "Intro");
+
+  // THE FIX: only a destination a copy actually lands on may hold a delete
+  // back. w01's content has moved to w02, nothing was written to w01, so w01
+  // goes — which is right, because the plan now puts the un-authored w05 slot
+  // in position 1.
+  const after = commitMoves(stored, moves, writtenDestinations(moves));
+  assert.equal(after.has("w01"), false);
+  assert.equal(after.get("w02")?.title, "Intro");
+  assert.equal(after.get("w03")?.title, "Second");
+  assert.equal(after.size, 2);
+
+  // No title survives at two addresses, which is the property in one line.
+  const titles = [...after.values()].map((d) => d.title);
+  assert.equal(new Set(titles).size, titles.length);
+
+  // The stored weekNumber travels with the content, so nothing lands claiming
+  // to be a week it is not.
+  assert.equal(after.get("w02")?.weekNumber, 2);
+  assert.equal(after.get("w03")?.weekNumber, 3);
+
+  // Pinned to the real route, so the model above cannot drift from it.
+  assert.match(NORMALISE_WEEKS, /hasDoc: stored\.has\(entry\.weekId\)/);
+  assert.match(
+    NORMALISE_WEEKS,
+    /const written = new Set\(moves\.filter\(\(m\) => m\.hasDoc\)\.map\(\(m\) => m\.to\)\)/,
+  );
+  assert.match(NORMALISE_WEEKS, /if \(written\.has\(move\.from\)\) continue;/);
+  // And the old spelling is gone, not merely renamed alongside.
+  assert.doesNotMatch(NORMALISE_WEEKS, /const destinations = new Set\(moves\.map/);
 });
 
 test("GUARD — the rules pin weekPlan the moment a run stops being a draft", () => {

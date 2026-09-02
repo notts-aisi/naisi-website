@@ -226,8 +226,15 @@ export async function POST(
   // deleting the sources that no destination claimed is the ordering that
   // survives that without a temporary id. At 60 slots the worst case is 121
   // operations, comfortably inside the 500-op batch limit.
+  //
+  // The skip set is built ONLY from the moves that actually write. A move whose
+  // source has no document copies nothing, so its destination holds no fresh
+  // content and is not a reason to keep the old doc alive. Counting those as
+  // destinations is how "w05 -> w01" (plan-only) protected the real w01 from
+  // deletion after w01 -> w02 had already copied it, leaving the same week
+  // authored at two addresses.
   const batch = db.batch();
-  const destinations = new Set(moves.map((m) => m.to));
+  const written = new Set(moves.filter((m) => m.hasDoc).map((m) => m.to));
 
   for (const move of moves) {
     const doc = stored.get(move.from);
@@ -248,7 +255,7 @@ export async function POST(
   }
   for (const move of moves) {
     if (!move.hasDoc) continue;
-    if (destinations.has(move.from)) continue;
+    if (written.has(move.from)) continue;
     batch.delete(weeksCol.doc(move.from));
   }
   for (const restamp of restamps) {
