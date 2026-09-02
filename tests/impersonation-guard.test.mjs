@@ -66,6 +66,8 @@ const GUARDED_TREES = ["src/app/api/courses"];
  */
 const MUST_GUARD = [
   ["src/app/api/courses/[courseId]/destroy/route.ts", "destroys a course and everything under it"],
+  ["src/app/api/courses/[courseId]/page/route.ts", "rewrites the public marketing page a logged-out visitor reads"],
+  ["src/app/api/courses/[courseId]/page/generate-themes/route.ts", "regenerates the public weekly themes and their provenance"],
   ["src/app/api/courses/[courseId]/publish/route.ts", "publishes a course to the public catalogue"],
   ["src/app/api/courses/[courseId]/templates/route.ts", "writes a reusable curriculum template"],
   ["src/app/api/courses/exercise-responses/[responseId]/review/route.ts", "reviews a learner's submitted work and releases the comment"],

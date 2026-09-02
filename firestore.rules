@@ -1049,6 +1049,44 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // =====================================================================
+    // === V3 W1 PR7: coursePages ==========================================
+    // =====================================================================
+    // The AUTHORED public page for a course, at `coursePages/{courseId}` —
+    // the doc id IS the course id, so a course structurally cannot have two
+    // pages and nothing has to query for uniqueness.
+    //
+    // ROUTES-ONLY, deliberately unlike the `courses` block immediately above,
+    // which is client-direct for the autosave path. The reason is specific and
+    // is not a general preference for routes:
+    //
+    //   `sanitizeBlocks` (src/lib/firestore/newsletterBlocks.ts) is a SHAPE
+    //   filter — `raw.filter(isValidBlock)` — not an HTML sanitiser. A
+    //   `richText` block renders through `dangerouslySetInnerHTML`, and for
+    //   THIS collection that render happens on a LOGGED-OUT marketing page.
+    //   The `courses` update branch above admits `isCourseCollaborator()`,
+    //   which that block's own comment describes as "possibly a plain member
+    //   with no permissions at all".
+    //
+    // Two write paths cannot enforce one sanitisation, so there is one:
+    // `PUT /api/courses/[courseId]/page` (Admin SDK), which sanitises what it
+    // stores, plus `normalizeCoursePage` sanitising again at read time. Making
+    // this collection client-writable would delete both guarantees at once.
+    //
+    // Read is signed-in, matching `courses` and `courseRuns`: the public
+    // pages are served by Admin-SDK fetchers on server components, and a
+    // world-readable rule would also grant `list`, making an unpublished
+    // course's draft pitch enumerable.
+    //
+    // The page holds no uid and no member text. It is destroyed with its
+    // course (`courseDeletion.ts`) and is deliberately not part of the
+    // per-account deletion sweep.
+    match /coursePages/{courseId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+    // === end V3 W1 PR7: coursePages ======================================
+
     // === courseRuns ===
     // One delivery of a course ("Autumn 2026"). Role arrays, counters and the
     // cohort channel are server-owned: admissions reviewers / facilitators /
@@ -1285,7 +1323,17 @@ service cloud.firestore {
           && request.resource.data.get('academicYear', '').size() <= 10
           && request.resource.data.get('courseTitle', '').size() <= 120
           && request.resource.data.get('weekPlan', []).size() <= 60
-          && request.resource.data.get('applicationForm', []).size() <= 30;
+          && request.resource.data.get('applicationForm', []).size() <= 30
+          // ---- V3 W1 PR7: coursePages (the two courseRuns authoring fields
+          // that PR ships alongside the page object). `startHereBlocks` mirrors
+          // COURSE_FIELD_LIMITS.maxStartHereBlocks; the `cohort` clause caps
+          // the map's KEY SET, which is this layer's whole vocabulary for
+          // bounding a map, and also refuses a stored null (`.keys()` on null
+          // raises, and a stored null would wedge every later edit against the
+          // `.get(field, {})` default — the submissionExerciseRef lesson).
+          && request.resource.data.get('startHereBlocks', []).size() <= 20
+          && request.resource.data.get('cohort', {}).keys()
+            .hasOnly(['term', 'year', 'number']);
       }
 
       allow read: if isSignedIn();

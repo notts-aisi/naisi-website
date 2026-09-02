@@ -391,7 +391,7 @@ test("GUARD §2.1 saving twice under one label mints two ids", () => {
   }
 });
 
-test("MODEL §2.2 only three routes touch courseTemplates, and none updates a week", () => {
+test("MODEL §2.2 only four routes touch courseTemplates, and none updates a week", () => {
   // The COLLECTION, not the module: the retrospective route imports the
   // aggregation from `courseTemplates.ts` and must not be counted as reaching
   // the collection.
@@ -404,10 +404,28 @@ test("MODEL §2.2 only three routes touch courseTemplates, and none updates a we
     .map((f) => f.slice(SRC.length + 1))
     .sort();
   assert.deepEqual(touching, [
+    // V3 W1 PR7: READ ONLY. The public page's theme generator reads a
+    // snapshot's weeks to write copy onto `coursePages`; it never writes back,
+    // which the assertion below pins.
+    join("app", "api", "courses", "[courseId]", "page", "generate-themes", "route.ts"),
     join("app", "api", "courses", "[courseId]", "templates", "route.ts"),
     join("app", "api", "courses", "runs", "[runId]", "apply-template", "route.ts"),
     join("app", "api", "courses", "templates", "[templateId]", "route.ts"),
   ]);
+
+  // The theme generator's only writes are to `coursePages`. A `.set` / `.update`
+  // / `.delete` reached from its template ref would mean the page editor could
+  // mutate a frozen snapshot, which is the property this whole file defends.
+  const GENERATE_CODE = code(
+    readFileSync(
+      join(SRC, "app", "api", "courses", "[courseId]", "page", "generate-themes", "route.ts"),
+      "utf8",
+    ),
+  );
+  assert.equal(
+    /templateRef[\s\S]{0,160}\.(set|create|update|delete)\(/.test(GENERATE_CODE),
+    false,
+  );
 
   // The snapshot route writes weeks with `create` (a collision is a bug, not
   // an overwrite) and the delete route only deletes them. Nowhere is there an

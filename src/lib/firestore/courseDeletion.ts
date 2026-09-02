@@ -15,6 +15,7 @@ import {
   type CourseRunDoc,
 } from "./courses";
 import { COURSE_AUDIT_COLLECTION } from "./courseAudit";
+import { COURSE_PAGES_COLLECTION } from "./coursePages";
 import { COURSE_MATERIAL_NOTES_COLLECTION } from "./courseMaterialNotes";
 import { SCHEDULER_MARKERS_COLLECTION } from "./schedulerMarkers";
 import { deleteEventsForSubscriptions } from "./subscriptions";
@@ -229,6 +230,23 @@ export type RunDestroyCounts = {
 export type CourseDestroyCounts = {
   /** Live runs still attached — every one of them is a blocker. */
   runs: number;
+  /**
+   * V3 W1 PR7. The authored public page at `coursePages/{courseId}` — 0 or 1,
+   * because the doc id IS the course id.
+   *
+   * DESTROYED with the course, not orphaned: unlike a template snapshot, the
+   * page is not a frozen artefact anybody could read again, it is the shop
+   * window for a course that is about to stop existing. The doc id is the
+   * course id, so a page left behind is also invisible: nothing lists this
+   * collection, and the next course minted at the same slug would inherit
+   * someone else's pitch.
+   *
+   * NOT part of the per-account deletion sweep (`accountDeletion.ts`). The
+   * page holds no uid beyond `updatedByUid` and no member-authored text, and
+   * sweeping on the last editor would delete a live course's public page
+   * because a committee member closed their account.
+   */
+  coursePages: number;
   /**
    * `courseTemplates` snapshots whose provenance names this course. NOT
    * deleted: templates are frozen snapshots (v2 decision 2) and orphaned
@@ -1471,12 +1489,16 @@ export async function countCourseDestroyTargets(
   db: Firestore,
   course: CourseDoc,
 ): Promise<CourseDestroyCounts> {
-  const [runs, templates] = await Promise.all([
+  const [runs, templates, pageSnap] = await Promise.all([
     countAgg(db.collection("courseRuns").where("courseId", "==", course.id)),
     // Ships in V2-2; counting the empty collection reads 0 until then.
     countAgg(db.collection("courseTemplates").where("courseId", "==", course.id)),
+    // An ADDRESSED get, not a count query: the doc id is the course id, so
+    // there is exactly one candidate and a query would cost more to learn
+    // less.
+    db.collection(COURSE_PAGES_COLLECTION).doc(course.id).get(),
   ]);
-  return { runs, templates };
+  return { runs, templates, coursePages: pageSnap.exists ? 1 : 0 };
 }
 
 /**
@@ -1609,13 +1631,24 @@ export async function destroyCourseCascade(
       };
     }
 
+    // V3 W1 PR7. The authored public page rides in the SAME final batch as the
+    // course doc, not in a drain pass: there is exactly one, addressed at the
+    // course id, so pagination would be machinery for a single document. Its
+    // existence is re-read here rather than taken from the manifest so the
+    // recorded count is what this pass actually deleted, and a page written
+    // between the manifest and the marker is still removed.
+    const pageRef = db.collection(COURSE_PAGES_COLLECTION).doc(courseId);
+    const pageSnap = await pageRef.get();
+
     const totals: Record<string, number> = { courses: 1 };
+    if (pageSnap.exists) totals.coursePages = 1;
     const finalBatch = db.batch();
     finalBatch.update(auditRef, {
       ...auditIncrements(totals),
       ...PASS_LEASE_RELEASED,
       completedAt: FieldValue.serverTimestamp(),
     });
+    if (pageSnap.exists) finalBatch.delete(pageRef);
     finalBatch.delete(courseRef);
     await finalBatch.commit();
 

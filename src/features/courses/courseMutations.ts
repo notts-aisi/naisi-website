@@ -2,6 +2,7 @@
 
 import {
   collection,
+  deleteField,
   doc,
   getDoc,
   serverTimestamp,
@@ -11,6 +12,7 @@ import {
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import { slugId } from "@/lib/firestore/slugId";
 import { isValidDateKey, type WeekPlanEntry } from "@/lib/courses/weekPlan";
+import { cohortError, type RunCohort } from "@/lib/courses/cohortLabel";
 import type { Block } from "@/lib/firestore/newsletterBlocks";
 import type { FormQuestion } from "@/lib/firestore/events";
 import {
@@ -271,6 +273,16 @@ export type CourseRunPatch = Partial<{
   applicationsOpenAt: Date | null;
   applicationsCloseAt: Date | null;
   applicationCap: number | null;
+  /**
+   * V3 W1 PR7. `null` CLEARS the cohort, and it clears it with
+   * `deleteField()`, never by storing a null. The rules cap reads
+   * `request.resource.data.get('cohort', {}).keys().hasOnly([...])`, and
+   * `.keys()` on a stored null raises and denies the write — so a null here
+   * would wedge every later non-admin edit of the run, which is the exact trap
+   * already recorded for `submissionExerciseRef`.
+   */
+  cohort: RunCohort | null;
+  startHereBlocks: Block[];
 }>;
 
 export async function updateRun(runId: string, patch: CourseRunPatch): Promise<void> {
@@ -314,6 +326,26 @@ export async function updateRun(runId: string, patch: CourseRunPatch): Promise<v
   }
   if (patch.applicationCap !== undefined) {
     out.applicationCap = positiveIntOrNull(patch.applicationCap);
+  }
+  if (patch.cohort !== undefined) {
+    if (patch.cohort === null) {
+      // ABSENT, never null. See CourseRunPatch.cohort.
+      out.cohort = deleteField();
+    } else {
+      const error = cohortError(patch.cohort);
+      if (error) throw new Error(error);
+      out.cohort = {
+        term: patch.cohort.term,
+        year: Math.floor(patch.cohort.year),
+        number: Math.floor(patch.cohort.number),
+      };
+    }
+  }
+  if (patch.startHereBlocks !== undefined) {
+    out.startHereBlocks = patch.startHereBlocks.slice(
+      0,
+      COURSE_FIELD_LIMITS.maxStartHereBlocks,
+    );
   }
 
   if (Object.keys(out).length === 0) return;

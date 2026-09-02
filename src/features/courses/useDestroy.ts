@@ -216,6 +216,11 @@ const COUNT_META: Record<string, CountMeta> = {
     fate: "retained",
     note: "KEPT. `emailSends` is the append-only record of what was sent to whom — deliverability and abuse-handling evidence, and not this run's to erase.",
   },
+  coursePages: {
+    label: "Public course page",
+    fate: "destroyed",
+    note: "The authored programme page: the pitch, the weekly themes, the FAQ and the journey strip. Authored copy, not member work, and it goes with the course it describes.",
+  },
   templates: {
     label: "Saved templates",
     fate: "orphaned",

@@ -285,7 +285,7 @@ const RUN_COUNT_KEYS = [
   "emailSendRows",
 ];
 /** `CourseDestroyCounts`, mirrored. */
-const COURSE_COUNT_KEYS = ["runs", "templates"];
+const COURSE_COUNT_KEYS = ["runs", "coursePages", "templates"];
 
 /** Counters whose rows SURVIVE the cascade — never part of the death toll. */
 const SURVIVING_COUNT_KEYS = ["emailSendRows", "templates", "admissionSeatOffers"];
@@ -330,14 +330,14 @@ test("GUARD — the survivors are not counted as deaths, and the arithmetic foll
   const counts = Object.fromEntries(
     [...RUN_COUNT_KEYS, ...COURSE_COUNT_KEYS].map((k) => [k, 10]),
   );
-  // Fifteen counters at ten rows each: twelve run counters that die,
-  // `materialNotes`, `auditRows` and `schedulerMarkers` among them, plus the
-  // three survivors (`admissionSeatOffers` is released, not destroyed).
-  assert.equal(sumCounts(counts), 160);
+  // Seventeen counters at ten rows each: fourteen that die, `materialNotes`,
+  // `auditRows`, `schedulerMarkers` and the V3 `coursePages` among them, plus
+  // the three survivors (`admissionSeatOffers` is released, not destroyed).
+  assert.equal(sumCounts(counts), 170);
   // The progress denominator counts only what actually dies, so a large
   // retained counter cannot inflate it into a bar that never fills. Adding a
   // survivor must not move this number.
-  assert.equal(destroyedTotal(counts), 130);
+  assert.equal(destroyedTotal(counts), 140);
 });
 
 test("MODEL — every key the cascade can report has copy, including the ones the manifest never shows", () => {
