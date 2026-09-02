@@ -354,6 +354,19 @@ test("a revoke removes both the row and the cache entry", async () => {
   assert.equal(db.docs.get("membershipPeriods/2026-27").totals.paid, 2);
 });
 
+test("a revoke clears a LEGACY cache entry that has no row behind it", async () => {
+  // Every member tagged before this PR looks exactly like this: the deleted
+  // `setPaidMembership` wrote the year client-direct and wrote no row. If
+  // revoke needed a row to clear the cache, those badges could never come off.
+  const db = seedWorld({ paidMembershipYears: ["2026/27"] });
+  globalThis.__fakeDb = db;
+
+  const res = await POST(request({ uid: "member1", periodId: "2026-27", revoke: true }));
+  assert.equal(res.status, 200);
+  assert.equal(res.body.revoked, false);
+  assert.deepEqual(db.docs.get("users/member1").paidMembershipYears, []);
+});
+
 test("an eleventh membership year is refused by name, and nothing is written", async () => {
   const existing = Array.from({ length: 10 }, (_, i) => {
     const start = 2010 + i;

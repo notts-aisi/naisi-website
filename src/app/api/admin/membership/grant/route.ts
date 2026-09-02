@@ -15,7 +15,6 @@ import {
   isMembershipTier,
   membershipId,
   removePaidMembershipYear,
-  sortYearsDescending,
   type MembershipTier,
 } from "@/lib/firestore/memberships";
 
@@ -147,15 +146,21 @@ export async function POST(req: Request) {
       const previous = isMembershipTier(previousTier) ? previousTier : null;
 
       if (revoke) {
+        const years = removePaidMembershipYear(cache, year);
+        // A cache entry with NO row behind it is a real state, not a bug: the
+        // deleted `setPaidMembership` tagged the year client-direct and wrote
+        // no row, so every member tagged before this PR looks exactly like
+        // this. Revoke has to clear it or that badge could never be taken off.
+        if (years.length !== cache.length) {
+          tx.update(userRef, { paidMembershipYears: years });
+        }
         if (!membershipSnap.exists) {
-          // Nothing to take away. Reported rather than 404'd: two admins
+          // Nothing more to take away. Reported rather than 404'd: two admins
           // pressing revoke on the same row should both see the state they
           // wanted, and the row is already gone.
-          return { revoked: false, tier: null, years: sortYearsDescending(cache) };
+          return { revoked: false, tier: null, years };
         }
-        const years = removePaidMembershipYear(cache, year);
         tx.delete(membershipRef);
-        tx.update(userRef, { paidMembershipYears: years });
         if (previous) {
           tx.update(periodRef, { [`totals.${previous}`]: FieldValue.increment(-1) });
         }
