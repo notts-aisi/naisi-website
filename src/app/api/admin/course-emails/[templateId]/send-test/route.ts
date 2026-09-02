@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
+import AdmissionsReinstatedEmail from "@/emails/AdmissionsReinstatedEmail";
+import AdmissionsSubmittedEmail from "@/emails/AdmissionsSubmittedEmail";
 import ApplicationEmail from "@/emails/ApplicationEmail";
 import CourseNudgeEmail from "@/emails/CourseNudgeEmail";
-import { courseSampleTokens } from "@/features/admin/emailDesigns/courseEmailSamples";
+import {
+  ADMISSIONS_PREVIEW_SAMPLE,
+  courseSampleTokens,
+  courseTemplateUsesAdmissionsTokens,
+} from "@/features/admin/emailDesigns/courseEmailSamples";
 import {
   courseNudgeTokensFrom,
   renderCourseNudge,
@@ -130,7 +136,33 @@ export async function POST(
    * anything that could flip a subscription row. Following it lands on the
    * unsubscribe page's "Invalid or expired link" state, which changes nothing.
    */
-  const react = nudge
+  /**
+   * The admissions pair render through THEIR OWN components for the same
+   * reason the nudge does: each carries a footer link back to the application,
+   * and a rehearsal that went through `ApplicationEmail` would proof an email
+   * nobody receives. The url is the sample one, so following it from a test
+   * send lands on a round that does not exist rather than on the admin's own
+   * application.
+   */
+  const admissions = courseTemplateUsesAdmissionsTokens(templateId)
+    ? templateId === "admissions-submitted"
+      ? AdmissionsSubmittedEmail({
+          subject: personalisedSubject,
+          blocks: personalisedBlocks,
+          applicationUrl: ADMISSIONS_PREVIEW_SAMPLE.applicationUrl,
+          preheader: testSubject,
+        })
+      : AdmissionsReinstatedEmail({
+          subject: personalisedSubject,
+          blocks: personalisedBlocks,
+          applicationUrl: ADMISSIONS_PREVIEW_SAMPLE.applicationUrl,
+          preheader: testSubject,
+        })
+    : null;
+
+  const react = admissions
+    ? admissions
+    : nudge
     ? CourseNudgeEmail({
         subject: personalisedSubject,
         blocks: personalisedBlocks,

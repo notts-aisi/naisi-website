@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireApplicant } from "@/lib/admissions/applyContext";
+import { requireApplicant } from "@/lib/admissions/applicantSession";
 import { loadStatusRows } from "@/lib/admissions/statusHubData";
 import type { ApplicationStatusPayload } from "@/lib/admissions/statusTypes";
 
@@ -20,6 +20,12 @@ import type { ApplicationStatusPayload } from "@/lib/admissions/statusTypes";
  * about the applicant), never an unshared `outcome.reason`, never the
  * access-requirements answer. The reasons are written out once, in
  * `statusTypes.ts`, and enforced in one place, `buildStatusRow`.
+ *
+ * The session gate comes from `applicantSession.ts` rather than
+ * `applyContext.ts` for the last of those: the apply context is the module
+ * that can reach the access-requirements collection, and this route must be
+ * provably unable to. The privacy scan in `tests/privacy-policy-v3.test.mjs`
+ * reads the import list, which is the right thing for it to read.
  *
  * ## Not guarded against view-as, and that is the decision
  *

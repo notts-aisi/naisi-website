@@ -1,7 +1,8 @@
 import "server-only";
 import { buildStatusRow, sortStatusRows } from "./statusHub";
 import type { ApplicationStatusRow } from "./statusTypes";
-import { APPLICATIONS_COLLECTION, type Db } from "./applyContext";
+import { type Db } from "./applicantSession";
+import { APPLICATIONS_COLLECTION } from "./applyContext";
 import { ROUNDS_COLLECTION, STAGES_SUBCOLLECTION } from "./roundRoutes";
 import {
   admissionApplicationId,

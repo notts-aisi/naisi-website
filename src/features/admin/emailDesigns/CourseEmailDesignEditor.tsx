@@ -21,6 +21,7 @@ import BlockEditor from "@/features/newsletter/editor/BlockEditor";
 import EmailPreview from "@/features/newsletter/editor/EmailPreview";
 import {
   courseSampleTokens,
+  courseTemplateUsesAdmissionsTokens,
   courseTemplateUsesGroupTokens,
   courseTemplateUsesWeekTokens,
 } from "./courseEmailSamples";
@@ -104,6 +105,38 @@ const WEEK_TOKENS: TokenHelp[] = [
     description: "Where that session is, e.g. Hallward Library, B12. Online groups say Online — never the meeting link.",
   },
   { token: "weekUrl", description: "Link straight to the week page in the learning space." },
+];
+
+/**
+ * The admissions map. Same story as the nudge's: a different send path
+ * (`src/lib/email/admissionEmails.ts`) builds these, and it deletes the three
+ * course tokens before substituting anything, so the lifecycle list is
+ * REPLACED rather than added to when one of these templates is open. A round
+ * is not a run: there is no course title, no run label and no start date to
+ * name yet.
+ */
+const ADMISSIONS_TOKENS: TokenHelp[] = [
+  { token: "firstName", description: "First word of their name, best for greetings." },
+  { token: "preferredName", description: "The name they asked to be called." },
+  { token: "roundLabel", description: "The round they applied to, e.g. Autumn 2026 intake." },
+  {
+    token: "deadline",
+    description: "When applications close, with the time, e.g. Sun 18 Oct, 23:59.",
+  },
+  {
+    token: "decisionsBy",
+    description: "The day decisions are promised by, e.g. Fri 23 Oct. Shown publicly on the form too.",
+  },
+  {
+    token: "stageLabel",
+    description:
+      "The part of the form this email is about, on a round that asks its questions in parts. Stays literal on a single-part round.",
+  },
+  {
+    token: "applicationUrl",
+    description:
+      "Link to their application on the site. The email already puts this in its footer, so you only need it if you want it in a sentence of your own.",
+  },
 ];
 
 export default function CourseEmailDesignEditor({ templateId }: Props) {
@@ -251,6 +284,7 @@ export default function CourseEmailDesignEditor({ templateId }: Props) {
   const subjectEmpty = subject.trim().length === 0;
   const showsGroupTokens = courseTemplateUsesGroupTokens(templateId);
   const showsWeekTokens = courseTemplateUsesWeekTokens(templateId);
+  const showsAdmissionsTokens = courseTemplateUsesAdmissionsTokens(templateId);
 
   return (
     <div className={styles.wrap}>
@@ -277,7 +311,12 @@ export default function CourseEmailDesignEditor({ templateId }: Props) {
           Tokens you can use in the subject and body — each is replaced at send time:
         </p>
         <dl className={styles.tokenList}>
-          {(showsWeekTokens ? WEEK_TOKENS : ALWAYS_TOKENS).map((t) => (
+          {(showsAdmissionsTokens
+            ? ADMISSIONS_TOKENS
+            : showsWeekTokens
+              ? WEEK_TOKENS
+              : ALWAYS_TOKENS
+          ).map((t) => (
             <div key={t.token} className={styles.tokenRow}>
               <dt>
                 <code>{`{${t.token}}`}</code>
@@ -286,6 +325,7 @@ export default function CourseEmailDesignEditor({ templateId }: Props) {
             </div>
           ))}
           {!showsWeekTokens &&
+            !showsAdmissionsTokens &&
             GROUP_TOKENS.map((t) => (
               <div
                 key={t.token}
@@ -298,7 +338,16 @@ export default function CourseEmailDesignEditor({ templateId }: Props) {
               </div>
             ))}
         </dl>
-        {!showsWeekTokens && !showsGroupTokens && (
+        {showsAdmissionsTokens && (
+          <p className={styles.tokensNote}>
+            This one goes out about an APPLICATION, not a course, so there is no
+            course title, run label or start date to use: those tokens arrive as
+            literal text. The link back to the application is already in the
+            footer, so you only need <code>{"{applicationUrl}"}</code> if you
+            want it in a sentence of your own.
+          </p>
+        )}
+        {!showsWeekTokens && !showsAdmissionsTokens && !showsGroupTokens && (
           <p className={styles.tokensNote}>
             The last three only resolve on the group placement email — nobody has a group
             yet when this one sends. Used here they arrive as the literal{" "}

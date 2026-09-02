@@ -60,6 +60,48 @@ export const COURSE_NUDGE_PREVIEW_SAMPLE = {
 } as const;
 
 /**
+ * Sample values for the ADMISSIONS tokens (V3), which no course template
+ * resolves.
+ *
+ * `cohortLabel` is in the map and is deliberately NOT handed to either
+ * template below: a round's receipts are sent weeks before anybody is placed
+ * on a cohort, and this module's rule is that whatever a template gets here is
+ * exactly what its send path can resolve. The decision templates, which do
+ * know a cohort, add themselves to that branch when they land.
+ *
+ * `deadline` carries the time of day and `decisionsBy` does not, matching the
+ * two formatters the send path uses: a deadline is an instant somebody has to
+ * beat, a decisions-by date is a promise about a day.
+ */
+export const ADMISSIONS_PREVIEW_SAMPLE = {
+  applicationUrl: "https://naisi.uk/applications/autumn-2026-intake__k3f9a2b1",
+  roundLabel: "Autumn 2026 intake",
+  stageLabel: "Week 2 questions",
+  deadline: "Sun 18 Oct, 23:59",
+  decisionsBy: "Fri 23 Oct",
+  cohortLabel: "Autumn 2026, cohort 2",
+} as const;
+
+/**
+ * The admissions templates: the ones whose send path is
+ * `sendAdmissionEmail` rather than either course path.
+ *
+ * They resolve the admissions tokens and NONE of the course ones. A round is
+ * not a run, so `{courseTitle}`, `{runLabel}` and `{startDate}` stay literal
+ * in a real send, and the preview shows that by not supplying them either.
+ */
+export const ADMISSIONS_TEMPLATES: readonly CourseTemplateId[] = [
+  "admissions-submitted",
+  "admissions-reinstated",
+];
+
+export function courseTemplateUsesAdmissionsTokens(
+  templateId: CourseTemplateId,
+): boolean {
+  return ADMISSIONS_TEMPLATES.includes(templateId);
+}
+
+/**
  * Templates whose send path actually populates the group-scoped tokens
  * (`groupName` / `facilitatorNames` / `firstSessionWhen`). Only the allocation
  * email knows a recipient's group: the application-lifecycle sends fire before
@@ -133,6 +175,21 @@ export function courseSampleTokens(
   templateId: CourseTemplateId,
   name: string,
 ): TokenValues {
+  if (courseTemplateUsesAdmissionsTokens(templateId)) {
+    return {
+      // Same derivation the send path does, through the same builder, with no
+      // course tokens: `sendAdmissionEmail` deletes those three keys before it
+      // substitutes anything, so the preview must not resolve them either.
+      firstName: firstWord(name),
+      preferredName: name,
+      applicationUrl: ADMISSIONS_PREVIEW_SAMPLE.applicationUrl,
+      roundLabel: ADMISSIONS_PREVIEW_SAMPLE.roundLabel,
+      stageLabel: ADMISSIONS_PREVIEW_SAMPLE.stageLabel,
+      deadline: ADMISSIONS_PREVIEW_SAMPLE.deadline,
+      decisionsBy: ADMISSIONS_PREVIEW_SAMPLE.decisionsBy,
+    };
+  }
+
   if (courseTemplateUsesWeekTokens(templateId)) {
     return {
       courseTitle: COURSE_PREVIEW_SAMPLE.courseTitle,

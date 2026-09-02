@@ -99,6 +99,8 @@ const COURSE_TRIGGER_LABELS: Record<CourseTemplateTrigger, string> = {
   allocated: "On placement",
   "week-nudge": "Each week",
   "dropped-out": "On leaving",
+  "admissions-submitted": "On submitting",
+  "admissions-reinstated": "On reopening",
 };
 
 function CourseGroup({ byId }: { byId: Map<CourseTemplateId, CourseTemplateDoc> }) {
