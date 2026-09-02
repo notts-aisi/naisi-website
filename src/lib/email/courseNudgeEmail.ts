@@ -207,13 +207,25 @@ export function nudgeMarkerId(runId: string, slotStartKey: string): string {
  *
  * The run-level catch-up can FORCE over one of these exactly as it forces
  * over a `nudge__` marker, recording what it overrode; see the nudge route.
+ *
+ * ── THE OCCURRENCE IS PART OF THE KEY ───────────────────────────────────────
+ * A group that meets twice in a week holds two sessions inside ONE slot, so
+ * the slot start key alone cannot tell their reminders apart: the second
+ * session's reminder would collide with the first's marker and never send.
+ * The occurrence is therefore appended, and BYTE-IDENTICALLY ABSENT FOR 1, on
+ * the same rule `sessionKey` follows. Every marker written before this
+ * argument existed keeps its id, so nothing migrates and no group is mailed
+ * twice by a deploy landing mid-term.
  */
 export function groupNudgeMarkerId(
   runId: string,
   groupId: string,
   nextSlotStartKey: string,
+  occurrence: number = 1,
 ): string {
-  return `gnudge__${runId}__${groupId}__${nextSlotStartKey}`;
+  const base = `gnudge__${runId}__${groupId}__${nextSlotStartKey}`;
+  const n = Number.isInteger(occurrence) ? occurrence : 1;
+  return n <= 1 ? base : `${base}-${n}`;
 }
 
 /** How far either side of a slot a marker still means "this calendar week". */

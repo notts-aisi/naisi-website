@@ -47,6 +47,7 @@ import {
   type CourseRunStatus,
 } from "@/lib/firestore/courses";
 import type { Block } from "@/lib/firestore/newsletterBlocks";
+import { readCoursesConfig } from "@/lib/firestore/config";
 import { signToken } from "@/lib/signedTokens";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
@@ -860,14 +861,19 @@ export async function GET(_req: Request, ctx: { params: Promise<{ runId: string 
 
   const runWeek = runWeekFacts(resolved);
   const runAddress = runWeekAddress(resolved);
-  const [marker, audience, groups, template, actorSnap, senderGroupId] = await Promise.all([
-    findWeekMarker(db, runId, resolved.slotStartKey),
-    resolveCohortAudience(db, runId, LANE),
-    loadGroups(db, run, runAddress, now),
-    resolveCourseNudgeTemplate(db),
-    db.collection("users").doc(actor.uid).get(),
-    ownGroupId(db, runId, actor.uid),
-  ]);
+  // `config` rides along so the preview carries the SAME feedback paragraph the
+  // send does. A proof that shows six paragraphs where the push mails seven is
+  // worse than no proof: it teaches an admin the wrong shape of the email.
+  const [marker, audience, groups, template, actorSnap, senderGroupId, config] =
+    await Promise.all([
+      findWeekMarker(db, runId, resolved.slotStartKey),
+      resolveCohortAudience(db, runId, LANE),
+      loadGroups(db, run, runAddress, now),
+      resolveCourseNudgeTemplate(db),
+      db.collection("users").doc(actor.uid).get(),
+      ownGroupId(db, runId, actor.uid),
+      readCoursesConfig(db),
+    ]);
 
   // The preview renders with the SENDER's own name and their own group context,
   // so it matches byte for byte what their test send will put in their inbox.
@@ -903,6 +909,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ runId: string 
       sessionWhen: sessionContext.sessionWhen,
       sessionWhere: sessionContext.sessionWhere,
       recipientName: senderName,
+      feedbackUrl: config.weeklyFeedbackUrl,
     }),
   );
 
@@ -1069,9 +1076,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
     : (actor.displayName?.trim() ?? "");
 
   const runWeek = runWeekFacts(resolved);
-  const [groups, template] = await Promise.all([
+  // `config` is read here, beside the template, because the catch-up is the
+  // lane that RECOVERS a failed push: an email missing the feedback paragraph
+  // the push would have carried is a different email, and the recovery has to
+  // put the same one in the inbox.
+  const [groups, template, config] = await Promise.all([
     loadGroups(db, run, runWeekAddress(resolved), now),
     resolveCourseNudgeTemplate(db),
+    readCoursesConfig(db),
   ]);
 
   // ── HAS A PUSH ALREADY MAILED PART OF THIS COHORT THIS WEEK? (V3) ────────
@@ -1375,6 +1387,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
           weekSummary: week.summary,
           weekPrep: week.prep,
           weekUrl: courseWeekUrl(appUrl, runId, week.weekNumber),
+          // Empty until an admin configures a form, and the renderer then
+          // drops the paragraph whole rather than shipping a dead link. The
+          // push resolves it the same way, so a catch-up recovering a failed
+          // push sends the same email.
+          feedbackUrl: config.weeklyFeedbackUrl,
         },
       });
       sent += 1;

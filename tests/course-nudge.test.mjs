@@ -198,6 +198,7 @@ const {
   courseNudgeTokensFrom,
   courseWeekPrepLine,
   courseWeekUrl,
+  groupNudgeMarkerId,
   nudgeMarkerId,
   nudgeWeekMarkerIds,
   renderCourseNudge,
@@ -205,6 +206,8 @@ const {
 } = await loadTs("lib/email/courseNudgeEmail.ts");
 const { courseTemplateDefaults } = await loadTs("lib/firestore/courseEmails.ts");
 const { weekDocId } = await loadTs("lib/firestore/courses.ts");
+const { resolveSessions } = await loadTs("lib/courses/sessions.ts");
+const { normalizeCourseGroup } = await loadTs("lib/firestore/courseGroups.ts");
 const { currentWeekFor } = await loadTs("lib/courses/weekPlan.ts");
 const { courseSampleTokens } = await loadTs(
   "features/admin/emailDesigns/courseEmailSamples.ts",
@@ -1161,4 +1164,99 @@ test("courseWeekUrl refuses to build a half-formed link", () => {
   assert.equal(courseWeekUrl("", "asf-autumn-2026", 3), "");
   assert.equal(courseWeekUrl("https://naisi.uk", "", 3), "");
   assert.equal(courseWeekUrl("https://naisi.uk", "asf-autumn-2026", 0), "");
+});
+
+// ---------------------------------------------------------------------------
+// The group lane's marker, and the occurrence dimension
+// ---------------------------------------------------------------------------
+
+test("groupNudgeMarkerId is byte-identical for occurrence 1", () => {
+  // The invariant that lets this argument ship mid-term: every marker written
+  // before the occurrence existed keeps its id, so no group is mailed twice by
+  // the deploy that adds it.
+  const base = "gnudge__run1__group-a__2026-10-12";
+  assert.equal(groupNudgeMarkerId("run1", "group-a", "2026-10-12"), base);
+  assert.equal(groupNudgeMarkerId("run1", "group-a", "2026-10-12", 1), base);
+  assert.equal(groupNudgeMarkerId("run1", "group-a", "2026-10-12", 0), base);
+  assert.equal(groupNudgeMarkerId("run1", "group-a", "2026-10-12", 1.5), base);
+});
+
+test("a second session in the same week claims its own marker", () => {
+  // Without this the mid-week session's reminder collides with the first
+  // session's marker and never sends: the group is silently short one email.
+  const first = groupNudgeMarkerId("run1", "group-a", "2026-10-12", 1);
+  const second = groupNudgeMarkerId("run1", "group-a", "2026-10-12", 2);
+  assert.notEqual(first, second);
+  assert.equal(second, "gnudge__run1__group-a__2026-10-12-2");
+  assert.doesNotMatch(second, /[/.#]/, "a marker id is spliced into a doc id");
+});
+
+test("the group markers stay clear of the run markers and the throttle", () => {
+  const group = groupNudgeMarkerId("run1", "group-a", "2026-10-12", 2);
+  assert.ok(group.startsWith("gnudge__"));
+  assert.ok(!group.startsWith("nudge__"));
+  assert.ok(!group.startsWith("emailrate__"));
+});
+
+// ---------------------------------------------------------------------------
+// The feedback paragraph: the preview, the send, and the recovery
+// ---------------------------------------------------------------------------
+
+test("the catch-up lane carries the same feedback link the push does", () => {
+  // A catch-up recovering a failed push must put the SAME email in the inbox.
+  // Dropping `{feedbackUrl}` here means the recovered send is six paragraphs
+  // where the original would have been seven.
+  assert.match(ROUTE_SOURCE, /readCoursesConfig\(db\)/);
+  assert.match(ROUTE_SOURCE, /feedbackUrl:\s*config\.weeklyFeedbackUrl/);
+
+  const get = ROUTE_SOURCE.indexOf("export async function GET");
+  const post = ROUTE_SOURCE.indexOf("export async function POST");
+  assert.ok(get > 0 && post > get);
+  const uses = [...ROUTE_SOURCE.matchAll(/feedbackUrl:\s*config\.weeklyFeedbackUrl/g)].map(
+    (m) => m.index,
+  );
+  assert.ok(
+    uses.some((at) => at > get && at < post),
+    "the GET preview builds its tokens with the feedback link, so an admin " +
+      "proofing the copy reads the email the send will produce",
+  );
+  assert.ok(
+    uses.some((at) => at > post),
+    "and the POST send context carries it too",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// The two session-date computations, which must not drift
+// ---------------------------------------------------------------------------
+
+test("courseNudgeSessionDateKey agrees with the session resolver", () => {
+  // `sessions.ts` has its own private copy of this arithmetic. Moving one into
+  // the other is a structural change a later PR owns; until then this is what
+  // stops the duplicate drifting silently, which would date a reminder
+  // differently from the register it belongs to.
+  const plan = [1, 2, 3, 4, 5, 6].map(week);
+  for (const weekday of [0, 1, 2, 3, 4, 5, 6]) {
+    const group = normalizeCourseGroup("group-a__7d2c", {
+      runId: "run1",
+      name: "A group",
+      session: {
+        weekday,
+        startTimeLocal: "18:00",
+        durationMinutes: 90,
+        location: "Hallward B12",
+        meetingUrl: null,
+        notes: "",
+      },
+    });
+    const sessions = resolveSessions({ id: "run1", startDate: START, weekPlan: plan }, group);
+    assert.equal(sessions.length, plan.length);
+    for (const session of sessions) {
+      assert.equal(
+        session.dateKey,
+        courseNudgeSessionDateKey(session.slotStartKey, weekday),
+        `week ${session.weekNumber}, weekday ${weekday}`,
+      );
+    }
+  }
 });
