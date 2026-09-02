@@ -35,7 +35,15 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -102,8 +110,79 @@ const MUST_GUARD = [
  */
 const ALLOWLIST = [];
 
-const MUTATING_METHOD = /^export async function (POST|PATCH|PUT|DELETE)\s*\(/gm;
+const METHODS = "POST|PATCH|PUT|DELETE";
+
+/**
+ * Every shape Next accepts for a route handler export, because a scan that
+ * only knows one of them is a scan a refactor walks straight through.
+ *
+ *  1. `export async function POST(` / `export function POST(`
+ *  2. `export const POST = ` / `export const POST: RouteHandler = ` (the arrow
+ *     and the typed-const forms, which the old scan missed entirely)
+ *  3. `export { handlePost as POST }` (a re-export; the body is elsewhere in
+ *     the file, so the guard window is measured from the DECLARATION, resolved
+ *     below, not from the export statement)
+ *
+ * Each returns the offset the guard window starts at, so the check is "this
+ * handler calls the guard near its top", not "the file mentions the guard as
+ * many times as it has handlers", which a file with one guarded handler and
+ * one unguarded one could satisfy twice over.
+ */
+const DECLARED_HANDLER = new RegExp(
+  `export\\s+(?:async\\s+)?function\\s+(${METHODS})\\s*\\(`,
+  "g",
+);
+const CONST_HANDLER = new RegExp(`export\\s+const\\s+(${METHODS})\\s*[:=]`, "g");
+const ALIASED_EXPORT = /export\s*\{([^}]*)\}/g;
 const GUARD_CALL = /assertNotImpersonating\(\)/g;
+
+/** Lines after a handler's opening within which the guard must appear. Wide
+ *  enough for a multi-line signature and a RouteContext type, far too narrow
+ *  for the guard to be sitting in some other handler further down. */
+const GUARD_WINDOW_LINES = 12;
+
+/** Where the local declaration of `name` starts, or -1. Used only to resolve
+ *  the `export { x as POST }` form back to the function it re-exports. */
+function declarationIndex(source, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const decl = new RegExp(
+    `(?:async\\s+)?function\\s+${escaped}\\s*\\(|(?:const|let|var)\\s+${escaped}\\s*[:=]`,
+  );
+  return source.search(decl);
+}
+
+/**
+ * Every mutating handler a route file exports: `{ method, at }`, where `at` is
+ * the offset the guard window is measured from.
+ */
+function mutatingHandlers(source) {
+  const found = [];
+  for (const pattern of [DECLARED_HANDLER, CONST_HANDLER]) {
+    pattern.lastIndex = 0;
+    for (const match of source.matchAll(pattern)) {
+      found.push({ method: match[1], at: match.index });
+    }
+  }
+  ALIASED_EXPORT.lastIndex = 0;
+  for (const match of source.matchAll(ALIASED_EXPORT)) {
+    for (const clause of match[1].split(",")) {
+      const alias = /^\s*([A-Za-z0-9_$]+)\s+as\s+([A-Za-z0-9_$]+)\s*$/.exec(clause);
+      if (!alias) continue;
+      const [, local, exported] = alias;
+      if (!new RegExp(`^(?:${METHODS})$`).test(exported)) continue;
+      const at = declarationIndex(source, local);
+      found.push({ method: exported, at: at === -1 ? match.index : at });
+    }
+  }
+  return found.sort((a, b) => a.at - b.at);
+}
+
+/** Does the guard appear inside this handler's window? */
+function guardedAt(source, at) {
+  const lines = source.slice(at).split("\n").slice(0, GUARD_WINDOW_LINES).join("\n");
+  GUARD_CALL.lastIndex = 0;
+  return GUARD_CALL.test(lines);
+}
 
 function routeFiles(dir) {
   const out = [];
@@ -119,10 +198,6 @@ function repoRelative(absolute) {
   return relative(REPO_ROOT, absolute).split(sep).join("/");
 }
 
-function countMatches(source, pattern) {
-  return source.match(new RegExp(pattern.source, pattern.flags))?.length ?? 0;
-}
-
 test("every listed high-trust course route calls assertNotImpersonating()", () => {
   for (const [path, why] of MUST_GUARD) {
     const absolute = join(REPO_ROOT, ...path.split("/"));
@@ -132,20 +207,22 @@ test("every listed high-trust course route calls assertNotImpersonating()", () =
         "moved, move its entry too; if it was deleted, delete the entry.",
     );
     const source = readFileSync(absolute, "utf8");
-    const handlers = countMatches(source, MUTATING_METHOD);
-    const guards = countMatches(source, GUARD_CALL);
+    const handlers = mutatingHandlers(source);
     assert.ok(
-      handlers > 0,
+      handlers.length > 0,
       `${path} is on the view-as guard list but exports no POST/PATCH/PUT/DELETE. ` +
         "Drop the entry if the route no longer mutates anything.",
     );
-    assert.ok(
-      guards >= handlers,
-      `${path} (${why}) exports ${handlers} mutating handler(s) but calls ` +
-        `assertNotImpersonating() ${guards} time(s). Every one of them must ` +
-        "refuse during a view-as session, because Firestore would record the " +
-        "write as the member, not as the admin who made it.",
-    );
+    for (const { method, at } of handlers) {
+      assert.ok(
+        guardedAt(source, at),
+        `${path} (${why}) exports ${method} without calling ` +
+          `assertNotImpersonating() in its first ${GUARD_WINDOW_LINES} lines. ` +
+          "Every mutating handler must refuse during a view-as session, at the " +
+          "TOP and before any other work, because Firestore would record the " +
+          "write as the member, not as the admin who made it.",
+      );
+    }
     assert.match(
       source,
       /from "@\/lib\/firebase\/impersonation"/,
@@ -168,7 +245,7 @@ test("no mutating course route escapes the view-as guard", () => {
     for (const file of files) {
       const path = repoRelative(file);
       const source = readFileSync(file, "utf8");
-      if (countMatches(source, MUTATING_METHOD) === 0) continue;
+      if (mutatingHandlers(source).length === 0) continue;
       assert.ok(
         listed.has(path) || exempt.has(path),
         `${path} exports a mutating handler but is on neither the view-as ` +
@@ -179,6 +256,82 @@ test("no mutating course route escapes the view-as guard", () => {
       );
     }
   }
+});
+
+test("the scan catches handler forms nobody has written in this tree yet", (t) => {
+  // A scratch route tree, written and removed here rather than committed: the
+  // point is to prove the SCANNER catches an unguarded arrow-form handler, and
+  // a fixture living under src/ would either be a real route or a file the
+  // sweep above has to be taught to skip. Every course route today uses
+  // `export async function`, so without this the widened patterns would be
+  // untested code claiming to be a guard.
+  const dir = mkdtempSync(join(tmpdir(), "view-as-guard-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const unguarded = join(dir, "route.ts");
+  writeFileSync(
+    unguarded,
+    [
+      'import { NextResponse } from "next/server";',
+      "",
+      "export const POST = async () => {",
+      "  return NextResponse.json({ ok: true });",
+      "};",
+      "",
+      "const handleDelete = async () => NextResponse.json({ ok: true });",
+      "export { handleDelete as DELETE };",
+      "",
+    ].join("\n"),
+  );
+  const source = readFileSync(unguarded, "utf8");
+  const handlers = mutatingHandlers(source);
+  assert.deepEqual(
+    handlers.map((h) => h.method).sort(),
+    ["DELETE", "POST"],
+    "the arrow-const and aliased-export handler forms must both be detected: " +
+      "a route written either way is exactly as capable of writing as the " +
+      "member as `export async function POST` is.",
+  );
+  for (const { method, at } of handlers) {
+    assert.equal(
+      guardedAt(source, at),
+      false,
+      `${method} in the fixture calls no guard, so the scan must report it unguarded.`,
+    );
+  }
+
+  // And the same forms WITH the guard pass, so the check is not just "arrow
+  // handlers always fail".
+  const guarded = [
+    'import { assertNotImpersonating } from "@/lib/firebase/impersonation";',
+    "",
+    "export const PATCH = async () => {",
+    "  const blocked = await assertNotImpersonating();",
+    "  if (blocked) return blocked;",
+    "  return new Response(null, { status: 204 });",
+    "};",
+    "",
+  ].join("\n");
+  const [patch] = mutatingHandlers(guarded);
+  assert.equal(patch.method, "PATCH");
+  assert.equal(guardedAt(guarded, patch.at), true);
+
+  // A guard call far below the handler is NOT that handler's guard.
+  const distant = [
+    "export const PUT = async () => {",
+    ...Array.from({ length: GUARD_WINDOW_LINES + 4 }, () => "  // filler"),
+    "  const blocked = await assertNotImpersonating();",
+    "  if (blocked) return blocked;",
+    "};",
+    "",
+  ].join("\n");
+  const [put] = mutatingHandlers(distant);
+  assert.equal(
+    guardedAt(distant, put.at),
+    false,
+    "the guard has to run BEFORE the handler's other work; a call buried " +
+      "further down may sit behind a branch that already wrote something.",
+  );
 });
 
 test("every allowlisted route still exists and carries a reason", () => {
