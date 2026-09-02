@@ -40,6 +40,38 @@ import {
  * facilitator-editable client-direct, exactly as before.
  */
 
+/*
+ * V3 SEAM, AND WHAT IS DELIBERATELY NOT BUILT HERE.
+ *
+ * The contract specifies ONE field on this document that this PR does not
+ * ship:
+ *
+ *   courseGroups.extraSession: GroupSession | null
+ *     A second weekly slot for a group that meets twice. Readers would be
+ *     `resolveSessions`, the register's columns and the session cards.
+ *
+ * It is not built because it has a BLOCKING PRECONDITION that is an owner
+ * decision, not a coding one: the pre-course cadence (does a group ever meet
+ * twice in a week, and if so is the second meeting a fixed extra slot or an
+ * irregular date). Until that is answered the key shape below cannot be
+ * chosen, and the key shape is a birth-pinned data decision.
+ *
+ * THE KEY SHAPE, stated exactly. `sessionOverrides` and `sessionModes` are
+ * both `Record<weekId, ...>` (weekId = "w03"), with NO occurrence component.
+ * So a group meeting twice in one week cannot move, virtualise or
+ * room-notice one of its two sessions: both requests address the same key.
+ * Adding `extraSession` (or the pre-committed fallback for an irregular
+ * rhythm, an explicit `sessionDates` list) means re-keying both maps to
+ * something like `w03#1` / `w03#2`, which changes what is stored, what
+ * firestore.rules pins flat at the `sessionModes` comparison, and what
+ * `normalizeCourseGroup` reads.
+ *
+ * The other half of the same decision is `courseAttendance.occurrence`; see
+ * the matching note in `courseAttendance.ts`. They land together or not at
+ * all, because a second session with no register is not a session. Start at
+ * both.
+ */
+
 export type GroupSession = {
   /** 0 = Sunday .. 6 = Saturday (JS `Date.getDay()` convention). */
   weekday: number;
@@ -83,6 +115,32 @@ export type GroupSessionOverride = Partial<GroupSession> & {
   mode?: GroupSessionMode;
 };
 
+/**
+ * One facilitator's appointment to this group: who appointed them, when, and
+ * whether the facilitator has agreed to it yet.
+ *
+ * Keyed by uid alongside `facilitatorUids` rather than replacing it, because
+ * `facilitatorUids` is what every rule, query and route already reads and an
+ * array is what Firestore can index on. This map is the RECORD of how each of
+ * those uids got there: decisions.md asks for facilitator appointments to be
+ * recorded, and "the array contains them" answers neither who nor when.
+ *
+ * Routes-only and birth-pinned empty, exactly like `facilitatorUids` itself:
+ * a group that could be born carrying appointments nobody issued would make
+ * the record worth less than no record.
+ */
+export type FacilitatorAppointment = {
+  at: Date | null;
+  byUid: string;
+  byName: string;
+  /**
+   * When the facilitator confirmed. Null = appointed but not yet agreed,
+   * which is a real state during the weeks-3-to-4 training window and not an
+   * error.
+   */
+  agreedAt: Date | null;
+};
+
 export type CourseGroupDoc = {
   /** Firestore doc id: `slugId(runLabel + name)`. */
   id: string;
@@ -91,7 +149,30 @@ export type CourseGroupDoc = {
   name: string;
   /** Server-owned (routes only, pinned in rules). Max 5. */
   facilitatorUids: string[];
-  /** Allocation cap; null = uncapped. */
+  /**
+   * Appointment provenance for the uids above (see `FacilitatorAppointment`).
+   * Server-owned, birth-pinned empty, capped at `maxFacilitatorAppointments`.
+   */
+  facilitatorAppointments: Record<string, FacilitatorAppointment>;
+  /**
+   * The stream this group teaches, or null when it is open to every stream.
+   *
+   * SERVER-OWNED, birth-pinned null, pinned on update, the same correction
+   * as `courseRuns.streams`, and for the same reason: the enrol route decides
+   * who may pick this group by comparing their stream against this field,
+   * while `courseEnrolments.streamId` is `allow write: if false`. A
+   * facilitator retagging their own group client-direct would strand rows in
+   * a collection the client cannot repair.
+   */
+  streamId: string | null;
+  /**
+   * Allocation cap; null = uncapped.
+   *
+   * REQUIRED, and at most `MAX_OPEN_MODE_CAPACITY`, for a group belonging to
+   * an OPEN-mode run; see `groupCapacityError`. Still nullable in the type
+   * because the admissions runs that predate open mode legitimately carry
+   * null, and because this doc alone cannot tell which kind of run it is on.
+   */
   capacity: number | null;
   /** Server-owned counter, maintained by the allocation transaction. */
   memberCount: number;
@@ -138,7 +219,53 @@ export const GROUP_FIELD_LIMITS = {
   maxDurationMinutes: 480,
   maxFacilitators: 5,
   maxSessionOverrides: 20,
+  /** One appointment record per facilitator slot; see `maxFacilitators`. */
+  maxFacilitatorAppointments: 5,
+  appointedByName: 120,
 } as const;
+
+/**
+ * The hard ceiling on an OPEN-mode group's capacity, and it is not a taste
+ * decision: `attendance/route.ts` throws `RegisterFullError` on the MERGED
+ * records map for the WHOLE POST once a register passes
+ * `ATTENDANCE_LIMITS.maxRecords` keys. So an uncapped "everyone gets a place"
+ * group does not merely leave its 41st member unmarked: it makes a bulk
+ * "rest present" fail for everyone in the room, and zeroes the completion
+ * signal the pre-course bar is computed from.
+ *
+ * Kept as its own named constant rather than an inline 40 so the two numbers
+ * are visibly the same number.
+ */
+export const MAX_OPEN_MODE_CAPACITY = 40;
+
+/**
+ * Why this group's capacity is not acceptable for the given enrolment mode,
+ * or null when it is. Human sentences: the group editor shows them verbatim.
+ *
+ * NOT part of `normalizeCourseGroup`, and it cannot be: the normaliser is
+ * handed one group document and the constraint depends on the parent RUN's
+ * `enrolMode`. Callers that know both (the group routes, the group editor,
+ * the enrol transaction) call this; `groupContentOk()` in firestore.rules
+ * expresses as much of it as a rule can reach.
+ */
+export function groupCapacityError(
+  capacity: number | null,
+  enrolMode: "admissions" | "open",
+): string | null {
+  if (capacity !== null) {
+    if (!Number.isInteger(capacity) || capacity < 1) {
+      return "Capacity must be a whole number of places, or left unset.";
+    }
+    if (capacity > MAX_OPEN_MODE_CAPACITY) {
+      return `A group can hold at most ${MAX_OPEN_MODE_CAPACITY} people, because that is the ceiling on one session's register.`;
+    }
+    return null;
+  }
+  if (enrolMode === "open") {
+    return `Groups on an open-enrolment run need a capacity, at most ${MAX_OPEN_MODE_CAPACITY}. Without one the group can fill past the size a register can hold, and marking attendance then fails for everybody in it.`;
+  }
+  return null;
+}
 
 type Raw = Record<string, unknown>;
 
@@ -322,6 +449,33 @@ export function sessionModesOf(
   return out;
 }
 
+/**
+ * Appointment records, capped and taken in uid order so a group doc carrying
+ * more than the cap truncates deterministically rather than shipping an
+ * unbounded map (the `sessionModesOf` doctrine).
+ */
+function normalizeFacilitatorAppointments(
+  v: unknown,
+): Record<string, FacilitatorAppointment> {
+  if (!v || typeof v !== "object") return {};
+  const out: Record<string, FacilitatorAppointment> = {};
+  let count = 0;
+  for (const uid of Object.keys(v as Record<string, unknown>).sort()) {
+    if (count >= GROUP_FIELD_LIMITS.maxFacilitatorAppointments) break;
+    const value = (v as Record<string, unknown>)[uid];
+    if (!uid || !value || typeof value !== "object") continue;
+    const raw = value as Raw;
+    out[uid] = {
+      at: tsToDate(raw.at),
+      byUid: typeof raw.byUid === "string" ? raw.byUid : "",
+      byName: str(raw.byName, GROUP_FIELD_LIMITS.appointedByName),
+      agreedAt: tsToDate(raw.agreedAt),
+    };
+    count += 1;
+  }
+  return out;
+}
+
 export function normalizeCourseGroup(id: string, data: Raw): CourseGroupDoc {
   const capacityRaw = data.capacity;
   const capacity =
@@ -334,6 +488,15 @@ export function normalizeCourseGroup(id: string, data: Raw): CourseGroupDoc {
     courseId: (data.courseId as string) ?? "",
     name: str(data.name, GROUP_FIELD_LIMITS.name),
     facilitatorUids: asUidList(data.facilitatorUids),
+    facilitatorAppointments: normalizeFacilitatorAppointments(
+      data.facilitatorAppointments,
+    ),
+    // Absent, empty and non-string all mean "open to every stream", the same
+    // degrade-to-the-widest-safe-state rule the pace fields follow. A garbled
+    // id would otherwise scope a group to a stream nobody is on, which reads
+    // as an empty group rather than as an error.
+    streamId:
+      typeof data.streamId === "string" && data.streamId ? data.streamId : null,
     capacity,
     memberCount:
       typeof data.memberCount === "number" && Number.isFinite(data.memberCount)

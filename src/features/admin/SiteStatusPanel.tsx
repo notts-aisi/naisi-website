@@ -51,9 +51,14 @@ const SURFACE_LABELS: Record<SiteNoticeSurface, { label: string; description: st
       "Disables the RSVP submit on event pages. Change/cancel links from RSVP emails stay open on purpose.",
   },
   courseApplications: {
-    label: "Pause course applications",
+    label: "Pause admissions",
     description:
       "Rejects new applications on /courses/*/apply (the only surface with a server-side gate). Editing and withdrawing an application stay open on purpose.",
+  },
+  courseEnrolments: {
+    label: "Pause course enrolment",
+    description:
+      "Rejects new sign-ups on open-enrolment runs (the pre-course). People already enrolled keep their place and their access.",
   },
 };
 
@@ -105,6 +110,7 @@ const EMPTY_DRAFT: Draft = {
     collaboratorApplications: false,
     eventSignups: false,
     courseApplications: false,
+    courseEnrolments: false,
   },
 };
 

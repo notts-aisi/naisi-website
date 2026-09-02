@@ -1455,7 +1455,10 @@ test("PROVEN GAP — un-publishing a week takes a member's completed work off th
 /** The shared lifecycle table, reproduced. Pinned below. */
 const ALLOWED_TRANSITIONS = {
   draft: ["applications-open", "cancelled"],
-  "applications-open": ["applications-closed", "cancelled"],
+  // `running` is reachable straight from here since V3 open enrolment: a
+  // pre-course keeps its sign-ups open into its first teaching weeks and has
+  // no review stage to close. Still forward-only, which the loop below pins.
+  "applications-open": ["applications-closed", "running", "cancelled"],
   "applications-closed": ["running", "cancelled"],
   running: ["completed", "cancelled"],
   completed: [],
@@ -1751,7 +1754,14 @@ test("GUARD — an offer survives admissions closing the run, which is what brok
   // submit cannot disagree. `status` alone decides nothing any more.
   assert.match(FETCH_COURSES, /from "@\/lib\/courses\/window"/);
   assert.doesNotMatch(FETCH_COURSES, /run\.status !== "applications-open"/);
-  assert.match(RUN_STATUS_LIB, /"applications-open": \["applications-closed", "cancelled"\]/);
+  // The point of this line is that `applications-open` is a state a run LEAVES,
+  // so the offer must not depend on it. The table gained `running` as a second
+  // exit for open enrolment, which only strengthens that: there are now two
+  // ways off the status the offer used to hang on.
+  assert.match(
+    RUN_STATUS_LIB,
+    /"applications-open": \["applications-closed", "running", "cancelled"\]/,
+  );
 });
 
 test("PROVEN GAP — their only record is an email whose {startDate} is frozen", () => {

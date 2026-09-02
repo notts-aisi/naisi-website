@@ -328,6 +328,14 @@
         { "fieldPath": "roundId", "order": "ASCENDING" },
         { "fieldPath": "reviewerUid", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "courseAudit",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "runId", "order": "ASCENDING" },
+        { "fieldPath": "at", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

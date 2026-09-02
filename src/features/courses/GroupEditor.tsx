@@ -9,9 +9,14 @@ import { Field, Input } from "@/components/ui/Input";
 import PersonSelector from "@/components/ui/PersonSelector";
 import Switch from "@/components/ui/Switch";
 import type { UserDoc } from "@/lib/firestore/users";
-import { validateSubmissionUrl } from "@/lib/firestore/courses";
+import {
+  validateSubmissionUrl,
+  type CourseEnrolMode,
+} from "@/lib/firestore/courses";
 import {
   GROUP_FIELD_LIMITS,
+  MAX_OPEN_MODE_CAPACITY,
+  groupCapacityError,
   type CourseGroupDoc,
   type GroupSession,
 } from "@/lib/firestore/courseGroups";
@@ -50,6 +55,17 @@ const DEFAULT_SESSION: GroupSession = {
   notes: "",
 };
 
+/**
+ * What "capacity" means differs by run, so the hint does too. An admissions
+ * run is placed by a human who can see the size of each group, so a blank cap
+ * is legitimate; an open run fills itself, and a group that fills past the
+ * register ceiling makes bulk marking fail for everybody in it.
+ */
+const CAPACITY_HINT: Record<CourseEnrolMode, string> = {
+  admissions: "Leave blank for no cap.",
+  open: `Required on an open-enrolment run, at most ${MAX_OPEN_MODE_CAPACITY}.`,
+};
+
 function sameUids(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((uid, i) => uid === b[i]);
 }
@@ -66,6 +82,12 @@ function capacityFromInput(raw: string): number | null {
 type Props = {
   group: CourseGroupDoc;
   members: UserDoc[];
+  /**
+   * The PARENT RUN's enrolment mode. Not on the group document and it cannot
+   * be: the capacity rule is a two-document rule, and this component is the
+   * only place that already holds both halves. See `groupCapacityError`.
+   */
+  enrolMode: CourseEnrolMode;
   runAction: ToastRun;
   onSaved: () => void;
   disabled?: boolean;
@@ -74,6 +96,7 @@ type Props = {
 export default function GroupEditor({
   group,
   members,
+  enrolMode,
   runAction,
   onSaved,
   disabled,
@@ -120,6 +143,15 @@ export default function GroupEditor({
         return;
       }
     }
+    // Checked here so an open-mode group missing its capacity reads a sentence
+    // instead of a permission-denied: firestore.rules refuses this exact write
+    // and has no way to say why.
+    const nextCapacity = capacityFromInput(capacity);
+    const capacityError = groupCapacityError(nextCapacity, enrolMode);
+    if (capacityError) {
+      setError(capacityError);
+      return;
+    }
     setError(null);
 
     const nextSession: GroupSession = {
@@ -135,11 +167,15 @@ export default function GroupEditor({
     let ok = false;
     await runAction(
       async () => {
-        await updateGroup(group.id, {
-          name: trimmedName,
-          capacity: capacityFromInput(capacity),
-          session: nextSession,
-        });
+        await updateGroup(
+          group.id,
+          {
+            name: trimmedName,
+            capacity: nextCapacity,
+            session: nextSession,
+          },
+          enrolMode,
+        );
         if (facilitatorsChanged) {
           await setGroupFacilitators(group.id, facilitatorUids);
         }
@@ -196,12 +232,13 @@ export default function GroupEditor({
           <Field
             id={`${fieldId}-capacity`}
             label="Capacity"
-            hint="Leave blank for no cap."
+            hint={CAPACITY_HINT[enrolMode]}
           >
             <Input
               id={`${fieldId}-capacity`}
               type="number"
               min={1}
+              max={MAX_OPEN_MODE_CAPACITY}
               inputMode="numeric"
               value={capacity}
               onChange={(e) => setCapacity(e.target.value)}
@@ -304,7 +341,7 @@ export function NewGroupForm({
   onCancel,
   disabled,
 }: {
-  run: { id: string; courseId: string; label: string };
+  run: { id: string; courseId: string; label: string; enrolMode: CourseEnrolMode };
   runAction: ToastRun;
   onCreated: () => void;
   onCancel: () => void;
@@ -322,13 +359,21 @@ export function NewGroupForm({
       setError("Give the group a name.");
       return;
     }
+    // Same check as the card, for the same reason: an open-mode run's group
+    // cannot be born uncapped, and the rules cannot say so in words.
+    const nextCapacity = capacityFromInput(capacity);
+    const capacityError = groupCapacityError(nextCapacity, run.enrolMode);
+    if (capacityError) {
+      setError(capacityError);
+      return;
+    }
     setError(null);
     let ok = false;
     await runAction(
       async () => {
         await createGroup(run, {
           name: trimmed,
-          capacity: capacityFromInput(capacity),
+          capacity: nextCapacity,
           session,
         });
         ok = true;
@@ -362,12 +407,13 @@ export function NewGroupForm({
           <Field
             id={`${fieldId}-new-capacity`}
             label="Capacity"
-            hint="Leave blank for no cap."
+            hint={CAPACITY_HINT[run.enrolMode]}
           >
             <Input
               id={`${fieldId}-new-capacity`}
               type="number"
               min={1}
+              max={MAX_OPEN_MODE_CAPACITY}
               inputMode="numeric"
               value={capacity}
               onChange={(e) => setCapacity(e.target.value)}
