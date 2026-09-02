@@ -129,6 +129,27 @@ confirms both that the path exists and that the guard is a key check. If you get
 a 404 with a key you believe is right, check the secret is granted to that
 backend and that the rollout since granting it has finished.
 
+#### What a failed tick looks like, and what recovers it
+
+Not the scheduler's own retry. Cloud Scheduler retries a non-2xx, but the retry
+arrives inside the same 15-minute bucket, resolves to the same receipt id, hits
+ALREADY_EXISTS and returns `{"deduped": true}` having done nothing. That is the
+dedupe working as designed: it cannot tell a retry of a failed delivery from a
+duplicate of a successful one, and of the two mistakes, doing the work twice is
+the worse one.
+
+**What recovers a failed tick is the next delivery, 15 minutes later.** No job
+loses work when one tick dies, because no job has a queue: each derives what is
+due from live data at tick time, and the markers stop anything already done
+being done again.
+
+On the panel, a tick that died mid-list is a **Recent ticks row with no finish
+time** (`finishedAt` is null, so the duration column has nothing to show). The
+receipt is opened before the first job runs precisely so that this row exists at
+all. One of them is a container that went away; a run of them in consecutive
+buckets is a job wedging the tick every time, and the job list on that row names
+the last job that reported.
+
 ### Kill switches
 
 `config/scheduler` holds `{ enabled, jobs: { <jobId>: { enabled, lastRunAt,
@@ -203,6 +224,19 @@ construction (every job derives its due state at tick time and every send is
 marker-guarded), so a dropped re-arm costs latency, never correctness. The
 receipt records what happened either way, under **More** on the Recent ticks
 table.
+
+**Ticks overlap, and that is expected.** The parent stops answering when the
+handoff window closes but the child keeps working, so a re-arm chain that starts
+near the end of a bucket is still running when the external scheduler delivers
+the next tick. Nothing prevents that and nothing should: the alternative is a
+lock, and a lock that outlives a crashed container is how a scheduler goes quiet
+for a day.
+
+The rule that follows, for anyone writing a job handler: **every handler must be
+safe to run concurrently with itself.** Claim a marker before the side effect,
+one marker per unit of work, and let the `.create()` decide who owns it. A
+handler that instead reads a list, does the work and writes a "done" flag at the
+end will double-send the first time two ticks meet.
 
 ### If the scheduler is down on a day something is due
 

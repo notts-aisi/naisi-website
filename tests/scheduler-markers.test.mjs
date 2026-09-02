@@ -1,6 +1,6 @@
 /**
  * Unit tests for the FIRESTORE half of the marker lifecycle:
- * `src/lib/scheduler/markers.ts` — `claim`, `stampSent`, `stampError`,
+ * `src/lib/scheduler/markers.ts`: `claim`, `stampSent`, `stampError`,
  * `stampSkipped` and `retryFailedMarker`.
  *
  * Run with `npm test` (Node's built-in runner, no dependencies).
@@ -27,7 +27,7 @@
  * emulator and must not reach a project. It implements exactly the four
  * behaviours the code under test depends on, and nothing else:
  *
- *  1. `.create()` throws `code 6` when the document is already there — the
+ *  1. `.create()` throws `code 6` when the document is already there, the
  *     ALREADY_EXISTS that means somebody else owns this unit of work;
  *  2. `.set(..., { merge: true })` merges;
  *  3. `runTransaction` REPLAYS its body when a document it read changed
@@ -137,7 +137,7 @@ async function loadTs(relativePath) {
       tsc = (await import("typescript")).default;
     } catch (err) {
       throw new Error(
-        "the `typescript` devDependency is not installed — run `npm install`.",
+        "the `typescript` devDependency is not installed. Run `npm install`.",
         { cause: err },
       );
     }
@@ -316,7 +316,7 @@ describe("claim", () => {
     assert.equal(
       db.stats.transactionRuns,
       0,
-      "fresh work must not pay for a transaction — .create() is already atomic",
+      "fresh work must not pay for a transaction: .create() is already atomic",
     );
 
     const stored = db.read(REF.id);

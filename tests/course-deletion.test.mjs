@@ -264,7 +264,7 @@ const RUN_COUNT_KEYS = [
   "materialNotes",
   "mirroredTasks",
   "subscriptionRows",
-  // `schedulerMarkers` — the scheduler tick's claim-before-send markers.
+  // `schedulerMarkers`, the scheduler tick's claim-before-send markers.
   // Added with the tick itself, under the house rule that a PR adding a
   // collection adds it to the manifest AND the cascade in that same PR. Two
   // families name this run and they name it differently: `breakret__` stores
@@ -572,7 +572,7 @@ test("MODEL — the run document is deleted LAST, and its subcollection is drain
   );
 });
 
-test("MODEL — the scheduler's markers are counted and drained on BOTH the shapes that name a run", () => {
+test("MODEL: the scheduler's markers are counted and drained on BOTH the shapes that name a run", () => {
   // `schedulerMarkers` holds one row per unit of timed work, and two of its
   // four families belong to a run. They are addressed differently, and a
   // drain that only knew about one of them would leave the other behind:

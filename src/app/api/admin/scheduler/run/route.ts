@@ -61,7 +61,7 @@ const RETRY_REFUSALS: Record<"missing" | "sent" | "in-flight", string> = {
   missing: "There is no marker with that id, so there is nothing to retry.",
   sent: "That send already went out. Retrying it would send it a second time.",
   "in-flight":
-    "That marker is still in flight — a tick has claimed it and has not finished. Leave it: if the send really is stuck, the next tick re-claims it once the claim goes stale, and it appears under Stuck sends if it runs out of attempts.",
+    "That marker is still in flight: a tick has claimed it and has not finished. Leave it: if the send really is stuck, the next tick re-claims it once the claim goes stale, and it appears under Stuck sends if it runs out of attempts.",
 };
 
 export async function POST(req: Request) {
