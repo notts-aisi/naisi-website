@@ -9,9 +9,9 @@ import {
   COURSE_PAGES_COLLECTION,
   COURSE_PAGE_LIMITS,
   canAuthorCoursePage,
+  mergeGeneratedThemes,
   normalizeCoursePage,
-  sanitizeWeeklyThemes,
-  type CoursePageTheme,
+  type GeneratedThemeSource,
 } from "@/lib/firestore/coursePages";
 import { cohortLabel } from "@/lib/courses/cohortLabel";
 
@@ -36,16 +36,20 @@ import { cohortLabel } from "@/lib/courses/cohortLabel";
  * silently replace the first with the second, so a theme that already has a
  * blurb is KEPT and NAMED in the receipt, and the caller decides.
  *
+ * That promise covers a week the source still has. A week the source no longer
+ * has is the other half of it: under `overwrite: false` the result is the
+ * UNION of the source's weeks and the page's, so a theme the author wrote for
+ * week 7 survives a regeneration from a five-week snapshot instead of being
+ * dropped by a source that never had an opinion about week 7. Those rows come
+ * back in the receipt as `carriedForward`.
+ *
+ * `overwrite: true` is the deliberate opposite and the only way to shrink the
+ * list from here: the caller has said the source is the truth, so the stored
+ * list is REPLACED by it and a week the source dropped goes with it.
+ *
  * This route is the ONLY writer of `themesSourceTemplateId` /
  * `themesSourceLabel`; the PUT route carries them forward untouched.
  */
-
-type WeekSource = { weekNumber: number; title: string; summary: string };
-
-/** A week's public blurb: its plain-text summary, capped. */
-function blurbFor(week: WeekSource): string {
-  return week.summary.trim().slice(0, COURSE_PAGE_LIMITS.themeBlurb);
-}
 
 export async function POST(
   req: Request,
@@ -94,7 +98,7 @@ export async function POST(
   // curriculum and would then advertise weeks nobody on this programme will
   // ever be taught. It is the same check the publish route makes on
   // `showcaseRunId`, for the same reason.
-  let weeks: WeekSource[] = [];
+  let weeks: GeneratedThemeSource[] = [];
   let sourceTemplateId: string | null = null;
   let sourceLabel = "";
 
@@ -166,32 +170,18 @@ export async function POST(
   }
 
   // --- Merge against what is already on the page ---
+  // `mergeGeneratedThemes` is the whole decision, and it lives in
+  // `coursePages.ts` beside the sanitisers so it can be tested without a
+  // Firestore, a session and a request.
   const pageRef = db.collection(COURSE_PAGES_COLLECTION).doc(courseId);
   const pageSnap = await pageRef.get();
   const page = normalizeCoursePage(courseId, pageSnap.data() ?? {});
-  const existingByWeek = new Map(page.weeklyThemes.map((theme) => [theme.weekNumber, theme]));
 
-  const kept: { weekNumber: number; title: string }[] = [];
-  const themes: CoursePageTheme[] = weeks.map((week) => {
-    const existing = existingByWeek.get(week.weekNumber);
-    // "Edited" means "has a blurb". There is no record of what was generated
-    // last time, and inventing one (a hash of the source summary, say) would
-    // make a curriculum edit look like an author edit. A non-empty blurb is
-    // the honest, checkable version of the question.
-    if (!overwrite && existing && existing.blurb.trim()) {
-      kept.push({ weekNumber: existing.weekNumber, title: existing.title });
-      return existing;
-    }
-    return {
-      weekNumber: week.weekNumber,
-      // The title follows the blurb: keeping a hand-written title beside a
-      // regenerated blurb reads as a mismatch on the page.
-      title: week.title.slice(0, COURSE_PAGE_LIMITS.themeTitle),
-      blurb: blurbFor(week),
-    };
+  const { weeklyThemes, kept, carriedForward } = mergeGeneratedThemes({
+    existing: page.weeklyThemes,
+    weeks,
+    overwrite,
   });
-
-  const weeklyThemes = sanitizeWeeklyThemes(themes);
 
   await pageRef.set(
     {
@@ -210,9 +200,11 @@ export async function POST(
     ok: true,
     weeklyThemes,
     /** How many rows this call wrote fresh copy into. */
-    generated: weeklyThemes.length - kept.length,
+    generated: weeklyThemes.length - kept.length - carriedForward.length,
     /** Rows left alone because they already carried an edited blurb. */
     kept,
+    /** Rows kept because the source has no week of that number at all. */
+    carriedForward,
     source: {
       kind: sourceTemplateId ? "template" : "run",
       id: sourceTemplateId ?? runId,

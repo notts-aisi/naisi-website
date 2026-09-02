@@ -522,6 +522,92 @@ export function normalizeCoursePage(id: string, data: Raw): CoursePageDoc {
   };
 }
 
+// ---------------------------------------------------------------------------
+// The theme merge behind POST /page/generate-themes
+// ---------------------------------------------------------------------------
+
+/** One week of curriculum, as either source hands it to the generator. */
+export type GeneratedThemeSource = {
+  weekNumber: number;
+  title: string;
+  summary: string;
+};
+
+export type ThemeMergeResult = {
+  weeklyThemes: CoursePageTheme[];
+  /** Weeks the source has, left alone because they carried an edited blurb. */
+  kept: { weekNumber: number; title: string }[];
+  /** Weeks the source does not have at all, kept because the author wrote them. */
+  carriedForward: { weekNumber: number; title: string }[];
+};
+
+/**
+ * Merge a source's weeks into the page's stored themes.
+ *
+ * Lives here rather than in the route because it is the whole behaviour of
+ * that route and it is decidable from three plain arguments, which makes it
+ * the part worth pinning with a test.
+ *
+ * TWO SEPARATE RULES, and it is easy to collapse them into one by accident:
+ *
+ *  - a week the source HAS, whose stored row already carries a blurb, is kept
+ *    when `overwrite` is false. That is the documented default: an author
+ *    writes for the visitor, a week summary is written for the cohort, and a
+ *    regeneration must not silently swap one for the other.
+ *  - a week the source DOES NOT HAVE is kept when `overwrite` is false
+ *    whatever its blurb says, because the source has no opinion about it. The
+ *    result is a UNION, not a replacement, and without it a regeneration from
+ *    a five-week snapshot deletes the theme an author wrote for week 7.
+ *
+ * `overwrite: true` waives both and makes the source the whole list, which is
+ * the only way to shrink it from the generator.
+ */
+export function mergeGeneratedThemes(args: {
+  existing: CoursePageTheme[];
+  weeks: GeneratedThemeSource[];
+  overwrite: boolean;
+}): ThemeMergeResult {
+  const { existing, weeks, overwrite } = args;
+  const existingByWeek = new Map(existing.map((theme) => [theme.weekNumber, theme]));
+
+  const kept: { weekNumber: number; title: string }[] = [];
+  const carriedForward: { weekNumber: number; title: string }[] = [];
+
+  const themes: CoursePageTheme[] = weeks.map((week) => {
+    const stored = existingByWeek.get(week.weekNumber);
+    // "Edited" means "has a blurb". There is no record of what was generated
+    // last time, and inventing one (a hash of the source summary, say) would
+    // make a curriculum edit look like an author edit. A non-empty blurb is
+    // the honest, checkable version of the question.
+    if (!overwrite && stored && stored.blurb.trim()) {
+      kept.push({ weekNumber: stored.weekNumber, title: stored.title });
+      return stored;
+    }
+    return {
+      weekNumber: week.weekNumber,
+      // The title follows the blurb: keeping a hand-written title beside a
+      // regenerated blurb reads as a mismatch on the page.
+      title: week.title.slice(0, COURSE_PAGE_LIMITS.themeTitle),
+      blurb: week.summary.trim().slice(0, COURSE_PAGE_LIMITS.themeBlurb),
+    };
+  });
+
+  if (!overwrite) {
+    const sourceWeeks = new Set(weeks.map((week) => week.weekNumber));
+    for (const theme of existing) {
+      if (sourceWeeks.has(theme.weekNumber)) continue;
+      carriedForward.push({ weekNumber: theme.weekNumber, title: theme.title });
+      themes.push(theme);
+    }
+    // Sorted before sanitising because `sanitizeWeeklyThemes` applies its cap
+    // in INPUT order and only then sorts, so an unsorted union over the cap
+    // would drop an arbitrary week rather than the highest ones.
+    themes.sort((a, b) => a.weekNumber - b.weekNumber);
+  }
+
+  return { weeklyThemes: sanitizeWeeklyThemes(themes), kept, carriedForward };
+}
+
 /**
  * The empty page, for a course that has never been authored. Returned by the
  * fetcher and the editor so neither has to branch on "no document yet".

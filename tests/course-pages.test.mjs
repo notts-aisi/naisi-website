@@ -35,6 +35,12 @@
  * being absent rather than on its value: a renderer cannot print a key that is
  * not there, and a future `{...page}` spread cannot leak one either.
  *
+ * §2d THE UNION. `generate-themes` with `overwrite: false` promises to keep an
+ * author's edited theme. A merge that only walks the SOURCE's weeks keeps that
+ * promise for a week the source still has and quietly breaks it for one the
+ * source dropped, which is the worse half: nothing on screen says the week 7
+ * blurb was deleted.
+ *
  * §4 ONE COHORT FORMATTER, ALWAYS SHOWING THE NUMBER. `cohortLabel` is the
  * only function that turns the stored triple into words, and the decision that
  * the cohort number always shows is deliberate: the function sees one run and
@@ -159,6 +165,7 @@ const {
   canAuthorCoursePage,
   coursePageHasContent,
   emptyCoursePage,
+  mergeGeneratedThemes,
   neuterRichTextHtml,
   normalizeCoursePage,
   sanitizeCoursePageBlocks,
@@ -445,6 +452,82 @@ test("§2c MODEL toPublicCoursePage keeps everything else", () => {
   const publicPage = toPublicCoursePage(full);
   const dropped = Object.keys(full).filter((key) => !(key in publicPage));
   assert.deepEqual(dropped.sort(), ["themesSourceLabel", "themesSourceTemplateId"]);
+});
+
+// ---------------------------------------------------------------------------
+// §2d The generate-themes union
+// ---------------------------------------------------------------------------
+
+const SOURCE_WEEKS = [
+  { weekNumber: 1, title: "Week 1", summary: "Generated one." },
+  { weekNumber: 2, title: "Week 2", summary: "Generated two." },
+];
+
+test("§2d GUARD an edited theme whose week the source lost is CARRIED FORWARD", () => {
+  // The regression: a merge that walks only the source's weeks keeps week 2's
+  // edited blurb and silently deletes week 7's, with nothing on screen saying
+  // so. The source has no opinion about week 7, so neither does this.
+  const existing = [
+    { weekNumber: 2, title: "Author two", blurb: "Written for a visitor." },
+    { weekNumber: 7, title: "Author seven", blurb: "Also written for a visitor." },
+  ];
+  const result = mergeGeneratedThemes({ existing, weeks: SOURCE_WEEKS, overwrite: false });
+
+  assert.deepEqual(result.weeklyThemes.map((t) => t.weekNumber), [1, 2, 7]);
+  assert.equal(result.weeklyThemes[2].blurb, "Also written for a visitor.");
+  assert.deepEqual(result.carriedForward, [{ weekNumber: 7, title: "Author seven" }]);
+  // Week 2 is the OTHER rule: the source has it, and its blurb is kept.
+  assert.deepEqual(result.kept, [{ weekNumber: 2, title: "Author two" }]);
+  assert.equal(result.weeklyThemes[1].blurb, "Written for a visitor.");
+  // Week 1 had nothing stored, so it is generated.
+  assert.equal(result.weeklyThemes[0].blurb, "Generated one.");
+});
+
+test("§2d MODEL a stored theme with NO blurb is regenerated, not carried", () => {
+  // "Edited" means "has a blurb". An empty row is a placeholder, and the whole
+  // point of the generator is to fill those in.
+  const existing = [{ weekNumber: 2, title: "Placeholder", blurb: "   " }];
+  const result = mergeGeneratedThemes({ existing, weeks: SOURCE_WEEKS, overwrite: false });
+  assert.equal(result.weeklyThemes[1].blurb, "Generated two.");
+  assert.equal(result.weeklyThemes[1].title, "Week 2");
+  assert.deepEqual(result.kept, []);
+  assert.deepEqual(result.carriedForward, []);
+});
+
+test("§2d MODEL overwrite:true replaces the list, which is how it shrinks", () => {
+  // The deliberate opposite, and the only way to drop a week the curriculum no
+  // longer has. The caller has said the source is the truth.
+  const existing = [
+    { weekNumber: 2, title: "Author two", blurb: "Written for a visitor." },
+    { weekNumber: 7, title: "Author seven", blurb: "Also written for a visitor." },
+  ];
+  const result = mergeGeneratedThemes({ existing, weeks: SOURCE_WEEKS, overwrite: true });
+  assert.deepEqual(result.weeklyThemes.map((t) => t.weekNumber), [1, 2]);
+  assert.equal(result.weeklyThemes[1].blurb, "Generated two.");
+  assert.deepEqual(result.kept, []);
+  assert.deepEqual(result.carriedForward, []);
+});
+
+test("§2d GUARD a union over the cap drops the HIGHEST weeks, not arbitrary ones", () => {
+  // `sanitizeWeeklyThemes` caps in INPUT order and only then sorts, so the
+  // union has to be sorted first or the row that falls off the end is
+  // whichever one happened to be appended last.
+  const weeks = Array.from({ length: 15 }, (_, i) => ({
+    weekNumber: i + 1,
+    title: `Week ${i + 1}`,
+    summary: "Generated.",
+  }));
+  const existing = Array.from({ length: 15 }, (_, i) => ({
+    weekNumber: i + 16,
+    title: `Author ${i + 16}`,
+    blurb: "Written for a visitor.",
+  }));
+  const result = mergeGeneratedThemes({ existing, weeks, overwrite: false });
+  assert.equal(result.weeklyThemes.length, COURSE_PAGE_LIMITS.maxWeeklyThemes);
+  assert.deepEqual(
+    result.weeklyThemes.map((t) => t.weekNumber),
+    Array.from({ length: COURSE_PAGE_LIMITS.maxWeeklyThemes }, (_, i) => i + 1),
+  );
 });
 
 // ---------------------------------------------------------------------------
