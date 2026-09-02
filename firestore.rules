@@ -2251,6 +2251,61 @@ service cloud.firestore {
 
     // === end V3 W1 PR4: admissions =======================================
 
+    // =====================================================================
+    // === V3 W3 PR27: membership ==========================================
+    // =====================================================================
+    //
+    // Two collections, both `allow read, write: if false`, plus the CURRENT
+    // pointer at `config/membership`, which the `match /config/{doc}` block
+    // above already shuts to every client.
+    //
+    // WHY NO CLIENT WRITES. A grant moves three things together: the
+    // membership row, the `users.paidMembershipYears` cache the badges read,
+    // and the period's cached per-tier totals. Rules cannot express "these
+    // three move as one", and they cannot express the cap pre-check that
+    // stops an eleventh year silently pushing another off the end of the
+    // cache. One Admin SDK route owns all three.
+    //
+    // WHY NO CLIENT READS, including the own-row one on `memberships` that
+    // looks obviously safe. A `get` of a MISSING document evaluates
+    // `resource.data.uid` against null and denies, so "this member has no
+    // membership row" and "this member may not look" arrive at the browser
+    // as the SAME permission-denied error. The profile badge could then not
+    // tell a member with no membership from a broken rule, which is the trap
+    // already recorded at useMyApplication.ts:26-33. The member path is
+    // GET /api/membership/me, which answers `null` and means it.
+    //
+    // `membershipPeriods` also carries a 200-character internal note an admin
+    // writes for other admins, and nothing member-facing needs the
+    // collection now that the /me route exists.
+    //
+    // NOT PART OF THE SU-RECOGNISED PII TIER. Membership is money and
+    // provenance rather than roster data, so recognising a committee member
+    // grants nothing here; the `manageMembership` permission does, and only
+    // through the routes.
+    //
+    // The `users.paidMembershipYears` pins in the users block above are the
+    // other half of this design: the cache is admin-set, and a member who
+    // could seed or edit it would wear a membership badge nobody granted.
+    // Those pins are re-asserted by the membership rules tests as the
+    // cache-forgery guard.
+    //
+    // ⚠ A `firebase deploy --only firestore:rules` is NOT owed for these two
+    // blocks: with no `allow`, each match is identical to Firestore's
+    // implicit deny (the `pushSubscriptions` precedent below). They are
+    // written out so the lockdown is visible here rather than inferred, and
+    // so a later wildcard cannot silently open one of them.
+
+    match /membershipPeriods/{periodId} {
+      allow read, write: if false;
+    }
+
+    match /memberships/{membershipId} {
+      allow read, write: if false;
+    }
+
+    // === end V3 W3 PR27: membership ======================================
+
     // Web push subscriptions: one row per device endpoint, written ONLY by
     // the Admin SDK routes under /api/push/*. Clients never touch it — the
     // endpoint plus its keys IS the capability to push to that device's

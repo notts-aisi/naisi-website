@@ -27,6 +27,8 @@ export type AdminTabAccess = {
   canAuthorRounds: boolean;
   /** Appointed on some round. Reads its own round, writes nothing. */
   isAdmissionsReviewer: boolean;
+  /** `manageMembership`: periods, tier grants and the membership console. */
+  canManageMembership: boolean;
 };
 
 type AdminTab = {
@@ -41,12 +43,17 @@ const ADMIN_ONLY = (a: AdminTabAccess) => a.isAdmin;
 
 const TABS: AdminTab[] = [
   { label: "Approvals", href: "/admin", match: (p: string) => p === "/admin", visible: ADMIN_ONLY },
-  { label: "Members", href: "/admin/members", match: (p: string) => p.startsWith("/admin/members"), visible: ADMIN_ONLY },
+  // Exact-or-child rather than a prefix: "/admin/membership" starts with
+  // "/admin/members", so a plain prefix test would light the Members tab up on
+  // the membership console and, since the strip picks the first match, leave
+  // Membership looking inactive on its own page.
+  { label: "Members", href: "/admin/members", match: (p: string) => p === "/admin/members" || p.startsWith("/admin/members/"), visible: ADMIN_ONLY },
   { label: "Collaborators", href: "/admin/collaborators", match: (p: string) => p.startsWith("/admin/collaborators"), visible: ADMIN_ONLY },
   { label: "Registrations", href: "/admin/registrations", match: (p: string) => p.startsWith("/admin/registrations"), visible: ADMIN_ONLY },
   { label: "Projects", href: "/admin/projects", match: (p: string) => p.startsWith("/admin/projects"), visible: ADMIN_ONLY },
   { label: "Courses", href: "/admin/courses", match: (p: string) => p.startsWith("/admin/courses"), visible: (a) => a.isAdmin || a.canAuthorCourses },
   { label: "Admissions", href: "/admin/admissions", match: (p: string) => p.startsWith("/admin/admissions"), visible: (a) => a.isAdmin || a.canAuthorRounds || a.isAdmissionsReviewer },
+  { label: "Membership", href: "/admin/membership", match: (p: string) => p.startsWith("/admin/membership"), visible: (a) => a.isAdmin || a.canManageMembership },
   { label: "Newsletter", href: "/admin/newsletter", match: (p: string) => p.startsWith("/admin/newsletter"), visible: ADMIN_ONLY },
   { label: "Subscriptions", href: "/admin/subscriptions", match: (p: string) => p.startsWith("/admin/subscriptions"), visible: ADMIN_ONLY },
   { label: "Email designs", href: "/admin/email-designs", match: (p: string) => p.startsWith("/admin/email-designs"), visible: ADMIN_ONLY },

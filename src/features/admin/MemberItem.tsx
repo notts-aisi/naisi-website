@@ -15,8 +15,6 @@ import {
   ALL_TRACKS,
   STATUS_LABELS,
   TRACK_LABELS,
-  currentAcademicYear,
-  hasPaidMembership,
   type AffiliationStatus,
   type Track,
   type UserDoc,
@@ -24,9 +22,9 @@ import {
 } from "@/lib/firestore/users";
 import { startImpersonation } from "@/auth/impersonation";
 import MemberEditForm from "./MemberEditForm";
+import MembershipChip from "./MembershipChip";
 import {
   deleteUser,
-  setPaidMembership,
   setPermissions,
   setRole,
   setSuRecognised,
@@ -143,14 +141,7 @@ function applyTier(
 
 export default function MemberItem({ user, currentAdminUid, expanded, onToggleExpand }: Props) {
   const [busy, setBusy] = useState(false);
-  const { toast, run, dismiss } = useActionToast();
-  const academicYear = currentAcademicYear();
-  // The members list is a one-shot fetch, so `user` doesn't refresh after a
-  // write. Remember just this toggle locally (null = no local change yet, read
-  // the doc) so the switch and badge settle on the new value straight away.
-  const [paidOverride, setPaidOverride] = useState<boolean | null>(null);
-  const paidThisYear = paidOverride ?? hasPaidMembership(user, academicYear);
-
+  const { toast, dismiss } = useActionToast();
   const isSelf = user.uid === currentAdminUid;
   const isRejected = user.role === "rejected";
   const isAdminRole = user.role === "admin";
@@ -208,28 +199,6 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
     }
   }
 
-  async function onTogglePaidMembership() {
-    const next = !paidThisYear;
-    setBusy(true);
-    // Year-scoped: this only ever adds/removes `academicYear`, so last year's
-    // tag stays on the record as history.
-    await run(
-      async () => {
-        await setPaidMembership(user.uid, academicYear, next);
-        setPaidOverride(next);
-      },
-      {
-        savingMessage: next
-          ? `Marking paid for ${academicYear}…`
-          : `Clearing ${academicYear} membership…`,
-        successMessage: next
-          ? `Paid member for ${academicYear}`
-          : `No longer marked paid for ${academicYear}`,
-      },
-    );
-    setBusy(false);
-  }
-
   async function onToggleSuRecognised() {
     setBusy(true);
     try {
@@ -237,6 +206,21 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
     } catch (err) {
       console.error(err);
       alert("Failed to update SU recognition");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** One standalone permission key, for the ones that have no draft/approve
+   *  pair. `manageMembership` is the first: there is no "draft a membership". */
+  async function onChangePermission(key: keyof UserPermissions, value: boolean) {
+    const next = { ...(user.permissions ?? {}), [key]: value };
+    setBusy(true);
+    try {
+      await setPermissions(user.uid, next);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update permissions");
     } finally {
       setBusy(false);
     }
@@ -369,11 +353,6 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
             {TRACK_LABELS[t]}
           </Badge>
         ))}
-        {paidThisYear && (
-          <Badge tone="success" title={`Tagged as a paid member for ${academicYear}`}>
-            Paid {academicYear}
-          </Badge>
-        )}
         {showCommitteeTitle && user.title && (
           <span className={styles.title}>{user.title}</span>
         )}
@@ -469,15 +448,32 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
 
               <div className={styles.controlBlock}>
                 <span className={styles.controlLabel}>
-                  Paid membership
+                  Membership
                   <span className={styles.hint}>(badge only, never a gate)</span>
                 </span>
+                <MembershipChip
+                  uid={user.uid}
+                  paidMembershipYears={user.paidMembershipYears}
+                />
+              </div>
+
+              <div className={styles.controlBlock}>
+                <span className={styles.controlLabel}>
+                  Membership admin
+                  {isAdminRole && (
+                    <span className={styles.hint}> (admins always have it)</span>
+                  )}
+                </span>
                 <Switch
-                  checked={paidThisYear}
-                  onChange={onTogglePaidMembership}
-                  disabled={busy}
-                  tone="success"
-                  label={`Paid ${academicYear}`}
+                  checked={Boolean(user.permissions?.manageMembership)}
+                  onChange={() =>
+                    onChangePermission(
+                      "manageMembership",
+                      !user.permissions?.manageMembership,
+                    )
+                  }
+                  disabled={busy || isAdminRole}
+                  label="Can create membership periods and record members"
                 />
               </div>
 
@@ -615,8 +611,10 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
         )}
       </div>
 
-      {/* Only the expanded panel runs a toasted mutation, and its backdrop
-          covers the summary button, so the row can't collapse mid-toast. */}
+      {/* Kept mounted with no live toaster of its own: the membership control
+          reports its own errors inline, and the next toasted mutation on this
+          row has its host ready. The backdrop covers the summary button, so a
+          row cannot collapse mid-toast. */}
       <ActionToast toast={toast} onDismiss={dismiss} />
     </div>
   );

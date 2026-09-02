@@ -5,6 +5,7 @@ import {
   canApproveCourse,
   canAuthorAdmissionRound,
   canDraftCourse,
+  canManageMembership,
 } from "@/lib/firestore/users";
 import AdminPageLockBar from "@/features/admin/AdminLockUI";
 import AdminTabs, { type AdminTabAccess } from "./AdminTabs";
@@ -51,13 +52,20 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // non-admin SU reviewers the flag exists to serve, which is the dead-link
   // failure the denormalisation was added to avoid.
   const isAdmissionsReviewer = user.admissionsReviewer === true;
-  if (!isAdmin && !isCourseAuthor && !isAdmissionsReviewer) redirect("/dashboard");
+  // Same reasoning one more time for `manageMembership`: the grant is useless
+  // if its holder is bounced off `/admin/membership`, which is the only page
+  // it reaches. The tree below has its own gate.
+  const canManageMembers = canManageMembership(user);
+  if (!isAdmin && !isCourseAuthor && !isAdmissionsReviewer && !canManageMembers) {
+    redirect("/dashboard");
+  }
 
   const access: AdminTabAccess = {
     isAdmin,
     canAuthorCourses: isCourseAuthor,
     canAuthorRounds: canAuthorAdmissionRound(user),
     isAdmissionsReviewer,
+    canManageMembership: canManageMembers,
   };
 
   // A marker whose actorUid matches this session is stale, not a session (the
@@ -134,7 +142,9 @@ function AdminHeading({ access }: { access: AdminTabAccess }) {
           ? "Committee controls"
           : access.canAuthorCourses
             ? "Course admin"
-            : "Admissions"}
+            : access.isAdmissionsReviewer || access.canAuthorRounds
+              ? "Admissions"
+              : "Membership"}
       </h1>
     </div>
   );

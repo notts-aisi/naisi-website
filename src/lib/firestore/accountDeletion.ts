@@ -42,6 +42,12 @@ export type AccountDeletionSummary = {
   admissionReviewsAuthoredDeleted: number;
   /** Rounds this account was taken off as a reviewer or as the final decider. */
   admissionRoundRolesCleared: number;
+  /**
+   * Membership rows keyed on this uid, one per period. The PERIODS themselves
+   * are not per-user and are never touched here: `membershipPeriods/2026-27`
+   * describes a year of the society, not a person.
+   */
+  membershipsDeleted: number;
   conductFlagDeleted: boolean;
   authDeleted: boolean;
   /** Set when the teardown was not fully clean (a best-effort step failed, or the
@@ -447,6 +453,7 @@ export async function deleteAccountCascade(
     admissionReviewsDeleted: 0,
     admissionReviewsAuthoredDeleted: 0,
     admissionRoundRolesCleared: 0,
+    membershipsDeleted: 0,
     conductFlagDeleted: false,
     authDeleted: false,
   };
@@ -758,6 +765,28 @@ export async function deleteAccountCascade(
     }
   } catch (err) {
     console.error("[deleteAccount] memberConductFlags delete failed:", uid, err);
+    partialFailure = true;
+  }
+
+  // 5e. MEMBERSHIP rows: one per period this account was recorded a member for.
+  //     Paged on the `uid` field like the course sweeps above, because a long
+  //     membership history is several rows rather than one addressed document.
+  //
+  //     The PERIODS are not swept and must not be:
+  //     `membershipPeriods/{periodId}` describes a year of the society and
+  //     outlives every account under it. The period's cached per-tier totals
+  //     go stale by however many rows this deletes, which is the honest
+  //     trade: recomputing them here would mean reading every remaining row
+  //     of every period the account touched, during a teardown whose other
+  //     steps are already best-effort, and the console's counts are a summary
+  //     of a moving list rather than an audit.
+  //
+  //     `users.paidMembershipYears` needs no step of its own: the whole user
+  //     document goes in step 3.
+  try {
+    summary.membershipsDeleted = await deleteOwnedCourseRows(db, "memberships", uid);
+  } catch (err) {
+    console.error("[deleteAccount] memberships delete failed:", uid, err);
     partialFailure = true;
   }
 
