@@ -66,20 +66,51 @@ export type SchedulerMarkerRef = {
 };
 
 /**
- * Marker id components must not contain the `__` separator or the resulting
- * id would be ambiguous, and must not contain "/" or Firestore rejects the
- * doc id outright. Callers pass ids the platform already produced (round ids,
- * uids, session keys), so this throws rather than sanitising: a silently
- * mangled component would collapse two distinct units of work onto one
- * marker and suppress a real send.
+ * A component that is a doc id the platform minted (a round id, a run id, a
+ * group id, a uid).
+ *
+ * NOTE these MAY contain the `__` separator, and rejecting it would be a bug,
+ * not a safety check: `slugId()` builds every doc id in this codebase as
+ * `{slug}__{8-char-base36}`, so `autumn-2026-intake__k3f9a2b1` is the NORMAL
+ * shape of a round id. The ids built below are therefore not parseable back
+ * into their components by splitting on `__`, and nothing tries to: every
+ * component is stored as a FIELD, and only the family prefix (which never
+ * contains `__`) is ever read back off the id.
+ *
+ * What that leaves is a theoretical collision — two different tuples
+ * concatenating to the same string. It does not arise here, because at most
+ * one component per id is a slug id whose tail is free-form, and every slug
+ * id carries a fixed 8-character suffix, so there is no second valid split.
+ * Callers pass platform ids, never user input.
+ *
+ * `/` is rejected because Firestore rejects it in a doc id outright, and `.`
+ * because a component that is `.` or `..` would make an illegal id. This
+ * throws rather than sanitising: a silently mangled component would collapse
+ * two units of work onto one marker and suppress a real send.
  */
-function assertComponent(name: string, value: string): string {
+function assertDocIdComponent(name: string, value: string): string {
   if (value === "") {
     throw new Error(`scheduler marker: \`${name}\` must not be empty`);
   }
-  if (value.includes("__") || value.includes("/") || value.includes(".")) {
+  if (value.includes("/") || value.includes(".")) {
     throw new Error(
-      `scheduler marker: \`${name}\` must not contain "__", "/" or "." (got ${JSON.stringify(value)})`,
+      `scheduler marker: \`${name}\` must not contain "/" or "." (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+/**
+ * A component this platform composes itself — a date key, a session key, a
+ * stage id. These are fully under our control, so they additionally must not
+ * contain `__`: keeping the tail of every marker id separator-free is what
+ * removes the last of the ambiguity described above.
+ */
+function assertKeyComponent(name: string, value: string): string {
+  assertDocIdComponent(name, value);
+  if (value.includes("__")) {
+    throw new Error(
+      `scheduler marker: \`${name}\` must not contain "__" (got ${JSON.stringify(value)})`,
     );
   }
   return value;
@@ -92,9 +123,11 @@ export function reminderMarker(
   dueAtKey: string,
 ): SchedulerMarkerRef {
   const fields = {
-    roundId: assertComponent("roundId", roundId),
-    uid: assertComponent("uid", uid),
-    dueAtKey: assertComponent("dueAtKey", dueAtKey),
+    roundId: assertDocIdComponent("roundId", roundId),
+    // A Firebase uid is 28 alphanumeric characters, so it belongs in the
+    // stricter bucket even though it is an id rather than a key.
+    uid: assertKeyComponent("uid", uid),
+    dueAtKey: assertKeyComponent("dueAtKey", dueAtKey),
   };
   return {
     id: `remind__${fields.roundId}__${fields.uid}__${fields.dueAtKey}`,
@@ -109,8 +142,8 @@ export function stageReleaseMarker(
   stageId: string,
 ): SchedulerMarkerRef {
   const fields = {
-    roundId: assertComponent("roundId", roundId),
-    stageId: assertComponent("stageId", stageId),
+    roundId: assertDocIdComponent("roundId", roundId),
+    stageId: assertKeyComponent("stageId", stageId),
   };
   return {
     id: `stagerel__${fields.roundId}__${fields.stageId}`,
@@ -125,8 +158,8 @@ export function unmarkedRegisterMarker(
   sessionKey: string,
 ): SchedulerMarkerRef {
   const fields = {
-    groupId: assertComponent("groupId", groupId),
-    sessionKey: assertComponent("sessionKey", sessionKey),
+    groupId: assertDocIdComponent("groupId", groupId),
+    sessionKey: assertKeyComponent("sessionKey", sessionKey),
   };
   return {
     id: `unmarked__${fields.groupId}__${fields.sessionKey}`,
@@ -142,9 +175,9 @@ export function breakReturnMarker(
   slotStartKey: string,
 ): SchedulerMarkerRef {
   const fields = {
-    runId: assertComponent("runId", runId),
-    groupId: assertComponent("groupId", groupId),
-    slotStartKey: assertComponent("slotStartKey", slotStartKey),
+    runId: assertDocIdComponent("runId", runId),
+    groupId: assertDocIdComponent("groupId", groupId),
+    slotStartKey: assertKeyComponent("slotStartKey", slotStartKey),
   };
   return {
     id: `breakret__${fields.runId}__${fields.groupId}__${fields.slotStartKey}`,
