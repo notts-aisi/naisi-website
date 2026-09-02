@@ -57,7 +57,8 @@ function acceptsFreeText(q: FormQuestion): boolean {
 /**
  * Read a typed character limit. Blank clears it back to the default, and
  * anything unparseable is treated as blank rather than as zero. The range is
- * NOT clamped here: both save paths refuse an out-of-range number and name the
+ * NOT clamped here: every save path that takes this builder's output (both
+ * event paths and the run editor) refuses an out-of-range number and names the
  * question, and the hint below the input says so before they get there.
  */
 function parseLimit(raw: string): number | undefined {
