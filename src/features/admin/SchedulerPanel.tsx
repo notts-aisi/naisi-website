@@ -5,6 +5,10 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Switch from "@/components/ui/Switch";
+// Type-only imports of firebase-admin inside that module are erased at build
+// time, so pulling the one bucket formatter into a client component is safe
+// and keeps the panel and the receipt id speaking the same language.
+import { formatBucketKey } from "@/lib/firestore/schedulerRuns";
 import styles from "./SchedulerPanel.module.css";
 
 /**
@@ -91,13 +95,6 @@ function formatWhen(iso: string | null): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function formatBucket(bucket: string): string {
-  const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})Z$/.exec(bucket);
-  if (!match) return bucket;
-  const [, y, mo, d, h, mi] = match;
-  return `${d}/${mo}/${y} ${h}:${mi} UTC`;
 }
 
 function receiptSummary(receipt: ReceiptRow): string {
@@ -247,7 +244,7 @@ export default function SchedulerPanel() {
             Last tick:{" "}
             {lastReceipt === null
               ? "none recorded yet"
-              : `${formatBucket(lastReceipt.bucket)} (depth ${lastReceipt.depth}, ${lastReceipt.durationMs}ms)`}
+              : `${formatBucketKey(lastReceipt.bucket)} (depth ${lastReceipt.depth}, ${lastReceipt.durationMs}ms)`}
           </span>
         </p>
         {actionError !== null && <p className={styles.error}>{actionError}</p>}
@@ -390,7 +387,7 @@ export default function SchedulerPanel() {
               <tbody>
                 {state.receipts.map((receipt) => (
                   <tr key={receipt.id}>
-                    <td className={styles.mono}>{formatBucket(receipt.bucket)}</td>
+                    <td className={styles.mono}>{formatBucketKey(receipt.bucket)}</td>
                     <td>{receipt.depth}</td>
                     <td>{receipt.trigger}</td>
                     <td>
