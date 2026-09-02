@@ -98,6 +98,11 @@ const AUTH_NEXT_COOKIE = "__auth_next";
  *    fails the prefix, and any later backslash is rejected outright;
  *  - a scheme with no slash ("javascript:alert(1)") fails the first character.
  *
+ * The prefix alone is not quite enough, though: "/courses/../admin" starts
+ * with it and still leaves the funnel the moment a browser normalises the
+ * path. So a dot-dot SEGMENT is rejected too, which keeps the allowlist
+ * meaning what it says rather than what it happens to spell.
+ *
  * Anything that does not match falls back to `/pending-approval`, which is
  * still the right answer for the overwhelming majority of registrations.
  */
@@ -113,6 +118,12 @@ function safeCourseNext(raw: string | null | undefined): string | null {
     const code = ch.codePointAt(0) ?? 0;
     if (code < 0x20 || code === 0x7f) return null;
   }
+  // Segment-wise, so a legitimate ".." inside a course id (or a lone dot) is
+  // untouched while a real traversal segment is refused. The query string and
+  // fragment are split off first: they are not path segments and a "?a=.." is
+  // not a traversal.
+  const path = raw.split(/[?#]/, 1)[0];
+  if (path.split("/").includes("..")) return null;
   return raw;
 }
 
