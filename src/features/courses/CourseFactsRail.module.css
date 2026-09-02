@@ -1,0 +1,92 @@
+/* ============================================================
+   CourseFactsRail — the scannable half of the programme page.
+
+   A grid of short answers, then the prose notes underneath.
+   ============================================================ */
+
+.rail {
+  padding-block: var(--space-10);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.heading {
+  margin: 0 0 var(--space-6);
+  font-size: clamp(1.35rem, 2.6vw, 1.75rem);
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  font-weight: 700;
+}
+
+.grid {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--space-5);
+}
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.term {
+  margin: 0;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.value {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: var(--leading-snug);
+  color: var(--color-text);
+}
+
+.notes {
+  margin-top: var(--space-8);
+  display: grid;
+  gap: var(--space-6);
+}
+
+.noteTitle {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-lg);
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+.noteBody {
+  margin: 0;
+  /* The author's own line breaks survive without anything parsing the string.
+     See the component comment: this page renders member-visible copy as text
+     nodes and leaves HTML to BlockView. */
+  white-space: pre-line;
+  color: var(--color-text-muted);
+  line-height: var(--leading-relaxed);
+  max-width: 44rem;
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .rail {
+    padding-block: var(--space-8);
+  }
+  .grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-3);
+  }
+  .cell {
+    padding: var(--space-3);
+  }
+  .notes {
+    margin-top: var(--space-6);
+    gap: var(--space-5);
+  }
+}

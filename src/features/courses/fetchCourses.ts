@@ -14,6 +14,11 @@ import {
 } from "@/lib/firestore/courseGroups";
 import { type ApplicationWindow } from "@/lib/courses/window";
 import { courseRunWindow } from "@/lib/courses/enrolWindow";
+import { COURSE_TRACKS } from "@/lib/firestore/courses";
+import {
+  listLiveRoundsByCourse,
+  type CourseLiveRound,
+} from "./fetchLiveRound";
 
 /**
  * Server-only fetchers for the public course pages (`fetchEvents.ts` pattern).
@@ -75,6 +80,18 @@ export type CourseCatalogueEntry = {
    * `closed`, and the card's copy has to branch on all three.
    */
   featuredRun: RunWindow | null;
+  /**
+   * The ADMISSION ROUND that places people onto one of this course's runs, or
+   * null when no round names any of them.
+   *
+   * When it is present it OUTRANKS the run's own window for every date on the
+   * card: a round is the object an applicant applies to, it carries the dates
+   * an admin typed, and the run's `applicationsCloseAt` is the pre-round
+   * mechanism kept for open-enrolment courses. Two dates naming the same
+   * deadline is exactly the drift V3 exists to stop, so the card reads one of
+   * them and the choice is made here rather than in the component.
+   */
+  liveRound: CourseLiveRound | null;
 };
 
 /** A published course with the curriculum its showcase run puts on display. */
@@ -230,13 +247,63 @@ export async function listPublishedCourses(): Promise<CourseCatalogueEntry[]> {
     );
   }
 
+  // The rounds pass reuses the run documents already read above as its
+  // run-to-course map, so the only rows it has to fetch are the runs a round
+  // names that no run query returned (a target run still in `draft`).
+  const knownRuns = new Map<string, string>();
+  for (const d of runDocs) {
+    const courseId = d.data()?.courseId;
+    if (typeof courseId === "string" && courseId) knownRuns.set(d.id, courseId);
+  }
+  const roundsByCourse = await listLiveRoundsByCourse(knownRuns, now);
+
   return courseSnap.docs
     .map((d) => normalizeCourse(d.id, d.data()))
-    .sort((a, b) => a.title.localeCompare(b.title))
     .map((course) => ({
       course,
       featuredRun: byCourse.get(course.id) ?? null,
-    }));
+      liveRound: roundsByCourse.get(course.id) ?? null,
+    }))
+    .sort(compareCatalogueEntries);
+}
+
+/**
+ * How openly a catalogue row is taking people, as a sort key. The ROUND wins
+ * when there is one, for the reason `liveRound` documents: it is the object
+ * people apply to, and the run's own window is the pre-round mechanism that
+ * open-enrolment courses still use.
+ */
+function opennessRank(entry: CourseCatalogueEntry): number {
+  const state = entry.liveRound?.state ?? entry.featuredRun?.window.state ?? null;
+  if (state === "open") return 0;
+  if (state === "not-yet") return 1;
+  return 2;
+}
+
+/**
+ * Catalogue order: what you can apply to NOW, then what opens soon, then
+ * everything else; within a band, by track and then by title.
+ *
+ * Alphabetical order was the previous rule and it buries the one thing the
+ * page exists for: in a term where the incubator is open and three past
+ * fellowships are not, "Applications open" can sit fourth on the grid because
+ * of a letter. Track is the secondary key rather than the title so the
+ * technical and governance strands read as strands rather than as an
+ * interleaved alphabet, and `COURSE_TRACKS` supplies that order so the
+ * catalogue, the chips and the filters cannot disagree about it.
+ *
+ * Exported because it is the half of the catalogue worth pinning with a test:
+ * it is decidable from two plain objects and it is what a reader notices first.
+ */
+export function compareCatalogueEntries(
+  a: CourseCatalogueEntry,
+  b: CourseCatalogueEntry,
+): number {
+  const rank = opennessRank(a) - opennessRank(b);
+  if (rank !== 0) return rank;
+  const track = COURSE_TRACKS.indexOf(a.course.track) - COURSE_TRACKS.indexOf(b.course.track);
+  if (track !== 0) return track;
+  return a.course.title.localeCompare(b.course.title);
 }
 
 /**
@@ -302,8 +369,34 @@ export async function getPublishedCourse(
 export async function getApplicationRunForCourse(
   courseId: string,
 ): Promise<RunWindow | null> {
+  return (await getCourseRunSet(courseId)).featuredRun;
+}
+
+/**
+ * One course's runs, read once and answered twice: the run its public
+ * surfaces describe, AND every run id the course has.
+ *
+ * The id list is what the round lookup needs. A round names RUNS
+ * (`outcomeRunIds`) and `courseRuns.admissionRoundIds` does not exist yet, so
+ * the only way from a course to its round is through its runs, and the ids
+ * have to include the ones `getApplicationRunForCourse` drops: an autumn
+ * intake's target run sits in `draft` right up until allocation, which is
+ * precisely the window in which the page most needs to name the round.
+ *
+ * One query for both answers, because the page needs both and reading the
+ * same fifty documents twice on every render is the kind of thing that only
+ * looks free.
+ */
+export type CourseRunSet = {
+  /** Every run of this course, draft and archived included. */
+  runIds: string[];
+  /** The run the public surfaces describe, or null. */
+  featuredRun: RunWindow | null;
+};
+
+export async function getCourseRunSet(courseId: string): Promise<CourseRunSet> {
   const db = getAdminDb();
-  if (!db) return null;
+  if (!db) return { runIds: [], featuredRun: null };
   const snap = await db
     .collection("courseRuns")
     .where("courseId", "==", courseId)
@@ -311,8 +404,10 @@ export async function getApplicationRunForCourse(
     .get();
   // One clock reading for every candidate, so the ranking is a total order.
   const now = new Date();
+  const runIds: string[] = [];
   let best: RunWindow | null = null;
   for (const d of snap.docs) {
+    runIds.push(d.id);
     const run = normalizeCourseRun(d.id, d.data());
     const window = courseRunWindow(run, now);
     // Draft and archived alike: unfinished authoring and withdrawn runs are
@@ -322,7 +417,7 @@ export async function getApplicationRunForCourse(
     const candidate: RunWindow = { run, window };
     best = best ? preferredRunWindow(best, candidate) : candidate;
   }
-  return best;
+  return { runIds, featuredRun: best };
 }
 
 /**

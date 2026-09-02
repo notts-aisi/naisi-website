@@ -1,0 +1,142 @@
+/* ============================================================
+   JourneyStrip — the term's shape, with the reader's position.
+
+   A horizontal rail on wide screens, a vertical one on a
+   phone. The connecting line is drawn per step (a ::before on
+   each marker) rather than as one absolutely positioned rule,
+   so it survives a step wrapping to a second line.
+   ============================================================ */
+
+.section {
+  padding-block: var(--space-10);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.heading {
+  margin: 0 0 var(--space-6);
+  font-size: clamp(1.35rem, 2.6vw, 1.75rem);
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  font-weight: 700;
+}
+
+.strip {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: var(--space-4);
+}
+
+.step {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: var(--space-5);
+}
+
+/* The rail: a line from this step's marker to the next one. */
+.step::before {
+  content: "";
+  position: absolute;
+  top: 0.34rem;
+  left: 0.6rem;
+  right: calc(var(--space-4) * -1);
+  height: 1px;
+  background: var(--color-border);
+}
+
+.step:last-child::before {
+  display: none;
+}
+
+.marker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: var(--radius-pill);
+  border: 2px solid var(--color-border-strong);
+  background: var(--color-bg);
+}
+
+.label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.date {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.detail {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  line-height: var(--leading-snug);
+}
+
+.here {
+  margin-top: var(--space-1);
+  align-self: flex-start;
+  padding: 0.15rem var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* === States === */
+
+.past .marker {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+}
+
+.past .label {
+  color: var(--color-text-muted);
+}
+
+.current .marker {
+  border-color: var(--color-accent);
+  background: var(--color-bg);
+  box-shadow: 0 0 0 4px var(--color-accent-soft);
+}
+
+.upcoming .label {
+  color: var(--color-text);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .section {
+    padding-block: var(--space-8);
+  }
+  .strip {
+    grid-template-columns: 1fr;
+    gap: var(--space-5);
+  }
+  /* Vertical rail: the line runs down the left gutter instead of across. */
+  .step {
+    padding-top: 0;
+    padding-left: var(--space-6);
+  }
+  .step::before {
+    top: 1rem;
+    bottom: calc(var(--space-5) * -1);
+    left: 0.3rem;
+    right: auto;
+    width: 1px;
+    height: auto;
+  }
+  .marker {
+    top: 0.25rem;
+  }
+}

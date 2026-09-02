@@ -1,0 +1,101 @@
+/* ============================================================
+   CourseFaq — native <details> rows.
+
+   The marker is suppressed and replaced with our own glyph so
+   the row matches the rest of the page; the summary keeps the
+   44px touch floor because this is a public surface.
+   ============================================================ */
+
+.section {
+  padding-block: var(--space-10);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.heading {
+  margin: 0 0 var(--space-5);
+  font-size: clamp(1.35rem, 2.6vw, 1.75rem);
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  font-weight: 700;
+}
+
+.list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.item {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  /* 44px floor - public surface, enforced (docs/touch-targets.md). */
+  min-height: 2.75rem;
+  padding: var(--space-3) var(--space-4);
+  cursor: pointer;
+  list-style: none;
+  color: var(--color-text);
+}
+
+/* Safari draws its own disclosure triangle through a pseudo-element that
+   `list-style: none` alone does not remove. */
+.summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-md);
+}
+
+.question {
+  font-weight: 600;
+  line-height: var(--leading-snug);
+}
+
+.chevron {
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-lg);
+  line-height: 1;
+  transition: transform var(--transition-fast);
+}
+
+.item[open] .chevron {
+  transform: rotate(45deg);
+}
+
+.answer {
+  margin: 0;
+  padding: 0 var(--space-4) var(--space-4);
+  white-space: pre-line;
+  color: var(--color-text-muted);
+  line-height: var(--leading-relaxed);
+  max-width: 44rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .section {
+    padding-block: var(--space-8);
+  }
+  .summary {
+    padding: var(--space-3);
+  }
+  .answer {
+    padding: 0 var(--space-3) var(--space-3);
+  }
+}
