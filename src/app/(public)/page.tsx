@@ -2,6 +2,7 @@ import Link from "next/link";
 import SubscribeForm from "@/components/SubscribeForm";
 import ReadingListAccordion from "@/components/ReadingListAccordion";
 import { READING_LISTS } from "@/content/readingLists";
+import { SU_PAGE_URL } from "@/content/socials";
 import HeroAtmosphere from "./HeroAtmosphere";
 import HeroScrollChevron from "./HeroScrollChevron";
 import HeroEyebrow from "./HeroEyebrow";
@@ -140,7 +141,7 @@ export default function Landing() {
                 Your first social is on us. Come once before you decide
                 whether to{" "}
                 <a
-                  href="https://su.nottingham.ac.uk/activities/view/NottsAISafety"
+                  href={SU_PAGE_URL}
                   target="_blank"
                   rel="noreferrer noopener"
                   className={styles.inlineLink}

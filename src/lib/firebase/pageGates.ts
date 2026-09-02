@@ -4,6 +4,7 @@ import {
   canApproveCourse,
   canAuthorAdmissionRound,
   canDraftCourse,
+  canManageMembership,
 } from "@/lib/firestore/users";
 import { getCurrentUser, type SessionUser } from "./session";
 
@@ -76,5 +77,27 @@ export async function requireAdmissionsPage(): Promise<SessionUser> {
   if (!user || !(canAuthorAdmissionRound(user) || user.admissionsReviewer === true)) {
     redirect("/dashboard");
   }
+  return user;
+}
+
+/**
+ * The membership console, `/admin/membership`. Admin or `manageMembership`.
+ *
+ * Its own tree for the same reason `/admin/courses` and `/admin/admissions`
+ * have one: the audience is not "full admins". A member holding
+ * `manageMembership` keeps the society's membership record, which is a job
+ * somebody can hold without also holding approvals, the member roster and the
+ * danger zone.
+ *
+ * The gate decides what RENDERS. Every write is gated again at its route, and
+ * the one action this page offers that a `manageMembership` holder may not
+ * take, moving the CURRENT period pointer, is refused by
+ * `POST /api/admin/membership/current` regardless of what this let through.
+ * Both collections are `allow read, write: if false`, so nothing here is
+ * reachable client-direct.
+ */
+export async function requireMembershipPage(): Promise<SessionUser> {
+  const user = await getCurrentUser();
+  if (!user || !canManageMembership(user)) redirect("/dashboard");
   return user;
 }

@@ -344,6 +344,25 @@ export type CohortAudienceLane = {
   overCapAdvice: string;
 };
 
+/**
+ * NARROWING THE AUDIENCE TO ONE GROUP.
+ *
+ * The attendance push mails ONE group, not the run, so it must not inherit a
+ * ceiling counted on the run: a 250-enrolment pre-course spread over twelve
+ * groups would refuse every group's reminder, and the register would lock with
+ * nobody mailed. Passing `groupId` filters the run's ACTIVE enrolments to that
+ * group BEFORE `MAX_COHORT_RECIPIENTS` is applied, so the cap becomes a
+ * statement about the room the facilitator was just in.
+ *
+ * The subscription half of the audience is unchanged: the channel is still the
+ * run's, because that is the row an unsubscribe link flips. Only the enrolment
+ * half narrows.
+ */
+export type CohortAudienceScope = {
+  /** Keep only members whose active enrolment names this group. */
+  groupId?: string | null;
+};
+
 /** Hard ceiling per request. Beyond this a send FAILS — see below. */
 export const MAX_COHORT_RECIPIENTS = 200;
 
@@ -396,9 +415,18 @@ export async function resolveCohortAudience(
   db: Firestore,
   runId: string,
   lane: CohortAudienceLane,
+  scope: CohortAudienceScope = {},
 ): Promise<CohortAudience> {
   const channel = courseRunChannel(runId);
+  const onlyGroupId = scope.groupId ?? null;
   let skipped = 0;
+  /**
+   * Enrolled on the run, active, and in ANOTHER group. Counted apart from
+   * `skipped` on purpose: they were never this send's audience, and folding
+   * them in would have a group of twelve report two hundred recipients
+   * dropped.
+   */
+  let otherGroups = 0;
 
   const rows = await findRecipientsForChannel(db, channel);
   // Refuse rather than slice. A `slice()` here would be a silent truncation
@@ -489,10 +517,17 @@ export async function resolveCohortAudience(
       enrolment.runId === runId &&
       enrolment.uid === p.uid
     ) {
+      // THE GROUP FILTER SITS HERE, ABOVE THE CAP, for the same reason the
+      // enrolment filter does: a ceiling counted on the whole run would refuse
+      // a twelve-person group's reminder because the run has 250 people on it.
+      if (onlyGroupId && enrolment.groupId !== onlyGroupId) {
+        otherGroups += 1;
+        continue;
+      }
       enrolled.push({ ...p, groupId: enrolment.groupId });
     }
   }
-  const notEnrolled = memberPending.length - enrolled.length;
+  const notEnrolled = memberPending.length - enrolled.length - otherGroups;
   if (notEnrolled > 0) {
     skipped += notEnrolled;
     // Counts only. A non-zero value here is either a stale row (someone left and

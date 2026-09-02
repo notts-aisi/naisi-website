@@ -52,12 +52,25 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /**
  * Route trees whose mutating handlers must all be guarded.
  *
- * TODO when those workstreams land: add "src/app/api/admin/membership"
- * (periods, grants, import, export) plus the CSV export routes to this list.
+ * TODO when that workstream lands: add the CSV export routes to this list.
  * They are named here rather than pre-registered because a tree that does not
  * exist yet cannot be scanned, and a silently-skipped tree is a hole.
  */
-const GUARDED_TREES = ["src/app/api/courses", "src/app/api/admissions"];
+const GUARDED_TREES = [
+  "src/app/api/courses",
+  "src/app/api/admissions",
+  // The member-record tree. It holds one route today, the conduct flag, and a
+  // single MUST_GUARD entry would cover that one route; the tree is registered
+  // so the NEXT route added beside it (a note, a ban, a merge) is caught by
+  // the sweep instead of relying on whoever adds it remembering this file.
+  "src/app/api/admin/members",
+
+  // Membership: periods, the CURRENT pointer and tier grants. A grant moves
+  // the membership row, the `paidMembershipYears` cache every badge reads and
+  // the period's totals in one write, all recorded as whoever the session says
+  // is acting, so a view-as session must not reach any of it.
+  "src/app/api/admin/membership",
+];
 
 /**
  * Every mutating route in those trees, with the reason it is high-trust.
@@ -70,7 +83,9 @@ const MUST_GUARD = [
   ["src/app/api/courses/[courseId]/publish/route.ts", "publishes a course to the public catalogue"],
   ["src/app/api/courses/[courseId]/templates/route.ts", "writes a reusable curriculum template"],
   ["src/app/api/courses/exercise-responses/[responseId]/review/route.ts", "reviews a learner's submitted work and releases the comment"],
-  ["src/app/api/courses/groups/[groupId]/attendance/route.ts", "marks and pushes a session register, which also sends the week's email"],
+  ["src/app/api/courses/groups/[groupId]/attendance/route.ts", "marks a session register, and lets an admin correct a locked one"],
+  ["src/app/api/courses/groups/[groupId]/attendance/push/route.ts", "locks a register, rewrites every member's attendance record and mails the group"],
+  ["src/app/api/courses/groups/[groupId]/participant-notes/route.ts", "writes a private note about a named student"],
   ["src/app/api/courses/groups/[groupId]/email/route.ts", "sends email to a group"],
   ["src/app/api/courses/groups/[groupId]/facilitators/route.ts", "appoints and removes facilitators"],
   ["src/app/api/courses/groups/[groupId]/notice/route.ts", "publishes a notice to a whole group"],
@@ -122,6 +137,21 @@ const MUST_GUARD = [
   // named here or it is checked by nothing: it writes `config/courses`, whose
   // knobs reach every course surface at once.
   ["src/app/api/admin/courses-config/route.ts", "changes site-wide course settings"],
+  // Also outside the scanned trees. It writes a conduct record about a named
+  // member, which reviewers act on, and it is the only writer of a collection
+  // no client can read back to check what happened.
+  [
+    "src/app/api/admin/members/[uid]/conduct-flag/route.ts",
+    "sets and clears a member's conduct flag",
+  ],
+
+  // Membership. Money and provenance: who paid, in which year, recorded by
+  // whom. The grant route also owns `users.paidMembershipYears`, so a write
+  // here changes a badge on somebody else's account.
+  ["src/app/api/admin/membership/periods/route.ts", "creates the membership period every badge is about"],
+  ["src/app/api/admin/membership/periods/[periodId]/route.ts", "edits a membership period's dates and internal note"],
+  ["src/app/api/admin/membership/current/route.ts", "moves the CURRENT period pointer, which re-badges the whole site"],
+  ["src/app/api/admin/membership/grant/route.ts", "grants and revokes a member's tier, and writes the badge cache"],
 ];
 
 /**

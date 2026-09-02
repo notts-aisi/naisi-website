@@ -7,9 +7,10 @@ import { Field, Input } from "@/components/ui/Input";
 import styles from "./CoursesConfigPanel.module.css";
 
 /**
- * The two `config/courses` knobs a human changes: the anonymous feedback form
- * offered when somebody leaves a course, and how long a register may go
- * unmarked before the follow-up job raises a task against its facilitator.
+ * The three `config/courses` knobs a human changes: the anonymous feedback
+ * form offered when somebody leaves a course, the weekly feedback form the
+ * attendance push links to, and how long a register may go unmarked before
+ * the follow-up job raises a task against its facilitator.
  *
  * It lives on the SITE STATUS page rather than under /admin/courses on
  * purpose. Neither value is course content: they are site-wide operational
@@ -24,9 +25,11 @@ import styles from "./CoursesConfigPanel.module.css";
 
 type ServerState = {
   dropOutFeedbackUrl: string;
+  weeklyFeedbackUrl: string;
   unmarkedRegisterGraceHours: number;
   defaults: {
     dropOutFeedbackUrl: string;
+    weeklyFeedbackUrl: string;
     unmarkedRegisterGraceHours: number;
   };
 };
@@ -34,6 +37,7 @@ type ServerState = {
 export default function CoursesConfigPanel() {
   const [defaults, setDefaults] = useState<ServerState["defaults"] | null>(null);
   const [feedbackUrl, setFeedbackUrl] = useState("");
+  const [weeklyUrl, setWeeklyUrl] = useState("");
   const [graceHours, setGraceHours] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -55,6 +59,7 @@ export default function CoursesConfigPanel() {
         } else {
           setDefaults(body.defaults);
           setFeedbackUrl(body.dropOutFeedbackUrl);
+          setWeeklyUrl(body.weeklyFeedbackUrl ?? "");
           setGraceHours(String(body.unmarkedRegisterGraceHours));
         }
       } catch {
@@ -84,6 +89,7 @@ export default function CoursesConfigPanel() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           dropOutFeedbackUrl: feedbackUrl.trim(),
+          weeklyFeedbackUrl: weeklyUrl.trim(),
           unmarkedRegisterGraceHours: hours,
         }),
       });
@@ -91,6 +97,7 @@ export default function CoursesConfigPanel() {
         ok?: boolean;
         error?: string;
         dropOutFeedbackUrl?: string;
+        weeklyFeedbackUrl?: string;
         unmarkedRegisterGraceHours?: number;
       } | null;
       if (!res.ok || !body?.ok) {
@@ -100,6 +107,7 @@ export default function CoursesConfigPanel() {
       // Seeded from the SERVER's answer, not the draft: the reader normalises
       // what it stored, so what comes back is what the site will actually use.
       setFeedbackUrl(body.dropOutFeedbackUrl ?? "");
+      setWeeklyUrl(body.weeklyFeedbackUrl ?? "");
       if (typeof body.unmarkedRegisterGraceHours === "number") {
         setGraceHours(String(body.unmarkedRegisterGraceHours));
       }
@@ -129,6 +137,22 @@ export default function CoursesConfigPanel() {
               id="courses-dropout-feedback-url"
               value={feedbackUrl}
               onChange={(e) => setFeedbackUrl(e.target.value)}
+              placeholder="https://forms.gle/..."
+              inputMode="url"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </Field>
+
+          <Field
+            id="courses-weekly-feedback-url"
+            label="Weekly feedback form"
+            hint="Linked from the reminder each group gets when its facilitator pushes the register. Leave it empty and the email simply does not mention one. Must start with http:// or https://."
+          >
+            <Input
+              id="courses-weekly-feedback-url"
+              value={weeklyUrl}
+              onChange={(e) => setWeeklyUrl(e.target.value)}
               placeholder="https://forms.gle/..."
               inputMode="url"
               autoComplete="off"

@@ -81,6 +81,13 @@ const COURSE_ADMIN_ACCESS = (v: Viewer) =>
 const ADMISSIONS_ACCESS = (v: Viewer) =>
   v.role === "admin" || v.admissionsReviewer;
 
+// A non-admin holding `manageMembership` may use /admin/membership and nothing
+// else in the admin area, so they get a link straight to it. Admins are
+// excluded on purpose, exactly like the course link above: they already have
+// "Admin", and the console is a tab inside it.
+const MEMBERSHIP_ADMIN_ACCESS = (v: Viewer) =>
+  v.role !== "admin" && Boolean(v.permissions.manageMembership);
+
 const NAV_GROUPS: NavGroup[] = [
   {
     label: null,
@@ -114,6 +121,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Admin", href: "/admin", visible: ADMIN_ONLY },
       { label: "Course admin", href: "/admin/courses", visible: COURSE_ADMIN_ACCESS },
+      { label: "Membership", href: "/admin/membership", visible: MEMBERSHIP_ADMIN_ACCESS },
     ],
   },
 ];

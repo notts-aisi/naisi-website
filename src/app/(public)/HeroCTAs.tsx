@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { motion } from "motion/react";
 import JoinMenu from "@/components/ui/JoinMenu";
+import { SU_PAGE_URL } from "@/content/socials";
 import { useTilt } from "@/hooks/useTilt";
 import styles from "./landing.module.css";
 
@@ -46,7 +47,7 @@ export default function HeroCTAs() {
       >
         <a
           ref={tertiaryRef}
-          href="https://su.nottingham.ac.uk/activities/view/NottsAISafety"
+          href={SU_PAGE_URL}
           target="_blank"
           rel="noreferrer noopener"
           className={styles.secondaryCta}

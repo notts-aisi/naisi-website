@@ -50,6 +50,10 @@ export type SessionUser = {
     approveEvent: boolean;
     draftCourse: boolean;
     approveCourse: boolean;
+    /** Membership periods, tier grants, and the membership console. Not part
+     *  of the SU-recognised PII tier; moving the CURRENT period pointer stays
+     *  full-admin only. */
+    manageMembership: boolean;
   };
 };
 
@@ -159,6 +163,7 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
         approveEvent: Boolean(perms.approveEvent),
         draftCourse: Boolean(perms.draftCourse),
         approveCourse: Boolean(perms.approveCourse),
+        manageMembership: Boolean(perms.manageMembership),
       },
     };
   } catch {

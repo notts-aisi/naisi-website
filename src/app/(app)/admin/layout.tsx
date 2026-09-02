@@ -5,6 +5,7 @@ import {
   canApproveCourse,
   canAuthorAdmissionRound,
   canDraftCourse,
+  canManageMembership,
 } from "@/lib/firestore/users";
 import AdminPageLockBar from "@/features/admin/AdminLockUI";
 import AdminTabs, { type AdminTabAccess } from "./AdminTabs";
@@ -51,13 +52,20 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // non-admin SU reviewers the flag exists to serve, which is the dead-link
   // failure the denormalisation was added to avoid.
   const isAdmissionsReviewer = user.admissionsReviewer === true;
-  if (!isAdmin && !isCourseAuthor && !isAdmissionsReviewer) redirect("/dashboard");
+  // Same reasoning one more time for `manageMembership`: the grant is useless
+  // if its holder is bounced off `/admin/membership`, which is the only page
+  // it reaches. The tree below has its own gate.
+  const canManageMembers = canManageMembership(user);
+  if (!isAdmin && !isCourseAuthor && !isAdmissionsReviewer && !canManageMembers) {
+    redirect("/dashboard");
+  }
 
   const access: AdminTabAccess = {
     isAdmin,
     canAuthorCourses: isCourseAuthor,
     canAuthorRounds: canAuthorAdmissionRound(user),
     isAdmissionsReviewer,
+    canManageMembership: canManageMembers,
   };
 
   // A marker whose actorUid matches this session is stale, not a session (the
@@ -115,6 +123,24 @@ export default async function AdminLayout({ children }: { children: React.ReactN
  *  the page identifies itself the same way in both. The title follows the
  *  caller: a course drafter and an appointed reviewer are both in here for one
  *  section, and "Committee controls" would be a promise neither can act on. */
+/**
+ * The title for one caller, most-specific capability first.
+ *
+ * Every branch TESTS the capability it names, membership included. Reaching
+ * "Membership" as the last else of a chain would have promised a section to
+ * whoever falls through it next, which is exactly how a new capability gets
+ * mislabelled. The final fallback names no section at all: the layout has
+ * already turned away anybody holding none of these, so it is a floor rather
+ * than a claim.
+ */
+function adminHeadingTitle(access: AdminTabAccess): string {
+  if (access.isAdmin) return "Committee controls";
+  if (access.canAuthorCourses) return "Course admin";
+  if (access.isAdmissionsReviewer || access.canAuthorRounds) return "Admissions";
+  if (access.canManageMembership) return "Membership";
+  return "Admin tools";
+}
+
 function AdminHeading({ access }: { access: AdminTabAccess }) {
   return (
     <div style={{ marginBottom: "var(--space-8)" }}>
@@ -129,13 +155,7 @@ function AdminHeading({ access }: { access: AdminTabAccess }) {
       >
         Admin
       </div>
-      <h1 style={{ fontSize: "var(--text-3xl)" }}>
-        {access.isAdmin
-          ? "Committee controls"
-          : access.canAuthorCourses
-            ? "Course admin"
-            : "Admissions"}
-      </h1>
+      <h1 style={{ fontSize: "var(--text-3xl)" }}>{adminHeadingTitle(access)}</h1>
     </div>
   );
 }

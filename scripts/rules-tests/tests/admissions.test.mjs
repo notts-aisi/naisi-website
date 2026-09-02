@@ -476,6 +476,26 @@ describe("admissions: the plausible reads, refused for their own reasons", () =>
     await assertFails(admin.collection("memberConductFlags").doc(APPLICANT).get());
   });
 
+  it("gives nobody an existence oracle on a conduct flag, set or cleared", async () => {
+    // Clearing a flag DELETES the row: the route writes no `flagged: false`,
+    // so the cleared state is absence. Absence has to be as unreadable as
+    // presence, or "the get failed" and "the get returned nothing" become two
+    // different answers and the pair of them is the flag. It fails the same
+    // way both times, and there is no query to run instead.
+    await seedCast();
+    await seedAdmissions();
+    await seed(async (db) => {
+      await db.collection("memberConductFlags").doc(APPLICANT).delete();
+    });
+    for (const uid of [APPLICANT, "admin1", REVIEWER]) {
+      const db = await asUser(uid);
+      await assertFails(db.collection("memberConductFlags").doc(APPLICANT).get());
+      await assertFails(
+        db.collection("memberConductFlags").where("flagged", "==", true).get(),
+      );
+    }
+  });
+
   it("refuses a FRESHER watching the intake counters move", async () => {
     // `applicationCounts` is live. A signed-in read would let any account
     // watch a competitive intake's submitted / accepted / rejected numbers
