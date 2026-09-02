@@ -33,6 +33,18 @@ import { baseUrl } from "@/lib/events/rsvpToken";
  * 500s is a worse outcome than a sitemap that is briefly short, and this runs
  * against the Admin SDK, which is absent in a build with no credentials.
  */
+/**
+ * Rendered PER REQUEST, not at build.
+ *
+ * Without this Next prerenders `sitemap.xml` as static content, and the build
+ * runs with no Admin SDK credentials: `listPublishedCourses()` returns an
+ * empty list, the empty result is frozen into the deployment, and the sitemap
+ * would then never mention a course again however many are published. A
+ * sitemap is fetched by a crawler a few times a day, so the cost of building
+ * it live is nothing and the cost of getting it wrong is the whole feature.
+ */
+export const dynamic = "force-dynamic";
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = baseUrl();
   const roots: MetadataRoute.Sitemap = [
