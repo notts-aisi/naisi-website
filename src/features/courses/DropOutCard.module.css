@@ -41,17 +41,14 @@
   border-radius: var(--radius-sm);
 }
 
-.warning,
-.line,
-.done {
+/* The post-drop confirmation and its feedback link are NOT here: they are
+   rendered by GroupPicker, the component still on screen once the drop has
+   committed. See the note in DropOutCard.tsx. */
+.warning {
   margin: 0;
   font-size: var(--text-sm);
   line-height: var(--leading-relaxed);
   color: var(--color-text-muted);
-}
-
-.done {
-  color: var(--color-text);
 }
 
 .label {
@@ -91,16 +88,6 @@
   font-size: var(--text-sm);
   line-height: var(--leading-relaxed);
   color: var(--color-danger);
-}
-
-.link {
-  color: var(--color-accent);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.link:hover {
-  color: var(--color-accent-hover);
 }
 
 .actions {

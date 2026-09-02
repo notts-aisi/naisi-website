@@ -173,6 +173,26 @@
   color: var(--color-text-muted);
 }
 
+/* The confirmation somebody sees straight after leaving the course. It lives
+   here rather than on the card that did the leaving, because that card is
+   unmounted by the re-read the drop triggers. */
+.done {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text);
+}
+
+.link {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.link:hover {
+  color: var(--color-accent-hover);
+}
+
 .error {
   margin: 0;
   font-size: var(--text-sm);

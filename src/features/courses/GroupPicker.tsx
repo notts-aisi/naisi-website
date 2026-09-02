@@ -123,6 +123,17 @@ export default function GroupPicker({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [changing, setChanging] = useState(false);
+  /**
+   * The anonymous feedback URL handed back by a drop-out THIS SESSION, or
+   * null when the member has not just left (an empty string means they have,
+   * and no admin has configured a form).
+   *
+   * It lives here rather than in `DropOutCard` because the drop is what
+   * unmounts that card: the re-read comes back `withdrawn`, the branch that
+   * renders it is gone, and a confirmation rendered inside it was never on
+   * screen long enough to read.
+   */
+  const [justLeft, setJustLeft] = useState<string | null>(null);
 
   // Reload nonce rather than a callable loader: the fetch lives INSIDE the
   // effect (the `useMyRuns` idiom), so every setState it makes happens in an
@@ -303,7 +314,10 @@ export default function GroupPicker({
           <DropOutCard
             runId={runId}
             courseTitle={courseTitle}
-            onDropped={reload}
+            onDropped={(url) => {
+              setJustLeft(url);
+              reload();
+            }}
           />
         ) : null}
       </div>
@@ -311,17 +325,44 @@ export default function GroupPicker({
   }
 
   // ---- Left already ------------------------------------------------------
-  // Dropping out is irreversible by decision, and the route enforces it (the
-  // enrolment row already exists at the deterministic id, so a second
+  // Dropping out is irreversible FROM HERE by decision, and the route enforces
+  // it (the enrolment row already exists at the deterministic id, so a second
   // `tx.create` cannot succeed). Saying so plainly beats offering a button
   // that would always fail.
+  //
+  // This is also where a drop-out lands the instant it commits, which is why
+  // the confirmation and the feedback link are rendered here: `justLeft` is
+  // set by the card that has just been unmounted by this very branch.
   if (enrolment) {
     return (
       <div className={styles.picker}>
+        {justLeft !== null ? (
+          <p className={styles.done}>
+            You&apos;re off the course. Your place has gone back to the group
+            and the weekly emails will stop.
+          </p>
+        ) : null}
         <p className={styles.note}>
           You came off this course. Signing up again isn&apos;t something you
           can do here, but the team can put you back on: email us and say so.
         </p>
+        {justLeft ? (
+          <p className={styles.note}>
+            If you have two minutes,{" "}
+            {/* Configured by an admin and scheme-checked server-side
+                (`readCoursesConfig` anchors it on ^https?://), which is what
+                makes rendering it as an href safe. */}
+            <a
+              href={justLeft}
+              className={styles.link}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              tell us anonymously what got in the way
+            </a>
+            . It goes to nobody who taught you.
+          </p>
+        ) : null}
       </div>
     );
   }

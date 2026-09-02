@@ -22,13 +22,24 @@ import styles from "./DropOutCard.module.css";
  * of the same question and is deliberately separate: this box is attached to
  * a name, that one is not, and somebody who will not write the first may well
  * write the second.
+ *
+ * ── THE CONFIRMATION IS NOT THIS COMPONENT'S TO SHOW ────────────────────────
+ * It used to be, and it was never once seen: the moment `onDropped` fires,
+ * the picker re-reads, the member's row comes back `withdrawn`, and the
+ * branch that renders this card is gone along with the card. So the "you're
+ * off the course" line and the feedback link live in the parent, which is the
+ * component still on screen afterwards, and this one hands the URL up.
  */
 
 type Props = {
   runId: string;
   courseTitle: string;
-  /** Called after a successful drop so the surrounding picker can re-read. */
-  onDropped: () => void;
+  /**
+   * Called once the drop has committed, with the anonymous feedback URL the
+   * route hands back (empty string when no admin has configured one). The
+   * parent renders the confirmation: see the note above.
+   */
+  onDropped: (feedbackUrl: string) => void;
 };
 
 export default function DropOutCard({ runId, courseTitle, onDropped }: Props) {
@@ -37,7 +48,6 @@ export default function DropOutCard({ runId, courseTitle, onDropped }: Props) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [feedbackUrl, setFeedbackUrl] = useState<string | null>(null);
 
   // Byte equality, matching the server. Nothing is trimmed or lower-cased on
   // either side: a ritual that accepts an approximation is not a ritual.
@@ -66,44 +76,14 @@ export default function DropOutCard({ runId, courseTitle, onDropped }: Props) {
         setError(body?.error ?? "Couldn't take you off the course just now.");
         return;
       }
-      // The confirmation stays on screen with the feedback link, rather than
-      // the card simply vanishing: somebody who has just left should be able
-      // to see that it worked, and be asked once, gently.
-      setFeedbackUrl(body?.feedbackUrl ?? "");
-      onDropped();
+      // Up to the parent, which is what stays on screen: somebody who has
+      // just left should see that it worked, and be asked once, gently.
+      onDropped(body?.feedbackUrl ?? "");
     } catch {
       setError("Couldn't reach the server. Check your connection and try again.");
     } finally {
       setBusy(false);
     }
-  }
-
-  if (feedbackUrl !== null) {
-    return (
-      <div className={styles.card}>
-        <p className={styles.done}>
-          You&apos;re off the course. Your place has gone back to the group and
-          the weekly emails will stop.
-        </p>
-        {feedbackUrl ? (
-          <p className={styles.line}>
-            If you have two minutes,{" "}
-            {/* Configured by an admin and scheme-checked server-side
-                (`readCoursesConfig` anchors it on ^https?://), which is what
-                makes rendering it as an href safe. */}
-            <a
-              href={feedbackUrl}
-              className={styles.link}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              tell us anonymously what got in the way
-            </a>
-            . It goes to nobody who taught you.
-          </p>
-        ) : null}
-      </div>
-    );
   }
 
   if (!open) {

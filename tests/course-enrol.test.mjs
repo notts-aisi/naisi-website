@@ -71,6 +71,14 @@ const FETCH_COURSES = readFileSync(
   join(SRC, "features", "courses", "fetchCourses.ts"),
   "utf8",
 );
+const GROUP_PICKER = readFileSync(
+  join(SRC, "features", "courses", "GroupPicker.tsx"),
+  "utf8",
+);
+const DROP_OUT_CARD = readFileSync(
+  join(SRC, "features", "courses", "DropOutCard.tsx"),
+  "utf8",
+);
 
 /** Every module specifier in transpiled output, in either quote style. */
 const SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"']+)\2/g;
@@ -722,4 +730,25 @@ test("SOURCE: the picker read is gated on the run, and throttled", () => {
   // The caller's OWN row still comes back on a run that is not offering: this
   // call is also how a member learns where they stand.
   assert.match(get, /\.doc\(courseEnrolmentId\(runId, user\.uid\)\)\.get\(\)/);
+});
+
+test("SOURCE: the post-drop confirmation outlives the card that did the drop", () => {
+  // The drop triggers a re-read; the row comes back `withdrawn`; the branch
+  // that renders DropOutCard is gone, and with it any confirmation the card
+  // held itself. So the card hands the feedback URL up and renders nothing
+  // after the commit.
+  assert.match(DROP_OUT_CARD, /onDropped: \(feedbackUrl: string\) => void;/);
+  assert.match(DROP_OUT_CARD, /onDropped\(body\?\.feedbackUrl \?\? ""\);/);
+  assert.doesNotMatch(DROP_OUT_CARD, /setFeedbackUrl/);
+  assert.doesNotMatch(DROP_OUT_CARD, /You&apos;re off the course/);
+
+  // And the picker's "you came off this course" branch is where it lands.
+  assert.match(GROUP_PICKER, /const \[justLeft, setJustLeft\] = useState<string \| null>\(null\);/);
+  assert.match(GROUP_PICKER, /setJustLeft\(url\);/);
+  const leftAt = GROUP_PICKER.indexOf("  if (enrolment) {");
+  assert.ok(leftAt > 0, "the picker's already-left branch is gone");
+  const left = GROUP_PICKER.slice(leftAt);
+  assert.match(left, /You&apos;re off the course/);
+  assert.match(left, /href=\{justLeft\}/);
+  assert.match(left, /tell us anonymously what got in the way/);
 });
