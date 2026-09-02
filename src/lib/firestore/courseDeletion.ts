@@ -156,6 +156,25 @@ export type RunDestroyCounts = {
   materialNotes: number;
   mirroredTasks: number;
   subscriptionRows: number;
+  /**
+   * `admissionApplications` whose `outcome.targetRunId` is this run: the
+   * people a decider placed HERE.
+   *
+   * These rows are NOT deleted, and they are not merely orphaned either —
+   * they are RELEASED. See `releaseAdmissionSeats` for the argument; the
+   * manifest line exists because "eleven people were placed on this cohort
+   * and will be released from it" is the single most consequential sentence
+   * a destroy dialog can show, and the counter it is built from is the only
+   * place it can come from.
+   *
+   * `admissionRounds` themselves are untouched by any cascade in this file.
+   * A round outlives every run it fed (one round feeds several, and an
+   * appointment round feeds none), so destroying a run must never reach the
+   * round that placed people on it. Destroying a ROUND is a separate
+   * protocol with its own typed confirmation and its own manifest, and it is
+   * not built yet.
+   */
+  admissionSeatOffers: number;
   emailSendRows: number;
 };
 
@@ -513,6 +532,93 @@ async function drainSubscriptionRows(
   return { deleted, drained: false };
 }
 
+/**
+ * RELEASE, not delete: the admission applications whose outcome placed
+ * somebody on this run.
+ *
+ * ## Why these rows survive a destroy
+ *
+ * An `admissionApplications` row is a PERSON'S APPLICATION. It belongs to the
+ * round and to the applicant, not to the run: it holds the essays they wrote,
+ * their availability, their evidence snapshot and the decision that was made
+ * about them, and the owner's decision is that applications are kept and
+ * stored against the account. One round also feeds several runs, so deleting
+ * every application pointing at one destroyed run would take rows belonging
+ * to an intake that is still live and still being decided.
+ *
+ * ## Why they cannot be left untouched either
+ *
+ * The seat those rows describe is being destroyed. Leaving them says three
+ * false things at once: `status: "accepted"` claims a place on a cohort that
+ * no longer exists, `outcome.targetRunId` points at a document nothing can
+ * resolve, and `seatApplicationId` names a `courseApplications` row this same
+ * cascade has already deleted. The status hub would show a live placement,
+ * and the round's own counters would keep counting the person as placed.
+ *
+ * So each row is RELEASED: `status` becomes `withdrawn`, and the two
+ * pointers are cleared. What actually happened is still legible from the row
+ * (the decision, the decider, the timestamp and the reason are all
+ * untouched) and from the destroy audit row, which records how many were
+ * released. Withdrawn is the right terminal status because it is the one the
+ * decide route already treats as "holds no seat": reinstating somebody is
+ * `withdrawn -> submitted` inside the counter transaction, so a released
+ * applicant can be put back into a live round by the route that already
+ * exists, rather than needing a repair nobody has written.
+ *
+ * ## Why clearing `outcome.targetRunId` is load-bearing, not tidiness
+ *
+ * It is also what makes this stage drain. Every other stage here is
+ * delete-as-you-read: the page it processes stops matching the query, so the
+ * next query's first page IS the next unprocessed page, and the
+ * first-doc-id guard can tell "nothing is happening" from "still working".
+ * An update that left the row matching would re-read the same page forever
+ * and trip that guard on the first pass. Clearing the pointer gives an update
+ * the same property a delete has, and it is the honest write regardless: a
+ * pointer at a destroyed run is not information.
+ */
+async function releaseAdmissionSeats(
+  db: Firestore,
+  runId: string,
+  budget: Budget,
+): Promise<DrainResult> {
+  let released = 0;
+  let prevFirstId: string | null = null;
+  while (budget.remaining > 0) {
+    const limit = Math.min(DESTROY_PAGE_SIZE, budget.remaining);
+    const snap = await db
+      .collection("admissionApplications")
+      .where("outcome.targetRunId", "==", runId)
+      .limit(limit)
+      .get();
+    if (snap.empty) return { deleted: released, drained: true };
+
+    const firstId = snap.docs[0].id;
+    if (firstId === prevFirstId) {
+      throw new Error(
+        "courseDeletion: admissionApplications page did not shrink after a committed release — " +
+          "aborting rather than looping (a silent stop would report progress over rows still holding a seat)",
+      );
+    }
+    prevFirstId = firstId;
+
+    const batch = db.batch();
+    for (const d of snap.docs) {
+      batch.update(d.ref, {
+        status: "withdrawn",
+        seatApplicationId: null,
+        "outcome.targetRunId": null,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    await batch.commit();
+    released += snap.size;
+    budget.remaining -= snap.size;
+
+    if (snap.size < limit) return { deleted: released, drained: true };
+  }
+  return { deleted: released, drained: false };
+}
+
 // ---------------------------------------------------------------------------
 // Manifest counts + blockers (run)
 // ---------------------------------------------------------------------------
@@ -563,6 +669,7 @@ export async function countRunDestroyTargets(
     materialNotes,
     mirroredTasks,
     subscriptionRows,
+    admissionSeatOffers,
     emailSendCounts,
   ] = await Promise.all([
     countAgg(db.collection("courseRuns").doc(runId).collection("weeks")),
@@ -591,6 +698,14 @@ export async function countRunDestroyTargets(
     countAgg(
       db.collection("subscriptions").where("channel", "==", courseRunChannel(runId)),
     ),
+    // Single equality on a nested field, served by the automatic single-field
+    // index like every other leaf here. It counts the rows the cascade will
+    // RELEASE, which is the same predicate `releaseAdmissionSeats` drains on
+    // — a manifest built on a different filter would promise to touch rows
+    // the cascade leaves alone, or hide ones it does not.
+    countAgg(
+      db.collection("admissionApplications").where("outcome.targetRunId", "==", runId),
+    ),
     Promise.all(emailCountPromises),
   ]);
 
@@ -605,6 +720,7 @@ export async function countRunDestroyTargets(
     materialNotes,
     mirroredTasks,
     subscriptionRows,
+    admissionSeatOffers,
     emailSendRows: emailSendCounts.reduce((a, b) => a + b, 0),
   };
 }
@@ -1021,6 +1137,16 @@ export async function destroyRunCascade(
       key: "applications",
       drain: () =>
         drainQuery(db, "courseApplications", byRunId("courseApplications"), budget),
+    },
+    {
+      key: "admissionSeatOffers",
+      // The ONE stage that does not delete anything: it releases the
+      // admission applications that placed people here (see
+      // releaseAdmissionSeats). It runs immediately after the seat rows it
+      // points at, because until those are gone `seatApplicationId` still
+      // names something real, and clearing it first would leave the seat row
+      // orphaned in the window between the two.
+      drain: () => releaseAdmissionSeats(db, runId, budget),
     },
     {
       key: "mirroredTasks",

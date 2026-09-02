@@ -196,6 +196,11 @@ const COUNT_META: Record<string, CountMeta> = {
     fate: "destroyed",
     note: "The rows on this run's cohort channel. Members' other subscriptions are untouched.",
   },
+  admissionSeatOffers: {
+    label: "Admission places on this cohort",
+    fate: "orphaned",
+    note: "KEPT and RELEASED. The applications themselves survive with everything the applicant wrote; each one is set to withdrawn and unlinked from this cohort, so it no longer claims a place that has stopped existing. An admin can reinstate any of them into a live round.",
+  },
   emailSendRows: {
     label: "Delivery-log rows",
     fate: "retained",
