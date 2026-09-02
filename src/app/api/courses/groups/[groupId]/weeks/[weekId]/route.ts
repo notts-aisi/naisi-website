@@ -19,6 +19,7 @@ import {
   type Material,
 } from "@/lib/firestore/courses";
 import { sanitizeBlocks } from "@/lib/firestore/newsletterBlocks";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * EDIT ONE FORKED WEEK — the facilitator editing surface of v2 decisions 4-6.
@@ -188,6 +189,9 @@ export async function PATCH(
   req: Request,
   ctx: { params: Promise<{ groupId: string; weekId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { groupId, weekId } = await ctx.params;
   if (!isAddressableId(groupId) || !WEEK_ID.test(weekId)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

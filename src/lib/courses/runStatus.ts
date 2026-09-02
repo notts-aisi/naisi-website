@@ -16,14 +16,29 @@ import type { CourseRunStatus } from "@/lib/firestore/courses";
  * decision about what happens to already-rejected applicants, not something
  * to fall into by accident.
  *
- * This module is the SINGLE source of truth. The status route enforces it and
- * the run editor's dropdown is built from it, so the admin is never offered a
- * move the server will refuse. Anything that wants to know "can this run go
- * there" imports `canTransition` rather than restating the table.
+ * This module is the SINGLE source of truth. The status route enforces it,
+ * the run editor's dropdown is built from it, and `firestore.rules` mirrors
+ * it, so the admin is never offered a move the server will refuse and an
+ * approver cannot reach one client-direct. Anything that wants to know "can
+ * this run go there" imports `canTransition` rather than restating the table.
+ *
+ * KEEP THE RULES MIRROR IN STEP. `firestore.rules` carries the same table as
+ * a literal in `runStatusMoveAllowed()` on the `courseRuns` block. It exists
+ * because the week-plan freeze is keyed on the status: without it an approver
+ * could walk a live run back to `draft`, edit the frozen plan, and walk it
+ * forward again, and the freeze would be three writes from defeated. Editing
+ * this table without editing that one leaves the two disagreeing, and the
+ * rules half is the one that decides.
  */
 export const ALLOWED_TRANSITIONS: Record<CourseRunStatus, CourseRunStatus[]> = {
   draft: ["applications-open", "cancelled"],
-  "applications-open": ["applications-closed", "cancelled"],
+  // OPEN ENROLMENT is why `running` is reachable directly from here. An
+  // open-mode run (the pre-course) has no review stage to close: sign-ups
+  // stay open into the first weeks of teaching, so the cohort starts while
+  // the window is still open, and forcing it through `applications-closed`
+  // would shut the door the mode exists to leave open. The admissions path
+  // is unaffected and still closes first.
+  "applications-open": ["applications-closed", "running", "cancelled"],
   "applications-closed": ["running", "cancelled"],
   running: ["completed", "cancelled"],
   completed: [],

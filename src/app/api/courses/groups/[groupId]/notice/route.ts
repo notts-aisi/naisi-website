@@ -13,6 +13,7 @@ import { normalizeCourseRun } from "@/lib/firestore/courses";
 import type { EmailSendKind } from "@/lib/firestore/emailSends";
 import { newBlockId, type Block } from "@/lib/firestore/newsletterBlocks";
 import { filterSuppressed } from "@/lib/firestore/suppression";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * ROOM NOTICE — the one-click "we've moved to B52 / we're on Zoom tonight"
@@ -170,6 +171,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ groupId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { groupId } = await ctx.params;
   if (!isAddressableId(groupId)) {
     return NextResponse.json({ error: "Group not found" }, { status: 404 });

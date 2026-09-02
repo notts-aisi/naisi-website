@@ -345,26 +345,27 @@ describe("courseRuns — who may move the calendar", () => {
 // The status lifecycle exists in ONE place, and it is not this one
 // ---------------------------------------------------------------------------
 
-describe("courseRuns — the status transition table is route-only", () => {
-  it("PROVEN GAP — an approver can walk a run BACKWARDS, or out of a terminal state", async () => {
-    // `/api/courses/runs/[runId]/status` is forward-only and terminal-safe:
-    // draft → applications-open → applications-closed → running → completed,
-    // plus cancelled, and nothing leaves completed or cancelled. The RULES
-    // carry no table at all — `canApproveCourse()` may write any status value.
+describe("courseRuns: the status transition table lives in the rules too", () => {
+  it("GUARD: an approver can no longer walk a run BACKWARDS, or out of a terminal state", async () => {
+    // WAS A PROVEN GAP until V3 W1 PR5. The rules carried no table at all, so
+    // `canApproveCourse()` could write any status value, and that mattered
+    // because the WEEK-PLAN FREEZE is keyed on the status: an approver could
+    // walk a live run back to `draft`, reshape the frozen plan, and walk it
+    // forward again. Three writes, no route, and the freeze was defeated.
     //
-    // The harm is not hypothetical. A run flipped back to `draft` makes
-    // `currentWeekSummary` return null and the overview's `currentWeek` null,
-    // so the week rail, the pacing banner and the Continue CTA all blank; the
-    // dashboard card drops the row entirely; the nudge and the task mirror
-    // refuse on their status allowlists; and the public page hides the
-    // curriculum. The course vanishes from a member's dashboard with nothing
-    // lost and nothing said — a very plausible second cause of "a course
-    // stopped appearing".
+    // `runStatusMoveAllowed()` in firestore.rules now mirrors
+    // src/lib/courses/runStatus.ts exactly. KEEP THE TWO IN STEP: the rules
+    // half is the one that decides, and a table edited in only one place
+    // leaves the dropdown offering a move the database refuses.
     await seedCast();
     await seedRun("run1", { status: "running" });
     const approver = await asUser("approver");
-    await assertSucceeds(
+    await assertFails(
       approver.collection("courseRuns").doc("run1").update({ status: "draft" }),
+    );
+    // Forward is still fine, and so is cancelling.
+    await assertSucceeds(
+      approver.collection("courseRuns").doc("run1").update({ status: "completed" }),
     );
 
     await clearData();
@@ -373,17 +374,89 @@ describe("courseRuns — the status transition table is route-only", () => {
     const db = await asUser("approver");
     // `completed` is documented as terminal precisely because un-completing it
     // "would silently re-arm every date-driven surface that reads the status".
-    await assertSucceeds(
+    await assertFails(
       db.collection("courseRuns").doc("run2").update({ status: "running" }),
+    );
+    await assertFails(
+      db.collection("courseRuns").doc("run2").update({ status: "cancelled" }),
     );
   });
 
-  it("PROVEN GAP — an admin can do the same, and can drift the counters while they are at it", async () => {
-    // The counters move only as relative increments inside the apply and decide
-    // transactions, and no recount pass exists anywhere. A direct write is
-    // therefore unreconcilable: the admissions queue renders
-    // `run.applicationCounts` as the headline above the independently-fetched
-    // rows, so the two can visibly disagree on one screen with no way back.
+  it("GUARD: the whole table, walked; every legal move passes and every other one does not", async () => {
+    // The table, restated so a rules edit that quietly drops an arrow fails
+    // here rather than in October.
+    const TABLE = {
+      draft: ["applications-open", "cancelled"],
+      // `running` reachable straight from `applications-open` is the OPEN
+      // ENROLMENT entry: a pre-course keeps its sign-ups open into its first
+      // teaching weeks and has no review stage to close.
+      "applications-open": ["applications-closed", "running", "cancelled"],
+      "applications-closed": ["running", "cancelled"],
+      running: ["completed", "cancelled"],
+      completed: [],
+      cancelled: [],
+    };
+    const ALL = Object.keys(TABLE);
+
+    for (const from of ALL) {
+      for (const to of ALL) {
+        if (from === to) continue;
+        await clearData();
+        await seedCast();
+        await seedRun("run1", { status: from });
+        const db = await asUser("approver");
+        const write = db.collection("courseRuns").doc("run1").update({ status: to });
+        if (TABLE[from].includes(to)) {
+          await assertSucceeds(write);
+        } else {
+          await assertFails(write);
+        }
+      }
+    }
+  });
+
+  it("GUARD: re-sending the SAME status is always legal, whatever the run is", async () => {
+    // An ordinary content save re-sends the status it already had. The table
+    // must not refuse those, including on a terminal run being archived or
+    // relabelled by its own approver.
+    await seedCast();
+    await seedRun("run1", { status: "completed" });
+    const db = await asUser("approver");
+    await assertSucceeds(
+      db
+        .collection("courseRuns")
+        .doc("run1")
+        .update({ status: "completed", label: "Autumn 2026 (final)" }),
+    );
+  });
+
+  it("GUARD: a run carrying a status outside the union is FROZEN, not erroring", async () => {
+    // `.get(key, [])` on the table literal rather than `[key]`, so a
+    // hand-edited doc (or one written before a rename) denies its status moves
+    // instead of erroring every update on the branch. The label edit proves
+    // the branch still evaluates rather than blowing up.
+    await seedCast();
+    await seedRun("run1", { status: "archived" });
+    const db = await asUser("approver");
+    await assertFails(
+      db.collection("courseRuns").doc("run1").update({ status: "running" }),
+    );
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run1").update({ label: "Still editable" }),
+    );
+  });
+
+  it("ADMINS ride their own branch, and can still drift the counters", async () => {
+    // Unchanged and deliberate, matching every other pin in the courseRuns
+    // block. It costs nothing: an admin already holds unconditional update on
+    // runs INCLUDING `weekPlan` itself, so denying them the backwards move
+    // would protect nothing they cannot do directly. The actor the table
+    // exists to bound is the approver.
+    //
+    // The counter half is still a PROVEN GAP and is still worth its own line:
+    // `applicationCounts` moves only as relative increments inside the apply
+    // and decide transactions, and no recount pass exists anywhere, so a
+    // direct write is unreconcilable.
     await seedCast();
     await seedRun("run1", { status: "running" });
     const db = await asUser("admin1");
@@ -393,13 +466,6 @@ describe("courseRuns — the status transition table is route-only", () => {
         applicationCounts: { ...ZERO_COUNTS, accepted: 999 },
       }),
     );
-
-    // WHEN YOU FIX THIS: a transition table IS expressible in rules (a map
-    // literal plus an `in` check), so unlike the date above this one could
-    // live here. The question is whether the rules should duplicate a table
-    // the route already owns, or whether status should stop being
-    // client-writable at all and move behind the route like the counters
-    // already have. The second is the smaller surface.
   });
 });
 

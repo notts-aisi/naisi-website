@@ -107,6 +107,65 @@ export const COURSE_RUN_STATUS_LABEL: Record<CourseRunStatus, string> = {
 };
 
 /**
+ * How people get onto a run.
+ *
+ * `admissions` is the historical shape: apply, be reviewed, be allocated.
+ * `open` is the pre-course / bootcamp shape from the V3 decisions, where
+ * everyone who signs up gets a place and there is no application at all.
+ *
+ * SERVER-OWNED and birth-pinned to `admissions`, because it opens a WRITE
+ * DOOR: an open-mode run admits an enrolment with no application behind it.
+ * That puts it in the same tier as the role arrays and the counters, not in
+ * the drafter's content band, and
+ * `PATCH /api/courses/runs/[runId]/enrol-mode` is its only writer.
+ */
+export type CourseEnrolMode = "admissions" | "open";
+
+export const COURSE_ENROL_MODES: CourseEnrolMode[] = ["admissions", "open"];
+
+export const COURSE_ENROL_MODE_LABEL: Record<CourseEnrolMode, string> = {
+  admissions: "Applications and review",
+  open: "Open enrolment",
+};
+
+/**
+ * One stream inside a run (e.g. technical / governance / generalist on the
+ * research incubator). A week's materials, exercises and checklist items may
+ * each be scoped to a subset of these through `streamIds`; an item with none
+ * is CORE and shown to everybody.
+ *
+ * SERVER-OWNED, birth-pinned empty, pinned on update, for the same reason
+ * `enrolMode` is: the enrol route validates a member's requested stream
+ * against this list, and `courseEnrolments.streamId` is `allow write: if
+ * false`. A client-direct edit here could therefore invalidate rows in a
+ * collection the client cannot write, which is the definition of a field that
+ * does not belong in the content band.
+ */
+export type CourseRunStream = {
+  /** Short slug, stable for the life of the run; item `streamIds` name it. */
+  id: string;
+  label: string;
+};
+
+/**
+ * The one exercise a member must complete to clear the run's submission bar
+ * (the pre-course's "6 sessions, attend 4 in full, plus the submission").
+ *
+ * STORED ABSENT WHEN UNSET, NEVER NULL. `firestore.rules` pins this field
+ * with `.get('submissionExerciseRef', {})` on BOTH sides, and a stored null
+ * compares unequal to that default, which would wedge every later non-admin
+ * edit of the run, the exact trap already recorded for `templateId` at
+ * courses.ts:729 and in the rules block itself. The normaliser therefore
+ * omits the key rather than returning null, so a doc round-tripped through it
+ * can never reintroduce one.
+ */
+export type SubmissionExerciseRef = {
+  /** Week doc id, "w01".."w60". */
+  weekId: string;
+  exerciseId: string;
+};
+
+/**
  * Per-status application counters, maintained transactionally by the apply /
  * decide routes. Server-owned: rules pin the whole map against client writes.
  */
@@ -137,6 +196,28 @@ export type CourseRunDoc = {
   /** Academic year tag, e.g. "2026/27" — matches `users.paidMembershipYears`. */
   academicYear: string;
   status: CourseRunStatus;
+  /**
+   * Server-owned (see `CourseEnrolMode`). Absent on every run written before
+   * V3, which normalises to "admissions", the behaviour those runs already
+   * had.
+   */
+  enrolMode: CourseEnrolMode;
+  /** Server-owned (see `CourseRunStream`). Empty = a run with no streams. */
+  streams: CourseRunStream[];
+  /**
+   * Server-owned counter: how many enrolments this run currently holds. Moved
+   * only by the transactions that write `courseEnrolments`, so it can never
+   * drift from the rows it summarises, following the `groupCount` /
+   * `memberCount`
+   * precedent. Read by the open-enrol picker and by the enrol-mode route,
+   * which refuses to change the mode once anybody is on the run.
+   */
+  enrolledCount: number;
+  /**
+   * The run's submission bar, or ABSENT when it has none. Never null on the
+   * wire. See `SubmissionExerciseRef`.
+   */
+  submissionExerciseRef?: SubmissionExerciseRef;
   /**
    * CIVIL date string "YYYY-MM-DD" (Europe/London), NOT a timestamp — week
    * maths runs on civil dates so DST transitions can't shift week boundaries.
@@ -252,7 +333,30 @@ type BaseMaterial = {
   estimatedMinutes?: number;
   /** Optional/extension material — excluded from completion percentages. */
   optional?: boolean;
+  /** Stream scope; see `ItemStreamIds`. */
+  streamIds?: string[];
 };
+
+/**
+ * STREAM SCOPE, shared verbatim by `Material`, `Exercise` and `ChecklistItem`.
+ *
+ * Absent OR empty means CORE: shown to every member of the run, whatever
+ * stream they are on. A non-empty list names the `CourseRunStream` ids the
+ * item belongs to, and a member sees it only if their `streamId` is in it.
+ *
+ * Both spellings of "core" are accepted deliberately. Absent is what every
+ * pre-V3 week already stores and what the sanitisers emit (the house
+ * absent-never-undefined rule); empty is what an editor leaves behind when
+ * somebody selects streams and then deselects them all. Treating those two
+ * differently would make an item silently vanish for the whole cohort.
+ *
+ * ONE READER. `src/lib/courses/streamScope.ts` is the single helper every
+ * surface resolves this through. The week view, the curriculum list, the
+ * progress page and the overview rail each count items independently today,
+ * and a second interpretation shows one learner two different percentages for
+ * the same week, which is worse than one wrong number.
+ */
+export type ItemStreamIds = string[];
 
 export type VideoMaterial = BaseMaterial & {
   type: "video";
@@ -286,6 +390,33 @@ export type Material =
   | ReadingMaterial
   | LinkMaterial
   | NoteMaterial;
+
+/**
+ * The `streamIds` key as it is STORED, or `{}` when the item is core.
+ *
+ * Spread into a rebuilt row (`...streamIdsKey(raw)`) so an item with no stream
+ * scope carries no key at all: Firestore refuses `undefined`, and an empty
+ * array on every row of every week is bytes with no meaning (see
+ * `ItemStreamIds`: absent and empty already mean the same thing).
+ *
+ * Ids are de-duplicated, order-preserved, and capped both per-id and in
+ * number. Nothing here checks an id against the run's declared streams: the
+ * canonical list lives on the run doc, the sanitiser only ever sees one week,
+ * and `streamScope.ts` already treats an id that matches no stream as
+ * "nobody's stream", which is a scoped item nobody sees rather than a leak.
+ */
+function streamIdsKey(raw: unknown): { streamIds?: string[] } {
+  if (!Array.isArray(raw)) return {};
+  const seen: string[] = [];
+  for (const value of raw) {
+    if (typeof value !== "string") continue;
+    const id = value.slice(0, COURSE_FIELD_LIMITS.streamId);
+    if (!id || seen.includes(id)) continue;
+    seen.push(id);
+    if (seen.length >= COURSE_FIELD_LIMITS.maxItemStreamIds) break;
+  }
+  return seen.length > 0 ? { streamIds: seen } : {};
+}
 
 /** Short, collision-unlikely material id for the week editor. */
 export function newMaterialId(): string {
@@ -357,7 +488,11 @@ export function sanitizeMaterials(raw: unknown): Material[] {
     .filter(isValidMaterial)
     .slice(0, COURSE_FIELD_LIMITS.maxMaterials)
     .map((m) => {
-      const extra = m as { estimatedMinutes?: unknown; optional?: unknown };
+      const extra = m as {
+        estimatedMinutes?: unknown;
+        optional?: unknown;
+        streamIds?: unknown;
+      };
       const minutes = extra.estimatedMinutes;
       const base = {
         id: m.id,
@@ -368,6 +503,11 @@ export function sanitizeMaterials(raw: unknown): Material[] {
         ...(typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0
           ? { estimatedMinutes: Math.round(minutes) }
           : {}),
+        // Added KEY-BY-KEY, which is the only way it can persist at all: this
+        // function rebuilds every row explicitly and drops unknown keys by
+        // design (see the doc comment), so a `streamIds` handled only in
+        // `isValidMaterial` would validate and then silently disappear.
+        ...streamIdsKey(extra.streamIds),
       };
       switch (m.type) {
         case "video":
@@ -415,6 +555,14 @@ export type Exercise = {
   maxLength: number;
   /** When true, cohort members can read each other's responses. */
   peerVisible: boolean;
+  /**
+   * Rough time cost of answering, in minutes: the same budget line the
+   * materials carry, so a week's total can be summed over readings AND
+   * questions rather than over readings alone.
+   */
+  estimatedMinutes?: number;
+  /** Stream scope; see `ItemStreamIds`. */
+  streamIds?: string[];
 };
 
 export function newExerciseId(): string {
@@ -452,21 +600,37 @@ export function sanitizeExercises(raw: unknown): Exercise[] {
   return raw
     .filter(isValidExercise)
     .slice(0, COURSE_FIELD_LIMITS.maxExercises)
-    .map((x) => ({
-      id: x.id,
-      prompt: x.prompt,
-      ...(typeof (x as { helpText?: unknown }).helpText === "string" &&
-      (x as { helpText: string }).helpText
-        ? { helpText: (x as { helpText: string }).helpText }
-        : {}),
-      responseType: x.responseType,
-      required: Boolean((x as { required?: unknown }).required),
-      maxLength: Math.min(
-        EXERCISE_MAX_LENGTH_CEILING,
-        Math.max(1, Math.round(x.maxLength)),
-      ),
-      peerVisible: Boolean((x as { peerVisible?: unknown }).peerVisible),
-    }));
+    .map((x) => {
+      const extra = x as {
+        helpText?: unknown;
+        required?: unknown;
+        peerVisible?: unknown;
+        estimatedMinutes?: unknown;
+        streamIds?: unknown;
+      };
+      const minutes = extra.estimatedMinutes;
+      return {
+        id: x.id,
+        prompt: x.prompt,
+        ...(typeof extra.helpText === "string" && extra.helpText
+          ? { helpText: extra.helpText }
+          : {}),
+        responseType: x.responseType,
+        required: Boolean(extra.required),
+        maxLength: Math.min(
+          EXERCISE_MAX_LENGTH_CEILING,
+          Math.max(1, Math.round(x.maxLength)),
+        ),
+        peerVisible: Boolean(extra.peerVisible),
+        // Both optional keys are added here rather than in `isValidExercise`,
+        // for the reason spelled out on `sanitizeMaterials`: this map rebuilds
+        // the row and drops anything it does not name.
+        ...(typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0
+          ? { estimatedMinutes: Math.round(minutes) }
+          : {}),
+        ...streamIdsKey(extra.streamIds),
+      };
+    });
 }
 
 // ---- Checklist ----
@@ -482,6 +646,8 @@ export type ChecklistItem = {
    * so the projection stays idempotent across re-syncs.
    */
   mirrorToMyWork: boolean;
+  /** Stream scope; see `ItemStreamIds`. */
+  streamIds?: string[];
 };
 
 export function newChecklistItemId(): string {
@@ -503,15 +669,23 @@ export function sanitizeChecklist(raw: unknown): ChecklistItem[] {
   return raw
     .filter(isValidChecklistItem)
     .slice(0, COURSE_FIELD_LIMITS.maxChecklistItems)
-    .map((c) => ({
-      id: c.id,
-      title: c.title,
-      ...(typeof (c as { detail?: unknown }).detail === "string" &&
-      (c as { detail: string }).detail
-        ? { detail: (c as { detail: string }).detail }
-        : {}),
-      mirrorToMyWork: Boolean((c as { mirrorToMyWork?: unknown }).mirrorToMyWork),
-    }));
+    .map((c) => {
+      const extra = c as {
+        detail?: unknown;
+        mirrorToMyWork?: unknown;
+        streamIds?: unknown;
+      };
+      return {
+        id: c.id,
+        title: c.title,
+        ...(typeof extra.detail === "string" && extra.detail
+          ? { detail: extra.detail }
+          : {}),
+        mirrorToMyWork: Boolean(extra.mirrorToMyWork),
+        // Key-by-key, same reason as `sanitizeMaterials`.
+        ...streamIdsKey(extra.streamIds),
+      };
+    });
 }
 
 // ---- Field limits ----
@@ -548,6 +722,20 @@ export const COURSE_FIELD_LIMITS = {
   maxAdmissionsReviewers: 10,
   maxRunFacilitators: 10,
   maxTrackLeads: 5,
+  /**
+   * Streams per run. Six is generous against the three the incubator actually
+   * needs, and small enough that a stream picker stays a row of chips rather
+   * than a scrolling list.
+   */
+  maxStreams: 6,
+  streamId: 40,
+  streamLabel: 60,
+  /**
+   * Streams a single material / exercise / checklist item may be scoped to.
+   * Matches `maxStreams`: scoping an item to every stream is the same thing
+   * as leaving it core, but there is no reason to refuse the write.
+   */
+  maxItemStreamIds: 6,
 } as const;
 
 // ---- Submission URL validation ----
@@ -670,6 +858,63 @@ export function sanitizeWeekPlan(raw: unknown): WeekPlanEntry[] {
     .slice(0, COURSE_FIELD_LIMITS.maxWeekPlanEntries);
 }
 
+/**
+ * Absent (every pre-V3 run) and anything unrecognised normalise to
+ * "admissions", which is the behaviour those runs already have. Open mode is
+ * never reached by accident.
+ */
+function asEnrolMode(v: unknown): CourseEnrolMode {
+  return COURSE_ENROL_MODES.includes(v as CourseEnrolMode)
+    ? (v as CourseEnrolMode)
+    : "admissions";
+}
+
+/**
+ * Streams, de-duplicated on `id` and capped. A stream with no id is dropped
+ * rather than defaulted: an id is what a week's `streamIds` and an
+ * enrolment's `streamId` point at, so an id-less stream is unaddressable and
+ * keeping it would show an empty chip nobody can be placed on.
+ */
+export function sanitizeStreams(raw: unknown): CourseRunStream[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CourseRunStream[] = [];
+  const seen = new Set<string>();
+  for (const value of raw) {
+    if (!value || typeof value !== "object") continue;
+    const s = value as Record<string, unknown>;
+    if (typeof s.id !== "string") continue;
+    const id = s.id.slice(0, COURSE_FIELD_LIMITS.streamId);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      label:
+        typeof s.label === "string"
+          ? s.label.slice(0, COURSE_FIELD_LIMITS.streamLabel)
+          : "",
+    });
+    if (out.length >= COURSE_FIELD_LIMITS.maxStreams) break;
+  }
+  return out;
+}
+
+/**
+ * The submission pointer, or `null` for "this run has no submission bar".
+ *
+ * The null here is a READ-SIDE convenience only: `normalizeCourseRun` turns
+ * it back into an ABSENT key, because a stored null wedges the rules pin (see
+ * `SubmissionExerciseRef`). Both halves of the ref must be present: a pointer
+ * naming a week with no exercise is not a weaker pointer, it is one that
+ * silently marks nobody complete.
+ */
+function asSubmissionExerciseRef(v: unknown): SubmissionExerciseRef | null {
+  if (!v || typeof v !== "object") return null;
+  const ref = v as Record<string, unknown>;
+  if (typeof ref.weekId !== "string" || !ref.weekId) return null;
+  if (typeof ref.exerciseId !== "string" || !ref.exerciseId) return null;
+  return { weekId: ref.weekId, exerciseId: ref.exerciseId };
+}
+
 function asApplicationCounts(v: unknown): ApplicationCounts {
   const raw = (v ?? {}) as Raw;
   return {
@@ -700,13 +945,16 @@ export function normalizeCourse(id: string, data: Raw): CourseDoc {
 }
 
 export function normalizeCourseRun(id: string, data: Raw): CourseRunDoc {
-  return {
+  const doc: CourseRunDoc = {
     id,
     courseId: (data.courseId as string) ?? "",
     courseTitle: (data.courseTitle as string) ?? "",
     label: (data.label as string) ?? "",
     academicYear: (data.academicYear as string) ?? "",
     status: asRunStatus(data.status),
+    enrolMode: asEnrolMode(data.enrolMode),
+    streams: sanitizeStreams(data.streams),
+    enrolledCount: asCount(data.enrolledCount),
     startDate: asCivilDate(data.startDate),
     weekPlan: sanitizeWeekPlan(data.weekPlan),
     applicationForm: sanitizeSignupForm(data.applicationForm),
@@ -736,6 +984,11 @@ export function normalizeCourseRun(id: string, data: Raw): CourseRunDoc {
     createdAt: tsToDate(data.createdAt),
     updatedAt: tsToDate(data.updatedAt),
   };
+  // ABSENT, never null: the key is only ever set when a real pointer is
+  // stored. See `SubmissionExerciseRef` for why a null here wedges the run.
+  const submissionExerciseRef = asSubmissionExerciseRef(data.submissionExerciseRef);
+  if (submissionExerciseRef) doc.submissionExerciseRef = submissionExerciseRef;
+  return doc;
 }
 
 export function normalizeCourseWeek(id: string, data: Raw): CourseWeekDoc {

@@ -7,6 +7,7 @@ import {
   destroyRunCascade,
 } from "@/lib/firestore/courseDeletion";
 import { normalizeCourseRun } from "@/lib/firestore/courses";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * DESTROY a course run — the irreversible half of the deletion protocol.
@@ -46,6 +47,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ runId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId } = await ctx.params;
 
   const actor = await getCurrentUser();

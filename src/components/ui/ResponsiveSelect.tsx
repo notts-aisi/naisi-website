@@ -31,6 +31,17 @@ type Props<T extends string = string> = {
   disabled?: boolean;
   /** Required: selects must be labelled. */
   ariaLabel: string;
+  /**
+   * DOM id for the native shape only. Lets a caller point an explicit
+   * `<label htmlFor>` at the control instead of wrapping it, which matters
+   * wherever help text or a validation message sits in the same field: a
+   * wrapping label would swallow those into the control's accessible name.
+   * Deliberately NOT applied to the sheet shape as well, because both shapes
+   * are in the DOM at once and two elements cannot share an id.
+   */
+  id?: string;
+  /** Ids of the help / error text describing this control. Reaches both shapes. */
+  describedBy?: string;
   /** Optional tooltip + native HTML title. */
   title?: string;
   /** Optional name for form serialization. Rare — current callsites are
@@ -49,15 +60,19 @@ export default function ResponsiveSelect<T extends string = string>({
   title,
   name,
   className,
+  id,
+  describedBy,
 }: Props<T>) {
   return (
     <>
       <span className={styles.desktopShape}>
         <Select
+          id={id}
           value={value}
           onChange={(e) => onChange(e.target.value as T)}
           disabled={disabled}
           aria-label={ariaLabel}
+          aria-describedby={describedBy}
           title={title}
           name={name}
           className={className}
@@ -76,6 +91,7 @@ export default function ResponsiveSelect<T extends string = string>({
           options={options}
           disabled={disabled}
           ariaLabel={ariaLabel}
+          describedBy={describedBy}
           title={title}
           className={className}
         />

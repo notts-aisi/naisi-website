@@ -10,6 +10,7 @@ import {
   type CourseApplicationStatus,
 } from "@/lib/firestore/courseApplications";
 import { normalizeCourseRun } from "@/lib/firestore/courses";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * Decide one application: accept, waitlist, or reject.
@@ -77,6 +78,9 @@ function formatRunStart(startDate: string): string | undefined {
 }
 
 export async function POST(req: Request, ctx: Ctx) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId, uid } = await ctx.params;
   if (!runId || !uid) {
     return NextResponse.json({ error: "Application not found" }, { status: 404 });

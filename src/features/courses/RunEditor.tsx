@@ -12,11 +12,16 @@ import { Field, Input } from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import Switch from "@/components/ui/Switch";
+import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
 import { AdminLoadingBar } from "@/features/admin/adminList";
 import { useMembers } from "@/features/admin/useMembers";
 import FormBuilder from "@/features/events/FormBuilder";
-import { sanitizeSignupForm, type FormQuestion } from "@/lib/firestore/events";
+import {
+  sanitizeSignupForm,
+  validateQuestionLimits,
+  type FormQuestion,
+} from "@/lib/firestore/events";
 import { ACADEMIC_YEAR_PATTERN } from "@/lib/firestore/users";
 import { isValidDateKey } from "@/lib/courses/weekPlan";
 import { ALLOWED_TRANSITIONS } from "@/lib/courses/runStatus";
@@ -121,9 +126,15 @@ function cleanQuestion(q: FormQuestion): FormQuestion {
 /**
  * Editor-side validation of the application form. Not a security boundary —
  * `sanitizeSignupForm` is the shape check and the rules cap the size. This
- * catches the two half-finished states the builder can leave behind, both of
- * which would otherwise ship to a public page as a blank question or an
- * unanswerable choice.
+ * catches the half-finished states the builder can leave behind, which would
+ * otherwise ship to a public page as a blank question or an unanswerable
+ * choice, plus a per-question limit typed outside its range.
+ *
+ * Expects the questions UNCLAMPED, i.e. `sanitizeSignupForm(raw, {
+ * clampLimits: false })`. A run's form is written client-direct, so there is no
+ * route to refuse an out-of-range limit: clamping before the check would turn
+ * a typed 5000 into a passing 4000 and store it without a word, while the
+ * builder's own hint says saving is refused until it is fixed.
  */
 function applicationFormError(questions: FormQuestion[]): string | null {
   if (questions.length > MAX_APPLICATION_FORM_QUESTIONS) {
@@ -142,6 +153,8 @@ function applicationFormError(questions: FormQuestion[]): string | null {
       }
     }
   }
+  const limitProblem = validateQuestionLimits(questions);
+  if (limitProblem) return limitProblem.error;
   return null;
 }
 
@@ -194,6 +207,10 @@ function useCourseRun(runId: string) {
 
 export default function RunEditor({ courseId, runId }: Props) {
   const { toast, run: runAction, dismiss } = useActionToast();
+  // Who is looking. The admissions and allocation ROUTES answer to a narrower
+  // set than this page's gate does (see the two links below), so the editor
+  // needs the caller's identity to avoid offering a door that answers 403.
+  const { user: authUser, role } = useAuth();
   const { run, loading, notFound, error, reload } = useCourseRun(runId);
   const { users: members, loading: membersLoading } = useMembers();
   const {
@@ -272,6 +289,21 @@ export default function RunEditor({ courseId, runId }: Props) {
       setFormError(null);
     }
   }
+
+  // Staff surfaces this caller may actually open. The applications route is
+  // admins, the run's admissionsReviewerUids and its trackLeadUids; allocation
+  // is admins and trackLeadUids only, because reviewers decide WHO gets in and
+  // track leads decide WHERE they sit. This page is gated one level wider
+  // (admin, draftCourse or approveCourse), so a drafter with no role on this
+  // run would otherwise be handed two buttons that 403.
+  const isAdmin = role === "admin";
+  const myUid = authUser?.uid ?? null;
+  const onRun = (uids: string[]) => myUid !== null && uids.includes(myUid);
+  const canReview =
+    isAdmin
+    || (run !== null
+      && (onRun(run.admissionsReviewerUids) || onRun(run.trackLeadUids)));
+  const canAllocate = isAdmin || (run !== null && onRun(run.trackLeadUids));
 
   if (loading) return <AdminLoadingBar label="Loading run…" />;
 
@@ -497,13 +529,20 @@ export default function RunEditor({ courseId, runId }: Props) {
   async function saveApplicationForm() {
     // Clean first, then validate: trimming is what turns a label of spaces
     // into the blank the check below is looking for.
-    const cleaned = sanitizeSignupForm(applicationForm.map(cleanQuestion));
-    const problem = applicationFormError(cleaned);
+    const tidied = applicationForm.map(cleanQuestion);
+    // Validate the limits as TYPED, store them clamped. The unclamped pass is
+    // what lets the refusal quote the author's own 5000 back at them; the
+    // clamped write stays as the backstop for anything that never reached this
+    // check, and can only ever be a no-op once the check has passed.
+    const problem = applicationFormError(
+      sanitizeSignupForm(tidied, { clampLimits: false }),
+    );
     if (problem) {
       setFormError(problem);
       return;
     }
     setFormError(null);
+    const cleaned = sanitizeSignupForm(tidied);
 
     let ok = false;
     await runAction(
@@ -637,29 +676,43 @@ export default function RunEditor({ courseId, runId }: Props) {
           {/* Admissions is its own surface, not a panel on this page: reviewing
               never edits the run, and reviewers who aren't admins reach the
               queue from /learn instead. The pending figure comes from the run
-              doc already loaded above — no second read for a link label. */}
-          <Link
-            href={`/admin/courses/${encodeURIComponent(courseId)}/runs/${encodeURIComponent(runId)}/applications`}
-          >
-            <Button type="button" variant="secondary">
-              {counts.pending > 0
-                ? `Review applications (${counts.pending} pending) →`
-                : "Review applications →"}
-            </Button>
-          </Link>
+              doc already loaded above, no second read for a link label. Shown
+              only to callers the applications route admits. */}
+          {canReview && (
+            <Link
+              href={`/admin/courses/${encodeURIComponent(courseId)}/runs/${encodeURIComponent(runId)}/applications`}
+            >
+              <Button type="button" variant="secondary">
+                {counts.pending > 0
+                  ? `Review applications (${counts.pending} pending) →`
+                  : "Review applications →"}
+              </Button>
+            </Link>
+          )}
           {/* Allocation is the step after review: it only ever places ACCEPTED
-              applicants, so the accepted figure — not the pending one — is what
+              applicants, so the accepted figure, not the pending one, is what
               tells you whether there is anything to do there. Same server-owned
-              counters, so still no extra read. */}
-          <Link
-            href={`/admin/courses/${encodeURIComponent(courseId)}/runs/${encodeURIComponent(runId)}/allocation`}
-          >
-            <Button type="button" variant="secondary">
-              {counts.accepted > 0
-                ? `Allocate places (${counts.accepted} accepted) →`
-                : "Allocate places →"}
-            </Button>
-          </Link>
+              counters, so still no extra read. Track leads and admins only. */}
+          {canAllocate && (
+            <Link
+              href={`/admin/courses/${encodeURIComponent(courseId)}/runs/${encodeURIComponent(runId)}/allocation`}
+            >
+              <Button type="button" variant="secondary">
+                {counts.accepted > 0
+                  ? `Allocate places (${counts.accepted} accepted) →`
+                  : "Allocate places →"}
+              </Button>
+            </Link>
+          )}
+          {/* Say why the buttons are missing rather than leaving a gap: the
+              reader holds a course permission, so "no link" reads as a bug
+              unless the run's staffing is named as the reason. */}
+          {!canReview && !canAllocate && (
+            <span className={styles.muted}>
+              Admissions and allocation are open to this run&apos;s reviewers and
+              track leads. Only an admin can set those roles.
+            </span>
+          )}
           {/* The look-back surface. It sits with the other "where to go next"
               links rather than beside the curriculum controls: it is read while
               drafting the NEXT run's weeks, and the ratings behind it belong to
@@ -1156,7 +1209,12 @@ export default function RunEditor({ courseId, runId }: Props) {
         <div className={styles.groups}>
           {creatingGroup && (
             <NewGroupForm
-              run={{ id: run.id, courseId: run.courseId, label: run.label }}
+              run={{
+                id: run.id,
+                courseId: run.courseId,
+                label: run.label,
+                enrolMode: run.enrolMode,
+              }}
               runAction={runAction}
               onCreated={() => {
                 setCreatingGroup(false);
@@ -1178,6 +1236,7 @@ export default function RunEditor({ courseId, runId }: Props) {
               key={group.id}
               group={group}
               members={members}
+              enrolMode={run.enrolMode}
               runAction={runAction}
               onSaved={reloadGroups}
             />

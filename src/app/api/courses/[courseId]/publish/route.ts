@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * Publish a course to the public catalogue, and choose which run's curriculum
@@ -22,6 +23,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ courseId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { courseId } = await ctx.params;
 
   const actor = await getCurrentUser();

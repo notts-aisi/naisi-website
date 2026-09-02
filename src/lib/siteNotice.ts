@@ -47,6 +47,7 @@ export const SITE_NOTICE_SURFACE_FLAGS = {
   collaboratorApplications: "pauseCollaboratorApplications",
   eventSignups: "pauseEventSignups",
   courseApplications: "pauseCourseApplications",
+  courseEnrolments: "pauseCourseEnrolments",
 } as const;
 export type SiteNoticeSurface = keyof typeof SITE_NOTICE_SURFACE_FLAGS;
 
@@ -67,7 +68,12 @@ export const SITE_NOTICE_SURFACE_NAMES: Record<SiteNoticeSurface, string> = {
   newRegistrations: "New member registrations",
   collaboratorApplications: "Collaborator applications",
   eventSignups: "Event sign-ups",
-  courseApplications: "Course applications",
+  // Renamed from "Course applications" when admissions rounds took over the
+  // application funnel: the stored FIELD stays `pauseCourseApplications`
+  // because renaming it would migrate a live config doc for cosmetics, and
+  // the round apply routes reuse this flag verbatim.
+  courseApplications: "Admissions",
+  courseEnrolments: "Course enrolment",
 };
 
 /**
@@ -146,6 +152,7 @@ export const DEFAULT_SITE_NOTICE: SiteNotice = Object.freeze({
     collaboratorApplications: false,
     eventSignups: false,
     courseApplications: false,
+    courseEnrolments: false,
   }),
   expiresAt: null,
   bannerVisible: false,

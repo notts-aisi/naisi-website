@@ -26,6 +26,7 @@ import {
   type CourseRunDoc,
 } from "@/lib/firestore/courses";
 import { subscribe } from "@/lib/firestore/subscriptions";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * Publish the allocation: the moment placements stop being a draft on a board
@@ -136,6 +137,9 @@ function firstSessionWhen(run: CourseRunDoc, group: CourseGroupDoc): string | un
 }
 
 export async function POST(_req: Request, ctx: Ctx) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId } = await ctx.params;
 
   const actor = await getCurrentUser();

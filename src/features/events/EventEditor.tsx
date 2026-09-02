@@ -25,6 +25,8 @@ import {
   LOCATION_MAX,
   TITLE_MAX,
   normalizeEvent,
+  sanitizeSignupForm,
+  validateQuestionLimits,
   type CoverBranding,
   type CoverLogoColor,
   type CoverLogoPosition,
@@ -275,9 +277,31 @@ export default function EventEditor({ eventId }: Props) {
     setDirty(true);
   }
 
+  /**
+   * Range-check the authored per-question character limits and help text,
+   * returning the sentence that names the offending question.
+   *
+   * Run on both save paths. The published-event route does the same check
+   * server-side and answers 400, but a draft is written client-direct through
+   * `updateEvent`, which has no route to refuse it: the sanitiser there clamps
+   * silently, and an organiser who typed 5000 would get 4000 with no idea. This
+   * is what turns that clamp back into a backstop.
+   *
+   * `clampLimits: false` is what makes the message quotable: it keeps the
+   * number as typed instead of the number that would have been stored.
+   */
+  function signupFormLimitError(): string | null {
+    const problem = validateQuestionLimits(
+      sanitizeSignupForm(signupForm, { clampLimits: false }),
+    );
+    return problem ? problem.error : null;
+  }
+
   async function flush() {
     if (!event) return;
     if (!dirty) return;
+    const limitProblem = signupFormLimitError();
+    if (limitProblem) throw new Error(limitProblem);
     const fields = {
       title,
       blocks,
@@ -416,6 +440,8 @@ export default function EventEditor({ eventId }: Props) {
         if (cleaned.length < 2) return `"${q.label}" needs at least two options.`;
       }
     }
+    const limitProblem = signupFormLimitError();
+    if (limitProblem) return limitProblem;
     return null;
   }
 

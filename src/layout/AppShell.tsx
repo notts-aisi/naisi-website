@@ -61,6 +61,13 @@ const EVENTS_ACCESS = (v: Viewer) =>
   v.role === "committee" ||
   Boolean(v.permissions.draftEvent) ||
   Boolean(v.permissions.approveEvent);
+// A non-admin holding draftCourse or approveCourse may use /admin/courses and
+// nothing else in the admin area, so they get a link straight to the course
+// tree rather than the Admin entry. Admins are excluded here on purpose: they
+// already have "Admin", and the two links would land on the same console.
+const COURSE_ADMIN_ACCESS = (v: Viewer) =>
+  v.role !== "admin" &&
+  (Boolean(v.permissions.draftCourse) || Boolean(v.permissions.approveCourse));
 
 const NAV_GROUPS: NavGroup[] = [
   {
@@ -83,7 +90,10 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Admin",
-    items: [{ label: "Admin", href: "/admin", visible: ADMIN_ONLY }],
+    items: [
+      { label: "Admin", href: "/admin", visible: ADMIN_ONLY },
+      { label: "Course admin", href: "/admin/courses", visible: COURSE_ADMIN_ACCESS },
+    ],
   },
 ];
 

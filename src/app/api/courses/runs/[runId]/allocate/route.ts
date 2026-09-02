@@ -14,6 +14,7 @@ import {
   type CourseGroupDoc,
 } from "@/lib/firestore/courseGroups";
 import { normalizeCourseRun, type CourseRunDoc } from "@/lib/firestore/courses";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * Place accepted applicants into groups — the write half of the allocation
@@ -118,6 +119,9 @@ function joinedWeekFor(run: CourseRunDoc, group: CourseGroupDoc | null): number 
 }
 
 export async function POST(req: Request, ctx: Ctx) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId } = await ctx.params;
 
   const actor = await getCurrentUser();
