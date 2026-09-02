@@ -1326,14 +1326,33 @@ service cloud.firestore {
           && request.resource.data.get('applicationForm', []).size() <= 30
           // ---- V3 W1 PR7: coursePages (the two courseRuns authoring fields
           // that PR ships alongside the page object). `startHereBlocks` mirrors
-          // COURSE_FIELD_LIMITS.maxStartHereBlocks; the `cohort` clause caps
-          // the map's KEY SET, which is this layer's whole vocabulary for
-          // bounding a map, and also refuses a stored null (`.keys()` on null
+          // COURSE_FIELD_LIMITS.maxStartHereBlocks; the `cohort` clauses cap
+          // the map's KEY SET and then TYPE each of the three keys.
+          //
+          // The key set alone is not enough. `hasOnly` says nothing about what
+          // is stored under a permitted key, so it would pass
+          // `{ term: 'winter', year: 'soon', number: [] }`, a cohort every
+          // reader then drops as malformed, leaving a run whose stored cohort
+          // and rendered cohort disagree, and leaving free text on a field the
+          // public page prints. The `.get(key, default)` defaults are what let
+          // an ABSENT cohort (every pre-V3 run, and the cleared case) pass
+          // these same clauses: each default is a valid value of its type.
+          //
+          // The key-set clause also refuses a stored null (`.keys()` on null
           // raises, and a stored null would wedge every later edit against the
           // `.get(field, {})` default: the submissionExerciseRef lesson).
+          //
+          // Ranges (year 2000-2100, number 1-99) stay in COHORT_LIMITS rather
+          // than here: they are typo catchers, not a trust boundary, and this
+          // layer's job is that the field cannot hold a shape a reader has to
+          // guess at.
           && request.resource.data.get('startHereBlocks', []).size() <= 20
           && request.resource.data.get('cohort', {}).keys()
-            .hasOnly(['term', 'year', 'number']);
+            .hasOnly(['term', 'year', 'number'])
+          && request.resource.data.get('cohort', {}).get('term', 'autumn')
+            in ['autumn', 'spring', 'summer']
+          && request.resource.data.get('cohort', {}).get('year', 2026) is int
+          && request.resource.data.get('cohort', {}).get('number', 1) is int;
       }
 
       allow read: if isSignedIn();

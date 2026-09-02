@@ -1975,6 +1975,36 @@ describe("courseRuns: the V3 cohort and startHereBlocks are capped authoring fie
     await assertFails(ref.update({ cohort: null }));
   });
 
+  it("refuses a cohort whose keys are the right NAMES but the wrong types", async () => {
+    // The key-set cap says nothing about what is stored under a permitted key.
+    // Without the type clauses beside it, `{ term: 'winter', year: 'soon',
+    // number: [] }` is a legal write, and then every reader drops it as
+    // malformed: the stored cohort and the rendered cohort disagree, and a
+    // free-text string sits on a field the public page prints.
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("drafter");
+    const ref = db.collection("courseRuns").doc("run1");
+    for (const cohort of [
+      { term: "winter", year: 2026, number: 1 },
+      { term: "autumn", year: "2026", number: 1 },
+      { term: "autumn", year: 2026.5, number: 1 },
+      { term: "autumn", year: 2026, number: "one" },
+      { term: "autumn", year: 2026, number: [1] },
+      { term: 7, year: 2026, number: 1 },
+    ]) {
+      await assertFails(ref.update({ cohort }));
+    }
+    // And the good one still lands, so the clauses refuse a shape rather than
+    // the field.
+    await assertSucceeds(
+      ref.update({ cohort: { term: "spring", year: 2027, number: 3 } }),
+    );
+    // An ABSENT cohort passes the same clauses, which is what the `.get`
+    // defaults are for: every pre-V3 run writes without the field.
+    await assertSucceeds(ref.update({ label: "Autumn 2026" }));
+  });
+
   it("refuses a start-here panel over the cap", async () => {
     await seedCast();
     await seedRun("run1");

@@ -613,6 +613,19 @@ test("§3 MODEL the rules cap the cohort's KEY SET, which is also what refuses a
   assert.match(RULES, /get\('startHereBlocks', \[\]\)\.size\(\) <= 20/);
 });
 
+test("§3 MODEL the rules TYPE the three cohort keys, not only their names", () => {
+  // hasOnly says nothing about what is stored under a permitted key, so on its
+  // own it admits { term: 'winter', year: 'soon', number: [] }: a cohort every
+  // reader drops, leaving the stored and the rendered cohort disagreeing. The
+  // `.get(key, default)` defaults are what let an ABSENT cohort still pass.
+  assert.match(
+    RULES,
+    /get\('cohort', \{\}\)\.get\('term', 'autumn'\)\s*\n?\s*in \['autumn', 'spring', 'summer'\]/,
+  );
+  assert.match(RULES, /get\('cohort', \{\}\)\.get\('year', 2026\) is int/);
+  assert.match(RULES, /get\('cohort', \{\}\)\.get\('number', 1\) is int/);
+});
+
 test("§3 MODEL the rules cap and COURSE_FIELD_LIMITS agree about startHereBlocks", () => {
   assert.equal(COURSE_FIELD_LIMITS.maxStartHereBlocks, 20);
 });
