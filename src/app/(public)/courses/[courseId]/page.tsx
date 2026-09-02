@@ -73,7 +73,7 @@ export default async function PublicCoursePage({
   // (`courseGroups` carries meeting links and facilitator uids). One extra
   // read, and only for a run that actually needs it.
   const pickerGroups: GroupPickerOption[] =
-    ctaRun && ctaRun.enrolMode === "open" && ctaRun.state === "open"
+    ctaRun && ctaRun.enrolMode === "open" && ctaRun.state !== "inactive"
       ? await fetchGroupPicker(ctaRun.id)
       : [];
 

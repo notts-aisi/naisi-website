@@ -184,13 +184,19 @@ export default function CourseCTA({
       {/* OPEN MODE: the picker IS the call to action, and it handles the
           signed-out case itself (a sign-in link carrying `next`), so it is
           rendered whether or not auth has resolved. Gating it on `loading`
-          would blank the timetable on every first paint. */}
-      {open && run.state === "open" ? (
+          would blank the timetable on every first paint.
+
+          It is rendered on a CLOSED open-mode run too, and renders nothing
+          there unless the visitor is on the course: this page is the only
+          surface an open-enrolment member has, so the deadline passing must
+          not take away the place they can see or the way out of it. */}
+      {open ? (
         <GroupPicker
           runId={run.id}
           courseTitle={courseTitle}
           groups={groups}
           streams={run.streams}
+          enrolOpen={run.state === "open"}
           nextPath={coursePath}
         />
       ) : loading ? null : run.state === "open" ? (

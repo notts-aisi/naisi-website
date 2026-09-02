@@ -46,6 +46,17 @@ type Props = {
   groups: GroupPickerOption[];
   /** The run's streams; empty when it has none. */
   streams: GroupPickerStream[];
+  /**
+   * Whether the run is taking sign-ups RIGHT NOW (`isEnrolOpen`, resolved on
+   * the server).
+   *
+   * The component is rendered on a CLOSED run too, and that is the point: the
+   * public course page is the only surface an open-enrolment member has, so
+   * closing the window must not take away the place they can see or the way
+   * out of it. What closes with the window is joining and moving, both of
+   * which the route refuses anyway.
+   */
+  enrolOpen: boolean;
   /** Where to send a signed-out visitor back to after sign-in. */
   nextPath: string;
 };
@@ -97,6 +108,7 @@ export default function GroupPicker({
   courseTitle,
   groups: initialGroups,
   streams,
+  enrolOpen,
   nextPath,
 }: Props) {
   const { user, loading: authLoading } = useAuth();
@@ -188,6 +200,7 @@ export default function GroupPicker({
 
   // ---- Signed out -------------------------------------------------------
   if (!authLoading && !user) {
+    if (!enrolOpen) return null;
     return (
       <div className={styles.picker}>
         <SlotList groups={groups} />
@@ -234,7 +247,7 @@ export default function GroupPicker({
             You&apos;re on this course as a facilitator, so your place is
             managed by the team.
           </p>
-        ) : changing ? (
+        ) : !enrolOpen ? null : changing ? (
           <>
             <SlotList
               groups={groups}
@@ -314,6 +327,9 @@ export default function GroupPicker({
   }
 
   // ---- Not on it yet -----------------------------------------------------
+  // Nothing to offer once the window has shut, and the CTA above has already
+  // said so in a dated sentence.
+  if (!enrolOpen) return null;
   return (
     <div className={styles.picker}>
       <SlotList
