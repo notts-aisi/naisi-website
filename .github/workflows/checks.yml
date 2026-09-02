@@ -1,0 +1,68 @@
+# Every pull request gets the same four checks a change has to pass locally.
+#
+# The BUILD is the point of this file. Typecheck, lint and the node suites all
+# pass on code that cannot be bundled: Next enforces the client and server
+# boundary at build time and nowhere else, so a module that reaches
+# `server-only` from a client component is green everywhere except here. Before
+# this workflow the only build that ever ran was the App Hosting rollout, which
+# means a build error was discovered by a failed deploy.
+name: Checks
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: Typecheck, lint, tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx next typegen
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: npm test
+      # A build needs the public Firebase values to inline. They are public by
+      # definition (they ship in the browser bundle), and a build does not
+      # contact the project, so placeholders are enough to prove it compiles.
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_FIREBASE_API_KEY: ci-placeholder
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ci-placeholder.firebaseapp.com
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ci-placeholder
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ci-placeholder.appspot.com
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "0"
+          NEXT_PUBLIC_FIREBASE_APP_ID: "1:0:web:0"
+          NEXT_PUBLIC_APP_URL: https://example.invalid
+
+  rules:
+    name: Firestore and Storage rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # The emulator suite is a Java process.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: npm ci
+      - run: npm ci
+        working-directory: scripts/rules-tests
+      - run: npm test
+        working-directory: scripts/rules-tests
