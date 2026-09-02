@@ -1,7 +1,9 @@
 "use client";
 
+import CountedTextarea from "@/components/ui/CountedTextarea";
 import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import {
+  answerMaxLength,
   DIETARY_ALLERGIES,
   DIETARY_NONE,
   type FormQuestion,
@@ -14,9 +16,24 @@ type Props = {
   answers: Record<string, RsvpAnswer>;
   onChange: (next: Record<string, RsvpAnswer>) => void;
   disabled?: boolean;
+  /**
+   * Per-question problems, keyed by question id. `validateAnswers` returns the
+   * offending `questionId` alongside its message, so a caller can put the
+   * sentence against the field it belongs to instead of only at the top of the
+   * form. Each one renders as a live region wired to the input through
+   * aria-describedby, so a screen reader announces it without the user having
+   * to go looking.
+   */
+  errors?: Record<string, string>;
 };
 
-export default function FormRenderer({ questions, answers, onChange, disabled }: Props) {
+export default function FormRenderer({
+  questions,
+  answers,
+  onChange,
+  disabled,
+  errors,
+}: Props) {
   function set(id: string, value: RsvpAnswer) {
     onChange({ ...answers, [id]: value });
   }
@@ -24,12 +41,32 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
   return (
     <div className={styles.wrap}>
       {questions.map((q) => {
+        const helpId = `${q.id}-help`;
+        const errorId = `${q.id}-error`;
+        const error = errors?.[q.id];
+        const describedBy =
+          [q.helpText ? helpId : null, error ? errorId : null]
+            .filter(Boolean)
+            .join(" ") || undefined;
+        const invalid = error ? true : undefined;
+        const limit = answerMaxLength(q);
+
         const label = (
           <span className={styles.label}>
             {q.label}
             {q.required && <span className={styles.required}> *</span>}
           </span>
         );
+        const help = q.helpText ? (
+          <p id={helpId} className={styles.help}>
+            {q.helpText}
+          </p>
+        ) : null;
+        const errorNote = error ? (
+          <p id={errorId} className={styles.error} role="alert">
+            {error}
+          </p>
+        ) : null;
 
         switch (q.type) {
           case "shortText": {
@@ -37,6 +74,7 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
             return (
               <label key={q.id} className={styles.field}>
                 {label}
+                {help}
                 <input
                   type="text"
                   className={styles.input}
@@ -45,8 +83,11 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                   disabled={disabled}
                   placeholder={q.placeholder}
                   required={q.required}
-                  maxLength={500}
+                  maxLength={limit}
+                  aria-invalid={invalid}
+                  aria-describedby={describedBy}
                 />
+                {errorNote}
               </label>
             );
           }
@@ -55,16 +96,20 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
             return (
               <label key={q.id} className={styles.field}>
                 {label}
-                <textarea
+                {help}
+                <CountedTextarea
                   className={styles.textarea}
                   value={value}
+                  max={limit}
                   onChange={(e) => set(q.id, e.target.value)}
                   disabled={disabled}
                   placeholder={q.placeholder}
                   required={q.required}
                   rows={3}
-                  maxLength={500}
+                  aria-invalid={invalid}
+                  aria-describedby={describedBy}
                 />
+                {errorNote}
               </label>
             );
           }
@@ -74,6 +119,7 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
             return (
               <label key={q.id} className={styles.field}>
                 {label}
+                {help}
                 <ResponsiveSelect
                   value={value}
                   onChange={(next) => set(q.id, next)}
@@ -84,6 +130,7 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                   disabled={disabled}
                   ariaLabel={q.label || "Pick one"}
                 />
+                {errorNote}
               </label>
             );
           }
@@ -107,11 +154,14 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                 <fieldset
                   key={q.id}
                   className={`${styles.field} ${styles.choiceField}`}
+                  aria-invalid={invalid}
+                  aria-describedby={describedBy}
                 >
                   <legend className={styles.legend}>
                     {q.label}
                     {q.required && <span className={styles.required}> *</span>}
                   </legend>
+                  {help}
                   <div className={styles.checkGrid}>
                     {opts.map((opt) => (
                       <label key={opt} className={styles.checkRow}>
@@ -150,7 +200,7 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                           }
                           disabled={disabled || noneSelected}
                           placeholder="Anything else not listed above"
-                          maxLength={500}
+                          maxLength={limit}
                         />
                       </div>
                     </>
@@ -176,6 +226,7 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                       </label>
                     </>
                   )}
+                  {errorNote}
                 </fieldset>
               );
             }
@@ -184,11 +235,14 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
               <fieldset
                 key={q.id}
                 className={`${styles.field} ${styles.choiceField}`}
+                aria-invalid={invalid}
+                aria-describedby={describedBy}
               >
                 <legend className={styles.legend}>
                   {q.label}
                   {q.required && <span className={styles.required}> *</span>}
                 </legend>
+                {help}
                 <div className={styles.checkGrid}>
                   {opts.map((opt) => {
                     const checked = value.includes(opt);
@@ -210,17 +264,24 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                     );
                   })}
                 </div>
+                {errorNote}
               </fieldset>
             );
           }
           case "yesNo": {
             const value = answers[q.id];
             return (
-              <fieldset key={q.id} className={styles.field}>
+              <fieldset
+                key={q.id}
+                className={styles.field}
+                aria-invalid={invalid}
+                aria-describedby={describedBy}
+              >
                 <legend className={styles.legend}>
                   {q.label}
                   {q.required && <span className={styles.required}> *</span>}
                 </legend>
+                {help}
                 <div className={styles.radioRow}>
                   <label className={styles.radioChoice}>
                     <input
@@ -244,6 +305,7 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                     <span>No</span>
                   </label>
                 </div>
+                {errorNote}
               </fieldset>
             );
           }
@@ -261,11 +323,14 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
               <fieldset
                 key={q.id}
                 className={`${styles.field} ${styles.choiceField}`}
+                aria-invalid={invalid}
+                aria-describedby={describedBy}
               >
                 <legend className={styles.legend}>
                   {q.label}
                   {q.required && <span className={styles.required}> *</span>}
                 </legend>
+                {help}
                 <p className={styles.helper}>
                   Tick anything we need to keep off your plate, whether a diet
                   you follow or an allergy. Tick only genuine requirements, not
@@ -307,7 +372,7 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                     }
                     disabled={disabled || noneSelected}
                     placeholder="e.g. strict halal, no shellfish"
-                    maxLength={500}
+                    maxLength={limit}
                   />
                 </div>
 
@@ -335,6 +400,7 @@ export default function FormRenderer({ questions, answers, onChange, disabled }:
                   />
                   <span>No dietary requirements</span>
                 </label>
+                {errorNote}
               </fieldset>
             );
           }

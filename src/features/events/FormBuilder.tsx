@@ -4,7 +4,11 @@ import { useState } from "react";
 import Card from "@/components/ui/Card";
 import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import {
+  DEFAULT_ANSWER_MAX_LENGTH,
   emptyQuestion,
+  QUESTION_HELP_TEXT_MAX,
+  QUESTION_MAX_LENGTH_MAX,
+  QUESTION_MAX_LENGTH_MIN,
   type FormQuestion,
   type FormQuestionType,
 } from "@/lib/firestore/events";
@@ -34,6 +38,35 @@ const TYPE_LABEL: Record<FormQuestionType, string> = {
   yesNo: "Yes / No",
   dietaryAllergies: "Allergies checklist",
 };
+
+/**
+ * Whether this question can receive free text at all, and so whether a
+ * character limit means anything for it. Short and long text are the answer
+ * itself; the other two are "Other" boxes, which `validateAnswers` caps with
+ * the same number.
+ */
+function acceptsFreeText(q: FormQuestion): boolean {
+  return (
+    q.type === "shortText" ||
+    q.type === "longText" ||
+    q.type === "dietaryAllergies" ||
+    (q.type === "multiSelect" && Boolean(q.allowOther))
+  );
+}
+
+/**
+ * Read a typed character limit. Blank clears it back to the default, and
+ * anything unparseable is treated as blank rather than as zero. The range is
+ * NOT clamped here: the saving route refuses an out-of-range number and names
+ * the question, and the hint below the input says so before they get there.
+ */
+function parseLimit(raw: string): number | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.floor(n);
+}
 
 const ADD_MENU: Array<{ type: FormQuestionType; hint: string }> = [
   { type: "shortText", hint: "One-line answer" },
@@ -245,6 +278,65 @@ export default function FormBuilder({
                 &quot;no requirements&quot; option, and a free-text box for
                 anything else.
               </p>
+            )}
+
+            <label className={styles.fieldLabel}>
+              <span>Help text (optional)</span>
+              <input
+                type="text"
+                className={styles.fieldInput}
+                value={q.helpText ?? ""}
+                onChange={(e) =>
+                  patch(i, {
+                    helpText: e.target.value || undefined,
+                  } as Partial<FormQuestion>)
+                }
+                disabled={disabled}
+                maxLength={QUESTION_HELP_TEXT_MAX}
+                placeholder="e.g. Two or three sentences is plenty"
+              />
+              <span className={styles.helper}>
+                Shown under the question, before the answer box.
+              </span>
+            </label>
+
+            {acceptsFreeText(q) && (
+              <label className={styles.fieldLabel}>
+                <span>Character limit (optional)</span>
+                <input
+                  type="number"
+                  className={styles.fieldInput}
+                  value={q.maxLength ?? ""}
+                  min={QUESTION_MAX_LENGTH_MIN}
+                  max={QUESTION_MAX_LENGTH_MAX}
+                  step={1}
+                  onChange={(e) =>
+                    patch(i, {
+                      maxLength: parseLimit(e.target.value),
+                    } as Partial<FormQuestion>)
+                  }
+                  disabled={disabled}
+                  placeholder={String(DEFAULT_ANSWER_MAX_LENGTH)}
+                />
+                {q.maxLength === undefined ? (
+                  <span className={styles.helper}>
+                    Blank means the default of {DEFAULT_ANSWER_MAX_LENGTH}{" "}
+                    characters.
+                  </span>
+                ) : q.maxLength < QUESTION_MAX_LENGTH_MIN ||
+                  q.maxLength > QUESTION_MAX_LENGTH_MAX ? (
+                  <span className={styles.warn}>
+                    Must be between {QUESTION_MAX_LENGTH_MIN} and{" "}
+                    {QUESTION_MAX_LENGTH_MAX}. Saving will be refused until you
+                    fix it.
+                  </span>
+                ) : (
+                  <span className={styles.helper}>
+                    Answers stop at {q.maxLength} characters, with a live
+                    counter on long text.
+                  </span>
+                )}
+              </label>
             )}
 
             <label className={styles.checkboxLabel}>

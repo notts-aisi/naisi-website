@@ -57,7 +57,13 @@
   cursor: not-allowed;
 }
 
-.textarea {
+/* Long text now renders through CountedTextarea, which brings Input.module.css
+   `.control` + `.textarea` with it. Those are single-class selectors, and which
+   of two CSS modules wins a specificity tie depends on bundle order, so the
+   long-text look would be decided by something nobody controls. Descendant
+   selectors (0,2,0) pin it here instead and keep the frozen events RSVP
+   baseline exactly as it was. See docs/mobile-baseline-events.md. */
+.wrap .textarea {
   padding: 0.55rem 0.7rem;
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
@@ -70,9 +76,10 @@
   min-height: 5rem;
 }
 
-.textarea:focus {
+.wrap .textarea:focus {
   outline: none;
   border-color: var(--color-accent);
+  box-shadow: none;
 }
 
 .checkGrid {
@@ -202,6 +209,25 @@
 .helper {
   font-size: var(--text-sm);
   color: var(--color-text-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Author-written guidance for one question, between its label and its input.
+   Sits above the control so it is read before the answer is typed rather than
+   after. */
+.help {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* One question's validation message. Rendered with role="alert" and pointed at
+   by the control's aria-describedby, so it is announced rather than only seen. */
+.error {
+  font-size: var(--text-sm);
+  color: var(--color-danger);
   line-height: 1.5;
   margin: 0;
 }
