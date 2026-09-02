@@ -5,9 +5,9 @@ the codebase: secrets, the external scheduler, and the order things have to be
 deployed in.
 
 > Status: this file starts with the scheduler tick, which is the first piece of
-> courses V3 infrastructure that needs work in the Google Cloud console. Later
-> PRs extend it with the rules-and-indexes deploy order, the membership import
-> and the cutover checklist.
+> courses V3 infrastructure that needs work in the Google Cloud console, and
+> now also carries the draft-read narrowing. Later PRs extend it with the
+> membership import and the cutover checklist.
 
 ---
 
@@ -322,3 +322,84 @@ Deletion begins within 24 hours of a document's `expiresAt` and is a background
 sweep, not an instant. Rows already written before this shipped carry no
 `expiresAt` and are never collected; delete them by hand if they matter, or
 leave them, since they stop accumulating the moment the policy is on.
+
+---
+
+## Draft course and run reads (V3 W3 PR20)
+
+### What changed
+
+`courses` and `courseRuns` used to be `allow read: if isSignedIn()`. A course
+with `status: 'draft'` and a run with `status: 'draft'` are now readable only
+by staff:
+
+| Collection | Who may read a DRAFT |
+| --- | --- |
+| `courses` | admins, `draftCourse` or `approveCourse` holders, the `authorUid`, anyone in the course's `collaboratorUids` |
+| `courseRuns` | admins, `draftCourse` or `approveCourse` holders, the run's `authorUid` |
+
+Every other status stays readable by any signed-in account. For `courseRuns`
+the predicate is `status != 'draft'`, not "published or archived": there is no
+`published` member of `CourseRunStatus` (it is `draft`, `applications-open`,
+`applications-closed`, `running`, `completed`, `cancelled`), and `archived` is
+a separate boolean orthogonal to status. A pending applicant reading an
+`applications-open` run is unaffected, which is what the funnel needs.
+
+### Two consequences worth knowing before you debug something
+
+**1. A course collaborator without a course permission cannot read a draft
+run.** `collaboratorUids` lives on the COURSE document; a run carries only
+`authorUid`. Honouring collaborators on the run would need a `get()` on the
+parent course from inside a read rule, which is billed once per candidate
+document on a list and is the pattern the rest of `firestore.rules` refuses.
+Nothing loses a surface today: every client-side reader of a run document
+(`RunEditor`, `WeekEditor`, `AdminCourseList`) sits under `/admin/courses`,
+whose gate is admin OR `draftCourse` OR `approveCourse`, so a permissionless
+collaborator cannot reach any of them anyway. If that changes, denormalise the
+roster onto the run as a server-pinned array rather than adding the `get()`.
+
+**2. An unfiltered client list over `courses` or `courseRuns` now fails for a
+caller with no course permission.** Firestore judges a list on the query's
+potential result set, not on the rows that come back, so an unfiltered query
+is refused even when every stored document happens to be published. This is
+fine today because no such list is issued: `useCourses()` and
+`AdminCourseList` both run inside `/admin/courses`, and every public and
+learner surface reads through the Admin SDK fetchers in
+`src/features/courses`, which bypass rules. A future member-facing list must
+constrain on status, for example
+`where("status", "==", "published")`, which narrows the candidate set to
+documents the rule already allows. `RoundEditor` is the one caller that can
+run as a permissionless account (an appointed admissions reviewer who is SU
+committee and holds no course key): its unfiltered `courseRuns` read now fails
+for that person, it already catches its own rejection, and the run pickers it
+feeds render only for `canAuthor`, so nothing they were shown disappears.
+
+### What was deliberately NOT narrowed
+
+`courseRuns/{runId}/weeks` keeps `allow read: if isSignedIn()`. Draft
+curriculum is still readable by any signed-in account, and this PR does not
+pretend otherwise. The week documents are read client-direct by `useWeek`,
+`ProgressBody` and `useGroupWeeks`, the last of which issues an unfiltered
+`getDocs` over the subcollection that a status-derived rule would reject
+wholesale, and a week document carries no status of its own to test.
+Narrowing that half means re-routing three learner surfaces through a server
+fetcher: a feature PR, not a rules edit.
+
+### Deploying it
+
+This is a TIGHTENING, so the usual ordering worry (deploy rules before the
+code that needs them) is reversed: nothing in the app needs this rule to
+function, and deploying it early only closes reads that were open. Ship it
+with the rest of the wave:
+
+```sh
+npx firebase deploy --only firestore:rules --project <default|dev>
+```
+
+No index is owed.
+
+**Rollback** is a rules-only deploy of the previous file; there is no data
+migration and no code depends on the narrowing. If a surface breaks after the
+deploy, the symptom is a `permission-denied` on a `courses` or `courseRuns`
+read, and the first question is whether the caller holds `draftCourse` or
+`approveCourse`, followed by whether the failing read is an unfiltered list.

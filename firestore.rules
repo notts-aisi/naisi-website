@@ -1064,7 +1064,53 @@ service cloud.firestore {
             == resource.data.get('archived', false);
       }
 
-      allow read: if isSignedIn();
+      // ---- V3 W3 PR20: draft reads ---------------------------------------
+      // A DRAFT course is staff-only. Every other status (published,
+      // archived) stays readable by any signed-in account, which is what the
+      // authenticated catalogue surfaces and the applicant funnel need.
+      //
+      // Who counts as staff for a draft: the author (authorUid), the course's
+      // own collaboratorUids, any draftCourse or approveCourse holder, and
+      // admins.
+      //
+      // ORDER MATTERS FOR COST, not for correctness. The three resource-only
+      // clauses come first, so the common path (a signed-in member opening a
+      // published course) costs ZERO document accesses. Only a draft
+      // candidate falls through to hasPerm(), which reads the caller's own
+      // user doc. That get() is the courseGroups pattern below
+      // (`allow read: if isAdmin() || canDraftCourse() || canApproveCourse()`),
+      // not the get()-in-a-read-rule trap this file warns about: the trap is a
+      // get() on the CANDIDATE document, billed once per document in a list.
+      // This one is on the CALLER, always the same path.
+      //
+      // THE LIST CONSEQUENCE, stated plainly because it is a behaviour change
+      // and not a bug: rules are not filters. An UNFILTERED list over
+      // `courses` by a caller holding no course permission is now refused
+      // WHOLESALE the moment one draft exists in the collection, rather than
+      // returning the published rows. That is intended, and no such list is
+      // issued anywhere: the only client-direct list over this collection is
+      // `useCourses` in useAdminCourses.ts, mounted by AdminCourseList,
+      // CourseEditor and CoursePageEditor, all three of which sit under
+      // /admin/courses, whose layout gate admits admin, draftCourse and
+      // approveCourse only. All three satisfy a permission clause and so pass
+      // the whole list. Every public surface reads through the Admin SDK
+      // fetchers in src/features/courses, which bypass rules entirely. A
+      // future member-facing list must constrain on `status` (for example
+      // `where('status', '==', 'published')`), which narrows the candidate set
+      // to documents the first clause already allows.
+      //
+      // `status` defaults to 'draft' when absent, so a malformed or
+      // half-written course fails CLOSED rather than open.
+      allow read: if isSignedIn()
+        && (
+          resource.data.get('status', 'draft') != 'draft'
+          || isOwnCourse()
+          || isCourseCollaborator()
+          || isAdmin()
+          || canDraftCourse()
+          || canApproveCourse()
+        );
+      // ---- end V3 W3 PR20 -------------------------------------------------
 
       allow create: if canDraftCourse()
         && request.resource.data.authorUid == request.auth.uid
@@ -1417,7 +1463,74 @@ service cloud.firestore {
           && request.resource.data.get('cohort', {}).get('number', 1) is int;
       }
 
-      allow read: if isSignedIn();
+      // ---- V3 W3 PR20: draft reads ---------------------------------------
+      // A DRAFT run is staff-only. The predicate is `status != 'draft'`, NOT
+      // "published or archived": CourseRunStatus has no 'published' member (it
+      // is draft | applications-open | applications-closed | running |
+      // completed | cancelled), and `archived` is a separate boolean
+      // orthogonal to status. So every non-draft status, a cancelled or an
+      // archived-but-completed run included, stays readable by any signed-in
+      // account. That is what a pending applicant reading an
+      // applications-open run needs, and it is why the test below still
+      // passes for a pending user.
+      //
+      // WHO CAN READ A DRAFT RUN, and the honest limitation: admins,
+      // draftCourse and approveCourse holders, and the run's own authorUid.
+      // That is all.
+      //
+      // A COURSE COLLABORATOR WHO HOLDS NO COURSE PERMISSION CANNOT READ A
+      // DRAFT RUN. `authorUid` lives on the run, but `collaboratorUids` lives
+      // on the parent COURSE, so honouring collaborators here would need a
+      // get() on courses/$(resource.data.courseId): a get() derived from the
+      // CANDIDATE document, billed once per candidate in a list, which is
+      // exactly the trap the rest of this file refuses. The limitation costs
+      // nothing in practice. Every client surface that reads a run document
+      // (RunEditor and WeekEditor through useAdminCourses, and
+      // AdminCourseList's unfiltered read) sits under /admin/courses, whose
+      // layout gate is admin OR draftCourse OR approveCourse, so a
+      // permissionless collaborator cannot reach any of them: the clause would
+      // guard a door nobody can stand in front of. If collaborators ever need
+      // a draft run client-direct, the fix is to denormalise the roster onto
+      // the run as a server-pinned array, the way trackLeadUids already is,
+      // not to add the get().
+      //
+      // trackLeadUids is likewise NOT a read clause. A track lead may author
+      // this run's weeks (canEditRun() in the weeks block), but the only
+      // surface that reads the run doc to do it is WeekEditor, behind that
+      // same admin-tree gate.
+      //
+      // Cost ordering and the list consequence are as in the `courses` block
+      // above: the resource-only clauses come first so a non-draft run costs
+      // zero document accesses, and an unfiltered client list over
+      // `courseRuns` by a caller with no course permission is refused
+      // wholesale once a draft exists. One caller can be such a person:
+      // RoundEditor's unfiltered read, reachable by an appointed admissions
+      // reviewer who is SU committee but holds neither course key. It already
+      // catches its own rejection, and the run pickers it feeds render only
+      // inside the `canAuthor` branch, so that reviewer loses nothing they
+      // were shown.
+      //
+      // `status` defaults to 'draft' when absent, so a malformed run fails
+      // CLOSED.
+      //
+      // DELIBERATELY NOT NARROWED: courseRuns/{runId}/weeks below keeps
+      // `allow read: if isSignedIn()`. Those documents are read CLIENT-DIRECT
+      // by useWeek, ProgressBody and useGroupWeeks, the last of which issues
+      // an unfiltered getDocs over the subcollection that a status-derived
+      // rule would reject wholesale, and a week doc carries no status of its
+      // own to test. Narrowing that half means re-routing three learner
+      // surfaces through a server fetcher, which is a feature PR and not a
+      // rules edit. So, said plainly: draft CURRICULUM is still readable by
+      // any signed-in account. Only the course and run shells are closed here.
+      allow read: if isSignedIn()
+        && (
+          resource.data.get('status', 'draft') != 'draft'
+          || isOwnRun()
+          || isAdmin()
+          || canDraftCourse()
+          || canApproveCourse()
+        );
+      // ---- end V3 W3 PR20 -------------------------------------------------
 
       // Server-owned state must start CLEAN: empty role arrays, zeroed
       // counters, and the channel pinned to the deterministic cohort:<runId>

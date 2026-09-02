@@ -549,8 +549,13 @@ describe("courseRuns", () => {
   });
 
   it("is readable by a PENDING user (applications are open to pending accounts)", async () => {
+    // The run is seeded APPLICATIONS-OPEN, not draft, and that is the point of
+    // the fixture rather than a detail of it: V3 W3 PR20 narrowed the read
+    // rule to `status != 'draft'`, so what a pending applicant is entitled to
+    // read is a run that has actually opened. The draft half is pinned in the
+    // "draft reads" suite below.
     await seedCast();
-    await seedRun("run1");
+    await seedRun("run1", { status: "applications-open" });
     const db = await asUser("pending1");
     await assertSucceeds(db.collection("courseRuns").doc("run1").get());
   });
@@ -744,7 +749,8 @@ describe("courseRuns weeks", () => {
 describe("courseGroups", () => {
   it("hides groups from pending users AND plain members — but a pending user CAN read the run", async () => {
     await seedCast();
-    await seedRun("run1");
+    // Applications-open, not draft: see the PR20 note on the courseRuns read.
+    await seedRun("run1", { status: "applications-open" });
     await seed(async (db) => {
       await db.collection("courseGroups").doc("g1").set(groupDoc());
     });
@@ -2036,6 +2042,259 @@ describe("courseRuns: the V3 cohort and startHereBlocks are capped authoring fie
           startHereBlocks: [],
         }),
       ),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V3 W3 PR20: draft course and run reads are staff-only
+// ---------------------------------------------------------------------------
+
+/**
+ * The narrowing: `courses` with status 'draft' and `courseRuns` with status
+ * 'draft' left the signed-in tier. Everything else about these two collections
+ * is unchanged, and the weeks subcollection was deliberately NOT narrowed (the
+ * "courseRuns weeks" suite above still reads w03 on a draft run as a pending
+ * user, and that stays green on purpose).
+ *
+ * Two properties are easy to get wrong and are pinned separately here:
+ *
+ *  1. LISTS ARE JUDGED ON THE QUERY, NOT ON THE ROWS. Firestore refuses a list
+ *     whose potential result set could include a document the rule denies, so
+ *     an unfiltered list over `courses` by a caller with no course permission
+ *     is refused EVEN IF every stored course happens to be published. The
+ *     permission clauses are resource-independent, so a drafter, an approver
+ *     and an admin still list the whole collection unfiltered, which is what
+ *     useCourses() and AdminCourseList do.
+ *  2. A COURSE COLLABORATOR CAN READ A DRAFT COURSE BUT NOT A DRAFT RUN.
+ *     `collaboratorUids` lives on the course; the run has only `authorUid`,
+ *     and resolving the parent would put a candidate-derived get() in a read
+ *     rule. The limitation is real and tested rather than papered over.
+ *
+ * ## Mutation check (each restored bit-exact afterwards)
+ *  1. `courses` read reverted to `allow read: if isSignedIn()` → five of the
+ *     eight tests below go red (every draft refusal, the fail-closed case and
+ *     the unfiltered-list refusal). Run.
+ *  2. The `|| isOwnCourse()` clause deleted → exactly ONE test goes red, the
+ *     author one, which is what proves the author clause is load bearing
+ *     rather than shadowed by the permission clauses. Run.
+ *  3. `courseRuns` given a collaborator clause resolved with a get() on the
+ *     parent course → exactly one test goes red, "a course COLLABORATOR ...
+ *     but NOT the draft run", which is the reminder that the honest
+ *     limitation is tested behaviour and not an oversight. Run.
+ */
+describe("V3 W3 PR20: draft courses and runs are staff-only", () => {
+  /** Seed one draft and one published course, plus a draft and a live run. */
+  async function seedDraftAndLive() {
+    await seed(async (db) => {
+      await db.collection("courses").doc("c-draft").set(courseDoc());
+      await db
+        .collection("courses")
+        .doc("c-live")
+        .set(courseDoc({ status: "published" }));
+      await db
+        .collection("courses")
+        .doc("c-archived")
+        .set(courseDoc({ status: "archived" }));
+    });
+    await seedRun("r-draft");
+    await seedRun("r-live", { status: "running" });
+    await seedRun("r-cancelled", { status: "cancelled" });
+  }
+
+  it("refuses a plain member a draft course and a draft run", async () => {
+    await seedCast();
+    await seedDraftAndLive();
+    const db = await asUser("learner");
+    await assertFails(db.collection("courses").doc("c-draft").get());
+    await assertFails(db.collection("courseRuns").doc("r-draft").get());
+  });
+
+  it("refuses a PENDING applicant and a signed-out visitor the same two docs", async () => {
+    await seedCast();
+    await seedDraftAndLive();
+    const pending = await asUser("pending1");
+    await assertFails(pending.collection("courses").doc("c-draft").get());
+    await assertFails(pending.collection("courseRuns").doc("r-draft").get());
+    const anon = await asAnon();
+    await assertFails(anon.collection("courses").doc("c-live").get());
+    await assertFails(anon.collection("courseRuns").doc("r-live").get());
+  });
+
+  it("keeps published, archived and every non-draft run status signed-in readable", async () => {
+    await seedCast();
+    await seedDraftAndLive();
+    const db = await asUser("learner");
+    await assertSucceeds(db.collection("courses").doc("c-live").get());
+    await assertSucceeds(db.collection("courses").doc("c-archived").get());
+    // There is no 'published' run status. `running` and `cancelled` are both
+    // simply not-draft, which is the whole predicate.
+    await assertSucceeds(db.collection("courseRuns").doc("r-live").get());
+    await assertSucceeds(db.collection("courseRuns").doc("r-cancelled").get());
+    const pending = await asUser("pending1");
+    await assertSucceeds(pending.collection("courseRuns").doc("r-live").get());
+  });
+
+  it("lets the author, a draftCourse holder, an approver and an admin read both drafts", async () => {
+    await seedCast();
+    await seedDraftAndLive();
+    // `drafter` is BOTH the seeded authorUid and a draftCourse holder, so the
+    // author clause needs its own actor to be visible: `facil` owns c-mine
+    // and r-mine and holds no permission at all.
+    await seed(async (db) => {
+      await db
+        .collection("courses")
+        .doc("c-mine")
+        .set(courseDoc({ authorUid: "facil" }));
+    });
+    await seedRun("r-mine", { authorUid: "facil" });
+
+    for (const uid of ["drafter", "approver", "admin1"]) {
+      const db = await asUser(uid);
+      await assertSucceeds(db.collection("courses").doc("c-draft").get());
+      await assertSucceeds(db.collection("courseRuns").doc("r-draft").get());
+    }
+
+    const author = await asUser("facil");
+    await assertSucceeds(author.collection("courses").doc("c-mine").get());
+    await assertSucceeds(author.collection("courseRuns").doc("r-mine").get());
+    // ...and only their own: authorship is not a permission.
+    await assertFails(author.collection("courses").doc("c-draft").get());
+    await assertFails(author.collection("courseRuns").doc("r-draft").get());
+  });
+
+  it("lets a course COLLABORATOR read the draft course but NOT the draft run", async () => {
+    // The documented limitation, pinned so it cannot drift into a surprise:
+    // collaboratorUids lives on the course doc, so the run cannot honour it
+    // without a candidate-derived get() in a read rule. No client surface
+    // needs it today (every run reader sits behind the /admin/courses gate,
+    // which a permissionless collaborator cannot pass anyway).
+    await seedCast();
+    await seed(async (db) => {
+      await db
+        .collection("courses")
+        .doc("c-collab")
+        .set(courseDoc({ collaboratorUids: ["learner"] }));
+    });
+    await seedRun("r-collab", { courseId: "c-collab" });
+    const db = await asUser("learner");
+    await assertSucceeds(db.collection("courses").doc("c-collab").get());
+    await assertFails(db.collection("courseRuns").doc("r-collab").get());
+  });
+
+  it("fails CLOSED on a course or run with no status field at all", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      const { status: _cs, ...noStatusCourse } = courseDoc();
+      await db.collection("courses").doc("c-nostatus").set(noStatusCourse);
+      const { status: _rs, ...noStatusRun } = runDoc("r-nostatus");
+      await db.collection("courseRuns").doc("r-nostatus").set(noStatusRun);
+    });
+    const db = await asUser("learner");
+    await assertFails(db.collection("courses").doc("c-nostatus").get());
+    await assertFails(db.collection("courseRuns").doc("r-nostatus").get());
+    await assertSucceeds((await asUser("admin1")).collection("courses").doc("c-nostatus").get());
+  });
+
+  it("REGRESSION: an unfiltered 25-doc list over courses is refused wholesale for a plain member and served for staff", async () => {
+    // Rules are not filters. One draft among twenty-five is enough to sink an
+    // unfiltered list, because Firestore judges the QUERY. This is the
+    // behaviour change the rule's comment describes, and the reason no
+    // client-direct list over `courses` is issued outside /admin/courses.
+    await seedCast();
+    await seed(async (db) => {
+      for (let i = 0; i < 25; i += 1) {
+        const id = `c${String(i).padStart(2, "0")}`;
+        await db
+          .collection("courses")
+          .doc(id)
+          .set(courseDoc({ status: i === 7 ? "draft" : "published" }));
+      }
+    });
+
+    const member = await asUser("learner");
+    await assertFails(member.collection("courses").get());
+    // The migration path for any future member-facing list: constrain on
+    // status and the candidate set becomes one the first clause allows.
+    const filtered = await assertSucceeds(
+      member.collection("courses").where("status", "==", "published").get(),
+    );
+    assert.equal(filtered.size, 24);
+
+    // The three staff hats list the lot, drafts included, because their
+    // clauses do not touch `resource` at all. This is exactly the read
+    // useCourses() issues from AdminCourseList, CourseEditor and
+    // CoursePageEditor.
+    for (const uid of ["drafter", "approver", "admin1"]) {
+      const db = await asUser(uid);
+      const all = await assertSucceeds(db.collection("courses").get());
+      assert.equal(all.size, 25);
+    }
+  });
+
+  it("REGRESSION: AdminCourseList's unfiltered courseRuns read still serves a draftCourse holder", async () => {
+    // AdminCourseList.tsx reads every run in one unfiltered query to label the
+    // course rows, and useCourseRuns() reads them filtered by courseId. Both
+    // are issued by a caller who may hold draftCourse and nothing else, and
+    // both must survive the narrowing.
+    await seedCast();
+    await seed(async (db) => {
+      for (let i = 0; i < 25; i += 1) {
+        const id = `run${String(i).padStart(2, "0")}`;
+        await db
+          .collection("courseRuns")
+          .doc(id)
+          .set(runDoc(id, { status: i % 3 === 0 ? "draft" : "running" }));
+      }
+    });
+    const db = await asUser("drafter");
+    const all = await assertSucceeds(db.collection("courseRuns").get());
+    assert.equal(all.size, 25);
+    const scoped = await assertSucceeds(
+      db.collection("courseRuns").where("courseId", "==", "course1").get(),
+    );
+    assert.equal(scoped.size, 25);
+    // The same two queries from a plain member: the unfiltered one goes, the
+    // courseId-scoped one goes too, because neither constrains status.
+    const member = await asUser("learner");
+    await assertFails(member.collection("courseRuns").get());
+    await assertFails(
+      member.collection("courseRuns").where("courseId", "==", "course1").get(),
+    );
+  });
+
+  it("leaves the weeks subcollection under a DRAFT run signed-in readable, deliberately", async () => {
+    // Not an oversight and not a hole this PR forgot: narrowing the weeks
+    // means re-routing useWeek, ProgressBody and useGroupWeeks (an unfiltered
+    // getDocs) through a server fetcher. Until that lands, draft curriculum is
+    // readable by any signed-in account and the docs say so.
+    await seedCast();
+    await seedRun("r-draft");
+    await seed(async (db) => {
+      await db
+        .collection("courseRuns")
+        .doc("r-draft")
+        .collection("weeks")
+        .doc("w03")
+        .set({
+          weekNumber: 3,
+          title: "Goal misgeneralisation",
+          summary: "Read the two papers.",
+          guideBlocks: [],
+          materials: [],
+          exercises: [],
+          checklist: [],
+          estimatedMinutes: null,
+          published: false,
+        });
+    });
+    const db = await asUser("learner");
+    await assertFails(db.collection("courseRuns").doc("r-draft").get());
+    await assertSucceeds(
+      db.collection("courseRuns").doc("r-draft").collection("weeks").doc("w03").get(),
+    );
+    await assertSucceeds(
+      db.collection("courseRuns").doc("r-draft").collection("weeks").get(),
     );
   });
 });
