@@ -24,6 +24,7 @@
 import { after, afterEach, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  asAnon,
   asUser,
   assertFails,
   assertSucceeds,
@@ -1839,6 +1840,202 @@ describe("courseEnrolments: the attendance rollup is not the member's to write",
     const db = await asUser("admin1");
     await assertFails(
       db.collection("courseEnrolments").doc("run1__learner").update({ submissionDone: true }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V3 W1 PR7: coursePages, and the two courseRuns fields that ship with it
+// ---------------------------------------------------------------------------
+
+/** Seed one authored page (rules disabled: the collection is routes-only). */
+async function seedCoursePage(courseId, overrides = {}) {
+  await seed(async (db) => {
+    await db.collection("coursePages").doc(courseId).set({
+      headline: "Learn how AI could go wrong, and what to do about it",
+      pitchBlocks: [],
+      whoItIsFor: "Any student, no prerequisites.",
+      howSelectionWorks: "A short written application, reviewed blind.",
+      membershipExpectation: "Members only. Membership is 5 pounds for the year.",
+      formatText: "In person, small groups",
+      sessionsText: "Six weekly sessions",
+      weeklyHoursText: "Around 5 hours a week",
+      weeklyThemes: [],
+      sampleWeekNumber: 3,
+      faq: [],
+      journey: [],
+      coverImageUrl: null,
+      coverAlt: "",
+      visualSeed: "",
+      themesSourceTemplateId: null,
+      themesSourceLabel: null,
+      updatedAt: new Date(),
+      updatedByUid: "drafter",
+      ...overrides,
+    });
+  });
+}
+
+describe("coursePages: signed-in read, and NOBODY writes from a client", () => {
+  it("lets any signed-in account read an authored page", async () => {
+    // Signed-in rather than public, matching `courses` and `courseRuns` above:
+    // `allow read` also grants `list`, and an unpublished course's pitch must
+    // not be world-enumerable. The logged-out marketing page is served by an
+    // Admin SDK fetcher on a server component (fetchCoursePage.ts).
+    await seedCast();
+    await seedCoursePage("course1");
+    for (const uid of ["learner", "pending1", "drafter", "admin1"]) {
+      const db = await asUser(uid);
+      await assertSucceeds(db.collection("coursePages").doc("course1").get());
+    }
+  });
+
+  it("refuses a signed-out read, of one doc and of the collection", async () => {
+    await seedCoursePage("course1");
+    const db = await asAnon();
+    await assertFails(db.collection("coursePages").doc("course1").get());
+    await assertFails(db.collection("coursePages").limit(1).get());
+  });
+
+  it("refuses EVERY client write, including an admin's", async () => {
+    // The whole point of the collection being routes-only: `pitchBlocks`
+    // renders through dangerouslySetInnerHTML on a logged-out page, and
+    // sanitizeBlocks is a shape filter, not an HTML sanitiser. Two write paths
+    // cannot enforce one sanitisation, so there is exactly one, and it is
+    // PUT /api/courses/[courseId]/page.
+    await seedCast();
+    await seedCoursePage("course1");
+    for (const uid of ["admin1", "approver", "drafter", "learner"]) {
+      const db = await asUser(uid);
+      const ref = db.collection("coursePages").doc("course1");
+      await assertFails(ref.update({ headline: "Rewritten" }));
+      await assertFails(
+        ref.update({
+          pitchBlocks: [
+            { id: "b1", type: "richText", html: "<script>alert(1)</script>" },
+          ],
+        }),
+      );
+      await assertFails(ref.delete());
+      // Nor by minting the page for a course that has none yet.
+      await assertFails(
+        db.collection("coursePages").doc("course2").set({ headline: "Mine now" }),
+      );
+    }
+  });
+
+  it("refuses a write even from the course's own author", async () => {
+    // `drafter` authors course1 in `courseDoc()`, and the `courses` update rule
+    // would let them edit the course document itself. The page is deliberately
+    // not on that lane.
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("courses").doc("course1").set(courseDoc());
+    });
+    await seedCoursePage("course1");
+    const db = await asUser("drafter");
+    await assertFails(
+      db.collection("coursePages").doc("course1").update({ headline: "Mine" }),
+    );
+  });
+});
+
+describe("courseRuns: the V3 cohort and startHereBlocks are capped authoring fields", () => {
+  it("lets the run's drafter set a cohort and a start-here panel", async () => {
+    // Unlike enrolMode and streams, these two are CONTENT: they name a cohort
+    // and write an orientation note. They gate nothing and no route reads them
+    // to decide anything, so they stay on the client-direct authoring lane
+    // with a cap rather than moving into the server-owned tier.
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("drafter");
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run1").update({
+        cohort: { term: "autumn", year: 2026, number: 2 },
+        startHereBlocks: [{ id: "b1", type: "heading", text: "Start here", level: 2 }],
+      }),
+    );
+  });
+
+  it("refuses an unknown key on the cohort map, and a cohort that is null", async () => {
+    // The key-set cap is this layer's whole vocabulary for bounding a map. It
+    // ALSO refuses a stored null, which matters more than it looks: `.keys()`
+    // on null raises, and a null that got in would then fail this same clause
+    // on every later edit, wedging the run for everyone but an admin. Same
+    // class as the submissionExerciseRef pin above.
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("drafter");
+    const ref = db.collection("courseRuns").doc("run1");
+    await assertFails(
+      ref.update({
+        cohort: { term: "autumn", year: 2026, number: 1, secret: "smuggled" },
+      }),
+    );
+    await assertFails(ref.update({ cohort: null }));
+  });
+
+  it("refuses a cohort whose keys are the right NAMES but the wrong types", async () => {
+    // The key-set cap says nothing about what is stored under a permitted key.
+    // Without the type clauses beside it, `{ term: 'winter', year: 'soon',
+    // number: [] }` is a legal write, and then every reader drops it as
+    // malformed: the stored cohort and the rendered cohort disagree, and a
+    // free-text string sits on a field the public page prints.
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("drafter");
+    const ref = db.collection("courseRuns").doc("run1");
+    for (const cohort of [
+      { term: "winter", year: 2026, number: 1 },
+      { term: "autumn", year: "2026", number: 1 },
+      { term: "autumn", year: 2026.5, number: 1 },
+      { term: "autumn", year: 2026, number: "one" },
+      { term: "autumn", year: 2026, number: [1] },
+      { term: 7, year: 2026, number: 1 },
+    ]) {
+      await assertFails(ref.update({ cohort }));
+    }
+    // And the good one still lands, so the clauses refuse a shape rather than
+    // the field.
+    await assertSucceeds(
+      ref.update({ cohort: { term: "spring", year: 2027, number: 3 } }),
+    );
+    // An ABSENT cohort passes the same clauses, which is what the `.get`
+    // defaults are for: every pre-V3 run writes without the field.
+    await assertSucceeds(ref.update({ label: "Autumn 2026" }));
+  });
+
+  it("refuses a start-here panel over the cap", async () => {
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("drafter");
+    await assertFails(
+      db.collection("courseRuns").doc("run1").update({
+        startHereBlocks: Array.from({ length: 21 }, (_, i) => ({
+          id: `b${i}`,
+          type: "divider",
+        })),
+      }),
+    );
+  });
+
+  it("applies the same caps at CREATE, not only on update", async () => {
+    // runContentOk() is shared by both branches on purpose: a field capped
+    // only on update is a field a drafter can be born holding too much of.
+    const db = await asUser("drafter");
+    await seedCast();
+    await assertFails(
+      db.collection("courseRuns").doc("run9").set(
+        runDoc("run9", { cohort: { term: "autumn", year: 2026, number: 1, oops: 1 } }),
+      ),
+    );
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run9").set(
+        runDoc("run9", {
+          cohort: { term: "autumn", year: 2026, number: 1 },
+          startHereBlocks: [],
+        }),
+      ),
     );
   });
 });

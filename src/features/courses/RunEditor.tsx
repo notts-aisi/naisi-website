@@ -24,6 +24,14 @@ import {
 } from "@/lib/firestore/events";
 import { ACADEMIC_YEAR_PATTERN } from "@/lib/firestore/users";
 import { isValidDateKey } from "@/lib/courses/weekPlan";
+import {
+  COHORT_LIMITS,
+  COHORT_TERMS,
+  COHORT_TERM_LABELS,
+  cohortLabel,
+  normalizeCohort,
+  type CohortTerm,
+} from "@/lib/courses/cohortLabel";
 import { ALLOWED_TRANSITIONS } from "@/lib/courses/runStatus";
 import {
   COURSE_FIELD_LIMITS,
@@ -241,7 +249,33 @@ export default function RunEditor({ courseId, runId }: Props) {
   const [label, setLabel] = useState("");
   const [academicYear, setAcademicYear] = useState("");
   const [startDate, setStartDate] = useState("");
+  // V3 W1 PR7. The STRUCTURED cohort that replaces `label` in front of
+  // learners and visitors. Held as strings because they come out of text
+  // inputs; parsed once in `saveMeta`.
+  const [cohortTerm, setCohortTerm] = useState<CohortTerm | "">("");
+  const [cohortYear, setCohortYear] = useState("");
+  const [cohortNumber, setCohortNumber] = useState("");
   const [metaError, setMetaError] = useState<string | null>(null);
+
+  // The cohort preview is derived from the THREE FORM FIELDS, never from the
+  // saved run. A preview of the stored cohort answers "what did this say last
+  // time", and the question in front of an author typing into these boxes is
+  // "what will this say when I press Save", including the answer "nothing
+  // yet, you have filled in one of three". `normalizeCohort` is the same
+  // reader the stored value goes through, so a preview that appears is a
+  // preview of a cohort that will save.
+  const cohortFieldsFilled = [
+    cohortTerm,
+    cohortYear.trim(),
+    cohortNumber.trim(),
+  ].filter(Boolean).length;
+  const cohortPreview = cohortLabel({
+    cohort: normalizeCohort({
+      term: cohortTerm,
+      year: Number(cohortYear.trim()),
+      number: Number(cohortNumber.trim()),
+    }),
+  });
 
   // ---- Applications ----
   const [openAt, setOpenAt] = useState<Date | null>(null);
@@ -280,6 +314,9 @@ export default function RunEditor({ courseId, runId }: Props) {
       setLabel(run.label);
       setAcademicYear(run.academicYear);
       setStartDate(run.startDate);
+      setCohortTerm(run.cohort ? run.cohort.term : "");
+      setCohortYear(run.cohort ? String(run.cohort.year) : "");
+      setCohortNumber(run.cohort ? String(run.cohort.number) : "");
       setMetaError(null);
       setOpenAt(run.applicationsOpenAt);
       setCloseAt(run.applicationsCloseAt);
@@ -478,6 +515,42 @@ export default function RunEditor({ courseId, runId }: Props) {
       setMetaError("Start date must be a real date — every run needs one.");
       return;
     }
+
+    // V3 W1 PR7. The cohort is ALL THREE FIELDS OR NONE. A half-filled cohort
+    // cannot be rendered ("Autumn , cohort " is not a cohort) and would have to
+    // be defaulted somewhere, which is how a run ends up publicly claiming a
+    // year nobody typed.
+    const cohortFilled = [cohortTerm, cohortYear.trim(), cohortNumber.trim()].filter(Boolean);
+    if (cohortFilled.length > 0 && cohortFilled.length < 3) {
+      setMetaError("Give the cohort a term, a year and a number, or leave all three blank.");
+      return;
+    }
+    let cohort: { term: CohortTerm; year: number; number: number } | null = null;
+    if (cohortFilled.length === 3) {
+      const year = Number(cohortYear.trim());
+      const number = Number(cohortNumber.trim());
+      if (
+        !Number.isInteger(year)
+        || year < COHORT_LIMITS.minYear
+        || year > COHORT_LIMITS.maxYear
+      ) {
+        setMetaError(
+          `Cohort year must be between ${COHORT_LIMITS.minYear} and ${COHORT_LIMITS.maxYear}.`,
+        );
+        return;
+      }
+      if (
+        !Number.isInteger(number)
+        || number < COHORT_LIMITS.minNumber
+        || number > COHORT_LIMITS.maxNumber
+      ) {
+        setMetaError(
+          `Cohort number must be between ${COHORT_LIMITS.minNumber} and ${COHORT_LIMITS.maxNumber}.`,
+        );
+        return;
+      }
+      cohort = { term: cohortTerm as CohortTerm, year, number };
+    }
     setMetaError(null);
 
     let ok = false;
@@ -487,6 +560,7 @@ export default function RunEditor({ courseId, runId }: Props) {
           label: trimmedLabel,
           academicYear: trimmedYear,
           startDate,
+          cohort,
         });
         ok = true;
       },
@@ -766,6 +840,74 @@ export default function RunEditor({ courseId, runId }: Props) {
               />
             </Field>
           </div>
+
+          {/* V3 W1 PR7. The cohort a learner and a visitor see, beside the run
+              label an admin sees. `cohortLabel()` is the ONE formatter, so the
+              preview below is byte-identical to what the public page renders.
+              It is built from the FORM STATE rather than the saved run, so the
+              all-three-or-none rule and the finished sentence are both visible
+              before Save rather than only after it. */}
+          <div className={styles.threeCol}>
+            <Field
+              id="run-cohort-term"
+              label="Cohort term"
+              hint="Shown to learners and on the public page."
+            >
+              <ResponsiveSelect
+                value={cohortTerm}
+                onChange={(next) => setCohortTerm(next as CohortTerm | "")}
+                options={[
+                  { value: "", label: "Not set" },
+                  ...COHORT_TERMS.map((term) => ({
+                    value: term,
+                    label: COHORT_TERM_LABELS[term],
+                  })),
+                ]}
+                ariaLabel="Cohort term"
+              />
+            </Field>
+            <Field
+              id="run-cohort-year"
+              label="Cohort year"
+              hint="The calendar year the term starts in."
+            >
+              <Input
+                id="run-cohort-year"
+                inputMode="numeric"
+                value={cohortYear}
+                onChange={(e) => setCohortYear(e.target.value)}
+                placeholder="2026"
+              />
+            </Field>
+            <Field
+              id="run-cohort-number"
+              label="Cohort number"
+              hint="1 unless this course runs several cohorts this term."
+            >
+              <Input
+                id="run-cohort-number"
+                inputMode="numeric"
+                value={cohortNumber}
+                onChange={(e) => setCohortNumber(e.target.value)}
+                placeholder="1"
+              />
+            </Field>
+          </div>
+
+          {cohortFieldsFilled > 0 && (
+            <p className={styles.hint}>
+              {cohortPreview ? (
+                <>
+                  Learners and visitors will see <strong>{cohortPreview}</strong> once
+                  you save. The run label above stays on admin lists only.
+                </>
+              ) : cohortFieldsFilled < 3 ? (
+                "A cohort is all three fields or none: give it a term, a year and a number, or clear the ones you have filled in."
+              ) : (
+                `Those three do not make a cohort yet. The year must be between ${COHORT_LIMITS.minYear} and ${COHORT_LIMITS.maxYear}, and the number between ${COHORT_LIMITS.minNumber} and ${COHORT_LIMITS.maxNumber}.`
+              )}
+            </p>
+          )}
 
           <Field
             id="run-start"

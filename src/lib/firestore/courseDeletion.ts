@@ -15,7 +15,12 @@ import {
   type CourseRunDoc,
 } from "./courses";
 import { COURSE_AUDIT_COLLECTION } from "./courseAudit";
+import { COURSE_PAGES_COLLECTION } from "./coursePages";
+// The ONLY `tasks.source` a run's cascade may delete. See drainMirroredTasks
+// for why this is a security filter rather than a tidier query.
+import { MIRRORED_TASK_SOURCE } from "./courseTasks";
 import { COURSE_MATERIAL_NOTES_COLLECTION } from "./courseMaterialNotes";
+import { DATA_EXPORTS_COLLECTION } from "./dataExports";
 import { SCHEDULER_MARKERS_COLLECTION } from "./schedulerMarkers";
 import { deleteEventsForSubscriptions } from "./subscriptions";
 import { ownedStoragePaths } from "./taskAttachments";
@@ -111,14 +116,6 @@ const MAX_PASSES = 5;
  */
 const PASS_LEASE_MS = 3 * 60 * 1000;
 
-/**
- * The ONLY `tasks.source` a run's cascade may delete — the value
- * `courseTasks.ts` stamps on a week mirror (`TaskSource`'s
- * "fellowship-reminder"). See drainMirroredTasks for why this is a security
- * filter rather than a tidier query.
- */
-const MIRRORED_TASK_SOURCE = "fellowship-reminder";
-
 export const COURSE_DELETIONS_COLLECTION = "courseDeletions";
 
 // ---------------------------------------------------------------------------
@@ -132,7 +129,8 @@ export const COURSE_DELETIONS_COLLECTION = "courseDeletions";
  * `emailSendRows` is counted but NEVER deleted: `emailSends` is the
  * append-only deliverability audit (the same reason accountDeletion leaves
  * it alone), and the manifest UI copy must say so — the number is "how much
- * history mentions this run", not "rows that will die".
+ * history mentions this run", not "rows that will die". `dataExportRows` is
+ * the second of those, on the same footing.
  */
 export type RunDestroyCounts = {
   weeks: number;
@@ -224,11 +222,47 @@ export type RunDestroyCounts = {
    */
   schedulerMarkers: number;
   emailSendRows: number;
+  /**
+   * `dataExports` rows whose scope names this run or one of its groups: the
+   * record of every register, roster or membership CSV somebody downloaded
+   * off this cohort.
+   *
+   * COUNTED, NEVER DELETED, exactly like `emailSendRows` above it. A row here
+   * names the ACTOR of a staff download and holds no member content at all
+   * (a kind, an actor, a scope of ids, a row count, a filename and a time),
+   * so destroying the run it describes takes away the thing exported without
+   * taking away the fact that somebody took a copy of it first. That fact is
+   * the whole point of the log, and it is not this cascade's to erase.
+   *
+   * It is on the manifest anyway, under the house rule that every collection
+   * a PR adds is named here in that same PR. A retained collection left off
+   * the list is worse than a noisy one: the dialog enumerates what a destroy
+   * touches, so silence reads as "this does not exist" rather than as "this
+   * survives".
+   */
+  dataExportRows: number;
 };
 
 export type CourseDestroyCounts = {
   /** Live runs still attached — every one of them is a blocker. */
   runs: number;
+  /**
+   * V3 W1 PR7. The authored public page at `coursePages/{courseId}`: 0 or 1,
+   * because the doc id IS the course id.
+   *
+   * DESTROYED with the course, not orphaned: unlike a template snapshot, the
+   * page is not a frozen artefact anybody could read again, it is the shop
+   * window for a course that is about to stop existing. The doc id is the
+   * course id, so a page left behind is also invisible: nothing lists this
+   * collection, and the next course minted at the same slug would inherit
+   * someone else's pitch.
+   *
+   * NOT part of the per-account deletion sweep (`accountDeletion.ts`). The
+   * page holds no uid beyond `updatedByUid` and no member-authored text, and
+   * sweeping on the last editor would delete a live course's public page
+   * because a committee member closed their account.
+   */
+  coursePages: number;
   /**
    * `courseTemplates` snapshots whose provenance names this course. NOT
    * deleted: templates are frozen snapshots (v2 decision 2) and orphaned
@@ -819,6 +853,20 @@ export async function countRunDestroyTargets(
     ),
   ];
 
+  // `dataExports` is COUNTED here and drained nowhere: see the counter's own
+  // doc comment. An export row records what it covered in a `scope` map, and
+  // the two keys that can name this cohort are `scope.runId` (a roster, an
+  // attendance summary) and `scope.groupId` (one group's register), so an
+  // honest "how much of the download log names this run" needs both, the same
+  // shape the emailSends count above uses. Nested map keys are served by the
+  // automatic single-field indexes, so neither needs a composite.
+  const exportCountPromises = [
+    countAgg(db.collection(DATA_EXPORTS_COLLECTION).where("scope.runId", "==", runId)),
+    ...chunkIds(groupIds).map((chunk) =>
+      countAgg(db.collection(DATA_EXPORTS_COLLECTION).where("scope.groupId", "in", chunk)),
+    ),
+  ];
+
   const [
     weeks,
     applications,
@@ -833,6 +881,7 @@ export async function countRunDestroyTargets(
     auditRows,
     schedulerMarkerCounts,
     emailSendCounts,
+    exportCounts,
   ] = await Promise.all([
     countAgg(db.collection("courseRuns").doc(runId).collection("weeks")),
     countAgg(db.collection("courseApplications").where("runId", "==", runId)),
@@ -874,6 +923,7 @@ export async function countRunDestroyTargets(
     countAgg(db.collection(COURSE_AUDIT_COLLECTION).where("runId", "==", runId)),
     Promise.all(markerCountPromises),
     Promise.all(emailCountPromises),
+    Promise.all(exportCountPromises),
   ]);
 
   return {
@@ -891,6 +941,7 @@ export async function countRunDestroyTargets(
     auditRows,
     schedulerMarkers: schedulerMarkerCounts.reduce((a, b) => a + b, 0),
     emailSendRows: emailSendCounts.reduce((a, b) => a + b, 0),
+    dataExportRows: exportCounts.reduce((a, b) => a + b, 0),
   };
 }
 
@@ -1471,12 +1522,16 @@ export async function countCourseDestroyTargets(
   db: Firestore,
   course: CourseDoc,
 ): Promise<CourseDestroyCounts> {
-  const [runs, templates] = await Promise.all([
+  const [runs, templates, pageSnap] = await Promise.all([
     countAgg(db.collection("courseRuns").where("courseId", "==", course.id)),
     // Ships in V2-2; counting the empty collection reads 0 until then.
     countAgg(db.collection("courseTemplates").where("courseId", "==", course.id)),
+    // An ADDRESSED get, not a count query: the doc id is the course id, so
+    // there is exactly one candidate and a query would cost more to learn
+    // less.
+    db.collection(COURSE_PAGES_COLLECTION).doc(course.id).get(),
   ]);
-  return { runs, templates };
+  return { runs, templates, coursePages: pageSnap.exists ? 1 : 0 };
 }
 
 /**
@@ -1609,13 +1664,29 @@ export async function destroyCourseCascade(
       };
     }
 
+    // V3 W1 PR7. The authored public page rides in the SAME final batch as the
+    // course doc, not in a drain pass: there is exactly one, addressed at the
+    // course id, so pagination would be machinery for a single document.
+    //
+    // The DELETE IS UNCONDITIONAL. Deleting a document that is not there is a
+    // no-op in Firestore, so gating the delete on the read would buy nothing
+    // and would lose the one case that matters: a page written between this
+    // read and the batch committing, which a conditional delete leaves behind
+    // as the live public page of a course that no longer exists. The read is
+    // kept only to say what this pass actually removed, which is why the audit
+    // count and not the delete is what branches on it.
+    const pageRef = db.collection(COURSE_PAGES_COLLECTION).doc(courseId);
+    const pageSnap = await pageRef.get();
+
     const totals: Record<string, number> = { courses: 1 };
+    if (pageSnap.exists) totals.coursePages = 1;
     const finalBatch = db.batch();
     finalBatch.update(auditRef, {
       ...auditIncrements(totals),
       ...PASS_LEASE_RELEASED,
       completedAt: FieldValue.serverTimestamp(),
     });
+    finalBatch.delete(pageRef);
     finalBatch.delete(courseRef);
     await finalBatch.commit();
 

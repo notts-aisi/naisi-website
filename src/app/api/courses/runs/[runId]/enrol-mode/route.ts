@@ -111,10 +111,37 @@ export async function PATCH(
     return NextResponse.json({ ok: true, enrolMode: currentMode });
   }
 
-  const enrolledCount =
-    typeof data.enrolledCount === "number" && Number.isFinite(data.enrolledCount)
-      ? Math.max(0, Math.floor(data.enrolledCount))
-      : 0;
+  // WHO IS ON THE RUN, COUNTED FROM THE ROWS. Not from
+  // `courseRuns.enrolledCount`: that counter tracks open-enrolment seats only
+  // (see its doc comment on `CourseRunDoc`), so an admissions run holding a
+  // hundred allocated learners reads 0 and this gate would wave the flip
+  // through, stranding every one of them on a run whose admissions surfaces
+  // no longer look at applications. The counter cannot answer "is anybody on
+  // this run"; an aggregate count over the enrolments can.
+  //
+  // TWO counts rather than one, because a `role: "facilitator"` row is an
+  // active enrolment too and is legitimate in either mode: a run whose staff
+  // are appointed before it opens must still be flippable. Rows written
+  // before `role` existed carry no such field and so fall on the learner side
+  // of the subtraction, which is `normalizeCourseEnrolment`'s default and the
+  // safe direction: it refuses rather than flips.
+  //
+  // Both are equality filters on auto-indexed fields, which Firestore serves
+  // by index merge, so this needs no composite index; `count()` is billed as
+  // a handful of reads however many rows it spans.
+  const activeRows = db
+    .collection("courseEnrolments")
+    .where("runId", "==", runId)
+    .where("status", "==", "active");
+  const [activeAgg, facilitatorAgg] = await Promise.all([
+    activeRows.count().get(),
+    activeRows.where("role", "==", "facilitator").count().get(),
+  ]);
+  const enrolledCount = Math.max(
+    0,
+    activeAgg.data().count - facilitatorAgg.data().count,
+  );
+
   const counts = (data.applicationCounts ?? {}) as Record<string, unknown>;
   const pending =
     typeof counts.pending === "number" && Number.isFinite(counts.pending)

@@ -40,6 +40,8 @@ export type AccountDeletionSummary = {
   admissionReviewsDeleted: number;
   /** Review rows written BY this account about other people. */
   admissionReviewsAuthoredDeleted: number;
+  /** Rounds this account was taken off as a reviewer or as the final decider. */
+  admissionRoundRolesCleared: number;
   conductFlagDeleted: boolean;
   authDeleted: boolean;
   /** Set when the teardown was not fully clean (a best-effort step failed, or the
@@ -294,6 +296,59 @@ async function deleteAdmissionApplications(
 }
 
 /**
+ * Take a deleted account off every admission round that names it: out of
+ * `reviewerUids`, and out of `finalDeciderUid` where it was the decider.
+ *
+ * ## Why this is not "tidying"
+ *
+ * A round outlives the accounts named on it, and until this ran, a deleted
+ * reviewer left a uid on the round that nothing could resolve. The roles route
+ * refuses a list naming an account that no longer exists, so the section
+ * wedged: the admin could not see who the problem was (the picker draws names
+ * from the member list, which no longer has them) and could not save a list
+ * with them taken off either, because the same save has to clear
+ * `users.admissionsReviewer` on everyone it removes and an update to a missing
+ * user document rejects the whole batch. Both halves of that are fixed in the
+ * route; this is the half that stops the state from arising at all.
+ *
+ * Both queries are single-field, so no composite index. Rounds are counted in
+ * tens, so one batch is enough, and a round appearing in both queries takes
+ * one update carrying both fields.
+ */
+export async function clearAdmissionRoundRoles(
+  db: Firestore,
+  uid: string,
+): Promise<number> {
+  const rounds = db.collection("admissionRounds");
+  const [asReviewer, asDecider] = await Promise.all([
+    rounds.where("reviewerUids", "array-contains", uid).get(),
+    rounds.where("finalDeciderUid", "==", uid).get(),
+  ]);
+
+  const updates = new Map<string, Record<string, unknown>>();
+  for (const doc of asReviewer.docs) {
+    updates.set(doc.id, {
+      ...(updates.get(doc.id) ?? {}),
+      reviewerUids: FieldValue.arrayRemove(uid),
+    });
+  }
+  for (const doc of asDecider.docs) {
+    updates.set(doc.id, { ...(updates.get(doc.id) ?? {}), finalDeciderUid: null });
+  }
+  if (updates.size === 0) return 0;
+
+  const batch = db.batch();
+  for (const [roundId, fields] of updates) {
+    batch.update(rounds.doc(roundId), {
+      ...fields,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  }
+  await batch.commit();
+  return updates.size;
+}
+
+/**
  * Cascade-delete an account by uid — the single source of truth for "delete this
  * account," reused by the admin Members delete, the collaborator delete, the
  * admin registrations-tracker delete, and the self-service unfinished-account
@@ -391,6 +446,7 @@ export async function deleteAccountCascade(
     admissionApplicationPrivateDeleted: 0,
     admissionReviewsDeleted: 0,
     admissionReviewsAuthoredDeleted: 0,
+    admissionRoundRolesCleared: 0,
     conductFlagDeleted: false,
     authDeleted: false,
   };
@@ -519,6 +575,15 @@ export async function deleteAccountCascade(
     //     only by an enrolment that is both active AND grouped — the
     //     allocate/remove routes' definition — so a withdrawn row releases
     //     nothing here; its seat went when it left "active".
+    //
+    //     The run's `enrolledCount` rides along too, and its condition is
+    //     NARROWER: `selfEnrolled` as well as active. That field is moved only
+    //     by the open-enrol route, which increments it when somebody takes a
+    //     seat themselves and decrements it when they leave. Decrementing it
+    //     for an allocated admissions learner, whose row nothing ever counted,
+    //     would drive it negative and then wedge the enrol-mode route, which
+    //     reads it as "is anybody on this run". Rows the counter never counted
+    //     are rows it must not uncount.
     if (!attendanceSwept) {
       console.error(
         "[deleteAccount] courseEnrolments delete SKIPPED — the attendance sweep failed and these rows are the only index back to the runs to re-scan:",
@@ -527,9 +592,17 @@ export async function deleteAccountCascade(
     } else {
       try {
         const seats = new Map<string, number>();
+        const selfEnrolledByRun = new Map<string, number>();
         for (const e of enrolments) {
-          if (e.status === "active" && e.groupId) {
+          if (e.status !== "active") continue;
+          if (e.groupId) {
             seats.set(e.groupId, (seats.get(e.groupId) ?? 0) + 1);
+          }
+          if (e.selfEnrolled && e.runId) {
+            selfEnrolledByRun.set(
+              e.runId,
+              (selfEnrolledByRun.get(e.runId) ?? 0) + 1,
+            );
           }
         }
         // A group doc that has since been deleted would make `batch.update`
@@ -541,6 +614,15 @@ export async function deleteAccountCascade(
           : [];
         const liveGroupIds = new Set(groupDocs.filter((d) => d.exists).map((d) => d.id));
 
+        // Same absent-doc rule as the groups above: a run deleted since the
+        // enrolment was written must not make `batch.update` reject the whole
+        // batch and strand every row in it.
+        const runIds = [...selfEnrolledByRun.keys()];
+        const runDocs = runIds.length
+          ? await db.getAll(...runIds.map((id) => db.collection("courseRuns").doc(id)))
+          : [];
+        const liveRunIds = new Set(runDocs.filter((d) => d.exists).map((d) => d.id));
+
         if (enrolSnap.size > 0) {
           const batch = db.batch();
           for (const d of enrolSnap.docs) batch.delete(d.ref);
@@ -548,6 +630,13 @@ export async function deleteAccountCascade(
             if (!liveGroupIds.has(groupId)) continue;
             batch.update(db.collection("courseGroups").doc(groupId), {
               memberCount: FieldValue.increment(-count),
+              updatedAt: FieldValue.serverTimestamp(),
+            });
+          }
+          for (const [runId, count] of selfEnrolledByRun) {
+            if (!liveRunIds.has(runId)) continue;
+            batch.update(db.collection("courseRuns").doc(runId), {
+              enrolledCount: FieldValue.increment(-count),
               updatedAt: FieldValue.serverTimestamp(),
             });
           }
@@ -644,6 +733,17 @@ export async function deleteAccountCascade(
     );
   } catch (err) {
     console.error("[deleteAccount] admissionReviews (reviewer) failed:", uid, err);
+    partialFailure = true;
+  }
+
+  // The rounds that NAME this account: its reviewer lists and its final
+  // decider. Unlike everything else in this block these are not rows the
+  // account owns, they are references to it on documents that outlive it, and
+  // a reference nothing can resolve is what wedged the roles section.
+  try {
+    summary.admissionRoundRolesCleared = await clearAdmissionRoundRoles(db, uid);
+  } catch (err) {
+    console.error("[deleteAccount] admissionRounds role clear failed:", uid, err);
     partialFailure = true;
   }
 

@@ -16,6 +16,10 @@ import {
   formatWindowDeadline,
 } from "@/lib/courses/window";
 import CourseCTA, { type CourseCTARun } from "@/features/courses/CourseCTA";
+import {
+  fetchGroupPicker,
+  type GroupPickerOption,
+} from "@/features/courses/fetchGroupPicker";
 import WeekAccordion from "@/features/courses/WeekAccordion";
 import Reveal from "../../Reveal";
 import styles from "./course.module.css";
@@ -61,6 +65,17 @@ export default async function PublicCoursePage({
   // island; formatting a Nottingham deadline in the visitor's own timezone is
   // how someone reads "closes Sat 17 Oct" and applies a day late.
   const ctaRun = toCTARun(applicationRun);
+
+  // OPEN-ENROLMENT runs put the session picker on this page, so the slots are
+  // fetched with the page rather than by the client island: a signed-out
+  // visitor sees the timetable in the first paint, and the projection stays
+  // on the server where `fetchGroupPicker` can guarantee what leaves it
+  // (`courseGroups` carries meeting links and facilitator uids). One extra
+  // read, and only for a run that actually needs it.
+  const pickerGroups: GroupPickerOption[] =
+    ctaRun && ctaRun.enrolMode === "open" && ctaRun.state !== "inactive"
+      ? await fetchGroupPicker(ctaRun.id)
+      : [];
 
   const meta = [
     course.level,
@@ -109,6 +124,7 @@ export default async function PublicCoursePage({
             courseId={course.id}
             courseTitle={course.title}
             run={ctaRun}
+            groups={pickerGroups}
             placement="hero"
           />
         </header>
@@ -142,6 +158,7 @@ export default async function PublicCoursePage({
           courseId={course.id}
           courseTitle={course.title}
           run={ctaRun}
+          groups={pickerGroups}
           placement="foot"
         />
       </div>
@@ -173,6 +190,11 @@ function toCTARun(found: RunWindow | null): CourseCTARun | null {
     id: run.id,
     label: run.label,
     state: window.state,
+    // `window` came from `courseRunWindow()`, so on an open-mode run its
+    // state is the ENROLMENT window, not the application one. The CTA needs
+    // the mode to know which of the two it is describing.
+    enrolMode: run.enrolMode,
+    streams: run.streams,
     opensOn: window.opensAt ? formatWindowDate(window.opensAt) : null,
     closesOn: window.closesAt
       ? past

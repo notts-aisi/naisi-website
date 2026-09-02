@@ -52,13 +52,12 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /**
  * Route trees whose mutating handlers must all be guarded.
  *
- * TODO when those workstreams land: add "src/app/api/admissions" (rounds,
- * stages, apply, review, decide, promote) and "src/app/api/admin/membership"
- * (periods, grants, import, export), plus the CSV export routes, to this list.
+ * TODO when those workstreams land: add "src/app/api/admin/membership"
+ * (periods, grants, import, export) plus the CSV export routes to this list.
  * They are named here rather than pre-registered because a tree that does not
  * exist yet cannot be scanned, and a silently-skipped tree is a hole.
  */
-const GUARDED_TREES = ["src/app/api/courses"];
+const GUARDED_TREES = ["src/app/api/courses", "src/app/api/admissions"];
 
 /**
  * Every mutating route in those trees, with the reason it is high-trust.
@@ -66,6 +65,8 @@ const GUARDED_TREES = ["src/app/api/courses"];
  */
 const MUST_GUARD = [
   ["src/app/api/courses/[courseId]/destroy/route.ts", "destroys a course and everything under it"],
+  ["src/app/api/courses/[courseId]/page/route.ts", "rewrites the public marketing page a logged-out visitor reads"],
+  ["src/app/api/courses/[courseId]/page/generate-themes/route.ts", "regenerates the public weekly themes and their provenance"],
   ["src/app/api/courses/[courseId]/publish/route.ts", "publishes a course to the public catalogue"],
   ["src/app/api/courses/[courseId]/templates/route.ts", "writes a reusable curriculum template"],
   ["src/app/api/courses/exercise-responses/[responseId]/review/route.ts", "reviews a learner's submitted work and releases the comment"],
@@ -88,7 +89,9 @@ const MUST_GUARD = [
   ["src/app/api/courses/runs/[runId]/clone-weeks/route.ts", "copies a whole week plan onto a run"],
   ["src/app/api/courses/runs/[runId]/destroy/route.ts", "destroys a run and every row under it"],
   ["src/app/api/courses/runs/[runId]/email/route.ts", "sends email to a cohort"],
+  ["src/app/api/courses/runs/[runId]/enrol/route.ts", "takes, moves and gives up a seat on an open-enrolment run in the member's own name"],
   ["src/app/api/courses/runs/[runId]/enrolments/[uid]/remove/route.ts", "removes a learner from a run"],
+  ["src/app/api/courses/runs/[runId]/enrolments/[uid]/reinstate/route.ts", "puts a member who left back on a run, taking a seat back off the group"],
   ["src/app/api/courses/runs/[runId]/enrol-mode/route.ts", "flips a run between admissions and open enrolment, which changes what the enrol route accepts"],
   ["src/app/api/courses/runs/[runId]/exercises/[exerciseId]/submit/route.ts", "submits a learner's answer in their own name"],
   ["src/app/api/courses/runs/[runId]/material-notes/route.ts", "records feedback attributed to the reader"],
@@ -98,6 +101,19 @@ const MUST_GUARD = [
   ["src/app/api/courses/runs/[runId]/status/route.ts", "moves a run along its lifecycle, opening or closing applications"],
   ["src/app/api/courses/runs/[runId]/sync-tasks/route.ts", "creates committee tasks on the board"],
   ["src/app/api/courses/templates/[templateId]/route.ts", "deletes a curriculum template"],
+  // Admissions: the round authoring console. A round is the object an intake
+  // hangs off, so every write here changes what applicants are asked, when the
+  // window is, who reads their answers, or who decides.
+  ["src/app/api/admissions/rounds/route.ts", "creates an admission round"],
+  ["src/app/api/admissions/rounds/[roundId]/route.ts", "edits a round's dates, questions framework and criteria"],
+  ["src/app/api/admissions/rounds/[roundId]/status/route.ts", "opens, closes, settles or cancels a round"],
+  ["src/app/api/admissions/rounds/[roundId]/stages/[stageId]/route.ts", "writes and deletes the questions a stage asks"],
+  ["src/app/api/admissions/rounds/[roundId]/stages/[stageId]/release/route.ts", "releases a stage's questions to applicants, which cannot be undone"],
+  ["src/app/api/admissions/rounds/[roundId]/roles/route.ts", "appoints reviewers and the final decider, which grants access to applications"],
+  // Outside the scanned trees above (it lives under /api/admin), so it is
+  // named here or it is checked by nothing: it writes `config/courses`, whose
+  // knobs reach every course surface at once.
+  ["src/app/api/admin/courses-config/route.ts", "changes site-wide course settings"],
 ];
 
 /**

@@ -22,6 +22,11 @@ type AuthState = {
   permissions: UserPermissions;
   /** True only for committee members the SU formally recognises (admin-set). */
   suRecognised: boolean;
+  /** Server-owned: true while this member reviews or decides at least one
+   *  admission round. Written only by the round roles route. It draws the
+   *  Admissions nav entry; the round's own arrays remain the authority on
+   *  what may actually be read. */
+  admissionsReviewer: boolean;
   loading: boolean;
   /**
    * True only once Firebase Auth's onAuthStateChanged has ACTUALLY fired.
@@ -41,6 +46,7 @@ const AuthContext = createContext<AuthState>({
   role: null,
   permissions: {},
   suRecognised: false,
+  admissionsReviewer: false,
   loading: true,
   authResolved: false,
 });
@@ -50,6 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<Role | null>(null);
   const [permissions, setPermissions] = useState<UserPermissions>({});
   const [suRecognised, setSuRecognised] = useState(false);
+  const [admissionsReviewer, setAdmissionsReviewer] = useState(false);
   const [loading, setLoading] = useState(true);
   const [authResolved, setAuthResolved] = useState(false);
 
@@ -71,11 +78,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setRole(snapshot.role);
         setPermissions(snapshot.permissions);
         setSuRecognised(snapshot.suRecognised);
+        // The bypass fixture has no admissions role of its own: a bypass
+        // admin already sees the Admissions entry through `role`, and a
+        // bypass member is not on any round.
+        setAdmissionsReviewer(false);
       } else {
         setUser(null);
         setRole(null);
         setPermissions({});
         setSuRecognised(false);
+        setAdmissionsReviewer(false);
       }
     }
 
@@ -171,6 +183,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           approveCourse: Boolean(raw.approveCourse),
         });
         setSuRecognised(Boolean(data?.suRecognised));
+        setAdmissionsReviewer(Boolean(data?.admissionsReviewer));
       },
       (err) => {
         log.warn("snapshot error", err);
@@ -180,6 +193,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setRole(null);
         setPermissions({});
         setSuRecognised(false);
+        setAdmissionsReviewer(false);
       },
     );
     return () => {
@@ -190,8 +204,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const value = useMemo(
-    () => ({ user, role, permissions, suRecognised, loading, authResolved }),
-    [user, role, permissions, suRecognised, loading, authResolved],
+    () => ({
+      user,
+      role,
+      permissions,
+      suRecognised,
+      admissionsReviewer,
+      loading,
+      authResolved,
+    }),
+    [user, role, permissions, suRecognised, admissionsReviewer, loading, authResolved],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

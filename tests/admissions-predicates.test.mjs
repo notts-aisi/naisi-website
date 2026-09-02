@@ -1056,7 +1056,10 @@ test("MODEL: every admissions step is best-effort and none can abort the cascade
     ACCOUNT_DELETION.indexOf("// 6. Firebase Auth user"),
   );
   assert.ok(block.length > 0, "the admissions block moved or lost its marker comment");
-  assert.equal((block.match(/\btry \{/g) ?? []).length, 4, "one try per collection");
-  assert.equal((block.match(/partialFailure = true;/g) ?? []).length, 4);
+  // Four collections the account OWNS rows in, plus the rounds that merely
+  // NAME it: reviewer lists and final decider, cleared by the same rule.
+  assert.equal((block.match(/\btry \{/g) ?? []).length, 5, "one try per collection");
+  assert.equal((block.match(/partialFailure = true;/g) ?? []).length, 5);
+  assert.match(block, /clearAdmissionRoundRoles\(db, uid\)/);
   assert.doesNotMatch(block, /\bthrow\b/);
 });

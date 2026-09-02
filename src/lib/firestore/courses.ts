@@ -5,6 +5,7 @@ import {
 } from "./newsletterBlocks";
 import { sanitizeSignupForm, type FormQuestion } from "./events";
 import { isValidDateKey, type WeekPlanEntry } from "../courses/weekPlan";
+import { normalizeCohort, type RunCohort } from "../courses/cohortLabel";
 
 /**
  * Courses data model — `courses/{id}` → `courseRuns/{id}` (top-level) →
@@ -24,6 +25,11 @@ import { isValidDateKey, type WeekPlanEntry } from "../courses/weekPlan";
 // type from one place. The shape itself lives in `../courses/weekPlan` next to
 // the week maths that interprets it.
 export type { WeekPlanEntry } from "../courses/weekPlan";
+
+// V3 W1 PR7. Same reasoning as the week-plan entry above: the shape lives next
+// to the ONE formatter that renders it (`cohortLabel`), and consumers of the
+// courses data model get it from here.
+export type { RunCohort, CohortTerm } from "../courses/cohortLabel";
 
 // ---- Course ----
 
@@ -205,12 +211,36 @@ export type CourseRunDoc = {
   /** Server-owned (see `CourseRunStream`). Empty = a run with no streams. */
   streams: CourseRunStream[];
   /**
-   * Server-owned counter: how many enrolments this run currently holds. Moved
-   * only by the transactions that write `courseEnrolments`, so it can never
-   * drift from the rows it summarises, following the `groupCount` /
-   * `memberCount`
-   * precedent. Read by the open-enrol picker and by the enrol-mode route,
-   * which refuses to change the mode once anybody is on the run.
+   * Server-owned counter: how many people are on this run through OPEN
+   * ENROLMENT right now. Moved only by the transactions that write
+   * `courseEnrolments`, so it can never drift from the rows it summarises,
+   * following the `groupCount` / `memberCount` precedent.
+   *
+   * ── WHAT IT COUNTS, EXACTLY ─────────────────────────────────────────────
+   * Enrolments that are BOTH `status: "active"` AND `selfEnrolled`. Every
+   * writer agrees on that definition, and there are four of them:
+   *
+   *  1. the open-enrol route, +1 on the seat and -1 on the drop-out;
+   *  2. the remove route, -1 when the row it retires was active and
+   *     self-enrolled (a removed open-enrol cohort that still read as
+   *     populated is how the enrol-mode route ends up refusing to reopen a
+   *     run nobody is on);
+   *  3. the reinstate route, +1 when it flips a withdrawn self-enrolled row
+   *     back to active;
+   *  4. the account-deletion sweep, -1 per self-enrolled active row it
+   *     deletes.
+   *
+   * Nothing counts an allocated admissions learner, so nothing may uncount
+   * one either: a decrement for a row that was never counted drives this
+   * negative.
+   *
+   * KNOWN GAP, stated rather than hidden: the allocation route does NOT move
+   * it, so an ADMISSIONS run reads 0 however many learners it has. Nothing
+   * may use this to answer "is anybody on this run": the enrol-mode route
+   * asks that question with an aggregate `count()` over the enrolments
+   * themselves, precisely because this number cannot answer it. Widening the
+   * definition means teaching the allocation route to move it in the same
+   * transaction as the row it writes.
    */
   enrolledCount: number;
   /**
@@ -226,6 +256,31 @@ export type CourseRunDoc = {
   startDate: string;
   /** Ordered teaching weeks + breaks. Interpreted by `currentWeekFor()`. */
   weekPlan: WeekPlanEntry[];
+  /**
+   * V3 W1 PR7. The STRUCTURED cohort (term, year and cohort number) that
+   * replaces `label` on every learner-facing and public surface, rendered by
+   * the one formatter `cohortLabel(run)` in `../courses/cohortLabel`.
+   *
+   * Client-writable authoring content, not a role or a counter: it names a
+   * cohort, it gates nothing and no route reads it to decide anything.
+   * `runContentOk()` caps its key set.
+   *
+   * ABSENT, NEVER NULL ON THE WIRE, exactly like `submissionExerciseRef` two
+   * fields up and for the same mechanical reason: the rules cap is
+   * `request.resource.data.get('cohort', {}).keys().hasOnly([...])`, and
+   * `.keys()` on a stored null raises, which denies the write. So the write
+   * path deletes the key to unset it (`updateRun`, `deleteField()`) and never
+   * writes a null. The `null` in this type is the READ side only.
+   */
+  cohort: RunCohort | null;
+  /**
+   * V3 W1 PR7. The "start here" panel shown above the week rail on the run
+   * home before week 1, and collapsed after it. Trusted authored content, the
+   * same trust model as `guideBlocks`, and unlike `coursePages.pitchBlocks`
+   * this one is behind the signed-in `/learn` gate, never on a logged-out
+   * page. Client-writable; `runContentOk()` caps the length.
+   */
+  startHereBlocks: Block[];
   /** Application form — reuses the events form machinery verbatim. */
   applicationForm: FormQuestion[];
   /** Applications window. Null = no automatic bound on that side. */
@@ -714,6 +769,12 @@ export const COURSE_FIELD_LIMITS = {
   checklistDetail: 500,
   maxSummaryBlocks: 40,
   maxGuideBlocks: 40,
+  /**
+   * V3 W1 PR7. The run home's "start here" panel. Half the guide-block budget:
+   * this is an orientation note read once, not a week's worth of prose, and
+   * the rules cap (`runContentOk()`) must be kept in step with it.
+   */
+  maxStartHereBlocks: 20,
   maxWeekPlanEntries: 60,
   maxMaterials: 30,
   maxExercises: 15,
@@ -957,6 +1018,13 @@ export function normalizeCourseRun(id: string, data: Raw): CourseRunDoc {
     enrolledCount: asCount(data.enrolledCount),
     startDate: asCivilDate(data.startDate),
     weekPlan: sanitizeWeekPlan(data.weekPlan),
+    // Absent (every pre-V3 run) and malformed both read as null. See the
+    // field comment for why a null must never be STORED.
+    cohort: normalizeCohort(data.cohort),
+    startHereBlocks: sanitizeBlocks(data.startHereBlocks).slice(
+      0,
+      COURSE_FIELD_LIMITS.maxStartHereBlocks,
+    ),
     applicationForm: sanitizeSignupForm(data.applicationForm),
     applicationsOpenAt: tsToDate(data.applicationsOpenAt),
     applicationsCloseAt: tsToDate(data.applicationsCloseAt),

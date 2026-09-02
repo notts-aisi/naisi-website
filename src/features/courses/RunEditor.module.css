@@ -151,6 +151,15 @@
   gap: var(--space-4);
 }
 
+/* V3 W1 PR7: the cohort triple (term, year, number) reads as one field made of
+   three, so it sits on its own row rather than pairing off with something
+   unrelated. */
+.threeCol {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-4);
+}
+
 .groups {
   display: flex;
   flex-direction: column;
@@ -280,6 +289,10 @@
    touch review of the course admin surfaces rides its own PR. */
 @media (max-width: 48rem) { /* --bp-md */
   .twoCol {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .threeCol {
     grid-template-columns: minmax(0, 1fr);
   }
 

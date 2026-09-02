@@ -2,18 +2,14 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
-import { isValidDateKey } from "@/lib/courses/weekPlan";
-import { memberCurrentWeek, resolveCalendar } from "@/lib/courses/groupResolve";
+import { joinedWeekFor } from "@/lib/courses/groupResolve";
 import { courseApplicationId } from "@/lib/firestore/courseApplications";
 import {
   courseEnrolmentId,
   normalizeCourseEnrolment,
 } from "@/lib/firestore/courseEnrolments";
-import {
-  normalizeCourseGroup,
-  type CourseGroupDoc,
-} from "@/lib/firestore/courseGroups";
-import { normalizeCourseRun, type CourseRunDoc } from "@/lib/firestore/courses";
+import { normalizeCourseGroup } from "@/lib/firestore/courseGroups";
+import { normalizeCourseRun } from "@/lib/firestore/courses";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
@@ -84,38 +80,6 @@ function dedupeByUid(placements: Placement[]): Placement[] {
   const byUid = new Map<string, Placement>();
   for (const p of placements) byUid.set(p.uid, p);
   return [...byUid.values()];
-}
-
-/**
- * The cohort week a fresh enrolment joins at — ON THE TARGET GROUP'S CLOCK.
- *
- * `anchorWeekNumber` is the last taught week that has started (0 before the
- * run — clamped to week 1 so pre-term allocation, the normal case, anchors
- * everyone to the beginning). A run or group with no usable start date also
- * anchors to week 1 rather than throwing: `memberCurrentWeek` inherits
- * `currentWeekFor`'s `RangeError` contract, so the RESOLVED start date is what
- * has to be guarded, not the run's.
- *
- * ── WHY IT IS PER PLACEMENT AND NOT PER REQUEST (V2-3) ──────────────────────
- * This was one value hoisted out of the loop, computed from the RUN's calendar
- * for everybody in the request. Groups pace themselves now, so that stamped a
- * number from a clock the member does not live on: allocate someone mid-run
- * into a group paced three weeks BEHIND and they join at the run's week 5
- * while their group is on week 3. `joinedWeekNumber` is a floor, and the
- * attendance route enforces it — so weeks 3 and 4, the weeks their group is
- * actually about to sit through, come back "hadn't joined the group in week
- * 3", the grid renders those cells inert, and `ProgressBody` leaves them out
- * of the member's own total. The group doc is already read inside the
- * transaction for the capacity check, so resolving through it costs nothing.
- *
- * `group === null` (un-placing) resolves the run canonical, which is exactly
- * what an ungrouped member is paced by.
- */
-function joinedWeekFor(run: CourseRunDoc, group: CourseGroupDoc | null): number {
-  const calendar = resolveCalendar(run, group);
-  return isValidDateKey(calendar.startDate)
-    ? Math.max(1, memberCurrentWeek(run, group).anchorWeekNumber)
-    : 1;
 }
 
 export async function POST(req: Request, ctx: Ctx) {
