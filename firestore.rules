@@ -1104,6 +1104,32 @@ service cloud.firestore {
           && request.resource.data.get('templateLabel', '')
             == resource.data.get('templateLabel', '');
       }
+      // THE WEEK PLAN LOCK. `weekPlan` is the run's calendar spine: the Nth
+      // taught entry IS week N, and every member-facing surface addresses that
+      // week as `weekDocId(weekNumber)` while the plan carries its own stable
+      // `weekId`. While a run is in DRAFT those two spellings can be
+      // reconciled freely, because no member data exists yet to repoint.
+      // The moment a run leaves draft they are load-bearing: reordering or
+      // removing a slot renumbers every entry after it, so a cohort's
+      // `/learn/{run}/weeks/{n}` silently resolves a different document than
+      // the one the admin arranged, and the registers, mirrored tasks and
+      // exercise responses keyed on the old numbering strand.
+      //
+      // So the plan is editable in draft and PINNED afterwards. Adding and
+      // removing slots mid-term is not forbidden outright, it is moved to the
+      // admin branch below, where the person making the change is the person
+      // accountable for the date shift it causes.
+      //
+      // Both sides default to [] so a run predating the field compares equal
+      // and passes, and the status defaults to 'draft' so a run written before
+      // the status union existed is treated as still editable rather than
+      // frozen out of reach.
+      function weekPlanLockRespected() {
+        return resource.data.get('status', 'draft') == 'draft'
+          || request.resource.data.get('weekPlan', [])
+            == resource.data.get('weekPlan', []);
+      }
+
       // Content caps shared by create and update. `startDate` must be a
       // civil "YYYY-MM-DD" — the week maths (weekPlan.ts) runs on civil
       // dates so DST can't shift week boundaries, and a malformed date here
@@ -1157,14 +1183,17 @@ service cloud.firestore {
 
       // Status moves (applications-open, running, cancelled, ...) change what
       // the world sees and what the apply route accepts — approve-gated, same
-      // two-person rule as events. A track lead may adjust run content
-      // (weekPlan tweaks mid-term) but is NOT an approver.
+      // two-person rule as events. A track lead may adjust run content (the
+      // label, the dates, the application form, and the week plan while the
+      // run is still a draft) but is NOT an approver, and once the run is out
+      // of draft the plan itself is pinned by weekPlanLockRespected().
       allow update: if isAdmin()
         || (
           (canApproveCourse() || isRunTrackLead()
             || (canDraftCourse() && isOwnRun()))
           && runPinnedFieldsUnchanged()
           && runContentOk()
+          && weekPlanLockRespected()
           // A run mid-destroy is frozen to non-admins entirely: every destroy
           // pass re-checks the typed confirmation against the CURRENT label,
           // so a rename here would wedge a half-finished cascade — the same
