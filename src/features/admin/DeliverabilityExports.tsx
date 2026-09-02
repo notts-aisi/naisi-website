@@ -130,13 +130,21 @@ export default function DeliverabilityExports({
           <p style={{ color: "var(--color-text-muted)", margin: 0 }}>Loading…</p>
         </Card>
       ) : rows.length === 0 ? (
-        <Card padding="md">
-          <p style={{ color: "var(--color-text-muted)", margin: 0 }}>
-            No exports recorded yet. Rows appear here the first time anyone
-            downloads a register, a roster, an applications table or a
-            membership list.
-          </p>
-        </Card>
+        // Only when the load SUCCEEDED and came back empty. A failed fetch
+        // also leaves `rows` empty, and rendering "no exports recorded yet"
+        // under the error card would answer a question the request never
+        // got to ask: it reads as "nobody has ever downloaded anything",
+        // which is the opposite of what a failure means on an audit log.
+        // On an error the card above is the whole answer.
+        error ? null : (
+          <Card padding="md">
+            <p style={{ color: "var(--color-text-muted)", margin: 0 }}>
+              No exports recorded yet. Rows appear here the first time anyone
+              downloads a register, a roster, an applications table or a
+              membership list.
+            </p>
+          </Card>
+        )
       ) : (
         <Card padding="sm">
           <div style={{ overflowX: "auto" }}>
