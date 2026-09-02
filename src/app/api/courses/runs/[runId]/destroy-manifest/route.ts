@@ -43,10 +43,13 @@ import { normalizeCourseRun, type CourseRunStatus } from "@/lib/firestore/course
  * absent from the payload rather than zeroed: the client treats a missing
  * counter as "not read", never as 0 (see useDestroy's `toCounts`).
  *
- * UI COPY CONTRACT for `counts.emailSendRows`: counted but NEVER deleted.
- * `emailSends` is the append-only deliverability audit — the dialog must
- * present this number as "delivery-log entries that will be kept", not as
- * part of what dies. Everything else in `counts` is destroyed.
+ * UI COPY CONTRACT for the two RETAINED counters, `counts.emailSendRows` and
+ * `counts.dataExportRows`: counted but NEVER deleted. `emailSends` is the
+ * append-only deliverability audit and `dataExports` the append-only record
+ * of which spreadsheets were downloaded off this cohort, so the dialog must
+ * present both as entries that will be KEPT, not as part of what dies.
+ * `admissionSeatOffers` is released rather than deleted (see the counter's
+ * own comment); everything else in `counts` is destroyed.
  */
 
 type RunSubject = {

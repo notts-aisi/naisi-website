@@ -42,8 +42,9 @@ export default function ReConsentActions({
         throw new Error(b?.error ?? "Couldn't save your acceptance. Please try again.");
       }
       // Hard nav, and NOT router.refresh(). The user is on /re-consent because
-      // dashboard/layout.tsx threw redirect("/re-consent") on a navigation to
-      // homeHref, so this document's route cache maps homeHref -> /re-consent.
+      // the authed layout ((app)/layout.tsx, or collaborator/layout.tsx) threw
+      // redirect("/re-consent") on a navigation to homeHref, so this
+      // document's route cache maps homeHref -> /re-consent.
       // router.refresh() cannot clear that — it invalidates segment entries
       // only (refresh-reducer.js:29-32) — which is exactly what made the old
       // code look correct while bouncing the user straight back at the consent

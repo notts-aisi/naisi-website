@@ -26,6 +26,17 @@ import { weekDocId, type ChecklistItem } from "./courses";
  * convention: meaning first, uniqueness after). CONSTRUCT-ONLY — never parse;
  * the task's `sourceRef` carries {cohortId, weekNumber} as data.
  */
+/**
+ * The `tasks.source` every week mirror carries, and the one value any sweep
+ * over mirrored tasks may filter on. Exported because it is a SECURITY FILTER
+ * wherever it is used, not a tidier query: `source` is pinned by the tasks
+ * rules against rewriting, so a task carrying it really was minted by the
+ * mirror, while `sourceRef` alone can be stamped onto an ordinary committee
+ * task. Anything that deletes by mirror id or by cohort pointer checks this
+ * first.
+ */
+export const MIRRORED_TASK_SOURCE = "fellowship-reminder";
+
 export function courseTaskId(runId: string, weekNumber: number, uid: string): string {
   return `course-${weekDocId(weekNumber)}__${runId}__${uid}`;
 }

@@ -1,9 +1,13 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { getImpersonator, markerIsLive } from "@/lib/firebase/impersonation";
-import { canApproveCourse, canDraftCourse } from "@/lib/firestore/users";
+import {
+  canApproveCourse,
+  canAuthorAdmissionRound,
+  canDraftCourse,
+} from "@/lib/firestore/users";
 import AdminPageLockBar from "@/features/admin/AdminLockUI";
-import AdminTabs from "./AdminTabs";
+import AdminTabs, { type AdminTabAccess } from "./AdminTabs";
 
 /**
  * The front door to the admin area.
@@ -41,7 +45,20 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const isAdmin = user.role === "admin";
   const isCourseAuthor = canDraftCourse(user) || canApproveCourse(user);
-  if (!isAdmin && !isCourseAuthor) redirect("/dashboard");
+  // Appointed reviewers reach `/admin/admissions` and nothing else. Without
+  // this branch the Admissions entry in the sidebar, which is drawn off the
+  // server-owned `users.admissionsReviewer` flag, would bounce exactly the
+  // non-admin SU reviewers the flag exists to serve, which is the dead-link
+  // failure the denormalisation was added to avoid.
+  const isAdmissionsReviewer = user.admissionsReviewer === true;
+  if (!isAdmin && !isCourseAuthor && !isAdmissionsReviewer) redirect("/dashboard");
+
+  const access: AdminTabAccess = {
+    isAdmin,
+    canAuthorCourses: isCourseAuthor,
+    canAuthorRounds: canAuthorAdmissionRound(user),
+    isAdmissionsReviewer,
+  };
 
   // A marker whose actorUid matches this session is stale, not a session (the
   // admin is signed in as themselves again); markerIsLive is the same
@@ -52,8 +69,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (viewingAs) {
     return (
       <div>
-        <AdminHeading isAdmin={isAdmin} />
-        <AdminTabs isAdmin={isAdmin} />
+        <AdminHeading access={access} />
+        <AdminTabs access={access} />
         <div
           style={{
             marginTop: "var(--space-8)",
@@ -84,8 +101,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   return (
     <div>
-      <AdminHeading isAdmin={isAdmin} />
-      <AdminTabs isAdmin={isAdmin} />
+      <AdminHeading access={access} />
+      <AdminTabs access={access} />
       <div style={{ marginTop: "var(--space-8)" }}>{children}</div>
       {/* Per-page, one-admin-at-a-time presence lease (keyed on the current admin
           route). Fail-open: renders nothing unless another admin holds the page. */}
@@ -95,8 +112,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 }
 
 /** Eyebrow + title. Shared by the open and the closed-during-view-as renders so
- *  the page identifies itself the same way in both. */
-function AdminHeading({ isAdmin }: { isAdmin: boolean }) {
+ *  the page identifies itself the same way in both. The title follows the
+ *  caller: a course drafter and an appointed reviewer are both in here for one
+ *  section, and "Committee controls" would be a promise neither can act on. */
+function AdminHeading({ access }: { access: AdminTabAccess }) {
   return (
     <div style={{ marginBottom: "var(--space-8)" }}>
       <div
@@ -111,7 +130,11 @@ function AdminHeading({ isAdmin }: { isAdmin: boolean }) {
         Admin
       </div>
       <h1 style={{ fontSize: "var(--text-3xl)" }}>
-        {isAdmin ? "Committee controls" : "Course admin"}
+        {access.isAdmin
+          ? "Committee controls"
+          : access.canAuthorCourses
+            ? "Course admin"
+            : "Admissions"}
       </h1>
     </div>
   );

@@ -344,6 +344,14 @@
         { "fieldPath": "job", "order": "ASCENDING" },
         { "fieldPath": "claimedAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "dataExports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "kind", "order": "ASCENDING" },
+        { "fieldPath": "at", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

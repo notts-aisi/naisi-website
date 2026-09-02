@@ -283,12 +283,24 @@ const RUN_COUNT_KEYS = [
   // both go through the run's group ids for the second one.
   "schedulerMarkers",
   "emailSendRows",
+  // `dataExports`, the log of every spreadsheet downloaded off this cohort
+  // (V3 W3 PR12). The SECOND counted-but-retained counter: like emailSends it
+  // records something that already left the platform, so the run it describes
+  // dying does not make it this cascade's to erase. It is on the manifest
+  // because a retained collection left off the list reads as "does not exist"
+  // rather than as "survives".
+  "dataExportRows",
 ];
 /** `CourseDestroyCounts`, mirrored. */
-const COURSE_COUNT_KEYS = ["runs", "templates"];
+const COURSE_COUNT_KEYS = ["runs", "coursePages", "templates"];
 
 /** Counters whose rows SURVIVE the cascade — never part of the death toll. */
-const SURVIVING_COUNT_KEYS = ["emailSendRows", "templates", "admissionSeatOffers"];
+const SURVIVING_COUNT_KEYS = [
+  "emailSendRows",
+  "dataExportRows",
+  "templates",
+  "admissionSeatOffers",
+];
 
 test("MODEL — the manifest count vocabulary is the same on both sides of the wire", () => {
   // The engine declares the counts; the dialog renders them; the two files were
@@ -330,14 +342,15 @@ test("GUARD — the survivors are not counted as deaths, and the arithmetic foll
   const counts = Object.fromEntries(
     [...RUN_COUNT_KEYS, ...COURSE_COUNT_KEYS].map((k) => [k, 10]),
   );
-  // Fifteen counters at ten rows each: twelve run counters that die,
-  // `materialNotes`, `auditRows` and `schedulerMarkers` among them, plus the
-  // three survivors (`admissionSeatOffers` is released, not destroyed).
-  assert.equal(sumCounts(counts), 160);
+  // Eighteen counters at ten rows each: fourteen that die, `materialNotes`,
+  // `auditRows`, `schedulerMarkers` and the V3 `coursePages` among them, plus
+  // the four survivors (`admissionSeatOffers` is released, `dataExportRows`
+  // is retained).
+  assert.equal(sumCounts(counts), 180);
   // The progress denominator counts only what actually dies, so a large
   // retained counter cannot inflate it into a bar that never fills. Adding a
   // survivor must not move this number.
-  assert.equal(destroyedTotal(counts), 130);
+  assert.equal(destroyedTotal(counts), 140);
 });
 
 test("MODEL — every key the cascade can report has copy, including the ones the manifest never shows", () => {
@@ -355,6 +368,11 @@ test("MODEL — every key the cascade can report has copy, including the ones th
   // The two directions of the manifest/receipt mismatch, stated explicitly so a
   // future counter has to choose a side rather than drift into one.
   assert.equal(stageKeys.includes("emailSendRows"), false, "emailSends must never be a stage");
+  assert.equal(
+    stageKeys.includes("dataExportRows"),
+    false,
+    "dataExports must never be a stage",
+  );
   assert.equal(RUN_COUNT_KEYS.includes("nudgeMarkers"), false);
 });
 
@@ -411,6 +429,7 @@ test("GUARD — an UNKNOWN counter is assumed destroyed, the survivable directio
   // Aliases carry the fate with them, so a route that spells a counter
   // differently cannot silently turn a retained row into a reported deletion.
   assert.equal(countMeta("emailSends").fate, countMeta("emailSendRows").fate);
+  assert.equal(countMeta("dataExports").fate, countMeta("dataExportRows").fate);
   assert.equal(countMeta("templatesOrphaned").fate, "orphaned");
   assert.equal(countMeta("subscriptions").fate, "destroyed");
 });
@@ -656,13 +675,23 @@ test("GUARD — the cascade does NOT delete the collections the manifest calls s
       `the cascade deletes "${collection}", but the manifest reports those rows as surviving`,
     );
   }
+  // `dataExports` is reached through its exported constant rather than a
+  // string literal, so the loop above cannot see it. Same property, spelled
+  // the way the engine spells it.
+  assert.doesNotMatch(
+    ENGINE,
+    /collection\(DATA_EXPORTS_COLLECTION\)[\s\S]{0,400}?\.delete\(/,
+    'the cascade deletes from "dataExports", but the manifest reports those rows as surviving',
+  );
   assert.equal(countMeta("emailSendRows").fate, "retained");
+  assert.equal(countMeta("dataExportRows").fate, "retained");
   assert.equal(countMeta("templates").fate, "orphaned");
   assert.equal(countMeta("admissionSeatOffers").fate, "orphaned");
   // All three are still COUNTED: "how much history mentions this run" is
   // worth knowing even when nothing happens to it, and "eleven people were
   // placed here" is worth knowing most of all.
   assert.match(ENGINE, /collection\("emailSends"\)/);
+  assert.match(ENGINE, /collection\(DATA_EXPORTS_COLLECTION\)/);
   assert.match(ENGINE, /collection\("admissionApplications"\)/);
 
   // Nothing in this file may reach an admission ROUND. A round outlives every
@@ -1491,7 +1520,12 @@ test("GUARD — the mirrored-task sweep is filtered on `source`, not just the po
   // an unfiltered sweep aimed the admin's own destroy at anything a committee
   // member chose. The source filter is the half that also protects rows
   // written before the rules pin.
-  assert.match(ENGINE, /const MIRRORED_TASK_SOURCE = "fellowship-reminder"/);
+  // The constant now lives in `courseTasks.ts`, beside the code that STAMPS
+  // the value on a mirror, and is imported here. What the guard is actually
+  // about is the two filters below and their order; this line only pins that
+  // the sweep is still bound to one named source rather than to a literal
+  // somebody could widen in passing.
+  assert.match(ENGINE, /import \{ MIRRORED_TASK_SOURCE \} from "\.\/courseTasks"/);
   const drain = ENGINE.slice(
     ENGINE.indexOf("async function drainMirroredTasks"),
     ENGINE.indexOf("async function drainSubscriptionRows"),

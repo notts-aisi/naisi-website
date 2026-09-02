@@ -38,6 +38,11 @@ export type SessionUser = {
   /** True only for committee members the SU formally recognises. Admin-set;
    *  gates member-PII access and the committee task board. */
   suRecognised: boolean;
+  /** Server-owned denormalisation of "reviews or decides at least one
+   *  admission round". Written only by the round roles route; it draws the
+   *  Admissions nav entry and never decides what may be read. Optional so the
+   *  dev-bypass stub's SessionUser does not have to carry it. */
+  admissionsReviewer?: boolean;
   permissions: {
     draftNewsletter: boolean;
     approveNewsletter: boolean;
@@ -146,6 +151,7 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
       displayName: data.displayName ?? data.profile?.preferredName,
       policyVersion: typeof data.policyVersion === "string" ? data.policyVersion : null,
       suRecognised: Boolean(data.suRecognised),
+      admissionsReviewer: Boolean(data.admissionsReviewer),
       permissions: {
         draftNewsletter: Boolean(perms.draftNewsletter),
         approveNewsletter: Boolean(perms.approveNewsletter),

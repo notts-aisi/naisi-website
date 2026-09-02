@@ -64,6 +64,18 @@ service cloud.firestore {
         && !('tracks' in request.resource.data)
         && !('permissions' in request.resource.data)
         && !('suRecognised' in request.resource.data)
+        // --- V3 W1 PR8: admissionsReviewer ---------------------------------
+        // Server-owned flag saying "this account reviews or decides an
+        // admission round". It is written ONLY by
+        // PUT /api/admissions/rounds/{roundId}/roles, and it draws the
+        // Admissions entry in the sidebar. Seeding it at create would put a
+        // brand-new account in front of the reviewer surface with a link it
+        // was never granted, the same forgery class as tracks / permissions /
+        // suRecognised above and guarded the same way in both create and
+        // self-update. The round's own reviewerUids stay the authority on
+        // what may actually be read; this is the nav flag.
+        && !('admissionsReviewer' in request.resource.data)
+        // --- end V3 W1 PR8 -------------------------------------------------
         // `paidMembershipYears` is the admin-set paid-member tag ("2026/27"),
         // shown to admissions reviewers as a BADGE when they weigh a course
         // application. Self-seeding it at create would let any new account
@@ -121,6 +133,17 @@ service cloud.firestore {
             && request.resource.data.get('tracks', []) == resource.data.get('tracks', [])
             && request.resource.data.get('permissions', {}) == resource.data.get('permissions', {})
             && request.resource.data.get('suRecognised', false) == resource.data.get('suRecognised', false)
+            // --- V3 W1 PR8: admissionsReviewer ---------------------------
+            // Pinned against self-edits exactly like suRecognised. A member
+            // who could set it would draw themselves an Admissions nav entry;
+            // one who could CLEAR it would silently drop themselves off the
+            // reviewer surface the flag exists to reach, and the round arrays
+            // that actually grant review access would then disagree with the
+            // only signal the UI has. The false default makes the pin hold on
+            // the common absent-vs-absent case.
+            && request.resource.data.get('admissionsReviewer', false)
+              == resource.data.get('admissionsReviewer', false)
+            // --- end V3 W1 PR8 -------------------------------------------
             // Admin-set paid-member tag: pinned against self-edits exactly
             // like `tracks` (see the create rule for why it matters — it is
             // a badge in front of admissions reviewers). The [] default makes
@@ -860,6 +883,45 @@ service cloud.firestore {
     }
     // ===================== end V3 W3 PR6: scheduler ==========================
 
+    // ========================================================================
+    // V3 W3 PR12: dataExports
+    // ========================================================================
+    // One append-only row per CSV the site generates: the attendance register,
+    // the cohort roster, an admission round's applications, a membership
+    // period's list. Each export route writes its row through
+    // `logExport()` (src/lib/firestore/dataExports.ts) immediately BEFORE it
+    // streams the file, and refuses the export when that write fails.
+    //
+    // SHUT TO EVERY CLIENT, ADMINS INCLUDED, on both axes.
+    //
+    // WRITE. The actor of a logged export is almost always an admin, so an
+    // admin-writable log is a log its own subject can edit: a row could be
+    // deleted, back-dated, or have its rowCount reduced by the person who
+    // took the file. That is the `courseAudit` / `courseDeletions` posture
+    // stated in this file already, and the reason is the same one: an audit
+    // its own actor can amend is not an audit. A forged row is the other
+    // half of it, since a fabricated export could be attributed to somebody
+    // who never ran one.
+    //
+    // READ. Not `isAdmin()`, deliberately. Admins read the Exports tab
+    // through GET /api/admin/deliverability/exports on the Admin SDK, exactly
+    // as they already read `emailSends`, so a client read rule would buy the
+    // product nothing and would leave the collection one `isAdmin()` typo
+    // away from readable by whatever the next helper edit makes true. Rows
+    // also name applicants' rounds and cohorts' groups alongside the actor,
+    // so the list of who was exported and when is not something to hand to a
+    // browser that has no feature needing it.
+    //
+    // The block is written out EXPLICITLY rather than left to
+    // deny-by-default. `dataExports` is a top-level collection whose name
+    // sorts near nothing else, and an explicit match is the thing that stops
+    // a later PR adding a broad match, or a helper widened one line, from
+    // opening it without anybody noticing this collection existed.
+    match /dataExports/{exportId} {
+      allow read, write: if false;
+    }
+    // ==================== end V3 W3 PR12: dataExports ========================
+
     // === eventRsvps ===
     // RSVPs are attendee PII - never public read. All writes go through the
     // server route `/api/events/[id]/rsvp` (admin SDK), so rules are a safety
@@ -1048,6 +1110,44 @@ service cloud.firestore {
       // paginated, resumable and audited. Soft archive is the primary path.
       allow delete: if false;
     }
+
+    // =====================================================================
+    // === V3 W1 PR7: coursePages ==========================================
+    // =====================================================================
+    // The AUTHORED public page for a course, at `coursePages/{courseId}`.
+    // The doc id IS the course id, so a course structurally cannot have two
+    // pages and nothing has to query for uniqueness.
+    //
+    // ROUTES-ONLY, deliberately unlike the `courses` block immediately above,
+    // which is client-direct for the autosave path. The reason is specific and
+    // is not a general preference for routes:
+    //
+    //   `sanitizeBlocks` (src/lib/firestore/newsletterBlocks.ts) is a SHAPE
+    //   filter (`raw.filter(isValidBlock)`), not an HTML sanitiser. A
+    //   `richText` block renders through `dangerouslySetInnerHTML`, and for
+    //   THIS collection that render happens on a LOGGED-OUT marketing page.
+    //   The `courses` update branch above admits `isCourseCollaborator()`,
+    //   which that block's own comment describes as "possibly a plain member
+    //   with no permissions at all".
+    //
+    // Two write paths cannot enforce one sanitisation, so there is one:
+    // `PUT /api/courses/[courseId]/page` (Admin SDK), which sanitises what it
+    // stores, plus `normalizeCoursePage` sanitising again at read time. Making
+    // this collection client-writable would delete both guarantees at once.
+    //
+    // Read is signed-in, matching `courses` and `courseRuns`: the public
+    // pages are served by Admin-SDK fetchers on server components, and a
+    // world-readable rule would also grant `list`, making an unpublished
+    // course's draft pitch enumerable.
+    //
+    // The page holds no uid and no member text. It is destroyed with its
+    // course (`courseDeletion.ts`) and is deliberately not part of the
+    // per-account deletion sweep.
+    match /coursePages/{courseId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+    // === end V3 W1 PR7: coursePages ======================================
 
     // === courseRuns ===
     // One delivery of a course ("Autumn 2026"). Role arrays, counters and the
@@ -1285,7 +1385,36 @@ service cloud.firestore {
           && request.resource.data.get('academicYear', '').size() <= 10
           && request.resource.data.get('courseTitle', '').size() <= 120
           && request.resource.data.get('weekPlan', []).size() <= 60
-          && request.resource.data.get('applicationForm', []).size() <= 30;
+          && request.resource.data.get('applicationForm', []).size() <= 30
+          // ---- V3 W1 PR7: coursePages (the two courseRuns authoring fields
+          // that PR ships alongside the page object). `startHereBlocks` mirrors
+          // COURSE_FIELD_LIMITS.maxStartHereBlocks; the `cohort` clauses cap
+          // the map's KEY SET and then TYPE each of the three keys.
+          //
+          // The key set alone is not enough. `hasOnly` says nothing about what
+          // is stored under a permitted key, so it would pass
+          // `{ term: 'winter', year: 'soon', number: [] }`, a cohort every
+          // reader then drops as malformed, leaving a run whose stored cohort
+          // and rendered cohort disagree, and leaving free text on a field the
+          // public page prints. The `.get(key, default)` defaults are what let
+          // an ABSENT cohort (every pre-V3 run, and the cleared case) pass
+          // these same clauses: each default is a valid value of its type.
+          //
+          // The key-set clause also refuses a stored null (`.keys()` on null
+          // raises, and a stored null would wedge every later edit against the
+          // `.get(field, {})` default: the submissionExerciseRef lesson).
+          //
+          // Ranges (year 2000-2100, number 1-99) stay in COHORT_LIMITS rather
+          // than here: they are typo catchers, not a trust boundary, and this
+          // layer's job is that the field cannot hold a shape a reader has to
+          // guess at.
+          && request.resource.data.get('startHereBlocks', []).size() <= 20
+          && request.resource.data.get('cohort', {}).keys()
+            .hasOnly(['term', 'year', 'number'])
+          && request.resource.data.get('cohort', {}).get('term', 'autumn')
+            in ['autumn', 'spring', 'summer']
+          && request.resource.data.get('cohort', {}).get('year', 2026) is int
+          && request.resource.data.get('cohort', {}).get('number', 1) is int;
       }
 
       allow read: if isSignedIn();

@@ -1,3 +1,4 @@
+import CoursesConfigPanel from "@/features/admin/CoursesConfigPanel";
 import SchedulerPanel from "@/features/admin/SchedulerPanel";
 import SiteStatusPanel from "@/features/admin/SiteStatusPanel";
 
@@ -18,6 +19,11 @@ export default function SiteStatusAdminPage() {
           notice above says what visitors are being told, this says whether
           anything time-based is still going out. */}
       <SchedulerPanel />
+      {/* Site-wide operational settings the courses feature reads. Here
+          rather than under /admin/courses because neither of them is course
+          content, and the grace period below is a dial on the same scheduler
+          the panel above reports on. */}
+      <CoursesConfigPanel />
     </div>
   );
 }

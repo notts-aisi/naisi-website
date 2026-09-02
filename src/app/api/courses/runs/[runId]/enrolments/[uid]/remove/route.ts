@@ -20,11 +20,12 @@ import { assertNotImpersonating } from "@/lib/firebase/impersonation";
  *
  * A SOFT removal, deliberately: the enrolment doc survives. The deterministic
  * doc id (`courseEnrolments/{runId}__{uid}`) is the one-enrolment-per-(run,
- * uid) invariant, so the row is that person's entire history on the run —
+ * uid) invariant, so the row is that person's entire history on the run:
  * deleting it would let a later re-placement mint a "fresh" enrolment with no
  * memory. Re-admission is the allocate route flipping this same row back to
  * "active" (which also re-clears/re-earns the placement-email stamp via the
- * cleared `groupId`).
+ * cleared `groupId`). That route needs an accepted application, so a member
+ * who signed themselves up comes back through the reinstate route instead.
  *
  * FACILITATOR ROWS ARE OUT OF SCOPE: a `role:"facilitator"` enrolment is
  * managed by the group facilitators route (which retires it when the person
@@ -104,9 +105,17 @@ export async function POST(_req: Request, ctx: Ctx) {
           : null;
       // `memberCount` counts enrolments that are both active AND grouped
       // (the allocate route's definition), so only that state releases a
-      // seat — a withdrawn row's seat was already released when it left
+      // seat: a withdrawn row's seat was already released when it left
       // "active".
       const heldSeat = status === "active" && groupId !== null;
+      // `courseRuns.enrolledCount` is the OTHER counter, and it counts a
+      // narrower set: active AND self-enrolled, whatever group they are in
+      // (see the field's doc comment on `CourseRunDoc`). Removing somebody
+      // who signed themselves up has to give it back, or a run whose whole
+      // open-enrolled cohort was removed still reads as populated and the
+      // enrol-mode route refuses to reopen it. An allocated learner was
+      // never counted by it, so removing one moves nothing.
+      const heldOpenSeat = status === "active" && existing.selfEnrolled === true;
 
       tx.update(enrolmentRef, {
         status: "removed" satisfies CourseEnrolmentStatus,
@@ -120,6 +129,12 @@ export async function POST(_req: Request, ctx: Ctx) {
       if (heldSeat && groupId) {
         tx.update(db.collection("courseGroups").doc(groupId), {
           memberCount: FieldValue.increment(-1),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+      if (heldOpenSeat) {
+        tx.update(db.collection("courseRuns").doc(runId), {
+          enrolledCount: FieldValue.increment(-1),
           updatedAt: FieldValue.serverTimestamp(),
         });
       }

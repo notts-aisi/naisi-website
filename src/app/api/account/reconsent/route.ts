@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 import { clearSessionCookieOnly, getSessionUid } from "@/lib/firebase/session";
 import { deleteAccountCascade } from "@/lib/firestore/accountDeletion";
 import { CURRENT_POLICY_VERSION } from "@/lib/legal/policies";
@@ -22,6 +23,20 @@ import { CURRENT_POLICY_VERSION } from "@/lib/legal/policies";
  * from the client, so there's no IDOR surface.
  */
 export async function POST(req: Request) {
+  // Never inside a view-as session. The reason is the ACCEPT stamp, not the
+  // decline branch: accepting is the one write on this site whose entire
+  // value is that the person themselves made it, and a view-as session
+  // records it on the member's own document as the member, so an admin could
+  // stamp a consent that was never given and nothing afterwards could tell.
+  // (The decline branch needs no protection from this guard. Impersonation
+  // targets always have a users doc, so `isMember` is true and the delete is
+  // refused with a 409 a few lines down regardless.) The gate in
+  // (app)/layout.tsx skips the redirect during view-as for the same reason,
+  // but an admin can still reach /re-consent by typing it, so the refusal
+  // belongs here as well as there.
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const session = await getSessionUid();
   if (!session) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });

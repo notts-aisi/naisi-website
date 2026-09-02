@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import DeliverabilityExports from "./DeliverabilityExports";
 
 type SendStatus = "sent" | "bounced" | "complained";
 
@@ -143,7 +144,8 @@ export default function DeliverabilityDashboard() {
             Deliverability
           </h2>
           <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)", margin: 0 }}>
-            Recent sends and the suppression list fed by email provider bounce + complaint events.
+            Recent sends and the suppression list fed by email provider bounce +
+            complaint events, plus the log of downloads the site has generated.
           </p>
         </div>
         <Button size="sm" variant="secondary" onClick={refresh} disabled={loading}>
@@ -265,6 +267,12 @@ export default function DeliverabilityDashboard() {
           </Card>
         )}
       </section>
+
+      {/* The export log. Its own component with its own fetch: the rows come
+          from a different route, they are read once rather than watched, and
+          the export routes that write them land in later PRs. Sharing this
+          dashboard's Refresh button through `reloadKey` is the only coupling. */}
+      <DeliverabilityExports reloadKey={reloadKey} />
     </div>
   );
 }

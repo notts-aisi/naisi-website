@@ -21,6 +21,7 @@ export const COURSE_TEMPLATE_IDS = [
   "course-application-rejected",
   "course-allocated",
   "course-week-nudge",
+  "course-dropped-out",
 ] as const;
 
 export type CourseTemplateId = (typeof COURSE_TEMPLATE_IDS)[number];
@@ -31,7 +32,8 @@ export type CourseTemplateTrigger =
   | "waitlisted"
   | "rejected"
   | "allocated"
-  | "week-nudge";
+  | "week-nudge"
+  | "dropped-out";
 
 /**
  * Trigger each template belongs to. Used by the send paths to decide which
@@ -44,6 +46,7 @@ export const COURSE_TEMPLATE_TRIGGER: Record<CourseTemplateId, CourseTemplateTri
   "course-application-rejected": "rejected",
   "course-allocated": "allocated",
   "course-week-nudge": "week-nudge",
+  "course-dropped-out": "dropped-out",
 };
 
 export type CourseTemplateDoc = {
@@ -122,6 +125,19 @@ export type CourseTokenMap = {
   facilitatorNames?: string;
   /** Human-formatted first session, e.g. "Tuesday 7 October, 6pm". */
   firstSessionWhen?: string;
+  /**
+   * The anonymous feedback form offered on drop-out (`config/courses`
+   * `dropOutFeedbackUrl`). ABSENT when no link is configured.
+   *
+   * NOT used by the seed copy, on purpose. `personaliseBlocks` leaves an
+   * unresolved token LITERAL (the house convention: an admin notices a typo),
+   * so a `{feedbackUrl}` in the body of a transactional email would read as
+   * "tell us at {feedbackUrl}" the day the config doc is empty. The drop-out
+   * email renders the link from its own component instead, and shows nothing
+   * when there is none. The token exists so an admin who HAS configured a
+   * form can place it in the sentence they prefer.
+   */
+  feedbackUrl?: string;
   preferredName: string;
   firstName: string;
 };
@@ -138,6 +154,7 @@ export type CourseTokenInput = {
   groupName?: string;
   facilitatorNames?: string;
   firstSessionWhen?: string;
+  feedbackUrl?: string;
 };
 
 export function buildCourseTokens(input: CourseTokenInput): CourseTokenMap {
@@ -157,6 +174,7 @@ export function buildCourseTokens(input: CourseTokenInput): CourseTokenMap {
     ...(input.firstSessionWhen !== undefined
       ? { firstSessionWhen: input.firstSessionWhen }
       : {}),
+    ...(input.feedbackUrl ? { feedbackUrl: input.feedbackUrl } : {}),
   };
 }
 
@@ -167,6 +185,7 @@ export const COURSE_DEFAULT_LABELS: Record<CourseTemplateId, string> = {
   "course-application-rejected": "Course application rejected",
   "course-allocated": "Placed in a group",
   "course-week-nudge": "Weekly reminder",
+  "course-dropped-out": "Left a course",
 };
 
 function rt(html: string): Block {
@@ -286,6 +305,18 @@ export const courseTemplateDefaults: Record<
           "<p>{weekPrep}</p>" +
           '<p><a href="{weekUrl}" style="color:#2563eb">Open this week on the site</a></p>' +
           "<p>Read what you can. The week stays open, and nobody is keeping score.</p>",
+      ),
+    ],
+  },
+  "course-dropped-out": {
+    label: COURSE_DEFAULT_LABELS["course-dropped-out"],
+    subject: "You've left {courseTitle}",
+    blocks: [
+      h("That's you off the list, {firstName}"),
+      rt(
+        "<p>You're no longer on <strong>{courseTitle}</strong> ({runLabel}), and your place has gone back to the group. The weekly emails will stop.</p>" +
+          "<p>Thanks for giving it a go. If you'd like to join a future cohort, keep an eye on the courses page: applying again is welcome and counts for nothing against you.</p>" +
+          "<p>Nothing else is needed from you.</p>",
       ),
     ],
   },
