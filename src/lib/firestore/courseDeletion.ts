@@ -16,6 +16,7 @@ import {
 } from "./courses";
 import { COURSE_AUDIT_COLLECTION } from "./courseAudit";
 import { COURSE_MATERIAL_NOTES_COLLECTION } from "./courseMaterialNotes";
+import { DATA_EXPORTS_COLLECTION } from "./dataExports";
 import { SCHEDULER_MARKERS_COLLECTION } from "./schedulerMarkers";
 import { deleteEventsForSubscriptions } from "./subscriptions";
 import { ownedStoragePaths } from "./taskAttachments";
@@ -132,7 +133,8 @@ export const COURSE_DELETIONS_COLLECTION = "courseDeletions";
  * `emailSendRows` is counted but NEVER deleted: `emailSends` is the
  * append-only deliverability audit (the same reason accountDeletion leaves
  * it alone), and the manifest UI copy must say so — the number is "how much
- * history mentions this run", not "rows that will die".
+ * history mentions this run", not "rows that will die". `dataExportRows` is
+ * the second of those, on the same footing.
  */
 export type RunDestroyCounts = {
   weeks: number;
@@ -224,6 +226,25 @@ export type RunDestroyCounts = {
    */
   schedulerMarkers: number;
   emailSendRows: number;
+  /**
+   * `dataExports` rows whose scope names this run or one of its groups: the
+   * record of every register, roster or membership CSV somebody downloaded
+   * off this cohort.
+   *
+   * COUNTED, NEVER DELETED, exactly like `emailSendRows` above it. A row here
+   * names the ACTOR of a staff download and holds no member content at all
+   * (a kind, an actor, a scope of ids, a row count, a filename and a time),
+   * so destroying the run it describes takes away the thing exported without
+   * taking away the fact that somebody took a copy of it first. That fact is
+   * the whole point of the log, and it is not this cascade's to erase.
+   *
+   * It is on the manifest anyway, under the house rule that every collection
+   * a PR adds is named here in that same PR. A retained collection left off
+   * the list is worse than a noisy one: the dialog enumerates what a destroy
+   * touches, so silence reads as "this does not exist" rather than as "this
+   * survives".
+   */
+  dataExportRows: number;
 };
 
 export type CourseDestroyCounts = {
@@ -819,6 +840,20 @@ export async function countRunDestroyTargets(
     ),
   ];
 
+  // `dataExports` is COUNTED here and drained nowhere: see the counter's own
+  // doc comment. An export row records what it covered in a `scope` map, and
+  // the two keys that can name this cohort are `scope.runId` (a roster, an
+  // attendance summary) and `scope.groupId` (one group's register), so an
+  // honest "how much of the download log names this run" needs both, the same
+  // shape the emailSends count above uses. Nested map keys are served by the
+  // automatic single-field indexes, so neither needs a composite.
+  const exportCountPromises = [
+    countAgg(db.collection(DATA_EXPORTS_COLLECTION).where("scope.runId", "==", runId)),
+    ...chunkIds(groupIds).map((chunk) =>
+      countAgg(db.collection(DATA_EXPORTS_COLLECTION).where("scope.groupId", "in", chunk)),
+    ),
+  ];
+
   const [
     weeks,
     applications,
@@ -833,6 +868,7 @@ export async function countRunDestroyTargets(
     auditRows,
     schedulerMarkerCounts,
     emailSendCounts,
+    exportCounts,
   ] = await Promise.all([
     countAgg(db.collection("courseRuns").doc(runId).collection("weeks")),
     countAgg(db.collection("courseApplications").where("runId", "==", runId)),
@@ -874,6 +910,7 @@ export async function countRunDestroyTargets(
     countAgg(db.collection(COURSE_AUDIT_COLLECTION).where("runId", "==", runId)),
     Promise.all(markerCountPromises),
     Promise.all(emailCountPromises),
+    Promise.all(exportCountPromises),
   ]);
 
   return {
@@ -891,6 +928,7 @@ export async function countRunDestroyTargets(
     auditRows,
     schedulerMarkers: schedulerMarkerCounts.reduce((a, b) => a + b, 0),
     emailSendRows: emailSendCounts.reduce((a, b) => a + b, 0),
+    dataExportRows: exportCounts.reduce((a, b) => a + b, 0),
   };
 }
 
