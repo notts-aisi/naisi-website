@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import { useAuth } from "@/auth/AuthProvider";
@@ -112,45 +112,39 @@ export default function GroupPicker({
   const [error, setError] = useState<string | null>(null);
   const [changing, setChanging] = useState(false);
 
-  // The picker only ever reflects the latest response, so a slow first load
-  // landing after a fast enrol must not overwrite it.
-  const requestSeq = useRef(0);
+  // Reload nonce rather than a callable loader: the fetch lives INSIDE the
+  // effect (the `useMyRuns` idiom), so every setState it makes happens in an
+  // async continuation rather than synchronously in an effect body, and a
+  // `cancelled` flag drops a response whose component is gone. Bumping the
+  // nonce is how a write asks for fresh numbers.
+  const [nonce, setNonce] = useState(0);
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
 
-  const loadState = useCallback(async () => {
-    if (!user) return;
-    const seq = ++requestSeq.current;
-    try {
-      const res = await fetch(
-        `/api/courses/runs/${encodeURIComponent(runId)}/enrol`,
-      );
-      const body = (await res.json().catch(() => null)) as
-        | (EnrolStatePayload & { error?: string })
-        | null;
-      if (seq !== requestSeq.current) return;
-      if (!res.ok || !body || !Array.isArray(body.groups)) {
+  useEffect(() => {
+    if (authLoading || !user) return;
+    let cancelled = false;
+    fetch(`/api/courses/runs/${encodeURIComponent(runId)}/enrol`)
+      .then((res) => res.json().catch(() => null))
+      .then((body: (EnrolStatePayload & { error?: string }) | null) => {
+        if (cancelled) return;
         // A read failure leaves the server-rendered slots in place: the page
         // still shows the timetable, and the first write will say what is
         // wrong in a sentence rather than a status code.
-        return;
-      }
-      setGroups(body.groups);
-      setEnrolment(body.enrolment);
-      if (body.enrolment?.streamId) setChosenStreamId(body.enrolment.streamId);
-    } catch {
-      // Same reasoning: offline or a blip leaves the rendered slots alone.
-    } finally {
-      if (seq === requestSeq.current) setStateLoaded(true);
-    }
-  }, [runId, user]);
-
-  useEffect(() => {
-    if (authLoading) return;
-    if (!user) {
-      setStateLoaded(true);
-      return;
-    }
-    void loadState();
-  }, [authLoading, user, loadState]);
+        if (!body || !Array.isArray(body.groups)) return;
+        setGroups(body.groups);
+        setEnrolment(body.enrolment);
+        if (body.enrolment?.streamId) setChosenStreamId(body.enrolment.streamId);
+      })
+      .catch(() => {
+        // Same reasoning: offline or a blip leaves the rendered slots alone.
+      })
+      .finally(() => {
+        if (!cancelled) setStateLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, user, runId, nonce]);
 
   const write = useCallback(
     async (method: "POST" | "PATCH", groupId: string) => {
@@ -177,19 +171,19 @@ export default function GroupPicker({
           setError(body?.error ?? "Couldn't save that just now.");
           // Re-read anyway: "that session is full" is a fact about the
           // timetable, and the numbers on screen are now known to be stale.
-          await loadState();
+          reload();
           return;
         }
         setChanging(false);
         setChosenGroupId("");
-        await loadState();
+        reload();
       } catch {
         setError("Couldn't reach the server. Check your connection and try again.");
       } finally {
         setBusy(false);
       }
     },
-    [runId, streams.length, chosenStreamId, loadState],
+    [runId, streams.length, chosenStreamId, reload],
   );
 
   // ---- Signed out -------------------------------------------------------
@@ -296,7 +290,7 @@ export default function GroupPicker({
           <DropOutCard
             runId={runId}
             courseTitle={courseTitle}
-            onDropped={() => void loadState()}
+            onDropped={reload}
           />
         ) : null}
       </div>

@@ -8,11 +8,8 @@ import {
   courseEnrolmentId,
   normalizeCourseEnrolment,
 } from "@/lib/firestore/courseEnrolments";
-import {
-  normalizeCourseGroup,
-  type CourseGroupDoc,
-} from "@/lib/firestore/courseGroups";
-import { normalizeCourseRun, type CourseRunDoc } from "@/lib/firestore/courses";
+import { normalizeCourseGroup } from "@/lib/firestore/courseGroups";
+import { normalizeCourseRun } from "@/lib/firestore/courses";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
