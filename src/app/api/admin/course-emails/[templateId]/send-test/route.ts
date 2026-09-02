@@ -37,12 +37,15 @@ import {
  * no seed step, so "no doc" is a normal state and the defaults are what a real
  * send would use — a test that 404'd there would be testing the wrong thing.
  *
- * Five of the six templates render through the same `ApplicationEmail`
+ * Six of the nine templates render through the same `ApplicationEmail`
  * component the real course sends use, so what lands here is what an applicant
- * gets. THE WEEKLY NUDGE RENDERS THROUGH ITS OWN PATH — `renderCourseNudge` into
- * `CourseNudgeEmail` — for exactly the same reason: that is the one
- * implementation a cohort receives, footer and degradation rules included. A
- * rehearsal that rendered it any other way would be proofing a third email.
+ * gets. THREE HAVE THEIR OWN COMPONENT AND ARE RENDERED THROUGH IT, for the
+ * same reason in each case: that is the one implementation the recipient
+ * receives, footer and degradation rules included, and a rehearsal that
+ * rendered it any other way would be proofing an email nobody gets. The weekly
+ * nudge goes through `renderCourseNudge` into `CourseNudgeEmail`; the two
+ * admissions receipts go through `AdmissionsSubmittedEmail` and
+ * `AdmissionsReinstatedEmail`. Keep this count honest when a template is added.
  */
 export async function POST(
   _req: Request,
