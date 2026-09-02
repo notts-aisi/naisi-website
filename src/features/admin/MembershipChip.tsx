@@ -61,24 +61,15 @@ function loadCurrentPeriod(): Promise<CurrentPeriod> {
   return periodPromise;
 }
 
-export default function MembershipChip({
-  uid,
-  recordedYears,
-}: {
-  uid: string;
-  recordedYears: string[] | undefined;
-}) {
+/**
+ * The current period, as state, for a component that only wants to render off
+ * it. `resolved` is separate from the value because "still asking" and "no
+ * period is current" are different things and only one of them is worth
+ * saying out loud.
+ */
+function useCurrentPeriod(): { period: CurrentPeriod; resolved: boolean } {
   const [period, setPeriod] = useState<CurrentPeriod>(null);
   const [resolved, setResolved] = useState(false);
-  const [open, setOpen] = useState(false);
-  const [tier, setTier] = useState<MembershipTier>("paid");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // The members list is a one-shot fetch, so the row does not refresh after a
-  // write. Remember just this member's state locally (null = no local change
-  // yet, read the cache) so the chip settles straight away.
-  const [override, setOverride] = useState<boolean | null>(null);
-
   useEffect(() => {
     let live = true;
     void loadCurrentPeriod().then((p) => {
@@ -90,6 +81,48 @@ export default function MembershipChip({
       live = false;
     };
   }, []);
+  return { period, resolved };
+}
+
+/**
+ * The read-only half, for the collapsed row's badge strip.
+ *
+ * Separate from the control below because that strip is inside a `<button>`
+ * that expands the row, and a button inside a button is invalid HTML and
+ * unreachable by keyboard. Renders nothing at all when there is no membership
+ * to report, so a list of members is not a wall of "not recorded".
+ */
+export function MembershipSummaryBadge({
+  recordedYears,
+}: {
+  recordedYears: string[] | undefined;
+}) {
+  const { period } = useCurrentPeriod();
+  if (!period) return null;
+  if (!(recordedYears ?? []).includes(period.year)) return null;
+  return (
+    <Badge tone="success" title={`Recorded as a member for ${period.year}`}>
+      Member {period.year}
+    </Badge>
+  );
+}
+
+export default function MembershipChip({
+  uid,
+  recordedYears,
+}: {
+  uid: string;
+  recordedYears: string[] | undefined;
+}) {
+  const { period, resolved } = useCurrentPeriod();
+  const [open, setOpen] = useState(false);
+  const [tier, setTier] = useState<MembershipTier>("paid");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // The members list is a one-shot fetch, so the row does not refresh after a
+  // write. Remember just this member's state locally (null = no local change
+  // yet, read the cache) so the chip settles straight away.
+  const [override, setOverride] = useState<boolean | null>(null);
 
   const recorded =
     override ?? (period ? (recordedYears ?? []).includes(period.year) : false);

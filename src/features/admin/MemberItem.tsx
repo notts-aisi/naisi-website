@@ -22,7 +22,7 @@ import {
 } from "@/lib/firestore/users";
 import { startImpersonation } from "@/auth/impersonation";
 import MemberEditForm from "./MemberEditForm";
-import MembershipChip from "./MembershipChip";
+import MembershipChip, { MembershipSummaryBadge } from "./MembershipChip";
 import {
   deleteUser,
   setPermissions,
@@ -353,6 +353,7 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
             {TRACK_LABELS[t]}
           </Badge>
         ))}
+        <MembershipSummaryBadge recordedYears={user.paidMembershipYears} />
         {showCommitteeTitle && user.title && (
           <span className={styles.title}>{user.title}</span>
         )}
