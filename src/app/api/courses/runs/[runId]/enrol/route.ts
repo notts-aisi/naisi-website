@@ -89,6 +89,17 @@ type Ctx = { params: Promise<{ runId: string }> };
 const RL_WINDOW_MS = 10 * 60 * 1000;
 const RL_IP_MAX = 60;
 const RL_UID_MAX = 10;
+/**
+ * The GET's own per-account budget, in its own bucket.
+ *
+ * Deliberately NOT the write bucket. The picker re-reads on mount and again
+ * after every write, so sharing the writers' ten-per-ten-minutes would let a
+ * handful of page loads and one changed session spend a member's ability to
+ * take a seat at all, and the sentence they would get back ("too many
+ * attempts") would be a lie about what they had done. A read still gets a
+ * ceiling, because it costs a group query and a document read.
+ */
+const RL_READ_UID_MAX = 60;
 
 /**
  * How many weeks back the drop-out sweep looks for this member's mirrored My
@@ -272,6 +283,21 @@ export type EnrolStatePayload = {
  * It exists because `courseGroups` is not client-readable and the seat counts
  * move: after an enrol, a change or a drop, the client re-reads through here
  * rather than guessing at what its own action did to everyone else's numbers.
+ *
+ * ── THE SLOTS ARE NOT FOR EVERY RUN ─────────────────────────────────────────
+ * `fetchGroupPicker` runs on the Admin SDK, so `courseGroups`'s read rule
+ * defends nothing here: whatever this returns is what any signed-in account
+ * gets for any run id it can name. The projection keeps the meeting link and
+ * the facilitators out of it, but a timetable with seat counts is still the
+ * open-enrolment offer, and an admissions run's groups are staff working
+ * material until allocation publishes them. So the slots come back only for
+ * an `open` run whose window is live, and every other run answers with an
+ * empty list.
+ *
+ * THE CALLER'S OWN ROW COMES BACK EITHER WAY, which is the reason this is a
+ * gate rather than a 404: this call is also how a member learns where they
+ * stand, and a run whose sign-ups have closed (or that was flipped back to
+ * admissions under them) must not take that answer away.
  */
 export async function GET(_req: Request, ctx: Ctx) {
   const { runId } = await ctx.params;
@@ -280,8 +306,24 @@ export async function GET(_req: Request, ctx: Ctx) {
   if (caller instanceof NextResponse) return caller;
   const { user, db } = caller;
 
+  const readLimit = rateLimit(
+    `courses:enrol:read:uid:${user.uid}`,
+    RL_READ_UID_MAX,
+    RL_WINDOW_MS,
+  );
+  if (!readLimit.ok) return tooManyAttempts(readLimit.retryAfterSeconds);
+
+  // The run is read FIRST, and it decides whether there is a timetable to
+  // hand out at all.
+  const run = await loadRun(db, runId);
+  if (!run) {
+    return NextResponse.json({ error: "Course run not found." }, { status: 404 });
+  }
+  const offering =
+    run.enrolMode === "open" && enrolWindow(run, new Date()).state !== "inactive";
+
   const [groups, snap] = await Promise.all([
-    fetchGroupPicker(runId),
+    offering ? fetchGroupPicker(runId) : Promise.resolve<GroupPickerOption[]>([]),
     db.collection("courseEnrolments").doc(courseEnrolmentId(runId, user.uid)).get(),
   ]);
 

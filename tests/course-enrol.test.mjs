@@ -701,3 +701,25 @@ test("SOURCE: the enrol-mode gate counts rows, not the open-enrol counter", () =
   // And nothing reads the stale counter off the run document any more.
   assert.doesNotMatch(ENROL_MODE_ROUTE, /data\.enrolledCount/);
 });
+
+test("SOURCE: the picker read is gated on the run, and throttled", () => {
+  // `fetchGroupPicker` runs on the Admin SDK, so this handler is the whole
+  // access decision for a read-restricted collection: without the gate, any
+  // signed-in account could name any run id and get its timetable and seat
+  // counts back, including an admissions run whose groups are staff working
+  // material until allocation publishes them.
+  const getAt = ENROL_ROUTE.indexOf("export async function GET(");
+  const get = ENROL_ROUTE.slice(getAt, ENROL_ROUTE.indexOf("export async function POST"));
+  assert.ok(get.length > 0, "the GET handler is gone");
+  const limitAt = get.indexOf("courses:enrol:read:uid:");
+  const runAt = get.indexOf("loadRun(");
+  const fetchAt = get.indexOf("fetchGroupPicker(");
+  assert.ok(limitAt > 0, "the picker read takes no per-account budget");
+  assert.ok(runAt > 0 && limitAt < runAt, "the throttle no longer precedes the reads");
+  assert.ok(runAt < fetchAt, "the run is no longer read before the slots are handed out");
+  assert.match(get, /run\.enrolMode === "open" && enrolWindow\(run, new Date\(\)\)\.state !== "inactive"/);
+  assert.match(get, /offering \? fetchGroupPicker\(runId\) : Promise\.resolve/);
+  // The caller's OWN row still comes back on a run that is not offering: this
+  // call is also how a member learns where they stand.
+  assert.match(get, /\.doc\(courseEnrolmentId\(runId, user\.uid\)\)\.get\(\)/);
+});
