@@ -335,9 +335,14 @@ export function answerMaxLength(q: FormQuestion): number {
  *
  * `clamp` is what separates the two callers. Read paths and any write that did
  * not cross a route clamp, so nothing out of range ever reaches an answer
- * validator. A saving route passes `false`, keeps the authored number intact
- * and hands it to `validateQuestionLimits`, so the author is told their 5000
- * is too big instead of silently getting 4000.
+ * validator. Clamping also rounds down, because a fractional cap is nobody's
+ * intent and the read path has no one left to ask.
+ *
+ * A saving route passes `false`, which keeps the authored number EXACTLY as
+ * typed and hands it to `validateQuestionLimits`, so the author is told their
+ * 5000 is too big, and their 12.5 is not a whole number, instead of silently
+ * getting 4000 and 12. Rounding here as well would have made the not-a-whole-
+ * number branch of `validateQuestionLimits` unreachable from the real pipeline.
  */
 function normaliseQuestionLimits(q: FormQuestion, clamp: boolean): FormQuestion {
   const out: Record<string, unknown> = {
@@ -347,10 +352,12 @@ function normaliseQuestionLimits(q: FormQuestion, clamp: boolean): FormQuestion 
 
   const rawMax = (q as { maxLength?: unknown }).maxLength;
   if (typeof rawMax === "number" && Number.isFinite(rawMax)) {
-    const floored = Math.floor(rawMax);
     out.maxLength = clamp
-      ? Math.min(Math.max(floored, QUESTION_MAX_LENGTH_MIN), QUESTION_MAX_LENGTH_MAX)
-      : floored;
+      ? Math.min(
+          Math.max(Math.floor(rawMax), QUESTION_MAX_LENGTH_MIN),
+          QUESTION_MAX_LENGTH_MAX,
+        )
+      : rawMax;
   } else {
     delete out.maxLength;
   }

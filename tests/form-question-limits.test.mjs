@@ -408,6 +408,36 @@ test("clampLimits: false keeps the authored number so a route can quote it back"
   assert.match(problem.error, /5000/);
 });
 
+test("the real save pipeline reaches the not-a-whole-number branch", () => {
+  // The pin for finding 3. A saving route never calls `validateQuestionLimits`
+  // on raw input: it calls it on the output of
+  // `sanitizeSignupForm(raw, { clampLimits: false })`. While that path rounded
+  // down, 12.5 arrived as 12 and the "not a whole number" message could only
+  // ever be produced by a hand-built fixture, never by an author typing into
+  // the builder. Driving both halves in order is what keeps it honest.
+  const authored = [longText({ label: "Your motivation", maxLength: 12.5 })];
+  const cleaned = sanitizeSignupForm(authored, { clampLimits: false });
+  assert.equal(cleaned[0].maxLength, 12.5, "the fraction survived the sanitiser");
+
+  const problem = validateQuestionLimits(cleaned);
+  assert.ok(problem);
+  assert.match(problem.error, /"Your motivation"/);
+  assert.match(problem.error, /whole number/);
+  assert.equal(problem.questionId, "q2");
+});
+
+test("the clamping half of the pipeline still rounds a fraction down", () => {
+  // The other side of the same coin: nothing is left to ask on a read path, so
+  // a fractional cap stored by some write that never crossed a route is
+  // rounded down there rather than handed to a validator.
+  const [q] = sanitizeSignupForm([longText({ maxLength: 12.5 })]);
+  assert.equal(q.maxLength, 12);
+  assert.equal(validateQuestionLimits([q]), null);
+
+  const [big] = sanitizeSignupForm([longText({ maxLength: 4000.9 })]);
+  assert.equal(big.maxLength, 4000);
+});
+
 test("a non-numeric limit and blank help text leave no key behind at all", () => {
   // Not `undefined`: an explicit undefined nested in an array is refused
   // outright by a client-direct Firestore write, which is how a run's
