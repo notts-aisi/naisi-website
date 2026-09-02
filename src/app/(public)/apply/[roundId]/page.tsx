@@ -28,6 +28,7 @@ import {
   normalizeAdmissionApplication,
 } from "@/lib/firestore/admissionApplications";
 import { normalizeAdmissionApplicationPrivate } from "@/lib/firestore/admissionApplicationPrivate";
+import { applyCopy } from "@/lib/admissions/applyCopy";
 import { formatRoundDate, formatRoundDeadline } from "@/lib/admissions/window";
 import ApplyFlow from "@/features/admissions/ApplyFlow";
 import styles from "./apply.module.css";
@@ -161,11 +162,12 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   if (!loaded) return { title: "Applications", robots: { index: false, follow: true } };
   const { round } = loaded;
   const state = round.windowState;
+  const facilitator = round.kind === "appointment";
   return {
     title: `${state === "open" ? "Apply" : "Applications"}: ${round.label}`,
     description:
       state === "open"
-        ? `Apply to ${round.label}. Open to anyone with a NAISI account, including one you make in the next minute.`
+        ? `${facilitator ? `Apply to facilitate on ${round.label}.` : `Apply to ${round.label}.`} Open to anyone with a NAISI account, including one you make in the next minute.`
         : state === "not-yet"
           ? `Applications for ${round.label} have not opened yet.`
           : `Applications for ${round.label} have closed.`,
@@ -189,6 +191,11 @@ export default async function ApplyPage({ params }: Params) {
   if (!loaded) notFound();
 
   const { round, stages, application, closesAt, opensAt } = loaded;
+  // The kind decides what this form is CALLED on every surface of the page.
+  // A facilitator round asks somebody to run a group, and a hero that says
+  // nothing about that leaves them checking whether they opened the right
+  // link.
+  const copy = applyCopy(round.kind);
   const open = round.windowState === "open";
   const notYet = round.windowState === "not-yet";
   const returnTo = `/apply/${encodeURIComponent(roundId)}`;
@@ -204,8 +211,22 @@ export default async function ApplyPage({ params }: Params) {
     <section className={styles.page}>
       <div className="container">
         <header className={styles.hero}>
-          <Badge tone="accent">{round.academicYear || "Applications"}</Badge>
+          {/* The year is the badge every round has wanted, so it keeps the
+              accent. A facilitator round needs the kicker BESIDE it rather
+              than instead of it: as a fallback it only ever showed on a round
+              with no academic year set, which is nearly none of them, and
+              "Facilitator applications" is the one word of chrome that tells
+              somebody who followed a link what they are looking at. */}
+          <div className={styles.badges}>
+            <Badge tone="accent">{round.academicYear || copy.kicker}</Badge>
+            {round.kind === "appointment" && round.academicYear ? (
+              <Badge tone="neutral">{copy.kicker}</Badge>
+            ) : null}
+          </div>
           <h1 className={styles.title}>{round.label}</h1>
+          {copy.standfirst ? (
+            <p className={styles.kindNote}>{copy.standfirst}</p>
+          ) : null}
           {dates.length > 0 ? (
             <p className={styles.dates}>
               {dates.map((bit, index) => (
@@ -226,7 +247,7 @@ export default async function ApplyPage({ params }: Params) {
         {!user ? (
           <Card padding="lg" className={styles.gate}>
             <h2 className={styles.gateTitle}>
-              {open ? "Sign in to apply" : "Sign in to check your application"}
+              {open ? copy.signInTitle : "Sign in to check your application"}
             </h2>
             <p className={styles.gateBody}>
               {open ? (
@@ -255,7 +276,7 @@ export default async function ApplyPage({ params }: Params) {
                 through registration, so a brand-new account lands back on this
                 form rather than on /pending-approval. */}
             <Link href={`/login?next=${nextParam}`} className={styles.button}>
-              {open ? "Sign in to apply" : "Sign in"}
+              {open ? copy.signInTitle : "Sign in"}
             </Link>
             {open || notYet ? (
               <p className={styles.gateNote}>
