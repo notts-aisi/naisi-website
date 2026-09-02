@@ -1882,17 +1882,31 @@ async function seedCoursePage(courseId, overrides = {}) {
   });
 }
 
-describe("coursePages: signed-in read, and NOBODY writes from a client", () => {
-  it("lets any signed-in account read an authored page", async () => {
-    // Signed-in rather than public, matching `courses` and `courseRuns` above:
-    // `allow read` also grants `list`, and an unpublished course's pitch must
-    // not be world-enumerable. The logged-out marketing page is served by an
-    // Admin SDK fetcher on a server component (fetchCoursePage.ts).
+describe("coursePages: staff read, and NOBODY writes from a client", () => {
+  it("lets a drafter, an approver and an admin read an authored page", async () => {
+    // The three holders of the /admin/courses gate, which is where the only
+    // client-direct reader (useCoursePage, inside CoursePageEditor) lives.
     await seedCast();
     await seedCoursePage("course1");
-    for (const uid of ["learner", "pending1", "drafter", "admin1"]) {
+    for (const uid of ["drafter", "approver", "admin1"]) {
       const db = await asUser(uid);
       await assertSucceeds(db.collection("coursePages").doc("course1").get());
+      await assertSucceeds(db.collection("coursePages").limit(1).get());
+    }
+  });
+
+  it("refuses a member and a pending account, doc and list alike", async () => {
+    // V3 W3 PR20. The page is the authored pitch for a course whose own
+    // document is now staff-only while it is a draft, so a signed-in read
+    // here would have handed back the copy the course doc withholds. The
+    // logged-out marketing page is unaffected: it is served by an Admin SDK
+    // fetcher on a server component (fetchCoursePage.ts).
+    await seedCast();
+    await seedCoursePage("course1");
+    for (const uid of ["learner", "pending1", "facil", "lead"]) {
+      const db = await asUser(uid);
+      await assertFails(db.collection("coursePages").doc("course1").get());
+      await assertFails(db.collection("coursePages").limit(1).get());
     }
   });
 

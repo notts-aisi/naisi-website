@@ -12,8 +12,14 @@ import { isValidDateKey } from "../courses/weekPlan";
  *
  * ## ROUTES-ONLY, and why that is not paranoia
  *
- * The rules block is `allow read: if isSignedIn(); allow write: if false`, and
- * every write goes through `PUT /api/courses/[courseId]/page`. The alternative
+ * The rules block is `allow read: if isAdmin() || canDraftCourse() ||
+ * canApproveCourse(); allow write: if false`, and every write goes through
+ * `PUT /api/courses/[courseId]/page`.
+ *
+ * The read half was the signed-in tier until V3 W3 PR20 narrowed it: this
+ * document is a draft course's pitch, and it stayed open after the course
+ * document that owns it closed. Only `useCoursePage` reads it from a client,
+ * and only from inside `/admin/courses`, so the narrowing cost nothing. The alternative
  * (client-direct authoring with a route beside it, which is how `courses` and
  * `courseRuns` work) was rejected for one specific reason:
  *

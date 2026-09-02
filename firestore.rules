@@ -1181,16 +1181,34 @@ service cloud.firestore {
     // stores, plus `normalizeCoursePage` sanitising again at read time. Making
     // this collection client-writable would delete both guarantees at once.
     //
-    // Read is signed-in, matching `courses` and `courseRuns`: the public
-    // pages are served by Admin-SDK fetchers on server components, and a
-    // world-readable rule would also grant `list`, making an unpublished
-    // course's draft pitch enumerable.
+    // ---- V3 W3 PR20: read is STAFF, no longer the signed-in tier --------
+    // This block used to say read matched `courses` and `courseRuns`. It no
+    // longer does, and the parity is what broke: PR20 closed a DRAFT course
+    // to staff, and the page is that same course's authored pitch. Left at
+    // `isSignedIn()` it would have handed every signed-in account the copy
+    // the course document itself had just stopped showing them, list
+    // included, since `allow read` grants `list` too.
+    //
+    // The predicate is resource-independent on purpose. Resolving the parent
+    // course would need a `get()` billed once per candidate document on a
+    // list, which is the pattern the rest of this file refuses, and it would
+    // buy nothing: the only client-direct reader already sits behind exactly
+    // this gate.
+    //
+    // That reader is `useCoursePage`, mounted only by `CoursePageEditor` at
+    // `/admin/courses/[courseId]/page`, whose tree is gated by
+    // `requireCourseAuthorPage()` (admin, `draftCourse` or `approveCourse`).
+    // `tests/courses-draft-reads.test.mjs` is what keeps that the only one.
+    // Every public and learner surface reads the page through the Admin SDK
+    // fetcher `fetchCoursePage.ts` on a server component, which bypasses
+    // rules, so the logged-out marketing page is unaffected.
+    // ---- end V3 W3 PR20 -------------------------------------------------
     //
     // The page holds no uid and no member text. It is destroyed with its
     // course (`courseDeletion.ts`) and is deliberately not part of the
     // per-account deletion sweep.
     match /coursePages/{courseId} {
-      allow read: if isSignedIn();
+      allow read: if isAdmin() || canDraftCourse() || canApproveCourse();
       allow write: if false;
     }
     // === end V3 W1 PR7: coursePages ======================================

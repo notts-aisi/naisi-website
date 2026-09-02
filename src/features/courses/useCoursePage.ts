@@ -17,11 +17,18 @@ import {
 /**
  * The authored public page for one course, read CLIENT-DIRECT.
  *
- * `coursePages` is `allow read: if isSignedIn(); allow write: if false`. The
- * asymmetry is the whole design (see the collection's module comment): reads
- * are harmless, because the document is marketing copy with no uid and no PII
- * in it, while writes go through one route so a single sanitiser can stand
- * between stored HTML and `dangerouslySetInnerHTML` on a logged-out page.
+ * `coursePages` is `allow read: if isAdmin() || canDraftCourse() ||
+ * canApproveCourse(); allow write: if false`. The asymmetry is the whole
+ * design (see the collection's module comment): a read is cheap to allow the
+ * staff who author the thing, while writes go through one route so a single
+ * sanitiser can stand between stored HTML and `dangerouslySetInnerHTML` on a
+ * logged-out page.
+ *
+ * The read predicate is the SAME gate this hook already sits behind
+ * (`requireCourseAuthorPage()` on `/admin/courses`), narrowed from the old
+ * signed-in tier by V3 W3 PR20 so a draft course's pitch is not readable by
+ * every account once the course document itself stopped being. Nothing here
+ * changed shape as a result.
  *
  * So the editor READS here and WRITES through `PUT /api/courses/[courseId]/page`.
  * Reading through a route as well would have bought nothing and cost the
