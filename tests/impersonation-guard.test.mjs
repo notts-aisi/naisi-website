@@ -89,6 +89,7 @@ const MUST_GUARD = [
   ["src/app/api/courses/runs/[runId]/destroy/route.ts", "destroys a run and every row under it"],
   ["src/app/api/courses/runs/[runId]/email/route.ts", "sends email to a cohort"],
   ["src/app/api/courses/runs/[runId]/enrolments/[uid]/remove/route.ts", "removes a learner from a run"],
+  ["src/app/api/courses/runs/[runId]/enrol-mode/route.ts", "flips a run between admissions and open enrolment, which changes what the enrol route accepts"],
   ["src/app/api/courses/runs/[runId]/exercises/[exerciseId]/submit/route.ts", "submits a learner's answer in their own name"],
   ["src/app/api/courses/runs/[runId]/material-notes/route.ts", "records feedback attributed to the reader"],
   ["src/app/api/courses/runs/[runId]/normalise-weeks/route.ts", "rewrites every week id on a run"],

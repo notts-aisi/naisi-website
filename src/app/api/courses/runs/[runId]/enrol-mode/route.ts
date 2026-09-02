@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 import {
   COURSE_ENROL_MODES,
   COURSE_ENROL_MODE_LABEL,
@@ -58,6 +59,8 @@ export async function PATCH(
   req: Request,
   ctx: { params: Promise<{ runId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
   const { runId } = await ctx.params;
 
   const actor = await getCurrentUser();
