@@ -1,0 +1,97 @@
+/* ============================================================
+   CourseVisual: the generated per-track artwork.
+
+   Every colour is a token. The track classes set two local
+   custom properties and nothing below them names a track
+   again, so adding a fourth track is one block here rather
+   than a sweep through the shapes.
+   ============================================================ */
+
+.visual {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  /* The composition is the only thing in here; nothing should be able to
+     stretch it out of ratio. */
+  line-height: 0;
+}
+
+.hero {
+  aspect-ratio: 21 / 9;
+}
+
+.card {
+  aspect-ratio: 16 / 7;
+}
+
+.svg,
+.cover {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* === Track palettes === */
+
+.technical {
+  --visual-ink: var(--color-accent);
+  --visual-wash: var(--color-accent-soft);
+  --visual-ring: var(--color-accent-ring);
+}
+
+.governance {
+  --visual-ink: var(--color-collaborator-accent);
+  --visual-wash: var(--color-collaborator-soft);
+  --visual-ring: var(--color-collaborator-accent);
+}
+
+/* `--color-warning` used as a HUE, not as a status: it is the third distinct
+   accent the palette carries, and a general-track course is not a warning. */
+.general {
+  --visual-ink: var(--color-warning);
+  --visual-wash: var(--color-warning-soft);
+  --visual-ring: var(--color-warning);
+}
+
+/* === Marks === */
+
+.stopStart {
+  stop-color: var(--visual-wash);
+}
+
+.stopEnd {
+  stop-color: var(--color-bg-elevated);
+}
+
+.dot {
+  fill: var(--visual-ink);
+  opacity: 0.35;
+}
+
+.trace {
+  fill: none;
+  stroke: var(--visual-ink);
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.45;
+}
+
+.ring {
+  fill: none;
+  stroke: var(--visual-ring);
+  opacity: 0.5;
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .hero {
+    aspect-ratio: 16 / 9;
+  }
+  .card {
+    aspect-ratio: 16 / 6;
+  }
+}

@@ -5,15 +5,28 @@ import {
   normalizeCourseRun,
   normalizeCourseWeek,
   type CourseDoc,
+  type CourseEnrolMode,
   type CourseRunDoc,
   type CourseWeekDoc,
 } from "@/lib/firestore/courses";
+import type { RoundWindowState } from "@/lib/admissions/window";
 import {
   normalizeCourseGroup,
   type GroupSession,
 } from "@/lib/firestore/courseGroups";
 import { type ApplicationWindow } from "@/lib/courses/window";
 import { courseRunWindow } from "@/lib/courses/enrolWindow";
+import { COURSE_TRACKS } from "@/lib/firestore/courses";
+import {
+  COURSE_PAGES_COLLECTION,
+  normalizeCoursePage,
+  toPublicCoursePage,
+  type PublicCoursePage,
+} from "@/lib/firestore/coursePages";
+import {
+  listLiveRoundsByCourse,
+  type CourseLiveRound,
+} from "./fetchLiveRound";
 
 /**
  * Server-only fetchers for the public course pages (`fetchEvents.ts` pattern).
@@ -75,6 +88,40 @@ export type CourseCatalogueEntry = {
    * `closed`, and the card's copy has to branch on all three.
    */
   featuredRun: RunWindow | null;
+  /**
+   * The ADMISSION ROUND that places people onto one of this course's runs, or
+   * null when no round names any of them.
+   *
+   * When it is present it OUTRANKS the run's own window for every date on the
+   * card: a round is the object an applicant applies to, it carries the dates
+   * an admin typed, and the run's `applicationsCloseAt` is the pre-round
+   * mechanism kept for open-enrolment courses. Two dates naming the same
+   * deadline is exactly the drift V3 exists to stop, so the card reads one of
+   * them and the choice is made here rather than in the component.
+   */
+  liveRound: CourseLiveRound | null;
+  /**
+   * The run `liveRound` will place people onto, resolved by `roundTargetRun`,
+   * or null when there is no round or the round names no run of this course.
+   *
+   * NOT the same object as `featuredRun`, and that is the whole reason it is
+   * here: the featured run is picked from the runs whose own window is live,
+   * and an open round's target run is normally still `draft`. The card's start
+   * date has to come from this one when the round is speaking, or it prints
+   * last term's.
+   */
+  roundRun: CourseRunDoc | null;
+  /**
+   * What the card's artwork is drawn from: the authored seed and cover, or
+   * the course id as the seed when nobody has authored a page.
+   *
+   * Read here rather than on the card so the catalogue tile and the hero on
+   * the course page are THE SAME picture. Seeding the card from the course id
+   * would have been one read cheaper and would have quietly given a course two
+   * different visuals, which is the sort of thing nobody reports and everybody
+   * notices.
+   */
+  visual: { seed: string; coverImageUrl: string | null; coverAlt: string };
 };
 
 /** A published course with the curriculum its showcase run puts on display. */
@@ -213,9 +260,15 @@ export async function listPublishedCourses(): Promise<CourseCatalogueEntry[]> {
   // snapshots; `preferredRunWindow` is a total order, so seeing it twice is
   // idempotent and no de-duplication pass is needed.
   const runDocs = [...runSnap.docs, ...openRunSnap.docs];
+  // Every run read above, by id, whatever its window says. The rounds pass
+  // uses it as its run-to-course map AND hands it back extended, which is what
+  // lets a card name the cohort a round is recruiting for; the featured-run
+  // ranking below is a separate, narrower question asked over the same rows.
+  const knownRuns = new Map<string, CourseRunDoc>();
   for (const d of runDocs) {
     const run = normalizeCourseRun(d.id, d.data());
     if (!run.courseId) continue;
+    knownRuns.set(run.id, run);
     const window = courseRunWindow(run, now);
     // Archived (and therefore also mid-destroy) runs come back `inactive` and
     // are withdrawn from the catalogue. Filtered here rather than in the query
@@ -230,13 +283,159 @@ export async function listPublishedCourses(): Promise<CourseCatalogueEntry[]> {
     );
   }
 
-  return courseSnap.docs
-    .map((d) => normalizeCourse(d.id, d.data()))
-    .sort((a, b) => a.title.localeCompare(b.title))
-    .map((course) => ({
-      course,
-      featuredRun: byCourse.get(course.id) ?? null,
-    }));
+  // The rounds pass reuses those documents, so the only rows it has to fetch
+  // are the runs a round names that no run query returned (a target run still
+  // in `draft`).
+  const courses = courseSnap.docs.map((d) => normalizeCourse(d.id, d.data()));
+
+  const [roundPass, pages] = await Promise.all([
+    listLiveRoundsByCourse(knownRuns, now),
+    // ONE batch read for every card's artwork. The page id IS the course id,
+    // so this needs no query and no index; a course with no authored page
+    // comes back missing and falls through to the id-seeded default.
+    courses.length > 0
+      ? db.getAll(
+          ...courses.map((c) => db.collection(COURSE_PAGES_COLLECTION).doc(c.id)),
+        )
+      : Promise.resolve([]),
+  ]);
+
+  const visuals = new Map<string, PublicCoursePage>();
+  for (const doc of pages) {
+    if (!doc.exists) continue;
+    visuals.set(doc.id, toPublicCoursePage(normalizeCoursePage(doc.id, doc.data() ?? {})));
+  }
+
+  return courses
+    .map((course) => {
+      const page = visuals.get(course.id) ?? null;
+      const liveRound = roundPass.rounds.get(course.id) ?? null;
+      return {
+        course,
+        featuredRun: byCourse.get(course.id) ?? null,
+        liveRound,
+        roundRun: roundTargetRun(liveRound, roundPass.runs, course.id),
+        visual: {
+          seed: page?.visualSeed || course.id,
+          coverImageUrl: page?.coverImageUrl ?? null,
+          coverAlt: page?.coverAlt ?? "",
+        },
+      };
+    })
+    .sort(compareCatalogueEntries);
+}
+
+/**
+ * WHICH OBJECT SPEAKS FOR A COURSE'S DATES: the admission round, or the run's
+ * own window. THE one rule, and every public surface asks it rather than
+ * writing the condition out again.
+ *
+ * The ROUND wins whenever there is one. It is the object an applicant applies
+ * to, it carries the dates an admin typed, and the run's
+ * `applicationsOpenAt` / `applicationsCloseAt` are the pre-round mechanism.
+ *
+ * The ONE exception is an OPEN-ENROLMENT run. It has no application, nobody
+ * is placed onto it by a decision, and people join it from the session picker
+ * on the course page, so its own enrolment window is the only thing that can
+ * be true about it. A round that happened to name it would otherwise put an
+ * application deadline on a pre-course that admits everyone.
+ *
+ * An `inactive` round is not a public thing at all (draft or archived), so it
+ * speaks for nothing. `pickLiveRound` already drops those, and this is the
+ * belt to that braces: the type still admits the state.
+ *
+ * The two surfaces disagreeing about this is how a page ends up showing a
+ * round's deadline beside a run's state, which is the drift V3 exists to stop.
+ * The catalogue used to apply it round-first with no exception while the
+ * programme page applied the exception, so an open-enrolment course with a
+ * round would have sorted and read differently on the two pages.
+ */
+export function roundOwnsDates(
+  round: { state: RoundWindowState } | null,
+  enrolMode: CourseEnrolMode | null | undefined,
+): boolean {
+  if (!round || round.state === "inactive") return false;
+  return enrolMode !== "open";
+}
+
+/**
+ * THE RUN A ROUND WILL PLACE PEOPLE ONTO, for one course: the first of the
+ * round's `outcomeRunIds` that belongs to it.
+ *
+ * A round feeds several runs across several courses (one autumn intake feeds
+ * the incubator and up to three fellowships), so "the target run" is only a
+ * question with an answer once a course is named, and the answer is the run
+ * whose cohort and start date this course's surfaces should print.
+ *
+ * `runs` must include DRAFT and ARCHIVED runs. That is the case this function
+ * exists for: an intake is authored and opened while the run it will place
+ * people onto is still `draft`, which is exactly the fortnight the page most
+ * needs to say "Autumn 2026, cohort 2, starts Mon 26 Oct". Every window-based
+ * ranking in this file drops those runs, so a caller passing only its featured
+ * run gets null here and prints nothing, which is right.
+ *
+ * Null is an ordinary answer: an appointment round places nobody onto a run at
+ * all, and an intake whose outcome targets are not chosen yet has none either.
+ * The caller then shows NO cohort and NO start date, rather than falling back
+ * to another intake's run and captioning a live deadline with last term's
+ * dates.
+ */
+export function roundTargetRun(
+  round: { outcomeRunIds: string[] } | null,
+  runs: Map<string, CourseRunDoc>,
+  courseId: string,
+): CourseRunDoc | null {
+  if (!round) return null;
+  for (const runId of round.outcomeRunIds) {
+    const run = runs.get(runId);
+    // The course check is what makes this safe on the catalogue, where `runs`
+    // holds every course's runs at once.
+    if (run && run.courseId === courseId) return run;
+  }
+  return null;
+}
+
+/**
+ * How openly a catalogue row is taking people, as a sort key. Which object
+ * decides that is `roundOwnsDates`'s question, not this function's.
+ */
+function opennessRank(entry: CourseCatalogueEntry): number {
+  const viaRound = roundOwnsDates(
+    entry.liveRound,
+    entry.featuredRun?.run.enrolMode ?? null,
+  );
+  const state = viaRound
+    ? (entry.liveRound?.state ?? null)
+    : (entry.featuredRun?.window.state ?? null);
+  if (state === "open") return 0;
+  if (state === "not-yet") return 1;
+  return 2;
+}
+
+/**
+ * Catalogue order: what you can apply to NOW, then what opens soon, then
+ * everything else; within a band, by track and then by title.
+ *
+ * Alphabetical order was the previous rule and it buries the one thing the
+ * page exists for: in a term where the incubator is open and three past
+ * fellowships are not, "Applications open" can sit fourth on the grid because
+ * of a letter. Track is the secondary key rather than the title so the
+ * technical and governance strands read as strands rather than as an
+ * interleaved alphabet, and `COURSE_TRACKS` supplies that order so the
+ * catalogue, the chips and the filters cannot disagree about it.
+ *
+ * Exported because it is the half of the catalogue worth pinning with a test:
+ * it is decidable from two plain objects and it is what a reader notices first.
+ */
+export function compareCatalogueEntries(
+  a: CourseCatalogueEntry,
+  b: CourseCatalogueEntry,
+): number {
+  const rank = opennessRank(a) - opennessRank(b);
+  if (rank !== 0) return rank;
+  const track = COURSE_TRACKS.indexOf(a.course.track) - COURSE_TRACKS.indexOf(b.course.track);
+  if (track !== 0) return track;
+  return a.course.title.localeCompare(b.course.title);
 }
 
 /**
@@ -281,29 +480,58 @@ export async function getPublishedCourse(
 }
 
 /**
- * The run one course's public surfaces should describe, with its window
- * state, or null when the course has never had a public run.
+ * One course's runs, read once and answered twice: the run its public
+ * surfaces describe, AND every run id the course has.
  *
- * Deliberately NOT "the open run". The course page CTA and the apply page
- * both need an answer between the deadline and the decision, and returning
- * null there is exactly what made an applicant's own status card unreachable
- * the moment admissions moved the run to `applications-closed`: the apply
- * page had no run to read a row against, so the one surface that ever told
- * someone their application existed vanished on the day they started asking.
+ * The id list is what the round lookup needs. A round names RUNS
+ * (`outcomeRunIds`) and `courseRuns.admissionRoundIds` does not exist yet, so
+ * the only way from a course to its round is through its runs, and the ids
+ * have to include the ones the featured-run ranking drops: an autumn intake's
+ * target run sits in `draft` right up until allocation, which is precisely
+ * the window in which the page most needs to name the round.
  *
- * So this returns the best CANDIDATE: a run taking applications if there is
- * one, else one opening soon, else the most recently closed. Draft and
- * archived runs are never candidates.
- *
- * Filters client-side over a `courseId`-only query: both fields are
- * single-field auto-indexed, and a course has a handful of runs ever, so this
- * stays index-free (`firestore.indexes.json` carries no courseId+status pair).
+ * One query for both answers, because the page needs both and reading the
+ * same fifty documents twice on every render is the kind of thing that only
+ * looks free.
  */
-export async function getApplicationRunForCourse(
-  courseId: string,
-): Promise<RunWindow | null> {
+export type CourseRunSet = {
+  /** Every run of this course, draft and archived included. */
+  runIds: string[];
+  /**
+   * The same runs as documents, by id. Draft and archived included, and that
+   * is the point: the run an open round will place people onto is normally
+   * still `draft`, and it is the run whose cohort and start date the page has
+   * to name. `roundTargetRun` resolves it out of this map.
+   */
+  runsById: Map<string, CourseRunDoc>;
+  /**
+   * The run the public surfaces describe, or null when the course has never
+   * had a public run.
+   *
+   * Deliberately NOT "the open run". The course page CTA and the apply page
+   * both need an answer between the deadline and the decision, and returning
+   * null there is exactly what made an applicant's own status card
+   * unreachable the moment admissions moved the run to `applications-closed`:
+   * the apply page had no run to read a row against, so the one surface that
+   * ever told someone their application existed vanished on the day they
+   * started asking.
+   *
+   * So this is the best CANDIDATE: a run taking applications if there is one,
+   * else one opening soon, else the most recently closed. Draft and archived
+   * runs are never candidates.
+   */
+  featuredRun: RunWindow | null;
+};
+
+/**
+ * Filters client-side over a `courseId`-only query: every field it branches on
+ * is single-field auto-indexed, and a course has a handful of runs ever, so
+ * this stays index-free (`firestore.indexes.json` carries no courseId+status
+ * pair).
+ */
+export async function getCourseRunSet(courseId: string): Promise<CourseRunSet> {
   const db = getAdminDb();
-  if (!db) return null;
+  if (!db) return { runIds: [], runsById: new Map(), featuredRun: null };
   const snap = await db
     .collection("courseRuns")
     .where("courseId", "==", courseId)
@@ -311,9 +539,13 @@ export async function getApplicationRunForCourse(
     .get();
   // One clock reading for every candidate, so the ranking is a total order.
   const now = new Date();
+  const runIds: string[] = [];
+  const runsById = new Map<string, CourseRunDoc>();
   let best: RunWindow | null = null;
   for (const d of snap.docs) {
+    runIds.push(d.id);
     const run = normalizeCourseRun(d.id, d.data());
+    runsById.set(run.id, run);
     const window = courseRunWindow(run, now);
     // Draft and archived alike: unfinished authoring and withdrawn runs are
     // not public, and the destroy cascade sets `archived` first, so this is
@@ -322,7 +554,96 @@ export async function getApplicationRunForCourse(
     const candidate: RunWindow = { run, window };
     best = best ? preferredRunWindow(best, candidate) : candidate;
   }
-  return best;
+  return { runIds, runsById, featuredRun: best };
+}
+
+/** One sitemap row: a published course and the week URLs hanging off it. */
+export type CourseSitemapRow = {
+  courseId: string;
+  /** `courses.updatedAt`, for `lastModified`. Absent on a pre-V2 document. */
+  updatedAt: Date | null;
+  /** The showcase run's PUBLISHED week numbers, ascending. Never a doc id. */
+  weekNumbers: number[];
+};
+
+/**
+ * The sitemap's own read: every published course id, plus the week numbers
+ * that have a public page.
+ *
+ * A NARROW fetcher rather than a reuse of `listPublishedCourses`, which is
+ * built for a page of cards and pays for it: two site-wide run queries, a scan
+ * of every admission round, a batch of `coursePages` for the artwork, and then
+ * one `getPublishedCourse` per course on top. A crawler needs none of that.
+ * This costs one course query, ONE batch read of the showcase runs, and one
+ * keys-plus-`weekNumber` query per course that has a public run.
+ *
+ * It inherits the module's visibility obligation in full, and by the same
+ * rules `getPublishedCourse` applies: published courses only, and a showcase
+ * run that is neither `draft` nor `archived`, so a run mid-destroy takes its
+ * weeks off the sitemap the moment the cascade sets the flag. A sitemap is a
+ * published list of URLs, so a draft leaked here would be worse than one
+ * leaked on a page, not better.
+ */
+export async function listCourseSitemapRows(): Promise<CourseSitemapRow[]> {
+  const db = getAdminDb();
+  if (!db) return [];
+
+  const courseSnap = await db
+    .collection("courses")
+    .where("status", "==", "published")
+    .limit(100)
+    .get();
+  const courses = courseSnap.docs.map((d) => normalizeCourse(d.id, d.data()));
+  if (courses.length === 0) return [];
+
+  // ONE batch read for every showcase run: the run ids are already on the
+  // course documents, so this needs no query and no index.
+  const withRun = courses.filter((c) => c.showcaseRunId);
+  const runDocs =
+    withRun.length > 0
+      ? await db.getAll(
+          ...withRun.map((c) => db.collection("courseRuns").doc(c.showcaseRunId as string)),
+        )
+      : [];
+
+  const showcase: { courseId: string; runId: string }[] = [];
+  runDocs.forEach((doc, i) => {
+    if (!doc.exists) return;
+    const run = normalizeCourseRun(doc.id, doc.data() ?? {});
+    if (run.status === "draft" || run.archived) return;
+    showcase.push({ courseId: withRun[i].id, runId: run.id });
+  });
+
+  // One query per showcase run, and no way around it: a collection-group read
+  // over `weeks` would need an index this feature has not shipped. They go
+  // together, and each asks for the ONE field the sitemap prints rather than
+  // for whole week documents with their materials and guide blocks in them.
+  const weekSnaps = await Promise.all(
+    showcase.map(({ runId }) =>
+      db
+        .collection("courseRuns")
+        .doc(runId)
+        .collection("weeks")
+        .where("published", "==", true)
+        .select("weekNumber")
+        .get(),
+    ),
+  );
+
+  const weeksByCourse = new Map<string, number[]>();
+  weekSnaps.forEach((snap, i) => {
+    const numbers = snap.docs
+      .map((d) => d.get("weekNumber"))
+      .filter((n): n is number => typeof n === "number" && Number.isInteger(n))
+      .sort((a, b) => a - b);
+    weeksByCourse.set(showcase[i].courseId, numbers);
+  });
+
+  return courses.map((course) => ({
+    courseId: course.id,
+    updatedAt: course.updatedAt ?? null,
+    weekNumbers: weeksByCourse.get(course.id) ?? [],
+  }));
 }
 
 /**
@@ -452,10 +773,11 @@ export async function getApplyContext(
   // Independent reads, so they go together: the draft-course path throws the
   // run query away, which is cheaper than serialising every real hit (the same
   // call the course detail page makes).
-  const [doc, found] = await Promise.all([
+  const [doc, runSet] = await Promise.all([
     db.collection("courses").doc(courseId).get(),
-    getApplicationRunForCourse(courseId),
+    getCourseRunSet(courseId),
   ]);
+  const found = runSet.featuredRun;
   if (!doc.exists || !found) return null;
   const { run, window } = found;
   const course = normalizeCourse(doc.id, doc.data() ?? {});

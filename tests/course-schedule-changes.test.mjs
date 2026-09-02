@@ -1769,8 +1769,14 @@ test("GUARD — an offer survives admissions closing the run, which is what brok
   // the branch covers a course between intakes and an unscheduled pre-course
   // alike. What the guard is about is that the branch still EXISTS and still
   // fires on a run the fetcher dropped, not on which noun it uses.
+  // V3 PR13 added ONE more condition, and it widens the live-CTA case rather
+  // than narrowing it: an admission ROUND with no public run is a real state
+  // (an intake opens while the runs it will place people onto are still
+  // `draft`), so the "not taking new people" branch now also has to see no
+  // round. The property this guard holds is unchanged: the branch exists, and
+  // it still fires on a run the fetcher dropped when nothing else is open.
   assert.match(COURSE_CTA, /This course isn&apos;t taking new people right now\./);
-  assert.match(COURSE_CTA, /if \(!run \|\| run\.state === "inactive"\)/);
+  assert.match(COURSE_CTA, /if \(!round && \(!run \|\| run\.state === "inactive"\)\)/);
   assert.match(APPLY_FORM, /You're in\. We'll email you your group/);
   // The CTA and the apply route read ONE window predicate, so discovery and
   // submit cannot disagree. `status` alone decides nothing any more.

@@ -415,7 +415,13 @@ export default function CourseEditor({ courseId }: { courseId: string }) {
               <div>
                 <h3 className={styles.subheading}>Introduction</h3>
                 <p className={styles.subheadingHint}>
-                  The intro shown on the public course page, above the curriculum.
+                  A short intro, used on the public page when its own pitch has
+                  not been written yet.{" "}
+                  <Link href={`/admin/courses/${courseId}/page`}>
+                    Edit the public page
+                  </Link>{" "}
+                  for the full programme pitch: the headline, the essentials,
+                  the weekly themes, the journey and the FAQ.
                 </p>
                 {/*
                   Same wiring as the email-designs editor: BlockEditor owns a

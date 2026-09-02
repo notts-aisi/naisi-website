@@ -110,6 +110,14 @@ const MUST_GUARD = [
   ["src/app/api/admissions/rounds/[roundId]/stages/[stageId]/route.ts", "writes and deletes the questions a stage asks"],
   ["src/app/api/admissions/rounds/[roundId]/stages/[stageId]/release/route.ts", "releases a stage's questions to applicants, which cannot be undone"],
   ["src/app/api/admissions/rounds/[roundId]/roles/route.ts", "appoints reviewers and the final decider, which grants access to applications"],
+  // Admissions: the applicant's own lane. Every write here is recorded by
+  // Firestore as the MEMBER performing it, and each one is a fact about their
+  // intake: an application starting, an answer changing, a submission going in
+  // or a withdrawal coming out. An admin viewing as somebody must not be able
+  // to type into their application, submit it, or take it out of the queue.
+  ["src/app/api/admissions/rounds/[roundId]/apply/route.ts", "starts, saves and withdraws an application in the applicant's own name"],
+  ["src/app/api/admissions/rounds/[roundId]/apply/submit/route.ts", "submits an application, which puts somebody's work in a reviewer's queue"],
+  ["src/app/api/admissions/rounds/[roundId]/apply/stage/[stageId]/route.ts", "submits one later-released stage of an application, which cannot be undone"],
   // Outside the scanned trees above (it lives under /api/admin), so it is
   // named here or it is checked by nothing: it writes `config/courses`, whose
   // knobs reach every course surface at once.

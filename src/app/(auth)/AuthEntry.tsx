@@ -23,6 +23,7 @@ import {
   signInWithEmailPassword,
 } from "@/auth/signInWithEmailPassword";
 import { useAuth } from "@/auth/AuthProvider";
+import { isFunnelReturn } from "@/lib/authReturn";
 import { hardNavigate } from "@/lib/navigation/hardNavigate";
 import { claimSelfHealAttempt } from "@/lib/navigation/selfHealGuard";
 import { minWidth } from "@/theme/breakpoints";
@@ -351,22 +352,23 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
           // the router).
           credentialReceivedRef.current = false;
           setPhase("idle");
-          // A course return address survives the hop. Without this, someone who
-          // pressed "Create one" on a course apply page and signed up with
-          // Google landed on /register with no ?next, finished the form, and
-          // was dropped on /pending-approval with no way back to the
-          // application they came to write. The register page's own
-          // `safeCourseNext` re-validates before it redirects anywhere, and
-          // the `__auth_next` cookie stays as the fallback for the redirect
-          // leg. Collaborators keep their own branch: their destination is
-          // /collaborator, not a course.
-          const courseNext = safeNext.startsWith("/courses/")
+          // A funnel return address survives the hop. Without this, someone
+          // who pressed "Create one" on a course apply page or an admission
+          // round's form and signed up with Google landed on /register with
+          // no ?next, finished the form, and was dropped on
+          // /pending-approval with no way back to the application they came
+          // to write. Which prefixes count is `src/lib/authReturn.ts`, shared
+          // with the register page, which re-validates before it redirects
+          // anywhere; the `__auth_next` cookie stays as the fallback for the
+          // redirect leg. Collaborators keep their own branch: their
+          // destination is /collaborator, not a form.
+          const funnelNext = isFunnelReturn(safeNext)
             ? `/register?next=${encodeURIComponent(safeNext)}`
             : "/register";
           router.replace(
             mode === "register" && audience === "collaborator"
               ? "/register?type=collaborator"
-              : courseNext,
+              : funnelNext,
           );
           return;
         }

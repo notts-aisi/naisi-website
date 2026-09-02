@@ -17,8 +17,17 @@ import styles from "./CourseCTA.module.css";
  */
 export type CourseCTARun = {
   id: string;
-  /** e.g. "Autumn 2026". Rendered as a CHIP, never inside a sentence. */
-  label: string;
+  /**
+   * THE STRUCTURED COHORT, e.g. "Autumn 2026, cohort 2", produced by
+   * `cohortLabel(run)` on the server. Empty string for a pre-V3 run that has
+   * no cohort stored, and the chip is then omitted entirely.
+   *
+   * NOT `run.label`. That field is the admin-facing handle somebody typed
+   * ("wd", while testing), it survives on the document for admin lists, and
+   * V3 stopped showing it to visitors. The empty string is not a licence to
+   * fall back to it: a run with no cohort gets no chip.
+   */
+  cohortLabel: string;
   state: ApplicationWindowState;
   /** "Mon 21 Sep", or null when the window has no opening bound. */
   opensOn: string | null;
@@ -38,12 +47,62 @@ export type CourseCTARun = {
   streams: GroupPickerStream[];
 };
 
+/**
+ * The ADMISSION ROUND this course's applications go through, flattened by the
+ * server component the same way the run is, with every date pre-formatted in
+ * Europe/London.
+ *
+ * When a round is present it REPLACES the run as the thing the CTA describes:
+ * the round is the object an applicant applies to, the apply link points at
+ * `/apply/[roundId]` rather than at the run's form, and the dates come from
+ * the round. The run's own `applicationsOpenAt` / `applicationsCloseAt` stay
+ * the mechanism for OPEN-ENROLMENT runs, which have no round and never will.
+ *
+ * Never `inactive`: the fetcher drops draft and archived rounds, so a round
+ * that reaches this component is one a visitor may be told about.
+ */
+export type CourseCTARound = {
+  id: string;
+  state: Exclude<ApplicationWindowState, "inactive">;
+  /** "Mon 21 Sep", or null when the round has no opening bound. */
+  opensOn: string | null;
+  /** "Sun 18 Oct, 23:59", or null when there is no deadline. */
+  closesOn: string | null;
+  /** "Fri 23 Oct", the day decisions are promised by, or null. */
+  decisionsOn: string | null;
+  /**
+   * THE COHORT OF THE RUN THIS ROUND PLACES PEOPLE ONTO, e.g. "Autumn 2026,
+   * cohort 2". Empty when the round names no run of this course, and the chip
+   * is then omitted entirely.
+   *
+   * The round carries these two run-derived rows rather than letting the CTA
+   * read them off `run`, because `run` is the FEATURED run: the one whose own
+   * window is live. An open round's target run is normally still `draft`, so
+   * the featured run is by construction a DIFFERENT intake, and taking the
+   * chip from it captions this round's deadline with last term's cohort.
+   *
+   * Empty is not a licence to fall back to `run.cohortLabel`. No chip is the
+   * honest answer.
+   */
+  cohortLabel: string;
+  /** "Mon 26 Oct" for that same run, or null when none resolves. */
+  startsOn: string | null;
+};
+
 type Props = {
   courseId: string;
   /** Used in the sentence in place of the run label. See the note below. */
   courseTitle: string;
   /** The run to describe, or null when the course has no public run. */
   run: CourseCTARun | null;
+  /**
+   * The admission round the course's applications go through, ALREADY
+   * PRECEDENCE-RESOLVED by the server: it is non-null exactly when
+   * `roundOwnsDates` (fetchCourses.ts) says the round speaks for this course,
+   * and null when the run's own window does. Passing it means "the round owns
+   * the dates and the apply link"; see `CourseCTARound`.
+   */
+  round?: CourseCTARound | null;
   /**
    * `hero` sits under the course title and stays compact; `foot` closes the
    * page and gets the fuller framing line.
@@ -91,14 +150,42 @@ export default function CourseCTA({
   courseId,
   courseTitle,
   run,
+  round = null,
   placement = "hero",
   groups = [],
 }: Props) {
   const { user, loading } = useAuth();
-  const applyHref = `/courses/${encodeURIComponent(courseId)}/apply`;
   const coursePath = `/courses/${encodeURIComponent(courseId)}`;
   const title = courseTitle || "this course";
   const open = run?.enrolMode === "open";
+  // PRECEDENCE IS THE SERVER'S. `roundOwnsDates` in `fetchCourses.ts` is the
+  // one rule for whether the round or the run's own window speaks for a
+  // course, and the page passes `round` only when the round is the answer
+  // (never for an open-enrolment run, which no round places anybody onto). A
+  // second copy of that condition here is how the catalogue and this page came
+  // to disagree about it in the first place.
+  const viaRound = round !== null;
+  /**
+   * MERGE DEPENDENCY, and the reason there is no fallback below.
+   *
+   * `/apply/[roundId]` is PR9's route. It does not exist on this branch, so
+   * PR13 must not reach dev ahead of PR9: whenever a live round is found this
+   * link is the only apply route the CTA offers, and until PR9 lands it is a
+   * 404. The integration owner merges PR9 first. (PR17 later adds
+   * `courseRuns.admissionRoundIds` and turns the per-run apply page into a
+   * 308 redirect to this same URL, so the destination is the settled one.)
+   *
+   * DELIBERATELY NOT a fallback to `/courses/[courseId]/apply` when the round
+   * is present. That page submits against the RUN, and the run an open round
+   * places people onto is a draft with no application window: the form would
+   * render on a page whose POST the route refuses, which is exactly the
+   * discovery-versus-submit mismatch the window predicate was built to end.
+   * A 404 while the two PRs are out of order is a loud, one-merge problem; a
+   * form that takes five hundred words and then says no is a quiet one.
+   */
+  const applyHref = viaRound
+    ? `/apply/${encodeURIComponent(round.id)}`
+    : `/courses/${encodeURIComponent(courseId)}/apply`;
 
   const wrap = [styles.cta, placement === "foot" ? styles.foot : styles.hero]
     .filter(Boolean)
@@ -111,7 +198,13 @@ export default function CourseCTA({
   // the branch covers an admissions course between intakes and a pre-course
   // that has not been scheduled yet with one sentence. Naming either way in
   // (applying, signing up) would be wrong for half the courses it renders on.
-  if (!run || run.state === "inactive") {
+  //
+  // A ROUND with no public run is a real and important state, not an edge
+  // case: an autumn intake is authored and opened while the runs it will
+  // place people onto are still `draft`, which is exactly the fortnight the
+  // page most needs to say "applications are open". So the round is checked
+  // first and the run's absence only decides the copy when there is no round.
+  if (!round && (!run || run.state === "inactive")) {
     return (
       <div className={wrap}>
         <p className={styles.line}>
@@ -125,20 +218,37 @@ export default function CourseCTA({
     );
   }
 
+  // ONE state and ONE set of dates for the whole component, resolved here so
+  // no branch below can read the round's deadline beside the run's state. The
+  // COHORT and the START DATE are in that set: when the round is speaking they
+  // describe the run it will place people onto, not the featured run, and they
+  // are empty rather than borrowed when no such run resolves.
+  const state = viaRound ? round.state : (run?.state ?? "closed");
+  const opensOn = viaRound ? round.opensOn : (run?.opensOn ?? null);
+  const closesOn = viaRound ? round.closesOn : (run?.closesOn ?? null);
+  const chip = viaRound ? round.cohortLabel : (run?.cohortLabel ?? "");
+  const startsOn = viaRound ? round.startsOn : (run?.startsOn ?? null);
+
   const dates = [
-    run.state !== "closed" && run.closesOn
-      ? `${open ? "Sign-ups close" : "Applications close"} ${run.closesOn}`
+    state !== "closed" && closesOn
+      ? `${open ? "Sign-ups close" : "Applications close"} ${closesOn}`
       : null,
-    run.startsOn ? `Starts ${run.startsOn}` : null,
+    viaRound && round.decisionsOn ? `Decisions by ${round.decisionsOn}` : null,
+    startsOn ? `Starts ${startsOn}` : null,
   ].filter(Boolean) as string[];
 
   return (
     <div className={wrap}>
-      <p className={styles.chipRow}>
-        <span className={styles.chip}>{run.label}</span>
-      </p>
+      {/* The chip is the structured cohort, never the run's admin label, and
+          it is omitted rather than guessed at when there is no cohort to
+          show. */}
+      {chip ? (
+        <p className={styles.chipRow}>
+          <span className={styles.chip}>{chip}</span>
+        </p>
+      ) : null}
 
-      {run.state === "open" ? (
+      {state === "open" ? (
         <p className={styles.line}>
           <span className={styles.open}>
             {open ? "Sign-ups are open" : "Applications are open"}
@@ -146,24 +256,24 @@ export default function CourseCTA({
           for {title}.
           {open ? " Everyone who signs up gets a place." : ""}
         </p>
-      ) : run.state === "not-yet" ? (
+      ) : state === "not-yet" ? (
         <p className={styles.line}>
           {open
-            ? run.opensOn
-              ? `Sign-ups for ${title} open on ${run.opensOn}.`
+            ? opensOn
+              ? `Sign-ups for ${title} open on ${opensOn}.`
               : `Sign-ups for ${title} open soon.`
-            : run.opensOn
-              ? `Applications for ${title} open on ${run.opensOn}.`
+            : opensOn
+              ? `Applications for ${title} open on ${opensOn}.`
               : `Applications for ${title} open soon.`}
         </p>
       ) : (
         <p className={styles.line}>
           {open
-            ? run.closesOn
-              ? `Sign-ups for ${title} closed on ${run.closesOn}.`
+            ? closesOn
+              ? `Sign-ups for ${title} closed on ${closesOn}.`
               : `Sign-ups for ${title} have closed.`
-            : run.closesOn
-              ? `Applications for ${title} closed on ${run.closesOn}.`
+            : closesOn
+              ? `Applications for ${title} closed on ${closesOn}.`
               : `Applications for ${title} have closed.`}
         </p>
       )}
@@ -195,7 +305,7 @@ export default function CourseCTA({
           there unless the visitor is on the course: this page is the only
           surface an open-enrolment member has, so the deadline passing must
           not take away the place they can see or the way out of it. */}
-      {open ? (
+      {open && run ? (
         <GroupPicker
           runId={run.id}
           courseTitle={courseTitle}
@@ -204,7 +314,7 @@ export default function CourseCTA({
           enrolOpen={run.state === "open"}
           nextPath={coursePath}
         />
-      ) : loading ? null : run.state === "open" ? (
+      ) : loading ? null : state === "open" ? (
         user ? (
           <Link href={applyHref} className={styles.button}>
             Start your application

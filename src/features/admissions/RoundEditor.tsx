@@ -318,7 +318,11 @@ function DetailsSection({ round, patch }: { round: Round; patch: PatchFn }) {
       onSave={() => patch({ label, slug, academicYear, blurb })}
     >
       <div className={styles.grid2}>
-        <Field id="round-name" label="Name">
+        <Field
+          id="round-name"
+          label="Name"
+          hint="Staff-facing, but a slug of it becomes the round's id and shows in the public apply link"
+        >
           <Input
             id="round-name"
             value={label}

@@ -1,10 +1,16 @@
 /* ============================================================
    Public course page.
 
-   One prose column, capped at reading width: hero → intro blocks
-   → curriculum accordion → closing CTA. Deliberately NOT a
-   dashboard — a visitor deciding whether to spend seven weeks on
-   this is reading, not scanning a spec sheet.
+   One prose column, capped at reading width: hero → facts rail
+   → pitch → weekly themes → a sample week → the term's journey
+   → FAQ → closing CTA. Deliberately NOT a dashboard: a visitor
+   deciding whether to spend seven weeks on this is reading, not
+   scanning a spec sheet.
+
+   Most sections own their own module (CourseFactsRail,
+   WeeklyThemes, JourneyStrip, CourseFaq, CourseVisual); what is
+   left here is the page frame and the two sections that have no
+   component of their own.
 
    Facilitator-free by design: no roster, no names, no group
    slots. Those are member surfaces (/learn) and the public page
@@ -98,16 +104,73 @@
   color: var(--color-text-subtle);
 }
 
+.heroChips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+/* The structured cohort ("Autumn 2026, cohort 2"), never the run's admin
+   label. See the page component's rule 2. */
+.cohort {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.visual {
+  width: 100%;
+  margin-top: var(--space-4);
+}
+
 /* === Intro blocks === */
 
 .summary {
   padding-block: var(--space-10);
+  border-bottom: 1px solid var(--color-border);
 }
 
-/* === Curriculum === */
+/* === The sample week === */
 
-.curriculum {
-  padding-top: var(--space-4);
+.sample {
+  padding-block: var(--space-10);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sampleMore {
+  margin: var(--space-6) 0 0;
+}
+
+.sampleLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* 44px floor, public surface, enforced (docs/touch-targets.md). */
+  min-height: 2.75rem;
+  color: var(--color-accent);
+  text-decoration: none;
+  font-size: var(--text-sm);
+}
+
+.sampleLink:hover {
+  text-decoration: underline;
+}
+
+.sampleLink:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.arrow {
+  display: inline-block;
+  transition: transform var(--transition-base);
+}
+
+.sampleLink:hover .arrow {
+  transform: translateX(3px);
 }
 
 .sectionTitle {
@@ -127,10 +190,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .backArrow {
+  .backArrow,
+  .arrow {
     transition: none;
   }
-  .breadcrumbLink:hover .backArrow {
+  .breadcrumbLink:hover .backArrow,
+  .sampleLink:hover .arrow {
     transform: none;
   }
 }
@@ -150,7 +215,8 @@
   .tagline {
     font-size: var(--text-base);
   }
-  .summary {
+  .summary,
+  .sample {
     padding-block: var(--space-8);
   }
   .sectionBlurb {
