@@ -1578,8 +1578,12 @@ test("GUARD — a run mid-DESTROY fails closed on the learning space and on its 
   // half-destroyed cohort back to `running` mid-cascade.
   assert.match(RUN_STATUS, /data\.destroying === true/);
   assert.match(RUN_STATUS, /status: 409/);
+  // The transition table itself now lives in `@/lib/courses/runStatus` and both
+  // the route and the run editor's dropdown read it, so what is checked here is
+  // the CALL rather than the literal.
   assert.ok(
-    RUN_STATUS.indexOf("data.destroying === true") < RUN_STATUS.indexOf("ALLOWED_TRANSITIONS["),
+    RUN_STATUS.indexOf("data.destroying === true") <
+      RUN_STATUS.indexOf("canTransition(currentStatus, nextStatus)"),
     "the destroying check runs after the transition table",
   );
 });

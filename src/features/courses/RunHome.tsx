@@ -17,7 +17,10 @@ import { useGroupRoster } from "./useGroupRoster";
 import { useRunOverview } from "./useRunOverview";
 import { useSyncTasks } from "./useSyncTasks";
 import { weekDocId } from "@/lib/firestore/courses";
-import type { OverviewPayload } from "@/app/api/courses/runs/[runId]/overview/route";
+import type {
+  OverviewGroup,
+  OverviewPayload,
+} from "@/app/api/courses/runs/[runId]/overview/route";
 import type { WeekPlanEntry } from "@/lib/courses/weekPlan";
 import styles from "./RunHome.module.css";
 
@@ -325,6 +328,143 @@ function RunHomeSkeleton() {
 }
 
 // ---------------------------------------------------------------------------
+// FacilitatorGroupPanel
+// ---------------------------------------------------------------------------
+
+/**
+ * One facilitated group's tools: its roster, its register, its review queue
+ * and its own email lane.
+ *
+ * A COMPONENT rather than inline JSX because each card needs its own roster
+ * fetch, and a hook cannot be called in a loop. That is the whole reason it
+ * exists: the page previously drew at most one of these, so the hook could sit
+ * at the top of `RunHome` and a facilitator holding two groups got nothing at
+ * all.
+ *
+ * The cohort-wide links (announcements, the weekly nudge) are passed in rather
+ * than derived here, and only the first card is asked to draw them: they
+ * address the RUN, and repeating them under every group would read as three
+ * separate lanes.
+ */
+function FacilitatorGroupPanel({
+  runId,
+  group,
+  targetWeekNumber,
+  showCohortLinks,
+}: {
+  runId: string;
+  group: OverviewGroup;
+  /** The published week to link materials for, or null when there isn't one. */
+  targetWeekNumber: number | null;
+  showCohortLinks: boolean;
+}) {
+  /*
+    The shared hook, the same one the facilitator group page and the email
+    composer read from. It carries a manual refresh and a null-vs-zero member
+    count that this page uses neither of; what it removes is the second copy of
+    the fetch, the stale-response guard and the error copy.
+  */
+  const roster = useGroupRoster(group.id);
+  const groupHref = `/learn/${encodeURIComponent(runId)}/group/${encodeURIComponent(group.id)}`;
+
+  return (
+    <Card as="section" padding="md" className={styles.panel}>
+      <h3 className={styles.panelTitle}>You facilitate {group.name}</h3>
+
+      {roster.loading && (
+        <Skeleton lines={2} height="1.25rem" ariaLabel="Loading the roster…" />
+      )}
+      {roster.error && <p className={styles.panelNote}>{roster.error.message}</p>}
+      {roster.group &&
+        (roster.members.length === 0 ? (
+          <p className={styles.panelNote}>No one is placed in this group yet.</p>
+        ) : (
+          /* Names only, because the roster route sends nothing else, and this is a
+             cohort surface. InitialsChip is decorative and aria-hidden, so the
+             name always renders beside it. */
+          <ul className={styles.roster}>
+            {roster.members.map((member) => (
+              <li key={member.uid} className={styles.rosterItem}>
+                <InitialsChip name={member.displayName} uid={member.uid} size="sm" />
+                <span>
+                  <MemberName name={member.displayName} />
+                </span>
+              </li>
+            ))}
+          </ul>
+        ))}
+
+      {/* Unconditional, unlike the materials link below: the review queue is
+          where a facilitator's own work is, and it stays reachable even in a
+          week nobody has published yet. */}
+      <Link className={styles.panelLink} href={`${groupHref}/review`}>
+        Review exercises
+        <span className={styles.arrow} aria-hidden="true">
+          →
+        </span>
+      </Link>
+
+      {/* Unconditional for the same reason as the review link above: the
+          register and the roster are a facilitator's own tools, and they stay
+          reachable in a week nobody has published yet. */}
+      <Link className={styles.panelLink} href={groupHref}>
+        Roster and attendance
+        <span className={styles.arrow} aria-hidden="true">
+          →
+        </span>
+      </Link>
+
+      <Link className={styles.panelLink} href={`${groupHref}/email`}>
+        Email the group
+        <span className={styles.arrow} aria-hidden="true">
+          →
+        </span>
+      </Link>
+
+      {/* Only for someone who staffs the RUN (see the `canEmailCohort` prop
+          on RunHome). A group facilitator has the link above and not this one:
+          their room is theirs, the cohort is not. */}
+      {showCohortLinks && (
+        <Link
+          className={styles.panelLink}
+          href={`/learn/${encodeURIComponent(runId)}/email`}
+        >
+          Email the whole cohort
+          <span className={styles.arrow} aria-hidden="true">
+            →
+          </span>
+        </Link>
+      )}
+
+      {/* Same gate as the cohort link above, and for the same reason: the
+          nudge addresses the whole run. Nothing sends it on a schedule, since
+          this app has no scheduler, so the link has to exist for it to go out
+          at all. */}
+      {showCohortLinks && (
+        <Link
+          className={styles.panelLink}
+          href={`/learn/${encodeURIComponent(runId)}/nudge`}
+        >
+          Send this week&apos;s nudge
+          <span className={styles.arrow} aria-hidden="true">
+            →
+          </span>
+        </Link>
+      )}
+
+      {targetWeekNumber !== null && (
+        <Link className={styles.panelLink} href={weekHref(runId, targetWeekNumber)}>
+          Open week {targetWeekNumber} materials
+          <span className={styles.arrow} aria-hidden="true">
+            →
+          </span>
+        </Link>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // RunHome
 // ---------------------------------------------------------------------------
 
@@ -348,33 +488,23 @@ export default function RunHome({ runId, isAdmin, canEmailCohort }: Props) {
   });
 
   /*
-    The group the caller FACILITATES — not merely the group on the payload.
+    The groups the caller FACILITATES, not merely the group on the payload.
 
-    The overview resolves its single `group` to the caller's LEARNER placement
-    first and only falls back to a group they hold, so someone who facilitates
-    the run (or a different group) while also sitting in group A would otherwise
-    be told "you facilitate A". A facilitator's own enrolment carries a null
-    groupId by construction, so an enrolment naming this group is proof it is
-    their seat rather than their post.
+    The overview sends EVERY group this caller holds: their learner placement
+    first (if they have one), then each group they facilitate. Their placement
+    is their seat, not their post, so it is subtracted here, because otherwise
+    somebody who facilitates the run while sitting in group A would be told
+    "you facilitate A".
 
-    Null also covers facilitating two groups: the overview sends no group at
-    all in that case, because there is no "current" one — the per-group pages
-    are that surface.
+    A LIST rather than the old single id, and that is the fix: someone running
+    two sessions is ordinary here, the payload used to send no group at all in
+    that case, and they were left with no link to any roster, register, review
+    queue or group email. One card each now.
   */
-  const ownGroup = data?.group ?? null;
-  const facilitatedGroupId =
-    data && ownGroup && data.access.isFacilitator && data.enrolment?.groupId !== ownGroup.id
-      ? ownGroup.id
-      : null;
-  /*
-    The shared hook — the same one the facilitator group page and the email
-    composer read from. It carries a manual refresh and a null-vs-zero member
-    count that this page uses neither of; what it removes is the second copy of
-    the fetch, the stale-response guard and the error copy that used to live
-    here. `null` groupId means "not facilitating one", which the hook spells as
-    an empty key and treats as idle: no fetch, no loading state.
-  */
-  const roster = useGroupRoster(facilitatedGroupId ?? "");
+  const placementGroupId = data?.enrolment?.groupId ?? null;
+  const facilitatedGroups = data?.access.isFacilitator
+    ? data.groups.filter((g) => g.id !== placementGroupId)
+    : [];
 
   /*
     P10 — the primary mirror trigger. This page is the one a member opens when
@@ -525,118 +655,22 @@ export default function RunHome({ runId, isAdmin, canEmailCohort }: Props) {
           />
         )}
 
-        {facilitatedGroupId && group && (
-          <Card as="section" padding="md" className={styles.panel}>
-            <h3 className={styles.panelTitle}>You facilitate {group.name}</h3>
+        {/* One card per group they hold. A single card renders exactly as it
+            always did; two or three simply stack, because this column already
+            stacks everything else on the page. The cohort-wide links ride on
+            the FIRST card only, because they address the run and not a room, so
+            repeating them per group would be three copies of one lane. */}
+        {facilitatedGroups.map((facilitated, index) => (
+          <FacilitatorGroupPanel
+            key={facilitated.id}
+            runId={runId}
+            group={facilitated}
+            targetWeekNumber={target?.published ? target.weekNumber : null}
+            showCohortLinks={canEmailCohort && index === 0}
+          />
+        ))}
 
-            {roster.loading && (
-              <Skeleton lines={2} height="1.25rem" ariaLabel="Loading the roster…" />
-            )}
-            {roster.error && <p className={styles.panelNote}>{roster.error.message}</p>}
-            {roster.group &&
-              (roster.members.length === 0 ? (
-                <p className={styles.panelNote}>
-                  No one is placed in this group yet.
-                </p>
-              ) : (
-                /* Names only — the roster route sends nothing else, and this
-                   is a cohort surface. InitialsChip is decorative and
-                   aria-hidden, so the name always renders beside it. */
-                <ul className={styles.roster}>
-                  {roster.members.map((member) => (
-                    <li key={member.uid} className={styles.rosterItem}>
-                      <InitialsChip
-                        name={member.displayName}
-                        uid={member.uid}
-                        size="sm"
-                      />
-                      <span>
-                        <MemberName name={member.displayName} />
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              ))}
-
-            {/* Unconditional, unlike the materials link below: the review queue
-                is where a facilitator's own work is, and it stays reachable
-                even in a week nobody has published yet. */}
-            <Link
-              className={styles.panelLink}
-              href={`/learn/${encodeURIComponent(runId)}/group/${encodeURIComponent(facilitatedGroupId)}/review`}
-            >
-              Review exercises
-              <span className={styles.arrow} aria-hidden="true">
-                →
-              </span>
-            </Link>
-
-            {/* Unconditional for the same reason as the review link above: the
-                register and the roster are a facilitator's own tools, and they
-                stay reachable in a week nobody has published yet. */}
-            <Link
-              className={styles.panelLink}
-              href={`/learn/${encodeURIComponent(runId)}/group/${encodeURIComponent(facilitatedGroupId)}`}
-            >
-              Roster and attendance
-              <span className={styles.arrow} aria-hidden="true">
-                →
-              </span>
-            </Link>
-
-            <Link
-              className={styles.panelLink}
-              href={`/learn/${encodeURIComponent(runId)}/group/${encodeURIComponent(facilitatedGroupId)}/email`}
-            >
-              Email the group
-              <span className={styles.arrow} aria-hidden="true">
-                →
-              </span>
-            </Link>
-
-            {/* Only for someone who staffs the RUN — see the `canEmailCohort`
-                prop. A group facilitator has the link above and not this one:
-                their room is theirs, the cohort is not. */}
-            {canEmailCohort && (
-              <Link
-                className={styles.panelLink}
-                href={`/learn/${encodeURIComponent(runId)}/email`}
-              >
-                Email the whole cohort
-                <span className={styles.arrow} aria-hidden="true">
-                  →
-                </span>
-              </Link>
-            )}
-
-            {/* Same gate as the cohort link above, and for the same reason: the
-                nudge addresses the whole run. Nothing sends it on a schedule —
-                this app has no scheduler — so the link has to exist for it to
-                go out at all. */}
-            {canEmailCohort && (
-              <Link
-                className={styles.panelLink}
-                href={`/learn/${encodeURIComponent(runId)}/nudge`}
-              >
-                Send this week&apos;s nudge
-                <span className={styles.arrow} aria-hidden="true">
-                  →
-                </span>
-              </Link>
-            )}
-
-            {target?.published && (
-              <Link className={styles.panelLink} href={weekHref(runId, target.weekNumber)}>
-                Open week {target.weekNumber} materials
-                <span className={styles.arrow} aria-hidden="true">
-                  →
-                </span>
-              </Link>
-            )}
-          </Card>
-        )}
-
-        {canEmailCohort && !facilitatedGroupId && (
+        {canEmailCohort && facilitatedGroups.length === 0 && (
           /* The same link as in the facilitator panel above, for the people
              that panel never renders for — a run facilitator, track lead or
              admin who holds no group of their own. Without it the announcement

@@ -232,6 +232,8 @@ const NOTICE = api("groups", "[groupId]", "notice", "route.ts");
 const GROUP_WEEK_PATCH = api("groups", "[groupId]", "weeks", "[weekId]", "route.ts");
 const COURSES_LIB = src("lib", "firestore", "courses.ts");
 const GROUP_RESOLVE = src("lib", "courses", "groupResolve.ts");
+const RUN_STATUS_LIB = src("lib", "courses", "runStatus.ts");
+const RUN_EDITOR = src("features", "courses", "RunEditor.tsx");
 
 const WEEK_PLAN_BUILDER = src("features", "courses", "WeekPlanBuilder.tsx");
 const WEEK_VIEW = src("features", "courses", "WeekView.tsx");
@@ -1145,7 +1147,7 @@ test("PROVEN GAP — un-publishing a week takes a member's completed work off th
 // RUN STATUS — forward-only in the route, unconstrained in the rules
 // ===========================================================================
 
-/** The status route's table, reproduced. Pinned below. */
+/** The shared lifecycle table, reproduced. Pinned below. */
 const ALLOWED_TRANSITIONS = {
   draft: ["applications-open", "cancelled"],
   "applications-open": ["applications-closed", "cancelled"],
@@ -1155,14 +1157,24 @@ const ALLOWED_TRANSITIONS = {
   cancelled: [],
 };
 
-test("GUARD — the status route's transition table is forward-only and terminal-safe", () => {
+test("GUARD: the transition table is forward-only, terminal-safe, and the only one", () => {
   for (const [from, to] of Object.entries(ALLOWED_TRANSITIONS)) {
     assert.match(
-      STATUS_ROUTE,
+      RUN_STATUS_LIB,
       new RegExp(`"?${from}"?:\\s*\\[${to.map((s) => `"${s}"`).join(", ")}\\]`),
       `the table no longer says ${from} → ${to.join("/")}`,
     );
   }
+  // ONE table, two consumers. The route enforces it and the run editor builds
+  // its dropdown from it, so the admin is never offered a move the server
+  // refuses (which is exactly what a second, drifted client copy did).
+  assert.match(STATUS_ROUTE, /from "@\/lib\/courses\/runStatus"/);
+  assert.match(STATUS_ROUTE, /canTransition\(currentStatus, nextStatus\)/);
+  assert.doesNotMatch(STATUS_ROUTE, /"applications-open": \[/);
+  assert.match(RUN_EDITOR, /ALLOWED_TRANSITIONS\[currentStatus\]/);
+  assert.doesNotMatch(RUN_EDITOR, /RUN_STATUS_TRANSITIONS/);
+  // Cancelling left the dropdown for the danger zone's typed confirmation.
+  assert.match(RUN_EDITOR, /\(s\) => s !== "cancelled",/);
   // Nothing leaves a terminal state, and nothing walks backwards.
   assert.deepEqual(ALLOWED_TRANSITIONS.completed, []);
   assert.deepEqual(ALLOWED_TRANSITIONS.cancelled, []);
@@ -1176,7 +1188,7 @@ test("GUARD — the status route's transition table is forward-only and terminal
       );
     }
   }
-  assert.match(STATUS_ROUTE, /Deliberately forward-only/);
+  assert.match(RUN_STATUS_LIB, /Deliberately forward-only/);
 });
 
 test("GUARD — a run walked backwards is refused new work by both write lanes", () => {
@@ -1434,7 +1446,7 @@ test("GUARD — an offer survives admissions closing the run, which is what brok
   // submit cannot disagree. `status` alone decides nothing any more.
   assert.match(FETCH_COURSES, /from "@\/lib\/courses\/window"/);
   assert.doesNotMatch(FETCH_COURSES, /run\.status !== "applications-open"/);
-  assert.match(STATUS_ROUTE, /"applications-open": \["applications-closed", "cancelled"\]/);
+  assert.match(RUN_STATUS_LIB, /"applications-open": \["applications-closed", "cancelled"\]/);
 });
 
 test("PROVEN GAP — their only record is an email whose {startDate} is frozen", () => {
@@ -2049,7 +2061,10 @@ test("GUARD — virtual/in-person reaches the member, on the card and in the ema
   // refactor. The slot fields stay resolved for the current week.
   assert.match(OVERVIEW, /sessionModes: Record<string, GroupSessionMode>;/);
   assert.match(OVERVIEW, /const weekId = currentWeekId\(currentWeek\);/);
-  assert.match(OVERVIEW, /sessionModes: sessionModesOf\(ownGroup\),/);
+  // Built per card now that the payload carries every group the caller
+  // holds, so the map travels for each of them rather than only for the one
+  // the calendar resolved through.
+  assert.match(OVERVIEW, /sessionModes: sessionModesOf\(source\),/);
   // The facilitator's own group page builds the same shape and hands the card
   // the same week's entry, so the person who just flipped the switch sees what
   // their members will.
@@ -2076,8 +2091,14 @@ test("GUARD — virtual/in-person reaches the member, on the card and in the ema
 
   // THE PII GATE IS UNTOUCHED. `mode` is a display fact; it grants nobody the
   // meeting link, and this is the line that says so.
-  assert.match(OVERVIEW, /meetingUrl: canSeeMeetingUrl \? session\.meetingUrl : null,/);
-  assert.match(OVERVIEW, /const canSeeMeetingUrl =/);
+  // Decided PER GROUP now that a facilitator of two gets a card each, so the
+  // predicate takes the group it is answering about rather than closing over
+  // the one the calendar resolved through.
+  assert.match(
+    OVERVIEW,
+    /meetingUrl: canSeeMeetingUrlFor\(source\) \? session\.meetingUrl : null,/,
+  );
+  assert.match(OVERVIEW, /const canSeeMeetingUrlFor = \(group: CourseGroupDoc\): boolean =>/);
 });
 
 test("GUARD — the week page shows the VIEWED week's mode, not the current week's", () => {

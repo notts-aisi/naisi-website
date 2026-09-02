@@ -266,3 +266,82 @@ describe("event-images — per-event scoping, matching firestore.rules", () => {
     await assertSucceeds(s.ref("event-images/any-event/cover.png").put(PNG, png));
   });
 });
+
+describe("course-images: was missing entirely, so every week-guide image failed", () => {
+  // The third time this exact shape has bitten: no `course-images` match block
+  // existed, so both editors' uploads hit deny-by-default. WeekEditor.tsx and
+  // CourseEditor.tsx each carry a comment predicting it. These tests pin the
+  // rule that fixes it, on the exact two path shapes those editors build.
+  it("allows a course drafter to upload under a courseId (CourseEditor)", async () => {
+    await seedUser("cDrafter", { role: "member", permissions: { draftCourse: true } });
+    const s = await storageAsUser("cDrafter");
+    await assertSucceeds(s.ref("course-images/course-1/x.png").put(PNG, png));
+  });
+
+  it("allows a course approver to upload under runId__weekId (WeekEditor)", async () => {
+    await seedUser("cApprover", { role: "member", permissions: { approveCourse: true } });
+    const s = await storageAsUser("cApprover");
+    await assertSucceeds(s.ref("course-images/run-1__w03/1700-x.png").put(PNG, png));
+  });
+
+  it("allows an admin, who holds every permission implicitly", async () => {
+    await seedUser("admin2", { role: "admin" });
+    const s = await storageAsUser("admin2");
+    await assertSucceeds(s.ref("course-images/course-1/x.png").put(PNG, png));
+  });
+
+  it("blocks a member with no course permission", async () => {
+    await seedUser("plain", { role: "member" });
+    const s = await storageAsUser("plain");
+    await assertFails(s.ref("course-images/course-1/x.png").put(PNG, png));
+  });
+
+  it("blocks a committee member who was never granted one", async () => {
+    // Course authoring is a permission, not a rank: sitting on the committee
+    // (SU-recognised or not) grants nothing here.
+    await seedUser("suCommittee", { role: "committee", suRecognised: true });
+    const s = await storageAsUser("suCommittee");
+    await assertFails(s.ref("course-images/course-1/x.png").put(PNG, png));
+  });
+
+  it("blocks a holder of the NEWSLETTER permissions (the keys are not shared)", async () => {
+    await seedUser("nDrafter", {
+      role: "member",
+      permissions: { draftNewsletter: true, approveNewsletter: true },
+    });
+    const s = await storageAsUser("nDrafter");
+    await assertFails(s.ref("course-images/course-1/x.png").put(PNG, png));
+  });
+
+  it("blocks a signed-out visitor from uploading", async () => {
+    const s = await storageAsAnon();
+    await assertFails(s.ref("course-images/course-1/x.png").put(PNG, png));
+  });
+
+  it("is readable by a signed-out visitor (the public course page renders it)", async () => {
+    const s = await storageAsAnon();
+    await assertSucceeds(
+      s.ref("course-images/course-1/x.png").getMetadata().catch((e) => {
+        if (e?.code === "storage/object-not-found") return null;
+        throw e;
+      }),
+    );
+  });
+
+  it("blocks a non-image content type", async () => {
+    await seedUser("cDrafter", { role: "member", permissions: { draftCourse: true } });
+    const s = await storageAsUser("cDrafter");
+    await assertFails(
+      s.ref("course-images/course-1/evil.html").put(PNG, { contentType: "text/html" }),
+    );
+  });
+
+  it("does not require the course or week to exist (the folder is unvalidated)", async () => {
+    // Stated rather than assumed: unlike newsletter-images and event-images
+    // there is no ownership test here, because `{folder}` is a courseId in one
+    // editor and a runId__weekId pair in the other. See the block's comment.
+    await seedUser("cDrafter", { role: "member", permissions: { draftCourse: true } });
+    const s = await storageAsUser("cDrafter");
+    await assertSucceeds(s.ref("course-images/no-such-thing/x.png").put(PNG, png));
+  });
+});

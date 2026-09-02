@@ -7,7 +7,8 @@ import type { OverviewPayload } from "@/app/api/courses/runs/[runId]/overview/ro
  * Everything the run home and the week pages need about one run:
  * `GET /api/courses/runs/[runId]/overview` — the run and its week plan, the
  * computed current week, the published week index, the caller's own enrolment,
- * their group, and the `access` flags the `[runId]` layout gates on.
+ * every group they hold (their placement and each group they facilitate),
+ * and the `access` flags the `[runId]` layout gates on.
  *
  * One-shot with a manual refresh, same argument as `useMyRuns`: the payload
  * joins `courseRuns` + its `weeks` subcollection + `courseEnrolments` +
@@ -55,7 +56,18 @@ export function useRunOverview(runId: string): RunOverview {
       })
       .then((payload) => {
         if (cancelled) return;
-        setData(payload);
+        // `groups` is newer than `group`. A response served by a container that
+        // predates it would leave the field undefined and every caller
+        // mapping over it would throw, so it is normalised once here rather
+        // than defended against at each render site.
+        setData({
+          ...payload,
+          groups: Array.isArray(payload.groups)
+            ? payload.groups
+            : payload.group
+              ? [payload.group]
+              : [],
+        });
         setError(null);
       })
       .catch((e: unknown) => {
