@@ -7,6 +7,11 @@ import {
   listPublishedCourses,
   type CourseCatalogueEntry,
 } from "@/features/courses/fetchCourses";
+import {
+  formatRunStartShort,
+  formatWindowDate,
+  type ApplicationWindowState,
+} from "@/lib/courses/window";
 import Reveal from "../Reveal";
 import styles from "./courses.module.css";
 
@@ -65,7 +70,9 @@ export default async function CourseCataloguePage() {
 }
 
 function CourseCard({ entry }: { entry: CourseCatalogueEntry }) {
-  const { course, openRun } = entry;
+  const { course, featuredRun } = entry;
+  const state = featuredRun?.window.state ?? null;
+  const dates = cardDates(entry);
   return (
     // Plain next/link, never TransitionLink: the public transition's ~960ms
     // exit choreography is tuned for one-off editorial pages and reads as a
@@ -86,16 +93,70 @@ function CourseCard({ entry }: { entry: CourseCatalogueEntry }) {
               {formatWeeklyHours(course.estimatedWeeklyHours)}
             </span>
           ) : null}
-          <span className={openRun ? styles.stateOpen : styles.stateClosed}>
-            {openRun ? `Applications open — ${openRun.label}` : "Next run TBA"}
-          </span>
+          {/* Three tones for three states. "Applications open Mon 21 Sep" is a
+              date to plan around, so it must not be painted the same muted
+              grey as "Applications closed" and read as a run that is over. */}
+          <span className={stateClass(state)}>{applicationState(entry)}</span>
+          {/* Shares `.commitment` (muted, tabular numerals) rather than
+              growing the stylesheet a near-identical class: it is the same
+              kind of line, and `.cardFoot` is already the flex column that
+              stacks them. */}
+          {dates ? <span className={styles.commitment}>{dates}</span> : null}
         </p>
       </Card>
     </Link>
   );
 }
 
-/** "~5 hrs/week" — a rough commitment figure, phrased as one. */
+/** Open is live, not-yet is upcoming, everything else is over. */
+function stateClass(state: ApplicationWindowState | null): string {
+  if (state === "open") return styles.stateOpen;
+  if (state === "not-yet") return styles.stateSoon;
+  return styles.stateClosed;
+}
+
+/**
+ * The card's one-line state, keyed on the application WINDOW rather than the
+ * run's status. Keying on status alone is what put "Applications open" on a
+ * card whose deadline had passed and whose form the apply route then refused,
+ * and on one whose window had not started yet.
+ *
+ * The run LABEL never appears here. It is an internal handle an admin typed,
+ * and "Applications open for wd" is what that reads like in the wild.
+ */
+function applicationState(entry: CourseCatalogueEntry): string {
+  const found = entry.featuredRun;
+  if (!found) return "Next run TBA";
+  if (found.window.state === "open") return "Applications open";
+  if (found.window.state === "not-yet") {
+    return found.window.opensAt
+      ? `Applications open ${formatWindowDate(found.window.opensAt)}`
+      : "Applications open soon";
+  }
+  return "Applications closed";
+}
+
+/**
+ * "Applications close Sun 18 Oct · Starts Mon 26 Oct". The two questions
+ * every prospective applicant asks, answered on the card rather than only in
+ * a confirmation email they have not been sent yet.
+ *
+ * A closed run drops the deadline: it is no longer something to plan around,
+ * and the state line above has already said it has passed.
+ */
+function cardDates(entry: CourseCatalogueEntry): string {
+  const found = entry.featuredRun;
+  if (!found) return "";
+  const bits: string[] = [];
+  if (found.window.state !== "closed" && found.window.closesAt) {
+    bits.push(`Applications close ${formatWindowDate(found.window.closesAt)}`);
+  }
+  const starts = formatRunStartShort(found.run.startDate);
+  if (starts) bits.push(`Starts ${starts}`);
+  return bits.join(" · ");
+}
+
+/** "~5 hrs/week", a rough commitment figure phrased as one. */
 function formatWeeklyHours(hours: number): string {
   return hours === 1 ? "~1 hr/week" : `~${hours} hrs/week`;
 }

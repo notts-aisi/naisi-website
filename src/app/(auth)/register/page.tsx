@@ -68,6 +68,87 @@ type VerificationState =
   | { status: "verified"; tokenId: string; verifiedAt: Date }
   | { status: "error"; message: string };
 
+/**
+ * Set by AuthEntry (and re-set by the Google redirect callback) so a `?next=`
+ * destination survives the hop through Google. It matters HERE because the
+ * new-account leg of that hop lands on a bare `/register` with no query
+ * string: AuthEntry sends `result.isNew` to `/register` without carrying the
+ * parameter, so the cookie is the only thing left holding the address.
+ * Mirrored in `AuthEntry.tsx` and `api/auth/google/callback/route.ts`.
+ */
+const AUTH_NEXT_COOKIE = "__auth_next";
+
+/**
+ * The ONE post-registration destination this page will accept from the URL.
+ *
+ * Registration is the back half of the course-application funnel: the apply
+ * page's whole premise is "any account can apply, including one you make in
+ * the next minute", and until now that journey dead-ended, because finishing
+ * registration always landed on `/pending-approval` and left the applicant to
+ * find their way back.
+ *
+ * The allowlist is a PREFIX, not a general open-redirect guard, and that is
+ * deliberate: `/courses/` is the only funnel that needs this, and a narrow
+ * prefix is far easier to be sure about than a scheme-and-host parser.
+ * Everything dangerous fails it for free:
+ *
+ *  - an absolute URL ("https://evil.example") does not start with a slash;
+ *  - a protocol-relative one ("//evil.example") fails the second character;
+ *  - the backslash trick browsers normalise to a slash ("/\evil.example")
+ *    fails the prefix, and any later backslash is rejected outright;
+ *  - a scheme with no slash ("javascript:alert(1)") fails the first character.
+ *
+ * The prefix alone is not quite enough, though: "/courses/../admin" starts
+ * with it and still leaves the funnel the moment a browser normalises the
+ * path. So a dot-dot SEGMENT is rejected too, which keeps the allowlist
+ * meaning what it says rather than what it happens to spell.
+ *
+ * Anything that does not match falls back to `/pending-approval`, which is
+ * still the right answer for the overwhelming majority of registrations.
+ */
+function safeCourseNext(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  if (!raw.startsWith("/courses/")) return null;
+  // Backslashes and control characters never appear in a path this site
+  // generates, and both are the raw material of redirect tricks.
+  if (raw.includes("\\")) return null;
+  // Checked by code point rather than a regex so this source file carries no
+  // literal control characters of its own. A newline is the one that matters.
+  for (const ch of raw) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) return null;
+  }
+  // Segment-wise, so a legitimate ".." inside a course id (or a lone dot) is
+  // untouched while a real traversal segment is refused. The query string and
+  // fragment are split off first: they are not path segments and a "?a=.." is
+  // not a traversal.
+  const path = raw.split(/[?#]/, 1)[0];
+  if (path.split("/").includes("..")) return null;
+  return raw;
+}
+
+/** The `__auth_next` value, or null. Browser-only: reads `document.cookie`. */
+function readAuthNextCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  const found = new RegExp(`(?:^|;\\s*)${AUTH_NEXT_COOKIE}=([^;]*)`).exec(document.cookie);
+  if (!found) return null;
+  try {
+    return decodeURIComponent(found[1]);
+  } catch {
+    return null;
+  }
+}
+
+/** Burn the marker so a stale one can't redirect an unrelated registration. */
+function clearAuthNextCookie(): void {
+  if (typeof document === "undefined") return;
+  try {
+    document.cookie = `${AUTH_NEXT_COOKIE}=; path=/; max-age=0; samesite=lax`;
+  } catch {
+    /* storage unavailable: the marker expires on its own in ten minutes */
+  }
+}
+
 export default function RegisterPage() {
   // Next 16 requires `useSearchParams()` consumers to live under a Suspense
   // boundary so the bailout-to-CSR semantics are explicit at build time.
@@ -96,6 +177,28 @@ function RegisterPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const fromSubscriber = searchParams.get("from") === "subscriber";
+  const nextParam = searchParams.get("next");
+
+  /**
+   * Where finishing registration lands you. `/pending-approval` for almost
+   * everyone; the course apply page they came from when they arrived through
+   * the application funnel.
+   *
+   * Resolved lazily and CACHED in a ref, for two reasons. It reads
+   * `document.cookie` (the fallback for the Google new-account hop, which
+   * drops the query string), so it cannot run during a server render. And it
+   * BURNS that cookie on first read, so a second call must not see a different
+   * answer and re-navigate somewhere else mid-flow.
+   */
+  const returnToRef = useRef<string | null>(null);
+  const returnTo = useCallback((): string => {
+    if (returnToRef.current === null) {
+      const found = safeCourseNext(nextParam) ?? safeCourseNext(readAuthNextCookie());
+      if (found) clearAuthNextCookie();
+      returnToRef.current = found ?? "/pending-approval";
+    }
+    return returnToRef.current;
+  }, [nextParam]);
   const { user, role, loading: authLoading } = useAuth();
   // Site-wide maintenance notice: while an admin has paused new registrations
   // the final submit is disabled with the notice's copy inline, and a failing
@@ -295,11 +398,16 @@ function RegisterPageInner() {
       // avoid a reload loop.
       if (claimSelfHealAttempt()) hardNavigate("/dashboard", "replace");
     } else if (role === "pending") {
-      router.replace("/pending-approval");
+      // Normally /pending-approval. When they came through the course apply
+      // funnel it is the apply page instead: a `pending` account is welcome
+      // to apply (that page lives in the PUBLIC route group precisely so it
+      // can), so bouncing them to "your membership is with the committee"
+      // would strand them one click from the form they were filling in.
+      router.replace(returnTo());
     } else if (role === "rejected") {
       router.replace("/");
     }
-  }, [authLoading, user, role, router, loading]);
+  }, [authLoading, user, role, router, loading, returnTo]);
 
   // Reverse guard: a signed-in collaborator has a collaborators doc but no
   // users doc, so `role` is null and the bounce above never fires — without
@@ -578,7 +686,10 @@ function RegisterPageInner() {
         verifiedTokenId: verified ? verification.tokenId : undefined,
         uniEmailVerifiedAt: verified ? verification.verifiedAt : undefined,
       });
-      router.push("/pending-approval");
+      // The return address, when there is one. Same value the role bounce
+      // above will compute a beat later (it is cached in a ref), so the two
+      // cannot race each other to different pages.
+      router.push(returnTo());
     } catch (err) {
       console.error(err);
       // During a declared incident the admin-written notice copy is the error

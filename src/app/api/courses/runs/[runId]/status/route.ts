@@ -5,8 +5,11 @@ import { getCurrentUser } from "@/lib/firebase/session";
 import {
   COURSE_RUN_STATUSES,
   COURSE_RUN_STATUS_LABEL,
+  sanitizeWeekPlan,
+  weekDocId,
   type CourseRunStatus,
 } from "@/lib/firestore/courses";
+import { canTransition } from "@/lib/courses/runStatus";
 
 /**
  * Move a run along its lifecycle. Gated to admins and `approveCourse`
@@ -15,34 +18,61 @@ import {
  * what the world sees and what the apply route accepts.
  *
  * The rules alone can express "an approver may write status"; they cannot
- * express WHICH move is legal, so the transition table below is the real
- * gate and this route is the only status path the admin UI uses.
+ * express WHICH move is legal, so the transition table is the real gate and
+ * this route is the only status path the admin UI uses.
+ *
+ * The table lives in `@/lib/courses/runStatus` so the run editor's dropdown is
+ * built from the same data and can never offer a move this route refuses.
+ *
+ * LEAVING DRAFT IS A ONE-WAY DOOR for the week plan, so this route also owns
+ * the last check on it. See `draftExitBlocker` below.
  */
 
 /**
- * The lifecycle, as a table rather than scattered `if`s:
- *
- *   draft → applications-open → applications-closed → running → completed
- *
- * plus `cancelled`, reachable from any state that has not finished. Nothing
- * leaves `completed` or `cancelled`: both are terminal, because a run that
- * has ended (or been called off) has already had its emails sent and its
- * enrolments settled, and "un-completing" it would silently re-arm every
- * date-driven surface that reads the status.
- *
- * Deliberately forward-only: re-opening a closed application window is NOT
- * modelled here. If that turns out to be wanted, it is a table entry plus a
- * decision about what happens to already-rejected applicants — not something
- * to fall into by accident.
+ * The number of taught slots whose plan `weekId` is not the id their own week
+ * number resolves to. `courseMutations.weekAddressDrift()` computes the same
+ * thing for the builder's panel; this is the server's own count, because a
+ * route may not import a "use client" module.
  */
-const ALLOWED_TRANSITIONS: Record<CourseRunStatus, CourseRunStatus[]> = {
-  draft: ["applications-open", "cancelled"],
-  "applications-open": ["applications-closed", "cancelled"],
-  "applications-closed": ["running", "cancelled"],
-  running: ["completed", "cancelled"],
-  completed: [],
-  cancelled: [],
-};
+function weekAddressDriftCount(rawPlan: unknown): number {
+  let taught = 0;
+  let drifted = 0;
+  for (const entry of sanitizeWeekPlan(rawPlan)) {
+    if (entry.kind !== "week") continue;
+    taught += 1;
+    if (entry.weekId !== weekDocId(taught)) drifted += 1;
+  }
+  return drifted;
+}
+
+/**
+ * The refusal that makes the draft boundary mean something.
+ *
+ * A reorder in the week plan builder preserves each slot's `weekId` and
+ * renumbers positionally, so the plan can say "slot 2 is week 2, document w05"
+ * while every member-facing surface opens `weekDocId(2)`. That is reconcilable
+ * for free in draft and nowhere else: the normalise route refuses outside
+ * draft, and `weekPlanLockRespected()` in firestore.rules pins the plan for
+ * non-admins from the same boundary. So a run allowed to leave draft with the
+ * two spellings disagreeing has that mismatch frozen into it for the whole of
+ * the cohort's life, and every learner opens a different document than the one
+ * the admin arranged.
+ *
+ * The window to fix it is open right up to this call and shut immediately
+ * after, which is exactly where the check belongs.
+ */
+function draftExitBlocker(
+  from: CourseRunStatus,
+  to: CourseRunStatus,
+  rawPlan: unknown,
+): string | null {
+  if (from !== "draft" || to === "draft") return null;
+  const drifted = weekAddressDriftCount(rawPlan);
+  if (drifted === 0) return null;
+  return `${
+    drifted === 1 ? "One week is" : `${drifted} weeks are`
+  } addressed two different ways in this run's week plan, and leaving draft freezes that for good. Open the run's Week plan section and use Normalise week ids first.`;
+}
 
 export async function POST(
   req: Request,
@@ -101,13 +131,20 @@ export async function POST(
     return NextResponse.json({ ok: true, status: currentStatus });
   }
 
-  if (!ALLOWED_TRANSITIONS[currentStatus].includes(nextStatus)) {
+  if (!canTransition(currentStatus, nextStatus)) {
     return NextResponse.json(
       {
         error: `Can't move a run from "${COURSE_RUN_STATUS_LABEL[currentStatus]}" to "${COURSE_RUN_STATUS_LABEL[nextStatus]}".`,
       },
       { status: 400 },
     );
+  }
+
+  // The last moment the week ids can still be reconciled. After this update
+  // both the normalise route and the rules refuse, whatever the plan says.
+  const blocker = draftExitBlocker(currentStatus, nextStatus, data.weekPlan);
+  if (blocker) {
+    return NextResponse.json({ error: blocker }, { status: 409 });
   }
 
   await ref.update({

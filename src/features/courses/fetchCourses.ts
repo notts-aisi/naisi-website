@@ -12,6 +12,10 @@ import {
   normalizeCourseGroup,
   type GroupSession,
 } from "@/lib/firestore/courseGroups";
+import {
+  applicationWindow,
+  type ApplicationWindow,
+} from "@/lib/courses/window";
 
 /**
  * Server-only fetchers for the public course pages (`fetchEvents.ts` pattern).
@@ -29,6 +33,13 @@ import {
  *
  * Any new fetcher added here inherits that obligation.
  *
+ * There is a SECOND obligation, added when the read-time application window
+ * landed: nothing in this file may decide whether a run is taking
+ * applications by looking at `status` on its own. `applicationWindow()` in
+ * `lib/courses/window.ts` is the only predicate, and the apply route calls the
+ * same one. Keying on status alone is what let a run sit past its deadline
+ * advertising an open application and then refuse the POST.
+ *
  * `archived` is the V2-1 deletion protocol's everyday soft path, and this
  * file is where most of its promise is kept: "an archived run drops out of
  * the public catalogue" is only true because the two run lookups below skip
@@ -39,11 +50,26 @@ import {
  * filters are.
  */
 
-/** One catalogue row: a published course plus the run taking applications. */
+/**
+ * A run paired with the window state that decides what a surface may say
+ * about it. Never one without the other: handing a caller a bare run is how
+ * the "Applications open" copy got out of step with the deadline in the
+ * first place.
+ */
+export type RunWindow = {
+  run: CourseRunDoc;
+  window: ApplicationWindow;
+};
+
+/** One catalogue row: a published course plus the run its card speaks about. */
 export type CourseCatalogueEntry = {
   course: CourseDoc;
-  /** The run currently accepting applications, or null when none is open. */
-  openRun: CourseRunDoc | null;
+  /**
+   * The run the card describes, with its window state, or null when the
+   * course has nothing to advertise. `window.state` is `open`, `not-yet` or
+   * `closed`, and the card's copy has to branch on all three.
+   */
+  featuredRun: RunWindow | null;
 };
 
 /** A published course with the curriculum its showcase run puts on display. */
@@ -103,12 +129,53 @@ function preferredOpenRun(a: CourseRunDoc, b: CourseRunDoc): CourseRunDoc {
 }
 
 /**
- * Every published course, each paired with its open run (if any).
+ * The mirror of `preferredOpenRun` for runs that have already shut: the MOST
+ * RECENTLY closed wins, because that is the one an applicant is asking about
+ * between the deadline and the decision. A run with no close date carries no
+ * recency signal at all (it was shut by an admin flipping the status), so it
+ * sorts last rather than pretending to be newest.
+ */
+function preferredClosedRun(a: CourseRunDoc, b: CourseRunDoc): CourseRunDoc {
+  const av = a.applicationsCloseAt?.getTime() ?? Number.NEGATIVE_INFINITY;
+  const bv = b.applicationsCloseAt?.getTime() ?? Number.NEGATIVE_INFINITY;
+  if (av !== bv) return av > bv ? a : b;
+  // Civil date strings sort lexicographically the same way they sort
+  // chronologically, so the later start wins without parsing anything.
+  if (a.startDate !== b.startDate) return a.startDate > b.startDate ? a : b;
+  return a.label.localeCompare(b.label) <= 0 ? a : b;
+}
+
+/**
+ * Which of two runs a public surface should describe. Taking applications
+ * beats opening soon beats already closed, so a course with a live window
+ * never advertises last term instead. `inactive` never reaches here: draft
+ * and archived runs are dropped before the comparison.
+ */
+function preferredRunWindow(a: RunWindow, b: RunWindow): RunWindow {
+  const rank = { open: 0, "not-yet": 1, closed: 2, inactive: 3 } as const;
+  const ra = rank[a.window.state];
+  const rb = rank[b.window.state];
+  if (ra !== rb) return ra < rb ? a : b;
+  const winner =
+    a.window.state === "closed"
+      ? preferredClosedRun(a.run, b.run)
+      : preferredOpenRun(a.run, b.run);
+  return winner === a.run ? a : b;
+}
+
+/**
+ * Every published course, each paired with the run its card speaks about.
  *
  * Two queries total, never N+1: one for the courses, one for ALL runs in
  * `applications-open` across the whole site, which is then indexed by
- * courseId. The site runs a handful of courses a year, so the open-run set is
- * tiny and this stays cheaper than a per-course lookup.
+ * courseId. The site runs a handful of courses a year, so the set is tiny and
+ * this stays cheaper than a per-course lookup.
+ *
+ * The query still asks for `applications-open`, because that is the only
+ * status whose window can be `open` or `not-yet`. What changed is that the
+ * STATUS no longer decides the copy: each run's window is computed here, and
+ * a run sitting past its deadline comes back `closed` so the card says so
+ * instead of inviting an application the route would refuse.
  */
 export async function listPublishedCourses(): Promise<CourseCatalogueEntry[]> {
   const db = getAdminDb();
@@ -123,19 +190,24 @@ export async function listPublishedCourses(): Promise<CourseCatalogueEntry[]> {
       .get(),
   ]);
 
-  const openByCourse = new Map<string, CourseRunDoc>();
+  // One clock reading for the whole page, so two cards can never land on
+  // opposite sides of the same deadline within one render.
+  const now = new Date();
+  const byCourse = new Map<string, RunWindow>();
   for (const d of runSnap.docs) {
     const run = normalizeCourseRun(d.id, d.data());
     if (!run.courseId) continue;
-    // Archived (and therefore also mid-destroy) runs are withdrawn from the
-    // catalogue — filtered here rather than in the query because a second
-    // equality on a status query is a composite index this feature has not
-    // shipped, and the open-run set is tiny (see the doc comment above).
-    if (run.archived) continue;
-    const existing = openByCourse.get(run.courseId);
-    openByCourse.set(
+    const window = applicationWindow(run, now);
+    // Archived (and therefore also mid-destroy) runs come back `inactive` and
+    // are withdrawn from the catalogue. Filtered here rather than in the query
+    // because a second equality on a status query is a composite index this
+    // feature has not shipped, and the run set is tiny (see the doc comment).
+    if (window.state === "inactive") continue;
+    const candidate: RunWindow = { run, window };
+    const existing = byCourse.get(run.courseId);
+    byCourse.set(
       run.courseId,
-      existing ? preferredOpenRun(existing, run) : run,
+      existing ? preferredRunWindow(existing, candidate) : candidate,
     );
   }
 
@@ -144,7 +216,7 @@ export async function listPublishedCourses(): Promise<CourseCatalogueEntry[]> {
     .sort((a, b) => a.title.localeCompare(b.title))
     .map((course) => ({
       course,
-      openRun: openByCourse.get(course.id) ?? null,
+      featuredRun: byCourse.get(course.id) ?? null,
     }));
 }
 
@@ -190,17 +262,27 @@ export async function getPublishedCourse(
 }
 
 /**
- * The run currently accepting applications for one course, or null.
+ * The run one course's public surfaces should describe, with its window
+ * state, or null when the course has never had a public run.
  *
- * The detail page needs this and the catalogue's bulk map isn't reachable from
- * a single-course route. Filters `status` client-side over a `courseId`-only
- * query: both fields are single-field auto-indexed, and a course has a handful
- * of runs ever, so this stays index-free — no composite to ship ahead of the
- * code (`firestore.indexes.json` carries no courseId+status pair).
+ * Deliberately NOT "the open run". The course page CTA and the apply page
+ * both need an answer between the deadline and the decision, and returning
+ * null there is exactly what made an applicant's own status card unreachable
+ * the moment admissions moved the run to `applications-closed`: the apply
+ * page had no run to read a row against, so the one surface that ever told
+ * someone their application existed vanished on the day they started asking.
+ *
+ * So this returns the best CANDIDATE: a run taking applications if there is
+ * one, else one opening soon, else the most recently closed. Draft and
+ * archived runs are never candidates.
+ *
+ * Filters client-side over a `courseId`-only query: both fields are
+ * single-field auto-indexed, and a course has a handful of runs ever, so this
+ * stays index-free (`firestore.indexes.json` carries no courseId+status pair).
  */
-export async function getOpenRunForCourse(
+export async function getApplicationRunForCourse(
   courseId: string,
-): Promise<CourseRunDoc | null> {
+): Promise<RunWindow | null> {
   const db = getAdminDb();
   if (!db) return null;
   const snap = await db
@@ -208,15 +290,18 @@ export async function getOpenRunForCourse(
     .where("courseId", "==", courseId)
     .limit(50)
     .get();
-  let best: CourseRunDoc | null = null;
+  // One clock reading for every candidate, so the ranking is a total order.
+  const now = new Date();
+  let best: RunWindow | null = null;
   for (const d of snap.docs) {
     const run = normalizeCourseRun(d.id, d.data());
-    if (run.status !== "applications-open") continue;
-    // Archived runs take no applications — the catalogue card, this page and
-    // the apply route all have to agree, or the card offers a form the POST
-    // then refuses.
-    if (run.archived) continue;
-    best = best ? preferredOpenRun(best, run) : run;
+    const window = applicationWindow(run, now);
+    // Draft and archived alike: unfinished authoring and withdrawn runs are
+    // not public, and the destroy cascade sets `archived` first, so this is
+    // also what keeps a run mid-destroy off the page.
+    if (window.state === "inactive") continue;
+    const candidate: RunWindow = { run, window };
+    best = best ? preferredRunWindow(best, candidate) : candidate;
   }
   return best;
 }
@@ -262,11 +347,16 @@ export type ApplyGroupOption = {
   sessionLabel: string;
 };
 
-/** Everything the apply page needs, or null when nobody can apply right now. */
+/** Everything the apply page needs, or null when the course has no run yet. */
 export type ApplyContext = {
   course: CourseDoc;
-  /** The run in `applications-open` — the one the form submits against. */
+  /** The run the page describes, and the one the form submits against. */
   run: CourseRunDoc;
+  /**
+   * That run's window. `open` renders the form; `not-yet` and `closed` render
+   * a dated card, and the applicant's OWN status card if they hold a row.
+   */
+  window: ApplicationWindow;
   /** Session-time options for the availability chips; empty when unallocated. */
   groups: ApplyGroupOption[];
 };
@@ -305,14 +395,18 @@ function sessionLabel(session: GroupSession): string | null {
 }
 
 /**
- * The apply page's one read: a published course, the run taking applications,
- * and the session times an applicant can say they're free for.
+ * The apply page's one read: a published course, the run it describes, that
+ * run's window state, and the session times an applicant can say they're free
+ * for.
  *
- * Returns null whenever there is nothing to apply to — unknown course, draft
- * course, or no open run — so the page renders one honest "not open" card
- * instead of three near-identical ones. The run is picked by the SAME
- * `preferredOpenRun` tie-break the catalogue uses, so the card that said
- * "Applications open — Autumn 2026" and the form always agree.
+ * Returns null ONLY when there is genuinely nothing to describe: an unknown
+ * course, a draft course, or a course with no non-draft run at all. It
+ * deliberately keeps returning a CLOSED run, which is the fix for the second
+ * applicant blocker: the apply page is the only surface that shows someone
+ * their own application, and it used to disappear the moment admissions
+ * closed the run, which is precisely the fortnight people spend asking
+ * whether their application arrived. The page renders the status card from
+ * this run in every window state; only the form is gated on `open`.
  *
  * Groups are best-effort context, never a gate: applicants do NOT pick a
  * group or a facilitator here (admissions records preferences later), and a
@@ -324,14 +418,15 @@ export async function getApplyContext(
   const db = getAdminDb();
   if (!db) return null;
 
-  // Independent reads, so they go together — the draft-course path throws the
+  // Independent reads, so they go together: the draft-course path throws the
   // run query away, which is cheaper than serialising every real hit (the same
   // call the course detail page makes).
-  const [doc, run] = await Promise.all([
+  const [doc, found] = await Promise.all([
     db.collection("courses").doc(courseId).get(),
-    getOpenRunForCourse(courseId),
+    getApplicationRunForCourse(courseId),
   ]);
-  if (!doc.exists || !run) return null;
+  if (!doc.exists || !found) return null;
+  const { run, window } = found;
   const course = normalizeCourse(doc.id, doc.data() ?? {});
   // Same visibility obligation as every fetcher in this file (module comment):
   // an unpublished course has no public apply page.
@@ -363,5 +458,5 @@ export async function getApplyContext(
   // a week. "HH:MM" is zero-padded, so a string compare IS time order.
   rows.sort((a, b) => a.day - b.day || a.start.localeCompare(b.start));
 
-  return { course, run, groups: rows.map((r) => r.option) };
+  return { course, run, window, groups: rows.map((r) => r.option) };
 }

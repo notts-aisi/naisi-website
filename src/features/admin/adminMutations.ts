@@ -124,15 +124,31 @@ export async function setSuRecognised(uid: string, suRecognised: boolean) {
   await updateDoc(doc(db, "users", uid), { suRecognised });
 }
 
-/** Admin-only: grant/revoke orthogonal permissions (draft/approve newsletter, draft/approve event). */
+/**
+ * Every key `UserPermissions` models, in the order the admin UI shows them.
+ * `setPermissions` writes a whole-object replacement, so this list has to stay
+ * exhaustive: a key missing here is a permission the next permissions edit
+ * silently revokes. Adding a permission to `UserPermissions` means adding it
+ * here too (tests/admin-permissions-keys.test.mjs pins the two together).
+ */
+export const PERMISSION_KEYS = [
+  "draftNewsletter",
+  "approveNewsletter",
+  "draftEvent",
+  "approveEvent",
+  "draftCourse",
+  "approveCourse",
+] as const satisfies readonly (keyof UserPermissions)[];
+
+/**
+ * Admin-only: grant/revoke orthogonal permissions (draft/approve newsletter,
+ * event and course). Writes every known key as a real boolean, never
+ * `undefined`, so an edit to one toggle cannot drop another permission.
+ */
 export async function setPermissions(uid: string, permissions: UserPermissions) {
   const db = getClientDb();
-  const clean: Record<string, boolean> = {
-    draftNewsletter: Boolean(permissions.draftNewsletter),
-    approveNewsletter: Boolean(permissions.approveNewsletter),
-    draftEvent: Boolean(permissions.draftEvent),
-    approveEvent: Boolean(permissions.approveEvent),
-  };
+  const clean: Record<string, boolean> = {};
+  for (const key of PERMISSION_KEYS) clean[key] = Boolean(permissions[key]);
   await updateDoc(doc(db, "users", uid), { permissions: clean });
 }
 

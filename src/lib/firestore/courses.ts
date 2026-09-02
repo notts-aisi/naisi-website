@@ -4,7 +4,7 @@ import {
   type Block,
 } from "./newsletterBlocks";
 import { sanitizeSignupForm, type FormQuestion } from "./events";
-import type { WeekPlanEntry } from "../courses/weekPlan";
+import { isValidDateKey, type WeekPlanEntry } from "../courses/weekPlan";
 
 /**
  * Courses data model — `courses/{id}` → `courseRuns/{id}` (top-level) →
@@ -630,9 +630,25 @@ function asCount(v: unknown): number {
   return Math.floor(v);
 }
 
-/** "YYYY-MM-DD" or empty string — never a partial/garbled date. */
+/**
+ * "YYYY-MM-DD" or empty string, never a partial, garbled, or IMPOSSIBLE date.
+ *
+ * `isValidDateKey` rather than a bare shape regex, because the shape is the
+ * easy half. `2026-02-31` matches `\d{4}-\d{2}-\d{2}` and is not a day, so a
+ * regex-only normaliser stores it happily and then every consumer of the run
+ * degrades at once: `currentWeekFor` throws, so the guarded surfaces
+ * (/learn, the rail, pacing, the nudge, the task mirror, the attendance
+ * anchor) all fall back to "no dates" and the run looks alive while doing
+ * nothing, with no error anywhere to explain it.
+ *
+ * This is also the ONLY layer that can make the check. `firestore.rules` has
+ * no date arithmetic, so its regex is the strongest thing that layer can say
+ * (a rule enumerating month lengths would still miss leap years). Normalising
+ * an impossible date to "" makes it behave exactly like an unset one, which is
+ * a state every reader already handles.
+ */
 function asCivilDate(v: unknown): string {
-  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "";
+  return typeof v === "string" && isValidDateKey(v) ? v : "";
 }
 
 function isValidWeekPlanEntry(raw: unknown): raw is WeekPlanEntry {

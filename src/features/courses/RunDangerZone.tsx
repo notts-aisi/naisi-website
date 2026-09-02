@@ -13,6 +13,8 @@ import {
   type CourseRunDoc,
   type CourseRunStatus,
 } from "@/lib/firestore/courses";
+import { ALLOWED_TRANSITIONS } from "@/lib/courses/runStatus";
+import { setRunStatus } from "./courseMutations";
 import useDestroy, {
   countRows,
   sumCounts,
@@ -80,8 +82,11 @@ type Props = {
   courseId: string;
   run: CourseRunDoc;
   runAction: ToastRun;
-  /** Re-read the run doc. Called after archive — NEVER after a destroy. */
-  onArchived: () => void;
+  /**
+   * Re-read the run doc. Called after archive and after cancel, NEVER after a
+   * destroy: there is no doc left to read.
+   */
+  onRunChanged: () => void;
 };
 
 /**
@@ -111,13 +116,18 @@ const LIVE_STATUSES: CourseRunStatus[] = ["applications-open", "running"];
 // RunDangerZone
 // ---------------------------------------------------------------------------
 
-export default function RunDangerZone({ courseId, run, runAction, onArchived }: Props) {
+export default function RunDangerZone({ courseId, run, runAction, onRunChanged }: Props) {
   const state = useDestroy("run", run.id, run.label);
   const { manifestState, loadInterrupted, loadManifest, phase } = state;
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [confirmText, setConfirmText] = useState("");
   const [archiving, setArchiving] = useState(false);
+
+  const cancelConfirmId = useId();
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelText, setCancelText] = useState("");
+  const [cancelling, setCancelling] = useState(false);
 
   /**
    * The archived value we last wrote, so the switch answers the tap rather
@@ -172,7 +182,45 @@ export default function RunDangerZone({ courseId, run, runAction, onArchived }: 
     }
     if (ok) {
       setArchivedWritten(next);
-      onArchived();
+      onRunChanged();
+    }
+  }
+
+  /**
+   * Cancelling calls the SAME status route the editor's dropdown uses. It is
+   * here, not there, because it is the one status move that cannot be walked
+   * back: the lifecycle table makes `cancelled` terminal, so a mis-tap in a
+   * select would permanently kill a cohort's run. The typed confirmation is
+   * the destroy dialog's, deliberately: same shape, same exactness, so the
+   * gesture reads as "this is the irreversible kind of button".
+   *
+   * No cascade, and no email. Nothing is deleted: applications, enrolments and
+   * everything the cohort produced stay exactly where they are, which is why
+   * this is not in the danger zone proper. Telling the cohort is still a
+   * manual job today; a cohort cancellation notice is a later change.
+   */
+  async function cancelRun() {
+    if (cancelling || cancelText !== run.label || !run.label) return;
+    setCancelling(true);
+    let ok = false;
+    try {
+      await runAction(
+        async () => {
+          await setRunStatus(run.id, "cancelled");
+          ok = true;
+        },
+        {
+          savingMessage: "Cancelling cohort…",
+          successMessage: "Cohort cancelled",
+        },
+      );
+    } finally {
+      setCancelling(false);
+    }
+    if (ok) {
+      setCancelOpen(false);
+      setCancelText("");
+      onRunChanged();
     }
   }
 
@@ -196,6 +244,19 @@ export default function RunDangerZone({ courseId, run, runAction, onArchived }: 
     if (phase === "destroying") return;
     setDialogOpen(false);
   }
+
+  // The server's own table decides whether cancelling is even on the menu, so
+  // this card disappears on a run that is already finished or cancelled rather
+  // than offering a button the route would refuse.
+  //
+  // Read straight off the table, NOT through `canTransition`: that helper
+  // answers true for a same-status move (the route treats a re-send as an
+  // idempotent no-op), so asking it "can a cancelled run be cancelled" got a
+  // yes and drew the whole danger card on a cohort that was already called off.
+  const canCancel = ALLOWED_TRANSITIONS[run.status].includes("cancelled");
+  const cancelMatches = cancelText === run.label && run.label.length > 0;
+  const cancelWhitespaceOnly =
+    !cancelMatches && cancelText.length > 0 && cancelText.trim() === run.label.trim();
 
   // A run with no label can't be confirmed by typing it. Local, and stated the
   // same way the server's blockers are.
@@ -245,6 +306,36 @@ export default function RunDangerZone({ courseId, run, runAction, onArchived }: 
           </p>
         )}
       </Card>
+
+      {canCancel && (
+        <Card padding="lg">
+          <h3 className={styles.sectionTitle}>Cancel this cohort</h3>
+          <p className={styles.hint}>
+            Cancelling calls the run off. It stops being applicable to and stops
+            being a live cohort on /learn, and it cannot be undone: a cancelled
+            run never moves back to draft or running. Nothing is deleted, so
+            every application, enrolment and answer stays readable as history.
+            Use archive instead if you only want the run out of the way.
+          </p>
+          <p className={styles.warn}>
+            Nobody is emailed. If this cohort has been meeting, tell them
+            yourself before or straight after you cancel.
+          </p>
+          <div className={styles.archiveRow}>
+            <Button
+              type="button"
+              variant="danger"
+              disabled={cancelling}
+              onClick={() => {
+                setCancelText("");
+                setCancelOpen(true);
+              }}
+            >
+              Cancel this cohort…
+            </Button>
+          </div>
+        </Card>
+      )}
 
       <Card padding="lg" className={styles.zoneCard}>
         {interrupted && (
@@ -301,6 +392,78 @@ export default function RunDangerZone({ courseId, run, runAction, onArchived }: 
           </DangerDisclosure>
         )}
       </Card>
+
+      <Modal
+        open={cancelOpen}
+        onClose={cancelling ? () => {} : () => setCancelOpen(false)}
+        ariaLabel="Cancel this cohort"
+        width="sm"
+      >
+        <div className={styles.dialog}>
+          <header className={styles.dialogHead}>
+            <h2 className={styles.dialogTitle}>Cancel this cohort</h2>
+            <p className={styles.dialogSubtitle}>
+              {run.courseTitle
+                ? `${run.courseTitle} · ${run.label || run.id}`
+                : run.label || run.id}
+            </p>
+          </header>
+
+          <p className={styles.dangerBody}>
+            The run moves to <strong>Cancelled</strong> and stays there. It
+            leaves the public catalogue and the cohort&apos;s live sections,
+            applications stop being accepted, and no weekly mail goes out.
+            Everything already recorded is kept.
+          </p>
+
+          {run.label ? (
+            <section className={styles.confirmBlock}>
+              <Field
+                id={cancelConfirmId}
+                label="Type the run label to confirm"
+                hint={
+                  cancelWhitespaceOnly
+                    ? "That matches apart from leading or trailing spaces. The check is exact."
+                    : `Exactly “${run.label}”. Nothing is trimmed or corrected.`
+                }
+              >
+                <Input
+                  id={cancelConfirmId}
+                  value={cancelText}
+                  onChange={(e) => setCancelText(e.target.value)}
+                  className={styles.confirmInput}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  placeholder={run.label}
+                />
+              </Field>
+            </section>
+          ) : (
+            <BlockerList blockers={localBlockers} />
+          )}
+
+          <div className={styles.dialogActions}>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={cancelling}
+              onClick={() => setCancelOpen(false)}
+            >
+              Keep this cohort
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              disabled={!cancelMatches || cancelling}
+              onClick={() => void cancelRun()}
+            >
+              Cancel this cohort
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <DestroyDialog
         open={dialogOpen}

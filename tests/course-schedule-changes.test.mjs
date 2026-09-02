@@ -232,6 +232,8 @@ const NOTICE = api("groups", "[groupId]", "notice", "route.ts");
 const GROUP_WEEK_PATCH = api("groups", "[groupId]", "weeks", "[weekId]", "route.ts");
 const COURSES_LIB = src("lib", "firestore", "courses.ts");
 const GROUP_RESOLVE = src("lib", "courses", "groupResolve.ts");
+const RUN_STATUS_LIB = src("lib", "courses", "runStatus.ts");
+const RUN_EDITOR = src("features", "courses", "RunEditor.tsx");
 
 const WEEK_PLAN_BUILDER = src("features", "courses", "WeekPlanBuilder.tsx");
 const WEEK_VIEW = src("features", "courses", "WeekView.tsx");
@@ -259,6 +261,8 @@ const COURSE_CTA = src("features", "courses", "CourseCTA.tsx");
 const APPLY_FORM = src("features", "courses", "ApplyForm.tsx");
 const FETCH_COURSES = src("features", "courses", "fetchCourses.ts");
 const COURSE_MUTATIONS = src("features", "courses", "courseMutations.ts");
+const NORMALISE_WEEKS = api("runs", "[runId]", "normalise-weeks", "route.ts");
+const RULES = readFileSync(join(REPO_ROOT, "firestore.rules"), "utf8");
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -436,6 +440,25 @@ function planIsCanonicallyAddressed(plan) {
   return plan.every((e) => e.kind !== "week" || e.weekId === weekDocId(e.weekNumber));
 }
 
+/**
+ * `courseMutations.weekAddressDrift()`, reproduced. Not imported because
+ * `courseMutations.ts` is a "use client" module that pulls in the Firebase web
+ * SDK; pinned to the real one by the source assertion in its own test below.
+ */
+function weekAddressDrift(plan) {
+  const out = [];
+  let taught = 0;
+  for (const entry of plan) {
+    if (entry.kind !== "week") continue;
+    taught += 1;
+    const canonicalWeekId = weekDocId(taught);
+    if (entry.weekId !== canonicalWeekId) {
+      out.push({ weekNumber: taught, planWeekId: entry.weekId, canonicalWeekId });
+    }
+  }
+  return out;
+}
+
 test("GUARD — renumber() renumbers positionally and preserves weekId", () => {
   // The builder's stated contract, and the whole reason the two doctrines can
   // diverge. If this ever changes, every assertion in this section is about a
@@ -471,7 +494,7 @@ test("GUARD — a plan that has never been reordered is canonically addressed", 
   );
 });
 
-test("PROVEN GAP — one press of ▲ permutes the curriculum the cohort reads", () => {
+test("GUARD: one press of ▲ still permutes the addressing, and that is now BOUNDED", () => {
   // The exact sequence from the audit: add a week (it takes the lowest free id,
   // w05) then move it to position 2.
   const added = renumber([...plainPlan(4), { kind: "week", weekNumber: 0, weekId: "w05" }]);
@@ -481,25 +504,299 @@ test("PROVEN GAP — one press of ▲ permutes the curriculum the cohort reads",
   assert.equal(moved[1].weekNumber, 2);
   assert.equal(moved[1].weekId, "w05");
 
-  // What the cohort gets: /learn/{run}/weeks/2 resolves weekDocId(2) = "w02",
-  // which is now the plan's week 3. Every week from 2 on is off by one.
+  // The divergence itself is UNCHANGED and deliberate. /learn/{run}/weeks/2
+  // resolves weekDocId(2) = "w02", which is now the plan's week 3; four of the
+  // five entries point at a document other than the one the admin put in that
+  // position. Recomputing `weekId` here would repoint authored curriculum and
+  // everyone's saved progress, which is the harm the builder's comment exists
+  // to prevent, and rewriting the ten member-facing readers to honour the
+  // plan's id costs `attendanceDocId` and `courseTaskId` their derivability
+  // from a number. Neither was the answer.
   assert.notEqual(weekDocId(moved[1].weekNumber), moved[1].weekId);
   assert.equal(planIsCanonicallyAddressed(moved), false);
-
-  // …and the drift is not one week's worth. Four of the five entries now point
-  // at a document other than the one the admin put in that position.
   const drifted = moved.filter((e) => e.weekId !== weekDocId(e.weekNumber));
   assert.equal(drifted.length, 4);
 
-  // WHEN YOU FIX THIS, invert the two assertions above. The two candidate
-  // fixes are a product decision, not a patch:
-  //   (a) renumber() recomputes weekId — the plan becomes canonical, and the
-  //       authored curriculum + everyone's saved progress REPOINT to different
-  //       weeks (which is the harm the current comment exists to prevent); or
-  //   (b) every reader honours the plan's weekId — six member-facing call
-  //       sites change, `attendanceDocId` and `courseTaskId` stop being
-  //       derivable from a number, and `/weeks/{n}` needs the plan to resolve.
-  // Either is defensible. Neither is guessable from the code.
+  // CLOSED 2026-09-02 by bounding the state instead of picking a doctrine.
+  // Three things now hold, and the rest of this section pins each of them:
+  //
+  //  1. the drift is REPORTED rather than silent (`weekAddressDrift`);
+  //  2. it is RECONCILABLE, but only in draft, where no member work exists to
+  //     repoint (POST /api/courses/runs/[runId]/normalise-weeks);
+  //  3. it is UNREACHABLE afterwards, because firestore.rules pins `weekPlan`
+  //     for non-admins once a run leaves draft.
+  //
+  // So a reorder can still permute the addressing, and only inside the window
+  // where permuting it costs nothing.
+});
+
+test("GUARD: weekAddressDrift names exactly the slots whose two spellings disagree", () => {
+  const added = renumber([...plainPlan(4), { kind: "week", weekNumber: 0, weekId: "w05" }]);
+  const moved = renumber([added[0], added[4], added[1], added[2], added[3]]);
+
+  const drift = weekAddressDrift(moved);
+  assert.deepEqual(
+    drift.map((d) => [d.weekNumber, d.planWeekId, d.canonicalWeekId]),
+    [
+      [2, "w05", "w02"],
+      [3, "w02", "w03"],
+      [4, "w03", "w04"],
+      [5, "w04", "w05"],
+    ],
+  );
+
+  // Silent on a plan that has only ever grown at the end, which is the common
+  // case and must not nag.
+  assert.deepEqual(weekAddressDrift(renumber(plainPlan(8))), []);
+  assert.deepEqual(
+    weekAddressDrift(renumber([...plainPlan(3), brk("Reading week")])),
+    [],
+  );
+  // A break shifts DATES, not week numbers, so inserting one mid-plan leaves
+  // the addressing alone.
+  assert.deepEqual(
+    weekAddressDrift(renumber([plainPlan(4)[0], brk("Reading week"), ...plainPlan(4).slice(1)])),
+    [],
+  );
+
+  // Pinned to the real helper, so the model above cannot drift from it.
+  assert.match(COURSE_MUTATIONS, /export function weekAddressDrift\(plan: WeekPlanEntry\[\]\)/);
+  assert.match(COURSE_MUTATIONS, /const canonicalWeekId = weekDocId\(taught\);/);
+  assert.match(
+    COURSE_MUTATIONS,
+    /out\.push\(\{ weekNumber: taught, planWeekId: entry\.weekId, canonicalWeekId \}\)/,
+  );
+
+  // And the builder surfaces it: the panel is rendered from this helper, and
+  // only while the run is still reshapeable.
+  assert.match(WEEK_PLAN_BUILDER, /weekAddressDrift\(weekPlan\)/);
+  assert.match(WEEK_PLAN_BUILDER, /!locked && drift\.length > 0/);
+});
+
+test("GUARD: the normalise route refuses outside the one window where it is free", () => {
+  // The whole safety argument is the draft check plus the emptiness checks: in
+  // draft there is nothing keyed on the old ids, so moving them repoints
+  // nothing. Every one of these is load-bearing.
+  assert.match(NORMALISE_WEEKS, /\(run\.status \?\? "draft"\) !== "draft"/);
+  assert.match(NORMALISE_WEEKS, /actor\.role === "admin" \|\| actor\.permissions\.approveCourse/);
+  assert.match(NORMALISE_WEEKS, /collection\("courseProgress"\)\.where\("runId", "==", runId\)/);
+  assert.match(
+    NORMALISE_WEEKS,
+    /collection\("courseExerciseResponses"\)\s*\.where\("runId", "==", runId\)/,
+  );
+  // Group-level content is keyed by week doc id too, and is not this route's
+  // to rewrite.
+  assert.match(NORMALISE_WEEKS, /sessionOverrides/);
+  assert.match(NORMALISE_WEEKS, /collection\("weeks"\)\.limit\(1\)/);
+  // A run mid-destroy is frozen here for the same reason it is frozen in the
+  // status route.
+  assert.match(NORMALISE_WEEKS, /run\.destroying === true/);
+
+  // Copy THEN delete, in one batch: the moves are a permutation, so a source
+  // id is very often also a destination id and deleting as it goes would drop
+  // a week it had just written. The skip set is built from the moves that
+  // actually WRITE, which is the whole of the fix modelled two tests below.
+  assert.match(
+    NORMALISE_WEEKS,
+    /const written = new Set\(moves\.filter\(\(m\) => m\.hasDoc\)\.map\(\(m\) => m\.to\)\)/,
+  );
+  assert.match(NORMALISE_WEEKS, /if \(written\.has\(move\.from\)\) continue;/);
+  assert.match(NORMALISE_WEEKS, /await batch\.commit\(\)/);
+});
+
+/**
+ * The normalise route's move computation, reproduced. Pinned to the real one by
+ * the source assertions in the test below, the same way `renumber()` and
+ * `weekAddressDrift()` are: nothing here may quietly become a model of code
+ * that no longer exists.
+ *
+ * `stored` is a Map of week doc id to `{ title }`, standing in for the
+ * documents the route reads out of `courseRuns/{id}/weeks`.
+ */
+function normalisationOf(plan, stored) {
+  const moves = [];
+  const restamps = [];
+  let taught = 0;
+  for (const entry of plan) {
+    if (entry.kind !== "week") continue;
+    taught += 1;
+    const to = weekDocId(taught);
+    if (entry.weekId !== to) {
+      moves.push({
+        from: entry.weekId,
+        to,
+        weekNumber: taught,
+        hasDoc: stored.has(entry.weekId),
+      });
+    } else {
+      const doc = stored.get(to);
+      if (doc && doc.weekNumber !== taught) {
+        restamps.push({ weekId: to, from: doc.weekNumber, to: taught });
+      }
+    }
+  }
+  return { moves, restamps };
+}
+
+/**
+ * The route's batch, in the order it commits: every copy first, then the
+ * deletes that no copy claimed. `skip` is the set a delete consults, and it is
+ * the whole subject of the guard below.
+ */
+function commitMoves(stored, moves, skip) {
+  const after = new Map(stored);
+  for (const move of moves) {
+    const doc = stored.get(move.from);
+    if (!doc) continue;
+    after.set(move.to, { ...doc, weekNumber: move.weekNumber });
+  }
+  for (const move of moves) {
+    if (!move.hasDoc) continue;
+    if (skip.has(move.from)) continue;
+    after.delete(move.from);
+  }
+  return after;
+}
+
+/** Every move's destination, including the ones that write nothing. The BUG. */
+const everyDestination = (moves) => new Set(moves.map((m) => m.to));
+
+/** Only the destinations a copy actually lands on. The fix. */
+const writtenDestinations = (moves) =>
+  new Set(moves.filter((m) => m.hasDoc).map((m) => m.to));
+
+test("GUARD: a plan-only move cannot leave a week authored at two addresses", () => {
+  // The permutation that broke it, from the builder's own affordances: four
+  // weeks with only w01 and w02 actually authored, add a fifth slot (it takes
+  // the lowest free id, w05), then move it to position 1.
+  const added = renumber([...plainPlan(4), { kind: "week", weekNumber: 0, weekId: "w05" }]);
+  const moved = renumber([added[4], added[0], added[1], added[2], added[3]]);
+  const stored = new Map([
+    ["w01", { title: "Intro", weekNumber: 1 }],
+    ["w02", { title: "Second", weekNumber: 2 }],
+  ]);
+
+  const { moves } = normalisationOf(moved, stored);
+  assert.deepEqual(
+    moves.map((m) => [m.from, m.to, m.hasDoc]),
+    [
+      ["w05", "w01", false],
+      ["w01", "w02", true],
+      ["w02", "w03", true],
+      ["w03", "w04", false],
+      ["w04", "w05", false],
+    ],
+  );
+
+  // THE BUG, kept here so the guard is about something. Skipping a delete
+  // whenever the source id appears as ANY move's destination protected w01
+  // from deletion on the strength of "w05 -> w01", a move that writes nothing
+  // at all. The copy w01 -> w02 had already run, so "Intro" ended up at both
+  // addresses, and w01 is the one every learner page opens for week 1.
+  const buggy = commitMoves(stored, moves, everyDestination(moves));
+  assert.equal(buggy.get("w01")?.title, "Intro");
+  assert.equal(buggy.get("w02")?.title, "Intro");
+
+  // THE FIX: only a destination a copy actually lands on may hold a delete
+  // back. w01's content has moved to w02, nothing was written to w01, so w01
+  // goes, which is right, because the plan now puts the un-authored w05 slot
+  // in position 1.
+  const after = commitMoves(stored, moves, writtenDestinations(moves));
+  assert.equal(after.has("w01"), false);
+  assert.equal(after.get("w02")?.title, "Intro");
+  assert.equal(after.get("w03")?.title, "Second");
+  assert.equal(after.size, 2);
+
+  // No title survives at two addresses, which is the property in one line.
+  const titles = [...after.values()].map((d) => d.title);
+  assert.equal(new Set(titles).size, titles.length);
+
+  // The stored weekNumber travels with the content, so nothing lands claiming
+  // to be a week it is not.
+  assert.equal(after.get("w02")?.weekNumber, 2);
+  assert.equal(after.get("w03")?.weekNumber, 3);
+
+  // Pinned to the real route, so the model above cannot drift from it.
+  assert.match(NORMALISE_WEEKS, /hasDoc: stored\.has\(entry\.weekId\)/);
+  assert.match(
+    NORMALISE_WEEKS,
+    /const written = new Set\(moves\.filter\(\(m\) => m\.hasDoc\)\.map\(\(m\) => m\.to\)\)/,
+  );
+  assert.match(NORMALISE_WEEKS, /if \(written\.has\(move\.from\)\) continue;/);
+  // And the old spelling is gone, not merely renamed alongside.
+  assert.doesNotMatch(NORMALISE_WEEKS, /const destinations = new Set\(moves\.map/);
+});
+
+test("GUARD: the rules pin weekPlan the moment a run stops being a draft", () => {
+  // The affordance in the builder is not the enforcement. This is.
+  assert.match(RULES, /function weekPlanLockRespected\(\)/);
+  // BOTH sides of the status, not just the pre-write one: a single write that
+  // set 'applications-open' and reshaped the plan used to pass, because the run
+  // was still a draft at the moment the rule read it.
+  assert.match(
+    RULES,
+    /resource\.data\.get\('status', 'draft'\) == 'draft'\s*&&\s*request\.resource\.data\.get\('status', 'draft'\) == 'draft'\s*\)\s*\|\|\s*request\.resource\.data\.get\('weekPlan', \[\]\)\s*==\s*resource\.data\.get\('weekPlan', \[\]\)/,
+  );
+  // On the NON-admin branch only, matching every other pin in that block: an
+  // admin adding a slot to a live run is a decision they own, not one to
+  // forbid. The builder mirrors the split.
+  assert.match(RULES, /&& runContentOk\(\)\s*&& weekPlanLockRespected\(\)/);
+  assert.match(WEEK_PLAN_BUILDER, /const canReshape = !locked;/);
+  assert.match(WEEK_PLAN_BUILDER, /const canGrow = !locked \|\| isAdmin;/);
+  // Reorder and remove are gone once locked; add-at-end survives for admins.
+  assert.match(WEEK_PLAN_BUILDER, /function move\(index: number, dir: -1 \| 1\) \{\s*if \(!canReshape\) return;/);
+  assert.match(WEEK_PLAN_BUILDER, /function removeAt\(index: number\) \{\s*if \(!canReshape\) return;/);
+  assert.match(WEEK_PLAN_BUILDER, /if \(full \|\| !canGrow\) return;/);
+});
+
+/**
+ * `status/route.ts`'s `draftExitBlocker`, reproduced. The route counts drift
+ * itself rather than importing `weekAddressDrift` (a "use client" module), so
+ * the source assertions below are what keep the two spellings of the same
+ * count in step.
+ */
+function refusesDraftExit(from, to, plan) {
+  if (from !== "draft" || to === "draft") return false;
+  return weekAddressDrift(plan).length > 0;
+}
+
+test("GUARD: a run cannot leave draft while its two week spellings disagree", () => {
+  // The bound on the drift has three legs: it is REPORTED, it is RECONCILABLE
+  // only in draft, and it is UNREACHABLE afterwards. The door itself was the
+  // gap. Nothing refused a drifted plan walking out of draft, and the moment it
+  // does, the normalise route refuses it and the rules pin it, so the mismatch
+  // is frozen for the whole of the cohort's life.
+  const added = renumber([...plainPlan(4), { kind: "week", weekNumber: 0, weekId: "w05" }]);
+  const moved = renumber([added[0], added[4], added[1], added[2], added[3]]);
+  const clean = renumber(plainPlan(8));
+
+  assert.equal(refusesDraftExit("draft", "applications-open", moved), true);
+  // A plan that was only ever grown at the end is untouched, which is the
+  // common case and must not be made to press a button.
+  assert.equal(refusesDraftExit("draft", "applications-open", clean), false);
+  // The door is behind a run that has already left. Refusing later moves would
+  // strand a cohort whose plan is frozen either way.
+  assert.equal(refusesDraftExit("applications-closed", "running", moved), false);
+  // Cancelling is an exit too, and it is refused for the same reason rather
+  // than carved out: normalising first is two presses, and a table of which
+  // exits freeze a plan and which do not is a second doctrine to keep in step.
+  assert.equal(refusesDraftExit("draft", "cancelled", moved), true);
+
+  // Pinned to the route. It counts the same thing the builder's panel reports,
+  // it only fires on a move OUT of draft, and it fires BEFORE the write.
+  assert.match(STATUS_ROUTE, /if \(entry\.weekId !== weekDocId\(taught\)\) drifted \+= 1;/);
+  assert.match(STATUS_ROUTE, /if \(from !== "draft" \|\| to === "draft"\) return null;/);
+  assert.match(
+    STATUS_ROUTE,
+    /const blocker = draftExitBlocker\(currentStatus, nextStatus, data\.weekPlan\);/,
+  );
+  const blockerAt = STATUS_ROUTE.indexOf("const blocker = draftExitBlocker(");
+  const writeAt = STATUS_ROUTE.indexOf("await ref.update(");
+  assert.ok(blockerAt > 0 && writeAt > 0 && blockerAt < writeAt);
+
+  // And it names the ONE affordance that can still fix it, which exists.
+  assert.match(STATUS_ROUTE, /Normalise week ids/);
+  assert.match(WEEK_PLAN_BUILDER, /Normalise week ids/);
 });
 
 test("GUARD — every member-facing surface addresses a week by weekDocId(number)", () => {
@@ -665,23 +962,33 @@ test("GUARD — sessionOverrides is capped at 20 keys, dead keys included", () =
   assert.match(COURSE_MUTATIONS, /GROUP_FIELD_LIMITS\.maxSessionOverrides/);
 });
 
-test("PROVEN GAP — a week doc's stored weekNumber is never re-synced after a renumber", () => {
-  // Three-way drift with no reconciler: the plan says one thing, the doc's own
-  // `weekNumber` field says another, and `weekDocId(n)` addresses a third.
+test("GUARD: the three-way drift has exactly ONE reconciler, and it is draft-only", () => {
+  // The three spellings are unchanged: the plan says one thing, the week doc's
+  // own `weekNumber` field says another, and `weekDocId(n)` addresses a third.
   assert.match(COURSE_MUTATIONS, /weekNumber/);
   assert.match(
     COURSE_MUTATIONS,
     /so the editor can reconcile a doc whose number has drifted/,
   );
-  // Nothing anywhere re-stamps a week doc's number when the plan is saved: the
-  // week-plan save writes ONLY `weekPlan`.
+  // The ordinary save still writes ONLY `weekPlan`; it does not quietly
+  // re-stamp week docs behind the admin's back, which on a live run would be
+  // the very repointing the preserved id exists to prevent.
   assert.match(WEEK_PLAN_BUILDER, /await updateRun\(runId, \{ weekPlan: plan \}\)/);
   assert.doesNotMatch(WEEK_PLAN_BUILDER, /ensureWeekDoc|saveWeek/);
-  // The overview's week index labels and sorts by the STORED field while the
-  // link it renders resolves `weekDocId(number)` — so a row can count doc A's
-  // items and link to doc B.
+  // The overview's week index still labels and sorts by the STORED field while
+  // the link it renders resolves `weekDocId(number)`, which is exactly why a
+  // drifted number is worth reconciling rather than tolerating forever.
   assert.match(OVERVIEW, /\.sort\(\(a, b\) => a\.weekNumber - b\.weekNumber/);
   assert.match(PROGRESS_BODY, /byWeek\.get\(week\.weekNumber\)/);
+
+  // CLOSED 2026-09-02: there is now a reconciler, it lives in one place, and it
+  // re-stamps the stored field as part of the same batch that moves the docs,
+  // including the slots that are already at the right id but carry a stale
+  // number ("restamps"), which is the case no move would have touched.
+  assert.match(NORMALISE_WEEKS, /restamps\.push\(\{ weekId: to, from: doc\.weekNumber, to: taught \}\)/);
+  assert.match(NORMALISE_WEEKS, /batch\.update\(weeksCol\.doc\(restamp\.weekId\), \{\s*weekNumber: restamp\.to,/);
+  // …and it writes the plan and the docs together, so the two cannot half-land.
+  assert.match(NORMALISE_WEEKS, /batch\.update\(runRef, \{\s*weekPlan: next,/);
 });
 
 // ===========================================================================
@@ -1145,7 +1452,7 @@ test("PROVEN GAP — un-publishing a week takes a member's completed work off th
 // RUN STATUS — forward-only in the route, unconstrained in the rules
 // ===========================================================================
 
-/** The status route's table, reproduced. Pinned below. */
+/** The shared lifecycle table, reproduced. Pinned below. */
 const ALLOWED_TRANSITIONS = {
   draft: ["applications-open", "cancelled"],
   "applications-open": ["applications-closed", "cancelled"],
@@ -1155,14 +1462,24 @@ const ALLOWED_TRANSITIONS = {
   cancelled: [],
 };
 
-test("GUARD — the status route's transition table is forward-only and terminal-safe", () => {
+test("GUARD: the transition table is forward-only, terminal-safe, and the only one", () => {
   for (const [from, to] of Object.entries(ALLOWED_TRANSITIONS)) {
     assert.match(
-      STATUS_ROUTE,
+      RUN_STATUS_LIB,
       new RegExp(`"?${from}"?:\\s*\\[${to.map((s) => `"${s}"`).join(", ")}\\]`),
       `the table no longer says ${from} → ${to.join("/")}`,
     );
   }
+  // ONE table, two consumers. The route enforces it and the run editor builds
+  // its dropdown from it, so the admin is never offered a move the server
+  // refuses (which is exactly what a second, drifted client copy did).
+  assert.match(STATUS_ROUTE, /from "@\/lib\/courses\/runStatus"/);
+  assert.match(STATUS_ROUTE, /canTransition\(currentStatus, nextStatus\)/);
+  assert.doesNotMatch(STATUS_ROUTE, /"applications-open": \[/);
+  assert.match(RUN_EDITOR, /ALLOWED_TRANSITIONS\[currentStatus\]/);
+  assert.doesNotMatch(RUN_EDITOR, /RUN_STATUS_TRANSITIONS/);
+  // Cancelling left the dropdown for the danger zone's typed confirmation.
+  assert.match(RUN_EDITOR, /\(s\) => s !== "cancelled",/);
   // Nothing leaves a terminal state, and nothing walks backwards.
   assert.deepEqual(ALLOWED_TRANSITIONS.completed, []);
   assert.deepEqual(ALLOWED_TRANSITIONS.cancelled, []);
@@ -1176,7 +1493,7 @@ test("GUARD — the status route's transition table is forward-only and terminal
       );
     }
   }
-  assert.match(STATUS_ROUTE, /Deliberately forward-only/);
+  assert.match(RUN_STATUS_LIB, /Deliberately forward-only/);
 });
 
 test("GUARD — a run walked backwards is refused new work by both write lanes", () => {
@@ -1387,9 +1704,12 @@ test("GUARD — an offer survives admissions closing the run, which is what brok
   // enrols nobody (above), so between "you're in" and allocation being
   // published an accepted applicant held no row in any collection the hub read.
   // The ONE surface that ever said they got in was the apply page's status
-  // card — reachable only while `getApplyContext` finds a run still in
+  // card, reachable only while `getApplyContext` found a run still in
   // `applications-open`, which is exactly the state admissions moves OFF next.
   // Every schedule-driven surface then agreed they were on nothing.
+  // (`getApplyContext` now keeps returning the closed run, so that card no
+  // longer disappears either. The hub fix below is still the load-bearing
+  // one: it is what makes the offer visible without visiting the apply page.)
   //
   // `/api/courses/me` now carries a fourth signal, so the hub no longer depends
   // on the run's status to know an offer exists. (The precedence rules of
@@ -1418,13 +1738,20 @@ test("GUARD — an offer survives admissions closing the run, which is what brok
   assert.match(RUN_LAYOUT, /if \(!hasRunRole\) redirect\("\/learn"\);/);
   assert.match(MY_COURSES_SUMMARY, /if \(loading \|\| error \|\| live\.length === 0\) return null;/);
   // Still true, and still the reason the hub had to be the place this was
-  // fixed: the PUBLIC course page tells an accepted member applications are
-  // shut, because it branches on the open run and nothing else.
+  // fixed: the PUBLIC course page is about the RUN's window, not about this
+  // member. It now says "Applications for X closed on <date>" instead of
+  // vanishing, and the apply page keeps showing an applicant their own row
+  // after the deadline (`getApplyContext` returns a closed run rather than
+  // null). Neither is where an ACCEPTED member learns they got in, which is
+  // the property this test holds: that answer comes from /api/courses/me.
   assert.match(COURSE_CTA, /Applications aren&apos;t open right now\./);
-  assert.match(COURSE_CTA, /if \(!openRun\)/);
+  assert.match(COURSE_CTA, /if \(!run \|\| run\.state === "inactive"\)/);
   assert.match(APPLY_FORM, /You're in\. We'll email you your group/);
-  assert.match(FETCH_COURSES, /if \(run\.status !== "applications-open"\) continue;/);
-  assert.match(STATUS_ROUTE, /"applications-open": \["applications-closed", "cancelled"\]/);
+  // The CTA and the apply route read ONE window predicate, so discovery and
+  // submit cannot disagree. `status` alone decides nothing any more.
+  assert.match(FETCH_COURSES, /from "@\/lib\/courses\/window"/);
+  assert.doesNotMatch(FETCH_COURSES, /run\.status !== "applications-open"/);
+  assert.match(RUN_STATUS_LIB, /"applications-open": \["applications-closed", "cancelled"\]/);
 });
 
 test("PROVEN GAP — their only record is an email whose {startDate} is frozen", () => {
@@ -1536,27 +1863,47 @@ test("GUARD — every date-driven consumer guards with isValidDateKey before pac
   assert.throws(() => currentWeekFor({ startDate: "", weekPlan: [] }), RangeError);
 });
 
-test("PROVEN GAP — an impossible date passes the run normaliser and silently kills the run", () => {
-  // `2026-02-31` matches the shape and is not a day. The normaliser keeps it,
-  // `isValidDateKey` rejects it, and every consumer degrades: no current week,
-  // no rail, no pacing, no nudge, no mirror, no attendance anchor. The run looks
-  // alive and does nothing, with no error anywhere to explain it.
+test("GUARD: an impossible date normalises to unset rather than killing the run", () => {
+  // Closed 2026-09-02 (this test was the PROVEN GAP that demanded it):
+  // `asCivilDate` now calls `isValidDateKey` instead of a bare shape regex.
+  // `2026-02-31` matches the shape and is not a day; storing it used to leave
+  // every consumer degraded at once (no current week, no rail, no pacing, no
+  // nudge, no mirror, no attendance anchor) with the run looking alive and
+  // doing nothing. It now reads back as "", which is a state every one of
+  // those readers already handles and every editing surface already prompts on.
   const stored = normalizeCourseRun("run1", {
     courseId: "c1",
     label: "Autumn 2026",
     startDate: "2026-02-31",
     weekPlan: [],
   });
-  assert.equal(stored.startDate, "2026-02-31");
-  assert.equal(isValidDateKey(stored.startDate), false);
-  // The normaliser rejects a wrong SHAPE, which is all it checks.
+  assert.equal(stored.startDate, "");
+
+  // Every flavour of impossible, not just the February one: an out-of-range
+  // month, a zero month, and a value that is all-digits nonsense.
+  for (const impossible of ["2026-02-31", "2026-13-01", "2026-00-10", "9999-99-99"]) {
+    assert.equal(
+      normalizeCourseRun("run1", { startDate: impossible }).startDate,
+      "",
+      `${impossible} survived the normaliser`,
+    );
+    assert.equal(isValidDateKey(impossible), false);
+  }
+
+  // A wrong SHAPE still normalises away, as it always did.
   assert.equal(normalizeCourseRun("run1", { startDate: "05/10/2026" }).startDate, "");
 
-  // WHEN YOU FIX THIS: `asCivilDate` in `lib/firestore/courses.ts` should call
-  // `isValidDateKey` rather than the bare regex — a one-line change that makes
-  // an impossible date behave exactly like an unset one. `firestore.rules`
-  // cannot do this check at all (no date arithmetic), so the normaliser is the
-  // only place it can live.
+  // …and a REAL date is untouched, including the leap day a month-length table
+  // would get wrong. This is the half of the contract a stricter check could
+  // plausibly break.
+  for (const good of ["2026-09-28", "2024-02-29", "2026-12-31", "2027-01-01"]) {
+    assert.equal(normalizeCourseRun("run1", { startDate: good }).startDate, good);
+  }
+
+  // The normaliser is the ONLY layer that can hold this: `firestore.rules` has
+  // no date arithmetic, so its regex stays the strongest thing that layer can
+  // say. Its sibling in `scripts/rules-tests/tests/courses-schedule.test.mjs`
+  // pins that division of labour from the other side.
 });
 
 test("GUARD — currentWeekFor clamps its slot key at both ends of the run", () => {
@@ -2039,7 +2386,10 @@ test("GUARD — virtual/in-person reaches the member, on the card and in the ema
   // refactor. The slot fields stay resolved for the current week.
   assert.match(OVERVIEW, /sessionModes: Record<string, GroupSessionMode>;/);
   assert.match(OVERVIEW, /const weekId = currentWeekId\(currentWeek\);/);
-  assert.match(OVERVIEW, /sessionModes: sessionModesOf\(ownGroup\),/);
+  // Built per card now that the payload carries every group the caller
+  // holds, so the map travels for each of them rather than only for the one
+  // the calendar resolved through.
+  assert.match(OVERVIEW, /sessionModes: sessionModesOf\(source\),/);
   // The facilitator's own group page builds the same shape and hands the card
   // the same week's entry, so the person who just flipped the switch sees what
   // their members will.
@@ -2066,8 +2416,14 @@ test("GUARD — virtual/in-person reaches the member, on the card and in the ema
 
   // THE PII GATE IS UNTOUCHED. `mode` is a display fact; it grants nobody the
   // meeting link, and this is the line that says so.
-  assert.match(OVERVIEW, /meetingUrl: canSeeMeetingUrl \? session\.meetingUrl : null,/);
-  assert.match(OVERVIEW, /const canSeeMeetingUrl =/);
+  // Decided PER GROUP now that a facilitator of two gets a card each, so the
+  // predicate takes the group it is answering about rather than closing over
+  // the one the calendar resolved through.
+  assert.match(
+    OVERVIEW,
+    /meetingUrl: canSeeMeetingUrlFor\(source\) \? session\.meetingUrl : null,/,
+  );
+  assert.match(OVERVIEW, /const canSeeMeetingUrlFor = \(group: CourseGroupDoc\): boolean =>/);
 });
 
 test("GUARD — the week page shows the VIEWED week's mode, not the current week's", () => {

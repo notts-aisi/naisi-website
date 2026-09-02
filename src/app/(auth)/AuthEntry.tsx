@@ -351,10 +351,22 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
           // the router).
           credentialReceivedRef.current = false;
           setPhase("idle");
+          // A course return address survives the hop. Without this, someone who
+          // pressed "Create one" on a course apply page and signed up with
+          // Google landed on /register with no ?next, finished the form, and
+          // was dropped on /pending-approval with no way back to the
+          // application they came to write. The register page's own
+          // `safeCourseNext` re-validates before it redirects anywhere, and
+          // the `__auth_next` cookie stays as the fallback for the redirect
+          // leg. Collaborators keep their own branch: their destination is
+          // /collaborator, not a course.
+          const courseNext = safeNext.startsWith("/courses/")
+            ? `/register?next=${encodeURIComponent(safeNext)}`
+            : "/register";
           router.replace(
             mode === "register" && audience === "collaborator"
               ? "/register?type=collaborator"
-              : "/register",
+              : courseNext,
           );
           return;
         }

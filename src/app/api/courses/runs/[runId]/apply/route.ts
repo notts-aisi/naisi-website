@@ -4,7 +4,7 @@ import { sendCourseApplicationEmail } from "@/lib/email/courseApplicationEmails"
 import { validateAnswers } from "@/lib/events/validateAnswers";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser, type SessionUser } from "@/lib/firebase/session";
-import { COURSE_TZ } from "@/lib/courses/weekPlan";
+import { applicationWindow, formatRunStart } from "@/lib/courses/window";
 import {
   APPLICATION_FIELD_LIMITS,
   buildApplication,
@@ -228,33 +228,54 @@ async function loadRun(db: Db, runId: string): Promise<CourseRunDoc | null> {
 }
 
 /**
- * The application window: the run's status is the switch, `archived` closes
- * it regardless, and the dates are optional bounds on either side. Each bound
- * applies only when set — a null `applicationsCloseAt` means "open until an
- * admin closes it", not "closed".
+ * The application window, translated into the applicant's sentence.
  *
- * An ARCHIVED run refuses applications with the same sentence as a run that
- * was never open, deliberately: archiving is a withdrawal (it takes the run
- * off the catalogue and out of the apply page's lookup), and the destroy
- * cascade sets the same flag before it deletes anything — so this is also
- * what stops an application landing on a run whose rows are being deleted, in
- * the window before its status or its document goes. The copy does not
- * distinguish the two, because an applicant has no business learning which.
+ * The PREDICATE lives in `lib/courses/window.ts` and nowhere else. That is
+ * the whole point: this route used to own the only date check on the site,
+ * while the catalogue, the course page CTA and the apply page all keyed on
+ * `status === "applications-open"` alone. A run left open past its deadline
+ * therefore advertised an open application, rendered the whole form, and
+ * refused the POST after the applicant had written it. Discovery and submit
+ * now read the same three lines of arithmetic and cannot disagree again.
+ *
+ * An `inactive` run (a draft, or an ARCHIVED one) refuses applications with
+ * the same sentence as a run that was never open, deliberately: archiving is
+ * a withdrawal, and the destroy cascade sets that flag before it deletes
+ * anything, so this is also what stops an application landing on a run whose
+ * rows are being deleted. The copy does not distinguish the two, because an
+ * applicant has no business learning which.
  */
 function windowError(run: CourseRunDoc, now: Date): string | null {
-  if (run.archived) {
-    return "This course run isn't accepting applications.";
+  const { state } = applicationWindow(run, now);
+  if (state === "open") return null;
+  if (state === "not-yet") return "Applications for this run haven't opened yet.";
+  if (state === "closed") return "Applications for this run have closed.";
+  return "This course run isn't accepting applications.";
+}
+
+/**
+ * The same predicate, asked the EDIT question.
+ *
+ * Owner decision D5: once the window is closed an applicant may still VIEW
+ * their application, and withdraw it, but no longer edit it. Editing after the
+ * deadline meant the version the admissions team read could change under them
+ * mid-review, and there was nothing on either side saying when that stopped.
+ * Now the deadline says it.
+ *
+ * `PATCH` is the only lane this closes. `DELETE` is untouched: trapping
+ * someone in a queue with no self-service exit helps nobody, and a withdrawal
+ * takes work off the team rather than changing it underneath them.
+ */
+function editWindowError(run: CourseRunDoc, now: Date): string | null {
+  const { state } = applicationWindow(run, now);
+  if (state === "open") return null;
+  if (state === "closed") {
+    return "Applications for this run have closed, so this one can't be edited now. It's still in the queue, and you can withdraw it if your plans have changed.";
   }
-  if (run.status !== "applications-open") {
-    return "This course run isn't accepting applications.";
+  if (state === "not-yet") {
+    return "Applications for this run aren't open yet, so this one can't be edited right now.";
   }
-  if (run.applicationsOpenAt && now.getTime() < run.applicationsOpenAt.getTime()) {
-    return "Applications for this run haven't opened yet.";
-  }
-  if (run.applicationsCloseAt && now.getTime() > run.applicationsCloseAt.getTime()) {
-    return "Applications for this run have closed.";
-  }
-  return null;
+  return "This course run isn't accepting changes to applications.";
 }
 
 /**
@@ -316,20 +337,6 @@ async function loadApplicant(db: Db, user: SessionUser): Promise<Applicant> {
     displayName: user.displayName?.trim() ?? "",
     paidMembershipAtApply: false,
   };
-}
-
-/** "Monday 6 October" in Europe/London, from the run's civil start date. */
-function formatRunStart(startDate: string): string | undefined {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) return undefined;
-  // Noon UTC: far enough from either edge that no DST shift can move the date.
-  const at = new Date(`${startDate}T12:00:00Z`);
-  if (Number.isNaN(at.getTime())) return undefined;
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: COURSE_TZ,
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  }).format(at);
 }
 
 // ---------------------------------------------------------------------------
@@ -612,10 +619,18 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ runId: string
     return NextResponse.json({ error: "Course run not found." }, { status: 404 });
   }
 
-  // Deliberately NOT gated on the application window or the maintenance pause.
-  // Both exist to stop NEW applications arriving; an applicant already in the
-  // queue tidying their answers costs nothing, and the submitted email promises
-  // they can edit "any time before we review it". Status `pending` is the gate.
+  // GATED on the application window, and deliberately NOT on the maintenance
+  // pause. The two are different promises: the pause exists to stop writes
+  // while something is being fixed, and stranding a queued applicant mid-edit
+  // for that helps nobody; the DEADLINE is a commitment to the applicant and to
+  // the team reading them (owner decision D5). The submitted email says "any
+  // time before the deadline", the status card drops its Edit button when the
+  // window shuts, and this is the enforcement under both.
+  const editError = editWindowError(run, new Date());
+  if (editError) {
+    return NextResponse.json({ error: editError }, { status: 403 });
+  }
+
   const payload = await validatePayload(db, run, body);
   if ("error" in payload) {
     return NextResponse.json({ error: payload.error }, { status: 400 });

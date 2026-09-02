@@ -17,6 +17,7 @@ import {
   COURSE_FIELD_LIMITS,
   EMPTY_APPLICATION_COUNTS,
   courseRunChannel,
+  weekDocId,
   type ChecklistItem,
   type CourseRunStatus,
   type CourseStatus,
@@ -534,6 +535,40 @@ export async function setRunStatus(
   );
 }
 
+/** One week doc the normalisation would re-address. */
+export type WeekIdMove = {
+  from: string;
+  to: string;
+  weekNumber: number;
+  /** False when the slot has no authored document yet: a plan-only fix. */
+  hasDoc: boolean;
+};
+
+export type NormaliseWeeksResult = {
+  moves: WeekIdMove[];
+  restamps: { weekId: string; from: number; to: number }[];
+  changed: number;
+};
+
+/**
+ * Re-address a DRAFT run's weeks so the plan's `weekId` and the id every
+ * member-facing surface derives (`weekDocId(weekNumber)`) agree again.
+ *
+ * Admin SDK, and refused outright once the run leaves draft. See the route
+ * for why the draft boundary is the only place this is free. `dryRun` returns
+ * the same moves without writing, which is what the builder previews.
+ */
+export async function normaliseRunWeekIds(
+  runId: string,
+  opts: { dryRun?: boolean } = {},
+): Promise<NormaliseWeeksResult> {
+  return postJson<NormaliseWeeksResult>(
+    `/api/courses/runs/${runId}/normalise-weeks`,
+    { dryRun: opts.dryRun === true },
+    "Couldn't normalise this run's week ids.",
+  );
+}
+
 /**
  * Publish a course to the public catalogue, optionally pointing the public
  * curriculum at `showcaseRunId` (null = published with no curriculum preview).
@@ -566,7 +601,52 @@ function assertWeekAddress(weekId: string, weekNumber: number): number {
   if (!Number.isFinite(n) || n < 1 || n > COURSE_FIELD_LIMITS.maxWeekPlanEntries) {
     throw new Error("Week number must be between 1 and 60.");
   }
+  // Deliberately does NOT require `weekId === weekDocId(n)`. A reordered plan
+  // legitimately carries a week whose id and number disagree, and that is the
+  // whole point of preserving the id across a renumber; the alternative moves
+  // authored curriculum and saved progress under a live cohort. Callers that
+  // care about the disagreement ask `weekAddressDrift()` below, which reports
+  // it rather than refusing the write.
   return n;
+}
+
+/** One plan slot whose stable id and derived id disagree. */
+export type WeekAddressDrift = {
+  weekNumber: number;
+  /** What the plan says the document is. Admin surfaces open this. */
+  planWeekId: string;
+  /** `weekDocId(weekNumber)`. Every member-facing surface opens this. */
+  canonicalWeekId: string;
+};
+
+/**
+ * Every slot in `plan` where the two ways of naming a week point at different
+ * documents.
+ *
+ * The two doctrines are both real. Admin surfaces address a week by the plan's
+ * `weekId`; `/learn/{run}/weeks/{n}`, the week rail, the nudge, the task
+ * mirror and the attendance grid all derive `weekDocId(weekNumber)`. They
+ * agree on a plan that has only ever grown at the end, and diverge from the
+ * first reorder or removal, silently, because both sides resolve a real
+ * document, just not the same one.
+ *
+ * Reported, never thrown: on a live run the divergence is the lesser evil and
+ * repointing it would move real people's saved work. It is only worth acting
+ * on while the run is still a draft, which is what
+ * `normaliseRunWeekIds()` and its route are for.
+ */
+export function weekAddressDrift(plan: WeekPlanEntry[]): WeekAddressDrift[] {
+  const out: WeekAddressDrift[] = [];
+  let taught = 0;
+  for (const entry of plan) {
+    if (entry.kind !== "week") continue;
+    taught += 1;
+    const canonicalWeekId = weekDocId(taught);
+    if (entry.weekId !== canonicalWeekId) {
+      out.push({ weekNumber: taught, planWeekId: entry.weekId, canonicalWeekId });
+    }
+  }
+  return out;
 }
 
 /**

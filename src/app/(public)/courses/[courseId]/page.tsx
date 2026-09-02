@@ -5,10 +5,17 @@ import Badge from "@/components/ui/Badge";
 import BlockView from "@/features/events/BlockView";
 import { COURSE_TRACK_LABELS } from "@/lib/firestore/courses";
 import {
-  getOpenRunForCourse,
+  getApplicationRunForCourse,
   getPublishedCourse,
+  type RunWindow,
 } from "@/features/courses/fetchCourses";
-import CourseCTA from "@/features/courses/CourseCTA";
+import {
+  formatPastWindowDate,
+  formatRunStartShort,
+  formatWindowDate,
+  formatWindowDeadline,
+} from "@/lib/courses/window";
+import CourseCTA, { type CourseCTARun } from "@/features/courses/CourseCTA";
 import WeekAccordion from "@/features/courses/WeekAccordion";
 import Reveal from "../../Reveal";
 import styles from "./course.module.css";
@@ -41,16 +48,19 @@ export default async function PublicCoursePage({
   const { courseId } = await params;
   // Both reads are independent — an unpublished course throws away the run
   // read, which is cheaper than serialising them on every hit.
-  const [found, openRun] = await Promise.all([
+  const [found, applicationRun] = await Promise.all([
     getPublishedCourse(courseId),
-    getOpenRunForCourse(courseId),
+    getApplicationRunForCourse(courseId),
   ]);
   // A draft or unknown course is a 404 either way, so a draft URL leaks
   // nothing about whether the course exists.
   if (!found) notFound();
 
   const { course, showcaseRun, weeks } = found;
-  const ctaRun = openRun ? { id: openRun.id, label: openRun.label } : null;
+  // Formatted HERE, on the server, in Europe/London. The CTA is a client
+  // island; formatting a Nottingham deadline in the visitor's own timezone is
+  // how someone reads "closes Sat 17 Oct" and applies a day late.
+  const ctaRun = toCTARun(applicationRun);
 
   const meta = [
     course.level,
@@ -95,7 +105,12 @@ export default async function PublicCoursePage({
             </p>
           ) : null}
 
-          <CourseCTA courseId={course.id} openRun={ctaRun} placement="hero" />
+          <CourseCTA
+            courseId={course.id}
+            courseTitle={course.title}
+            run={ctaRun}
+            placement="hero"
+          />
         </header>
 
         {course.summaryBlocks.length > 0 ? (
@@ -108,24 +123,62 @@ export default async function PublicCoursePage({
           <Reveal variant="mask-wipe" as="h2" className={styles.sectionTitle}>
             Curriculum
           </Reveal>
-          <p className={styles.sectionBlurb}>
-            {weeks.length > 0
-              ? "Every week, in full, before you apply. Expand a week to see what you'd read and watch."
-              : "The week-by-week plan goes up here as it's finalised."}
-            {showcaseRun && weeks.length > 0
-              ? ` This is the ${showcaseRun.label} curriculum.`
-              : ""}
-          </p>
+          {/* Only when there IS a curriculum. With no published weeks this
+              blurb and WeekAccordion's own empty state were two consecutive
+              sentences saying the same thing to the same reader; the
+              accordion's is the one that stays, because it sits where the
+              weeks would have been. */}
+          {weeks.length > 0 ? (
+            <p className={styles.sectionBlurb}>
+              Every week, in full, before you apply. Expand a week to see what
+              you&apos;d read and watch.
+              {showcaseRun ? ` This is the ${showcaseRun.label} curriculum.` : ""}
+            </p>
+          ) : null}
           <WeekAccordion courseId={course.id} weeks={weeks} />
         </section>
 
-        <CourseCTA courseId={course.id} openRun={ctaRun} placement="foot" />
+        <CourseCTA
+          courseId={course.id}
+          courseTitle={course.title}
+          run={ctaRun}
+          placement="foot"
+        />
       </div>
     </article>
   );
 }
 
-/** "~5 hrs/week" — a rough commitment figure, phrased as one. */
+/** "~5 hrs/week", a rough commitment figure phrased as one. */
 function formatWeeklyHours(hours: number): string {
   return hours === 1 ? "~1 hr/week" : `~${hours} hrs/week`;
+}
+
+/**
+ * Flatten a run plus its window into the props the client CTA takes, with
+ * every date already rendered in Europe/London.
+ *
+ * A LIVE deadline carries its TIME ("Sun 18 Oct, 23:59"), because the minute
+ * it falls on is the thing an applicant plans around. A PASSED one carries
+ * its year instead ("Sun 18 Oct 2026"): the minute no longer matters, and
+ * without the year a run from a previous autumn reads as one you have just
+ * missed. A start date needs neither, since its time is a group's session
+ * slot and is told to them after allocation.
+ */
+function toCTARun(found: RunWindow | null): CourseCTARun | null {
+  if (!found) return null;
+  const { run, window } = found;
+  const past = window.state === "closed";
+  return {
+    id: run.id,
+    label: run.label,
+    state: window.state,
+    opensOn: window.opensAt ? formatWindowDate(window.opensAt) : null,
+    closesOn: window.closesAt
+      ? past
+        ? formatPastWindowDate(window.closesAt)
+        : formatWindowDeadline(window.closesAt)
+      : null,
+    startsOn: formatRunStartShort(run.startDate) ?? null,
+  };
 }

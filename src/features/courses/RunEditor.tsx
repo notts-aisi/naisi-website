@@ -19,6 +19,7 @@ import FormBuilder from "@/features/events/FormBuilder";
 import { sanitizeSignupForm, type FormQuestion } from "@/lib/firestore/events";
 import { ACADEMIC_YEAR_PATTERN } from "@/lib/firestore/users";
 import { isValidDateKey } from "@/lib/courses/weekPlan";
+import { ALLOWED_TRANSITIONS } from "@/lib/courses/runStatus";
 import {
   COURSE_FIELD_LIMITS,
   COURSE_RUN_STATUSES,
@@ -64,23 +65,6 @@ import pickerStyles from "./TemplatePicker.module.css";
  */
 
 type Props = { courseId: string; runId: string };
-
-/**
- * Which status changes are offered from where. This is UX only — the status
- * route is the authority and re-validates every transition server-side. The
- * disallowed options stay visible but disabled so the shape of the lifecycle
- * is legible rather than hidden.
- */
-const RUN_STATUS_TRANSITIONS: Record<CourseRunStatus, CourseRunStatus[]> = {
-  draft: ["applications-open", "cancelled"],
-  "applications-open": ["applications-closed", "running", "cancelled"],
-  "applications-closed": ["applications-open", "running", "cancelled"],
-  running: ["completed", "cancelled"],
-  // Terminal: a finished run is re-run by creating a new one, never by
-  // rewinding this one (progress and enrolments are keyed to it).
-  completed: [],
-  cancelled: ["draft"],
-};
 
 function statusTone(
   status: CourseRunStatus,
@@ -324,7 +308,17 @@ export default function RunEditor({ courseId, runId }: Props) {
   // declarations, so TypeScript can't carry the "run is loaded" narrowing into
   // them (a hoisted function could, in principle, be called before the guard).
   const currentStatus = run.status;
-  const allowedStatuses = RUN_STATUS_TRANSITIONS[currentStatus];
+  // The SERVER's table, imported rather than restated, so the dropdown can
+  // never offer a move the status route refuses. Cancelling is subtracted
+  // from it: that move is irreversible and lives in the danger zone behind a
+  // typed confirmation, not one keystroke away in a select.
+  const allowedStatuses: CourseRunStatus[] = ALLOWED_TRANSITIONS[currentStatus].filter(
+    (s) => s !== "cancelled",
+  );
+  // A cancelled run still has to be able to show its own status in the select.
+  const statusOptions = COURSE_RUN_STATUSES.filter(
+    (s) => s !== "cancelled" || currentStatus === "cancelled",
+  );
   const saving = toast?.phase === "saving";
   const visibleGroups = groups.filter((g) => (showArchived ? true : !g.archived));
   const counts = run.applicationCounts;
@@ -751,24 +745,30 @@ export default function RunEditor({ courseId, runId }: Props) {
       <Card padding="lg">
         <h3 className={styles.sectionTitle}>Status</h3>
         <p className={styles.hint}>
-          Status drives who can see and apply to this run. Transitions that
-          aren&apos;t available from <strong>{COURSE_RUN_STATUS_LABEL[run.status]}</strong>{" "}
-          are listed but disabled.
+          Status drives who can see and apply to this run. It only moves
+          forwards. Transitions that aren&apos;t available from{" "}
+          <strong>{COURSE_RUN_STATUS_LABEL[run.status]}</strong> are listed but
+          disabled. Cancelling a cohort lives in the danger zone below.
         </p>
         <div className={styles.statusRow}>
           <ResponsiveSelect
             value={run.status}
             onChange={(next) => changeStatus(next as CourseRunStatus)}
-            options={COURSE_RUN_STATUSES.map((s) => ({
+            options={statusOptions.map((s) => ({
               value: s,
               label: COURSE_RUN_STATUS_LABEL[s],
               disabled: s !== run.status && !allowedStatuses.includes(s),
             }))}
             ariaLabel="Run status"
           />
+          {/* Both terminal states have an empty transition row, and they are
+              not the same news: a cancelled cohort was called off, not
+              delivered. Saying "finished" over it read as a run that had run. */}
           {allowedStatuses.length === 0 && (
             <span className={styles.muted}>
-              This run is finished — start a new run to deliver the course again.
+              {run.status === "cancelled"
+                ? "This cohort was cancelled. Start a new run to deliver the course again."
+                : "This run is finished. Start a new run to deliver the course again."}
             </span>
           )}
         </div>
@@ -890,10 +890,14 @@ export default function RunEditor({ courseId, runId }: Props) {
       {/* ---- Week plan ---- */}
       <Card padding="lg">
         <h3 className={styles.sectionTitle}>Week plan</h3>
+        {/* `status` is threaded through rather than left to the builder's own
+            getDoc fallback: without it every open of a DRAFT run rendered the
+            locked state until a round trip came back and said otherwise. */}
         <WeekPlanBuilder
           runId={runId}
           startDate={run.startDate}
           weekPlan={run.weekPlan}
+          status={run.status}
           runAction={runAction}
           onSaved={reload}
         />
@@ -1208,7 +1212,7 @@ export default function RunEditor({ courseId, runId }: Props) {
         courseId={courseId}
         run={run}
         runAction={runAction}
-        onArchived={reload}
+        onRunChanged={reload}
       />
 
       <SaveTemplateDialog

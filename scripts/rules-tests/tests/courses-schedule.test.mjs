@@ -134,23 +134,124 @@ function progressDoc(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe("courseRuns — who may move the calendar", () => {
+  /** The plan with a reading week dropped in after week 1: the everyday edit. */
+  const RESHAPED_PLAN = [
+    WEEK_PLAN[0],
+    { kind: "break", label: "Reading week" },
+    ...WEEK_PLAN.slice(1),
+  ];
+
   it("GUARD — a run track lead may reschedule the cohort client-direct", async () => {
     // Not a finding, a PREMISE: every downstream drift in the schedule-change
     // audit starts with this write, and it needs no server route. It is
-    // deliberate (a lead tweaks the plan mid-term), but it means the rules are
-    // the ONLY validation these two fields ever get.
+    // deliberate (a lead moves a cohort's dates mid-term), but it means the
+    // rules are the ONLY validation `startDate` ever gets.
     await seedCast();
     await seedRun("run1");
     const db = await asUser("lead");
     await assertSucceeds(
-      db.collection("courseRuns").doc("run1").update({
-        startDate: "2026-10-12",
-        weekPlan: [
-          WEEK_PLAN[0],
-          { kind: "break", label: "Reading week" },
-          ...WEEK_PLAN.slice(1),
-        ],
-      }),
+      db.collection("courseRuns").doc("run1").update({ startDate: "2026-10-12" }),
+    );
+  });
+
+  it("GUARD: the week plan is reshapeable by the run's cast while it is a DRAFT", async () => {
+    // The authoring state, and the other half of the lock below. Nobody is
+    // enrolled, no register exists, no task has been mirrored, so renumbering
+    // the plan repoints nothing, which is exactly why the boundary is drawn
+    // at draft and not earlier.
+    await seedCast();
+    await seedRun("run1", { status: "draft" });
+    for (const uid of ["lead", "drafter", "approver"]) {
+      const db = await asUser(uid);
+      await assertSucceeds(
+        db.collection("courseRuns").doc("run1").update({ weekPlan: RESHAPED_PLAN }),
+      );
+    }
+  });
+
+  it("GUARD: the week plan is PINNED to non-admins the moment a run leaves draft", async () => {
+    // `weekPlan` is the calendar spine: the Nth taught entry IS week N, and
+    // every member-facing surface addresses that week as
+    // `weekDocId(weekNumber)`. Reordering or removing a slot on a live run
+    // renumbers every entry after it, so a cohort's /learn/{run}/weeks/{n}
+    // silently resolves a different document than the one the admin arranged,
+    // and the registers, mirrored tasks and exercise responses keyed on the
+    // old numbering strand.
+    for (const status of [
+      "applications-open",
+      "applications-closed",
+      "running",
+      "completed",
+      "cancelled",
+    ]) {
+      await seedCast();
+      await seedRun("run1", { status });
+      for (const uid of ["lead", "drafter", "approver"]) {
+        const db = await asUser(uid);
+        await assertFails(
+          db.collection("courseRuns").doc("run1").update({ weekPlan: RESHAPED_PLAN }),
+        );
+      }
+      // Not a blanket freeze on the run: the SAME actor may still move the
+      // dates, which is the mid-term edit the lock is not trying to stop.
+      const lead = await asUser("lead");
+      await assertSucceeds(
+        lead.collection("courseRuns").doc("run1").update({ startDate: "2026-10-12" }),
+      );
+      // …and re-sending the plan UNCHANGED still passes, so a section save
+      // that always includes the field is not wedged by the pin.
+      await assertSucceeds(
+        lead.collection("courseRuns").doc("run1").update({ weekPlan: WEEK_PLAN }),
+      );
+      await clearData();
+    }
+  });
+
+  it("GUARD: one write cannot both leave draft AND reshape the plan", async () => {
+    // The pin used to read only the PRE-write status, so a draft run was still
+    // a draft at the moment the rule looked at it. An approver could therefore
+    // set status to 'applications-open' and reshape the week plan in the SAME
+    // update: the run left draft, and the plan the pin protects for the rest of
+    // the cohort's life was the reshaped one nothing ever checked.
+    await seedCast();
+    await seedRun("run1", { status: "draft" });
+    const db = await asUser("approver");
+    await assertFails(
+      db
+        .collection("courseRuns")
+        .doc("run1")
+        .update({ status: "applications-open", weekPlan: RESHAPED_PLAN }),
+    );
+
+    // Neither half is forbidden on its own. The status may move...
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run1").update({ status: "applications-open" }),
+    );
+    // ...and a section save that always includes the field still passes while
+    // it re-sends the plan verbatim, which is the disjunct that carve-out is
+    // for. (Re-seeded as a draft first: the two halves are being tested apart.)
+    await clearData();
+    await seedCast();
+    await seedRun("run1", { status: "draft" });
+    const again = await asUser("approver");
+    await assertSucceeds(
+      again
+        .collection("courseRuns")
+        .doc("run1")
+        .update({ status: "applications-open", weekPlan: WEEK_PLAN }),
+    );
+  });
+
+  it("GUARD: an ADMIN can still reshape a live run's plan, and owns the consequences", async () => {
+    // The carve-out, matching every other pin in this block: admins ride the
+    // unconditional branch. Adding a slot to a live run shifts every later
+    // date, so it is a change that belongs to the person accountable for it
+    // rather than one to forbid outright.
+    await seedCast();
+    await seedRun("run1", { status: "running" });
+    const db = await asUser("admin1");
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run1").update({ weekPlan: RESHAPED_PLAN }),
     );
   });
 
@@ -185,7 +286,9 @@ describe("courseRuns — who may move the calendar", () => {
     // The cap the week-number bounds everywhere else assume (MAX_WEEK_NUMBER,
     // `weekDocId` zero-padding, the attendance column filter).
     await seedCast();
-    await seedRun("run1");
+    // A DRAFT run: the ceiling is a content cap, and the week-plan lock above
+    // would otherwise refuse both of these writes for an unrelated reason.
+    await seedRun("run1", { status: "draft" });
     const db = await asUser("lead");
     const tooMany = Array.from({ length: 61 }, (_, i) => ({
       kind: "week",
@@ -211,13 +314,22 @@ describe("courseRuns — who may move the calendar", () => {
     }
   });
 
-  it("PROVEN GAP — an IMPOSSIBLE date passes, and silently kills the whole run", async () => {
-    // `runContentOk` checks the SHAPE with a regex. `2026-02-31` is the right
-    // shape and is not a day, so it is stored — and then `isValidDateKey`
-    // (which round-trips through Date) rejects it at every single consumer:
-    // no current week on /learn, no rail, no pacing, the nudge refuses, the
-    // task mirror no-ops, the attendance grid loses its anchor. The run looks
-    // alive and does nothing, with no error anywhere to explain it.
+  it("GUARD: an IMPOSSIBLE date is the NORMALISER's job, and the rules stay out of it", async () => {
+    // Was a PROVEN GAP until 2026-09-02, and it is green for the same reason it
+    // always was: `runContentOk` checks the SHAPE with a regex, and
+    // `2026-02-31` is the right shape and is not a day, so the write lands.
+    //
+    // THIS IS NOT A RULES BUG AND MUST NOT BE FIXED HERE. Firestore rules have
+    // no date arithmetic, so the regex is the strongest check this layer can
+    // make; a rule enumerating month lengths would still miss leap years.
+    // The fix lives in `asCivilDate` (src/lib/firestore/courses.ts), which now
+    // calls `isValidDateKey`, so an impossible date READS BACK as "" and
+    // behaves exactly like an unset one at every consumer. Its sibling in
+    // `tests/course-schedule-changes.test.mjs` pins that half.
+    //
+    // The test survives the fix as the pin on the division of labour: if
+    // someone later tries to express the check here, these writes start failing
+    // and this comment explains why they should not have.
     await seedCast();
     await seedRun("run1");
     const db = await asUser("lead");
@@ -226,15 +338,6 @@ describe("courseRuns — who may move the calendar", () => {
         db.collection("courseRuns").doc("run1").update({ startDate: impossible }),
       );
     }
-
-    // THIS IS NOT A RULES BUG AND MUST NOT BE FIXED HERE. Firestore rules have
-    // no date arithmetic, so the regex is the strongest check this layer can
-    // make; a rule enumerating month lengths would still miss leap years.
-    // The fix belongs in `asCivilDate` (src/lib/firestore/courses.ts), which
-    // should call `isValidDateKey` instead of its own bare regex — one line,
-    // and an impossible date then behaves exactly like an unset one.
-    // When that lands, this test stays green and its sibling in
-    // `tests/course-schedule-changes.test.mjs` is the one to invert.
   });
 });
 
