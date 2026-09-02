@@ -165,6 +165,24 @@ export default function CourseCTA({
   // second copy of that condition here is how the catalogue and this page came
   // to disagree about it in the first place.
   const viaRound = round !== null;
+  /**
+   * MERGE DEPENDENCY, and the reason there is no fallback below.
+   *
+   * `/apply/[roundId]` is PR9's route. It does not exist on this branch, so
+   * PR13 must not reach dev ahead of PR9: whenever a live round is found this
+   * link is the only apply route the CTA offers, and until PR9 lands it is a
+   * 404. The integration owner merges PR9 first. (PR17 later adds
+   * `courseRuns.admissionRoundIds` and turns the per-run apply page into a
+   * 308 redirect to this same URL, so the destination is the settled one.)
+   *
+   * DELIBERATELY NOT a fallback to `/courses/[courseId]/apply` when the round
+   * is present. That page submits against the RUN, and the run an open round
+   * places people onto is a draft with no application window: the form would
+   * render on a page whose POST the route refuses, which is exactly the
+   * discovery-versus-submit mismatch the window predicate was built to end.
+   * A 404 while the two PRs are out of order is a loud, one-merge problem; a
+   * form that takes five hundred words and then says no is a quiet one.
+   */
   const applyHref = viaRound
     ? `/apply/${encodeURIComponent(round.id)}`
     : `/courses/${encodeURIComponent(courseId)}/apply`;
