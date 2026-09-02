@@ -52,46 +52,40 @@ export default function RoundList() {
   const [createdId, setCreatedId] = useState<string | null>(null);
 
   /**
+   * ONE load, called by the mount effect and again after a round is created.
    * State moves only from the async callbacks, never synchronously in the
    * effect body: the same shape `useOneShotList` uses, and the reason this is
    * a promise chain rather than an awaited call.
+   *
+   * `isCancelled` is how the effect's cleanup reaches in, so the effect calls
+   * this rather than carrying a second copy of the same six lines.
    */
   const load = useCallback(
-    () =>
+    (isCancelled: () => boolean = () => false) =>
       fetchRounds()
         .then((data) => {
+          if (isCancelled()) return;
           setRounds(data.rounds);
           setCanAuthor(data.canAuthor);
           setError(null);
         })
         .catch((err: unknown) => {
+          if (isCancelled()) return;
           setError(err instanceof Error ? err.message : "Could not load the rounds.");
         })
-        .finally(() => setLoading(false)),
+        .finally(() => {
+          if (!isCancelled()) setLoading(false);
+        }),
     [],
   );
 
   useEffect(() => {
     let cancelled = false;
-    fetchRounds()
-      .then((data) => {
-        if (cancelled) return;
-        setRounds(data.rounds);
-        setCanAuthor(data.canAuthor);
-        setError(null);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Could not load the rounds.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    void load(() => cancelled);
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [load]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();

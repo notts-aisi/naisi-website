@@ -117,48 +117,42 @@ export default function RoundEditor({
   const [runs, setRuns] = useState<CourseRunDoc[]>([]);
 
   /**
+   * ONE load, called by the mount effect and by anything that needs a reread.
    * Promise chain rather than an awaited call, and state set only from the
    * callbacks: the shape the admin lists use, so nothing updates synchronously
    * inside the effect body.
+   *
+   * `isCancelled` is how the effect's cleanup reaches in. Copying the body
+   * into the effect to get that guard was two loads to keep in step, and the
+   * copy that drifts is the one nobody is looking at.
    */
   const load = useCallback(
-    () =>
+    (isCancelled: () => boolean = () => false) =>
       fetchRound(roundId)
         .then((data) => {
+          if (isCancelled()) return;
           setRound(data.round);
           setStages(data.stages);
           setCanAuthor(data.canAuthor);
           setError(null);
         })
         .catch((err: unknown) => {
+          if (isCancelled()) return;
           setError(err instanceof Error ? err.message : "Could not load this round.");
         })
-        .finally(() => setLoading(false)),
+        .finally(() => {
+          if (!isCancelled()) setLoading(false);
+        }),
     [roundId],
   );
 
   useEffect(() => {
     let cancelled = false;
-    fetchRound(roundId)
-      .then((data) => {
-        if (cancelled) return;
-        setRound(data.round);
-        setStages(data.stages);
-        setCanAuthor(data.canAuthor);
-        setError(null);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Could not load this round.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    void load(() => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [roundId]);
+  }, [load]);
 
   // Course runs are `allow read: if isSignedIn()`, so the run pickers read them
   // straight from Firestore. Tens of documents at NAISI scale: one unfiltered
