@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import styles from "./DraftSaveBar.module.css";
 
@@ -23,6 +23,11 @@ import styles from "./DraftSaveBar.module.css";
  * is cleared on every successful save. So a form nobody is touching makes no
  * requests at all, and a form being typed into saves at most once every two
  * minutes however fast the typing is.
+ *
+ * A FAILED save re-arms it for one more cycle rather than ending the autosave
+ * for the session: see `failures` below. The bar keeps saying "this saves
+ * itself every couple of minutes", and that sentence has to stay true after a
+ * connection drops for two minutes on a bus.
  *
  * `beforeunload` is only registered WHILE dirty. Registering it always would
  * put a browser confirmation in front of somebody who has changed nothing,
@@ -69,13 +74,38 @@ export default function DraftSaveBar({
     saveRef.current = onSave;
   });
 
+  /**
+   * How many autosaves have FAILED since the last successful one.
+   *
+   * It exists to re-arm the timer. A successful save moves `savedAt` and
+   * clears `dirty`, both of which the effect below depends on, so the next
+   * cycle arms itself. A failed one moves neither: the form is still dirty and
+   * `savedAt` is still whatever it was, so without this the effect's
+   * dependencies are unchanged, React keeps the cleaned-up timer torn down,
+   * and the autosave is over for the rest of the session. Somebody whose
+   * connection dropped for one cycle would get "Unsaved changes. This saves
+   * itself every couple of minutes." from a bar that had stopped trying.
+   *
+   * Counting rather than toggling so two failures in a row are two distinct
+   * values, and each one arms one more cycle.
+   */
+  const [failures, setFailures] = useState(0);
+
   useEffect(() => {
     if (!dirty || disabled) return;
     const timer = window.setTimeout(() => {
-      void saveRef.current();
+      // A rejection counts as a failure too: `onSave` is contracted to resolve
+      // false rather than throw, but a bar that stops saving forever because
+      // that contract slipped is exactly the failure this counter is for.
+      void saveRef.current().then(
+        (ok) => {
+          if (!ok) setFailures((n) => n + 1);
+        },
+        () => setFailures((n) => n + 1),
+      );
     }, AUTOSAVE_INTERVAL_MS);
     return () => window.clearTimeout(timer);
-  }, [dirty, disabled, savedAt]);
+  }, [dirty, disabled, savedAt, failures]);
 
   useEffect(() => {
     if (!dirty) return;

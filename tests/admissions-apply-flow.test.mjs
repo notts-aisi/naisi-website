@@ -1509,6 +1509,23 @@ describe("the apply flow island", () => {
     );
   });
 
+  test("a failed autosave re-arms rather than ending the autosave for good", () => {
+    const bar = source("src/features/admissions/DraftSaveBar.tsx");
+    // A successful save moves `savedAt` and clears `dirty`, so the effect
+    // re-runs and arms the next cycle. A FAILED one moves neither, so without
+    // a dependency that the failure itself changes, React keeps the timer torn
+    // down and the bar goes on promising a save it will never attempt again.
+    assert.match(bar, /setFailures\(\(n\) => n \+ 1\)/);
+    assert.match(bar, /\}, \[dirty, disabled, savedAt, failures\]\);/);
+    // A rejection has to count as a failure too, or one thrown save is the
+    // same permanent stop by another route.
+    assert.equal(
+      (bar.match(/setFailures\(\(n\) => n \+ 1\)/g) ?? []).length,
+      2,
+      "only one of the resolve-false and reject paths bumps the counter",
+    );
+  });
+
   test("the availability grid locks the document only while a TOUCH drag is live", () => {
     const grid = source("src/features/admissions/AvailabilityGrid.tsx");
     // The lock is for one gesture: a finger dragging off the bottom edge. On a
