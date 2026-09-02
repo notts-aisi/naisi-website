@@ -56,8 +56,8 @@
  *  5. A `questions` field added to the ROUND fixture → everything stays
  *     GREEN, and that is correct rather than a hole: the round is
  *     unreadable, so the questions are not on the wire. Add (1)'s sibling
- *     mutation on top of it — `admissionRounds` relaxed to
- *     `allow read: if isSignedIn()` WITH the fixture change — and the
+ *     mutation on top of it (`admissionRounds` relaxed to
+ *     `allow read: if isSignedIn()` WITH the fixture change) and the
  *     scanner goes red alongside the read tests. That pair is the real
  *     property: the guarantee is not "no questions on a round", it is "no
  *     questions anywhere a client can reach", and the scanner tracks the
@@ -82,7 +82,7 @@ import {
 } from "../lib/harness.mjs";
 
 before(async () => {
-  // Unique per file — a shared project id lets one file's clearFirestore()
+  // Unique per file: a shared project id lets one file's clearFirestore()
   // wipe another's fixtures mid-test (see harness.mjs).
   await getTestEnv("admissions");
 });
@@ -131,7 +131,7 @@ const ZERO_ADMISSION_COUNTS = {
 
 /**
  * A round as the authoring route writes it. Note what is NOT here: there is
- * no `questions` field, and there never may be — see the scanner below.
+ * no `questions` field, and there never may be. See the scanner below.
  */
 function roundDoc(overrides = {}) {
   return {
@@ -382,7 +382,7 @@ const COLLECTIONS = [
 // The blanket denial, verb by verb and hat by hat
 // ===========================================================================
 
-describe("admissions — no client reads anything, admins included", () => {
+describe("admissions: no client reads anything, admins included", () => {
   for (const entry of COLLECTIONS) {
     it(`refuses every GET and every LIST on ${entry.label}`, async () => {
       await seedCast();
@@ -399,7 +399,7 @@ describe("admissions — no client reads anything, admins included", () => {
   }
 });
 
-describe("admissions — no client writes anything, admins included", () => {
+describe("admissions: no client writes anything, admins included", () => {
   for (const entry of COLLECTIONS) {
     it(`refuses CREATE, UPDATE and DELETE on ${entry.label}`, async () => {
       await seedCast();
@@ -424,11 +424,11 @@ describe("admissions — no client writes anything, admins included", () => {
 // The reads that would have looked reasonable
 // ===========================================================================
 
-describe("admissions — the plausible reads, refused for their own reasons", () => {
+describe("admissions: the plausible reads, refused for their own reasons", () => {
   it("refuses an APPLICANT their own application row", async () => {
     // The sharpest one. The row carries `evidence.facilitatorNotes` (a
     // facilitator's private written assessment of this person) and
-    // `outcome.reason` alongside `outcome.reasonShared: false` — the tick the
+    // `outcome.reason` alongside `outcome.reasonShared: false`, the tick the
     // decider deliberately did NOT set. An own-row read hands the applicant
     // both from the browser console.
     await seedCast();
@@ -492,7 +492,7 @@ describe("admissions — the plausible reads, refused for their own reasons", ()
   it("refuses a SIGNED-IN account the stage questions before release, and after it", async () => {
     // The release boundary is enforced by a route calling isStageReleased.
     // The rule's job is only to make sure there is no second path to the
-    // questions, and there is not — the subcollection is unreadable whatever
+    // questions, and there is not: the subcollection is unreadable whatever
     // the release dates say.
     await seedCast();
     await seedAdmissions();
@@ -559,7 +559,7 @@ async function readableDocsCarryingQuestions(uid = "member1") {
   return found;
 }
 
-describe("admissions — question text never sits on a readable document", () => {
+describe("admissions: question text never sits on a readable document", () => {
   it("finds no readable document carrying questions across the real fixtures", async () => {
     await seedCast();
     await seedAdmissions();
@@ -601,7 +601,7 @@ describe("admissions — question text never sits on a readable document", () =>
     assert.deepEqual(await readableDocsCarryingQuestions(), []);
   });
 
-  it("SELF-CHECK — the scanner catches a leak planted on a readable document", async () => {
+  it("SELF-CHECK: the scanner catches a leak planted on a readable document", async () => {
     // Without this, the test above would pass just as happily if the scanner
     // were broken, if `courseRuns` had stopped being readable, or if the
     // probe swallowed every error. Plant the exact mistake the rule exists to
@@ -627,7 +627,7 @@ describe("admissions — question text never sits on a readable document", () =>
 // The list regression
 // ===========================================================================
 
-describe("admissions — a 25-document list on a readable sibling still serves", () => {
+describe("admissions: a 25-document list on a readable sibling still serves", () => {
   it("lets a member list 25 course runs, and refuses 25 admission rounds", async () => {
     // WHAT THIS PROVES. Firestore evaluates a read rule PER DOCUMENT and caps
     // the document lookups one request may make, so a read rule that reaches

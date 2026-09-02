@@ -1,5 +1,5 @@
 /**
- * `admissionApplicationPrivate/{roundId}__{uid}` — the access-requirements
+ * `admissionApplicationPrivate/{roundId}__{uid}`: the access-requirements
  * answer, and NOTHING else.
  *
  * ## Why this is a collection and not a field

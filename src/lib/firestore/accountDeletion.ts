@@ -25,7 +25,7 @@ export type AccountDeletionSummary = {
   courseAttendanceMarksCleared: number;
   /** Admission applications (drafts included) written by this account. */
   admissionApplicationsDeleted: number;
-  /** Their access-requirements rows, deleted in the SAME batch — see below. */
+  /** Their access-requirements rows, deleted in the SAME batch. See below. */
   admissionApplicationPrivateDeleted: number;
   /** Review rows written ABOUT this account. */
   admissionReviewsDeleted: number;
@@ -176,8 +176,8 @@ async function clearCourseAttendanceMarks(
  *
  * `admissionApplicationPrivate` holds the answer to "is there anything we
  * should know about access requirements?", which in practice means disability
- * and health information. It deliberately carries NOTHING but that answer —
- * no `uid`, no `roundId` — because the collection's whole design is that no
+ * and health information. It deliberately carries NOTHING but that answer
+ * (no `uid`, no `roundId`), because the collection's whole design is that no
  * reader can join it by accident. The price of that is that it has no field
  * to query on: the ONLY handle back to a private row is the application id it
  * shares, `${roundId}__${uid}`.
@@ -185,7 +185,7 @@ async function clearCourseAttendanceMarks(
  * So a private sweep that ran after the applications were gone would have
  * nothing left to address, and the rows would sit in an
  * `allow read, write: if false` collection that nothing on the site could
- * name — the most sensitive text in the whole intake, permanently
+ * name: the most sensitive text in the whole intake, permanently
  * unreachable and undeletable. The `clearCourseAttendanceMarks` ordering
  * lesson in its sharpest form.
  *
@@ -304,7 +304,7 @@ async function deleteAdmissionApplications(
  * `memberConductFlags` carries a free-text allegation. All are keyed to the
  * uid alone. And `admissionApplicationPrivate` holds the access-requirements
  * answer, which will in practice contain disability and health information
- * and which has NO field to query on by design — see
+ * and which has NO field to query on by design; see
  * `deleteAdmissionApplications` for why that makes it the one row that must
  * die in the same batch as its application rather than in a sweep of its own.
  * The reviewer-authored retention decision is argued at its call site rather
@@ -528,7 +528,7 @@ export async function deleteAccountCascade(
   }
 
   // 5d. ADMISSIONS. Same tier as the course rows above and for the same
-  //     reason — every one of these is keyed to the uid rather than owned by
+  //     reason: every one of these is keyed to the uid rather than owned by
   //     a document somebody can still administer, so with the users doc gone
   //     they are ghost rows no admin surface could find. Each is its own try
   //     so one failure does not cost the others.
@@ -561,9 +561,9 @@ export async function deleteAccountCascade(
   // RETENTION DECISION, stated rather than left to inference: these are
   // DELETED too. The argument for keeping them is that they are somebody
   // else's decision record. The argument that wins is that the row is
-  // personal data about the REVIEWER as well as the applicant — it is their
+  // personal data about the REVIEWER as well as the applicant (it is their
   // named judgement, their free text, and the queue attributes it to them by
-  // uid — and that with the reviewer's account gone it attributes itself to
+  // uid), and that with the reviewer's account gone it attributes itself to
   // an id nothing can resolve. Keeping it would mean an anonymous score of
   // unknown provenance sitting in a decision aggregate, which is worse for
   // the applicant than one fewer review: the coverage filter would count a
@@ -573,7 +573,7 @@ export async function deleteAccountCascade(
   // realistic case is an account deleted long after the round settled, where
   // the decision has already been made and mailed. A reviewer who deletes
   // their account MID-round leaves an application short of coverage, which
-  // the queue's coverage filter surfaces as work to redo — visible, and the
+  // the queue's coverage filter surfaces as work to redo: visible, and the
   // right answer.
   try {
     summary.admissionReviewsAuthoredDeleted = await deleteOwnedCourseRows(

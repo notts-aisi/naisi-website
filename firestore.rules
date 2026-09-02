@@ -1751,8 +1751,8 @@ service cloud.firestore {
     // =====================================================================
     //
     // Six collections, every one of them `allow read, write: if false`.
-    // That is unusually blunt for this file, so each half is argued below —
-    // "deny everything" is only a good rule when someone has checked that
+    // That is unusually blunt for this file, so each half is argued below.
+    // "Deny everything" is only a good rule when someone has checked that
     // nothing legitimate needed the door.
     //
     // WHY NO CLIENT WRITES ANYWHERE. Every one of these carries something

@@ -1,5 +1,5 @@
 /**
- * `admissionReviews/{roundId}__{applicantUid}__{reviewerUid}` — one
+ * `admissionReviews/{roundId}__{applicantUid}__{reviewerUid}`: one
  * reviewer's scored assessment of one applicant.
  *
  * ## The doc id is the "no duplicates" rule

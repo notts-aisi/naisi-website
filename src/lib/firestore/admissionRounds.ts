@@ -10,7 +10,7 @@ import {
 import { slugId } from "./slugId";
 
 /**
- * `admissionRounds/{roundId}` — one intake. The object an applicant applies
+ * `admissionRounds/{roundId}`: one intake. The object an applicant applies
  * TO, and the object a reviewer reviews FOR.
  *
  * ## Why this is not a field on a course run
@@ -335,7 +335,7 @@ export type AdmissionRoundDoc = {
 };
 
 /**
- * `admissionRounds/{roundId}/stages/{stageId}` — one released-on-a-date block
+ * `admissionRounds/{roundId}/stages/{stageId}`: one released-on-a-date block
  * of questions.
  *
  * Subcollections do NOT inherit their parent's rules, so this needs its own

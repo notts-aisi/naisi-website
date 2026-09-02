@@ -125,7 +125,7 @@ export function isUsableGrid(grid: AvailabilityGrid | null | undefined): grid is
 
 /**
  * How many slots one day column holds. A window that is not a whole number of
- * slots long is FLOORED — a trailing part-slot is not offerable, so offering
+ * slots long is FLOORED. A trailing part-slot is not offerable, so offering
  * it would mean an applicant could mark availability for a quarter hour that
  * runs past the window the round advertised.
  */

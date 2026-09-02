@@ -8,7 +8,7 @@ import {
 import type { RsvpAnswer } from "./events";
 
 /**
- * `admissionApplications/{roundId}__{uid}` — one person's application to one
+ * `admissionApplications/{roundId}__{uid}`: one person's application to one
  * round, from the first keystroke of a draft to the decision.
  *
  * ## The doc id is the invariant

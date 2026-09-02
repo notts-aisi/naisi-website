@@ -599,7 +599,7 @@ test("GUARD — the cascade does NOT delete the collections the manifest calls s
   assert.equal(countMeta("emailSendRows").fate, "retained");
   assert.equal(countMeta("templates").fate, "orphaned");
   assert.equal(countMeta("admissionSeatOffers").fate, "orphaned");
-  // All three are still COUNTED — "how much history mentions this run" is
+  // All three are still COUNTED: "how much history mentions this run" is
   // worth knowing even when nothing happens to it, and "eleven people were
   // placed here" is worth knowing most of all.
   assert.match(ENGINE, /collection\("emailSends"\)/);

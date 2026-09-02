@@ -9,17 +9,17 @@
  * Each of the three modules is the ONLY implementation of something two
  * surfaces would otherwise implement twice:
  *
- *  1. **`window.ts`** — whether you can apply. The courses version of this
+ *  1. **`window.ts`**: whether you can apply. The courses version of this
  *     exists because discovery and submit disagreed and an applicant wrote
  *     five hundred words into a form the route then refused. A round has the
  *     same two halves and would grow the same bug.
- *  2. **`stageRelease.ts`** — whether a question may be served yet. This one
+ *  2. **`stageRelease.ts`**: whether a question may be served yet. This one
  *     is not a convenience: it is the entire timed-release guarantee. The
  *     stages subcollection is `allow read, write: if false` precisely so that
  *     nothing but a route which called `isStageReleased` can put a question
  *     on the wire, which means a bug here is a fairness failure, not a
  *     display bug.
- *  3. **`availability.ts`** — one hex codec. The decide route resolves seat
+ *  3. **`availability.ts`**: one hex codec. The decide route resolves seat
  *     labels through it and the allocation board's conflict warning is built
  *     on those labels, so a bit-order or bounds mistake blanks the one screen
  *     whose whole job is putting people into session slots.
@@ -675,7 +675,7 @@ test("opensAt and closesAt are echoed back in every state", () => {
 // §2.4 THE LONDON DAY BOUNDARY
 // ---------------------------------------------------------------------------
 
-test("LONDON — a deadline late in the evening is never named a day early", () => {
+test("LONDON: a deadline late in the evening is never named a day early", () => {
   // The bug this exists to catch: formatting a deadline in UTC. During BST an
   // instant after 23:00 UTC is already the NEXT calendar day in London, so a
   // UTC-formatted label names the wrong day, and an applicant reads "you have
@@ -780,7 +780,7 @@ test("a malformed release date falls back to releasing with the round", () => {
 // §3.4 THE LONDON DAY BOUNDARY, on the release side
 // ---------------------------------------------------------------------------
 
-test("LONDON — the same announced wall clock is a different instant either side of the clock change", () => {
+test("LONDON: the same announced wall clock is a different instant either side of the clock change", () => {
   // British Summer Time ends at 02:00 on Sunday 25 October 2026. A stage
   // announced for "09:00 on Monday" releases at 08:00Z the week before and at
   // 09:00Z the week after. An implementation that stored or derived the
@@ -847,7 +847,7 @@ test("the deterministic ids are construct-only and agree with each other", () =>
   );
 });
 
-test("THE RULE — no round or application document carries a `questions` field", () => {
+test("THE RULE: no round or application document carries a `questions` field", () => {
   // Question text lives ONLY in the stages subcollection, which is
   // `allow read, write: if false`. Any copy of it onto a document a client
   // could read defeats the timed release, and the V2 shape (questions on a
@@ -963,7 +963,7 @@ test("a reviewer's conduct chip is a boolean and can never carry the reason", ()
 // loosening the pin.
 // ===========================================================================
 
-test("MODEL — the summary counts every admissions collection the sweep touches", () => {
+test("MODEL: the summary counts every admissions collection the sweep touches", () => {
   const summaryType = /export type AccountDeletionSummary = \{([\s\S]*?)\n\};/.exec(
     ACCOUNT_DELETION,
   );
@@ -999,7 +999,7 @@ test("MODEL — the summary counts every admissions collection the sweep touches
   );
 });
 
-test("MODEL — the access-requirements row dies in the SAME BATCH as its application", () => {
+test("MODEL: the access-requirements row dies in the SAME BATCH as its application", () => {
   // It has no field to query on by design, so the application id is the only
   // handle back to it. A separate sweep running afterwards would find nothing
   // to address and would strand disability and health information in a
@@ -1032,7 +1032,7 @@ test("MODEL — the access-requirements row dies in the SAME BATCH as its applic
   );
 });
 
-test("MODEL — reviews are swept from BOTH sides, and the conduct flag is addressed", () => {
+test("MODEL: reviews are swept from BOTH sides, and the conduct flag is addressed", () => {
   // The applicant side and the reviewer side name the same account through
   // two different fields, so one sweep would leave the other half behind.
   assert.match(ACCOUNT_DELETION_CODE, /"admissionReviews",\s*uid,\s*"applicantUid"/);
@@ -1047,7 +1047,7 @@ test("MODEL — reviews are swept from BOTH sides, and the conduct flag is addre
   );
 });
 
-test("MODEL — every admissions step is best-effort and none can abort the cascade", () => {
+test("MODEL: every admissions step is best-effort and none can abort the cascade", () => {
   // The one FATAL step is the subscription rows, because a surviving row keeps
   // mailing a deleted user. Nothing in admissions has that property, and a
   // throw from any of it would cost the caller the Auth deletion.

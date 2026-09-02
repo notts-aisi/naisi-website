@@ -25,7 +25,7 @@ import { roundWindowState, type RoundWindowInput } from "./window";
  *
  * ## The three ways a stage becomes released
  *
- *  1. **With the round.** `releaseAt: null` means "this stage is the form" —
+ *  1. **With the round.** `releaseAt: null` means "this stage is the form",
  *     the single-stage case, which is how the autumn round runs if the
  *     multi-stage work is descoped. It releases the moment the round's window
  *     opens and not a second earlier.

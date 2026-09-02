@@ -160,7 +160,7 @@ export type RunDestroyCounts = {
    * `admissionApplications` whose `outcome.targetRunId` is this run: the
    * people a decider placed HERE.
    *
-   * These rows are NOT deleted, and they are not merely orphaned either —
+   * These rows are NOT deleted, and they are not merely orphaned either:
    * they are RELEASED. See `releaseAdmissionSeats` for the argument; the
    * manifest line exists because "eleven people were placed on this cohort
    * and will be released from it" is the single most consequential sentence
@@ -595,7 +595,7 @@ async function releaseAdmissionSeats(
     const firstId = snap.docs[0].id;
     if (firstId === prevFirstId) {
       throw new Error(
-        "courseDeletion: admissionApplications page did not shrink after a committed release — " +
+        "courseDeletion: admissionApplications page did not shrink after a committed release, " +
           "aborting rather than looping (a silent stop would report progress over rows still holding a seat)",
       );
     }
@@ -700,8 +700,8 @@ export async function countRunDestroyTargets(
     ),
     // Single equality on a nested field, served by the automatic single-field
     // index like every other leaf here. It counts the rows the cascade will
-    // RELEASE, which is the same predicate `releaseAdmissionSeats` drains on
-    // — a manifest built on a different filter would promise to touch rows
+    // RELEASE, which is the same predicate `releaseAdmissionSeats` drains
+    // on. A manifest built on a different filter would promise to touch rows
     // the cascade leaves alone, or hide ones it does not.
     countAgg(
       db.collection("admissionApplications").where("outcome.targetRunId", "==", runId),

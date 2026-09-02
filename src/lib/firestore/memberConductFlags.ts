@@ -1,5 +1,5 @@
 /**
- * `memberConductFlags/{uid}` — a conduct flag on one member, with a required
+ * `memberConductFlags/{uid}`: a conduct flag on one member, with a required
  * reason.
  *
  * ## Why this is not a field on users/{uid}
