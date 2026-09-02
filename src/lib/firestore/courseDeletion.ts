@@ -14,7 +14,9 @@ import {
   type CourseDoc,
   type CourseRunDoc,
 } from "./courses";
+import { COURSE_AUDIT_COLLECTION } from "./courseAudit";
 import { COURSE_MATERIAL_NOTES_COLLECTION } from "./courseMaterialNotes";
+import { SCHEDULER_MARKERS_COLLECTION } from "./schedulerMarkers";
 import { deleteEventsForSubscriptions } from "./subscriptions";
 import { ownedStoragePaths } from "./taskAttachments";
 
@@ -156,6 +158,71 @@ export type RunDestroyCounts = {
   materialNotes: number;
   mirroredTasks: number;
   subscriptionRows: number;
+  /**
+   * `admissionApplications` whose `outcome.targetRunId` is this run: the
+   * people a decider placed HERE.
+   *
+   * These rows are NOT deleted, and they are not merely orphaned either:
+   * they are RELEASED. See `releaseAdmissionSeats` for the argument; the
+   * manifest line exists because "eleven people were placed on this cohort
+   * and will be released from it" is the single most consequential sentence
+   * a destroy dialog can show, and the counter it is built from is the only
+   * place it can come from.
+   *
+   * `admissionRounds` themselves are untouched by any cascade in this file.
+   * A round outlives every run it fed (one round feeds several, and an
+   * appointment round feeds none), so destroying a run must never reach the
+   * round that placed people on it. Destroying a ROUND is a separate
+   * protocol with its own typed confirmation and its own manifest, and it is
+   * not built yet.
+   *
+   * KNOWN GAP, deliberately left for PR8 or PR33: a round POINTS AT runs
+   * from two array fields, `evidenceRunIds` (the pre-course runs a reviewer
+   * scores attendance from) and `outcomeRunIds` (the runs a decider may
+   * place people on), and neither `runDestroyBlockers` nor this counter
+   * looks at either. So a run can be destroyed while a live round still
+   * names it, leaving the round's evidence builder pointed at a cohort with
+   * no register and its decide screen offering a target run that no longer
+   * resolves. Fixing it means one of two things, and it is a product
+   * decision rather than a mechanical one: either naming the round a
+   * BLOCKER (safest, and consistent with "a live child blocks a destroy"),
+   * or counting the referencing rounds here and pruning the arrays as a
+   * release stage. Whichever wins, the round write it needs belongs in the
+   * round's own PR, not in this file, which is why nothing here does it yet.
+   */
+  admissionSeatOffers: number;
+  /**
+   * `courseAudit` rows scoped to this run (V3 W1 PR5): registers pushed and
+   * edited, facilitators appointed and removed, drop-outs, the enrolment-mode
+   * flips, the run being settled.
+   *
+   * DESTROYED, unlike `emailSendRows` beside it, and the difference is what
+   * each log is evidence OF. `emailSends` is evidence about a message that
+   * left the platform and reached a person's inbox, which outlives the run it
+   * mentions. A `courseAudit` row is evidence about a row this cascade is
+   * deleting in the same pass: once the register, the group and the
+   * enrolments are gone, "an admin edited register X" names nothing. Leaving
+   * them would accumulate orphans nothing can render and nothing can query,
+   * which is the failure the house rule about manifests exists to prevent.
+   */
+  auditRows: number;
+  /**
+   * `schedulerMarkers` rows this run owns: the send-dedupe markers the
+   * scheduler tick writes before it sends anything.
+   *
+   * Two families name this run, and they name it differently. `breakret__`
+   * stores `runId` as a field; `unmarked__` stores only `groupId`, because
+   * the job that writes it is walking group sessions and never needs the run.
+   * Both are counted here, the second through the run's group ids.
+   *
+   * They carry no member work and no PII, so the number is small print rather
+   * than a warning. It is on the manifest because the house rule is that
+   * every collection a PR adds is counted and drained in that same PR, and
+   * because a marker outliving its run is not harmless: an `unmarked__` row
+   * keyed to a group id that comes round again would suppress a real
+   * follow-up on a different cohort, silently.
+   */
+  schedulerMarkers: number;
   emailSendRows: number;
 };
 
@@ -318,6 +385,87 @@ async function drainQuery(
     if (snap.size < limit) return { deleted, drained: true };
   }
   return { deleted, drained: false };
+}
+
+/** Firestore's ceiling on the value list of an `in` filter. */
+const IN_FILTER_MAX = 30;
+
+/** Split ids into `in`-filter-sized chunks. Empty in, empty out. */
+function chunkIds(ids: readonly string[]): string[][] {
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += IN_FILTER_MAX) {
+    chunks.push(ids.slice(i, i + IN_FILTER_MAX));
+  }
+  return chunks;
+}
+
+/**
+ * The run's live group ids, read with a projection (`.select()`) so the query
+ * carries ids and nothing else. Both the manifest and the scheduler-marker
+ * drain need them: the group-lane rows in `emailSends` and the `unmarked__`
+ * marker family are addressed by group, not by run.
+ */
+async function runGroupIds(db: Firestore, runId: string): Promise<string[]> {
+  const snap = await db
+    .collection("courseGroups")
+    .where("runId", "==", runId)
+    .select()
+    .get();
+  return snap.docs.map((d) => d.id);
+}
+
+/**
+ * Drain this run's `schedulerMarkers` rows.
+ *
+ * Two families name a run and they name it differently, which is why this is
+ * a function rather than one more `byRunId` line in the stage table:
+ *
+ *  - `breakret__{runId}__{groupId}__{slotStartKey}` stores `runId` as a
+ *    top-level field, so it drains on a single equality like every leaf;
+ *  - `unmarked__{groupId}__{sessionKey}` stores `groupId` and no run at all,
+ *    because the job that writes it walks group sessions. That family is
+ *    drained a chunk of group ids at a time, at Firestore's `in` cap.
+ *
+ * The group ids are read LIVE on each call rather than captured once, and
+ * this stage sits ABOVE `groups` in the table for that reason: while there
+ * are groups to read there are markers to find, and by the time the groups
+ * are gone this stage has already run in the same pass.
+ *
+ * Markers hold no member work and no PII. They are drained anyway because a
+ * marker that outlives its run is not inert: an `unmarked__` row keyed to a
+ * group id that comes round again suppresses a real follow-up on a different
+ * cohort, and a suppressed send is exactly the failure the marker design
+ * exists to make visible rather than cause.
+ */
+async function drainSchedulerMarkers(
+  db: Firestore,
+  runId: string,
+  budget: Budget,
+): Promise<DrainResult> {
+  let deleted = 0;
+  let drained = true;
+
+  const byRun = await drainQuery(
+    db,
+    "schedulerMarkers (runId)",
+    () => db.collection(SCHEDULER_MARKERS_COLLECTION).where("runId", "==", runId),
+    budget,
+  );
+  deleted += byRun.deleted;
+  if (!byRun.drained) return { deleted, drained: false };
+
+  for (const chunk of chunkIds(await runGroupIds(db, runId))) {
+    if (budget.remaining <= 0) return { deleted, drained: false };
+    const res = await drainQuery(
+      db,
+      "schedulerMarkers (groupId)",
+      () => db.collection(SCHEDULER_MARKERS_COLLECTION).where("groupId", "in", chunk),
+      budget,
+    );
+    deleted += res.deleted;
+    if (!res.drained) drained = false;
+  }
+  return { deleted, drained };
 }
 
 /**
@@ -513,6 +661,126 @@ async function drainSubscriptionRows(
   return { deleted, drained: false };
 }
 
+/**
+ * RELEASE, not delete: the admission applications whose outcome placed
+ * somebody on this run.
+ *
+ * ## Why these rows survive a destroy
+ *
+ * An `admissionApplications` row is a PERSON'S APPLICATION. It belongs to the
+ * round and to the applicant, not to the run: it holds the essays they wrote,
+ * their availability, their evidence snapshot and the decision that was made
+ * about them, and the owner's decision is that applications are kept and
+ * stored against the account. One round also feeds several runs, so deleting
+ * every application pointing at one destroyed run would take rows belonging
+ * to an intake that is still live and still being decided.
+ *
+ * ## Why they cannot be left untouched either
+ *
+ * The seat those rows describe is being destroyed. Leaving them says three
+ * false things at once: `status: "accepted"` claims a place on a cohort that
+ * no longer exists, `outcome.targetRunId` points at a document nothing can
+ * resolve, and `seatApplicationId` names a `courseApplications` row this same
+ * cascade has already deleted. The status hub would show a live placement on
+ * a cohort nothing can open.
+ *
+ * So each row is RELEASED: `status` becomes `withdrawn`, and the two
+ * pointers are cleared. What actually happened is still legible from the row
+ * (the decision, the decider, the timestamp and the reason are all
+ * untouched) and from the destroy audit row, which records how many were
+ * released. Withdrawn is the right terminal status because it is the one the
+ * decide route already treats as "holds no seat": reinstating somebody is
+ * `withdrawn -> submitted` inside the counter transaction, so a released
+ * applicant can be put back into a live round by the route that already
+ * exists, rather than needing a repair nobody has written.
+ *
+ * `withdrawnAt` is deliberately NOT stamped. It records when THE APPLICANT
+ * withdrew, and reading it is how the reapply flow and the queue tell a
+ * person's own change of mind from anything else; a system release is not
+ * that, and back-dating one would put an act on the applicant's record that
+ * they never performed. The destroy audit row carries the when, the who and
+ * the how many for this release, and `updatedAt` moves, so nothing is lost.
+ *
+ * ## The round's counters are deliberately NOT moved here
+ *
+ * A release does not touch `admissionRounds.applicationCounts`, and nothing
+ * anywhere in this file writes an `admissionRounds` document (a test pins
+ * that). The counters are relative increments owned by the apply, submit and
+ * decide transactions; a second writer outside those transactions is how a
+ * counter goes wrong, not how it is repaired. And a round outlives every run
+ * it fed, so a run destroy must never reach one.
+ *
+ * The consequence is real and accepted: after a destroy, a round's accepted
+ * count can read higher than its rows justify. The repair is the round's own
+ * recount, `POST /api/admissions/rounds/[roundId]/recount` (PR33), which
+ * rebuilds the numbers from the rows themselves. It is the same repair the
+ * account cascade leans on for the same reason.
+ *
+ * ## Why clearing `outcome.targetRunId` is load-bearing, not tidiness
+ *
+ * It is also what makes this stage drain. Every other stage here is
+ * delete-as-you-read: the page it processes stops matching the query, so the
+ * next query's first page IS the next unprocessed page, and the
+ * first-doc-id guard can tell "nothing is happening" from "still working".
+ * An update that left the row matching would re-read the same page forever
+ * and trip that guard on the first pass. Clearing the pointer gives an update
+ * the same property a delete has, and it is the honest write regardless: a
+ * pointer at a destroyed run is not information.
+ */
+async function releaseAdmissionSeats(
+  db: Firestore,
+  runId: string,
+  budget: Budget,
+): Promise<DrainResult> {
+  let released = 0;
+  let prevFirstId: string | null = null;
+  while (budget.remaining > 0) {
+    const limit = Math.min(DESTROY_PAGE_SIZE, budget.remaining);
+    const snap = await db
+      .collection("admissionApplications")
+      .where("outcome.targetRunId", "==", runId)
+      .limit(limit)
+      .get();
+    if (snap.empty) return { deleted: released, drained: true };
+
+    const firstId = snap.docs[0].id;
+    if (firstId === prevFirstId) {
+      throw new Error(
+        "courseDeletion: admissionApplications page did not shrink after a committed release, " +
+          "aborting rather than looping (a silent stop would report progress over rows still holding a seat)",
+      );
+    }
+    prevFirstId = firstId;
+
+    const batch = db.batch();
+    for (const d of snap.docs) {
+      // The dotted key IS a field path here, and that is what is wanted:
+      // `outcome` is a map and only its `targetRunId` leaf moves, so the
+      // decision, the decider and the reason all survive untouched.
+      //
+      // `update` on a document deleted between the read and the commit aborts
+      // the whole batch. The only thing that deletes an admission application
+      // is an account cascade, so the race is a member deleting their account
+      // mid-destroy: the batch fails, this stage throws, and the destroy stops
+      // with its audit row open for a resume that will simply not see the row.
+      // That is the same failure shape the delete stages have, and the same
+      // recovery.
+      batch.update(d.ref, {
+        status: "withdrawn",
+        seatApplicationId: null,
+        "outcome.targetRunId": null,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    await batch.commit();
+    released += snap.size;
+    budget.remaining -= snap.size;
+
+    if (snap.size < limit) return { deleted: released, drained: true };
+  }
+  return { deleted: released, drained: false };
+}
+
 // ---------------------------------------------------------------------------
 // Manifest counts + blockers (run)
 // ---------------------------------------------------------------------------
@@ -534,24 +802,22 @@ export async function countRunDestroyTargets(
   // `referenceId: groupId` while run-lane sends log `referenceId: runId`
   // (courseFacilitatorEmails.ts), so an honest "history mentions this run"
   // number needs both. Chunked `in` filters at Firestore's 30-value cap.
-  const groupIdSnap = await db
-    .collection("courseGroups")
-    .where("runId", "==", runId)
-    .select()
-    .get();
-  const groupIds = groupIdSnap.docs.map((d) => d.id);
+  const groupIds = await runGroupIds(db, runId);
 
-  const emailRefIds = [runId, ...groupIds];
-  const emailCountPromises: Array<Promise<number>> = [];
-  for (let i = 0; i < emailRefIds.length; i += 30) {
-    emailCountPromises.push(
-      countAgg(
-        db
-          .collection("emailSends")
-          .where("referenceId", "in", emailRefIds.slice(i, i + 30)),
-      ),
-    );
-  }
+  const emailCountPromises = chunkIds([runId, ...groupIds]).map((chunk) =>
+    countAgg(db.collection("emailSends").where("referenceId", "in", chunk)),
+  );
+
+  // `schedulerMarkers` is counted the same way it is drained: one equality on
+  // `runId` for the `breakret__` family, and a chunked `in` over the run's
+  // group ids for `unmarked__`, which stores no run at all. See
+  // drainSchedulerMarkers for why the two families differ.
+  const markerCountPromises = [
+    countAgg(db.collection(SCHEDULER_MARKERS_COLLECTION).where("runId", "==", runId)),
+    ...chunkIds(groupIds).map((chunk) =>
+      countAgg(db.collection(SCHEDULER_MARKERS_COLLECTION).where("groupId", "in", chunk)),
+    ),
+  ];
 
   const [
     weeks,
@@ -563,6 +829,9 @@ export async function countRunDestroyTargets(
     materialNotes,
     mirroredTasks,
     subscriptionRows,
+    admissionSeatOffers,
+    auditRows,
+    schedulerMarkerCounts,
     emailSendCounts,
   ] = await Promise.all([
     countAgg(db.collection("courseRuns").doc(runId).collection("weeks")),
@@ -591,6 +860,19 @@ export async function countRunDestroyTargets(
     countAgg(
       db.collection("subscriptions").where("channel", "==", courseRunChannel(runId)),
     ),
+    // Single equality on a nested field, served by the automatic single-field
+    // index like every other leaf here. It counts the rows the cascade will
+    // RELEASE, which is the same predicate `releaseAdmissionSeats` drains
+    // on. A manifest built on a different filter would promise to touch rows
+    // the cascade leaves alone, or hide ones it does not.
+    countAgg(
+      db.collection("admissionApplications").where("outcome.targetRunId", "==", runId),
+    ),
+    // `runId` is a stored FIELD on every audit row (the doc id is a Firestore
+    // auto-id and is never parsed), so this is the same single-equality shape
+    // as the leaves above and is served by the automatic single-field index.
+    countAgg(db.collection(COURSE_AUDIT_COLLECTION).where("runId", "==", runId)),
+    Promise.all(markerCountPromises),
     Promise.all(emailCountPromises),
   ]);
 
@@ -605,6 +887,9 @@ export async function countRunDestroyTargets(
     materialNotes,
     mirroredTasks,
     subscriptionRows,
+    admissionSeatOffers,
+    auditRows,
+    schedulerMarkers: schedulerMarkerCounts.reduce((a, b) => a + b, 0),
     emailSendRows: emailSendCounts.reduce((a, b) => a + b, 0),
   };
 }
@@ -902,7 +1187,10 @@ function auditIncrements(totals: Record<string, number>): Record<string, unknown
  *  4. Mirrored My Work tasks (see drainMirroredTasks — the deliberate
  *     inversion of accountDeletion's retain-tasks rule, and the index note).
  *  5. Nudge markers (courseNudges) — send-dedupe machinery keyed by runId;
- *     hygiene, so counted in `deleted` but not in the manifest.
+ *     hygiene, so counted in `deleted` but not in the manifest. Then the
+ *     scheduler's own markers (schedulerMarkers), which ARE on the manifest:
+ *     they must go before the groups, because one of the two families that
+ *     names this run is addressed by group id rather than by run id.
  *  6. Subscription rows on the cohort channel + their event log (see
  *     drainSubscriptionRows). After this, nothing can mail the cohort.
  *  7. Groups, then weeks — the structural containers, after everything that
@@ -1023,6 +1311,16 @@ export async function destroyRunCascade(
         drainQuery(db, "courseApplications", byRunId("courseApplications"), budget),
     },
     {
+      key: "admissionSeatOffers",
+      // The ONE stage that does not delete anything: it releases the
+      // admission applications that placed people here (see
+      // releaseAdmissionSeats). It runs immediately after the seat rows it
+      // points at, because until those are gone `seatApplicationId` still
+      // names something real, and clearing it first would leave the seat row
+      // orphaned in the window between the two.
+      drain: () => releaseAdmissionSeats(db, runId, budget),
+    },
+    {
       key: "mirroredTasks",
       drain: () => drainMirroredTasks(db, storage, runId, budget),
     },
@@ -1031,11 +1329,34 @@ export async function destroyRunCascade(
       drain: () => drainQuery(db, "courseNudges", byRunId("courseNudges"), budget),
     },
     {
+      key: "schedulerMarkers",
+      // ABOVE `groups` deliberately: the `unmarked__` family is addressed by
+      // group id, so this stage has to run while the run's groups are still
+      // readable. See drainSchedulerMarkers.
+      drain: () => drainSchedulerMarkers(db, runId, budget),
+    },
+    {
       key: "subscriptionRows",
       // COMPUTED from the run id, never `run.channel` — a doc carrying a
       // channel someone else owns would otherwise aim this drain at their
       // subscriber list. See drainSubscriptionRows.
       drain: () => drainSubscriptionRows(db, courseRunChannel(runId), budget, totals),
+    },
+    {
+      key: "auditRows",
+      // V3 W1 PR5. Drained BEFORE the groups and weeks it references, with
+      // the other leaves: an audit row is `read: if false` to every client
+      // and written only by Admin SDK routes, so nothing can recreate one
+      // behind the cascade, and the ordering is consistency rather than
+      // necessity, which is what stops the next reader working out which
+      // rule this one follows.
+      drain: () =>
+        drainQuery(
+          db,
+          COURSE_AUDIT_COLLECTION,
+          byRunId(COURSE_AUDIT_COLLECTION),
+          budget,
+        ),
     },
     {
       key: "groups",

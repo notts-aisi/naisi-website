@@ -7,6 +7,7 @@ import {
   destroyCourseCascade,
 } from "@/lib/firestore/courseDeletion";
 import { normalizeCourse } from "@/lib/firestore/courses";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * DESTROY a course. Only reachable once every run is gone (each run
@@ -27,6 +28,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ courseId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { courseId } = await ctx.params;
 
   const actor = await getCurrentUser();

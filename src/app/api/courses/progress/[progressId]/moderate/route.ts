@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * Hide or re-publish one member's public comment. ADMIN ONLY — not
@@ -39,6 +40,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ progressId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { progressId } = await ctx.params;
 
   const actor = await getCurrentUser();

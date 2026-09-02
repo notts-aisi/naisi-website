@@ -264,13 +264,31 @@ const RUN_COUNT_KEYS = [
   "materialNotes",
   "mirroredTasks",
   "subscriptionRows",
+  // Admission applications whose outcome placed somebody on this run (V3 W1).
+  // They are the one thing the cascade WRITES rather than deletes: the
+  // application belongs to the round and the applicant, so it survives with
+  // everything they wrote, set to `withdrawn` and unlinked from a cohort that
+  // has stopped existing.
+  "admissionSeatOffers",
+  // `courseAudit`, the run's operational log (V3 W1 PR5). Added to the
+  // manifest in the same change that gave the cascade a stage for it, for the
+  // reason materialNotes was: an unlisted collection means the dialog lies
+  // about what a destroy takes.
+  "auditRows",
+  // `schedulerMarkers`, the scheduler tick's claim-before-send markers.
+  // Added with the tick itself, under the house rule that a PR adding a
+  // collection adds it to the manifest AND the cascade in that same PR. Two
+  // families name this run and they name it differently: `breakret__` stores
+  // `runId`, `unmarked__` stores only `groupId`, so the count and the drain
+  // both go through the run's group ids for the second one.
+  "schedulerMarkers",
   "emailSendRows",
 ];
 /** `CourseDestroyCounts`, mirrored. */
 const COURSE_COUNT_KEYS = ["runs", "templates"];
 
 /** Counters whose rows SURVIVE the cascade — never part of the death toll. */
-const SURVIVING_COUNT_KEYS = ["emailSendRows", "templates"];
+const SURVIVING_COUNT_KEYS = ["emailSendRows", "templates", "admissionSeatOffers"];
 
 test("MODEL — the manifest count vocabulary is the same on both sides of the wire", () => {
   // The engine declares the counts; the dialog renders them; the two files were
@@ -312,12 +330,14 @@ test("GUARD — the survivors are not counted as deaths, and the arithmetic foll
   const counts = Object.fromEntries(
     [...RUN_COUNT_KEYS, ...COURSE_COUNT_KEYS].map((k) => [k, 10]),
   );
-  // Twelve counters at ten rows each: ten run counters that die, `materialNotes`
-  // among them, plus the two survivors.
-  assert.equal(sumCounts(counts), 130);
+  // Fifteen counters at ten rows each: twelve run counters that die,
+  // `materialNotes`, `auditRows` and `schedulerMarkers` among them, plus the
+  // three survivors (`admissionSeatOffers` is released, not destroyed).
+  assert.equal(sumCounts(counts), 160);
   // The progress denominator counts only what actually dies, so a large
-  // retained counter cannot inflate it into a bar that never fills.
-  assert.equal(destroyedTotal(counts), 110);
+  // retained counter cannot inflate it into a bar that never fills. Adding a
+  // survivor must not move this number.
+  assert.equal(destroyedTotal(counts), 130);
 });
 
 test("MODEL — every key the cascade can report has copy, including the ones the manifest never shows", () => {
@@ -470,9 +490,22 @@ test("MODEL — the cascade's declared stage order is the one the contract needs
     "materialNotes",
     "enrolments",
     "applications",
+    // Immediately after the seat rows it points at: until those are deleted,
+    // `seatApplicationId` still names something real, and clearing it first
+    // would orphan the seat row in the window between the two.
+    "admissionSeatOffers",
     "mirroredTasks",
     "nudgeMarkers",
+    // The scheduler tick's own markers. It sits here rather than beside the
+    // other leaves because half of it is addressed by GROUP id (`unmarked__`
+    // stores no run), so it must still be above `groups` and below nothing in
+    // particular.
+    "schedulerMarkers",
     "subscriptionRows",
+    // Another run-keyed leaf, drained with the rest. It is `write: if false`
+    // to every client, so nothing can recreate a row behind the cascade and
+    // its position is consistency rather than necessity.
+    "auditRows",
     "groups",
     "weeks",
   ]);
@@ -509,7 +542,12 @@ test("MODEL — leaf before index: every dependent stage precedes the one that n
       "materialNotes",
       "enrolments",
       "applications",
+      "admissionSeatOffers",
       "mirroredTasks",
+      // Not consistency: a REQUIREMENT. The `unmarked__` marker family is
+      // addressed by group id, so the drain resolves the run's groups and
+      // would find nothing at all if the groups had already gone.
+      "schedulerMarkers",
       "subscriptionRows",
     ]) {
       assert.ok(
@@ -518,6 +556,14 @@ test("MODEL — leaf before index: every dependent stage precedes the one that n
       );
     }
   }
+
+  // 3. The SEAT ROWS go before the applications that point at them. The
+  //    release clears `seatApplicationId`, so running it first would leave a
+  //    `courseApplications` row that nothing names for the rest of the pass.
+  assert.ok(
+    stageAt("applications") < stageAt("admissionSeatOffers"),
+    "admission seats are released before the seat rows they name are deleted",
+  );
 });
 
 test("MODEL — the run document is deleted LAST, and its subcollection is drained before it", () => {
@@ -555,12 +601,54 @@ test("MODEL — the run document is deleted LAST, and its subcollection is drain
   );
 });
 
+test("MODEL: the scheduler's markers are counted and drained on BOTH the shapes that name a run", () => {
+  // `schedulerMarkers` holds one row per unit of timed work, and two of its
+  // four families belong to a run. They are addressed differently, and a
+  // drain that only knew about one of them would leave the other behind:
+  //
+  //   breakret__{runId}__{groupId}__{slotStartKey}   stores `runId`
+  //   unmarked__{groupId}__{sessionKey}              stores only `groupId`
+  //
+  // A surviving `unmarked__` row is not inert. Its id names a group, and a
+  // group id that comes round again inherits the suppression: the follow-up
+  // that should have gone out on a different cohort silently does not.
+  const drain = ENGINE.slice(
+    ENGINE.indexOf("async function drainSchedulerMarkers"),
+    ENGINE.indexOf("async function drainMirroredTasks"),
+  );
+  assert.ok(drain.length > 0, "the cascade has no scheduler-marker drain");
+  assert.match(drain, /where\("runId", "==", runId\)/);
+  assert.match(drain, /where\("groupId", "in", chunk\)/);
+
+  // The manifest counts what the drain deletes, on both shapes. A manifest
+  // that counted one family and destroyed two would understate the toll,
+  // which is the failure direction §1 exists to rule out.
+  const manifest = ENGINE.slice(
+    ENGINE.indexOf("export async function countRunDestroyTargets"),
+    ENGINE.indexOf("export async function runDestroyBlockers"),
+  );
+  assert.match(manifest, /SCHEDULER_MARKERS_COLLECTION\)\.where\("runId", "==", runId\)/);
+  assert.match(manifest, /SCHEDULER_MARKERS_COLLECTION\)\.where\("groupId", "in", chunk\)/);
+
+  // And the ordering requirement that follows from the group-id half: the
+  // drain resolves the run's groups, so it has to run while they exist.
+  assert.ok(stageAt("schedulerMarkers") < stageAt("groups"));
+});
+
 test("GUARD — the cascade does NOT delete the collections the manifest calls survivors", () => {
   // The dialog tells the operator `emailSends` rows are KEPT and templates are
   // merely ORPHANED. If the engine deleted either, the manifest would be lying
   // at the exact moment it is trusted most. This is the only thing tying the
   // two halves together.
-  for (const collection of ["emailSends", "courseTemplates"]) {
+  for (const collection of [
+    "emailSends",
+    "courseTemplates",
+    // An application belongs to the round and the applicant, never to one
+    // run. The cascade RELEASES these rows (status withdrawn, pointers
+    // cleared); the day it starts deleting them, a destroy of one run takes
+    // essays belonging to an intake that is still being decided.
+    "admissionApplications",
+  ]) {
     const re = new RegExp(`collection\\("${collection}"\\)[\\s\\S]{0,400}?\\.delete\\(`);
     assert.doesNotMatch(
       ENGINE,
@@ -570,9 +658,21 @@ test("GUARD — the cascade does NOT delete the collections the manifest calls s
   }
   assert.equal(countMeta("emailSendRows").fate, "retained");
   assert.equal(countMeta("templates").fate, "orphaned");
-  // Both are still COUNTED — "how much history mentions this run" is worth
-  // knowing even when nothing happens to it.
+  assert.equal(countMeta("admissionSeatOffers").fate, "orphaned");
+  // All three are still COUNTED: "how much history mentions this run" is
+  // worth knowing even when nothing happens to it, and "eleven people were
+  // placed here" is worth knowing most of all.
   assert.match(ENGINE, /collection\("emailSends"\)/);
+  assert.match(ENGINE, /collection\("admissionApplications"\)/);
+
+  // Nothing in this file may reach an admission ROUND. A round outlives every
+  // run it fed, so a run destroy that touched one would take an intake with
+  // it; destroying a round is its own protocol and is not built yet.
+  assert.doesNotMatch(
+    ENGINE_CODE,
+    /collection\("admissionRounds"\)/,
+    "a run destroy reaches the round that placed people on it",
+  );
 });
 
 test("MODEL — a course is destroyed run-by-run, and its own cascade never fans into run rows", () => {

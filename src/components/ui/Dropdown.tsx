@@ -56,6 +56,8 @@ type Props<T extends string = string> = {
   size?: "sm" | "md";
   /** Required: dropdowns must be labelled. */
   ariaLabel: string;
+  /** Ids of any help / error text describing the control, for the trigger. */
+  describedBy?: string;
   /** Optional tooltip + native HTML title. */
   title?: string;
   /** Prefix shown in the trigger label, e.g. "View" → "View: To do (3)". */
@@ -80,6 +82,7 @@ export default function Dropdown<T extends string = string>({
   disabled,
   size = "md",
   ariaLabel,
+  describedBy,
   title,
   triggerPrefix,
   className,
@@ -350,6 +353,7 @@ export default function Dropdown<T extends string = string>({
         className={triggerClassName}
         disabled={disabled}
         aria-label={ariaLabel}
+        aria-describedby={describedBy}
         title={title}
         role="combobox"
         aria-haspopup="listbox"

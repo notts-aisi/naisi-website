@@ -3,17 +3,17 @@ import RetrospectiveView from "@/features/courses/RetrospectiveView";
 /**
  * The admin mount of one run's retrospective.
  *
- * Thin on purpose: `(app)/admin/layout.tsx` already gates on `role === "admin"`
- * server-side, and the view owns its own breadcrumb.
+ * Thin on purpose: `courses/layout.tsx` gates the tree server-side with
+ * `requireCourseAuthorPage()` (admin, `draftCourse` or `approveCourse`), and
+ * the view owns its own breadcrumb.
  *
- * STAFF WIDER THAN ADMIN: the retrospective ROUTES answer to admins, the
- * `draftCourse` / `approveCourse` permission holders and the run's track leads
- * — wider than this page, exactly as the allocation board's are. That is not an
- * oversight. A non-admin drafter cannot reach `/admin/**` at all, and minting
- * them a second admin-shaped URL would mean two places where the gate has to be
- * got right. Their mount, when it lands, is the learn-side one rendering this
- * same component against these same routes; the route gate is the boundary
- * either way, and this page is only the admin's door to it.
+ * TRACK LEADS: the retrospective ROUTES answer to admins, the `draftCourse` /
+ * `approveCourse` holders and the run's track leads, so they overlap this
+ * page's gate rather than nesting inside it: a track lead holding neither
+ * permission cannot open this URL. That is not an oversight. The ROUTE is the
+ * boundary, this page is one door to it, and the track lead's door is the
+ * learn-side mount rendering this same component against these same routes
+ * when it lands.
  */
 export default async function AdminRunRetrospectivePage({
   params,

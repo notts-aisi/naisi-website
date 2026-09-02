@@ -65,6 +65,12 @@ For PRs that touch a mobile-frozen module or a shared token, extend to:
 - [ ] Screenshots attached for each flow
 ```
 
+## Owed re-verifications
+
+Changes already merged that have not yet been walked on real hardware. Clear the line when it is done, and do not let one reach prod unchecked.
+
+- **Per-question character limits (`feat/form-question-limits`).** The long-text answer box moved onto the shared `CountedTextarea`, so it now renders through `Input.module.css` as well as this module. `FormRenderer.module.css` pins padding, font-size, min-height, line-height, the focus transition and the placeholder colour back to their previous values, but a counter row now sits under the box and CSS alone cannot answer whether the taller field still clears the iOS keyboard. A real-device walk of the RSVP flow at 375 and 414, and at 844 × 390 landscape, is owed before this reaches prod.
+
 ## When the baseline itself should change
 
 The baseline is not immutable — if a deliberate mobile improvement to the events flow is the goal of a PR, the new behaviour replaces the relevant entry above. Update this document in the same PR.

@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/firebase/session";
 import { asUidList } from "@/lib/firestore/events";
 import { GROUP_FIELD_LIMITS } from "@/lib/firestore/courseGroups";
 import { courseEnrolmentId } from "@/lib/firestore/courseEnrolments";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * Staff a group. `courseGroups.facilitatorUids` is server-owned (pinned in
@@ -41,6 +42,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ groupId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { groupId } = await ctx.params;
 
   const actor = await getCurrentUser();
