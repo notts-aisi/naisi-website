@@ -100,6 +100,42 @@ service firebase.storage {
         && request.resource.contentType.matches('image/.*');
     }
 
+    // Course images: the guide imagery in a week's editor and the intro on a
+    // course's public page. Public read for the same reason as every block
+    // above — the published course page and the curriculum preview are served
+    // to signed-out visitors — and writes gated to admins plus the two course
+    // permissions, matching `canDraftCourse` / `canApproveCourse` and the
+    // `courses` rules in firestore.rules.
+    //
+    // This block was MISSING, exactly as `event-images` and `application-emails`
+    // were before it, and with the same result: every image upload in the
+    // course and week editors hit deny-by-default and failed with
+    // storage/unauthorized. Both editors' own comments predicted it. Storage
+    // rules deploy separately (`firebase deploy --only storage`) and nothing
+    // verifies the deployed set matches this file, so the pattern keeps
+    // repeating; `scripts/rules-tests/tests/storage.test.mjs` is what stops it.
+    //
+    // NO per-document ownership scoping, unlike newsletter-images and
+    // event-images, and deliberately so: `{folder}` is not one document id. The
+    // course editor uploads under a courseId and the week editor under a
+    // `runId__weekId` pair, so there is no single document to read an authorUid
+    // from, and a rule that guessed would deny one of the two editors. Course
+    // authoring is an admin-granted permission held by a handful of people who
+    // are already trusted to edit each other's runs (courses have no per-course
+    // author gate in firestore.rules either), so the permission IS the scope
+    // here. If courses ever grow a per-course author, mirror event-images.
+    match /course-images/{folder}/{image=**} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && (
+          userData().role == 'admin'
+          || userData().get(['permissions', 'approveCourse'], false) == true
+          || userData().get(['permissions', 'draftCourse'], false) == true
+        )
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
     // Task attachments: mirror the Firestore task access gate — anyone who
     // can read the parent task can read/upload, and delete is author-or-admin.
     // 10MB cap; MIME allowlist covers images, PDFs, common office docs, zips.
