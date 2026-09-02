@@ -971,6 +971,16 @@ function CriteriaSection({ round, patch }: { round: Round; patch: PatchFn }) {
   );
 }
 
+/**
+ * Reviewers and the final decider.
+ *
+ * The picker is a CHILD, mounted only for an admin, and that is the whole
+ * point of the split: `useMembers` reads the `users` collection, which is
+ * readable by admins and SU-recognised committee only. An `approveCourse`
+ * holder authoring their own round is neither, so a hook called from the
+ * shared component would fire a denied query on every load of the page and
+ * leave a permission error in their console for a section they cannot use.
+ */
 function RolesSection({
   round,
   isAdmin,
@@ -980,18 +990,6 @@ function RolesSection({
   isAdmin: boolean;
   onSaved: (round: Round) => void;
 }) {
-  const { users } = useMembers();
-  const [reviewerUids, setReviewerUids] = useState(round.reviewerUids);
-  const [finalDeciderUid, setFinalDeciderUid] = useState(round.finalDeciderUid ?? "");
-
-  const eligible = useMemo(
-    () =>
-      users.filter(
-        (u) => u.role === "admin" || (u.role === "committee" && u.suRecognised),
-      ),
-    [users],
-  );
-
   if (!isAdmin) {
     return (
       <SectionCard
@@ -1009,6 +1007,54 @@ function RolesSection({
     );
   }
 
+  return <RolesEditor round={round} onSaved={onSaved} />;
+}
+
+function RolesEditor({
+  round,
+  onSaved,
+}: {
+  round: Round;
+  onSaved: (round: Round) => void;
+}) {
+  const { users, loading } = useMembers();
+  const [reviewerUids, setReviewerUids] = useState(round.reviewerUids);
+  const [finalDeciderUid, setFinalDeciderUid] = useState(round.finalDeciderUid ?? "");
+
+  const eligible = useMemo(
+    () =>
+      users.filter(
+        (u) => u.role === "admin" || (u.role === "committee" && u.suRecognised),
+      ),
+    [users],
+  );
+
+  /**
+   * Anybody the member list no longer has is DERIVED out, not edited out.
+   *
+   * A round outlives the accounts named on it, and a deleted uid sitting in
+   * `reviewerUids` is a name this picker cannot draw and the roles route
+   * refuses to save, so the section would be stuck: no way to see who the
+   * problem is, and no way to take them off either. Pruning makes the fix the
+   * same Save the admin was already pressing, and the note below says it
+   * happened.
+   *
+   * Derived rather than an effect that rewrites state: this has to hold for
+   * whatever is selected right now, and a render that computes it cannot fall
+   * out of step with one that does not.
+   */
+  const known = useMemo(() => new Set(users.map((u) => u.uid)), [users]);
+  const membersLoaded = !loading && users.length > 0;
+  const shownReviewers = membersLoaded
+    ? reviewerUids.filter((uid) => known.has(uid))
+    : reviewerUids;
+  const shownDecider =
+    membersLoaded && finalDeciderUid && !known.has(finalDeciderUid)
+      ? ""
+      : finalDeciderUid;
+  const dropped =
+    reviewerUids.length - shownReviewers.length + (finalDeciderUid && !shownDecider ? 1 : 0);
+
   return (
     <SectionCard
       id="roles"
@@ -1017,15 +1063,22 @@ function RolesSection({
       onSave={async () => {
         onSaved(
           await setRoundRoles(round.id, {
-            reviewerUids,
-            finalDeciderUid: finalDeciderUid || null,
+            reviewerUids: shownReviewers,
+            finalDeciderUid: shownDecider || null,
           }),
         );
       }}
     >
+      {dropped > 0 && (
+        <p className={styles.hint}>
+          {dropped === 1 ? "One person" : `${dropped} people`} named on this round
+          no longer {dropped === 1 ? "has an account" : "have accounts"} on the
+          site. They have been taken off the list below; save to record it.
+        </p>
+      )}
       <PersonSelector
         users={eligible}
-        selected={reviewerUids}
+        selected={shownReviewers}
         onChange={setReviewerUids}
         label="Reviewers"
         role="reviewer"
@@ -1038,7 +1091,7 @@ function RolesSection({
       >
         <Select
           id="final-decider"
-          value={finalDeciderUid}
+          value={shownDecider}
           onChange={(e) => setFinalDeciderUid(e.target.value)}
         >
           <option value="">Nobody yet</option>
