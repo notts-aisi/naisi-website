@@ -57,9 +57,9 @@ export type CourseDroppedOutEmailOptions = {
    * `{feedbackUrl}` token for an admin who prefers it inline.
    */
   feedbackUrl: string;
-  /** The member's uid — the deliverability log's actor. */
+  /** The member's uid, the deliverability log's actor. */
   uid: string;
-  /** Run id — the deliverability log's reference, so a run's mail is greppable. */
+  /** Run id, the deliverability log's reference, so a run's mail is greppable. */
   runId: string;
 };
 

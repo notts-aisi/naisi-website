@@ -1,5 +1,5 @@
 /* ============================================================
-   GroupPicker — the open-enrolment sign-up on a public course
+   GroupPicker: the open-enrolment sign-up on a public course
    page. Radio-style session cards, a strand select when the run
    has streams, and the state of the visitor's own place.
 
@@ -46,7 +46,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  /* 44px floor — public surface, enforced (docs/touch-targets.md). */
+  /* 44px floor, public surface, enforced (docs/touch-targets.md). */
   min-height: 2.75rem;
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--color-border);
@@ -211,7 +211,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  /* 44px floor — public surface, enforced (docs/touch-targets.md). */
+  /* 44px floor, public surface, enforced (docs/touch-targets.md). */
   min-height: 2.75rem;
   padding: 0.7rem 1.35rem;
   border-radius: var(--radius-md);

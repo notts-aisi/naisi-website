@@ -474,7 +474,7 @@ function freshStore(memberCount = 0) {
 
 test("two people take the last seat: one gets it, memberCount ends at capacity", () => {
   const store = freshStore(11); // capacity 12, one place left
-  // Both callers read the same counter before either commits — the interleave
+  // Both callers read the same counter before either commits: the interleave
   // that a check-then-write outside a transaction gets wrong.
   const first = enrolTransaction(store, { uid: "a", capacity: 12 });
   const second = enrolTransaction(store, { uid: "b", capacity: 12 });
@@ -528,7 +528,7 @@ test("an uncapped group is never full, because an open run cannot have one", () 
 // Route shape
 // ---------------------------------------------------------------------------
 
-test("SOURCE — the enrol route rate limits before it reads anything", () => {
+test("SOURCE: the enrol route rate limits before it reads anything", () => {
   // Throttling exists to cap COST, so it has to come before the work it is
   // protecting. The per-IP limit needs no identity, so it sits in front of the
   // session lookup's Auth RPC too.
@@ -549,7 +549,7 @@ test("SOURCE — the enrol route rate limits before it reads anything", () => {
   );
 });
 
-test("SOURCE — every mutating handler calls the view-as guard first", () => {
+test("SOURCE: every mutating handler calls the view-as guard first", () => {
   // Also pinned repo-wide by tests/impersonation-guard.test.mjs; asserted here
   // too because this route writes in a MEMBER's own name, which is the case
   // that guard exists for.
@@ -566,7 +566,7 @@ test("SOURCE — every mutating handler calls the view-as guard first", () => {
   assert.doesNotMatch(getBody, /assertNotImpersonating/);
 });
 
-test("SOURCE — the pause flag stops new sign-ups and nothing else", () => {
+test("SOURCE: the pause flag stops new sign-ups and nothing else", () => {
   // The admin panel's copy promises exactly this: "People already enrolled
   // keep their place and their access." A pause that also blocked a session
   // change or a drop-out would make that sentence false.
@@ -584,7 +584,7 @@ test("SOURCE — the pause flag stops new sign-ups and nothing else", () => {
   assert.doesNotMatch(del, /isSurfacePaused/);
 });
 
-test("SOURCE — the drop-out is behind a byte-exact typed confirmation", () => {
+test("SOURCE: the drop-out is behind a byte-exact typed confirmation", () => {
   const del = ENROL_ROUTE.slice(ENROL_ROUTE.indexOf("export async function DELETE"));
   // Nothing normalised away, the destroy routes' rule.
   assert.match(del, /body\.confirmName !== run\.courseTitle/);
@@ -595,7 +595,7 @@ test("SOURCE — the drop-out is behind a byte-exact typed confirmation", () => 
   assert.match(del, /kind: "enrolment-dropout"/);
 });
 
-test("SOURCE — joining writes no audit row, because the enum has no kind for it", () => {
+test("SOURCE: joining writes no audit row, because the enum has no kind for it", () => {
   const post = ENROL_ROUTE.slice(
     ENROL_ROUTE.indexOf("export async function POST"),
     ENROL_ROUTE.indexOf("async function subscribeToCohort"),
@@ -606,7 +606,7 @@ test("SOURCE — joining writes no audit row, because the enum has no kind for i
   assert.doesNotMatch(post, /COURSE_AUDIT_COLLECTION/);
 });
 
-test("SOURCE — deleting an account gives back the seats it was holding", () => {
+test("SOURCE: deleting an account gives back the seats it was holding", () => {
   // Every writer of `enrolledCount` agrees on what it counts, or the counter
   // goes negative and the enrol-mode route refuses to reopen a run nobody is
   // on. The sweep's condition is the NARROW one, active AND selfEnrolled,
@@ -628,12 +628,12 @@ test("SOURCE — deleting an account gives back the seats it was holding", () =>
   assert.match(block, /memberCount: FieldValue\.increment\(-count\)/);
   assert.match(block, /enrolledCount: FieldValue\.increment\(-count\)/);
   // A run deleted since the enrolment was written must not make the whole
-  // batch reject and strand every row in it — the groups rule, applied to
+  // batch reject and strand every row in it: the groups rule, applied to
   // runs.
   assert.match(ACCOUNT_DELETION, /if \(!liveRunIds\.has\(runId\)\) continue;/);
 });
 
-test("SOURCE — the enrol route moves both counters in the seat transaction", () => {
+test("SOURCE: the enrol route moves both counters in the seat transaction", () => {
   const post = ENROL_ROUTE.slice(
     ENROL_ROUTE.indexOf("export async function POST"),
     ENROL_ROUTE.indexOf("async function subscribeToCohort"),

@@ -42,10 +42,10 @@ import {
 /**
  * OPEN ENROLMENT: clicking into a pre-course session slot, and leaving again.
  *
- *   GET    — the session slots on offer plus the caller's own row (if any)
- *   POST   — take a seat in one of them
- *   PATCH  — move to a different session, or change stream
- *   DELETE — drop out. IRREVERSIBLE.
+ *   GET:    the session slots on offer plus the caller's own row (if any)
+ *   POST:   take a seat in one of them
+ *   PATCH:  move to a different session, or change stream
+ *   DELETE: drop out. IRREVERSIBLE.
  *
  * ── WHY A ROUTE AND NOT A CLIENT-DIRECT WRITE ───────────────────────────────
  * `courseEnrolments` is `allow write: if false` and it stays that way. Three
@@ -257,7 +257,7 @@ function resolveStreamId(
 }
 
 // ---------------------------------------------------------------------------
-// GET — what the picker renders
+// GET: what the picker renders
 // ---------------------------------------------------------------------------
 
 /**
@@ -350,7 +350,7 @@ export async function GET(_req: Request, ctx: Ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// POST — take a seat
+// POST: take a seat
 // ---------------------------------------------------------------------------
 
 /**
@@ -499,7 +499,7 @@ export async function POST(req: Request, ctx: Ctx) {
         status: "active" satisfies CourseEnrolmentStatus,
         role: "learner",
         streamId,
-        // Not an application, and not an admin placing them either — see
+        // Not an application, and not an admin placing them either: see
         // `selfEnrolled` on `CourseEnrolmentDoc`.
         selfEnrolled: true,
         applicationId: null,
@@ -546,7 +546,7 @@ export async function POST(req: Request, ctx: Ctx) {
   // member, and inventing one would put a string in the log that
   // `courseAuditKindLabel` renders as "Unrecognised action". The enrolment
   // document IS the record of joining (it carries `selfEnrolled`, `createdAt`
-  // and the group). Leaving is different — it destroys state, so it gets a row.
+  // and the group). Leaving is different: it destroys state, so it gets a row.
 
   return NextResponse.json({ ok: true, groupId, streamId });
 }
@@ -580,7 +580,7 @@ async function subscribeToCohort(db: Db, runId: string, user: SessionUser) {
 }
 
 // ---------------------------------------------------------------------------
-// PATCH — change session or stream
+// PATCH: change session or stream
 // ---------------------------------------------------------------------------
 
 /**
@@ -588,7 +588,7 @@ async function subscribeToCohort(db: Db, runId: string, user: SessionUser) {
  *
  * TWO COUNTER DELTAS, ONE TRANSACTION: the old group loses a seat and the new
  * one gains it atomically with the row's `groupId`, or nothing happens. The
- * run's `enrolledCount` does NOT move — the member is still on the run.
+ * run's `enrolledCount` does NOT move: the member is still on the run.
  *
  * Not gated on the maintenance pause: pausing enrolment means "no new
  * sign-ups", and someone already holding a seat swapping Tuesday for Thursday
@@ -744,7 +744,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// DELETE — drop out
+// DELETE: drop out
 // ---------------------------------------------------------------------------
 
 /**
@@ -824,7 +824,7 @@ export async function DELETE(req: Request, ctx: Ctx) {
       { status: 409 },
     );
   }
-  // Byte equality against the course TITLE — nothing normalised away.
+  // Byte equality against the course TITLE, nothing normalised away.
   if (body.confirmName !== run.courseTitle) {
     return NextResponse.json(
       { error: "That doesn't match the course title. Type it exactly to confirm." },

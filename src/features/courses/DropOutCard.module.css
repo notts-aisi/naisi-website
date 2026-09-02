@@ -1,5 +1,5 @@
 /* ============================================================
-   DropOutCard — leaving a course, behind a typed confirmation.
+   DropOutCard: leaving a course, behind a typed confirmation.
 
    Deliberately quiet until it is opened: a destructive action
    sitting under a place somebody is happy to have should read as
@@ -18,7 +18,7 @@
 .reveal {
   align-self: flex-start;
   padding: var(--space-2) 0;
-  /* 44px floor — public surface, enforced (docs/touch-targets.md). */
+  /* 44px floor, public surface, enforced (docs/touch-targets.md). */
   min-height: 2.75rem;
   border: 0;
   background: none;
@@ -65,7 +65,7 @@
 
 .input {
   width: 100%;
-  /* 44px floor — public surface, enforced (docs/touch-targets.md). */
+  /* 44px floor, public surface, enforced (docs/touch-targets.md). */
   min-height: 2.75rem;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
@@ -101,7 +101,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  /* 44px floor — public surface, enforced (docs/touch-targets.md). */
+  /* 44px floor, public surface, enforced (docs/touch-targets.md). */
   min-height: 2.75rem;
   padding: 0.7rem 1.35rem;
   border-radius: var(--radius-md);
