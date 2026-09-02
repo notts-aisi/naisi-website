@@ -219,6 +219,9 @@ export type AdmissionApplicationDoc = {
    * because a stage is the unit of release AND the unit of freezing: with a
    * flat map, "which answers are locked" would have to be recomputed from the
    * round's stage list on every write.
+   *
+   * Every value is coerced to the `RsvpAnswer` union on read, and a value
+   * outside it is dropped rather than passed through: see `asRsvpAnswer`.
    */
   stageAnswers: Record<string, Record<string, RsvpAnswer>>;
   /** When each stage was frozen. A stage with no entry is still editable. */
@@ -316,6 +319,38 @@ function int(v: unknown, fallback: number): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.round(v) : fallback;
 }
 
+/**
+ * One stored answer, coerced to the `RsvpAnswer` union rather than asserted
+ * into it.
+ *
+ * The write side already validates: the apply and submit routes run every
+ * answer through the events `validateAnswers`, so a well-formed row cannot
+ * contain anything this drops. It is the ill-formed row this exists for. A
+ * value outside the union is not an answer any renderer can draw (they switch
+ * on exactly these four shapes), so admitting one buys a `[object Object]` on
+ * a reviewer's screen at best and a throw at worst, and the reviewer would
+ * have no way to tell a corrupt cell from an empty one.
+ *
+ * Unknown values become `null`, which the caller drops, so the question reads
+ * as unanswered. That is the honest rendering of a value nothing can read.
+ */
+function asRsvpAnswer(v: unknown): RsvpAnswer | null {
+  if (typeof v === "string" || typeof v === "boolean") return v;
+  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
+  if (v && typeof v === "object") {
+    const raw = v as Raw;
+    // The checkbox-with-other shape. Both keys must be present and the right
+    // type; a map that merely happens to be an object is not one of these.
+    if (Array.isArray(raw.checked) && typeof raw.other === "string") {
+      return {
+        checked: raw.checked.filter((x): x is string => typeof x === "string"),
+        other: raw.other,
+      };
+    }
+  }
+  return null;
+}
+
 function asStageAnswers(v: unknown): Record<string, Record<string, RsvpAnswer>> {
   if (!v || typeof v !== "object") return {};
   const out: Record<string, Record<string, RsvpAnswer>> = {};
@@ -323,7 +358,12 @@ function asStageAnswers(v: unknown): Record<string, Record<string, RsvpAnswer>> 
   for (const [stageId, answers] of Object.entries(v as Raw)) {
     if (stages >= ADMISSION_APPLICATION_FIELD_LIMITS.maxStages) break;
     if (!answers || typeof answers !== "object") continue;
-    out[stageId] = { ...(answers as Record<string, RsvpAnswer>) };
+    const stage: Record<string, RsvpAnswer> = {};
+    for (const [questionId, answer] of Object.entries(answers as Raw)) {
+      const coerced = asRsvpAnswer(answer);
+      if (coerced !== null) stage[questionId] = coerced;
+    }
+    out[stageId] = stage;
     stages += 1;
   }
   return out;
@@ -413,7 +453,7 @@ export function normalizeAdmissionApplication(
     id,
     roundId: str(data.roundId),
     uid: str(data.uid),
-    email: (data.email as string | null | undefined) ?? null,
+    email: str(data.email) || null,
     displayName: str(data.displayName),
     stageAnswers: asStageAnswers(data.stageAnswers),
     stageSubmittedAt: asStageSubmittedAt(data.stageSubmittedAt),
