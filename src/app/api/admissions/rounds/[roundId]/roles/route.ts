@@ -122,12 +122,21 @@ export async function PUT(
     new Set([...reviewerUids, ...(finalDeciderUid ? [finalDeciderUid] : [])]),
   );
 
+  /**
+   * A uid with no user document is a DELETED ACCOUNT, and it gets its own
+   * answer rather than being folded into "not eligible". The two need
+   * different things doing: an ineligible person is somebody to un-appoint or
+   * recognise, while a deleted account is a name the console should already
+   * have dropped and cannot show. Reporting it as ineligible left the section
+   * refusing a save whose fix was invisible.
+   */
   const ineligible: string[] = [];
+  const missing: string[] = [];
   if (named.length > 0) {
     const docs = await db.getAll(...named.map((uid) => db.collection("users").doc(uid)));
     for (const doc of docs) {
       if (!doc.exists) {
-        ineligible.push(doc.id);
+        missing.push(doc.id);
         continue;
       }
       const candidate = normalizeUser(doc.id, doc.data() ?? {});
@@ -135,6 +144,15 @@ export async function PUT(
         ineligible.push(candidate.displayName || candidate.email || doc.id);
       }
     }
+  }
+  if (missing.length > 0) {
+    return NextResponse.json(
+      {
+        error: `${missing.length === 1 ? "One of the people" : `${missing.length} of the people`} named here no longer has an account on this site. Reload the round and save again to drop ${missing.length === 1 ? "them" : "them all"}.`,
+        missing,
+      },
+      { status: 400 },
+    );
   }
   if (ineligible.length > 0) {
     return NextResponse.json(
@@ -176,6 +194,21 @@ export async function PUT(
     if (asDecider.docs.some((d) => d.id !== roundId)) stillElsewhere.add(uid);
   }
 
+  /**
+   * A removed person whose account has since been deleted has nothing to
+   * clear, and saying so is not a formality: `batch.update` on a document that
+   * is not there rejects the WHOLE batch, so one deleted account on the round
+   * would take the roles save down with it and there would be no way to take
+   * their name off. The flag they would have lost went with their user
+   * document anyway.
+   */
+  const toClear = removed.filter((uid) => !stillElsewhere.has(uid));
+  const clearable: string[] = [];
+  if (toClear.length > 0) {
+    const docs = await db.getAll(...toClear.map((uid) => db.collection("users").doc(uid)));
+    for (const doc of docs) if (doc.exists) clearable.push(doc.id);
+  }
+
   const batch = db.batch();
   batch.update(roundRef, {
     reviewerUids,
@@ -185,8 +218,7 @@ export async function PUT(
   for (const uid of added) {
     batch.update(db.collection("users").doc(uid), { admissionsReviewer: true });
   }
-  for (const uid of removed) {
-    if (stillElsewhere.has(uid)) continue;
+  for (const uid of clearable) {
     batch.update(db.collection("users").doc(uid), { admissionsReviewer: false });
   }
   await batch.commit();

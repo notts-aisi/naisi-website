@@ -474,6 +474,32 @@ test("the roles route is admin only and moves the nav flag both ways", () => {
   );
 });
 
+test("a deleted account cannot wedge the roles section", () => {
+  const src = source(ROLES_ROUTE);
+  assert.match(
+    src,
+    /const missing: string\[\] = \[\]/,
+    "a uid with no user document is a deleted account and needs its own " +
+      "answer: reported as ineligible, the fix is invisible.",
+  );
+  assert.match(
+    src,
+    /no longer has an account on this site/,
+    "the refusal has to say what actually happened.",
+  );
+  assert.match(
+    src,
+    /for \(const doc of docs\) if \(doc\.exists\) clearable\.push\(doc\.id\)/,
+    "clearing the nav flag on a user document that is gone rejects the WHOLE " +
+      "batch, so one deleted reviewer would take the roles save with it.",
+  );
+  assert.match(
+    source("src/lib/firestore/accountDeletion.ts"),
+    /clearAdmissionRoundRoles/,
+    "and the cascade takes the uid off the rounds, so the state stops arising.",
+  );
+});
+
 test("admissionsReviewer rides the auth snapshot rather than a per-navigation query", () => {
   const provider = source("src/auth/AuthProvider.tsx");
   assert.match(
