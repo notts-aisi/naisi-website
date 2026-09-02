@@ -8,6 +8,12 @@ import {
   type QuerySnapshot,
 } from "firebase-admin/firestore";
 import { normalizeCourseEnrolment } from "./courseEnrolments";
+import {
+  MEMBERSHIPS_COLLECTION,
+  MEMBERSHIP_PERIODS_COLLECTION,
+  isMembershipTier,
+  type MembershipTier,
+} from "./memberships";
 import { REGISTRATIONS_COLLECTION } from "./registrations";
 import { deleteEventsForSubscriptions } from "./subscriptions";
 
@@ -129,6 +135,95 @@ async function deleteOwnedCourseRows(
     if (snap.size < COURSE_PAGE_SIZE) return deleted;
   }
   throw new Error(`${collection} did not drain after ${COURSE_MAX_PAGES} pages`);
+}
+
+/**
+ * How much to give each period back, worked out from the membership rows a
+ * sweep deleted. Pure, so the arithmetic is testable without a Firestore.
+ *
+ * Keyed period id then tier, because a member holds at most one row per period
+ * but a teardown can cross several periods at several tiers. A row with no
+ * readable period id, or a tier the module does not know, is COUNTED NOWHERE:
+ * the period's totals only ever moved for a recognised tier on the way in (see
+ * the grant route), so moving them for an unrecognised one on the way out
+ * would invent a decrement that no increment matches.
+ */
+export function membershipTotalsGivenBack(
+  rows: readonly { periodId?: unknown; tier?: unknown }[],
+): Map<string, Partial<Record<MembershipTier, number>>> {
+  const back = new Map<string, Partial<Record<MembershipTier, number>>>();
+  for (const row of rows) {
+    const periodId = typeof row.periodId === "string" ? row.periodId : "";
+    if (periodId === "" || !isMembershipTier(row.tier)) continue;
+    const tiers = back.get(periodId) ?? {};
+    tiers[row.tier] = (tiers[row.tier] ?? 0) + 1;
+    back.set(periodId, tiers);
+  }
+  return back;
+}
+
+/**
+ * Delete every membership row this account holds, and take each one back off
+ * its period's cached per-tier totals.
+ *
+ * The PERIODS themselves are not swept and must not be:
+ * `membershipPeriods/{periodId}` describes a year of the society and outlives
+ * every account under it. Its `totals` map, though, is a cache the console
+ * renders as a count of people, so leaving it holding rows that no longer
+ * exist would have the membership page reporting a number an admin cannot
+ * reconcile against anything. The grant route maintains those totals with
+ * `increment(+1)` and `increment(-1)`; this is the same arithmetic for a row
+ * that leaves without anybody pressing revoke.
+ *
+ * The deletes go first and the totals follow, one update per period rather
+ * than one per row. A totals update that fails is LOGGED and does not fail the
+ * teardown: the rows are already gone, which is the part that matters for the
+ * person being deleted, and a count that is out by one is not a reason to keep
+ * the account's registration row open for a retry.
+ */
+export async function deleteMembershipsAndAdjustTotals(
+  db: Firestore,
+  uid: string,
+): Promise<number> {
+  const deletedRows: { periodId?: unknown; tier?: unknown }[] = [];
+
+  // Same no-cursor paging as `deleteOwnedCourseRows`: the rows are deleted as
+  // they are read, so the next query's first page is the next unprocessed one.
+  for (let page = 0; page < COURSE_MAX_PAGES; page += 1) {
+    const snap = await db
+      .collection(MEMBERSHIPS_COLLECTION)
+      .where("uid", "==", uid)
+      .limit(COURSE_PAGE_SIZE)
+      .get();
+    if (snap.empty) break;
+    const batch = db.batch();
+    for (const d of snap.docs) {
+      const data = d.data() ?? {};
+      deletedRows.push({ periodId: data.periodId, tier: data.tier });
+      batch.delete(d.ref);
+    }
+    await batch.commit();
+    if (snap.size < COURSE_PAGE_SIZE) break;
+    if (page === COURSE_MAX_PAGES - 1) {
+      throw new Error(
+        `${MEMBERSHIPS_COLLECTION} did not drain after ${COURSE_MAX_PAGES} pages`,
+      );
+    }
+  }
+
+  for (const [periodId, tiers] of membershipTotalsGivenBack(deletedRows)) {
+    const update: Record<string, FirebaseFirestore.FieldValue> = {};
+    for (const [tier, count] of Object.entries(tiers)) {
+      update[`totals.${tier}`] = FieldValue.increment(-count);
+    }
+    try {
+      await db.collection(MEMBERSHIP_PERIODS_COLLECTION).doc(periodId).update(update);
+    } catch (err) {
+      console.error("[deleteAccount] membership totals adjust failed:", periodId, err);
+    }
+  }
+
+  return deletedRows.length;
 }
 
 /**
@@ -772,19 +867,15 @@ export async function deleteAccountCascade(
   //     Paged on the `uid` field like the course sweeps above, because a long
   //     membership history is several rows rather than one addressed document.
   //
-  //     The PERIODS are not swept and must not be:
-  //     `membershipPeriods/{periodId}` describes a year of the society and
-  //     outlives every account under it. The period's cached per-tier totals
-  //     go stale by however many rows this deletes, which is the honest
-  //     trade: recomputing them here would mean reading every remaining row
-  //     of every period the account touched, during a teardown whose other
-  //     steps are already best-effort, and the console's counts are a summary
-  //     of a moving list rather than an audit.
+  //     Each row also comes back off its period's cached per-tier totals,
+  //     which the console renders as a headcount. The periods themselves are
+  //     left alone: they describe a year of the society and outlive every
+  //     account under them. See `deleteMembershipsAndAdjustTotals`.
   //
   //     `users.paidMembershipYears` needs no step of its own: the whole user
   //     document goes in step 3.
   try {
-    summary.membershipsDeleted = await deleteOwnedCourseRows(db, "memberships", uid);
+    summary.membershipsDeleted = await deleteMembershipsAndAdjustTotals(db, uid);
   } catch (err) {
     console.error("[deleteAccount] memberships delete failed:", uid, err);
     partialFailure = true;
