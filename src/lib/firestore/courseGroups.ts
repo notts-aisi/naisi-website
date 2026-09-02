@@ -41,16 +41,35 @@ import {
  */
 
 /*
- * V3 seam: session occurrence dimension lands when the pre-course cadence is
- * confirmed; register ids stay byte-identical for occurrence 1.
+ * V3 SEAM, AND WHAT IS DELIBERATELY NOT BUILT HERE.
  *
- * `sessionOverrides` and `sessionModes` are both keyed by WEEK ID with no
- * occurrence component, so a group meeting twice in one week cannot currently
- * move, virtualise or room-notice one of its two sessions. Adding
- * `extraSession` (or an explicit `sessionDates` list, the pre-committed
- * fallback for an irregular rhythm) means changing that key shape, which is a
- * birth-pinned data decision and therefore deliberately NOT taken here. The
- * matching note in `courseAttendance.ts` is the other half. Start at both.
+ * The contract specifies ONE field on this document that this PR does not
+ * ship:
+ *
+ *   courseGroups.extraSession: GroupSession | null
+ *     A second weekly slot for a group that meets twice. Readers would be
+ *     `resolveSessions`, the register's columns and the session cards.
+ *
+ * It is not built because it has a BLOCKING PRECONDITION that is an owner
+ * decision, not a coding one: the pre-course cadence (does a group ever meet
+ * twice in a week, and if so is the second meeting a fixed extra slot or an
+ * irregular date). Until that is answered the key shape below cannot be
+ * chosen, and the key shape is a birth-pinned data decision.
+ *
+ * THE KEY SHAPE, stated exactly. `sessionOverrides` and `sessionModes` are
+ * both `Record<weekId, ...>` (weekId = "w03"), with NO occurrence component.
+ * So a group meeting twice in one week cannot move, virtualise or
+ * room-notice one of its two sessions: both requests address the same key.
+ * Adding `extraSession` (or the pre-committed fallback for an irregular
+ * rhythm, an explicit `sessionDates` list) means re-keying both maps to
+ * something like `w03#1` / `w03#2`, which changes what is stored, what
+ * firestore.rules pins flat at the `sessionModes` comparison, and what
+ * `normalizeCourseGroup` reads.
+ *
+ * The other half of the same decision is `courseAttendance.occurrence`; see
+ * the matching note in `courseAttendance.ts`. They land together or not at
+ * all, because a second session with no register is not a session. Start at
+ * both.
  */
 
 export type GroupSession = {

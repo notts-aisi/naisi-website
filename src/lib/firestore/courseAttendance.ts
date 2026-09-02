@@ -15,15 +15,32 @@ import { weekDocId } from "./courses";
  */
 
 /*
- * V3 seam: session occurrence dimension lands when the pre-course cadence is
- * confirmed; register ids stay byte-identical for occurrence 1.
+ * V3 SEAM, AND WHAT IS DELIBERATELY NOT BUILT HERE.
  *
- * `attendanceDocId` and the `{runId}__{groupId}__wNN` key shape below are
- * therefore UNCHANGED by this PR, deliberately. When a group can meet twice
- * in one week, an `occurrence` field joins this doc and the id gains a
- * suffix for occurrence 2 and up, so nothing already written moves and the
- * account-deletion `documentId()` scan keeps working. The matching note in
- * `courseGroups.ts` is the other half. Start at both.
+ * The contract specifies ONE field on this document that this PR does not
+ * ship:
+ *
+ *   courseAttendance.occurrence: int, default 1
+ *     Which of the week's sessions this register is for. Readers would be
+ *     the register grid, the push transaction and the reviewer evidence.
+ *
+ * It is not built because it has a BLOCKING PRECONDITION that is an owner
+ * decision, not a coding one: the pre-course cadence (does a group ever meet
+ * twice in a week). Until that is answered there is nothing for a second
+ * register to belong to.
+ *
+ * THE KEY SHAPE, stated exactly, because it is the thing the decision moves.
+ * Register ids are `{runId}__{groupId}__wNN` today (`attendanceDocId`), one
+ * register per (run, group, WEEK). When `occurrence` lands, ids stay
+ * BYTE-IDENTICAL for occurrence 1 and gain a suffix from occurrence 2 up, so
+ * nothing already written moves and account deletion's `documentId()` scan
+ * keeps working unchanged. That is the whole reason the field is an int with
+ * a default rather than part of the id for everybody.
+ *
+ * The other half of the same decision is `courseGroups.extraSession`, whose
+ * absence is why `sessionOverrides` and `sessionModes` are keyed by week id
+ * with no occurrence component; see the matching note in `courseGroups.ts`.
+ * They land together or not at all. Start at both.
  */
 
 /**
