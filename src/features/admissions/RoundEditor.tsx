@@ -1197,6 +1197,33 @@ function StatusSection({
   const [prompt, setPrompt] = useState<string | null>(null);
   const [typed, setTyped] = useState("");
 
+  /**
+   * The archive toggle answers to the same busy and error handling as the
+   * status buttons beside it: it is the same kind of write, and a save that
+   * fails silently on a switch is worse than on a button, because the switch
+   * has already moved and looks like it worked.
+   *
+   * The optimistic value is a pending override rather than a second copy of
+   * `round.archived`. Clearing it is the reset: whether the patch succeeded
+   * (the round came back changed) or failed (it did not), the switch goes back
+   * to reading the round, so it can never end up showing a state the server
+   * does not hold.
+   */
+  const [pendingArchive, setPendingArchive] = useState<boolean | null>(null);
+  const archiving = pendingArchive !== null;
+
+  async function setArchived(next: boolean) {
+    setPendingArchive(next);
+    setError(null);
+    try {
+      await patch({ archived: next });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "That did not save.");
+    } finally {
+      setPendingArchive(null);
+    }
+  }
+
   async function move(status: AdmissionRoundStatus, confirm = false) {
     setBusy(true);
     setError(null);
@@ -1231,7 +1258,7 @@ function StatusSection({
               key={status}
               type="button"
               variant={status === "cancelled" ? "danger" : "secondary"}
-              disabled={busy || !plan.ok}
+              disabled={busy || archiving || !plan.ok}
               onClick={() => void move(status)}
             >
               {ADMISSION_ROUND_STATUS_LABEL[status]}
@@ -1246,8 +1273,9 @@ function StatusSection({
       </div>
 
       <Switch
-        checked={round.archived}
-        onChange={(archived) => void patch({ archived })}
+        checked={pendingArchive ?? round.archived}
+        onChange={(next) => void setArchived(next)}
+        disabled={busy || archiving}
         label="Archived"
         description="Keeps a finished round out of the way. An archived round cannot be opened."
       />
