@@ -9,48 +9,67 @@ import { useCollaboratorCount } from "@/features/admin/useCollaboratorCount";
 import { useCourseApplicationCount } from "@/features/courses/useCourseApplicationCount";
 import styles from "./AdminTabs.module.css";
 
+/**
+ * What the caller may reach, resolved once by the server layout.
+ *
+ * Four capabilities rather than one `isAdmin` boolean, because the admin area
+ * now has three audiences with three different gates: full admins, course
+ * permission holders (`/admin/courses`), and round authors or appointed
+ * reviewers (`/admin/admissions`). A tab a caller cannot open is a link that
+ * redirects to the dashboard, so the strip has to know the same predicates the
+ * page gates do.
+ */
+export type AdminTabAccess = {
+  isAdmin: boolean;
+  /** `draftCourse` or `approveCourse`: the course authoring tree. */
+  canAuthorCourses: boolean;
+  /** `approveCourse`: authoring an admission round. */
+  canAuthorRounds: boolean;
+  /** Appointed on some round. Reads its own round, writes nothing. */
+  isAdmissionsReviewer: boolean;
+};
+
 type AdminTab = {
   label: string;
   href: string;
   match: (p: string) => boolean;
-  /** True when a non-admin holding `draftCourse` or `approveCourse` may use
-   *  this section. Everything else needs a full admin, and the pages
-   *  themselves say so: the `(admin-only)` route group's layout runs
-   *  `requireAdminPage()`, so a tab hidden here is also a page that redirects.
-   *  This flag only spares a course author twelve links they cannot follow. */
-  courseAuthor?: true;
+  /** Who may open this section. Mirrors the page gate, never a looser rule. */
+  visible: (access: AdminTabAccess) => boolean;
 };
 
+const ADMIN_ONLY = (a: AdminTabAccess) => a.isAdmin;
+
 const TABS: AdminTab[] = [
-  { label: "Approvals", href: "/admin", match: (p: string) => p === "/admin" },
-  { label: "Members", href: "/admin/members", match: (p: string) => p.startsWith("/admin/members") },
-  { label: "Collaborators", href: "/admin/collaborators", match: (p: string) => p.startsWith("/admin/collaborators") },
-  { label: "Registrations", href: "/admin/registrations", match: (p: string) => p.startsWith("/admin/registrations") },
-  { label: "Projects", href: "/admin/projects", match: (p: string) => p.startsWith("/admin/projects") },
-  { label: "Courses", href: "/admin/courses", match: (p: string) => p.startsWith("/admin/courses"), courseAuthor: true },
-  { label: "Newsletter", href: "/admin/newsletter", match: (p: string) => p.startsWith("/admin/newsletter") },
-  { label: "Subscriptions", href: "/admin/subscriptions", match: (p: string) => p.startsWith("/admin/subscriptions") },
-  { label: "Email designs", href: "/admin/email-designs", match: (p: string) => p.startsWith("/admin/email-designs") },
-  { label: "Deliverability", href: "/admin/deliverability", match: (p: string) => p.startsWith("/admin/deliverability") },
-  { label: "Task templates", href: "/admin/task-templates", match: (p: string) => p.startsWith("/admin/task-templates") },
-  { label: "Site status", href: "/admin/site-status", match: (p: string) => p.startsWith("/admin/site-status") },
+  { label: "Approvals", href: "/admin", match: (p: string) => p === "/admin", visible: ADMIN_ONLY },
+  { label: "Members", href: "/admin/members", match: (p: string) => p.startsWith("/admin/members"), visible: ADMIN_ONLY },
+  { label: "Collaborators", href: "/admin/collaborators", match: (p: string) => p.startsWith("/admin/collaborators"), visible: ADMIN_ONLY },
+  { label: "Registrations", href: "/admin/registrations", match: (p: string) => p.startsWith("/admin/registrations"), visible: ADMIN_ONLY },
+  { label: "Projects", href: "/admin/projects", match: (p: string) => p.startsWith("/admin/projects"), visible: ADMIN_ONLY },
+  { label: "Courses", href: "/admin/courses", match: (p: string) => p.startsWith("/admin/courses"), visible: (a) => a.isAdmin || a.canAuthorCourses },
+  { label: "Admissions", href: "/admin/admissions", match: (p: string) => p.startsWith("/admin/admissions"), visible: (a) => a.isAdmin || a.canAuthorRounds || a.isAdmissionsReviewer },
+  { label: "Newsletter", href: "/admin/newsletter", match: (p: string) => p.startsWith("/admin/newsletter"), visible: ADMIN_ONLY },
+  { label: "Subscriptions", href: "/admin/subscriptions", match: (p: string) => p.startsWith("/admin/subscriptions"), visible: ADMIN_ONLY },
+  { label: "Email designs", href: "/admin/email-designs", match: (p: string) => p.startsWith("/admin/email-designs"), visible: ADMIN_ONLY },
+  { label: "Deliverability", href: "/admin/deliverability", match: (p: string) => p.startsWith("/admin/deliverability"), visible: ADMIN_ONLY },
+  { label: "Task templates", href: "/admin/task-templates", match: (p: string) => p.startsWith("/admin/task-templates"), visible: ADMIN_ONLY },
+  { label: "Site status", href: "/admin/site-status", match: (p: string) => p.startsWith("/admin/site-status"), visible: ADMIN_ONLY },
   // TEMP — fire-once data-wipe controls. Remove this entry along with
   // `src/app/(app)/admin/(admin-only)/danger-zone/` and
   // `src/app/api/admin/nuke-tasks/` once both environments have been reset.
-  { label: "Danger zone", href: "/admin/danger-zone", match: (p: string) => p.startsWith("/admin/danger-zone") },
+  { label: "Danger zone", href: "/admin/danger-zone", match: (p: string) => p.startsWith("/admin/danger-zone"), visible: ADMIN_ONLY },
 ];
 
 /**
  * The tab strip for the admin area.
  *
- * `isAdmin` comes from the server layout, which has already read the session:
- * a full admin gets every section, a course drafter or approver gets only the
- * sections marked `courseAuthor`. Passing it down rather than reading
- * `useAuth()` here keeps the strip in step with the gate that actually decides
- * (`requireAdminPage()` / `requireCourseAuthorPage()`), instead of a second
- * client-side opinion that could drift from it.
+ * `access` comes from the server layout, which has already read the session, so
+ * the strip stays in step with the gates that actually decide
+ * (`requireAdminPage()`, `requireCourseAuthorPage()`,
+ * `requireAdmissionsPage()`) instead of being a second client-side opinion that
+ * could drift from them. Every tab renders only for the callers its own page
+ * would let in.
  */
-export default function AdminTabs({ isAdmin }: { isAdmin: boolean }) {
+export default function AdminTabs({ access }: { access: AdminTabAccess }) {
   const pathname = usePathname();
   const pendingCount = usePendingCount();
   const collaboratorCount = useCollaboratorCount();
@@ -59,10 +78,7 @@ export default function AdminTabs({ isAdmin }: { isAdmin: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
 
-  const tabs = useMemo(
-    () => (isAdmin ? TABS : TABS.filter((tab) => tab.courseAuthor)),
-    [isAdmin],
-  );
+  const tabs = useMemo(() => TABS.filter((tab) => tab.visible(access)), [access]);
 
   // `?? 0` for courses: that hook reports an unknown count as null (see its
   // doc comment), and a badge that hasn't been measured renders as no badge.
