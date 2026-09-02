@@ -144,11 +144,25 @@ function draftFrom(page: CoursePageDoc | null): PageDraft {
  * field, which is exactly the kind of omission a dirty check hides rather than
  * reports.
  *
- * `key` is part of the compare and that is harmless: keys are only minted when
- * a draft is seeded or a row is added, so a reseed and its baseline share them.
+ * React keys are stripped first. They are minted fresh every time a draft is
+ * seeded from a document, so a reload would otherwise make an untouched form
+ * report unsaved changes: identical copy, different keys. Generating themes
+ * does exactly that reload, so this is the difference between "saved" and a
+ * banner that never goes away.
  */
+function withoutKeys(draft: PageDraft): unknown {
+  const strip = <T extends { key: string }>(rows: T[]) =>
+    rows.map(({ key: _key, ...rest }) => rest);
+  return {
+    ...draft,
+    themes: strip(draft.themes),
+    faq: strip(draft.faq),
+    journey: strip(draft.journey),
+  };
+}
+
 function sameDraft(a: PageDraft, b: PageDraft): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return JSON.stringify(withoutKeys(a)) === JSON.stringify(withoutKeys(b));
 }
 
 /** A new seed. Short, typeable, and visibly a seed rather than an id. */
