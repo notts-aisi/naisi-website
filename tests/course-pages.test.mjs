@@ -12,8 +12,8 @@
  * SHAPE filter, and a `richText` block whose `html` is `<script>…</script>`
  * passes it unchanged. The collection is `allow write: if false` and one route
  * writes it, and `normalizeCoursePage` neuters again at READ time so that a
- * row which arrived some other way — a console edit, a restored backup, a
- * future route — is still harmless. That read-time promise is what this
+ * row which arrived some other way (a console edit, a restored backup, a
+ * future route) is still harmless. That read-time promise is what this
  * section pins, and no type checker can see it.
  *
  * §2 THE CAPS AND THE SHAPES. Every list on the page has a ceiling and every
@@ -24,7 +24,7 @@
  * §3 THE COHORT IS ABSENT, NEVER NULL. `firestore.rules` caps the field with
  * `request.resource.data.get('cohort', {}).keys().hasOnly([...])`, and
  * `.keys()` on a stored null raises, denying the write. So `updateRun` must
- * clear the field with `deleteField()`, never by writing null — the same trap
+ * clear the field with `deleteField()`, never by writing null: the same trap
  * already recorded for `submissionExerciseRef`. Source-pinned, because the
  * failure it prevents is a run nobody can edit again.
  *
@@ -197,8 +197,8 @@ test("§1 GUARD a stored script tag does not survive normalisation", () => {
   const [first] = page.pitchBlocks;
   assert.equal(first.html.includes("<script"), false);
   assert.equal(first.html.includes("fetch("), false);
-  // The legitimate half of the block survives — a sanitiser that ate the copy
-  // would be quietly reverted the first time an author noticed.
+  // The legitimate half of the block survives. A sanitiser that ate the
+  // copy would be quietly reverted the first time an author noticed.
   assert.ok(first.html.includes("Real copy."));
 });
 

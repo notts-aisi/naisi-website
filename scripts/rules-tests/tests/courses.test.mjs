@@ -1845,10 +1845,10 @@ describe("courseEnrolments: the attendance rollup is not the member's to write",
 });
 
 // ---------------------------------------------------------------------------
-// V3 W1 PR7 — coursePages, and the two courseRuns fields that ship with it
+// V3 W1 PR7: coursePages, and the two courseRuns fields that ship with it
 // ---------------------------------------------------------------------------
 
-/** Seed one authored page (rules disabled — the collection is routes-only). */
+/** Seed one authored page (rules disabled: the collection is routes-only). */
 async function seedCoursePage(courseId, overrides = {}) {
   await seed(async (db) => {
     await db.collection("coursePages").doc(courseId).set({

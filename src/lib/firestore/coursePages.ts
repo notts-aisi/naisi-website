@@ -2,7 +2,7 @@ import { sanitizeBlocks, type Block } from "./newsletterBlocks";
 import { isValidDateKey } from "../courses/weekPlan";
 
 /**
- * `coursePages/{courseId}` — the AUTHORED public page for a course.
+ * `coursePages/{courseId}`: the AUTHORED public page for a course.
  *
  * The doc id IS the course id, so a course can never have two pages and no
  * uniqueness query is needed anywhere. There is no `status`: this object is
@@ -29,8 +29,8 @@ import { isValidDateKey } from "../courses/weekPlan";
  * the only writer, and `sanitizeCoursePageBlocks` below runs at BOTH ends:
  * the route sanitises what it stores, and `normalizeCoursePage` sanitises
  * again at read time (the `normalizeCourse` pattern in `courses.ts`), so a row
- * that reached the collection by any other means — a console edit, a restored
- * backup, a future route written by someone who did not read this comment —
+ * that reached the collection by any other means (a console edit, a restored
+ * backup, a future route written by someone who did not read this comment)
  * is still neutered before it reaches a renderer.
  *
  * ## Deletion
@@ -39,7 +39,7 @@ import { isValidDateKey } from "../courses/weekPlan";
  * text and no PII. It is therefore counted in the course destroy manifest and
  * deleted by `destroyCourseCascade` (see `courseDeletion.ts`), and it is
  * deliberately NOT part of the per-account deletion sweep in
- * `accountDeletion.ts` — there is nothing of a member's in here to erase, and
+ * `accountDeletion.ts`. There is nothing of a member's in here to erase, and
  * a sweep keyed on `updatedByUid` would delete a course's public page because
  * the person who last edited it closed their account.
  */
@@ -74,7 +74,7 @@ export const COURSE_PAGE_LIMITS = {
   maxWeeklyThemes: 20,
   maxFaq: 12,
   maxJourney: 8,
-  /** Highest week a `sampleWeekNumber` may name — matches the week-id range. */
+  /** Highest week a `sampleWeekNumber` may name. Matches the week-id range. */
   maxWeekNumber: 60,
 } as const;
 
@@ -145,7 +145,7 @@ export type CoursePageDoc = {
    * the editor can also type is not provenance.
    *
    * `themesSourceLabel` is STAFF-FACING. It may name a run, and a run's free
-   * text label is exactly the string V3 stopped showing visitors — so it
+   * text label is exactly the string V3 stopped showing visitors, so it
    * belongs in the authoring UI and never on the public page.
    */
   themesSourceTemplateId: string | null;
@@ -450,7 +450,7 @@ function asSampleWeekNumber(v: unknown): number | null {
 
 /**
  * Read one stored page. `pitchBlocks` goes through
- * `sanitizeCoursePageBlocks` HERE as well as in the route — see the module
+ * `sanitizeCoursePageBlocks` HERE as well as in the route. See the module
  * comment for why the read end is not redundant.
  */
 export function normalizeCoursePage(id: string, data: Raw): CoursePageDoc {

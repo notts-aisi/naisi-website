@@ -231,7 +231,7 @@ export type CourseDestroyCounts = {
   /** Live runs still attached — every one of them is a blocker. */
   runs: number;
   /**
-   * V3 W1 PR7. The authored public page at `coursePages/{courseId}` — 0 or 1,
+   * V3 W1 PR7. The authored public page at `coursePages/{courseId}`: 0 or 1,
    * because the doc id IS the course id.
    *
    * DESTROYED with the course, not orphaned: unlike a template snapshot, the

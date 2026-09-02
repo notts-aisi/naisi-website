@@ -233,7 +233,7 @@ export type CourseRunDoc = {
   /** Ordered teaching weeks + breaks. Interpreted by `currentWeekFor()`. */
   weekPlan: WeekPlanEntry[];
   /**
-   * V3 W1 PR7. The STRUCTURED cohort — term, year and cohort number — that
+   * V3 W1 PR7. The STRUCTURED cohort (term, year and cohort number) that
    * replaces `label` on every learner-facing and public surface, rendered by
    * the one formatter `cohortLabel(run)` in `../courses/cohortLabel`.
    *
@@ -252,7 +252,7 @@ export type CourseRunDoc = {
   /**
    * V3 W1 PR7. The "start here" panel shown above the week rail on the run
    * home before week 1, and collapsed after it. Trusted authored content, the
-   * same trust model as `guideBlocks` — and unlike `coursePages.pitchBlocks`
+   * same trust model as `guideBlocks`, and unlike `coursePages.pitchBlocks`
    * this one is behind the signed-in `/learn` gate, never on a logged-out
    * page. Client-writable; `runContentOk()` caps the length.
    */

@@ -1052,8 +1052,8 @@ service cloud.firestore {
     // =====================================================================
     // === V3 W1 PR7: coursePages ==========================================
     // =====================================================================
-    // The AUTHORED public page for a course, at `coursePages/{courseId}` —
-    // the doc id IS the course id, so a course structurally cannot have two
+    // The AUTHORED public page for a course, at `coursePages/{courseId}`.
+    // The doc id IS the course id, so a course structurally cannot have two
     // pages and nothing has to query for uniqueness.
     //
     // ROUTES-ONLY, deliberately unlike the `courses` block immediately above,
@@ -1061,7 +1061,7 @@ service cloud.firestore {
     // is not a general preference for routes:
     //
     //   `sanitizeBlocks` (src/lib/firestore/newsletterBlocks.ts) is a SHAPE
-    //   filter — `raw.filter(isValidBlock)` — not an HTML sanitiser. A
+    //   filter (`raw.filter(isValidBlock)`), not an HTML sanitiser. A
     //   `richText` block renders through `dangerouslySetInnerHTML`, and for
     //   THIS collection that render happens on a LOGGED-OUT marketing page.
     //   The `courses` update branch above admits `isCourseCollaborator()`,
@@ -1330,7 +1330,7 @@ service cloud.firestore {
           // the map's KEY SET, which is this layer's whole vocabulary for
           // bounding a map, and also refuses a stored null (`.keys()` on null
           // raises, and a stored null would wedge every later edit against the
-          // `.get(field, {})` default — the submissionExerciseRef lesson).
+          // `.get(field, {})` default: the submissionExerciseRef lesson).
           && request.resource.data.get('startHereBlocks', []).size() <= 20
           && request.resource.data.get('cohort', {}).keys()
             .hasOnly(['term', 'year', 'number']);

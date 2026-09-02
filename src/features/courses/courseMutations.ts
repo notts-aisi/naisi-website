@@ -277,7 +277,7 @@ export type CourseRunPatch = Partial<{
    * V3 W1 PR7. `null` CLEARS the cohort, and it clears it with
    * `deleteField()`, never by storing a null. The rules cap reads
    * `request.resource.data.get('cohort', {}).keys().hasOnly([...])`, and
-   * `.keys()` on a stored null raises and denies the write — so a null here
+   * `.keys()` on a stored null raises and denies the write, so a null here
    * would wedge every later non-admin edit of the run, which is the exact trap
    * already recorded for `submissionExerciseRef`.
    */

@@ -16,7 +16,7 @@ import {
 import { cohortLabel } from "@/lib/courses/cohortLabel";
 
 /**
- * `POST /api/courses/[courseId]/page/generate-themes` — fill the public
+ * `POST /api/courses/[courseId]/page/generate-themes`: fill the public
  * page's weekly themes from curriculum that already exists.
  *
  * The themes list is the spine of a BlueDot-style course page ("week 3: goal

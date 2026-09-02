@@ -17,7 +17,7 @@ import {
 import { isValidDateKey } from "@/lib/courses/weekPlan";
 
 /**
- * `PUT /api/courses/[courseId]/page` — the ONLY writer of `coursePages`.
+ * `PUT /api/courses/[courseId]/page`: the ONLY writer of `coursePages`.
  *
  * `coursePages` is `allow write: if false`. See the collection's module
  * comment (`src/lib/firestore/coursePages.ts`) and the rules block for the
