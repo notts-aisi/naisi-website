@@ -390,40 +390,15 @@ export async function getPublishedCourse(
 }
 
 /**
- * The run one course's public surfaces should describe, with its window
- * state, or null when the course has never had a public run.
- *
- * Deliberately NOT "the open run". The course page CTA and the apply page
- * both need an answer between the deadline and the decision, and returning
- * null there is exactly what made an applicant's own status card unreachable
- * the moment admissions moved the run to `applications-closed`: the apply
- * page had no run to read a row against, so the one surface that ever told
- * someone their application existed vanished on the day they started asking.
- *
- * So this returns the best CANDIDATE: a run taking applications if there is
- * one, else one opening soon, else the most recently closed. Draft and
- * archived runs are never candidates.
- *
- * Filters client-side over a `courseId`-only query: both fields are
- * single-field auto-indexed, and a course has a handful of runs ever, so this
- * stays index-free (`firestore.indexes.json` carries no courseId+status pair).
- */
-export async function getApplicationRunForCourse(
-  courseId: string,
-): Promise<RunWindow | null> {
-  return (await getCourseRunSet(courseId)).featuredRun;
-}
-
-/**
  * One course's runs, read once and answered twice: the run its public
  * surfaces describe, AND every run id the course has.
  *
  * The id list is what the round lookup needs. A round names RUNS
  * (`outcomeRunIds`) and `courseRuns.admissionRoundIds` does not exist yet, so
  * the only way from a course to its round is through its runs, and the ids
- * have to include the ones `getApplicationRunForCourse` drops: an autumn
- * intake's target run sits in `draft` right up until allocation, which is
- * precisely the window in which the page most needs to name the round.
+ * have to include the ones the featured-run ranking drops: an autumn intake's
+ * target run sits in `draft` right up until allocation, which is precisely
+ * the window in which the page most needs to name the round.
  *
  * One query for both answers, because the page needs both and reading the
  * same fifty documents twice on every render is the kind of thing that only
@@ -432,10 +407,31 @@ export async function getApplicationRunForCourse(
 export type CourseRunSet = {
   /** Every run of this course, draft and archived included. */
   runIds: string[];
-  /** The run the public surfaces describe, or null. */
+  /**
+   * The run the public surfaces describe, or null when the course has never
+   * had a public run.
+   *
+   * Deliberately NOT "the open run". The course page CTA and the apply page
+   * both need an answer between the deadline and the decision, and returning
+   * null there is exactly what made an applicant's own status card
+   * unreachable the moment admissions moved the run to `applications-closed`:
+   * the apply page had no run to read a row against, so the one surface that
+   * ever told someone their application existed vanished on the day they
+   * started asking.
+   *
+   * So this is the best CANDIDATE: a run taking applications if there is one,
+   * else one opening soon, else the most recently closed. Draft and archived
+   * runs are never candidates.
+   */
   featuredRun: RunWindow | null;
 };
 
+/**
+ * Filters client-side over a `courseId`-only query: every field it branches on
+ * is single-field auto-indexed, and a course has a handful of runs ever, so
+ * this stays index-free (`firestore.indexes.json` carries no courseId+status
+ * pair).
+ */
 export async function getCourseRunSet(courseId: string): Promise<CourseRunSet> {
   const db = getAdminDb();
   if (!db) return { runIds: [], featuredRun: null };
@@ -589,10 +585,11 @@ export async function getApplyContext(
   // Independent reads, so they go together: the draft-course path throws the
   // run query away, which is cheaper than serialising every real hit (the same
   // call the course detail page makes).
-  const [doc, found] = await Promise.all([
+  const [doc, runSet] = await Promise.all([
     db.collection("courses").doc(courseId).get(),
-    getApplicationRunForCourse(courseId),
+    getCourseRunSet(courseId),
   ]);
+  const found = runSet.featuredRun;
   if (!doc.exists || !found) return null;
   const { run, window } = found;
   const course = normalizeCourse(doc.id, doc.data() ?? {});
