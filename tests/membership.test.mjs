@@ -20,6 +20,10 @@
  *  4. THE /me PROJECTION. The member sees their tier and when it was
  *     recorded. Not who granted it, not the import batch, not the admin's
  *     note on the period.
+ *  5. THE CURRENT-PERIOD MEMO. Every row of the admin Members list is drawn
+ *     off one shared answer to "which period is current". Remembering the
+ *     wrong answer is how that list ends up telling twenty rows there is no
+ *     period, minutes after somebody made one.
  *
  * The loader dance is the one from `account-deletion-admission-roles.test.mjs`:
  * this repo's Node predates native TypeScript stripping, so the module graph is
@@ -126,6 +130,7 @@ async function loadTs(relativePath) {
 
 const memberships = await loadTs(join("lib", "firestore", "memberships.ts"));
 const users = await loadTs(join("lib", "firestore", "users.ts"));
+const periodCache = await loadTs(join("features", "admin", "currentPeriodCache.ts"));
 
 // ---------------------------------------------------------------------------
 // 1. Ids
@@ -362,7 +367,83 @@ test("period dates are real civil dates, in order, and may be empty", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 6. The single-writer guard
+// 6. The shared current-period memo
+// ---------------------------------------------------------------------------
+
+/** A fetcher that answers from a script and counts how often it was asked. */
+function scriptedFetcher(answers) {
+  const queue = [...answers];
+  const state = { calls: 0 };
+  state.fetch = () => {
+    state.calls += 1;
+    const next = queue.length > 1 ? queue.shift() : queue[0];
+    return next instanceof Error ? Promise.reject(next) : Promise.resolve(next);
+  };
+  return state;
+}
+
+const PERIOD = { id: "2026-27", year: "2026/27", label: "Membership 2026/27" };
+
+test("a real answer is fetched once and shared by every row", async () => {
+  const source = scriptedFetcher([PERIOD]);
+  const cache = periodCache.createCurrentPeriodCache(source.fetch);
+  const [a, b, c] = await Promise.all([cache.load(), cache.load(), cache.load()]);
+  assert.deepEqual([a, b, c], [PERIOD, PERIOD, PERIOD]);
+  assert.equal(source.calls, 1, "twenty member rows must not be twenty requests");
+});
+
+test("NO period is never remembered", async () => {
+  // The state an admin is most likely to be halfway through changing. Keeping
+  // it is how every row goes on saying "no membership period is current"
+  // after one has been created and made current.
+  const source = scriptedFetcher([null, PERIOD]);
+  const cache = periodCache.createCurrentPeriodCache(source.fetch);
+  assert.equal(await cache.load(), null);
+  assert.deepEqual(await cache.load(), PERIOD);
+  assert.equal(source.calls, 2);
+});
+
+test("a failed request is never remembered either", async () => {
+  const source = scriptedFetcher([new Error("offline"), PERIOD]);
+  const cache = periodCache.createCurrentPeriodCache(source.fetch);
+  await assert.rejects(cache.load(), /offline/);
+  assert.deepEqual(await cache.load(), PERIOD);
+  assert.equal(source.calls, 2);
+});
+
+test("a real answer expires", async () => {
+  const source = scriptedFetcher([PERIOD]);
+  let clock = 1_000;
+  const cache = periodCache.createCurrentPeriodCache(source.fetch, {
+    ttlMs: 100,
+    now: () => clock,
+  });
+  await cache.load();
+  clock += 99;
+  await cache.load();
+  assert.equal(source.calls, 1, "still inside the window");
+  clock += 2;
+  await cache.load();
+  assert.equal(source.calls, 2, "past it, so the badge cannot be stale forever");
+});
+
+test("reset drops the answer, and an in-flight request cannot undo the reset", async () => {
+  const source = scriptedFetcher([PERIOD]);
+  const cache = periodCache.createCurrentPeriodCache(source.fetch);
+  const inFlight = cache.load();
+  cache.reset();
+  await inFlight;
+  await cache.load();
+  assert.equal(
+    source.calls,
+    2,
+    "the console resets after a write; a request that started before it must " +
+      "not put the pre-write answer back",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 7. The single-writer guard
 // ---------------------------------------------------------------------------
 
 /**

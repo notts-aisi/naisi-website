@@ -12,6 +12,7 @@ import {
   MEMBERSHIP_TIER_LABELS,
   type MembershipTier,
 } from "@/lib/firestore/memberships";
+import { loadCurrentPeriod, type CurrentPeriod } from "./currentPeriodCache";
 import styles from "./MembershipChip.module.css";
 
 /**
@@ -31,35 +32,15 @@ import styles from "./MembershipChip.module.css";
  *
  * ## One fetch for the whole page
  *
- * Which period is current is the same answer for every row, so the periods
- * request is memoised at module scope and shared by every chip on the list.
- * Without that, opening the Members tab would fire one request per member.
+ * Which period is current is the same answer for every row, so the request is
+ * shared by every chip on the list through `currentPeriodCache`. Without that,
+ * opening the Members tab would fire one request per member. That module also
+ * owns when the shared answer stops being trusted, which matters most in the
+ * one state an admin is likely to be halfway through changing: see its header.
  *
  * The write is `POST /api/admin/membership/grant`, which owns the row, the
  * cache and the period totals together. Nothing here writes Firestore.
  */
-
-type CurrentPeriod = { id: string; year: string; label: string } | null;
-
-let periodPromise: Promise<CurrentPeriod> | null = null;
-
-/** The current period, fetched once per page load and shared by every row. */
-function loadCurrentPeriod(): Promise<CurrentPeriod> {
-  if (!periodPromise) {
-    periodPromise = fetch("/api/admin/membership/periods")
-      .then(async (res) => {
-        if (!res.ok) return null;
-        const data = (await res.json()) as {
-          periods: { id: string; year: string; label: string }[];
-          currentPeriodId: string | null;
-        };
-        const match = data.periods.find((p) => p.id === data.currentPeriodId);
-        return match ? { id: match.id, year: match.year, label: match.label } : null;
-      })
-      .catch(() => null);
-  }
-  return periodPromise;
-}
 
 /**
  * The current period, as state, for a component that only wants to render off
@@ -72,11 +53,18 @@ function useCurrentPeriod(): { period: CurrentPeriod; resolved: boolean } {
   const [resolved, setResolved] = useState(false);
   useEffect(() => {
     let live = true;
-    void loadCurrentPeriod().then((p) => {
-      if (!live) return;
-      setPeriod(p);
-      setResolved(true);
-    });
+    void loadCurrentPeriod().then(
+      (p) => {
+        if (!live) return;
+        setPeriod(p);
+        setResolved(true);
+      },
+      // The fetcher swallows its own failures, so this is belt and braces:
+      // whatever happens, the chip stops saying "checking".
+      () => {
+        if (live) setResolved(true);
+      },
+    );
     return () => {
       live = false;
     };
