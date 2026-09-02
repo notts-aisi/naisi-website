@@ -23,6 +23,7 @@ import {
   signInWithEmailPassword,
 } from "@/auth/signInWithEmailPassword";
 import { useAuth } from "@/auth/AuthProvider";
+import { isFunnelReturn } from "@/lib/authReturn";
 import { hardNavigate } from "@/lib/navigation/hardNavigate";
 import { claimSelfHealAttempt } from "@/lib/navigation/selfHealGuard";
 import { minWidth } from "@/theme/breakpoints";
@@ -360,7 +361,7 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
           // the `__auth_next` cookie stays as the fallback for the redirect
           // leg. Collaborators keep their own branch: their destination is
           // /collaborator, not a course.
-          const courseNext = safeNext.startsWith("/courses/")
+          const courseNext = isFunnelReturn(safeNext)
             ? `/register?next=${encodeURIComponent(safeNext)}`
             : "/register";
           router.replace(

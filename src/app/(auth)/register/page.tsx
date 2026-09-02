@@ -29,6 +29,7 @@ import {
 import { signUpWithEmailPassword, startOver } from "@/auth/signInWithEmailPassword";
 import DeleteAccountButton from "@/components/DeleteAccountButton";
 import { useAuth } from "@/auth/AuthProvider";
+import { safeFunnelReturn } from "@/lib/authReturn";
 import { hardNavigate } from "@/lib/navigation/hardNavigate";
 import { claimSelfHealAttempt } from "@/lib/navigation/selfHealGuard";
 import { useSiteNotice } from "@/features/maintenance/useSiteNotice";
@@ -79,53 +80,15 @@ type VerificationState =
 const AUTH_NEXT_COOKIE = "__auth_next";
 
 /**
- * The ONE post-registration destination this page will accept from the URL.
+ * Where a return address is allowed to point after registration.
  *
- * Registration is the back half of the course-application funnel: the apply
- * page's whole premise is "any account can apply, including one you make in
- * the next minute", and until now that journey dead-ended, because finishing
- * registration always landed on `/pending-approval` and left the applicant to
- * find their way back.
- *
- * The allowlist is a PREFIX, not a general open-redirect guard, and that is
- * deliberate: `/courses/` is the only funnel that needs this, and a narrow
- * prefix is far easier to be sure about than a scheme-and-host parser.
- * Everything dangerous fails it for free:
- *
- *  - an absolute URL ("https://evil.example") does not start with a slash;
- *  - a protocol-relative one ("//evil.example") fails the second character;
- *  - the backslash trick browsers normalise to a slash ("/\evil.example")
- *    fails the prefix, and any later backslash is rejected outright;
- *  - a scheme with no slash ("javascript:alert(1)") fails the first character.
- *
- * The prefix alone is not quite enough, though: "/courses/../admin" starts
- * with it and still leaves the funnel the moment a browser normalises the
- * path. So a dot-dot SEGMENT is rejected too, which keeps the allowlist
- * meaning what it says rather than what it happens to spell.
- *
- * Anything that does not match falls back to `/pending-approval`, which is
- * still the right answer for the overwhelming majority of registrations.
+ * The allowlist itself moved to `src/lib/authReturn.ts` when the admission
+ * rounds added a second funnel (`/apply/`): `AuthEntry` decides the same
+ * question on the sign-in leg, and two copies of a redirect allowlist is two
+ * chances for one of them to be widened alone. The reasoning for a prefix
+ * allowlist rather than an open-redirect parser lives there.
  */
-function safeCourseNext(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  if (!raw.startsWith("/courses/")) return null;
-  // Backslashes and control characters never appear in a path this site
-  // generates, and both are the raw material of redirect tricks.
-  if (raw.includes("\\")) return null;
-  // Checked by code point rather than a regex so this source file carries no
-  // literal control characters of its own. A newline is the one that matters.
-  for (const ch of raw) {
-    const code = ch.codePointAt(0) ?? 0;
-    if (code < 0x20 || code === 0x7f) return null;
-  }
-  // Segment-wise, so a legitimate ".." inside a course id (or a lone dot) is
-  // untouched while a real traversal segment is refused. The query string and
-  // fragment are split off first: they are not path segments and a "?a=.." is
-  // not a traversal.
-  const path = raw.split(/[?#]/, 1)[0];
-  if (path.split("/").includes("..")) return null;
-  return raw;
-}
+const safeCourseNext = safeFunnelReturn;
 
 /** The `__auth_next` value, or null. Browser-only: reads `document.cookie`. */
 function readAuthNextCookie(): string | null {
