@@ -214,6 +214,15 @@ const SYNC_TASKS = api("runs", "[runId]", "sync-tasks", "route.ts");
 const OVERVIEW = api("runs", "[runId]", "overview", "route.ts");
 const ME = api("me", "route.ts");
 const ATTENDANCE = api("groups", "[groupId]", "attendance", "route.ts");
+const ATTENDANCE_PUSH = api("groups", "[groupId]", "attendance", "push", "route.ts");
+/**
+ * V3 moved the register's session resolution and its access gate out of the
+ * route and into two shared modules, because the push, the admin edit and the
+ * participant-note route all need the same answers. The PROPERTIES pinned
+ * below are unchanged; only their home moved.
+ */
+const SESSIONS = src("lib", "courses", "sessions.ts");
+const REGISTER_ACCESS = src("lib", "courses", "registerAccess.ts");
 const GROUP_EXERCISES = api("groups", "[groupId]", "exercises", "route.ts");
 const MY_EXERCISES = api("runs", "[runId]", "my-exercises", "route.ts");
 const SUBMIT = api("runs", "[runId]", "exercises", "[exerciseId]", "submit", "route.ts");
@@ -903,14 +912,22 @@ test("GUARD — no reader resolves sessionOverrides by the plan entry's own week
   //
   // If this goes red, a reader has reverted to (or newly adopted) the plan-id
   // doctrine — align it with `weekDocId(weekNumber)` instead.
-  assert.doesNotMatch(ATTENDANCE, /sessionForWeek\(group, week\.weekId\)/);
-  assert.match(ATTENDANCE, /sessionForWeek\(group, weekDocId\(week\.weekNumber\)\)/);
+  // V3: the resolution moved to `sessions.ts`, which derives the key from the
+  // week NUMBER (`weekId` there IS `weekDocId(weekNumber)`) and never from the
+  // plan entry's own id.
+  assert.doesNotMatch(SESSIONS, /entry\.weekId/);
+  assert.match(SESSIONS, /const weekId = weekDocId\(weekNumber\);/);
+  assert.match(SESSIONS, /sessionForWeek\(group, weekId\)/);
   assert.doesNotMatch(ALLOCATION_PUBLISH, /\? firstWeek\.weekId/);
   assert.match(ALLOCATION_PUBLISH, /weekDocId\(firstWeek\.weekNumber\)/);
 
   // Attendance stays internally consistent: the register beside the header is
-  // addressed by NUMBER too.
-  assert.match(ATTENDANCE, /attendanceDocId\(runId, groupId, weekNumber\)/);
+  // addressed by NUMBER too (plus the occurrence, whose default keeps every
+  // existing id byte-identical).
+  assert.match(
+    ATTENDANCE,
+    /attendanceDocId\(runId, groupId, session\.weekNumber, session\.occurrence\)/,
+  );
 });
 
 test("GUARD — the two week keys really do resolve different overrides on a reordered plan", () => {
@@ -1269,11 +1286,15 @@ test("GUARD — archiving a group withdraws it from every live surface at once",
   assert.match(NUDGE, /\.filter\(\(g\) => !g\.archived\)/);
   assert.match(ALLOCATION, /archived/);
   // Attendance treats archiving as UNSTAFFING: the facilitator loses the
-  // register with the group.
+  // register with the group. V3 moved that predicate into `registerAccess.ts`
+  // so the register, the push and the note route cannot drift apart about it.
   assert.match(
-    ATTENDANCE,
+    REGISTER_ACCESS,
     /group && !group\.archived && group\.facilitatorUids\.includes\(actor\.uid\)/,
   );
+  for (const route of [ATTENDANCE, ATTENDANCE_PUSH]) {
+    assert.match(route, /gateGroupRegister\(/);
+  }
 });
 
 test("PROVEN GAP — archiving leaves the enrolments, the count and the publish gate behind", () => {
@@ -1330,11 +1351,10 @@ test("GUARD — taughtWeeksOf refuses to mint a column from a corrupt plan entry
   // V2-3 hands it a RESOLVED plan (the group's own when it has one), so it
   // takes the plan rather than the run — the defence is a property of week-plan
   // data, not of where the data came from.
-  assert.match(
-    ATTENDANCE,
-    /function taughtWeeksOf\(weekPlan: WeekPlanEntry\[\]\): TaughtWeek\[\]/,
-  );
-  assert.match(ATTENDANCE, /seen\.has\(n\)/);
+  // V3: the defence moved with the resolution into `sessions.ts`, which builds
+  // the register's columns for every consumer.
+  assert.match(SESSIONS, /function taughtWeeksOf\(/);
+  assert.match(SESSIONS, /seen\.has\(n\)/);
   const messy = [
     week(1),
     brk("Reading week"),
@@ -1390,10 +1410,10 @@ test("PROVEN GAP — removing a taught week strands its register beyond reach", 
   // And POST refuses to correct it, so the marks are invisible AND un-editable.
   // (V2-3: the refusal now names the GROUP's schedule, because that is what it
   // is checked against — the group's resolved plan, not the run's raw one.)
-  assert.match(ATTENDANCE, /isn't a taught week of this group's schedule/);
+  assert.match(ATTENDANCE, /isn't a taught session of this group's schedule/);
   assert.match(
     ATTENDANCE,
-    /const week = taughtWeeksOf\(calendar\.weekPlan\)\.find\(\(w\) => w\.weekNumber === weekNumber\);/,
+    /const sessions = resolveSessions\(run, gated\.group\);/,
   );
 
   // 2. WORSE, THE SURVIVING REGISTERS RE-ATTACH TO DIFFERENT WEEKS. What the

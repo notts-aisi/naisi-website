@@ -191,6 +191,31 @@ export function nudgeMarkerId(runId: string, slotStartKey: string): string {
   return `nudge__${runId}__${slotStartKey}`;
 }
 
+/**
+ * THE GROUP LANE'S MARKER: one claim per (run, group, next session slot),
+ * claimed by the attendance push after its transaction commits.
+ *
+ * Same collection, same `.create()`-is-the-guarantee shape, same
+ * construct-only rule as `nudgeMarkerId` above, and deliberately a DIFFERENT
+ * prefix so the two families cannot collide in a collection they share with
+ * the `emailrate__` send throttle.
+ *
+ * KEYED ON THE NEXT SLOT, not the session just taught, because that is what
+ * the reminder is about: "your next session is on X, here is what is in it".
+ * Two pushes of the same register cannot both send, and neither can a push
+ * and the admin catch-up, which reads this family before it claims its own.
+ *
+ * The run-level catch-up can FORCE over one of these exactly as it forces
+ * over a `nudge__` marker, recording what it overrode; see the nudge route.
+ */
+export function groupNudgeMarkerId(
+  runId: string,
+  groupId: string,
+  nextSlotStartKey: string,
+): string {
+  return `gnudge__${runId}__${groupId}__${nextSlotStartKey}`;
+}
+
 /** How far either side of a slot a marker still means "this calendar week". */
 const NUDGE_WEEK_SPAN_DAYS = 6;
 

@@ -545,10 +545,13 @@ test("every mutating handler in the register tree guards view-as FIRST", () => {
 
 test("the push claims its send marker AFTER the transaction commits", () => {
   const text = source(PUSH_ROUTE);
-  const transaction = text.indexOf("runTransaction");
-  const create = text.indexOf(".create(");
+  // The CODE, not the prose: the module header names `.create()` in a
+  // sentence, and an index that matched a comment would pass on a route that
+  // did the wrong thing.
+  const transaction = text.indexOf("await db.runTransaction(");
+  const create = text.indexOf("await markerRef.create({");
   assert.ok(transaction > 0, "the push locks the register in a transaction");
-  assert.ok(create > 0, "the push claims the gnudge marker with a create");
+  assert.ok(create > 0, "the push claims the gnudge marker with a standalone create");
   assert.ok(
     create > transaction,
     "a .create() collision inside a transaction aborts the WHOLE transaction, " +
@@ -563,14 +566,24 @@ test("the push claims its send marker AFTER the transaction commits", () => {
 });
 
 test("the push recomputes the rollup rather than incrementing it", () => {
-  const text = source(PUSH_ROUTE);
-  assert.match(text, /recomputeRollup\(/, "the rollup comes from the shared helper");
-  assert.doesNotMatch(
-    text,
-    /FieldValue\.increment\(/,
-    "the attendance rollup is a FULL RECOMPUTE, never a delta, the direct " +
-      "lesson from applicationCounts drift",
+  assert.match(
+    source(PUSH_ROUTE),
+    /readMirrorPlan\(/,
+    "the rollup comes from the shared mirror helper, not from arithmetic here",
   );
+  assert.match(
+    source("lib/courses/attendanceMirror.ts"),
+    /recomputeRollup\(/,
+    "and that helper recomputes from the registers it just read",
+  );
+  for (const file of [PUSH_ROUTE, "lib/courses/attendanceMirror.ts"]) {
+    assert.doesNotMatch(
+      source(file),
+      /FieldValue\.increment\(/,
+      "the attendance rollup is a FULL RECOMPUTE, never a delta: the direct " +
+        "lesson from applicationCounts drift",
+    );
+  }
 });
 
 test("a post-push edit is admin-only and writes an audit row per changed mark", () => {

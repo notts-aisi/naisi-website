@@ -508,7 +508,15 @@ test("a FORCE over a NEIGHBOURING marker is recorded on the marker it writes", (
 
   const claimBlock = ROUTE_SOURCE.slice(claim, dispatch);
   assert.match(claimBlock, /forcedOverMarkerId/);
-  assert.match(claimBlock, /forceCount:\s*forcedOverMarkerId\s*\?\s*1\s*:\s*0/);
+  // V3 widened the same rule to the GROUP push's `gnudge__` markers, which
+  // cannot collide with this create either: a marker in EITHER family means
+  // the cohort has had this week's reminder, and forcing past one starts the
+  // count at 1 rather than reporting a first send.
+  assert.match(
+    claimBlock,
+    /forceCount:\s*forcedOverMarkerId\s*\|\|\s*forcedOverGroups\s*\?\s*1\s*:\s*0/,
+  );
+  assert.match(claimBlock, /forcedOverGroupMarkerIds/);
   // …and the caller is told the cohort had already been mailed this week.
   assert.match(claimBlock, /alreadySent = true/);
 });
