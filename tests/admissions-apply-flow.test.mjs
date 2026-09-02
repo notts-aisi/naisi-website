@@ -976,7 +976,7 @@ describe("the route prologue", () => {
       const src = source(file);
       for (const method of methods) {
         const body = handler(src, method);
-        const throttle = body.indexOf("throttle(req");
+        const throttle = body.indexOf("throttleIp(req");
         assert.ok(throttle !== -1, `${file} ${method} is not throttled at all`);
         for (const read of ["loadRound(", "loadOwnApplication(", "loadStages(", "runTransaction("]) {
           const at = body.indexOf(read);
@@ -990,14 +990,31 @@ describe("the route prologue", () => {
     }
   });
 
+  test("each axis is counted once per request, from its own helper", () => {
+    // One helper with a nullable uid, called twice per request, would count
+    // two hits against the IP bucket for every one request and quietly halve
+    // a budget set generous for a campus sharing one NAT address.
+    const context = source("src/lib/admissions/applyContext.ts");
+    assert.match(context, /export function throttleIp\(/);
+    assert.match(context, /export function throttleUid\(/);
+    for (const [file] of files) {
+      const src = source(file);
+      assert.equal(
+        /\bthrottle\(/.test(src),
+        false,
+        `${file} still calls a combined throttle helper`,
+      );
+    }
+  });
+
   test("the IP axis runs before the session lookup, and the uid axis after it", () => {
     for (const [file, methods] of files) {
       const src = source(file);
       for (const method of methods) {
         const body = handler(src, method);
-        const ip = body.indexOf("throttle(req, null,");
+        const ip = body.indexOf("throttleIp(req,");
         const session = body.indexOf("requireApplicant()");
-        const uid = body.indexOf("throttle(req, user.uid,");
+        const uid = body.indexOf("throttleUid(user.uid,");
         assert.ok(ip !== -1, `${file} ${method} has no per-IP throttle`);
         assert.ok(ip < session, `${file} ${method} looks up the session before throttling by IP`);
         if (uid !== -1) assert.ok(session < uid, `${file} ${method} throttles by uid before it has one`);

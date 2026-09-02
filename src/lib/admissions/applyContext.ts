@@ -100,6 +100,8 @@ export async function requireApplicant(): Promise<Caller | NextResponse> {
   return { user, db };
 }
 
+export type ThrottleKind = "create" | "save";
+
 /**
  * The abuse throttles, run BEFORE any datastore read.
  *
@@ -107,21 +109,25 @@ export async function requireApplicant(): Promise<Caller | NextResponse> {
  * cap cost, so a limiter sitting after the reads it protects has already paid
  * for the request it is about to refuse. `tests/admissions-apply-flow.test.mjs`
  * pins the ordering against the route sources.
+ *
+ * TWO FUNCTIONS, not one with a nullable uid, because each call COUNTS A HIT.
+ * A single helper called twice per request (once before the session lookup for
+ * the IP axis, once after it for the account axis) would count two hits
+ * against the IP bucket for every one request, quietly halving a budget
+ * deliberately set generous for a campus sharing one NAT address.
  */
-export function throttle(
-  req: Request,
-  uid: string | null,
-  kind: "create" | "save",
-): NextResponse | null {
+export function throttleIp(req: Request, kind: ThrottleKind): NextResponse | null {
   const L = APPLY_RATE_LIMITS;
-  const ipMax = kind === "create" ? L.createIpMax : L.saveIpMax;
-  const uidMax = kind === "create" ? L.createUidMax : L.saveUidMax;
-  const ip = rateLimit(`admissions:apply:${kind}:ip:${clientIp(req)}`, ipMax, L.windowMs);
-  if (!ip.ok) return tooManyAttempts(ip.retryAfterSeconds);
-  if (!uid) return null;
-  const byUid = rateLimit(`admissions:apply:${kind}:uid:${uid}`, uidMax, L.windowMs);
-  if (!byUid.ok) return tooManyAttempts(byUid.retryAfterSeconds);
-  return null;
+  const max = kind === "create" ? L.createIpMax : L.saveIpMax;
+  const hit = rateLimit(`admissions:apply:${kind}:ip:${clientIp(req)}`, max, L.windowMs);
+  return hit.ok ? null : tooManyAttempts(hit.retryAfterSeconds);
+}
+
+export function throttleUid(uid: string, kind: ThrottleKind): NextResponse | null {
+  const L = APPLY_RATE_LIMITS;
+  const max = kind === "create" ? L.createUidMax : L.saveUidMax;
+  const hit = rateLimit(`admissions:apply:${kind}:uid:${uid}`, max, L.windowMs);
+  return hit.ok ? null : tooManyAttempts(hit.retryAfterSeconds);
 }
 
 /**

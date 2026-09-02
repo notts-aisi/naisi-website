@@ -30,7 +30,8 @@ import {
   requireApplicant,
   requireRecaptcha,
   roundRef,
-  throttle,
+  throttleIp,
+  throttleUid,
   windowRefusal,
   type Db,
 } from "@/lib/admissions/applyContext";
@@ -148,14 +149,14 @@ export async function POST(req: Request, ctx: Ctx) {
   // cost, so a limiter after the reads has already paid for the request it is
   // about to refuse. The IP axis runs before the session lookup for the same
   // reason.
-  const ipBlocked = throttle(req, null, "create");
+  const ipBlocked = throttleIp(req, "create");
   if (ipBlocked) return ipBlocked;
 
   const caller = await requireApplicant();
   if (caller instanceof NextResponse) return caller;
   const { user, db } = caller;
 
-  const uidBlocked = throttle(req, user.uid, "create");
+  const uidBlocked = throttleUid(user.uid, "create");
   if (uidBlocked) return uidBlocked;
 
   const body = await readJson(req);
@@ -325,14 +326,14 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
   const { roundId } = await ctx.params;
 
-  const ipBlocked = throttle(req, null, "save");
+  const ipBlocked = throttleIp(req, "save");
   if (ipBlocked) return ipBlocked;
 
   const caller = await requireApplicant();
   if (caller instanceof NextResponse) return caller;
   const { user, db } = caller;
 
-  const uidBlocked = throttle(req, user.uid, "save");
+  const uidBlocked = throttleUid(user.uid, "save");
   if (uidBlocked) return uidBlocked;
 
   const body = await readJson(req);
@@ -467,7 +468,7 @@ export async function DELETE(req: Request, ctx: Ctx) {
 
   const { roundId } = await ctx.params;
 
-  const ipBlocked = throttle(req, null, "create");
+  const ipBlocked = throttleIp(req, "create");
   if (ipBlocked) return ipBlocked;
 
   const caller = await requireApplicant();

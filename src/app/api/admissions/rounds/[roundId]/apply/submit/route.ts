@@ -22,7 +22,8 @@ import {
   requireApplicant,
   requireRecaptcha,
   roundRef,
-  throttle,
+  throttleIp,
+  throttleUid,
   windowRefusal,
 } from "@/lib/admissions/applyContext";
 
@@ -76,14 +77,14 @@ export async function POST(req: Request, ctx: Ctx) {
   const { roundId } = await ctx.params;
 
   // Throttles before any datastore read (see `applyContext.throttle`).
-  const ipBlocked = throttle(req, null, "create");
+  const ipBlocked = throttleIp(req, "create");
   if (ipBlocked) return ipBlocked;
 
   const caller = await requireApplicant();
   if (caller instanceof NextResponse) return caller;
   const { user, db } = caller;
 
-  const uidBlocked = throttle(req, user.uid, "create");
+  const uidBlocked = throttleUid(user.uid, "create");
   if (uidBlocked) return uidBlocked;
 
   const body = await readJson(req);
