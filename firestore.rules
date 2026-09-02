@@ -1503,6 +1503,13 @@ service cloud.firestore {
             || (
               request.resource.data.capacity is int
               && request.resource.data.capacity >= 1
+              // THE LITERAL 40 IS TWO CONSTANTS AT ONCE, and rules cannot
+              // import either: `ATTENDANCE_LIMITS.maxRecords` (the register
+              // ceiling the marking route enforces) and
+              // `courseGroups.MAX_OPEN_MODE_CAPACITY` (the group cap, defined
+              // equal to it on purpose). `tests/course-streams.test.mjs` §6.2
+              // asserts those two ARE the same number, so raising one and not
+              // this line fails a suite rather than a Tuesday evening.
               && request.resource.data.capacity <= 40
             )
           )

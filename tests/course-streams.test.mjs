@@ -145,6 +145,7 @@ const {
 const { templateWeekFields } = await loadTs("lib/firestore/courseTemplates.ts");
 
 const {
+  ATTENDANCE_LIMITS,
   ATTENDANCE_STATUSES,
   ATTENDANCE_STATUS_LABEL,
   normalizeCourseAttendance,
@@ -544,7 +545,15 @@ test("GUARD §6.2 the ceiling is the register's ceiling, on both modes", () => {
   // 40 is ATTENDANCE_LIMITS.maxRecords, and it is load-bearing: the marking
   // route fails the WHOLE post once the merged map passes it, so a 41st
   // member breaks bulk marking for everybody in the group.
+  //
+  // BOTH halves are asserted, and the second is the one that matters. The
+  // literal pins the number a human reads in the sentence and in the
+  // firestore.rules `groupCapacityOk()` clause, which cannot import a
+  // constant; the equality pins the REASON, so raising the register cap
+  // without raising the group cap (or the reverse) fails here rather than in
+  // a room full of people on a Tuesday evening.
   assert.equal(MAX_OPEN_MODE_CAPACITY, 40);
+  assert.equal(MAX_OPEN_MODE_CAPACITY, ATTENDANCE_LIMITS.maxRecords);
   assert.equal(groupCapacityError(MAX_OPEN_MODE_CAPACITY, "open"), null);
   assert.match(groupCapacityError(41, "open"), /at most 40/);
   assert.match(groupCapacityError(41, "admissions"), /at most 40/);
