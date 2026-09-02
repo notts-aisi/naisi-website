@@ -15,6 +15,7 @@ import {
   asCoverLogoY,
   asCoverStripSize,
   sanitizeSignupForm,
+  validateQuestionLimits,
 } from "@/lib/firestore/events";
 import { formatEventWhen, type EventChange } from "@/lib/events/changeSummary";
 
@@ -124,6 +125,17 @@ export async function POST(
 
   const newBlocks = sanitizeBlocks(body.blocks);
 
+  // Range-check the authored per-question limits here rather than in
+  // `isValidQuestion`, which is the filter behind `sanitizeSignupForm`: a check
+  // there would delete the whole question instead of telling the organiser
+  // which one is wrong. `clampLimits: false` keeps the number they typed so the
+  // message can quote it back.
+  const signupForm = sanitizeSignupForm(body.signupForm, { clampLimits: false });
+  const limitProblem = validateQuestionLimits(signupForm);
+  if (limitProblem) {
+    return NextResponse.json({ error: limitProblem.error }, { status: 400 });
+  }
+
   const patch: Record<string, unknown> = {
     updatedAt: FieldValue.serverTimestamp(),
     title,
@@ -137,7 +149,7 @@ export async function POST(
     visibility,
     capacity,
     waitlistEnabled,
-    signupForm: sanitizeSignupForm(body.signupForm),
+    signupForm,
     foodText: foodText ? foodText : FieldValue.delete(),
     dietaryTags,
     posterUrl: posterUrl ?? FieldValue.delete(),
