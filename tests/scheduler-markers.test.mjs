@@ -156,6 +156,9 @@ const {
   stampSent,
   stampSkipped,
 } = await loadTs("lib/scheduler/markers.ts");
+const { JOBS, MIN_RECLAIM_AFTER_MINUTES, policyFor } =
+  await loadTs("lib/scheduler/registry.ts");
+const { heartbeatJob } = await loadTs("lib/scheduler/jobs/heartbeat.ts");
 
 // ---------------------------------------------------------------------------
 // The fake
@@ -588,5 +591,62 @@ describe("retryFailedMarker", () => {
     db.seed(REF.id, seededMarker({ attempts: 1, skippedReason: "stale" }));
     assert.deepEqual(await retryFailedMarker(db, REF.id, "admin1"), { retried: true });
     assert.equal(db.read(REF.id).skippedReason, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// policyFor: the registry's numbers reaching claim()
+// ---------------------------------------------------------------------------
+
+describe("policyFor", () => {
+  test("carries a job's re-claim window through to a claim", async () => {
+    const db = makeDb();
+    db.seed(REF.id, seededMarker({ attempts: 1, claimedAt: minutesAgo(9) }));
+
+    const policy = policyFor({ ...heartbeatJob, reclaimAfterMinutes: 8 });
+    assert.equal(policy.reclaimAfterMinutes, 8);
+    assert.deepEqual(await claim(db, REF, { job: JOB, policy }), {
+      claimed: true,
+      attempts: 2,
+      reclaimed: true,
+    });
+  });
+
+  test("floors the window, because 0 means re-claim immediately", () => {
+    // Not a tuning knob. A window under the time one send can legitimately
+    // take is a second tick racing the first, which is a duplicate send with
+    // extra steps.
+    assert.equal(
+      policyFor({ ...heartbeatJob, reclaimAfterMinutes: 0 }).reclaimAfterMinutes,
+      MIN_RECLAIM_AFTER_MINUTES,
+    );
+    assert.ok(MIN_RECLAIM_AFTER_MINUTES >= 5);
+  });
+
+  test("does not let a job set its own attempt cap", () => {
+    // Three claims with no stamp means the WORK is wrong, not the timing. A
+    // per-job cap would eventually be set high enough to loop on it.
+    assert.equal(
+      policyFor(heartbeatJob).maxAttempts,
+      DEFAULT_MARKER_POLICY.maxAttempts,
+    );
+  });
+
+  test("every registered job survives the floor", () => {
+    for (const job of JOBS) {
+      const policy = policyFor(job);
+      assert.ok(
+        policy.reclaimAfterMinutes >= MIN_RECLAIM_AFTER_MINUTES,
+        `${job.id} would re-claim after ${policy.reclaimAfterMinutes} minutes`,
+      );
+      assert.ok(job.maxPerTick > 0, `${job.id} may do no work at all`);
+    }
+  });
+
+  test("the heartbeat claims nothing, and is still not registered with a zero window", () => {
+    // Nothing reads the heartbeat's window. It is a real number anyway,
+    // because it is the entry the next job author copies.
+    assert.equal(heartbeatJob.id, JOBS[0].id, "the heartbeat is registered first");
+    assert.ok(heartbeatJob.reclaimAfterMinutes > 0);
   });
 });

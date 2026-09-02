@@ -22,6 +22,10 @@
  * and `config/scheduler` key on those ids, and renaming one after it has
  * shipped orphans its stored enable switch.
  */
+import {
+  DEFAULT_MARKER_POLICY,
+  type MarkerPolicy,
+} from "@/lib/firestore/schedulerMarkers";
 import { heartbeatJob } from "./jobs/heartbeat";
 
 /**
@@ -75,6 +79,22 @@ export type JobContext = {
   now: Date;
   budget: JobBudget;
   log: JobLog;
+  /**
+   * The marker policy for THIS job, ready to hand to `claim()`.
+   *
+   * It is passed rather than looked up because a handler that has to find its
+   * own registration to honour its own re-claim window is a handler that will
+   * quietly stop honouring it. Built by {@link policyFor}.
+   */
+  policy: MarkerPolicy;
+  /**
+   * This job's `maxPerTick` and `maxLateHours`, restated on the context for
+   * the same reason: they are limits the HANDLER has to apply (nothing else
+   * can count a job's units of work or know what its due instants mean), and
+   * a limit a handler has to go and fetch is a limit that drifts.
+   */
+  maxPerTick: number;
+  maxLateHours: number;
 };
 
 export type JobResult = {
@@ -110,9 +130,41 @@ export type JobRegistration = {
    * How long a claimed-but-unsent marker is left alone before another tick
    * may re-claim it. See the re-claim rule in
    * `src/lib/firestore/schedulerMarkers.ts`.
+   *
+   * Read through {@link policyFor}, never directly: it is floored at
+   * {@link MIN_RECLAIM_AFTER_MINUTES}, because a window shorter than a send
+   * can legitimately take is a second tick racing the first one.
    */
   reclaimAfterMinutes: number;
 };
+
+/**
+ * The floor under every job's re-claim window.
+ *
+ * A window of 0 does not mean "never re-claim", it means "re-claim
+ * immediately", which is the one value that turns the recovery rule into a
+ * duplicate-send machine: two ticks a second apart would both find the same
+ * marker reclaimable and both send. Five minutes comfortably exceeds any
+ * single Resend call, so the floor is a floor and not a tuning knob.
+ */
+export const MIN_RECLAIM_AFTER_MINUTES = 5;
+
+/**
+ * The marker policy a job's `claim()` calls must use.
+ *
+ * `maxAttempts` is deliberately NOT per job: three claims with no stamp means
+ * something is wrong with the work rather than with the timing, and a job
+ * that could set its own cap would eventually set it high enough to loop.
+ */
+export function policyFor(job: JobRegistration): MarkerPolicy {
+  return {
+    reclaimAfterMinutes: Math.max(
+      job.reclaimAfterMinutes,
+      MIN_RECLAIM_AFTER_MINUTES,
+    ),
+    maxAttempts: DEFAULT_MARKER_POLICY.maxAttempts,
+  };
+}
 
 /**
  * Registration order. Heartbeat is FIRST and deliberately first: it proves

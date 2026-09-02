@@ -33,7 +33,7 @@ import {
   readSchedulerConfig,
 } from "@/lib/firestore/schedulerConfig";
 import { errorText, retryFailedMarker } from "@/lib/scheduler/markers";
-import { findJob, type JobBudget } from "@/lib/scheduler/registry";
+import { findJob, policyFor, type JobBudget } from "@/lib/scheduler/registry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -156,6 +156,12 @@ export async function POST(req: Request) {
       budget,
       log: (message, extra) =>
         console.log(`[scheduler:${job.id}] (manual) ${message}`, extra ?? ""),
+      // Identical limits to a scheduled run. A Run now that quietly claimed
+      // markers on a different policy would be a second code path through the
+      // one thing on this platform that must not double-send.
+      policy: policyFor(job),
+      maxPerTick: job.maxPerTick,
+      maxLateHours: job.maxLateHours,
     });
     await configRef.set(
       {

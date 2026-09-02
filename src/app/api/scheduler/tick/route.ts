@@ -65,7 +65,12 @@ import {
   tickReceiptId,
   type SchedulerRunJobEntry,
 } from "@/lib/firestore/schedulerRuns";
-import { JOBS, type JobBudget, type JobRegistration } from "@/lib/scheduler/registry";
+import {
+  JOBS,
+  policyFor,
+  type JobBudget,
+  type JobRegistration,
+} from "@/lib/scheduler/registry";
 import { errorText } from "@/lib/scheduler/markers";
 
 export const runtime = "nodejs";
@@ -344,6 +349,12 @@ export async function POST(req: Request) {
         budget,
         log: (message, extra) =>
           console.log(`[scheduler:${job.id}] ${message}`, extra ?? ""),
+        // The job's own limits, handed to it rather than left for it to look
+        // up: a handler that has to find its registration to honour its own
+        // re-claim window is a handler that stops honouring it.
+        policy: policyFor(job),
+        maxPerTick: job.maxPerTick,
+        maxLateHours: job.maxLateHours,
       });
       ranSomething = true;
       if (result.hasMore) hasMore = true;

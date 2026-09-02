@@ -29,7 +29,11 @@ export const heartbeatJob: JobRegistration = {
   maxPerTick: 1,
   // Nothing is ever late here: there is no due instant to be late for.
   maxLateHours: 0,
-  reclaimAfterMinutes: 0,
+  // This job claims no marker, so nothing reads this number. It is the
+  // default rather than 0 anyway: a 0 copied out of here into a job that DOES
+  // claim would mean "re-claim immediately", and two ticks a second apart
+  // would both send. `policyFor` floors it regardless.
+  reclaimAfterMinutes: 20,
   async handler({ now, log }: JobContext): Promise<JobResult> {
     log("heartbeat", { at: now.toISOString() });
     return { processed: 1, hasMore: false, note: "alive" };
