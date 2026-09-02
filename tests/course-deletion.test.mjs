@@ -191,6 +191,8 @@ const COURSE_DESTROY = api("[courseId]", "destroy", "route.ts");
 
 /** Client + server surfaces that owe the `archived` flag an answer (§8). */
 const FETCHERS = src("features", "courses", "fetchCourses.ts");
+/** The one application-window predicate every course surface now reads. */
+const WINDOW_LIB = src("lib", "courses", "window.ts");
 const RUN_ACCESS = src("features", "courses", "runAccess.ts");
 const ADMIN_RUNS_HOOK = src("features", "courses", "useAdminCourses.ts");
 const COURSE_EDITOR = src("features", "courses", "CourseEditor.tsx");
@@ -1507,19 +1509,30 @@ test("GUARD — `archived` is READ by every surface the danger-zone copy names",
   assert.match(RUN_ZONE, /out of the\s*\n?\s*public catalogue/);
 
   // 1. The public catalogue + the apply page's run lookup + the showcase.
-  assert.match(FETCHERS, /if \(run\.archived\) continue;/);
+  //    Both public run lookups drop an archived run through the SHARED
+  //    application-window predicate rather than their own `run.archived`
+  //    check: `applicationWindow()` answers `inactive` for an archived run
+  //    whatever its status says, and that is the same predicate the apply
+  //    route enforces (see below). The promise is unchanged; the mechanism
+  //    moved to `lib/courses/window.ts`, where `tests/course-window.test.mjs`
+  //    covers it case by case.
+  assert.match(FETCHERS, /from "@\/lib\/courses\/window"/);
   assert.equal(
-    (FETCHERS.match(/if \(run\.archived\) continue;/g) ?? []).length,
+    (FETCHERS.match(/if \(window\.state === "inactive"\) continue;/g) ?? []).length,
     2,
     "one of the two public run lookups no longer skips archived runs",
   );
   assert.match(FETCHERS, /showcaseRun\.status === "draft" \|\| showcaseRun\.archived/);
 
-  // 2. The application window — the POST refuses, not just the page.
-  assert.match(RUN_APPLY, /if \(run\.archived\) \{/);
+  // 2. The application window: the POST refuses, not just the page. The
+  //    route reads the same predicate, and inside it `archived` is tested
+  //    FIRST, so an archived run still sitting in `applications-open` is
+  //    refused rather than applied to.
+  assert.match(RUN_APPLY, /applicationWindow\(run, now\)/);
+  assert.match(WINDOW_LIB, /if \(run\.archived\) return \{ state: "inactive"/);
   assert.ok(
-    RUN_APPLY.indexOf("if (run.archived) {") <
-      RUN_APPLY.indexOf('run.status !== "applications-open"'),
+    WINDOW_LIB.indexOf("if (run.archived)") <
+      WINDOW_LIB.indexOf('run.status !== "applications-open"'),
     "the archived check runs after the status check, so an archived open run applies",
   );
 

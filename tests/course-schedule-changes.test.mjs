@@ -1387,9 +1387,12 @@ test("GUARD — an offer survives admissions closing the run, which is what brok
   // enrols nobody (above), so between "you're in" and allocation being
   // published an accepted applicant held no row in any collection the hub read.
   // The ONE surface that ever said they got in was the apply page's status
-  // card — reachable only while `getApplyContext` finds a run still in
+  // card, reachable only while `getApplyContext` found a run still in
   // `applications-open`, which is exactly the state admissions moves OFF next.
   // Every schedule-driven surface then agreed they were on nothing.
+  // (`getApplyContext` now keeps returning the closed run, so that card no
+  // longer disappears either. The hub fix below is still the load-bearing
+  // one: it is what makes the offer visible without visiting the apply page.)
   //
   // `/api/courses/me` now carries a fourth signal, so the hub no longer depends
   // on the run's status to know an offer exists. (The precedence rules of
@@ -1418,12 +1421,19 @@ test("GUARD — an offer survives admissions closing the run, which is what brok
   assert.match(RUN_LAYOUT, /if \(!hasRunRole\) redirect\("\/learn"\);/);
   assert.match(MY_COURSES_SUMMARY, /if \(loading \|\| error \|\| live\.length === 0\) return null;/);
   // Still true, and still the reason the hub had to be the place this was
-  // fixed: the PUBLIC course page tells an accepted member applications are
-  // shut, because it branches on the open run and nothing else.
+  // fixed: the PUBLIC course page is about the RUN's window, not about this
+  // member. It now says "Applications for X closed on <date>" instead of
+  // vanishing, and the apply page keeps showing an applicant their own row
+  // after the deadline (`getApplyContext` returns a closed run rather than
+  // null). Neither is where an ACCEPTED member learns they got in, which is
+  // the property this test holds: that answer comes from /api/courses/me.
   assert.match(COURSE_CTA, /Applications aren&apos;t open right now\./);
-  assert.match(COURSE_CTA, /if \(!openRun\)/);
+  assert.match(COURSE_CTA, /if \(!run \|\| run\.state === "inactive"\)/);
   assert.match(APPLY_FORM, /You're in\. We'll email you your group/);
-  assert.match(FETCH_COURSES, /if \(run\.status !== "applications-open"\) continue;/);
+  // The CTA and the apply route read ONE window predicate, so discovery and
+  // submit cannot disagree. `status` alone decides nothing any more.
+  assert.match(FETCH_COURSES, /from "@\/lib\/courses\/window"/);
+  assert.doesNotMatch(FETCH_COURSES, /run\.status !== "applications-open"/);
   assert.match(STATUS_ROUTE, /"applications-open": \["applications-closed", "cancelled"\]/);
 });
 
