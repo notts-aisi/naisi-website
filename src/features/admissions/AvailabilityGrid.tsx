@@ -52,9 +52,11 @@ import styles from "./AvailabilityGrid.module.css";
  * than scroll: that is the whole gesture. The TIME RAIL down the left keeps
  * `touch-action: pan-y` and is the scroll handle inside the grid, which is why
  * it is wide enough to be one and why the hint below the grid says so. While a
- * drag is in flight the document is pinned with `useBodyScrollLock`, so a drag
- * that runs off the bottom edge does not take the page with it, and the pin is
- * released the moment the pointer comes up.
+ * TOUCH drag is in flight the document is pinned with `useBodyScrollLock`, so
+ * a drag that runs off the bottom edge does not take the page with it, and the
+ * pin is released the moment the pointer comes up. A mouse drag does not pin
+ * anything: it has no such problem, and pinning the document on a browser with
+ * classic scrollbars shifts the whole layout sideways as the drag starts.
  *
  * ## Keyboard
  *
@@ -101,6 +103,11 @@ export default function AvailabilityGrid({
   const [activeDay, setActiveDay] = useState(1);
   const [cursor, setCursor] = useState<Cursor>({ day: 1, slot: 0 });
   const [dragging, setDragging] = useState(false);
+  /**
+   * Which kind of pointer is drawing, captured on `pointerdown`. State rather
+   * than a ref because the scroll lock below is computed during render.
+   */
+  const [dragPointer, setDragPointer] = useState("");
 
   /**
    * Mutable scratch for a live drag, written ONLY inside event handlers (never
@@ -119,9 +126,20 @@ export default function AvailabilityGrid({
 
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Pinned only WHILE dragging: a drag that runs off the bottom of the grid
-  // must not scroll the page out from under the gesture.
-  useBodyScrollLock(dragging);
+  /**
+   * Pinned only while a TOUCH drag is in flight.
+   *
+   * The lock exists for one gesture: a finger dragging off the bottom of the
+   * grid, where the browser would otherwise scroll the page out from under it.
+   * A mouse drag has no such problem, and arming the lock for one has a cost
+   * of its own: on a browser with classic scrollbars, pinning the document
+   * takes the scrollbar's width out of the layout and every column jumps
+   * sideways the instant a paint starts. So the pointer type is captured on
+   * `pointerdown` and only touch locks. Pen behaves like a mouse here, which
+   * is right: a stylus on a tablet is precise and does not need the page
+   * frozen to stay on the cell it is over.
+   */
+  useBodyScrollLock(dragging && dragPointer === "touch");
 
   function paint(to: Cursor) {
     const from = lastRef.current;
@@ -171,6 +189,7 @@ export default function AvailabilityGrid({
     anchorRef.current = { day, slot };
     lastRef.current = null;
     workingRef.current = columns;
+    setDragPointer(event.pointerType);
     setDragging(true);
     try {
       containerRef.current?.setPointerCapture(event.pointerId);
@@ -190,6 +209,7 @@ export default function AvailabilityGrid({
 
   function endDrag(event?: React.PointerEvent<HTMLDivElement>) {
     setDragging(false);
+    setDragPointer("");
     lastRef.current = null;
     workingRef.current = null;
     if (event) {
@@ -207,6 +227,7 @@ export default function AvailabilityGrid({
     if (!dragging) return;
     const stop = () => {
       setDragging(false);
+      setDragPointer("");
       lastRef.current = null;
       workingRef.current = null;
     };

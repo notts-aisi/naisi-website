@@ -1509,9 +1509,21 @@ describe("the apply flow island", () => {
     );
   });
 
-  test("the availability grid locks the document only while a drag is live", () => {
+  test("the availability grid locks the document only while a TOUCH drag is live", () => {
     const grid = source("src/features/admissions/AvailabilityGrid.tsx");
-    assert.match(grid, /useBodyScrollLock\(dragging\)/);
+    // The lock is for one gesture: a finger dragging off the bottom edge. On a
+    // mouse it buys nothing and costs a layout shift, because pinning the
+    // document takes a classic scrollbar's width out of the page the instant a
+    // paint starts.
+    assert.match(grid, /useBodyScrollLock\(dragging && dragPointer === "touch"\)/);
+    assert.match(grid, /setDragPointer\(event\.pointerType\)/);
+    // And it has to be released on every path that ends a drag, or the first
+    // mouse drag after a touch one would lock the page.
+    assert.equal(
+      (grid.match(/setDragPointer\(""\)/g) ?? []).length,
+      2,
+      "a drag can end through endDrag or through the global pointerup listener, and both have to clear the pointer kind",
+    );
     // One delegated handler on the container, not 252 listeners.
     assert.match(grid, /onPointerDown=\{onPointerDown\}/);
     assert.equal(/onClick=\{\(\) => toggle/.test(grid), false);
