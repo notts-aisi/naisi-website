@@ -7,6 +7,7 @@ import Card from "@/components/ui/Card";
 import Dropdown, { type DropdownOption } from "@/components/ui/Dropdown";
 import {
   TASK_KIND_LABELS,
+  TASK_SOURCE_LABELS,
   TASK_STATUSES,
   TASK_STATUS_LABELS,
   getSubtaskBreakdown,
@@ -42,13 +43,6 @@ const PRIORITY_COLORS: Record<string, string> = {
   normal: "var(--color-text-muted)",
   high: "var(--color-warning)",
   urgent: "var(--color-danger)",
-};
-
-const SOURCE_LABELS: Record<string, string> = {
-  committee: "Committee",
-  "fellowship-reminder": "Fellowship",
-  personal: "Personal",
-  "course-register": "Register",
 };
 
 /**
@@ -210,7 +204,7 @@ export default function TaskCard({
             </Badge>
           ) : (
             task.source !== "committee" && (
-              <Badge tone="neutral">{SOURCE_LABELS[task.source]}</Badge>
+              <Badge tone="neutral">{TASK_SOURCE_LABELS[task.source]}</Badge>
             )
           )}
           <DueDateBadge dueDate={task.dueDate} done={task.status === "done"} />
