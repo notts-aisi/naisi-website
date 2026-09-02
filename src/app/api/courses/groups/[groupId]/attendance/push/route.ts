@@ -5,7 +5,7 @@ import { resolveWeekDoc } from "@/lib/courses/groupResolve";
 import {
   gateGroupRegister,
   isAddressableId,
-  loadRegisterMembers,
+  loadMirrorMembers,
 } from "@/lib/courses/registerAccess";
 import { resolveSessions, type ResolvedSession } from "@/lib/courses/sessions";
 import {
@@ -15,7 +15,6 @@ import {
   type CohortRecipient,
 } from "@/lib/email/courseFacilitatorEmails";
 import {
-  courseNudgeSessionDateKey,
   courseNudgeSessionWhen,
   courseNudgeSessionWhere,
   courseWeekPrepLine,
@@ -74,6 +73,31 @@ import { signToken } from "@/lib/signedTokens";
  * `{ ok: true, alreadyPushed: true }`. A facilitator pressing twice because
  * the first press was slow has done nothing wrong, and nothing happens twice.
  *
+ * ── `{ force: true }`: THE ADMIN'S PER-GROUP RESEND ─────────────────────────
+ * The claim-before-send trade above has one bad outcome: a transport failure
+ * after the claim leaves a locked register, correct mirrors, and a group that
+ * was never mailed, with the marker taken so a second press does nothing. The
+ * only lane that used to reach them was the run-wide catch-up, which mails
+ * every OTHER group of the run a second time to fix one.
+ *
+ * So an ADMIN may POST `{ force: true }` against a pushed register. It skips
+ * the "already pushed" early return, re-derives the same audience, and updates
+ * the existing marker with `forceCount`, `lastForcedAt`, `lastForcedByUid` and
+ * a `forces` entry, the shape the run-level nudge writes for its own forces.
+ * A facilitator is refused 403: the marker exists to stop a group being mailed
+ * the same reminder every evening, and it must not be theirs to overwrite.
+ *
+ * Everything the mail needs (the config, the template) is now resolved BEFORE
+ * the claim, so the ONLY thing that can fail after it is the transport itself.
+ *
+ * ── AN EMPTY HELD REGISTER IS REFUSED ───────────────────────────────────────
+ * The participant-note lane creates the register document with a merge, so
+ * "the register exists" stopped meaning "somebody marked the room". A held
+ * session with no marks would push and count every eligible member absent, so
+ * it is refused with the same sentence a missing register gets. Both refusals
+ * are read BEFORE the throttle slot is spent: eight taps on an empty column
+ * must not lock a facilitator out of pushing the register they then mark.
+ *
  * ── WHAT THIS ROUTE DOES NOT DO ─────────────────────────────────────────────
  * THE SESSION-1 WELCOME. There is no push before a run's first session, so
  * nothing here can send one. That send is the ADMIN CATCH-UP lane's job (the
@@ -98,6 +122,12 @@ export type AttendancePushResult = {
   sent: number;
   /** Recipients dropped along the way: opted out, suppressed, failed. */
   skipped: number;
+  /**
+   * True when an admin RE-SENT this group's reminder over a marker that was
+   * already claimed. The marker records who forced it and how often; this is
+   * the same fact travelling back to the screen that asked for it.
+   */
+  forced: boolean;
   /**
    * Why nothing was sent, when nothing was. Null when mail went out. Never a
    * failure: a locked register with no reminder is a complete outcome, and
@@ -125,10 +155,17 @@ const PUSHES_PER_WINDOW = 8;
 /** Same lifetime the newsletter gives its unsubscribe links. */
 const UNSUB_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 365;
 
-/** This lane's voice in the shared audience derivation. */
+/**
+ * This lane's voice in the shared audience derivation.
+ *
+ * The advice names the GROUP, not the cohort, because the audience is now
+ * resolved with `{ groupId }` and the ceiling is counted on this group's
+ * active enrolments. A group over the cap is a group that needs splitting; the
+ * size of the run it belongs to has nothing to do with it.
+ */
 const LANE = {
   logTag: "courses push",
-  overCapAdvice: "split the cohort",
+  overCapAdvice: "split the group",
 } as const;
 
 /**
@@ -142,6 +179,35 @@ function isAlreadyExists(err: unknown): boolean {
 }
 
 class RegisterMissingError extends Error {}
+/** A HELD session with not one mark on it. See `isEmptyHeldRegister`. */
+class RegisterEmptyError extends Error {}
+
+/**
+ * One sentence for both "there is no register" and "the register is empty",
+ * because they are the same mistake from the facilitator's side and the remedy
+ * is the same: mark the room, or say the session did not happen.
+ */
+const EMPTY_REGISTER_MESSAGE =
+  "Mark the register before pushing it. An empty session still needs the not-held switch.";
+
+/**
+ * A held session carrying no marks at all.
+ *
+ * The participant-note lane writes with `set(..., { merge: true })`, so a note
+ * or a session note CREATES the register document. Without this check the
+ * push's "no register" guard is defeated by a note: a held session with an
+ * empty `records` map would push, and the rollup counts every eligible member
+ * of the group absent for a session nobody marked.
+ *
+ * Raw keys, not the normalised map: a document already carrying junk under
+ * `records` is one somebody has marked, and this guard is about the empty one.
+ */
+function isEmptyHeldRegister(data: Record<string, unknown>): boolean {
+  if (data.held === false) return false;
+  const records = data.records;
+  if (!records || typeof records !== "object") return true;
+  return Object.keys(records as Record<string, unknown>).length === 0;
+}
 
 // ---------------------------------------------------------------------------
 // POST
@@ -171,9 +237,9 @@ export async function POST(
   if (!gated.ok) {
     return NextResponse.json({ error: gated.error }, { status: gated.status });
   }
-  const { group, runId } = gated;
+  const { group, runId, isAdmin } = gated;
 
-  let body: { weekNumber?: unknown; occurrence?: unknown };
+  let body: { weekNumber?: unknown; occurrence?: unknown; force?: unknown };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -204,10 +270,24 @@ export async function POST(
       { status: 400 },
     );
   }
+  if (body?.force !== undefined && typeof body.force !== "boolean") {
+    return NextResponse.json({ error: "force must be true or false." }, { status: 400 });
+  }
+  const force = body?.force === true;
+  // ADMIN ONLY, and refused rather than ignored. A facilitator whose push
+  // half-failed asks an admin; a facilitator who can re-send at will can mail
+  // their group the same reminder every evening, and the marker that exists to
+  // make that impossible would be theirs to overwrite.
+  if (force && !isAdmin) {
+    return NextResponse.json(
+      { error: "Only an admin can re-send a reminder that has already gone." },
+      { status: 403 },
+    );
+  }
 
   const [runSnap, members] = await Promise.all([
     db.collection("courseRuns").doc(runId).get(),
-    loadRegisterMembers(db, runId, groupId),
+    loadMirrorMembers(db, runId, groupId),
   ]);
   if (!runSnap.exists) {
     return NextResponse.json({ error: "Run not found" }, { status: 404 });
@@ -227,6 +307,25 @@ export async function POST(
   }
   const session = sessions[index];
   const nextSession: ResolvedSession | null = sessions[index + 1] ?? null;
+
+  const ref = db
+    .collection("courseAttendance")
+    .doc(attendanceDocId(runId, groupId, session.weekNumber, session.occurrence));
+
+  // ── REFUSALS THAT COST NO THROTTLE SLOT ──────────────────────────────────
+  // A tap on a column with nothing in it is a mistake, not a send, and eight
+  // of them must not lock a facilitator out of pushing the register they then
+  // go and mark. So the two "there is nothing here to push" answers are read
+  // ONCE, cheaply, before the slot is spent. The transaction re-reads both
+  // authoritatively: this pre-read is a courtesy, never the guarantee.
+  const preSnap = await ref.get();
+  const preData = preSnap.exists ? (preSnap.data() ?? {}) : null;
+  if (!preData) {
+    return NextResponse.json({ error: EMPTY_REGISTER_MESSAGE }, { status: 400 });
+  }
+  if (!preData.pushedAt && isEmptyHeldRegister(preData)) {
+    return NextResponse.json({ error: EMPTY_REGISTER_MESSAGE }, { status: 400 });
+  }
 
   // Spent BEFORE the transaction: a throttled request must neither lock a
   // register nor send. Fail CLOSED, the one safe direction for outbound mail.
@@ -252,9 +351,6 @@ export async function POST(
   }
 
   // ── (1) + (2): LOCK AND MIRROR, IN ONE TRANSACTION ───────────────────────
-  const ref = db
-    .collection("courseAttendance")
-    .doc(attendanceDocId(runId, groupId, session.weekNumber, session.occurrence));
   const now = new Date();
   let alreadyPushed = false;
   let mirrored = 0;
@@ -267,10 +363,14 @@ export async function POST(
       if (!snap.exists) throw new RegisterMissingError();
       const data = snap.data() ?? {};
       if (data.pushedAt) {
-        // Nothing to do, and nothing to undo. Reported as a 200 outside.
+        // Nothing to do, and nothing to undo. Reported as a 200 outside, or
+        // carried on into the reminder lane when an admin is forcing a resend.
         alreadyPushed = true;
         return;
       }
+      // The empty-held guard, re-read inside the transaction so a note written
+      // between the pre-read and here cannot slip an unmarked room past it.
+      if (isEmptyHeldRegister(data)) throw new RegisterEmptyError();
 
       // EVERY READ BEFORE EVERY WRITE. The plan reads this group's other
       // registers and its members' enrolments; the override is how the
@@ -317,19 +417,16 @@ export async function POST(
       });
     });
   } catch (err) {
-    if (err instanceof RegisterMissingError) {
-      return NextResponse.json(
-        {
-          error:
-            "Mark the register before pushing it. An empty session still needs the not-held switch.",
-        },
-        { status: 400 },
-      );
+    if (err instanceof RegisterMissingError || err instanceof RegisterEmptyError) {
+      return NextResponse.json({ error: EMPTY_REGISTER_MESSAGE }, { status: 400 });
     }
     throw err;
   }
 
-  if (alreadyPushed) {
+  // An ordinary second press. An admin FORCING a resend carries on into the
+  // reminder lane instead: that is the whole point of the force, and the
+  // register is already locked and mirrored either way.
+  if (alreadyPushed && !force) {
     const result: AttendancePushResult = {
       ok: true,
       sessionKey: session.sessionKey,
@@ -337,6 +434,7 @@ export async function POST(
       mirrored: 0,
       sent: 0,
       skipped: 0,
+      forced: false,
       reason: "This register was already pushed, so nothing was sent again.",
     };
     return NextResponse.json(result);
@@ -346,14 +444,20 @@ export async function POST(
   // Everything from here is best effort against a register that is ALREADY
   // locked and mirrors that are ALREADY correct. No failure below may undo
   // either, and every early return is a 200 saying why no mail went.
-  const done = (sent: number, skipped: number, reason: string | null) =>
+  const done = (
+    sent: number,
+    skipped: number,
+    reason: string | null,
+    forced: boolean = false,
+  ) =>
     NextResponse.json({
       ok: true,
       sessionKey: session.sessionKey,
-      alreadyPushed: false,
+      alreadyPushed,
       mirrored,
       sent,
       skipped,
+      forced,
       reason,
     } satisfies AttendancePushResult);
 
@@ -377,11 +481,12 @@ export async function POST(
     );
   }
 
-  const audience = await resolveCohortAudience(db, runId, LANE);
+  // SCOPED TO THIS GROUP INSIDE the derivation, not filtered after it: the
+  // recipient ceiling has to be counted on the group being mailed, or a large
+  // run refuses every one of its groups' reminders while every register locks.
+  const audience = await resolveCohortAudience(db, runId, LANE, { groupId });
   if (audience.refusal) return done(0, audience.skipped, audience.refusal);
-  const recipients: CohortRecipient[] = audience.members.filter(
-    (m) => m.groupId === groupId,
-  );
+  const recipients: CohortRecipient[] = audience.members;
   let skipped = audience.skipped;
   if (recipients.length === 0) {
     // Deliberately does NOT claim the marker: an audience that is empty today
@@ -390,14 +495,31 @@ export async function POST(
     return done(0, skipped, "Nobody in this group is set up to receive email, so none was sent.");
   }
 
+  // ── EVERYTHING THE MAIL NEEDS, RESOLVED BEFORE THE CLAIM ─────────────────
+  // Read ABOVE the marker on purpose. Claiming first and then failing to read
+  // the config or the template would burn the group's one claim on a send that
+  // never happened, and the only recovery lane left would be the run-wide force
+  // that mails every OTHER group a second time. After this point only the
+  // transport itself can fail, and the per-group force below is that recovery.
+  const config = await readCoursesConfig(db);
+  const template = await resolveCourseNudgeTemplate(db);
+
   // ── CLAIM THE MARKER, OUTSIDE THE TRANSACTION ────────────────────────────
   // Deterministic id plus `.create()` IS the guarantee. It lives in
   // `courseNudges`, already locked `read, write: if false` as server-side
   // course-email bookkeeping, so this ships with no rules change.
   const markerRef = db
     .collection("courseNudges")
-    .doc(groupNudgeMarkerId(runId, groupId, nextSession.slotStartKey));
+    .doc(
+      groupNudgeMarkerId(
+        runId,
+        groupId,
+        nextSession.slotStartKey,
+        nextSession.occurrence,
+      ),
+    );
   const stamp = Timestamp.fromDate(now);
+  let forced = false;
   try {
     await markerRef.create({
       kind: "group-week-nudge",
@@ -420,20 +542,55 @@ export async function POST(
     });
   } catch (err) {
     if (!isAlreadyExists(err)) throw err;
-    // Another push (or the admin catch-up) already claimed this group's
-    // reminder for the next session. The register is still locked, which is
-    // the point of doing this after the commit.
-    return done(0, skipped, "This group has already had the reminder for its next session.");
+    if (!force) {
+      // Another push (or the admin catch-up) already claimed this group's
+      // reminder for the next session. The register is still locked, which is
+      // the point of doing this after the commit.
+      return done(
+        0,
+        skipped,
+        "This group has already had the reminder for its next session.",
+      );
+    }
+    // ── THE PER-GROUP RESEND ───────────────────────────────────────────────
+    // AUDIT FIRST, then send, exactly as the run-level catch-up does: a forced
+    // re-send is on the record before a single message leaves, so a crash
+    // mid-force still leaves evidence. The marker is UPDATED, never deleted:
+    // the record of the first send survives the second, and `forces` grows by
+    // one small map per force, bounded by the hourly push throttle above.
+    //
+    // This exists so a transport failure after the claim has a recovery that
+    // touches THIS GROUP ONLY. Without it the sole lane was the run-wide force,
+    // which mails every other group of the run a second time.
+    forced = true;
+    await markerRef.update({
+      forceCount: FieldValue.increment(1),
+      lastForcedAt: stamp,
+      lastForcedByUid: actor.uid,
+      forces: FieldValue.arrayUnion({
+        uid: actor.uid,
+        at: stamp,
+        recipientCount: recipients.length,
+        forcedOverMarkerId: markerRef.id,
+      }),
+    });
+    console.warn(
+      "[courses push] FORCED re-send of a claimed group reminder",
+      runId,
+      groupId,
+      nextSession.sessionKey,
+      actor.uid,
+      recipients.length,
+    );
   }
 
-  const config = await readCoursesConfig(db);
-  const template = await resolveCourseNudgeTemplate(db);
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
   const channel = courseRunChannel(runId);
-  const sessionWhen = courseNudgeSessionWhen(
-    nextSession.session,
-    courseNudgeSessionDateKey(nextSession.slotStartKey, nextSession.session.weekday),
-  );
+  // `resolveSessions` already dated this session, from the group's OWN
+  // calendar and with the week's override applied. Recomputing it from the
+  // slot start and the standing weekday would be a second answer to a question
+  // that already has one, and the two can legitimately differ.
+  const sessionWhen = courseNudgeSessionWhen(nextSession.session, nextSession.dateKey);
   const sessionWhere = courseNudgeSessionWhere(
     nextSession.session,
     sessionModeForWeek(group, nextSession.weekId),
@@ -490,6 +647,7 @@ export async function POST(
     mirrored,
     sent,
     skipped,
+    forced,
   });
-  return done(sent, skipped, null);
+  return done(sent, skipped, null, forced);
 }

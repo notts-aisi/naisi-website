@@ -340,23 +340,49 @@ things, and the order is the design:
    that group's pushed registers. Never a delta: a mirror that can be rebuilt
    from its source cannot drift from it.
 2. **The send marker is claimed by a standalone `.create()` OUTSIDE that
-   transaction**, at `courseNudges/gnudge__{runId}__{groupId}__{nextSlotStartKey}`.
+   transaction**, at `courseNudges/gnudge__{runId}__{groupId}__{nextSlotStartKey}`
+   (plus a `-{occurrence}` suffix from a week's second session onwards, so a
+   group meeting twice inside one slot gets two reminders rather than one).
    A create collision inside a transaction aborts the whole transaction, so
    claiming it there would unlock a register because an email had already gone.
 3. **The group is emailed** about its next session, one message each, carrying
    the next week's material and the weekly feedback link.
 
 The consequence worth knowing on the night: **a send failure leaves the
-register locked and the figures correct**, and the mail is recovered from the
-run's catch-up lane rather than by pushing again. A second press is an
-idempotent 200 that sends nothing.
+register locked and the figures correct**. A second press is an idempotent 200
+that sends nothing, and the mail is recovered by an admin (below) rather than by
+pushing again.
 
 ### After the push
 
-The register is admin-only. An admin corrects it from the same grid, and every
-mark they move appends its own `courseAudit` row with the before and the after.
-Participant notes stay open to the facilitator, deliberately: they are usually
-written after the session rather than during it.
+The register is admin-only. An admin corrects it from the same grid: marks, the
+**Didn't happen** switch and the session note all stay available to them on a
+pushed column, and every change appends its own `courseAudit` row with the
+before and the after. Participant notes stay open to the facilitator,
+deliberately: they are usually written after the session rather than during it.
+
+### Recovering a push whose email failed
+
+The register locks and the figures move BEFORE the first message goes out, so a
+transport failure leaves a locked register and an unmailed group. The marker is
+already claimed, so pressing **Push** again reports "already pushed" and sends
+nothing. That is the correct default, and it is why there is a second lane.
+
+**Resend reminder** sits on a pushed column for admins only. It re-sends this
+group's reminder and **nobody else's**, and it records the re-send on the
+group's marker exactly as the run-level catch-up records its own forces
+(`forceCount`, `lastForcedAt`, `lastForcedByUid`, and an entry in `forces`
+naming the marker it went over). Use it when a facilitator reports "I pushed and
+nobody got the email".
+
+Reach for the run-wide catch-up only when the whole cohort is owed the send. It
+mails **every** group of the run, so using it to fix one group mails every other
+group twice.
+
+What can and cannot fail after the claim, so the failure a report describes can
+be placed: the config read and the email template are resolved BEFORE the marker
+is claimed, so the only thing left that can fail after it is the transport
+itself.
 
 ### The two sends, and which is which
 
@@ -378,13 +404,31 @@ refused unless an admin forces it, and a force records the group markers it
 overrode on its own marker. A cohort mailed twice in one week is on the record
 either way.
 
+**Residual risk: a mid-term `startDate` edit.** The run's own marker family is
+checked across a span of six days either side of the slot, so nudging the same
+calendar week twice is caught even after the dates move. The group markers are
+checked at the CURRENT slot key only. So if a run's `startDate` is edited part
+way through the term, the group markers a push wrote sit under neighbouring
+keys, the catch-up finds none, and it can mail those groups a second time with
+no force recorded anywhere. Remedy: after editing a live run's `startDate`,
+treat the run-wide catch-up as unavailable for that week. If a group is owed a
+reminder, use **Resend reminder** on that group's pushed column, which is keyed
+on the group's own next session and is recorded on the group's own marker.
+
 ### If a facilitator never presses it
 
 Their group loses its reminder as well as its register, and every member of
 that group carries a session in a denominator reviewers will read as a
-shortfall. The unmarked-register follow-up task lands on every admin's board
-after the grace period (`config/courses.unmarkedRegisterGraceHours`, default
-36). Brief facilitators on the push **before** their first session, not after.
+shortfall.
+
+**Nothing tells you yet.** The unmarked-register follow-up task, which lands on
+every admin's board once the grace period has passed
+(`config/courses.unmarkedRegisterGraceHours`, default 36), arrives with PR25.
+The setting exists and the scan's tunables are already on the site status page,
+but no job reads them today: **until PR25 lands, an unpushed register is
+invisible**, and the only way to notice one is to open the group's register.
+Check the boards yourself in the days after a session, and brief facilitators on
+the push **before** their first session, not after.
 
 ### The knobs
 

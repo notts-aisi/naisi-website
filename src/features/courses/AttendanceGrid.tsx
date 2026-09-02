@@ -341,6 +341,8 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
 
   const [pushTarget, setPushTarget] = useState<string | null>(null);
   const [pushing, setPushing] = useState(false);
+  const [resendTarget, setResendTarget] = useState<string | null>(null);
+  const [resending, setResending] = useState(false);
   const [noteTarget, setNoteTarget] = useState<{ sessionKey: string; uid: string } | null>(
     null,
   );
@@ -351,6 +353,7 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
     [sessions],
   );
   const pushSession = pushTarget ? (sessionByKey.get(pushTarget) ?? null) : null;
+  const resendSession = resendTarget ? (sessionByKey.get(resendTarget) ?? null) : null;
   const noteSession = noteTarget ? (sessionByKey.get(noteTarget.sessionKey) ?? null) : null;
   const noteMember = noteTarget
     ? (members.find((m) => m.uid === noteTarget.uid) ?? null)
@@ -435,7 +438,11 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
       setCellError(null);
       void runAction(
         async () => {
-          await mark(session, [], { held: next });
+          // A pushed register takes the admin's PATCH lane, which logs the
+          // move and rebuilds every rollup the switch changes. Same gesture,
+          // a different door, and a facilitator never sees the button.
+          if (session.pushedAt) await edit(session, [], { held: next });
+          else await mark(session, [], { held: next });
         },
         {
           savingMessage: next ? "Marking the session as held…" : "Marking the session as not held…",
@@ -445,15 +452,16 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
         },
       );
     },
-    [mark, runAction],
+    [edit, mark, runAction],
   );
 
   const onSessionNote = useCallback(
     async (session: AttendanceSession, text: string) => {
       setCellError(null);
-      await mark(session, [], { notes: text });
+      if (session.pushedAt) await edit(session, [], { notes: text });
+      else await mark(session, [], { notes: text });
     },
-    [mark],
+    [edit, mark],
   );
 
   // ---- The push ------------------------------------------------------------
@@ -481,6 +489,39 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
       setPushing(false);
     }
   }, [push, pushSession, runAction]);
+
+  // ---- The admin's resend --------------------------------------------------
+
+  /**
+   * A push that locked the register and then failed to mail the group leaves
+   * no lane a facilitator can use: the marker is claimed, so pressing Push
+   * again reports "already pushed" and sends nothing. Before this button the
+   * only recovery was the run-wide catch-up, which mails every OTHER group of
+   * the run a second time.
+   *
+   * Admin only (the route refuses anyone else), behind a confirm, and every
+   * press is recorded on the marker as a force.
+   */
+  const onResend = useCallback(async () => {
+    if (!resendSession) return;
+    setResending(true);
+    setCellError(null);
+    try {
+      const result = await push(resendSession, { force: true });
+      setResendTarget(null);
+      void runAction(async () => undefined, {
+        savingMessage: "Re-sending…",
+        successMessage:
+          result.sent > 0
+            ? `${result.sent} ${result.sent === 1 ? "person" : "people"} emailed again about the next session.`
+            : (result.reason ?? "No email was sent."),
+      });
+    } catch (e) {
+      setCellError(e instanceof Error ? e.message : "The resend didn't go through.");
+    } finally {
+      setResending(false);
+    }
+  }, [push, resendSession, runAction]);
 
   // ---- Per-column tallies --------------------------------------------------
 
@@ -652,23 +693,33 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
                       <span className={styles.notHeld}>Not held</span>
                     )}
 
-                    {pushed ? (
-                      <span className={styles.pushed}>Pushed</span>
-                    ) : (
+                    {pushed && <span className={styles.pushed}>Pushed</span>}
+
+                    {/* The bulk gesture and the push itself belong to the
+                        DRAFT column only: one is how a facilitator finishes
+                        marking, the other is the act of finishing. */}
+                    {!pushed && (
+                      <button
+                        type="button"
+                        className={styles.bulk}
+                        onClick={() => onBulk(session)}
+                        disabled={remaining === 0 || !session.held}
+                        aria-label={
+                          remaining === 0
+                            ? `Week ${session.weekNumber}: ${bulkLabel}`
+                            : `Mark the remaining ${remaining} present in week ${session.weekNumber}`
+                        }
+                      >
+                        {bulkLabel}
+                      </button>
+                    )}
+
+                    {/* The held switch and the session note stay on a PUSHED
+                        column for whoever may correct one: PATCH supports both
+                        and logs both, and "the fire alarm went off" is usually
+                        written after the register has gone. */}
+                    {(!pushed || canEditPushed) && (
                       <>
-                        <button
-                          type="button"
-                          className={styles.bulk}
-                          onClick={() => onBulk(session)}
-                          disabled={remaining === 0 || !session.held}
-                          aria-label={
-                            remaining === 0
-                              ? `Week ${session.weekNumber}: ${bulkLabel}`
-                              : `Mark the remaining ${remaining} present in week ${session.weekNumber}`
-                          }
-                        >
-                          {bulkLabel}
-                        </button>
                         <button
                           type="button"
                           className={styles.bulk}
@@ -689,15 +740,32 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
                         >
                           {session.notes ? "Session note ✓" : "Session note"}
                         </button>
-                        <button
-                          type="button"
-                          className={`${styles.bulk} ${styles.pushButton}`}
-                          onClick={() => setPushTarget(session.sessionKey)}
-                          aria-label={`Push the week ${session.weekNumber} register, which locks it and emails the group`}
-                        >
-                          Push
-                        </button>
                       </>
+                    )}
+
+                    {!pushed && (
+                      <button
+                        type="button"
+                        className={`${styles.bulk} ${styles.pushButton}`}
+                        onClick={() => setPushTarget(session.sessionKey)}
+                        aria-label={`Push the week ${session.weekNumber} register, which locks it and emails the group`}
+                      >
+                        Push
+                      </button>
+                    )}
+
+                    {/* The recovery lane for a push whose mail failed after
+                        the register locked. Admin only, and it reaches THIS
+                        group alone. */}
+                    {pushed && canEditPushed && (
+                      <button
+                        type="button"
+                        className={styles.bulk}
+                        onClick={() => setResendTarget(session.sessionKey)}
+                        aria-label={`Send the week ${session.weekNumber} reminder to this group again`}
+                      >
+                        Resend reminder
+                      </button>
                     )}
                   </th>
                 );
@@ -826,6 +894,40 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
             : null
         }
       />
+
+      {resendSession && (
+        <Modal
+          open
+          onClose={() => setResendTarget(null)}
+          ariaLabel="Re-send this group's reminder"
+          width="sm"
+        >
+          <div className={styles.dialog}>
+            <h2 className={styles.dialogTitle}>
+              Re-send the reminder after week {resendSession.weekNumber}
+              {resendSession.occurrence > 1 ? `, session ${resendSession.occurrence}` : ""}?
+            </h2>
+            <p className={styles.dialogMeta}>
+              This group has already been sent (or claimed) this reminder. Use it when
+              the push locked the register but the email failed: everyone in{" "}
+              {group?.name || "this group"} gets the message again, and nobody outside
+              the group is emailed. The re-send is recorded against your name.
+            </p>
+            <div className={styles.dialogActions}>
+              <Button
+                variant="secondary"
+                onClick={() => setResendTarget(null)}
+                disabled={resending}
+              >
+                Cancel
+              </Button>
+              <Button onClick={() => void onResend()} disabled={resending}>
+                {resending ? "Re-sending..." : "Re-send reminder"}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       <SessionNoteDialog
         key={sessionNoteSession?.sessionKey ?? "no-session-note"}

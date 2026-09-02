@@ -577,9 +577,17 @@ test("the push recomputes the rollup rather than incrementing it", () => {
     "and that helper recomputes from the registers it just read",
   );
   for (const file of [PUSH_ROUTE, "lib/courses/attendanceMirror.ts"]) {
-    assert.doesNotMatch(
-      source(file),
-      /FieldValue\.increment\(/,
+    // `forceCount` on the reminder marker is the ONE legitimate increment in
+    // this tree: it counts how many times an admin re-sent a claimed reminder,
+    // which is an append-only tally with no source to recompute it from. Every
+    // other field named beside an increment would be a rollup going back to
+    // deltas, which is the applicationCounts drift all over again.
+    const incremented = [
+      ...source(file).matchAll(/(\w+):\s*FieldValue\.increment\(/g),
+    ].map((m) => m[1]);
+    assert.deepEqual(
+      incremented.filter((field) => field !== "forceCount"),
+      [],
       "the attendance rollup is a FULL RECOMPUTE, never a delta: the direct " +
         "lesson from applicationCounts drift",
     );
@@ -588,7 +596,153 @@ test("the push recomputes the rollup rather than incrementing it", () => {
 
 test("a post-push edit is admin-only and writes an audit row per changed mark", () => {
   const text = source(REGISTER_ROUTE);
-  assert.match(text, /export async function PATCH\(/);
-  assert.match(text, /COURSE_AUDIT_COLLECTION/);
-  assert.match(text, /"attendance-edit"/);
+  const at = text.indexOf("export async function PATCH(");
+  assert.ok(at > 0, "the post-push lane is PATCH");
+  // The BODY of PATCH, not the file: `COURSE_AUDIT_COLLECTION` appearing
+  // somewhere in a 1000-line route says nothing about the handler that has to
+  // carry it, and neither does an admin check that lives in another function.
+  const body = text.slice(at);
+
+  const refusal = body.indexOf("if (!isAdmin) {");
+  assert.ok(refusal > 0, "PATCH refuses a non-admin caller in its own body");
+  assert.match(
+    body.slice(refusal, refusal + 400),
+    /status:\s*403/,
+    "and answers that refusal 403",
+  );
+  // Before the request body is looked at any further: a 403 that arrives after
+  // a payload-shape error has already described the API to someone who may not
+  // use it.
+  assert.ok(
+    refusal < body.indexOf("parseMarks(body.marks)"),
+    "the admin check runs before the marks are parsed",
+  );
+
+  assert.match(body, /COURSE_AUDIT_COLLECTION/);
+  assert.match(body, /kind: "attendance-edit"/);
+});
+
+test("the empty-held guard cannot be defeated by a note", () => {
+  const text = source(PUSH_ROUTE);
+  // The participant-note lane creates the register with `set(merge: true)`, so
+  // "the document exists" stopped meaning "somebody marked the room". A held
+  // session with no marks pushes every eligible member into `absent`.
+  assert.match(
+    text,
+    /function isEmptyHeldRegister\(/,
+    "the push names the empty-held case",
+  );
+  const guard = text.indexOf("if (isEmptyHeldRegister(data)) throw new RegisterEmptyError();");
+  const transaction = text.indexOf("await db.runTransaction(");
+  assert.ok(guard > transaction, "and re-checks it INSIDE the transaction");
+  assert.match(
+    text,
+    /EMPTY_REGISTER_MESSAGE\s*=\s*\n?\s*"Mark the register before pushing it\./,
+    "with the same sentence the missing-register case answers",
+  );
+});
+
+test("a throttle slot is spent only on a request that reaches the transaction", () => {
+  const text = source(PUSH_ROUTE);
+  const preRead = text.indexOf("const preSnap = await ref.get();");
+  const slot = text.indexOf("slot = await reserveSendSlot(");
+  const transaction = text.indexOf("await db.runTransaction(");
+  assert.ok(preRead > 0, "the push checks the register exists before it spends a slot");
+  assert.ok(
+    preRead < slot && slot < transaction,
+    "eight taps on an empty column must not lock a facilitator out of pushing " +
+      "the register they then go and mark",
+  );
+});
+
+test("the push resolves its copy BEFORE it claims the marker", () => {
+  const text = source(PUSH_ROUTE);
+  const config = text.indexOf("await readCoursesConfig(db)");
+  const template = text.indexOf("await resolveCourseNudgeTemplate(db)");
+  const claim = text.indexOf("await markerRef.create({");
+  assert.ok(config > 0 && template > 0 && claim > 0);
+  assert.ok(
+    config < claim && template < claim,
+    "a read that throws AFTER the claim burns the group's one reminder on a " +
+      "send that never happened",
+  );
+});
+
+test("the per-group resend is admin-only and records the force on the marker", () => {
+  const text = source(PUSH_ROUTE);
+  const refusal = text.indexOf("if (force && !isAdmin) {");
+  assert.ok(refusal > 0, "a facilitator cannot force a re-send");
+  assert.match(text.slice(refusal, refusal + 300), /status:\s*403/);
+
+  assert.match(
+    text,
+    /forceCount:\s*FieldValue\.increment\(1\)/,
+    "the force is counted on the marker, as the run-level lane counts its own",
+  );
+  assert.match(text, /lastForcedAt:\s*stamp/);
+  assert.match(text, /lastForcedByUid:\s*actor\.uid/);
+  assert.match(text, /forcedOverMarkerId:\s*markerRef\.id/);
+  // UPDATED, never deleted: the record of the first send has to survive the
+  // second, or the log cannot say the group was mailed twice.
+  assert.doesNotMatch(text, /markerRef\.delete\(/);
+});
+
+test("the reminder's date comes from the resolver, not a second computation", () => {
+  const text = source(PUSH_ROUTE);
+  assert.match(
+    text,
+    /courseNudgeSessionWhen\(nextSession\.session,\s*nextSession\.dateKey\)/,
+    "`resolveSessions` already dated this session, from the group's own calendar",
+  );
+  assert.doesNotMatch(
+    text,
+    /courseNudgeSessionDateKey\(/,
+    "recomputing the date is a second answer to a question that has one",
+  );
+});
+
+test("courseAttendance.ts drags no schedule resolver into the client bundle", () => {
+  // It is imported by AttendanceGrid, useAttendance and ParticipantNoteDrawer.
+  // One import of `sessions.ts` pulls groupResolve, the calendar and the week
+  // plan into all three bundles for one line of string maths.
+  const text = source("lib/firestore/courseAttendance.ts");
+  assert.doesNotMatch(
+    text,
+    /from\s+"(@\/lib\/courses\/sessions|\.\.\/courses\/sessions)"/,
+    "sessionKey lives beside weekDocId in firestore/courses.ts for this reason",
+  );
+  assert.doesNotMatch(
+    text,
+    /from\s+"(@\/lib\/courses\/|\.\.\/courses\/)/,
+    "and nothing else under lib/courses is reached for either",
+  );
+  assert.match(text, /import \{ sessionKey \} from "\.\/courses";/);
+});
+
+test("the mirror recomputes for every enrolment on the group, not just the active ones", () => {
+  // A withdrawn member's rollup is still read on the admin surfaces and on
+  // their own run overview. Recomputing only the active rows freezes everyone
+  // else's figures at their pre-correction values.
+  for (const route of [PUSH_ROUTE, REGISTER_ROUTE]) {
+    assert.match(
+      source(route),
+      /loadMirrorMembers\(/,
+      `${route} feeds the mirror the group's full enrolment list`,
+    );
+  }
+  assert.match(
+    source("lib/courses/registerAccess.ts"),
+    /\.where\("status", "in", ENROLMENT_STATUSES\)/,
+    "and that list is every status, on the existing composite index",
+  );
+});
+
+test("a participant note is capped in KEYS as well as in characters", () => {
+  const text = source(NOTES_ROUTE);
+  assert.match(text, /ATTENDANCE_LIMITS\.participantNote/, "the length cap");
+  const transaction = text.indexOf("await db.runTransaction(");
+  const cap = text.indexOf("keys.size > ATTENDANCE_LIMITS.maxRecords");
+  assert.ok(transaction > 0, "the key cap is a property of the MERGED map");
+  assert.ok(cap > transaction, "so it is checked inside the transaction");
+  assert.match(text, /status:\s*409/, "and refused as a conflict, like the marks lane");
 });

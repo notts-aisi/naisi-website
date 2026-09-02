@@ -61,6 +61,9 @@ export type ParticipantNoteResult = {
 const MAX_WEEK_NUMBER = 60;
 const MAX_OCCURRENCE = 4;
 
+/** The merged `participantNotes` map would pass `ATTENDANCE_LIMITS.maxRecords`. */
+class NotesFullError extends Error {}
+
 export async function POST(
   req: Request,
   ctx: { params: Promise<{ groupId: string }> },
@@ -203,22 +206,54 @@ export async function POST(
     } satisfies ParticipantNoteResult);
   }
 
+  // A TRANSACTION, and for the reason the marking lane runs one: the 40-key
+  // cap is a property of the MERGED map. Two facilitators writing notes about
+  // two different people concurrently would each see room and both be right,
+  // and the map would end up over the cap that `normalizeCourseAttendance`
+  // then silently truncates on read, losing a note nobody was told was lost.
+  // Raw keys, not the normalised ones, so a document already over the cap is
+  // counted honestly rather than as 40.
+  //
   // `set(..., { merge: true })` creates the register if this note is the first
   // thing written about the session, and merges the map key by key otherwise,
   // so two facilitators writing about two people never overwrite each other.
   // Nested keys in `set()` are literal field names, which is what makes a uid
   // safe to use as one.
-  await ref.set(
-    {
-      runId,
-      groupId,
-      weekNumber: session.weekNumber,
-      occurrence: session.occurrence,
-      participantNotes: { [uid]: note },
-      updatedAt: FieldValue.serverTimestamp(),
-    },
-    { merge: true },
-  );
+  try {
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const stored = ((snap.data() ?? {}).participantNotes ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const keys = new Set(Object.keys(stored));
+      keys.add(uid);
+      if (keys.size > ATTENDANCE_LIMITS.maxRecords) throw new NotesFullError();
+
+      tx.set(
+        ref,
+        {
+          runId,
+          groupId,
+          weekNumber: session.weekNumber,
+          occurrence: session.occurrence,
+          participantNotes: { [uid]: note },
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    });
+  } catch (err) {
+    if (err instanceof NotesFullError) {
+      return NextResponse.json(
+        {
+          error: `This session already carries ${ATTENDANCE_LIMITS.maxRecords} notes, which is the most one register holds. Clear one to write another.`,
+        },
+        { status: 409 },
+      );
+    }
+    throw err;
+  }
 
   return NextResponse.json({
     ok: true,

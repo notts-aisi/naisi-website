@@ -6,6 +6,7 @@ import { readMirrorPlan, type RegisterOverride } from "@/lib/courses/attendanceM
 import {
   gateGroupRegister,
   isAddressableId,
+  loadMirrorMembers,
   loadRegisterMembers,
   type RegisterMember,
 } from "@/lib/courses/registerAccess";
@@ -751,7 +752,18 @@ export async function PATCH(
   if (hasHeld && typeof body.held !== "boolean") {
     return NextResponse.json({ error: "held must be true or false." }, { status: 400 });
   }
-  if (wanted.size === 0 && !hasHeld) {
+  // The SESSION note travels this lane too. It is a note about the room, not
+  // about a person, and an admin correcting a pushed register is exactly who
+  // writes "the fire alarm went off at 19:20" afterwards. Participant notes
+  // stay on their own route, which the push deliberately never locks.
+  const hasNotes = body.notes !== undefined;
+  let notes = "";
+  if (hasNotes) {
+    const parsed = parseNotes(body.notes);
+    if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
+    notes = parsed.value;
+  }
+  if (wanted.size === 0 && !hasHeld && !hasNotes) {
     return NextResponse.json({ error: "Nothing to change." }, { status: 400 });
   }
 
@@ -764,6 +776,9 @@ export async function PATCH(
   const now = new Date();
   const actorName = actor.displayName ?? "";
   const memberName = new Map(members.map((m) => [m.uid, m.displayName]));
+  // Read OUTSIDE the transaction: it is a membership list, not a value the
+  // correction races with, and a transaction that queries cannot then write.
+  const mirrorMembers = await loadMirrorMembers(db, runId, groupId);
 
   let logged = 0;
   let changed = 0;
@@ -794,6 +809,8 @@ export async function PATCH(
       const heldBefore = data.held !== false;
       const heldAfter = hasHeld ? body.held === true : heldBefore;
       held = heldAfter;
+      const notesBefore = typeof data.notes === "string" ? data.notes : "";
+      const notesMoved = hasNotes && notes !== notesBefore;
 
       // Only the marks that actually MOVE are written or logged. An audit row
       // per unchanged cell would bury the one row that matters.
@@ -827,12 +844,15 @@ export async function PATCH(
         runId,
         groupId,
         sessions,
-        members,
+        // NOT `members`: the register's rows are the ACTIVE enrolments, and a
+        // correction to a pushed register has to move the figures of everybody
+        // whose rollup is read afterwards, withdrawn and completed included.
+        members: mirrorMembers,
         overrides,
         now,
       });
 
-      if (moved.length > 0 || heldAfter !== heldBefore) {
+      if (moved.length > 0 || heldAfter !== heldBefore || notesMoved) {
         const records: Record<string, AttendanceStatus | FieldValue> = {};
         for (const [uid, status] of moved) {
           records[uid] = status === null ? FieldValue.delete() : status;
@@ -842,6 +862,7 @@ export async function PATCH(
           {
             records,
             ...(hasHeld ? { held: heldAfter } : {}),
+            ...(notesMoved ? { notes } : {}),
             updatedAt: FieldValue.serverTimestamp(),
             // `markedByUid` is deliberately NOT moved to the admin: it records
             // who ran the session. Who corrected it afterwards is what the
@@ -889,6 +910,26 @@ export async function PATCH(
           detail: heldAfter
             ? `Week ${session.weekNumber} session ${session.occurrence} marked as held again, so it counts in everyone's attendance.`
             : `Week ${session.weekNumber} session ${session.occurrence} marked as not held, so it leaves everyone's attendance.`,
+          at: FieldValue.serverTimestamp(),
+        });
+        logged += 1;
+      }
+      if (notesMoved) {
+        // The note's TEXT is deliberately not copied into the audit row: it is
+        // a facilitator's account of a session and can name people, and the
+        // log is read by every admin. That it changed, and who changed it, is
+        // the fact the log is for.
+        tx.set(db.collection(COURSE_AUDIT_COLLECTION).doc(), {
+          kind: "attendance-edit",
+          runId,
+          groupId,
+          subjectUid: null,
+          actorUid: actor.uid,
+          actorName,
+          targetLabel: `${session.sessionKey} register`,
+          detail: notes
+            ? `Session note on week ${session.weekNumber} session ${session.occurrence} rewritten after the push.`
+            : `Session note on week ${session.weekNumber} session ${session.occurrence} cleared after the push.`,
           at: FieldValue.serverTimestamp(),
         });
         logged += 1;

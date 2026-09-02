@@ -94,10 +94,23 @@ export type AttendanceState = {
     marks: AttendanceMark[],
     patch?: SessionPatch,
   ) => Promise<void>;
-  /** An admin's correction to a register that is already pushed. */
-  edit: (session: AttendanceSession, marks: AttendanceMark[]) => Promise<AttendanceEditResult>;
-  /** PUSH ATTENDANCE. Locks the register, rebuilds the mirrors, mails the group. */
-  push: (session: AttendanceSession) => Promise<AttendancePushResult>;
+  /**
+   * An admin's correction to a register that is already pushed: marks, the
+   * held switch, or the session note. Every change appends its own audit row.
+   */
+  edit: (
+    session: AttendanceSession,
+    marks: AttendanceMark[],
+    patch?: SessionPatch,
+  ) => Promise<AttendanceEditResult>;
+  /**
+   * PUSH ATTENDANCE. Locks the register, rebuilds the mirrors, mails the
+   * group. `force` is the ADMIN-ONLY resend over a claimed reminder marker.
+   */
+  push: (
+    session: AttendanceSession,
+    opts?: { force?: boolean },
+  ) => Promise<AttendancePushResult>;
   /** Write or clear one private note about one member for one session. */
   saveNote: (
     session: AttendanceSession,
@@ -293,7 +306,11 @@ export function useAttendance(groupId: string): AttendanceState {
   );
 
   const edit = useCallback(
-    async (session: AttendanceSession, marks: AttendanceMark[]) => {
+    async (
+      session: AttendanceSession,
+      marks: AttendanceMark[],
+      patch?: SessionPatch,
+    ) => {
       const res = await fetch(endpoint, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -301,6 +318,8 @@ export function useAttendance(groupId: string): AttendanceState {
           weekNumber: session.weekNumber,
           occurrence: session.occurrence,
           marks,
+          ...(patch?.held !== undefined ? { held: patch.held } : {}),
+          ...(patch?.notes !== undefined ? { notes: patch.notes } : {}),
         }),
       });
       const body = (await res.json().catch(() => null)) as
@@ -316,13 +335,14 @@ export function useAttendance(groupId: string): AttendanceState {
   );
 
   const push = useCallback(
-    async (session: AttendanceSession) => {
+    async (session: AttendanceSession, opts?: { force?: boolean }) => {
       const res = await fetch(`${endpoint}/push`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           weekNumber: session.weekNumber,
           occurrence: session.occurrence,
+          ...(opts?.force ? { force: true } : {}),
         }),
       });
       const body = (await res.json().catch(() => null)) as
