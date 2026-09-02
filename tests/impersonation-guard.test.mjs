@@ -1,6 +1,8 @@
 /**
- * View-as write guard (run via `npm test`, Node's built-in test runner, no
- * dependencies).
+ * View-as write guard (run via `npm test`, Node's built-in test runner). Two
+ * halves: a source scan over the guarded route trees, and, at the foot of the
+ * file, live calls into `assertNotImpersonating()` itself through a transpiled
+ * copy of the module with its request-only imports stubbed.
  *
  * Admin "view as" is a FULL impersonation: the `__session` cookie is swapped
  * for the target's, so `getCurrentUser()` returns the target and Firestore
@@ -231,4 +233,158 @@ test("assertNotImpersonating refuses with a 403 and honest copy", () => {
     /viewing as another member/,
     "the copy must say what happened, not just Forbidden.",
   );
+});
+
+// ---------------------------------------------------------------------------
+// Live behaviour: what assertNotImpersonating() actually answers
+//
+// Everything above reads source. These load the module and call it, because
+// the stale-marker rule below is a decision no amount of grepping can pin: a
+// marker whose actorUid is the CURRENT session's uid means the admin is signed
+// in as themselves again (a half-failed start, or a sign-in that never went
+// through the exit route). `(app)/layout.tsx` has always suppressed the banner
+// on it and POST /api/admin/impersonate self-heals it, so treating it as a
+// live session here would have locked an admin out of every high-trust course
+// route until they thought to clear a cookie they cannot see.
+//
+// The module is TypeScript and imports next/headers, next/server and the
+// session module, none of which run outside a request, so it is transpiled in
+// memory with the `typescript` devDependency (the dance tests/course-window
+// .test.mjs explains at length) and those four specifiers are rewritten to
+// stubs driven by `harness` below.
+// ---------------------------------------------------------------------------
+
+const harness = { cookie: null, user: null, deleted: false };
+globalThis.__viewAsGuardHarness = harness;
+
+const STUBS = new Map([
+  ["server-only", "export {};"],
+  [
+    "next/headers",
+    `const h = globalThis.__viewAsGuardHarness;
+     export async function cookies() {
+       return {
+         get: (name) => (h.cookie === null ? undefined : { name, value: h.cookie }),
+         set: (name, value) => { h.cookie = value; },
+         delete: () => { h.cookie = null; h.deleted = true; },
+       };
+     }`,
+  ],
+  [
+    "next/server",
+    `export const NextResponse = {
+       json: (body, init) => ({ body, status: init?.status ?? 200 }),
+     };`,
+  ],
+  [
+    "./session",
+    `export async function getCurrentUser() {
+       return globalThis.__viewAsGuardHarness.user;
+     }`,
+  ],
+]);
+
+const SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"']+)\2/g;
+
+function dataUrl(source) {
+  return `data:text/javascript;base64,${Buffer.from(source, "utf8").toString("base64")}`;
+}
+
+async function loadImpersonationModule() {
+  let tsc;
+  try {
+    tsc = (await import("typescript")).default;
+  } catch (err) {
+    throw new Error(
+      "the `typescript` devDependency is not installed. Run `npm install`.",
+      { cause: err },
+    );
+  }
+  const file = join(REPO_ROOT, "src", "lib", "firebase", "impersonation.ts");
+  const { outputText } = tsc.transpileModule(readFileSync(file, "utf8"), {
+    fileName: file,
+    compilerOptions: {
+      target: tsc.ScriptTarget.ES2022,
+      module: tsc.ModuleKind.ESNext,
+    },
+  });
+  const rewritten = outputText.replace(
+    SPECIFIER,
+    (whole, prefix, quote, specifier) => {
+      if (!STUBS.has(specifier)) {
+        throw new Error(
+          `impersonation.ts imports "${specifier}", which this harness has no ` +
+            "stub for. Add one, or the guard's behaviour goes untested.",
+        );
+      }
+      return `${prefix}${quote}${dataUrl(STUBS.get(specifier))}${quote}`;
+    },
+  );
+  return import(dataUrl(rewritten));
+}
+
+const { assertNotImpersonating, markerIsLive, IMPERSONATION_BLOCKED_MESSAGE } =
+  await loadImpersonationModule();
+
+function setState({ marker, uid }) {
+  harness.cookie = marker === null ? null : JSON.stringify(marker);
+  harness.user = uid === null ? null : { uid, role: "member" };
+  harness.deleted = false;
+}
+
+const ADMIN_UID = "admin-uid";
+const TARGET_UID = "member-uid";
+const LIVE_MARKER = {
+  actorUid: ADMIN_UID,
+  actorName: "An Admin",
+  actorEmail: "admin@example.com",
+  auditId: "audit-1",
+};
+
+test("no marker means no view-as session, so the write proceeds", async () => {
+  setState({ marker: null, uid: TARGET_UID });
+  assert.equal(await assertNotImpersonating(), null);
+});
+
+test("a live marker refuses with 403 and the honest copy", async () => {
+  setState({ marker: LIVE_MARKER, uid: TARGET_UID });
+  const blocked = await assertNotImpersonating();
+  assert.equal(blocked.status, 403);
+  assert.equal(blocked.body.error, IMPERSONATION_BLOCKED_MESSAGE);
+  assert.equal(
+    harness.deleted,
+    false,
+    "a live marker must survive the guard: the session is still borrowed and " +
+      "the banner and the exit route both depend on it.",
+  );
+});
+
+test("a same-uid marker is stale, not a session: the write proceeds and the cookie is cleared", async () => {
+  // The admin is signed in as THEMSELVES with a leftover marker. Refusing here
+  // would leave them unable to publish a course, allocate a cohort or send a
+  // nudge, with nothing on screen explaining why: the banner is already
+  // suppressed in exactly this case.
+  setState({ marker: LIVE_MARKER, uid: ADMIN_UID });
+  assert.equal(await assertNotImpersonating(), null);
+  assert.equal(
+    harness.deleted,
+    true,
+    "the stale marker must be cleared, the same self-heal " +
+      "POST /api/admin/impersonate does, so the next request is not asked again.",
+  );
+});
+
+test("a marker with no session at all still refuses", async () => {
+  // No session means nothing can prove the marker stale, and the route is
+  // about to 401 anyway. Refusing is the safe reading.
+  setState({ marker: LIVE_MARKER, uid: null });
+  const blocked = await assertNotImpersonating();
+  assert.equal(blocked.status, 403);
+});
+
+test("markerIsLive is the one comparison the banner, the gate and the guard share", () => {
+  assert.equal(markerIsLive(null, TARGET_UID), false);
+  assert.equal(markerIsLive(LIVE_MARKER, TARGET_UID), true);
+  assert.equal(markerIsLive(LIVE_MARKER, ADMIN_UID), false);
+  assert.equal(markerIsLive(LIVE_MARKER, null), true);
 });
