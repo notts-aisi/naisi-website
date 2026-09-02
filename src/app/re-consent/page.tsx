@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import { bypass } from "@/lib/devBypass";
+import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentCollaborator, getCurrentUser } from "@/lib/firebase/session";
 import { CURRENT_POLICY_VERSION, currentPolicy } from "@/lib/legal/policies";
 import ReConsentActions from "./ReConsentActions";
@@ -16,7 +17,27 @@ export const metadata: Metadata = {
 const SUPPORT_EMAIL = "ai-safety@uonsu.com";
 
 /**
- * Re-consent gate landing. Reached from the dashboard layout (members) or the
+ * Does this uid have a `users` doc for the accept action to stamp?
+ *
+ * `getCurrentUser()` cannot answer it: an account with no doc resolves to a
+ * default shape with role "pending", which is indistinguishable from a real
+ * applicant awaiting approval. One addressed read, on a page almost nobody
+ * loads, is the cheapest honest answer. A missing Admin SDK reads as "no
+ * doc", the same conservative default the rest of the page takes.
+ */
+async function hasMemberDoc(uid: string): Promise<boolean> {
+  const db = getAdminDb();
+  if (!db) return false;
+  try {
+    const snap = await db.collection("users").doc(uid).get();
+    return snap.exists;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Re-consent gate landing. Reached from the authed layout (members) or the
  * collaborator layout (collaborators) when a user's stored policyVersion is
  * behind CURRENT_POLICY_VERSION. Lives OUTSIDE the (app) / collaborator shells so
  * those gates don't loop, and renders only the gate (no nav chrome to slip past).
@@ -32,14 +53,21 @@ export default async function ReConsentPage() {
   const user = collaborator ? null : await getCurrentUser();
   if (!collaborator && !user) redirect("/login");
 
-  // Only ACTIVE members and collaborators are the re-consent audience. A member
-  // session whose role is pending/rejected — including an unfinished signup with
-  // no profile doc, which resolves to a default role of "pending" — isn't, and
-  // would otherwise land on a dead-end member gate (accept has no doc to stamp).
-  // Send them where the normal layouts would, so /re-consent is never a trap.
+  // Who the gate is FOR. Anyone whose acceptance we can record, which means
+  // anyone with a doc to stamp: a member, a collaborator, and now also a
+  // role-pending applicant who has finished registering, because an applicant
+  // holding a course place reaches authed pages and must be asked like anybody
+  // else. What is still turned away is a session with NOTHING to stamp — an
+  // unfinished signup that never wrote a users doc, which resolves to a default
+  // role of "pending" here and would otherwise sit on a dead-end gate whose
+  // accept button has no document to write to. A rejected account is not an
+  // audience for anything. Send both where the normal layouts would, so
+  // /re-consent is never a trap.
   if (!collaborator && user) {
-    if (user.role === "pending") redirect("/pending-approval");
     if (user.role === "rejected") redirect("/");
+    if (user.role === "pending" && !(await hasMemberDoc(user.uid))) {
+      redirect("/pending-approval");
+    }
   }
 
   const isMember = !collaborator;
@@ -73,12 +101,16 @@ export default async function ReConsentPage() {
         </p>
         <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-4)", lineHeight: 1.6 }}>
           <strong style={{ color: "var(--color-text)" }}>What changed:</strong>{" "}
-          we&apos;ve explained how long we keep your information after an account
-          is deleted. We may hold your account data, the content you contributed
-          (committee tasks, comments, file attachments, and event RSVPs), and our
-          logs for up to 30 days, so we can meet our legal obligations and look
-          into any abuse or misuse of the site. After that we permanently delete
-          or anonymise it.
+          we&apos;ve added a section covering our courses and programmes. It
+          lists everything we hold if you apply to one or take part in one: your
+          application answers and drafts, your availability, anything you tell
+          us about access requirements (kept apart from the rest and never
+          scored), reviewer scores and notes, attendance registers, notes a
+          facilitator writes about a participant, your written work and the
+          feedback on it, weekly feedback and surveys, your membership tier,
+          certificates, and who can see each of those. We&apos;ve also written
+          down that applications are kept against your account rather than
+          stripped after a set period.
         </p>
         <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-4)", lineHeight: 1.6 }}>
           Read the full{" "}
