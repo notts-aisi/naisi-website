@@ -295,6 +295,39 @@
         { "fieldPath": "groupId", "order": "ASCENDING" },
         { "fieldPath": "weekNumber", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "admissionApplications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "roundId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "submittedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "admissionApplications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "uid", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "admissionReviews",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "roundId", "order": "ASCENDING" },
+        { "fieldPath": "applicantUid", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "admissionReviews",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "roundId", "order": "ASCENDING" },
+        { "fieldPath": "reviewerUid", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -1746,6 +1746,106 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // =====================================================================
+    // === V3 W1 PR4: admissions ===========================================
+    // =====================================================================
+    //
+    // Six collections, every one of them `allow read, write: if false`.
+    // That is unusually blunt for this file, so each half is argued below —
+    // "deny everything" is only a good rule when someone has checked that
+    // nothing legitimate needed the door.
+    //
+    // WHY NO CLIENT WRITES ANYWHERE. Every one of these carries something
+    // rules cannot express: counters that must move in the same transaction
+    // as a status (`applicationCounts`), a cross-document membership check
+    // (`round.reviewerUids`), a self-review guard, a server-recomputed
+    // total, or free text about a named person. The routes are Admin SDK and
+    // are the security boundary. That also makes the round's status
+    // transition table safe to keep in one route rather than duplicated
+    // here; if the write rule is ever relaxed, the table has to come with
+    // it, or the machine is three client writes from being walked
+    // backwards, exactly as `canApproveCourse()` can walk a live run back to
+    // draft today.
+    //
+    // WHY NO CLIENT READS EITHER, including own-row ones. This is the half
+    // that looks over-tight, so it is itemised:
+    //
+    //  - `admissionRounds` carries live `applicationCounts`, so a signed-in
+    //    read lets any fresher watch a competitive intake's submitted /
+    //    accepted / rejected counters move through the week their own
+    //    application is being decided; and `finalDeciderUid`, so they learn
+    //    who decides it. Nothing needs the client read: every staff surface
+    //    goes through GET /api/admissions/rounds[/[roundId]] for blinding
+    //    anyway, and the public round page is a server component.
+    //  - `.../stages` is THE release guarantee. `courseRuns` is
+    //    `allow read: if isSignedIn()` (see the block above), so questions
+    //    authored on a run document are readable the moment they are saved
+    //    and a timed release there is cosmetic. Here the only way a
+    //    question reaches a browser is a route that called
+    //    `isStageReleased` first. Subcollections do NOT inherit, so this
+    //    match block is required rather than decorative.
+    //  - `admissionApplications` would be the obvious own-row read, and it
+    //    is the sharpest one to refuse: the row carries
+    //    `evidence.facilitatorNotes` (a facilitator's private assessment of
+    //    the applicant) and `outcome.reason` alongside `outcome.reasonShared`
+    //    (the tick that decides whether they ever see it). An own-row read
+    //    hands the applicant reviewer-only material and an unshared
+    //    rejection reason from the browser console. The status hub is an
+    //    Admin SDK server component, so the rule bought nothing. If an
+    //    own-row read is ever wanted, those fields move to a routes-only
+    //    sibling FIRST.
+    //  - `admissionApplicationPrivate` holds the access-requirements answer
+    //    and nothing else. In practice that is disability and health
+    //    information. One reader, one route, and every read appends a
+    //    `courseAudit` row.
+    //  - `admissionReviews` read:false rather than own-row so no client can
+    //    enumerate who scored whom, which is the correlation a name-blind
+    //    process exists to prevent.
+    //  - `memberConductFlags` is off `users/{uid}` precisely because that
+    //    doc is own-row readable AND `AuthProvider` holds a live
+    //    `onSnapshot` on it, so a free-text misconduct reason there would
+    //    stream into the flagged member's own browser on every authed page
+    //    and could expose the reporter. Reviewers get a boolean chip through
+    //    a route payload; only admins ever see `reason`.
+    //
+    // Read:false also means there is no read rule for a `get()` to enter, so
+    // the "never a get() in a read rule" constraint is satisfied
+    // structurally here rather than by care.
+    //
+    // ⚠ A `firebase deploy --only firestore:rules` is NOT owed for these six
+    // blocks: with no `allow`, each match is identical to Firestore's
+    // implicit deny (the `pushSubscriptions` precedent below). They are
+    // written out so the lockdown is visible here rather than inferred, and
+    // so a later wildcard cannot silently open one of them. The composite
+    // indexes in `firestore.indexes.json` ARE owed a deploy, and they take
+    // minutes to build.
+
+    match /admissionRounds/{roundId} {
+      allow read, write: if false;
+    }
+
+    match /admissionRounds/{roundId}/stages/{stageId} {
+      allow read, write: if false;
+    }
+
+    match /admissionApplications/{applicationId} {
+      allow read, write: if false;
+    }
+
+    match /admissionApplicationPrivate/{applicationId} {
+      allow read, write: if false;
+    }
+
+    match /admissionReviews/{reviewId} {
+      allow read, write: if false;
+    }
+
+    match /memberConductFlags/{uid} {
+      allow read, write: if false;
+    }
+
+    // === end V3 W1 PR4: admissions =======================================
+
     // Web push subscriptions: one row per device endpoint, written ONLY by
     // the Admin SDK routes under /api/push/*. Clients never touch it — the
     // endpoint plus its keys IS the capability to push to that device's
