@@ -319,6 +319,11 @@ export function maskCoversSession(
     return false;
   }
   const end = start + duration;
+  // An EARLY EXIT, not the enforcement. A session outside the grid also fails
+  // the range guard inside the loop below, which is what actually decides it;
+  // this line is here because "outside the window is not covered" deserves to
+  // be legible at the top rather than emerging from slot arithmetic. Removing
+  // it changes no answer, so do not read it as load-bearing.
   if (start < effective.startMinute || end > effective.endMinute) return false;
 
   const column = decodeDay(
