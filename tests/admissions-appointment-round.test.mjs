@@ -483,7 +483,15 @@ test("a facilitator applicant is any signed-in account that has not been refused
   // Pending is the load-bearing case: somebody who made an account at the fair
   // on the Monday is still pending when the facilitator window closes on the
   // Sunday, and the round exists to recruit exactly those people.
-  const context = source("src/lib/admissions/applyContext.ts");
+  // The gate is defined in applyContext.ts on this branch. The status hub PR
+  // moves it into applicantSession.ts (so its route cannot reach the private
+  // collection) and leaves a re-export behind, so read whichever file holds
+  // the definition rather than pinning the module path.
+  const gateFile = ["src/lib/admissions/applicantSession.ts", "src/lib/admissions/applyContext.ts"].find(
+    (rel) => existsSync(join(REPO_ROOT, rel)) && source(rel).includes("export async function requireApplicant"),
+  );
+  assert.ok(gateFile, "no module defines requireApplicant");
+  const context = source(gateFile);
   const gate = context.slice(context.indexOf("export async function requireApplicant"));
   assert.match(gate.slice(0, 800), /user\.role === "rejected"/);
   assert.equal(
