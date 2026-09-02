@@ -211,6 +211,42 @@ export function canApproveCourse(
 }
 
 /**
+ * Who may author an admission round: an admin, or a member holding
+ * `approveCourse`.
+ *
+ * Deliberately NOT `canDraftCourse`, and deliberately not a new permission
+ * key. Authoring a round means writing the questions a cohort is judged on,
+ * the criteria they are scored against and the dates the whole intake hangs
+ * off, which sits with whoever may already sign off a course rather than with
+ * everyone who may draft one. A separate `manageAdmissions` key was
+ * considered and dropped: admissions authority is `reviewerUids` and
+ * `finalDeciderUid` on the round itself, plus this gate for authoring, and a
+ * third axis would only be a thing to forget to grant.
+ */
+export function canAuthorAdmissionRound(
+  user: Pick<UserDoc, "role" | "permissions">,
+): boolean {
+  return user.role === "admin" || Boolean(user.permissions?.approveCourse);
+}
+
+/**
+ * Who may be APPOINTED a reviewer or a final decider on a round.
+ *
+ * Admins, and SU-recognised committee. Reviewers read applications, which are
+ * member PII plus free text about the applicant's circumstances, so the bar is
+ * the same trust boundary that already gates the `users` collection and the
+ * committee task board rather than a looser one invented for admissions. A
+ * non-SU committee member or a plain member cannot be appointed however the
+ * request is shaped: the roles route checks this against each candidate's live
+ * user document, never against what the browser sent.
+ */
+export function isEligibleAdmissionsReviewer(
+  user: Pick<UserDoc, "role" | "suRecognised">,
+): boolean {
+  return user.role === "admin" || (user.role === "committee" && Boolean(user.suRecognised));
+}
+
+/**
  * A UK academic year label: four-digit start year, slash, two-digit end year —
  * "2026/27". The same shape a course run carries in `academicYear`, and what
  * Firestore rules check before letting an admin add a paid-membership tag.
@@ -287,6 +323,27 @@ export type UserDoc = {
    * committee are scoped to the tasks they are on.
    */
   suRecognised?: boolean;
+  /**
+   * SERVER-OWNED. True while this user is a reviewer or the final decider on
+   * at least one admission round. Written only by
+   * `PUT /api/admissions/rounds/[roundId]/roles`, and pinned in
+   * `firestore.rules` absent-at-create and unchanged-on-self-update exactly
+   * like `suRecognised`.
+   *
+   * It is a DENORMALISATION of `admissionRounds.reviewerUids` /
+   * `finalDeciderUid`, and it exists for one reason: the Admissions sidebar
+   * entry. `AppShell` gates every nav item client-side from the `useAuth()`
+   * snapshot, which is a live `onSnapshot` on this document. Gating on "does
+   * this uid appear in some round's reviewerUids" has no field behind it, so
+   * it would cost an `admissionRounds` query on every authed navigation for
+   * every user, or the entry would simply never appear for exactly the
+   * non-admin SU reviewers the reviewer surface exists to serve.
+   *
+   * The round arrays remain the AUTHORITY: every admissions route re-checks
+   * membership of the round it is acting on. This flag decides whether a link
+   * is drawn, never what may be read.
+   */
+  admissionsReviewer?: boolean;
   approvedAt?: Date | null;
   approvedBy?: string | null;
   rejectedAt?: Date | null;
@@ -347,6 +404,7 @@ export function normalizeUser(id: string, data: Raw): UserDoc {
     ...(paidMembershipYears.length > 0 ? { paidMembershipYears } : {}),
     permissions,
     suRecognised: Boolean(data.suRecognised),
+    admissionsReviewer: Boolean(data.admissionsReviewer),
     approvedAt: tsToDate(data.approvedAt),
     approvedBy: (data.approvedBy as string) ?? null,
     rejectedAt: tsToDate(data.rejectedAt),

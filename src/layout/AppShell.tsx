@@ -30,6 +30,9 @@ type Viewer = {
   role: "member" | "committee" | "admin";
   permissions: UserPermissions;
   suRecognised: boolean;
+  /** Server-owned: this member reviews or decides at least one admission
+   *  round. See `users.admissionsReviewer`. */
+  admissionsReviewer: boolean;
 };
 type NavItem = {
   label: string;
@@ -69,6 +72,15 @@ const COURSE_ADMIN_ACCESS = (v: Viewer) =>
   v.role !== "admin" &&
   (Boolean(v.permissions.draftCourse) || Boolean(v.permissions.approveCourse));
 
+// The Admissions group. Admins always; anyone the roles route has marked as a
+// reviewer or final decider on a round. The flag is a denormalisation carried
+// on the user document precisely so this predicate is a field read rather than
+// an `admissionRounds` query on every authed navigation, which is the shape
+// that would either cost every visitor a query or, worse, silently never show
+// the entry to exactly the non-admin SU reviewers it exists for.
+const ADMISSIONS_ACCESS = (v: Viewer) =>
+  v.role === "admin" || v.admissionsReviewer;
+
 const NAV_GROUPS: NavGroup[] = [
   {
     label: null,
@@ -86,6 +98,15 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Credentials", href: "/credentials", visible: COMMITTEE_AND_UP },
       { label: "Newsletter", href: "/newsletter", visible: NEWSLETTER_ACCESS },
       { label: "Events", href: "/events/manage", visible: EVENTS_ACCESS },
+    ],
+  },
+  {
+    label: "Admissions",
+    items: [
+      // The reviewer's own queue is a later PR. Until it lands this points at
+      // the round console, which is where an admin acts and where a reviewer
+      // can at least see the round they have been appointed to.
+      { label: "Rounds", href: "/admin/admissions", visible: ADMISSIONS_ACCESS },
     ],
   },
   {
@@ -126,7 +147,7 @@ export default function AppShell({
   impersonation?: Impersonation | null;
 }) {
   const pathname = usePathname();
-  const { user, role, permissions, suRecognised, loading } = useAuth();
+  const { user, role, permissions, suRecognised, admissionsReviewer, loading } = useAuth();
   const pendingCount = usePendingCount();
   const [exiting, setExiting] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -249,7 +270,7 @@ export default function AppShell({
       ? NAV_GROUPS.map((g) => ({
           ...g,
           items: g.items.filter((item) =>
-            item.visible({ role, permissions, suRecognised }),
+            item.visible({ role, permissions, suRecognised, admissionsReviewer }),
           ),
         })).filter((g) => g.items.length > 0)
       : [];

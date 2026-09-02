@@ -1,6 +1,10 @@
 import "server-only";
 import { redirect } from "next/navigation";
-import { canApproveCourse, canDraftCourse } from "@/lib/firestore/users";
+import {
+  canApproveCourse,
+  canAuthorAdmissionRound,
+  canDraftCourse,
+} from "@/lib/firestore/users";
 import { getCurrentUser, type SessionUser } from "./session";
 
 /**
@@ -41,6 +45,35 @@ export async function requireAdminPage(): Promise<SessionUser> {
 export async function requireCourseAuthorPage(): Promise<SessionUser> {
   const user = await getCurrentUser();
   if (!user || !(user.role === "admin" || canDraftCourse(user) || canApproveCourse(user))) {
+    redirect("/dashboard");
+  }
+  return user;
+}
+
+/**
+ * The admissions console, `/admin/admissions`. Its own tree and its own gate,
+ * for the same reason `/admin/courses` has one: the `(admin-only)` group would
+ * be wrong in both directions here.
+ *
+ * Two audiences reach this tree, and they are not the same set:
+ *
+ *  - AUTHORS: an admin, or a member holding `approveCourse`
+ *    (`canAuthorAdmissionRound`). They write the round.
+ *  - REVIEWERS: anyone the roles route has appointed on some round, carried on
+ *    `users.admissionsReviewer`. They write nothing here. They are admitted so
+ *    the Admissions entry in the sidebar goes somewhere rather than bouncing
+ *    them to `/dashboard`, which is the dead-link failure the denormalised
+ *    flag exists to avoid. The round page renders them a read-only summary,
+ *    and every route under `/api/admissions` re-checks the round's own
+ *    `reviewerUids` regardless of what this gate let through.
+ *
+ * The gate is a page-level convenience, never the boundary: the boundary is
+ * each route, and `admissionRounds` is `allow read, write: if false` so
+ * nothing here can be reached client-direct.
+ */
+export async function requireAdmissionsPage(): Promise<SessionUser> {
+  const user = await getCurrentUser();
+  if (!user || !(canAuthorAdmissionRound(user) || user.admissionsReviewer === true)) {
     redirect("/dashboard");
   }
   return user;

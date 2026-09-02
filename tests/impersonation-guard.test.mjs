@@ -52,13 +52,12 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /**
  * Route trees whose mutating handlers must all be guarded.
  *
- * TODO when those workstreams land: add "src/app/api/admissions" (rounds,
- * stages, apply, review, decide, promote) and "src/app/api/admin/membership"
- * (periods, grants, import, export), plus the CSV export routes, to this list.
+ * TODO when those workstreams land: add "src/app/api/admin/membership"
+ * (periods, grants, import, export) plus the CSV export routes to this list.
  * They are named here rather than pre-registered because a tree that does not
  * exist yet cannot be scanned, and a silently-skipped tree is a hole.
  */
-const GUARDED_TREES = ["src/app/api/courses"];
+const GUARDED_TREES = ["src/app/api/courses", "src/app/api/admissions"];
 
 /**
  * Every mutating route in those trees, with the reason it is high-trust.
@@ -100,6 +99,15 @@ const MUST_GUARD = [
   ["src/app/api/courses/runs/[runId]/status/route.ts", "moves a run along its lifecycle, opening or closing applications"],
   ["src/app/api/courses/runs/[runId]/sync-tasks/route.ts", "creates committee tasks on the board"],
   ["src/app/api/courses/templates/[templateId]/route.ts", "deletes a curriculum template"],
+  // Admissions: the round authoring console. A round is the object an intake
+  // hangs off, so every write here changes what applicants are asked, when the
+  // window is, who reads their answers, or who decides.
+  ["src/app/api/admissions/rounds/route.ts", "creates an admission round"],
+  ["src/app/api/admissions/rounds/[roundId]/route.ts", "edits a round's dates, questions framework and criteria"],
+  ["src/app/api/admissions/rounds/[roundId]/status/route.ts", "opens, closes, settles or cancels a round"],
+  ["src/app/api/admissions/rounds/[roundId]/stages/[stageId]/route.ts", "writes and deletes the questions a stage asks"],
+  ["src/app/api/admissions/rounds/[roundId]/stages/[stageId]/release/route.ts", "releases a stage's questions to applicants, which cannot be undone"],
+  ["src/app/api/admissions/rounds/[roundId]/roles/route.ts", "appoints reviewers and the final decider, which grants access to applications"],
 ];
 
 /**

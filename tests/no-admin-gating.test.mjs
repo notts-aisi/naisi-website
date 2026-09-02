@@ -17,9 +17,10 @@
  *    reach `/admin/courses`. Every page that still needs a full admin therefore
  *    has to be gated below that layout, and the shape chosen is a route group:
  *    `src/app/(app)/admin/(admin-only)/**` is wrapped by a layout that calls
- *    `requireAdminPage()`, and `src/app/(app)/admin/courses/**` by one that
- *    calls `requireCourseAuthorPage()`. This asserts every admin page lives in
- *    one of those two trees and that both gates are still in place, so a course
+ *    `requireAdminPage()`, `src/app/(app)/admin/courses/**` by one that calls
+ *    `requireCourseAuthorPage()`, and `src/app/(app)/admin/admissions/**` by
+ *    one that calls `requireAdmissionsPage()`. This asserts every admin page
+ *    lives in one of those trees and that every gate is still in place, so a course
  *    permission holder cannot reach /admin (approvals), /admin/members,
  *    /admin/danger-zone or any other section. A new page dropped straight into
  *    `src/app/(app)/admin/` fails here, which is the point: that location has
@@ -56,6 +57,11 @@ const GATED_TREES = [
     dir: "courses",
     gate: "requireCourseAuthorPage",
     why: "the course authoring tree, also open to draftCourse and approveCourse holders",
+  },
+  {
+    dir: "admissions",
+    gate: "requireAdmissionsPage",
+    why: "the admission round console, open to approveCourse holders who author rounds and to the reviewers a round has appointed",
   },
 ];
 

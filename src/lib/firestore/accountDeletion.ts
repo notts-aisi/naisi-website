@@ -40,6 +40,8 @@ export type AccountDeletionSummary = {
   admissionReviewsDeleted: number;
   /** Review rows written BY this account about other people. */
   admissionReviewsAuthoredDeleted: number;
+  /** Rounds this account was taken off as a reviewer or as the final decider. */
+  admissionRoundRolesCleared: number;
   conductFlagDeleted: boolean;
   authDeleted: boolean;
   /** Set when the teardown was not fully clean (a best-effort step failed, or the
@@ -294,6 +296,59 @@ async function deleteAdmissionApplications(
 }
 
 /**
+ * Take a deleted account off every admission round that names it: out of
+ * `reviewerUids`, and out of `finalDeciderUid` where it was the decider.
+ *
+ * ## Why this is not "tidying"
+ *
+ * A round outlives the accounts named on it, and until this ran, a deleted
+ * reviewer left a uid on the round that nothing could resolve. The roles route
+ * refuses a list naming an account that no longer exists, so the section
+ * wedged: the admin could not see who the problem was (the picker draws names
+ * from the member list, which no longer has them) and could not save a list
+ * with them taken off either, because the same save has to clear
+ * `users.admissionsReviewer` on everyone it removes and an update to a missing
+ * user document rejects the whole batch. Both halves of that are fixed in the
+ * route; this is the half that stops the state from arising at all.
+ *
+ * Both queries are single-field, so no composite index. Rounds are counted in
+ * tens, so one batch is enough, and a round appearing in both queries takes
+ * one update carrying both fields.
+ */
+export async function clearAdmissionRoundRoles(
+  db: Firestore,
+  uid: string,
+): Promise<number> {
+  const rounds = db.collection("admissionRounds");
+  const [asReviewer, asDecider] = await Promise.all([
+    rounds.where("reviewerUids", "array-contains", uid).get(),
+    rounds.where("finalDeciderUid", "==", uid).get(),
+  ]);
+
+  const updates = new Map<string, Record<string, unknown>>();
+  for (const doc of asReviewer.docs) {
+    updates.set(doc.id, {
+      ...(updates.get(doc.id) ?? {}),
+      reviewerUids: FieldValue.arrayRemove(uid),
+    });
+  }
+  for (const doc of asDecider.docs) {
+    updates.set(doc.id, { ...(updates.get(doc.id) ?? {}), finalDeciderUid: null });
+  }
+  if (updates.size === 0) return 0;
+
+  const batch = db.batch();
+  for (const [roundId, fields] of updates) {
+    batch.update(rounds.doc(roundId), {
+      ...fields,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  }
+  await batch.commit();
+  return updates.size;
+}
+
+/**
  * Cascade-delete an account by uid — the single source of truth for "delete this
  * account," reused by the admin Members delete, the collaborator delete, the
  * admin registrations-tracker delete, and the self-service unfinished-account
@@ -391,6 +446,7 @@ export async function deleteAccountCascade(
     admissionApplicationPrivateDeleted: 0,
     admissionReviewsDeleted: 0,
     admissionReviewsAuthoredDeleted: 0,
+    admissionRoundRolesCleared: 0,
     conductFlagDeleted: false,
     authDeleted: false,
   };
@@ -644,6 +700,17 @@ export async function deleteAccountCascade(
     );
   } catch (err) {
     console.error("[deleteAccount] admissionReviews (reviewer) failed:", uid, err);
+    partialFailure = true;
+  }
+
+  // The rounds that NAME this account: its reviewer lists and its final
+  // decider. Unlike everything else in this block these are not rows the
+  // account owns, they are references to it on documents that outlive it, and
+  // a reference nothing can resolve is what wedged the roles section.
+  try {
+    summary.admissionRoundRolesCleared = await clearAdmissionRoundRoles(db, uid);
+  } catch (err) {
+    console.error("[deleteAccount] admissionRounds role clear failed:", uid, err);
     partialFailure = true;
   }
 
