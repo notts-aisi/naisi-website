@@ -13,6 +13,7 @@ import { isSurfacePaused } from "@/lib/siteNotice";
 import { validateAnswers } from "@/lib/events/validateAnswers";
 import type { FormQuestion, RsvpAnswer } from "@/lib/firestore/events";
 import type { CourseApplicationStatus } from "@/lib/firestore/courseApplications";
+import type { ApplicationWindowState } from "@/lib/courses/window";
 import { useMyApplication } from "./useMyApplication";
 import styles from "./ApplyForm.module.css";
 
@@ -50,6 +51,24 @@ type GroupOption = {
   sessionLabel: string;
 };
 
+/**
+ * The run's application window, computed server-side by the ONE predicate the
+ * apply route also uses, with its dates already formatted in Europe/London.
+ *
+ * Pre-formatted on purpose: this is a client island, and formatting a
+ * Nottingham deadline in the visitor's own timezone is how someone reads
+ * "closes Sat 17 Oct" and applies a day late.
+ */
+export type ApplyWindow = {
+  state: ApplicationWindowState;
+  /** "Mon 21 Sep", or null when the window has no opening bound. */
+  opensOn: string | null;
+  /** "Sun 18 Oct, 23:59", or null when there is no deadline. */
+  closesOn: string | null;
+  /** "Mon 26 Oct", or null when the run has no start date authored yet. */
+  startsOn: string | null;
+};
+
 type Props = {
   runId: string;
   courseId: string;
@@ -59,6 +78,14 @@ type Props = {
   groups: GroupOption[];
   /** Who they're applying as, echoed back so a shared device is obvious. */
   userDisplayName: string;
+  /**
+   * Whether the run is taking applications. Only `open` renders the blank
+   * form; every other state renders the applicant's OWN status card if they
+   * hold a row, and a dated "closed" card if they don't. That split has to
+   * live in this component rather than on the page, because whether a row
+   * exists is a client-side own-row read the server never makes.
+   */
+  runWindow: ApplyWindow;
 };
 
 const STATUS_BADGE: Record<
@@ -151,6 +178,7 @@ export default function ApplyForm({
   questions,
   groups,
   userDisplayName,
+  runWindow,
 }: Props) {
   const { application, loading, reload } = useMyApplication(runId);
   const { toast, run, dismiss } = useActionToast();
@@ -330,6 +358,20 @@ export default function ApplyForm({
             <Badge tone={badge.tone}>{badge.label}</Badge>
           </div>
           <p className={styles.blurb}>{STATUS_BLURB[application.status]}</p>
+          {/* The deadline, restated on the card, because this is the surface
+              someone opens in the fortnight between applying and hearing
+              back. It used to be unreachable in exactly that fortnight: the
+              page needed a run still in `applications-open` to render at all,
+              which is the state admissions moves OFF the day they close. */}
+          {editable && runWindow.state === "closed" ? (
+            <p className={styles.note}>
+              {runWindow.closesOn
+                ? `Applications closed on ${runWindow.closesOn}.`
+                : "Applications for this run have closed."}{" "}
+              Yours is still in the queue, and you can keep editing it until
+              the team reviews it.
+            </p>
+          ) : null}
 
           {application.createdAt ? (
             <p className={styles.timestamp}>
@@ -400,6 +442,42 @@ export default function ApplyForm({
         </Card>
         <ActionToast toast={toast} onDismiss={dismiss} />
       </>
+    );
+  }
+
+  // ---- No application, and the window isn't open: the dated card ----
+  //
+  // Reached only AFTER the own-row read has settled, which is the whole
+  // point: someone who already applied gets their status card above, in every
+  // window state. Only a visitor with no row lands here.
+  if (!application && runWindow.state !== "open") {
+    const notYet = runWindow.state === "not-yet";
+    return (
+      <Card padding="lg" className={styles.card}>
+        <h2 className={styles.h2}>
+          {notYet ? "Applications aren't open yet" : "Applications have closed"}
+        </h2>
+        <p className={styles.blurb}>
+          {notYet
+            ? runWindow.opensOn
+              ? `Applications open on ${runWindow.opensOn}. The curriculum is up already, so you can read the whole thing before you decide.`
+              : "Applications open shortly. The curriculum is up already, so you can read the whole thing before you decide."
+            : runWindow.closesOn
+              ? `Applications closed on ${runWindow.closesOn}, so this run is no longer taking them.`
+              : "This run is no longer taking applications."}
+          {runWindow.startsOn ? ` The programme starts ${runWindow.startsOn}.` : ""}
+        </p>
+        <p className={styles.note}>
+          <Link href={`/courses/${courseId}`} className={styles.inlineLink}>
+            Read the curriculum
+          </Link>
+        </p>
+        <p className={styles.note}>
+          <Link href="/#stay-in-touch" className={styles.inlineLink}>
+            Get told when the next run opens
+          </Link>
+        </p>
+      </Card>
     );
   }
 

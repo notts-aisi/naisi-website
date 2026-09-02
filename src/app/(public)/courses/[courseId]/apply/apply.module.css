@@ -83,6 +83,17 @@
   max-width: 44rem;
 }
 
+/* "Applications close Sun 18 Oct, 23:59 · Starts Mon 26 Oct". The two facts
+   an applicant is here to act on, above the form rather than only in a
+   confirmation email they have not been sent yet. */
+.dates {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 /* === Signed-out / ineligible gate === */
 
 .gateCard {
@@ -113,6 +124,18 @@
   margin: var(--space-4) 0 0;
   color: var(--color-text-subtle);
   font-size: var(--text-xs);
+}
+
+/* Inline, deliberately not a second .button: registering is the alternative
+   route in, not a competing primary action. */
+.gateLink {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.gateLink:hover {
+  color: var(--color-accent-hover);
 }
 
 /* Anchor styled as the primary action — see the comment at the call site. */
@@ -235,6 +258,9 @@
   }
   .lede {
     font-size: var(--text-sm);
+  }
+  .dates {
+    font-size: var(--text-xs);
   }
   .button {
     /* Full-bleed tap target on phones — the card has one action. */
