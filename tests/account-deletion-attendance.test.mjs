@@ -102,7 +102,16 @@ async function transpileToDataUrl(file) {
       if (!target) throw new Error(`cannot resolve "${specifier}" imported from ${file}`);
       rewrites.set(specifier, await transpileToDataUrl(target));
     } else {
-      rewrites.set(specifier, import.meta.resolve(specifier));
+      // The scan is a regex over source text, so a plain string literal can
+      // look like an import: "su-import", in the membership module the
+      // deletion cascade now reaches, carries the word import inside it and
+      // the match that follows is not a module specifier at all. Anything
+      // that will not resolve is left exactly as it was written.
+      try {
+        rewrites.set(specifier, import.meta.resolve(specifier));
+      } catch {
+        // Not a module. Leave the source alone.
+      }
     }
   }
 
