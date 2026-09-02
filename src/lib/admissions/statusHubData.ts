@@ -2,9 +2,9 @@ import "server-only";
 import { buildStatusRow, sortStatusRows } from "./statusHub";
 import type { ApplicationStatusRow } from "./statusTypes";
 import { type Db } from "./applicantSession";
-import { APPLICATIONS_COLLECTION } from "./applyContext";
 import { ROUNDS_COLLECTION, STAGES_SUBCOLLECTION } from "./roundRoutes";
 import {
+  APPLICATIONS_COLLECTION,
   admissionApplicationId,
   normalizeAdmissionApplication,
 } from "@/lib/firestore/admissionApplications";
@@ -40,6 +40,20 @@ import {
  * link onward: the answers are still the applicant's own, and hiding somebody's
  * application because the team tidied up afterwards is a worse failure than an
  * unlinked card.
+ *
+ * ## Nothing in this module can address the private sibling collection
+ *
+ * The access-requirements answer lives in the private sibling of this
+ * collection, and the privacy notice promises every read of it is recorded.
+ * This surface records nothing, so it must be unable to read it, and "unable"
+ * is meant structurally rather than as a habit: the collection name comes from
+ * `@/lib/firestore/admissionApplications`, a leaf that knows a shape and an id
+ * and holds no database handle, rather than from the apply tree's shared
+ * context module, which exports the two helpers that address the private
+ * sibling on a caller's behalf. The source pins in
+ * `tests/admissions-status-hub.test.mjs` hold this module and the `/me` route
+ * to it. Do not import that context module here for a constant: move the
+ * constant instead.
  *
  * ## No `orderBy` on the query
  *

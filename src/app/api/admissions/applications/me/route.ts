@@ -21,11 +21,16 @@ import type { ApplicationStatusPayload } from "@/lib/admissions/statusTypes";
  * access-requirements answer. The reasons are written out once, in
  * `statusTypes.ts`, and enforced in one place, `buildStatusRow`.
  *
- * The session gate comes from `applicantSession.ts` rather than
- * `applyContext.ts` for the last of those: the apply context is the module
- * that can reach the access-requirements collection, and this route must be
- * provably unable to. The privacy scan in `tests/privacy-policy-v3.test.mjs`
- * reads the import list, which is the right thing for it to read.
+ * The last of those is structural, not a habit. The session gate comes from
+ * `applicantSession.ts`, and the loader behind it takes the collection name
+ * from `@/lib/firestore/admissionApplications`, so nothing in this route's
+ * import graph is the apply tree's shared context module: that is the module
+ * holding the two helpers which address the access-requirements collection on
+ * a caller's behalf, and this route must be provably unable to reach them. The
+ * privacy scan in `tests/privacy-policy-v3.test.mjs` reads the import list,
+ * which is the right thing for it to read, and a source pin in
+ * `tests/admissions-status-hub.test.mjs` keeps this route and the loader off
+ * that module.
  *
  * ## Not guarded against view-as, and that is the decision
  *

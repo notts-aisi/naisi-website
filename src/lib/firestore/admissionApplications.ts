@@ -281,6 +281,19 @@ export type AdmissionApplicationDoc = {
 // ---------------------------------------------------------------------------
 
 /**
+ * The collection name, HERE rather than beside the apply tree's handlers.
+ *
+ * It lives with the shape it names so that a module needing only "which
+ * collection is this" can have it without importing `applyContext.ts`, which
+ * can reach `admissionApplicationPrivate` (the access-requirements answer) and
+ * which `tests/privacy-policy-v3.test.mjs` therefore treats as reaching it. The
+ * status hub's loader is the module that made the difference matter: it must be
+ * provably unable to touch that collection, and an import for a string constant
+ * is not a reason to give up the proof.
+ */
+export const APPLICATIONS_COLLECTION = "admissionApplications";
+
+/**
  * Deterministic doc id: one application per (round, person), enforced by
  * `tx.create()` on this id. CONSTRUCT-ONLY (see the module comment).
  */

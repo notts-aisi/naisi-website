@@ -11,6 +11,7 @@ import {
   normaliseSiteNotice,
 } from "@/lib/siteNotice";
 import {
+  APPLICATIONS_COLLECTION,
   admissionApplicationId,
   admissionApplicationPrivateId,
   normalizeAdmissionApplication,
@@ -42,7 +43,6 @@ import { APPLY_RATE_LIMITS, type RecaptchaAction } from "./applyRoutes";
  * reading it.
  */
 
-export const APPLICATIONS_COLLECTION = "admissionApplications";
 export const APPLICATION_PRIVATE_COLLECTION = "admissionApplicationPrivate";
 
 /**
