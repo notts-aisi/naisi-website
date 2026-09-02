@@ -546,17 +546,18 @@ function ProgrammeSection({
     });
   }
 
-  async function save(force = false) {
+  async function save(force = false): Promise<boolean> {
     setError(null);
     try {
       await patch({ programmePreference: preference, ...(force ? { force: true } : {}) });
       setConfirmOpen(false);
       setTyped("");
+      return true;
     } catch (err) {
       if (err instanceof RoundApiError && err.needsConfirmation) {
         setConfirmOpen(true);
         setError(err.message);
-        return;
+        return false;
       }
       throw err;
     }
@@ -818,7 +819,7 @@ function CriteriaSection({ round, patch }: { round: Round; patch: PatchFn }) {
     setCriteria(next);
   }
 
-  async function save(force = false) {
+  async function save(force = false): Promise<boolean> {
     setError(null);
     try {
       await patch({
@@ -830,11 +831,12 @@ function CriteriaSection({ round, patch }: { round: Round; patch: PatchFn }) {
       });
       setConfirmOpen(false);
       setTyped("");
+      return true;
     } catch (err) {
       if (err instanceof RoundApiError && err.needsConfirmation) {
         setConfirmOpen(true);
         setError(err.message);
-        return;
+        return false;
       }
       throw err;
     }

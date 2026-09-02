@@ -31,8 +31,14 @@ export default function SectionCard({
   title: string;
   note?: ReactNode;
   children: ReactNode;
-  /** Omit for a section that saves through its own controls (stages, status). */
-  onSave?: () => Promise<void>;
+  /**
+   * Omit for a section that saves through its own controls (stages, status).
+   * Resolving to `false` means "nothing was written": the two sections that
+   * can be stopped by the submitted-applications freeze open a confirmation
+   * instead of saving, and a card that said "Saved." over an unanswered
+   * confirmation would be a lie the author would act on.
+   */
+  onSave?: () => Promise<void | boolean>;
   saveLabel?: string;
   disabled?: boolean;
   footer?: ReactNode;
@@ -47,8 +53,8 @@ export default function SectionCard({
     setError(null);
     setSaved(false);
     try {
-      await onSave();
-      setSaved(true);
+      const wrote = await onSave();
+      setSaved(wrote !== false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "That did not save.");
     } finally {
