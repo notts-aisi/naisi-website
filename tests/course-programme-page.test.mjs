@@ -117,7 +117,7 @@ async function transpileToDataUrl(file) {
       target: tsc.ScriptTarget.ES2022,
       module: tsc.ModuleKind.ESNext,
       // The automatic runtime, so a component file needs no React import of
-      // its own — exactly how Next compiles it.
+      // its own, exactly how Next compiles it.
       jsx: tsc.JsxEmit.ReactJSX,
       jsxImportSource: "react",
     },

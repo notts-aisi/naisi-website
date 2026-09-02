@@ -3,7 +3,7 @@
 
    One prose column, capped at reading width: hero → facts rail
    → pitch → weekly themes → a sample week → the term's journey
-   → FAQ → closing CTA. Deliberately NOT a dashboard — a visitor
+   → FAQ → closing CTA. Deliberately NOT a dashboard: a visitor
    deciding whether to spend seven weeks on this is reading, not
    scanning a spec sheet.
 
@@ -147,7 +147,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  /* 44px floor — public surface, enforced (docs/touch-targets.md). */
+  /* 44px floor, public surface, enforced (docs/touch-targets.md). */
   min-height: 2.75rem;
   color: var(--color-accent);
   text-decoration: none;

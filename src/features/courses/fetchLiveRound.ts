@@ -11,7 +11,7 @@ import type { RoundWindowState } from "@/lib/admissions/window";
  *
  * ## The obligation, restated because this file inherits it
  *
- * `admissionRounds` is `allow read, write: if false` — read:false as well,
+ * `admissionRounds` is `allow read, write: if false`, read:false as well,
  * because the doc carries live `applicationCounts`, the `finalDeciderUid` who
  * decides your application, and the `criteria` reviewers score against. This
  * reads through the Admin SDK, so rules provide no defence here at all.

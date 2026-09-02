@@ -1,5 +1,5 @@
 /* ============================================================
-   JourneyStrip — the term's shape, with the reader's position.
+   JourneyStrip: the term's shape, with the reader's position.
 
    A horizontal rail on wide screens, a vertical one on a
    phone. The connecting line is drawn per step (a ::before on

@@ -27,7 +27,7 @@ import styles from "./CourseVisual.module.css";
  * ## The cover override
  *
  * An author who HAS a picture wins: `coverImageUrl` replaces the generated
- * composition entirely, rendered as a plain `<img>` (never `next/image` — see
+ * composition entirely, rendered as a plain `<img>` (never `next/image`, see
  * the repo note; the default import resolves to an object under the Turbopack
  * production build). It requires `coverAlt`, which the write route enforces,
  * because an image with no alternative text is announced as nothing on a page
