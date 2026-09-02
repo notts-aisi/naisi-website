@@ -29,6 +29,7 @@ import {
   COHORT_TERMS,
   COHORT_TERM_LABELS,
   cohortLabel,
+  normalizeCohort,
   type CohortTerm,
 } from "@/lib/courses/cohortLabel";
 import { ALLOWED_TRANSITIONS } from "@/lib/courses/runStatus";
@@ -255,6 +256,26 @@ export default function RunEditor({ courseId, runId }: Props) {
   const [cohortYear, setCohortYear] = useState("");
   const [cohortNumber, setCohortNumber] = useState("");
   const [metaError, setMetaError] = useState<string | null>(null);
+
+  // The cohort preview is derived from the THREE FORM FIELDS, never from the
+  // saved run. A preview of the stored cohort answers "what did this say last
+  // time", and the question in front of an author typing into these boxes is
+  // "what will this say when I press Save", including the answer "nothing
+  // yet, you have filled in one of three". `normalizeCohort` is the same
+  // reader the stored value goes through, so a preview that appears is a
+  // preview of a cohort that will save.
+  const cohortFieldsFilled = [
+    cohortTerm,
+    cohortYear.trim(),
+    cohortNumber.trim(),
+  ].filter(Boolean).length;
+  const cohortPreview = cohortLabel({
+    cohort: normalizeCohort({
+      term: cohortTerm,
+      year: Number(cohortYear.trim()),
+      number: Number(cohortNumber.trim()),
+    }),
+  });
 
   // ---- Applications ----
   const [openAt, setOpenAt] = useState<Date | null>(null);
@@ -822,7 +843,10 @@ export default function RunEditor({ courseId, runId }: Props) {
 
           {/* V3 W1 PR7. The cohort a learner and a visitor see, beside the run
               label an admin sees. `cohortLabel()` is the ONE formatter, so the
-              preview below is byte-identical to what the public page renders. */}
+              preview below is byte-identical to what the public page renders.
+              It is built from the FORM STATE rather than the saved run, so the
+              all-three-or-none rule and the finished sentence are both visible
+              before Save rather than only after it. */}
           <div className={styles.threeCol}>
             <Field
               id="run-cohort-term"
@@ -870,10 +894,18 @@ export default function RunEditor({ courseId, runId }: Props) {
             </Field>
           </div>
 
-          {run.cohort && (
+          {cohortFieldsFilled > 0 && (
             <p className={styles.hint}>
-              Learners and visitors see <strong>{cohortLabel(run)}</strong>. The run
-              label above stays on admin lists only.
+              {cohortPreview ? (
+                <>
+                  Learners and visitors will see <strong>{cohortPreview}</strong> once
+                  you save. The run label above stays on admin lists only.
+                </>
+              ) : cohortFieldsFilled < 3 ? (
+                "A cohort is all three fields or none: give it a term, a year and a number, or clear the ones you have filled in."
+              ) : (
+                `Those three do not make a cohort yet. The year must be between ${COHORT_LIMITS.minYear} and ${COHORT_LIMITS.maxYear}, and the number between ${COHORT_LIMITS.minNumber} and ${COHORT_LIMITS.maxNumber}.`
+              )}
             </p>
           )}
 
