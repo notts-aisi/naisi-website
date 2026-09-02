@@ -1089,6 +1089,20 @@ describe("the route prologue", () => {
     assert.equal(/email: body\./.test(post), false);
   });
 
+  test("re-applying unfreezes the stages, or the reopened draft is uneditable", () => {
+    const post = handler(source(APPLY_ROUTE), "POST");
+    const reopen = post.slice(post.indexOf('status === "withdrawn"'));
+    assert.match(reopen, /stageSubmittedAt: \{\},/);
+    assert.match(reopen, /withdrawnAt: null,/);
+    assert.match(reopen, /reapplyCount: FieldValue\.increment\(1\)/);
+    // The save route refuses a frozen stage by design, so a reopened draft
+    // that kept its freezes would be a form somebody can read and never edit.
+    assert.match(
+      handler(source(APPLY_ROUTE), "PATCH"),
+      /application\.stageSubmittedAt/,
+    );
+  });
+
   test("a 409 on create carries the existing row so a double tap opens the draft", () => {
     const post = handler(source(APPLY_ROUTE), "POST");
     const conflict = post.slice(post.indexOf('outcome === "exists"'));

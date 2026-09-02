@@ -226,6 +226,14 @@ export async function POST(req: Request, ctx: Ctx) {
           status: "draft" satisfies AdmissionApplicationStatus,
           withdrawnAt: null,
           submittedAt: null,
+          // The freeze goes with the submission it belonged to. Somebody who
+          // submitted, withdrew and picked it back up is holding a DRAFT, and
+          // a draft whose every stage is still frozen is a form they can read
+          // and never change: the save route refuses a frozen stage by
+          // design, so leaving these in place would strand them one press
+          // from the deadline with no way to fix a typo. `reapplyCount` is
+          // what records that the round has been round this loop.
+          stageSubmittedAt: {},
           reapplyCount: FieldValue.increment(1),
           updatedAt: FieldValue.serverTimestamp(),
         });
