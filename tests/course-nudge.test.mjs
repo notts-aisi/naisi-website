@@ -237,6 +237,7 @@ function fullInput(overrides = {}) {
     weekPrep:
       "There are four things to read or watch and one exercise to write up this week, about 2 hours in total.",
     weekUrl: "https://naisi.uk/learn/asf-autumn-2026/weeks/3",
+    feedbackUrl: "https://forms.gle/naisi-weekly-feedback",
     recipientName: "Alex Taylor",
     ...overrides,
   };
@@ -656,7 +657,7 @@ test("the seed template rendered with the designer's own samples has no gaps", (
   assert.doesNotMatch(rendered.subject, /\{[a-zA-Z]/);
   assert.doesNotMatch(bodyOf(rendered), /\{[a-zA-Z]/);
   // Nothing dropped: the designer shows the longest version anyone receives.
-  assert.equal(paragraphsOf(rendered), 6);
+  assert.equal(paragraphsOf(rendered), 7);
   assert.equal(rendered.blocks.length, SEED.blocks.length);
 });
 
@@ -665,8 +666,8 @@ test("the nudge template's advertised behaviour is the behaviour it has", () => 
   // promise about a module nothing imported; this is the assertion that it is
   // now a promise about the send path.
   assert.match(EDITOR_SOURCE, /the whole sentence around it is removed/);
-  assert.equal(paragraphsOf(renderSeed()), 6);
-  assert.equal(paragraphsOf(renderSeed({ weekSummary: "" })), 5);
+  assert.equal(paragraphsOf(renderSeed()), 7);
+  assert.equal(paragraphsOf(renderSeed({ weekSummary: "" })), 6);
   assert.doesNotMatch(bodyOf(renderSeed({ weekSummary: "" })), /\{weekSummary\}/);
 });
 
@@ -707,7 +708,7 @@ test("the unpushy last line survives verbatim", () => {
 test("a member with no session gets no session sentence", () => {
   const rendered = renderSeed({ sessionWhen: "", sessionWhere: "Hallward Library, B12" });
   const body = bodyOf(rendered);
-  assert.equal(paragraphsOf(rendered), 5);
+  assert.equal(paragraphsOf(rendered), 6);
   assert.doesNotMatch(body, /Your group meets/);
   // The pairing rule: a room with no time is not a fact worth a sentence, and
   // "Your group meets, Hallward B12." is the one shape the tidy cannot repair.
@@ -722,14 +723,14 @@ test("a session with a time but no room keeps the sentence and closes it up", ()
 
 test("a week with no summary written yet loses that paragraph, not its scaffolding", () => {
   const rendered = renderSeed({ weekSummary: "" });
-  assert.equal(paragraphsOf(rendered), 5);
+  assert.equal(paragraphsOf(rendered), 6);
   assert.doesNotMatch(bodyOf(rendered), /\{weekSummary\}/);
   assert.doesNotMatch(bodyOf(rendered), /<p><\/p>/);
 });
 
 test("a week with nothing to prepare loses that paragraph", () => {
   const rendered = renderSeed({ weekPrep: "" });
-  assert.equal(paragraphsOf(rendered), 5);
+  assert.equal(paragraphsOf(rendered), 6);
   assert.doesNotMatch(bodyOf(rendered), /\{weekPrep\}/);
   assert.match(bodyOf(rendered), /Read what you can\./);
 });
@@ -739,10 +740,28 @@ test("no app URL means no dead link — the whole line goes", () => {
   // Shipping `<a href="{weekUrl}">` or `<a href="">` would be a link that looks
   // real and goes nowhere.
   const rendered = renderSeed({ weekUrl: "" });
-  assert.equal(paragraphsOf(rendered), 5);
+  assert.equal(paragraphsOf(rendered), 6);
   assert.doesNotMatch(bodyOf(rendered), /\{weekUrl\}/);
   assert.doesNotMatch(bodyOf(rendered), /href=""/);
   assert.doesNotMatch(bodyOf(rendered), /Open this week on the site/);
+});
+
+test("no weekly feedback form means no feedback line at all", () => {
+  // The form is unset until an admin configures one on the site status page,
+  // so this is the ORDINARY case rather than an edge case. The paragraph
+  // holds one token for exactly that reason: the drop rule takes it whole
+  // instead of shipping "Tell us how the last session went" pointing nowhere.
+  const rendered = renderSeed({ feedbackUrl: "" });
+  assert.equal(paragraphsOf(rendered), 6);
+  assert.doesNotMatch(bodyOf(rendered), /\{feedbackUrl\}/);
+  assert.doesNotMatch(bodyOf(rendered), /href=""/);
+  assert.doesNotMatch(bodyOf(rendered), /Tell us how the last session went/);
+
+  // And with one configured, it is a real link.
+  assert.match(
+    bodyOf(renderSeed()),
+    /href="https:\/\/forms\.gle\/naisi-weekly-feedback"/,
+  );
 });
 
 test("an anchor that resolved SOMETHING but has no href is unwrapped, not shipped dead", () => {
@@ -781,7 +800,7 @@ test("a member with neither preferred name nor display name is not greeted 'Hi N
   // The greeting is a heading block, so the whole block goes.
   assert.equal(rendered.blocks.filter((b) => b.type === "heading").length, 0);
   // The rest of the email is untouched.
-  assert.equal(paragraphsOf(rendered), 6);
+  assert.equal(paragraphsOf(rendered), 7);
   assert.match(body, /Week 3 of AI Safety Fundamentals is open/);
 });
 
@@ -811,8 +830,8 @@ test("an unknown token stays literal so an ADMIN notices the typo", () => {
 // ===========================================================================
 
 test("no combination of missing values can ship a brace, a gap or a dead link", () => {
-  // THE headline property, over all 2^10 on/off combinations of the seed
-  // template's ten tokens. One case at a time is how the three parallel builds
+  // THE headline property, over all 2^11 on/off combinations of the seed
+  // template's eleven tokens. One case at a time is how the three parallel builds
   // each convinced themselves they were fine.
   const keys = [
     "courseTitle",
@@ -823,6 +842,7 @@ test("no combination of missing values can ship a brace, a gap or a dead link", 
     "sessionWhere",
     "weekPrep",
     "weekUrl",
+    "feedbackUrl",
     "recipientName",
   ];
   const blanks = { weekNumber: 0 };
@@ -874,8 +894,12 @@ test("no combination of missing values can ship a brace, a gap or a dead link", 
       // The pairing blanks the room when there is no time, so one test covers it.
       Number(overrides.sessionWhen === "") +
       Number(overrides.weekPrep === "") +
-      Number(overrides.weekUrl === "");
-    assert.equal(paragraphsOf(rendered), 6 - dropped, where);
+      Number(overrides.weekUrl === "") +
+      // The weekly feedback form is unset until an admin configures one, so
+      // this paragraph is dropped on most real sends rather than as an edge
+      // case. It is a whole paragraph precisely so that it can be.
+      Number(overrides.feedbackUrl === "");
+    assert.equal(paragraphsOf(rendered), 7 - dropped, where);
     // The greeting is a heading, and it goes whole rather than reading "Hi ,".
     assert.equal(
       rendered.blocks.filter((b) => b.type === "heading").length,
@@ -885,7 +909,7 @@ test("no combination of missing values can ship a brace, a gap or a dead link", 
 
     cases += 1;
   }
-  assert.equal(cases, 1024);
+  assert.equal(cases, 2048);
 });
 
 // ===========================================================================

@@ -317,6 +317,15 @@ export type CourseNudgeTokens = {
   sessionWhere: string;
   /** Absolute link to the week page. */
   weekUrl: string;
+  /**
+   * The weekly feedback form, from `config/courses.weeklyFeedbackUrl`.
+   *
+   * Empty is the ordinary state until an admin sets one, and the paragraph
+   * carrying it is then dropped whole rather than shipping a dead link. That
+   * is why the send lane can resolve this from config with no branch of its
+   * own: an unconfigured form degrades to a shorter email.
+   */
+  feedbackUrl: string;
   /** First word of the recipient's name, for the greeting. */
   firstName: string;
   /**
@@ -340,6 +349,7 @@ export type CourseNudgeTokenInput = {
   sessionWhen?: string | null;
   sessionWhere?: string | null;
   weekUrl?: string | null;
+  feedbackUrl?: string | null;
   /**
    * The recipient's display name. Pass an empty string when there isn't one —
    * NEVER a placeholder like "NAISI member", which would greet them "Hi NAISI,".
@@ -374,6 +384,7 @@ export function buildCourseNudgeTokens(
     // punctuation tidy cannot repair. Blanking the pair drops the line instead.
     sessionWhere: sessionWhen ? oneLine(input.sessionWhere) : "",
     weekUrl: oneLine(input.weekUrl),
+    feedbackUrl: oneLine(input.feedbackUrl),
     firstName: firstWord(oneLine(input.recipientName)),
     weekPrep: oneLine(input.weekPrep),
   };
@@ -404,6 +415,7 @@ export const COURSE_NUDGE_TOKEN_KEYS = [
   "sessionWhen",
   "sessionWhere",
   "weekUrl",
+  "feedbackUrl",
   "firstName",
   "weekPrep",
 ] as const satisfies readonly (keyof CourseNudgeTokens)[];
@@ -432,6 +444,7 @@ export function courseNudgeTokensFrom(
     sessionWhen,
     sessionWhere: sessionWhen ? pick("sessionWhere") : "",
     weekUrl: pick("weekUrl"),
+    feedbackUrl: pick("feedbackUrl"),
     firstName: pick("firstName"),
     weekPrep: pick("weekPrep"),
   };
@@ -979,6 +992,8 @@ export type CourseNudgeRunContext = {
   weekPrep?: string | null;
   /** From `courseWeekUrl(appUrl, runId, weekNumber)`. */
   weekUrl?: string | null;
+  /** From `config/courses.weeklyFeedbackUrl`. "" when none is configured. */
+  feedbackUrl?: string | null;
 };
 
 export type SendCourseWeekNudgeArgs = {
@@ -1025,6 +1040,7 @@ export async function sendCourseWeekNudgeEmail(
     weekSummary: args.context.weekSummary,
     weekPrep: args.context.weekPrep,
     weekUrl: args.context.weekUrl,
+    feedbackUrl: args.context.feedbackUrl,
     sessionWhen: args.sessionWhen,
     sessionWhere: args.sessionWhere,
     recipientName: args.recipientName,

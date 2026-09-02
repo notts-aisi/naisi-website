@@ -681,3 +681,20 @@ test("GUARD §8.1 dropOutFeedbackUrl is http(s) or empty, never a script url", a
   const absent = await readCoursesConfig(fakeConfigDb(null));
   assert.deepEqual(absent, DEFAULT_COURSES_CONFIG);
 });
+
+test("weeklyFeedbackUrl is held to the same scheme rule as the drop-out link", async () => {
+  // This one is substituted into an email that reaches a whole cohort, where
+  // a bad href cannot be fixed after the fact. Unset is a complete state: the
+  // nudge renderer drops the paragraph carrying the token whole.
+  const good = await readCoursesConfig(
+    fakeConfigDb({ weeklyFeedbackUrl: " https://forms.example/week " }),
+  );
+  assert.equal(good.weeklyFeedbackUrl, "https://forms.example/week");
+
+  for (const hostile of ["javascript:alert(1)", "/relative/path", "forms.example/week", 42]) {
+    const cfg = await readCoursesConfig(fakeConfigDb({ weeklyFeedbackUrl: hostile }));
+    assert.equal(cfg.weeklyFeedbackUrl, "", `refused: ${String(hostile)}`);
+  }
+
+  assert.equal(DEFAULT_COURSES_CONFIG.weeklyFeedbackUrl, "");
+});

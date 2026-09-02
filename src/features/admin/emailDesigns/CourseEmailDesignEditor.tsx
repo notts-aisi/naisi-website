@@ -104,6 +104,11 @@ const WEEK_TOKENS: TokenHelp[] = [
     description: "Where that session is, e.g. Hallward Library, B12. Online groups say Online — never the meeting link.",
   },
   { token: "weekUrl", description: "Link straight to the week page in the learning space." },
+  {
+    token: "feedbackUrl",
+    description:
+      "The weekly feedback form, set on the site status page. Set nothing and the sentence around it is dropped.",
+  },
 ];
 
 export default function CourseEmailDesignEditor({ templateId }: Props) {
