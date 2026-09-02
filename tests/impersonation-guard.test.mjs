@@ -100,6 +100,10 @@ const MUST_GUARD = [
   ["src/app/api/courses/runs/[runId]/status/route.ts", "moves a run along its lifecycle, opening or closing applications"],
   ["src/app/api/courses/runs/[runId]/sync-tasks/route.ts", "creates committee tasks on the board"],
   ["src/app/api/courses/templates/[templateId]/route.ts", "deletes a curriculum template"],
+  // Outside the scanned trees above (it lives under /api/admin), so it is
+  // named here or it is checked by nothing: it writes `config/courses`, whose
+  // knobs reach every course surface at once.
+  ["src/app/api/admin/courses-config/route.ts", "changes site-wide course settings"],
 ];
 
 /**
