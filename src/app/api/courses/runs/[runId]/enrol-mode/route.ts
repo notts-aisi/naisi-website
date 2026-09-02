@@ -8,6 +8,7 @@ import {
   type CourseEnrolMode,
 } from "@/lib/firestore/courses";
 import { COURSE_AUDIT_COLLECTION } from "@/lib/firestore/courseAudit";
+import { groupCapacityError } from "@/lib/firestore/courseGroups";
 
 /**
  * Move a run between `admissions` (apply, be reviewed, be allocated) and
@@ -38,6 +39,16 @@ import { COURSE_AUDIT_COLLECTION } from "@/lib/firestore/courseAudit";
  * change a populated run's mode removes the enrolments (or decides the
  * applications) first, which is exactly the accounting the refusal is asking
  * for.
+ *
+ * IT ALSO REFUSES TO OPEN A RUN WHOSE GROUPS ARE NOT CAPPED, and that check
+ * is not tidiness. `groupCapacityOk()` in firestore.rules requires a
+ * capacity in [1, 40] on every group whose parent run is `open`, and it is
+ * evaluated against the MERGED document on an update, so a group that was
+ * legal while the run was in admissions mode becomes unwritable the instant
+ * the run flips: the facilitator who tries to move the room gets a raw
+ * permission-denied, with nothing on the group or the run to explain it.
+ * Flipping the run is the one write that can wedge a document it does not
+ * touch, so it is the one write that has to look first.
  *
  * Every accepted change writes a `courseAudit` row before it returns: the
  * field is invisible on most surfaces and a silent flip is how a run ends up
@@ -126,6 +137,44 @@ export async function PATCH(
       },
       { status: 409 },
     );
+  }
+
+  // The groups have to be able to survive the flip. Checked BEFORE the audit
+  // row and before the write, because the whole point is that the run never
+  // reaches a state where its own groups are unwritable. `groupCapacityError`
+  // is the same function the group routes and the group editor call, so the
+  // admin reading this 409 and the facilitator reading the editor's inline
+  // error are reading one sentence, written once.
+  if (nextMode === "open") {
+    const groups = await db
+      .collection("courseGroups")
+      .where("runId", "==", runId)
+      .get();
+    // Archived groups count too: the rule pins the merged document on EVERY
+    // group write, and an archived group is still edited (unarchived, renamed,
+    // re-roomed) rather than being read-only.
+    const blocked: string[] = [];
+    for (const g of groups.docs) {
+      const raw = g.data() ?? {};
+      const capacity =
+        typeof raw.capacity === "number" && Number.isFinite(raw.capacity)
+          ? raw.capacity
+          : null;
+      if (groupCapacityError(capacity, "open") !== null) {
+        blocked.push(typeof raw.name === "string" && raw.name ? raw.name : g.id);
+      }
+    }
+    if (blocked.length > 0) {
+      const named = blocked.slice(0, 5).join(", ");
+      const rest = blocked.length > 5 ? ` and ${blocked.length - 5} more` : "";
+      return NextResponse.json(
+        {
+          error: `${groupCapacityError(null, "open")} Set one on ${named}${rest} before opening this run.`,
+          groups: blocked,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   // Audit BEFORE the change, the impersonations pattern: a row written after

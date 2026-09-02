@@ -1724,6 +1724,59 @@ describe("courseGroups: V3 server-owned fields and the capacity ceiling", () => 
         .set(groupDoc({ runId: "run-adm", capacity: null })),
     );
   });
+
+  it("THE TRAP: flipping the run to open wedges an already-uncapped group", async () => {
+    // This is the failure the enrol-mode route exists to prevent, pinned here
+    // so it stays visibly real. `groupCapacityOk()` reads the PARENT run, and
+    // it is evaluated against the merged document on every group update, so a
+    // group that was legal all term becomes unwritable the moment somebody
+    // flips its run to open enrolment. Nothing on the group or the run says
+    // so: the facilitator moving the room just gets permission-denied.
+    //
+    // The route's job is to count these groups and refuse the flip with
+    // `groupCapacityError(null, "open")`'s sentence. If this test ever starts
+    // FAILING (the edit succeeds), the rule stopped requiring a capacity and
+    // the route's 409 became theatre — fix the rule, not this test.
+    await seedCast();
+    await seedRun("run-flip", { enrolMode: "admissions" });
+    await seed(async (db) => {
+      await db
+        .collection("courseGroups")
+        .doc("grp-flip")
+        .set(groupDoc({ runId: "run-flip", capacity: null, facilitatorUids: ["facil"] }));
+    });
+
+    // While the run is in admissions mode the facilitator can edit their slot.
+    const before = await asUser("facil");
+    await assertSucceeds(
+      before
+        .collection("courseGroups")
+        .doc("grp-flip")
+        .update({ session: { ...groupDoc().session, location: "Portland A21" } }),
+    );
+
+    // The Admin SDK flips the run, exactly as the enrol-mode route would if it
+    // did not look at the groups first.
+    await seed(async (db) => {
+      await db.collection("courseRuns").doc("run-flip").update({ enrolMode: "open" });
+    });
+
+    // Same facilitator, same edit, now refused. The group is wedged.
+    const after = await asUser("facil");
+    await assertFails(
+      after
+        .collection("courseGroups")
+        .doc("grp-flip")
+        .update({ session: { ...groupDoc().session, location: "Monica Partridge B12" } }),
+    );
+
+    // And an approver setting a capacity is the repair, so the wedge is not
+    // permanent once somebody knows what happened.
+    const approver = await asUser("approver");
+    await assertSucceeds(
+      approver.collection("courseGroups").doc("grp-flip").update({ capacity: 12 }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

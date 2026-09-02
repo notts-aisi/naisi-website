@@ -158,6 +158,18 @@ const {
   normalizeCourseGroup,
 } = await loadTs("lib/firestore/courseGroups.ts");
 
+/**
+ * Read as TEXT, not imported: the enrol-mode route is an Admin SDK module and
+ * pulling it in here would drag `firebase-admin` and `next/server` into a unit
+ * suite that has no business booting either. The property being pinned is a
+ * structural one (a guard runs BEFORE a write), and source order is exactly
+ * what expresses it.
+ */
+const ENROL_MODE_ROUTE = readFileSync(
+  join(SRC, "app/api/courses/runs/[runId]/enrol-mode/route.ts"),
+  "utf8",
+);
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -550,4 +562,33 @@ test("GUARD §6.3 a group's stream tag and appointments normalise safely", () =>
   assert.equal(group.facilitatorAppointments.f1.byUid, "admin1");
   // Not yet agreed is a real state during the training window, not an error.
   assert.equal(group.facilitatorAppointments.f1.agreedAt, null);
+});
+
+test("GUARD §6.4 the enrol-mode route checks the run's GROUPS before it opens it", () => {
+  // `groupCapacityOk()` requires a capacity when the parent run is open, and
+  // it is evaluated against the merged document on EVERY group write. So the
+  // one write that can wedge a document it does not touch is the flip to open
+  // mode: every uncapped group on that run becomes unwritable, and the
+  // facilitator who tries to move the room gets a raw permission-denied with
+  // nothing anywhere to explain it. The rules test
+  // "THE TRAP: flipping the run to open wedges an already-uncapped group"
+  // in scripts/rules-tests/tests/courses.test.mjs proves that failure is real.
+  //
+  // This pins the guard against it: the route reads courseGroups for the run,
+  // and it does so BEFORE the ref.update that stores the new mode.
+  assert.match(ENROL_MODE_ROUTE, /groupCapacityError/);
+  assert.match(ENROL_MODE_ROUTE, /collection\("courseGroups"\)/);
+
+  const guardAt = ENROL_MODE_ROUTE.indexOf('collection("courseGroups")');
+  const writeAt = ENROL_MODE_ROUTE.indexOf("ref.update(");
+  assert.ok(guardAt > 0 && writeAt > 0, "both the group read and the run write exist");
+  assert.ok(
+    guardAt < writeAt,
+    "the group capacity check must run BEFORE the run's enrolMode is written",
+  );
+
+  // And the refusal is a 409, the same class as the other two populated-run
+  // refusals, not a 400 that reads like a malformed request.
+  const guardBlock = ENROL_MODE_ROUTE.slice(guardAt, writeAt);
+  assert.match(guardBlock, /status: 409/);
 });
