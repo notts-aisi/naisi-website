@@ -57,8 +57,8 @@ function acceptsFreeText(q: FormQuestion): boolean {
 /**
  * Read a typed character limit. Blank clears it back to the default, and
  * anything unparseable is treated as blank rather than as zero. The range is
- * NOT clamped here: the saving route refuses an out-of-range number and names
- * the question, and the hint below the input says so before they get there.
+ * NOT clamped here: both save paths refuse an out-of-range number and name the
+ * question, and the hint below the input says so before they get there.
  */
 function parseLimit(raw: string): number | undefined {
   const trimmed = raw.trim();
@@ -327,8 +327,9 @@ export default function FormBuilder({
                   q.maxLength > QUESTION_MAX_LENGTH_MAX ? (
                   <span className={styles.warn}>
                     Must be between {QUESTION_MAX_LENGTH_MIN} and{" "}
-                    {QUESTION_MAX_LENGTH_MAX}. This number will not be saved as
-                    typed.
+                    {QUESTION_MAX_LENGTH_MAX}. Saving is refused until this is
+                    fixed, and answers are capped at {QUESTION_MAX_LENGTH_MAX}{" "}
+                    however the form is stored.
                   </span>
                 ) : (
                   <span className={styles.helper}>
