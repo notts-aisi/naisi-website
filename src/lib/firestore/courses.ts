@@ -220,13 +220,13 @@ export type CourseRunDoc = {
    * this negative and then wedges the enrol-mode route, which reads it as "is
    * anybody on this run".
    *
-   * KNOWN GAP, stated rather than hidden: the allocation and remove routes do
-   * NOT move it, so an ADMISSIONS run reads 0 however many learners it has.
-   * That is safe for every current reader (the picker and the enrol-mode
-   * route both only ask about open runs), and it is why the enrol-mode
-   * route's admissions-to-open direction leans on `applicationCounts.pending`
-   * rather than on this. Widening the definition means teaching those two
-   * routes to move it in the same transaction.
+   * KNOWN GAP, stated rather than hidden: the allocation route does NOT move
+   * it, so an ADMISSIONS run reads 0 however many learners it has. Nothing
+   * may use this to answer "is anybody on this run": the enrol-mode route
+   * asks that question with an aggregate `count()` over the enrolments
+   * themselves, precisely because this number cannot answer it. Widening the
+   * definition means teaching the allocation route to move it in the same
+   * transaction as the row it writes.
    */
   enrolledCount: number;
   /**

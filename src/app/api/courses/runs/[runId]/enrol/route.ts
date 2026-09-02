@@ -831,10 +831,18 @@ export async function DELETE(req: Request, ctx: Ctx) {
           updatedAt: FieldValue.serverTimestamp(),
         });
       }
-      tx.update(db.collection("courseRuns").doc(runId), {
-        enrolledCount: FieldValue.increment(-1),
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+      // `enrolledCount` counts SELF-ENROLLED active rows only, which is the
+      // narrower condition the account-deletion sweep already uses. An
+      // allocated learner on a run that has since been flipped to open mode
+      // was never counted by it, and uncounting them here would drive the
+      // number negative and then wedge the enrol-mode route, which reads it
+      // as "is anybody on this run".
+      if (row.selfEnrolled) {
+        tx.update(db.collection("courseRuns").doc(runId), {
+          enrolledCount: FieldValue.increment(-1),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
     });
   } catch (err) {
     if (err instanceof EnrolError) {

@@ -55,6 +55,10 @@ const ACCOUNT_DELETION = readFileSync(
   join(SRC, "lib", "firestore", "accountDeletion.ts"),
   "utf8",
 );
+const ENROL_MODE_ROUTE = readFileSync(
+  join(SRC, "app", "api", "courses", "runs", "[runId]", "enrol-mode", "route.ts"),
+  "utf8",
+);
 const APPLY_ROUTE = readFileSync(
   join(SRC, "app", "api", "courses", "runs", "[runId]", "apply", "route.ts"),
   "utf8",
@@ -581,10 +585,10 @@ test("SOURCE — joining writes no audit row, because the enum has no kind for i
 });
 
 test("SOURCE — deleting an account gives back the seats it was holding", () => {
-  // `enrolledCount` has exactly three writers and they must agree on what it
-  // counts, or the enrol-mode route ends up refusing to reopen a run nobody
-  // is on. The sweep's condition is the NARROW one — active AND selfEnrolled
-  // — because decrementing for an allocated admissions learner, whose row
+  // Every writer of `enrolledCount` agrees on what it counts, or the counter
+  // goes negative and the enrol-mode route refuses to reopen a run nobody is
+  // on. The sweep's condition is the NARROW one, active AND selfEnrolled,
+  // because decrementing for an allocated admissions learner, whose row
   // nothing ever counted, drives the counter negative.
   assert.match(ACCOUNT_DELETION, /if \(e\.selfEnrolled && e\.runId\)/);
   assert.match(ACCOUNT_DELETION, /enrolledCount: FieldValue\.increment\(-count\)/);
@@ -619,6 +623,14 @@ test("SOURCE — the enrol route moves both counters in the seat transaction", (
   const del = ENROL_ROUTE.slice(ENROL_ROUTE.indexOf("export async function DELETE"));
   assert.match(del, /memberCount: FieldValue\.increment\(-1\)/);
   assert.match(del, /enrolledCount: FieldValue\.increment\(-1\)/);
+  // And the run's counter moves only for a row it actually counted. An
+  // allocated learner on a run since flipped to open mode was never counted
+  // by `enrolledCount`, so uncounting them would drive it negative and wedge
+  // the enrol-mode route.
+  const selfGate = del.indexOf("if (row.selfEnrolled) {");
+  const runDecrement = del.indexOf("enrolledCount: FieldValue.increment(-1)");
+  assert.ok(selfGate > 0, "the drop-out decrements the run counter unconditionally");
+  assert.ok(selfGate < runDecrement, "the decrement escaped its selfEnrolled gate");
 
   // Changing session moves the two GROUP counters and leaves the run's alone:
   // the member is still on the run.
@@ -672,4 +684,20 @@ test("SOURCE: the apply page sends an open-enrolment run to the picker", () => {
   const destructureAt = APPLY_PAGE.indexOf("const { course, run, groups, window } = context;");
   assert.ok(redirectAt > 0 && destructureAt > 0);
   assert.ok(redirectAt < destructureAt);
+});
+
+test("SOURCE: the enrol-mode gate counts rows, not the open-enrol counter", () => {
+  // `enrolledCount` only ever tracked open-enrolment seats, so an ADMISSIONS
+  // run holding a hundred allocated learners reads 0 through it. Trusting it
+  // here is how the flip strands a whole cohort on a run whose admissions
+  // surfaces stop reading applications.
+  assert.match(ENROL_MODE_ROUTE, /\.collection\("courseEnrolments"\)/);
+  assert.match(ENROL_MODE_ROUTE, /\.where\("runId", "==", runId\)/);
+  assert.match(ENROL_MODE_ROUTE, /\.where\("status", "==", "active"\)/);
+  assert.match(ENROL_MODE_ROUTE, /\.count\(\)\.get\(\)/);
+  // Facilitator rows are active enrolments and are legitimate in either mode,
+  // so a run whose staff were appointed before it opened stays flippable.
+  assert.match(ENROL_MODE_ROUTE, /\.where\("role", "==", "facilitator"\)/);
+  // And nothing reads the stale counter off the run document any more.
+  assert.doesNotMatch(ENROL_MODE_ROUTE, /data\.enrolledCount/);
 });
