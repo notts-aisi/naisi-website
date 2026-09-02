@@ -749,6 +749,56 @@ test("GUARD — the rules pin weekPlan the moment a run stops being a draft", ()
   assert.match(WEEK_PLAN_BUILDER, /if \(full \|\| !canGrow\) return;/);
 });
 
+/**
+ * `status/route.ts`'s `draftExitBlocker`, reproduced. The route counts drift
+ * itself rather than importing `weekAddressDrift` (a "use client" module), so
+ * the source assertions below are what keep the two spellings of the same
+ * count in step.
+ */
+function refusesDraftExit(from, to, plan) {
+  if (from !== "draft" || to === "draft") return false;
+  return weekAddressDrift(plan).length > 0;
+}
+
+test("GUARD — a run cannot leave draft while its two week spellings disagree", () => {
+  // The bound on the drift has three legs: it is REPORTED, it is RECONCILABLE
+  // only in draft, and it is UNREACHABLE afterwards. The door itself was the
+  // gap. Nothing refused a drifted plan walking out of draft, and the moment it
+  // does, the normalise route refuses it and the rules pin it, so the mismatch
+  // is frozen for the whole of the cohort's life.
+  const added = renumber([...plainPlan(4), { kind: "week", weekNumber: 0, weekId: "w05" }]);
+  const moved = renumber([added[0], added[4], added[1], added[2], added[3]]);
+  const clean = renumber(plainPlan(8));
+
+  assert.equal(refusesDraftExit("draft", "applications-open", moved), true);
+  // A plan that was only ever grown at the end is untouched, which is the
+  // common case and must not be made to press a button.
+  assert.equal(refusesDraftExit("draft", "applications-open", clean), false);
+  // The door is behind a run that has already left. Refusing later moves would
+  // strand a cohort whose plan is frozen either way.
+  assert.equal(refusesDraftExit("applications-closed", "running", moved), false);
+  // Cancelling is an exit too, and it is refused for the same reason rather
+  // than carved out: normalising first is two presses, and a table of which
+  // exits freeze a plan and which do not is a second doctrine to keep in step.
+  assert.equal(refusesDraftExit("draft", "cancelled", moved), true);
+
+  // Pinned to the route. It counts the same thing the builder's panel reports,
+  // it only fires on a move OUT of draft, and it fires BEFORE the write.
+  assert.match(STATUS_ROUTE, /if \(entry\.weekId !== weekDocId\(taught\)\) drifted \+= 1;/);
+  assert.match(STATUS_ROUTE, /if \(from !== "draft" \|\| to === "draft"\) return null;/);
+  assert.match(
+    STATUS_ROUTE,
+    /const blocker = draftExitBlocker\(currentStatus, nextStatus, data\.weekPlan\);/,
+  );
+  const blockerAt = STATUS_ROUTE.indexOf("const blocker = draftExitBlocker(");
+  const writeAt = STATUS_ROUTE.indexOf("await ref.update(");
+  assert.ok(blockerAt > 0 && writeAt > 0 && blockerAt < writeAt);
+
+  // And it names the ONE affordance that can still fix it, which exists.
+  assert.match(STATUS_ROUTE, /Normalise week ids/);
+  assert.match(WEEK_PLAN_BUILDER, /Normalise week ids/);
+});
+
 test("GUARD — every member-facing surface addresses a week by weekDocId(number)", () => {
   // Ten readers, one doctrine. This is the assertion that keeps an eleventh
   // from being written against the plan's `weekId` by accident.
