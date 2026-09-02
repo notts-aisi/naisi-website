@@ -7,6 +7,7 @@ import {
   normalizeCourseGroup,
   type GroupSessionMode,
 } from "@/lib/firestore/courseGroups";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * SET HOW ONE WEEK MEETS — the virtual/in-person switch of v2 decision 7,
@@ -47,6 +48,9 @@ export async function PATCH(
   req: Request,
   ctx: { params: Promise<{ groupId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { groupId } = await ctx.params;
   if (!isAddressableId(groupId)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

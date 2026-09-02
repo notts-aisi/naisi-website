@@ -277,13 +277,28 @@ Trust + safety properties:
   `marker.actorUid === user.uid` (admin re-signed in as themselves
   without the marker being cleared) so the banner can't lie.
 
+- High-trust writes are refused outright. `assertNotImpersonating()`
+  in `src/lib/firebase/impersonation.ts` returns a 403 with honest copy
+  while the marker is set, and every mutating route under
+  `src/app/api/courses/**` calls it first.
+  `tests/impersonation-guard.test.mjs` lists those routes literally and
+  fails when a new mutating route appears in the tree without the call,
+  so the rule survives parallel work. The list is the place to add the
+  admissions, membership and export routes as those land.
+
 Operational caveats (by design with full impersonation):
 - Writes during a view-as session are recorded by Firestore as the
   target performing them (`createdAt`/`updatedAt`/`actorUid` fields look
   identical to a real target write). The banner copy warns; the
   `impersonations` log records the start/end window for after-the-fact
   correlation, but per-write attribution to "admin acting as X" is not
-  reconstructable.
+  reconstructable. That is why the guard above refuses rather than
+  annotates.
+- The guard reads an httpOnly cookie, so no page script can remove it,
+  but an admin with devtools open can delete it from their own browser
+  and write as the target anyway. It enforces intent against accidents,
+  not against a determined admin, who in any case holds the rights to
+  make those writes under their own name.
 - Exit requires re-authentication: `signInWithCustomToken` on start
   replaced the admin's Firebase Auth client state with the target's,
   and Firebase Auth client SDK has no way to "restore" the previous

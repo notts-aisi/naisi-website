@@ -8,6 +8,7 @@ import {
   weekDocId,
   type WeekPlanEntry,
 } from "@/lib/firestore/courses";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * Re-address a DRAFT run's weeks so the plan's `weekId` and the doc id every
@@ -59,6 +60,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ runId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId } = await ctx.params;
 
   const actor = await getCurrentUser();

@@ -8,6 +8,7 @@ import {
 } from "@/lib/firestore/courseApplications";
 import { normalizeCourseGroup } from "@/lib/firestore/courseGroups";
 import { normalizeCourseRun } from "@/lib/firestore/courses";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * The reviewer's private working notes on one application: a free-text note,
@@ -32,6 +33,9 @@ import { normalizeCourseRun } from "@/lib/firestore/courses";
 type Ctx = { params: Promise<{ runId: string; uid: string }> };
 
 export async function PATCH(req: Request, ctx: Ctx) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId, uid } = await ctx.params;
   if (!runId || !uid) {
     return NextResponse.json({ error: "Application not found" }, { status: 404 });

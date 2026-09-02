@@ -18,6 +18,7 @@ import {
   type CourseTemplateRow,
   type RetroProgressRow,
 } from "@/lib/firestore/courseTemplates";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * `courseTemplates` for ONE course — the save half (POST) and the picker half
@@ -107,6 +108,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ courseId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { courseId } = await ctx.params;
 
   // Authorization BEFORE existence: one 403 for every non-admin, whatever the

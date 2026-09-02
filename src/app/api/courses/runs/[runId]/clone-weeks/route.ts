@@ -9,6 +9,7 @@ import {
   normalizeCourseWeek,
   sanitizeWeekPlan,
 } from "@/lib/firestore/courses";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * Copy-forward: clone one run's `weeks` subcollection into another run of the
@@ -71,6 +72,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ runId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId } = await ctx.params;
 
   const actor = await getCurrentUser();

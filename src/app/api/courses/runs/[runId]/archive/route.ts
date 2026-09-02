@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * Soft-archive a run — the EVERYDAY half of the deletion protocol (destroy
@@ -25,6 +26,9 @@ export async function PATCH(
   req: Request,
   ctx: { params: Promise<{ runId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId } = await ctx.params;
 
   // Authorization before the existence check.

@@ -10,6 +10,7 @@ import {
   buildMaterialNoteWrite,
   courseMaterialNoteId,
 } from "@/lib/firestore/courseMaterialNotes";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * "How did this land" — one facilitator's note on one piece of material, for
@@ -94,6 +95,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ runId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId } = await ctx.params;
 
   const actor = await getCurrentUser();

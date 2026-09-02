@@ -9,6 +9,7 @@ import {
 import { courseApplicationId } from "@/lib/firestore/courseApplications";
 import { courseRunChannel, normalizeCourseRun } from "@/lib/firestore/courses";
 import { unsubscribe } from "@/lib/firestore/subscriptions";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * Remove one learner from a run: their enrolment flips to `status:"removed"`
@@ -43,6 +44,9 @@ class RemoveError extends Error {
 }
 
 export async function POST(_req: Request, ctx: Ctx) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId, uid } = await ctx.params;
   if (!runId || !uid) {
     return NextResponse.json({ error: "Enrolment not found" }, { status: 404 });

@@ -47,6 +47,7 @@ import {
 } from "@/lib/firestore/courses";
 import type { Block } from "@/lib/firestore/newsletterBlocks";
 import { signToken } from "@/lib/signedTokens";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * THE WEEK NUDGE — "a new week of the course is live, here's what's in it".
@@ -936,6 +937,9 @@ function parseBody(raw: unknown): { ok: true; value: ParsedBody } | { ok: false;
 }
 
 export async function POST(req: Request, ctx: { params: Promise<{ runId: string }> }) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId } = await ctx.params;
   const gate = await gateRunStaff(runId);
   if (!gate.ok) {

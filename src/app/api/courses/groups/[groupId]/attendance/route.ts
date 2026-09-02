@@ -31,6 +31,7 @@ import {
   weekDocId,
   type CourseRunDoc,
 } from "@/lib/firestore/courses";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * THE ATTENDANCE REGISTER for one group: the whole grid on GET, one week's
@@ -555,6 +556,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ groupId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { groupId } = await ctx.params;
   if (!isAddressableId(groupId)) {
     return NextResponse.json({ error: "Group not found" }, { status: 404 });

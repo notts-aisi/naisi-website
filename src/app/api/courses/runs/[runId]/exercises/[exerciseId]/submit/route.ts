@@ -15,6 +15,7 @@ import {
   type ExerciseReviewStatus,
 } from "@/lib/firestore/courseExercises";
 import { validateSubmissionUrl } from "@/lib/firestore/courses";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * A member saving or submitting ONE weekly exercise. This route is the only
@@ -175,6 +176,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ runId: string; exerciseId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId, exerciseId } = await ctx.params;
   if (!isAddressableId(runId) || !isAddressableId(exerciseId)) {
     return NextResponse.json({ error: "Exercise not found" }, { status: 404 });

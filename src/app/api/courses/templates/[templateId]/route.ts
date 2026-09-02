@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { COURSE_TEMPLATES_COLLECTION } from "@/lib/firestore/courseTemplates";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * Delete one frozen curriculum snapshot: the doc and its `weeks`
@@ -47,6 +48,9 @@ export async function DELETE(
   _req: Request,
   ctx: { params: Promise<{ templateId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { templateId } = await ctx.params;
 
   // Authorization BEFORE existence.

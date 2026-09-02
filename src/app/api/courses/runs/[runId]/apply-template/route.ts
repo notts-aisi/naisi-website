@@ -13,6 +13,7 @@ import {
   normalizeCourseTemplate,
   templateWeekFields,
 } from "@/lib/firestore/courseTemplates";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * Apply a frozen snapshot's curriculum INTO a run — the "spawn next year's
@@ -146,6 +147,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ runId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId } = await ctx.params;
 
   // Authorization BEFORE existence: the tier is role/permission-only, so the
