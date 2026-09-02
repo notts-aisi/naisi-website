@@ -21,6 +21,11 @@ export type AccountDeletionSummary = {
   courseEnrolmentsDeleted: number;
   courseProgressDeleted: number;
   courseExerciseResponsesDeleted: number;
+  /** Scheduler markers naming this uid (deadline reminders, and anything a
+   *  later job keys on a person). Deleted rather than kept: the audience row
+   *  they suppress a send to is gone in the same cascade, so the marker can
+   *  only ever be a dangling reference to a person who no longer exists. */
+  schedulerMarkersDeleted: number;
   /** Map keys removed from shared attendance registers — never whole registers. */
   courseAttendanceMarksCleared: number;
   authDeleted: boolean;
@@ -53,7 +58,9 @@ const COURSE_PAGE_SIZE = 300;
 const COURSE_MAX_PAGES = 60;
 
 /**
- * Delete every row a member owns in one course collection, a page at a time.
+ * Delete every row a member owns in one `uid`-keyed collection, a page at a
+ * time. (Named for the course collections it was written for; it is generic,
+ * and the scheduler markers use it too.)
  *
  * No cursor: the rows are deleted as they are read, so the next query's first
  * page IS the next unprocessed page. That also makes a mid-way failure
@@ -231,6 +238,7 @@ export async function deleteAccountCascade(
     courseEnrolmentsDeleted: 0,
     courseProgressDeleted: 0,
     courseExerciseResponsesDeleted: 0,
+    schedulerMarkersDeleted: 0,
     courseAttendanceMarksCleared: 0,
     authDeleted: false,
   };
@@ -406,10 +414,18 @@ export async function deleteAccountCascade(
   //     answers). All addressed by their own `uid` field, so these run whether
   //     or not the enrolment read above succeeded. The last two are paged — a
   //     learner accrues one row per check-offable item and per exercise, per run.
+  //
+  //     `schedulerMarkers` rides the same loop: markers store every component
+  //     of their id as a field, so the person-keyed families (today the
+  //     admissions deadline reminder, `remind__{roundId}__{uid}__{dueAtKey}`)
+  //     are addressable by `uid` exactly like the rows above. They are
+  //     deleted rather than retained because a marker's only job is to
+  //     suppress a send to an audience row this cascade has already removed.
   for (const [collection, key] of [
     ["courseApplications", "courseApplicationsDeleted"],
     ["courseProgress", "courseProgressDeleted"],
     ["courseExerciseResponses", "courseExerciseResponsesDeleted"],
+    ["schedulerMarkers", "schedulerMarkersDeleted"],
   ] as const) {
     try {
       summary[key] = await deleteOwnedCourseRows(db, collection, uid);
