@@ -205,12 +205,28 @@ export type CourseRunDoc = {
   /** Server-owned (see `CourseRunStream`). Empty = a run with no streams. */
   streams: CourseRunStream[];
   /**
-   * Server-owned counter: how many enrolments this run currently holds. Moved
-   * only by the transactions that write `courseEnrolments`, so it can never
-   * drift from the rows it summarises, following the `groupCount` /
-   * `memberCount`
-   * precedent. Read by the open-enrol picker and by the enrol-mode route,
-   * which refuses to change the mode once anybody is on the run.
+   * Server-owned counter: how many people are on this run through OPEN
+   * ENROLMENT right now. Moved only by the transactions that write
+   * `courseEnrolments`, so it can never drift from the rows it summarises,
+   * following the `groupCount` / `memberCount` precedent.
+   *
+   * ── WHAT IT COUNTS, EXACTLY ─────────────────────────────────────────────
+   * Enrolments that are BOTH `status: "active"` AND `selfEnrolled`. Three
+   * writers move it and all three agree on that definition: the open-enrol
+   * route increments on the seat and decrements on the drop-out, and the
+   * account-deletion sweep decrements for the self-enrolled active rows it
+   * deletes. Nothing counts an allocated admissions learner, so nothing may
+   * uncount one either: a decrement for a row that was never counted drives
+   * this negative and then wedges the enrol-mode route, which reads it as "is
+   * anybody on this run".
+   *
+   * KNOWN GAP, stated rather than hidden: the allocation and remove routes do
+   * NOT move it, so an ADMISSIONS run reads 0 however many learners it has.
+   * That is safe for every current reader (the picker and the enrol-mode
+   * route both only ask about open runs), and it is why the enrol-mode
+   * route's admissions-to-open direction leans on `applicationCounts.pending`
+   * rather than on this. Widening the definition means teaching those two
+   * routes to move it in the same transaction.
    */
   enrolledCount: number;
   /**

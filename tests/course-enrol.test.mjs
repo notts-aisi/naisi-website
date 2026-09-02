@@ -51,6 +51,10 @@ const ENROL_ROUTE = readFileSync(
   join(SRC, "app", "api", "courses", "runs", "[runId]", "enrol", "route.ts"),
   "utf8",
 );
+const ACCOUNT_DELETION = readFileSync(
+  join(SRC, "lib", "firestore", "accountDeletion.ts"),
+  "utf8",
+);
 
 /** Every module specifier in transpiled output, in either quote style. */
 const SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"']+)\2/g;
@@ -562,4 +566,55 @@ test("SOURCE — joining writes no audit row, because the enum has no kind for i
   // renders as "Unrecognised action"; the enrolment document is the record of
   // joining. Leaving destroys state, so leaving gets a row.
   assert.doesNotMatch(post, /COURSE_AUDIT_COLLECTION/);
+});
+
+test("SOURCE — deleting an account gives back the seats it was holding", () => {
+  // `enrolledCount` has exactly three writers and they must agree on what it
+  // counts, or the enrol-mode route ends up refusing to reopen a run nobody
+  // is on. The sweep's condition is the NARROW one — active AND selfEnrolled
+  // — because decrementing for an allocated admissions learner, whose row
+  // nothing ever counted, drives the counter negative.
+  assert.match(ACCOUNT_DELETION, /if \(e\.selfEnrolled && e\.runId\)/);
+  assert.match(ACCOUNT_DELETION, /enrolledCount: FieldValue\.increment\(-count\)/);
+  // In the SAME batch as the enrolment deletes and the memberCount deltas, so
+  // a counter can never survive the rows it summarises.
+  // Anchored on the enrolment teardown specifically: `db.batch()` appears
+  // several times in this file, and a slice from the first one would be
+  // asserting about somebody else's step.
+  const teardownAt = ACCOUNT_DELETION.indexOf("const seats = new Map<string, number>();");
+  const block = ACCOUNT_DELETION.slice(
+    teardownAt,
+    ACCOUNT_DELETION.indexOf("await batch.commit();", teardownAt),
+  );
+  assert.ok(block.length > 0, "the enrolment teardown batch is gone");
+  assert.match(block, /memberCount: FieldValue\.increment\(-count\)/);
+  assert.match(block, /enrolledCount: FieldValue\.increment\(-count\)/);
+  // A run deleted since the enrolment was written must not make the whole
+  // batch reject and strand every row in it — the groups rule, applied to
+  // runs.
+  assert.match(ACCOUNT_DELETION, /if \(!liveRunIds\.has\(runId\)\) continue;/);
+});
+
+test("SOURCE — the enrol route moves both counters in the seat transaction", () => {
+  const post = ENROL_ROUTE.slice(
+    ENROL_ROUTE.indexOf("export async function POST"),
+    ENROL_ROUTE.indexOf("async function subscribeToCohort"),
+  );
+  assert.match(post, /memberCount: FieldValue\.increment\(1\)/);
+  assert.match(post, /enrolledCount: FieldValue\.increment\(1\)/);
+  assert.match(post, /selfEnrolled: true/);
+
+  const del = ENROL_ROUTE.slice(ENROL_ROUTE.indexOf("export async function DELETE"));
+  assert.match(del, /memberCount: FieldValue\.increment\(-1\)/);
+  assert.match(del, /enrolledCount: FieldValue\.increment\(-1\)/);
+
+  // Changing session moves the two GROUP counters and leaves the run's alone:
+  // the member is still on the run.
+  const patch = ENROL_ROUTE.slice(
+    ENROL_ROUTE.indexOf("export async function PATCH"),
+    ENROL_ROUTE.indexOf("export async function DELETE"),
+  );
+  assert.match(patch, /memberCount: FieldValue\.increment\(-1\)/);
+  assert.match(patch, /memberCount: FieldValue\.increment\(1\)/);
+  assert.doesNotMatch(patch, /enrolledCount/);
 });
