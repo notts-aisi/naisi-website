@@ -35,6 +35,7 @@ import {
   DEFAULT_APPLICANTS,
   STATE_PATH,
   assertFixtureTarget,
+  countFunnelRows,
   readState,
   seedFunnelFixtures,
   teardownFunnelFixtures,
@@ -186,6 +187,13 @@ async function main() {
       teardownCode = 0;
     } else {
       try {
+        // The BEFORE picture, printed because a manifest that reads zero
+        // afterwards proves nothing on its own: a teardown that ran against
+        // the wrong ids would also read zero. Seeing eleven rows go to none is
+        // the evidence; seeing none go to none is a warning that the run never
+        // reached the routes it was meant to drive.
+        const before = await countFunnelRows(toTearDown);
+        console.log(`[e2e:funnel] before teardown: ${JSON.stringify(before)}`);
         const counts = await teardownFunnelFixtures(toTearDown);
         console.log(JSON.stringify(counts, null, 2));
         teardownCode = counts.total === 0 ? 0 : 1;
