@@ -1,5 +1,5 @@
 /**
- * POST /api/admin/scheduler/run — the two manual overrides.
+ * POST /api/admin/scheduler/run: the two manual overrides.
  *
  *   { jobId }    run one registered job right now
  *   { markerId } put one failed marker back in play, for the next tick

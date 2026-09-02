@@ -6,16 +6,16 @@ import "server-only";
  * The id builders and the pure re-claim decision live in
  * `src/lib/firestore/schedulerMarkers.ts` (and are re-exported here so a job
  * handler needs one import); this module is the thin Firestore layer over
- * them. Read that module's header first — it explains WHY a claimed-but-
+ * them. Read that module's header first: it explains WHY a claimed-but-
  * unsent marker has to be reclaimable, which is the only interesting thing
  * about this file.
  *
  * THE ORDER MATTERS AND IS NOT NEGOTIABLE:
  *
- *   1. `claim()` — `.create()` the marker. ALREADY_EXISTS means somebody else
- *      has this unit of work; stop.
+ *   1. `claim()`, which `.create()`s the marker. ALREADY_EXISTS means somebody
+ *      else has this unit of work; stop.
  *   2. do the side effect (send the mail, mint the task)
- *   3. `stampSent()` — write `sentAt`.
+ *   3. `stampSent()`, which writes `sentAt`.
  *
  * Claim first, send second. The reverse order (send, then mark) turns any
  * crash into a duplicate send, and duplicates are the failure mode people
@@ -84,7 +84,7 @@ export type ClaimOutcome =
  * the same id produce exactly one winner and one ALREADY_EXISTS, with no
  * transaction. Recovery of a stuck marker cannot use `.create()` (the doc is
  * there), so it re-claims inside a transaction that re-reads the marker and
- * re-runs the same decision — otherwise two ticks that both saw a stale
+ * re-runs the same decision. Otherwise two ticks that both saw a stale
  * marker would both send.
  */
 export async function claim(
@@ -175,7 +175,7 @@ export async function stampSent(
 
 /**
  * The side effect threw. Record why and leave `sentAt` null so the re-claim
- * rule can pick it up on a later tick — this is NOT a terminal state.
+ * rule can pick it up on a later tick. This is NOT a terminal state.
  */
 export async function stampError(
   db: Firestore,
@@ -189,7 +189,7 @@ export async function stampError(
 }
 
 /**
- * The work was found but consciously not done — too late to be worth doing,
+ * The work was found but consciously not done: too late to be worth doing,
  * audience gone, run cancelled. Terminal, and distinct from a failure: a
  * skipped marker never gets a Retry button, because retrying is not what an
  * admin wants.

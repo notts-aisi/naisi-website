@@ -67,7 +67,7 @@ async function loadModule(url, label) {
     } catch {
       throw new Error(
         `Node ${process.version} cannot import .ts (needs >= 22.18) and the ` +
-          "`typescript` devDependency is not installed — run `npm install`, " +
+          "`typescript` devDependency is not installed. Run `npm install`, " +
           "or run this suite on a newer Node.",
         { cause: err },
       );
@@ -123,7 +123,7 @@ describe("tickBucketKey", () => {
     assert.equal(tickBucketKey(iso("2026-09-02T14:59:59.999Z")), "20260902T1445Z");
   });
 
-  test("is UTC, not London — the bucket must not repeat or vanish at a clock change", () => {
+  test("is UTC, not London, so a bucket cannot repeat or vanish at a clock change", () => {
     // BST -> GMT, 2026-10-25: 01:00-01:59 London happens twice. A London-local
     // bucket key would collide across that hour (an hour of ticks silently
     // deduped away) and skip an hour in the spring.
@@ -388,7 +388,7 @@ describe("decideMarkerClaim", () => {
     });
   });
 
-  test("an already-sent marker is skipped — this is the suppression", () => {
+  test("an already-sent marker is skipped, which is the suppression", () => {
     const decision = decideMarkerClaim(
       marker({ claimedAt: ago(600), sentAt: ago(599) }),
       NOW,
@@ -521,17 +521,17 @@ describe("POST /api/scheduler/tick source guards", () => {
     assert.match(source, /status:\s*404/);
     assert.ok(
       !/status:\s*401/.test(source),
-      "the tick must never answer 401 — that confirms the endpoint exists",
+      "the tick must never answer 401, which confirms the endpoint exists",
     );
     assert.ok(
       !/status:\s*403/.test(source),
-      "the tick must never answer 403 — same disclosure as a 401",
+      "the tick must never answer 403, the same disclosure as a 401",
     );
   });
 
   test("hashes both sides before the timing-safe compare", () => {
     // timingSafeEqual throws on a length mismatch, so a truncated header
-    // would 500 — an error page that confirms the endpoint exists.
+    // would 500, and an error page confirms the endpoint exists.
     assert.match(source, /createHash\("sha256"\)/);
     assert.match(source, /timingSafeEqual\(sha256\(presented\), sha256\(secret\)\)/);
   });

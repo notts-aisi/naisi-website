@@ -1,5 +1,5 @@
 /**
- * POST /api/admin/scheduler/config — the kill switches.
+ * POST /api/admin/scheduler/config: the kill switches.
  *
  * One global `enabled` plus one per job. MISSING MEANS ENABLED at both levels
  * (see src/lib/firestore/schedulerConfig.ts), so this route only ever writes

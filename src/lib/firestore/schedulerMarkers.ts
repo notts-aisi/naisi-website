@@ -1,5 +1,5 @@
 /**
- * `schedulerMarkers` — the single claim-before-send marker collection for
+ * `schedulerMarkers`: the single claim-before-send marker collection for
  * EVERY scheduler-tick job.
  *
  * A tick job derives its due work from live data at tick time (no queue, no
@@ -16,7 +16,7 @@
  *
  * THE RE-CLAIM RULE (the part that is easy to leave out and expensive to
  * leave out). Claim-before-send means a failure BETWEEN the claim and the
- * stamp — one Resend 5xx, one container eviction, one budget cut — leaves a
+ * stamp (one Resend 5xx, one container eviction, one budget cut) leaves a
  * marker with no `sentAt`. Without a recovery rule every later tick derives
  * the same work, sees the marker, and skips: permanent silent non-delivery of
  * exactly the mail somebody is waiting for. So a marker with no `sentAt`
@@ -77,7 +77,7 @@ export type SchedulerMarkerRef = {
  * component is stored as a FIELD, and only the family prefix (which never
  * contains `__`) is ever read back off the id.
  *
- * What that leaves is a theoretical collision — two different tuples
+ * What that leaves is a theoretical collision: two different tuples
  * concatenating to the same string. It does not arise here, because at most
  * one component per id is a slug id whose tail is free-form, and every slug
  * id carries a fixed 8-character suffix, so there is no second valid split.
@@ -101,7 +101,7 @@ function assertDocIdComponent(name: string, value: string): string {
 }
 
 /**
- * A component this platform composes itself — a date key, a session key, a
+ * A component this platform composes itself: a date key, a session key, a
  * stage id. These are fully under our control, so they additionally must not
  * contain `__`: keeping the tail of every marker id separator-free is what
  * removes the last of the ambiguity described above.
@@ -116,7 +116,7 @@ function assertKeyComponent(name: string, value: string): string {
   return value;
 }
 
-/** `remind__{roundId}__{uid}__{dueAtKey}` — an admissions deadline reminder. */
+/** `remind__{roundId}__{uid}__{dueAtKey}`, an admissions deadline reminder. */
 export function reminderMarker(
   roundId: string,
   uid: string,
@@ -136,7 +136,7 @@ export function reminderMarker(
   };
 }
 
-/** `stagerel__{roundId}__{stageId}` — an application stage release notice. */
+/** `stagerel__{roundId}__{stageId}`, an application stage release notice. */
 export function stageReleaseMarker(
   roundId: string,
   stageId: string,
@@ -152,7 +152,7 @@ export function stageReleaseMarker(
   };
 }
 
-/** `unmarked__{groupId}__{sessionKey}` — an unmarked-register follow-up. */
+/** `unmarked__{groupId}__{sessionKey}`, an unmarked-register follow-up. */
 export function unmarkedRegisterMarker(
   groupId: string,
   sessionKey: string,
@@ -168,7 +168,7 @@ export function unmarkedRegisterMarker(
   };
 }
 
-/** `breakret__{runId}__{groupId}__{slotStartKey}` — a back-after-the-break notice. */
+/** `breakret__{runId}__{groupId}__{slotStartKey}`, a back-after-the-break notice. */
 export function breakReturnMarker(
   runId: string,
   groupId: string,

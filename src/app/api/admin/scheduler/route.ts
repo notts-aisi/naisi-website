@@ -1,5 +1,5 @@
 /**
- * GET /api/admin/scheduler — everything the scheduler panel renders.
+ * GET /api/admin/scheduler: everything the scheduler panel renders.
  *
  * The panel exists to answer five questions from a SURFACE rather than from
  * Cloud Logging: is the scheduler running, which jobs are on, when did each

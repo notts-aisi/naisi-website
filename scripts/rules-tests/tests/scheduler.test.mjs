@@ -1,8 +1,8 @@
 /**
  * The two scheduler collections: `schedulerMarkers` and `schedulerRuns`.
  *
- * Both are `allow read, write: if false` — shut to EVERY client, admins
- * included — and both are reached only through the Admin SDK, by
+ * Both are `allow read, write: if false`, shut to EVERY client (admins
+ * included), and both are reached only through the Admin SDK, by
  * POST /api/scheduler/tick and GET /api/admin/scheduler.
  *
  * What must hold, and why each half matters:
@@ -10,9 +10,9 @@
  *  - NOBODY WRITES `schedulerMarkers`. A marker is the claim-before-send
  *    record: every tick job checks "does this marker exist?" and skips the
  *    work if it does. A client able to create one at a deterministic id could
- *    therefore SUPPRESS a send permanently and silently — its own
+ *    therefore SUPPRESS a send permanently and silently: its own
  *    application-deadline reminder, the follow-up task that chases an
- *    unmarked register — and nothing downstream would report anything wrong,
+ *    unmarked register. Nothing downstream would report anything wrong,
  *    because "marker exists" is indistinguishable from "already sent". The
  *    forged-suppression case at the bottom of this file is that attack
  *    written out.

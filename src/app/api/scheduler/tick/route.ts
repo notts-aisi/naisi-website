@@ -1,5 +1,5 @@
 /**
- * POST /api/scheduler/tick — the ONE scheduler endpoint.
+ * POST /api/scheduler/tick: the ONE scheduler endpoint.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * REQUIRED ENVIRONMENT
@@ -26,8 +26,8 @@
  *
  * WHY 404 AND NOT 401. A 401 confirms that the path exists and that the guard
  * is a key check, which is exactly the pair of facts worth knowing before you
- * start guessing. A 404 says nothing. Every rejection here — missing secret,
- * missing header, wrong header — returns the same 404 body.
+ * start guessing. A 404 says nothing. Every rejection here (missing secret,
+ * missing header, wrong header) returns the same 404 body.
  *
  * WHY NO RATE LIMIT. `src/lib/rateLimit.ts` is per-instance and fail-open, so
  * against a bearer-token endpoint it is decoration: it cannot slow a
@@ -36,7 +36,7 @@
  *
  * WHY THE SECRET COMPARISON HASHES FIRST. `timingSafeEqual` THROWS when the
  * two buffers differ in length, so comparing raw bytes would turn a truncated
- * header into a 500 — an error page that confirms the endpoint exists, which
+ * header into a 500, and an error page confirms the endpoint exists, which
  * is the one thing the 404 is for. Hashing both sides to a fixed 32 bytes
  * first makes every comparison well-formed and keeps it constant time.
  *
@@ -76,7 +76,7 @@ export const dynamic = "force-dynamic";
  * `runConfig.timeoutSeconds`). 45 leaves 15s of headroom: the job budget below
  * has to stop with enough time left to finish the receipt write and, when a
  * re-arm is due, to hand off to the child request. A `maxDuration` at or above
- * the platform timeout would be a lie — the container is killed first, and a
+ * the platform timeout would be a lie: the container is killed first, and a
  * killed tick leaves a receipt that says "running" forever.
  */
 export const maxDuration = 45;
@@ -90,7 +90,7 @@ const JOB_BUDGET_MS = 28_000;
  * CLOUD RUN CPU THROTTLING, the reason this is awaited at all: outside a
  * request, an instance's CPU is throttled to near zero. A fire-and-forget
  * `void fetch(...)` after the response has been returned may therefore never
- * get enough CPU to open the socket, and the re-arm silently never happens —
+ * get enough CPU to open the socket, and the re-arm silently never happens,
  * the classic "it worked locally" failure. Awaiting keeps the parent's
  * request alive, and therefore its CPU allocated, until the child request has
  * at least been accepted.
@@ -100,7 +100,7 @@ const JOB_BUDGET_MS = 28_000;
  * four full ticks into one 60s request). It waits `REARM_HANDOFF_MS` and then
  * aborts, which Cloud Run MAY propagate to the child as a client
  * disconnection. If it does, the backlog waits for the next 15-minute
- * delivery — which is safe by construction, because every job derives its due
+ * delivery, which is safe by construction, because every job derives its due
  * state at tick time and every send is marker-guarded. A dropped re-arm costs
  * latency, never correctness.
  */
@@ -126,7 +126,7 @@ function keyAccepted(req: Request): boolean {
   const secret = process.env.SCHEDULER_SECRET ?? "";
   if (secret === "") {
     console.warn(
-      "[scheduler] SCHEDULER_SECRET is not set — every tick will 404. " +
+      "[scheduler] SCHEDULER_SECRET is not set, so every tick will 404. " +
         "Provision it in Secret Manager and grant the backend access (docs/courses-ops.md).",
     );
     return false;
@@ -180,7 +180,7 @@ export async function POST(req: Request) {
 
   const db = getAdminDb();
   if (!db) {
-    console.error("[scheduler] Admin SDK unavailable — tick cannot run.");
+    console.error("[scheduler] Admin SDK unavailable, so the tick cannot run.");
     return NextResponse.json({ error: "Server not configured" }, { status: 500 });
   }
 

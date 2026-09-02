@@ -1,5 +1,5 @@
 /**
- * `schedulerRuns` — one receipt per execution of POST /api/scheduler/tick.
+ * `schedulerRuns`: one receipt per execution of POST /api/scheduler/tick.
  *
  * The receipt does two jobs:
  *
@@ -101,7 +101,7 @@ export function tickBucketKey(now: Date): string {
   );
 }
 
-/** `tick__{bucket}__d{depth}` — the receipt doc id. */
+/** `tick__{bucket}__d{depth}`, the receipt doc id. */
 export function tickReceiptId(bucket: string, depth: number): string {
   return `tick__${bucket}__d${depth}`;
 }

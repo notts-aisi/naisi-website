@@ -2,7 +2,7 @@
  * The scheduler job registry.
  *
  * Jobs are MODULES, not HTTP routes. There are exactly two scheduler
- * endpoints — POST /api/scheduler/tick and POST /api/admin/scheduler/run —
+ * endpoints (POST /api/scheduler/tick and POST /api/admin/scheduler/run)
  * and everything else is an entry in `JOBS` below. A per-job route would mean
  * a per-job secret surface, a per-job timeout and a per-job "is it armed?"
  * question; a registry entry means one endpoint to protect and one panel to
@@ -18,7 +18,7 @@
  * ADDING A JOB (later PRs): write `src/lib/scheduler/jobs/<name>.ts`
  * exporting a `JobRegistration`, import it here, and append it to `JOBS`. The
  * `SchedulerJobId` union already names every job the courses V3 contract
- * plans, so a new entry needs no type change — which is deliberate: the panel
+ * plans, so a new entry needs no type change. That is deliberate: the panel
  * and `config/scheduler` key on those ids, and renaming one after it has
  * shipped orphans its stored enable switch.
  */
@@ -80,7 +80,7 @@ export type JobContext = {
 export type JobResult = {
   /** Units of work actually acted on (sent, stamped, created). */
   processed: number;
-  /** True when due work remains — the tick may then re-arm itself. */
+  /** True when due work remains, so the tick may then re-arm itself. */
   hasMore: boolean;
   /** Optional one-line summary for the receipt. */
   note?: string;
@@ -96,7 +96,7 @@ export type JobRegistration = {
   handler: JobHandler;
   /**
    * Hard ceiling on units of work per tick. Protects the downstream service
-   * (Resend, Firestore writes), NOT the 60s Cloud Run timeout — that is what
+   * (Resend, Firestore writes), NOT the 60s Cloud Run timeout. That is what
    * `budget` is for.
    */
   maxPerTick: number;

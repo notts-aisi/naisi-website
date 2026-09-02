@@ -2,9 +2,9 @@
  * The heartbeat job.
  *
  * It sends nothing, writes nothing and claims no marker. Its entire purpose
- * is to be the FIRST registered job so that the machinery around jobs — the
+ * is to be the FIRST registered job so that the machinery around jobs (the
  * secret check, the receipt id scheme, the config kill switch, the budget,
- * the re-arm and the admin panel — is exercised on every tick and visible on
+ * the re-arm and the admin panel) is exercised on every tick and visible on
  * the panel before any real send depends on it.
  *
  * The operational rule that goes with it (docs/courses-ops.md): after arming
@@ -27,7 +27,7 @@ export const heartbeatJob: JobRegistration = {
   description:
     "Does nothing except prove the tick reached the job list. Leave it on: it is how you tell a scheduler that is running from one that is silently down.",
   maxPerTick: 1,
-  // Nothing is ever late here — there is no due instant to be late for.
+  // Nothing is ever late here: there is no due instant to be late for.
   maxLateHours: 0,
   reclaimAfterMinutes: 0,
   async handler({ now, log }: JobContext): Promise<JobResult> {

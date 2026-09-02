@@ -823,8 +823,8 @@ service cloud.firestore {
     // a deterministic, construct-only doc id per unit of work, created BEFORE
     // the send and stamped `sentAt` after it. A client able to WRITE here
     // could pre-create a marker id and permanently suppress a send it does
-    // not want — its own application-deadline reminder, a facilitator's
-    // unmarked-register follow-up task — and nothing downstream would notice,
+    // not want (its own application-deadline reminder, a facilitator's
+    // unmarked-register follow-up task) and nothing downstream would notice,
     // because "marker exists" is exactly how every job decides the work is
     // already done. Suppression by forgery is the threat this rule exists
     // for, and it is why these markers do NOT live in `courseNudges`

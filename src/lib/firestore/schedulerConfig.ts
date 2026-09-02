@@ -1,13 +1,13 @@
 /**
- * Scheduler kill switch and per-job state — a single Firestore doc at
+ * Scheduler kill switch and per-job state: a single Firestore doc at
  * `config/scheduler`, structural clone of `config/taskEmails`.
  *
  * `{ enabled, jobs: Record<jobId, { enabled, lastRunAt, lastError }>,
  *    updatedAt, updatedByUid }`.
  *
  * MISSING MEANS ENABLED, at both levels. A fresh Firestore project, or a job
- * registered by a later PR before anyone has touched the panel, must run —
- * the alternative is a scheduler that is silently off on a new environment
+ * registered by a later PR before anyone has touched the panel, must run.
+ * The alternative is a scheduler that is silently off on a new environment
  * and a deadline reminder nobody notices did not send. Switching a job OFF is
  * an explicit `enabled: false`, exactly like `readTaskEmailConfig`.
  *
