@@ -21,7 +21,11 @@ export type AccountDeletionSummary = {
   courseEnrolmentsDeleted: number;
   courseProgressDeleted: number;
   courseExerciseResponsesDeleted: number;
-  /** Map keys removed from shared attendance registers — never whole registers. */
+  /**
+   * Registers this member was removed FROM, never whole registers deleted.
+   * Counts a document once even when it carried both an attendance mark and a
+   * participant note about them (both keys go, in one batch).
+   */
   courseAttendanceMarksCleared: number;
   authDeleted: boolean;
   /** Set when the teardown was not fully clean (a best-effort step failed, or the
@@ -119,18 +123,40 @@ async function clearCourseAttendanceMarks(
       if (snap.empty) break;
       cursor = snap.docs[snap.docs.length - 1];
 
-      const marked = snap.docs.filter((d) => {
-        const records = (d.data() as { records?: unknown }).records;
+      // TWO map keys per register, not one. `participantNotes` (V3 W1 PR5)
+      // is post-session prose ABOUT this member, written by their facilitator,
+      // and it is personal data of exactly the kind an account deletion has to
+      // take with it. Both keys are cleared by FieldPath on the SAME document,
+      // in the same batch, for the same reason `records` always was: the
+      // register is shared, so deleting the doc would erase the whole group's
+      // session.
+      //
+      // A register can carry a note without a mark and a mark without a note
+      // (a facilitator writes notes for the people they have something to say
+      // about), so each key is tested separately and a document qualifies if
+      // it holds either.
+      const holds = (d: QueryDocumentSnapshot, field: string): boolean => {
+        const map = (d.data() as Record<string, unknown>)[field];
         // `in` throws on a non-object, and a hand-edited register could carry
-        // anything — a malformed `records` simply has no mark to clear.
-        return (
-          typeof records === "object" && records !== null && uid in records
-        );
-      });
+        // anything: a malformed map simply has no key to clear.
+        return typeof map === "object" && map !== null && uid in map;
+      };
+      const marked = snap.docs.filter(
+        (d) => holds(d, "records") || holds(d, "participantNotes"),
+      );
       if (marked.length > 0) {
         const batch = db.batch();
         for (const d of marked) {
-          batch.update(d.ref, new FieldPath("records", uid), FieldValue.delete());
+          if (holds(d, "records")) {
+            batch.update(d.ref, new FieldPath("records", uid), FieldValue.delete());
+          }
+          if (holds(d, "participantNotes")) {
+            batch.update(
+              d.ref,
+              new FieldPath("participantNotes", uid),
+              FieldValue.delete(),
+            );
+          }
         }
         await batch.commit();
         cleared += marked.length;
