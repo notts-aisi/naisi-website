@@ -106,11 +106,16 @@ export default function CourseCTA({
 
   // No run at all, or one that is not public (draft / archived, both of which
   // the fetcher drops before this component ever sees them).
+  //
+  // MODE-NEUTRAL COPY, deliberately: there is no run here to have a mode, so
+  // the branch covers an admissions course between intakes and a pre-course
+  // that has not been scheduled yet with one sentence. Naming either way in
+  // (applying, signing up) would be wrong for half the courses it renders on.
   if (!run || run.state === "inactive") {
     return (
       <div className={wrap}>
         <p className={styles.line}>
-          Sign-ups aren&apos;t open right now.{" "}
+          This course isn&apos;t taking new people right now.{" "}
           <Link href="/#stay-in-touch" className={styles.inlineLink}>
             Subscribe for updates
           </Link>{" "}

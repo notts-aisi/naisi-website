@@ -1764,11 +1764,12 @@ test("GUARD — an offer survives admissions closing the run, which is what brok
   // after the deadline (`getApplyContext` returns a closed run rather than
   // null). Neither is where an ACCEPTED member learns they got in, which is
   // the property this test holds: that answer comes from /api/courses/me.
-  // The sentence lost its admissions-only noun when open enrolment landed: the
-  // same branch now also covers a pre-course, which nobody applies to. What
-  // the guard is about is that the branch still EXISTS and still fires on a
-  // run the fetcher dropped, not on which noun it uses.
-  assert.match(COURSE_CTA, /Sign-ups aren&apos;t open right now\./);
+  // The sentence lost its admissions-only noun when open enrolment landed,
+  // and then its sign-ups-only one: with no run there is no mode either, so
+  // the branch covers a course between intakes and an unscheduled pre-course
+  // alike. What the guard is about is that the branch still EXISTS and still
+  // fires on a run the fetcher dropped, not on which noun it uses.
+  assert.match(COURSE_CTA, /This course isn&apos;t taking new people right now\./);
   assert.match(COURSE_CTA, /if \(!run \|\| run\.state === "inactive"\)/);
   assert.match(APPLY_FORM, /You're in\. We'll email you your group/);
   // The CTA and the apply route read ONE window predicate, so discovery and
