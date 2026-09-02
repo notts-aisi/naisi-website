@@ -260,9 +260,15 @@ export async function listPublishedCourses(): Promise<CourseCatalogueEntry[]> {
   // snapshots; `preferredRunWindow` is a total order, so seeing it twice is
   // idempotent and no de-duplication pass is needed.
   const runDocs = [...runSnap.docs, ...openRunSnap.docs];
+  // Every run read above, by id, whatever its window says. The rounds pass
+  // uses it as its run-to-course map AND hands it back extended, which is what
+  // lets a card name the cohort a round is recruiting for; the featured-run
+  // ranking below is a separate, narrower question asked over the same rows.
+  const knownRuns = new Map<string, CourseRunDoc>();
   for (const d of runDocs) {
     const run = normalizeCourseRun(d.id, d.data());
     if (!run.courseId) continue;
+    knownRuns.set(run.id, run);
     const window = courseRunWindow(run, now);
     // Archived (and therefore also mid-destroy) runs come back `inactive` and
     // are withdrawn from the catalogue. Filtered here rather than in the query
@@ -277,15 +283,9 @@ export async function listPublishedCourses(): Promise<CourseCatalogueEntry[]> {
     );
   }
 
-  // The rounds pass reuses the run documents already read above, so the only
-  // rows it has to fetch are the runs a round names that no run query returned
-  // (a target run still in `draft`). It hands those back, which is what lets
-  // the card below name the cohort a round is recruiting for.
-  const knownRuns = new Map<string, CourseRunDoc>();
-  for (const d of runDocs) {
-    const run = normalizeCourseRun(d.id, d.data());
-    if (run.courseId) knownRuns.set(run.id, run);
-  }
+  // The rounds pass reuses those documents, so the only rows it has to fetch
+  // are the runs a round names that no run query returned (a target run still
+  // in `draft`).
   const courses = courseSnap.docs.map((d) => normalizeCourse(d.id, d.data()));
 
   const [roundPass, pages] = await Promise.all([
