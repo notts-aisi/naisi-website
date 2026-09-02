@@ -57,7 +57,15 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
  * They are named here rather than pre-registered because a tree that does not
  * exist yet cannot be scanned, and a silently-skipped tree is a hole.
  */
-const GUARDED_TREES = ["src/app/api/courses", "src/app/api/admissions"];
+const GUARDED_TREES = [
+  "src/app/api/courses",
+  "src/app/api/admissions",
+  // The member-record tree. It holds one route today, the conduct flag, and a
+  // single MUST_GUARD entry would cover that one route; the tree is registered
+  // so the NEXT route added beside it (a note, a ban, a merge) is caught by
+  // the sweep instead of relying on whoever adds it remembering this file.
+  "src/app/api/admin/members",
+];
 
 /**
  * Every mutating route in those trees, with the reason it is high-trust.
@@ -122,6 +130,13 @@ const MUST_GUARD = [
   // named here or it is checked by nothing: it writes `config/courses`, whose
   // knobs reach every course surface at once.
   ["src/app/api/admin/courses-config/route.ts", "changes site-wide course settings"],
+  // Also outside the scanned trees. It writes a conduct record about a named
+  // member, which reviewers act on, and it is the only writer of a collection
+  // no client can read back to check what happened.
+  [
+    "src/app/api/admin/members/[uid]/conduct-flag/route.ts",
+    "sets and clears a member's conduct flag",
+  ],
 ];
 
 /**
