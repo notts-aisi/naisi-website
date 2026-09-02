@@ -25,7 +25,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -297,5 +297,85 @@ describe("the re-consent gate", () => {
     assert.match(AUTHED_LAYOUT, /!viewingAs/);
     const route = read("src/app/api/account/reconsent/route.ts");
     assert.match(route, /assertNotImpersonating\(\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §4 The access-requirements read log: the promise, and the guard on it
+// ---------------------------------------------------------------------------
+
+/**
+ * v3 tells an applicant, twice, that their access-requirements answer is
+ * stored apart, is never scored, and that "every time one of them does we
+ * record who read it". The in-form notice says the same thing on the page
+ * where the answer is typed.
+ *
+ * No route reads that collection yet: the reveal lands in PR33, and the
+ * `access-requirements-read` audit kind is sitting in `CourseAuditKind`
+ * waiting for it. So the sentence is a promise about code that does not
+ * exist, which is exactly the shape of claim a policy quietly breaks.
+ *
+ * This guard is what keeps it honest. It walks EVERY route file under
+ * src/app/api and refuses one that reaches `admissionApplicationPrivate` (by
+ * collection name, or through the shared id helper) without also naming the
+ * audit kind. A reveal route that forgets the log cannot ship, so the two
+ * always land together and the policy stays true the day the feature does.
+ *
+ * A route that only DELETES these rows should go through
+ * `accountDeletion.ts` rather than naming the collection itself, which is
+ * what the account-deletion cascade already does; if a future one has a real
+ * reason to address the collection directly, it can say so in the same
+ * commit that widens this guard.
+ */
+function routeFilesUnder(dir, out = []) {
+  if (!existsSync(dir)) return out;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) routeFilesUnder(full, out);
+    else if (/^route\.tsx?$/.test(entry.name)) out.push(full);
+  }
+  return out;
+}
+
+const REACHES_PRIVATE =
+  /["'`]admissionApplicationPrivate["'`]|admissionApplicationPrivateId\b/;
+const NAMES_AUDIT_KIND = /access-requirements-read/;
+
+describe("the access-requirements read log", () => {
+  const routes = routeFilesUnder(join(SRC, "app/api"));
+
+  test("the walk found routes at all, so the guard below is not vacuous", () => {
+    assert.ok(
+      routes.length > 20,
+      `only ${routes.length} route files found under src/app/api; the walk is broken`,
+    );
+  });
+
+  test("the audit kind the policy promises exists in the enum", () => {
+    const audit = read("src/lib/firestore/courseAudit.ts");
+    assert.match(audit, NAMES_AUDIT_KIND);
+  });
+
+  test("no route reaches admissionApplicationPrivate without logging the read", () => {
+    const offenders = routes.filter((file) => {
+      const source = readFileSync(file, "utf8");
+      return REACHES_PRIVATE.test(source) && !NAMES_AUDIT_KIND.test(source);
+    });
+    assert.deepEqual(
+      offenders.map((f) => f.slice(REPO_ROOT.length + 1)),
+      [],
+      "these routes reach the access-requirements collection without naming " +
+        "the `access-requirements-read` audit kind. The privacy policy and " +
+        "the in-form notice both promise that every read of that answer is " +
+        "recorded, so a route that reveals it without appending a courseAudit " +
+        "row makes both pages false. Append the row in the same route, or " +
+        "take the promise off the policy.",
+    );
+  });
+
+  test("the promise is on the page and in the in-form notice", () => {
+    assert.match(V3_FLAT, /every time one of them does we record who read it/i);
+    const notice = read("src/features/admissions/ApplicationPrivacyNotice.tsx");
+    assert.match(notice.replace(/\s+/g, " "), /We record each time one of them/i);
   });
 });
