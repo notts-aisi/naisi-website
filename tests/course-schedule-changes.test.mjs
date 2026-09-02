@@ -1536,27 +1536,47 @@ test("GUARD — every date-driven consumer guards with isValidDateKey before pac
   assert.throws(() => currentWeekFor({ startDate: "", weekPlan: [] }), RangeError);
 });
 
-test("PROVEN GAP — an impossible date passes the run normaliser and silently kills the run", () => {
-  // `2026-02-31` matches the shape and is not a day. The normaliser keeps it,
-  // `isValidDateKey` rejects it, and every consumer degrades: no current week,
-  // no rail, no pacing, no nudge, no mirror, no attendance anchor. The run looks
-  // alive and does nothing, with no error anywhere to explain it.
+test("GUARD — an impossible date normalises to unset rather than killing the run", () => {
+  // Closed 2026-09-02 (this test was the PROVEN GAP that demanded it):
+  // `asCivilDate` now calls `isValidDateKey` instead of a bare shape regex.
+  // `2026-02-31` matches the shape and is not a day; storing it used to leave
+  // every consumer degraded at once (no current week, no rail, no pacing, no
+  // nudge, no mirror, no attendance anchor) with the run looking alive and
+  // doing nothing. It now reads back as "", which is a state every one of
+  // those readers already handles and every editing surface already prompts on.
   const stored = normalizeCourseRun("run1", {
     courseId: "c1",
     label: "Autumn 2026",
     startDate: "2026-02-31",
     weekPlan: [],
   });
-  assert.equal(stored.startDate, "2026-02-31");
-  assert.equal(isValidDateKey(stored.startDate), false);
-  // The normaliser rejects a wrong SHAPE, which is all it checks.
+  assert.equal(stored.startDate, "");
+
+  // Every flavour of impossible, not just the February one: an out-of-range
+  // month, a zero month, and a value that is all-digits nonsense.
+  for (const impossible of ["2026-02-31", "2026-13-01", "2026-00-10", "9999-99-99"]) {
+    assert.equal(
+      normalizeCourseRun("run1", { startDate: impossible }).startDate,
+      "",
+      `${impossible} survived the normaliser`,
+    );
+    assert.equal(isValidDateKey(impossible), false);
+  }
+
+  // A wrong SHAPE still normalises away, as it always did.
   assert.equal(normalizeCourseRun("run1", { startDate: "05/10/2026" }).startDate, "");
 
-  // WHEN YOU FIX THIS: `asCivilDate` in `lib/firestore/courses.ts` should call
-  // `isValidDateKey` rather than the bare regex — a one-line change that makes
-  // an impossible date behave exactly like an unset one. `firestore.rules`
-  // cannot do this check at all (no date arithmetic), so the normaliser is the
-  // only place it can live.
+  // …and a REAL date is untouched, including the leap day a month-length table
+  // would get wrong. This is the half of the contract a stricter check could
+  // plausibly break.
+  for (const good of ["2026-09-28", "2024-02-29", "2026-12-31", "2027-01-01"]) {
+    assert.equal(normalizeCourseRun("run1", { startDate: good }).startDate, good);
+  }
+
+  // The normaliser is the ONLY layer that can hold this: `firestore.rules` has
+  // no date arithmetic, so its regex stays the strongest thing that layer can
+  // say. Its sibling in `scripts/rules-tests/tests/courses-schedule.test.mjs`
+  // pins that division of labour from the other side.
 });
 
 test("GUARD — currentWeekFor clamps its slot key at both ends of the run", () => {

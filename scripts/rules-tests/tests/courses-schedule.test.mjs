@@ -211,13 +211,22 @@ describe("courseRuns — who may move the calendar", () => {
     }
   });
 
-  it("PROVEN GAP — an IMPOSSIBLE date passes, and silently kills the whole run", async () => {
-    // `runContentOk` checks the SHAPE with a regex. `2026-02-31` is the right
-    // shape and is not a day, so it is stored — and then `isValidDateKey`
-    // (which round-trips through Date) rejects it at every single consumer:
-    // no current week on /learn, no rail, no pacing, the nudge refuses, the
-    // task mirror no-ops, the attendance grid loses its anchor. The run looks
-    // alive and does nothing, with no error anywhere to explain it.
+  it("GUARD — an IMPOSSIBLE date is the NORMALISER's job, and the rules stay out of it", async () => {
+    // Was a PROVEN GAP until 2026-09-02, and it is green for the same reason it
+    // always was: `runContentOk` checks the SHAPE with a regex, and
+    // `2026-02-31` is the right shape and is not a day, so the write lands.
+    //
+    // THIS IS NOT A RULES BUG AND MUST NOT BE FIXED HERE. Firestore rules have
+    // no date arithmetic, so the regex is the strongest check this layer can
+    // make; a rule enumerating month lengths would still miss leap years.
+    // The fix lives in `asCivilDate` (src/lib/firestore/courses.ts), which now
+    // calls `isValidDateKey`, so an impossible date READS BACK as "" and
+    // behaves exactly like an unset one at every consumer. Its sibling in
+    // `tests/course-schedule-changes.test.mjs` pins that half.
+    //
+    // The test survives the fix as the pin on the division of labour: if
+    // someone later tries to express the check here, these writes start failing
+    // and this comment explains why they should not have.
     await seedCast();
     await seedRun("run1");
     const db = await asUser("lead");
@@ -226,15 +235,6 @@ describe("courseRuns — who may move the calendar", () => {
         db.collection("courseRuns").doc("run1").update({ startDate: impossible }),
       );
     }
-
-    // THIS IS NOT A RULES BUG AND MUST NOT BE FIXED HERE. Firestore rules have
-    // no date arithmetic, so the regex is the strongest check this layer can
-    // make; a rule enumerating month lengths would still miss leap years.
-    // The fix belongs in `asCivilDate` (src/lib/firestore/courses.ts), which
-    // should call `isValidDateKey` instead of its own bare regex — one line,
-    // and an impossible date then behaves exactly like an unset one.
-    // When that lands, this test stays green and its sibling in
-    // `tests/course-schedule-changes.test.mjs` is the one to invert.
   });
 });
 
