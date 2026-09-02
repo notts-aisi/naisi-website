@@ -730,9 +730,12 @@ test("GUARD — a plan-only move cannot leave a week authored at two addresses",
 test("GUARD — the rules pin weekPlan the moment a run stops being a draft", () => {
   // The affordance in the builder is not the enforcement. This is.
   assert.match(RULES, /function weekPlanLockRespected\(\)/);
+  // BOTH sides of the status, not just the pre-write one: a single write that
+  // set 'applications-open' and reshaped the plan used to pass, because the run
+  // was still a draft at the moment the rule read it.
   assert.match(
     RULES,
-    /resource\.data\.get\('status', 'draft'\) == 'draft'\s*\|\|\s*request\.resource\.data\.get\('weekPlan', \[\]\)\s*==\s*resource\.data\.get\('weekPlan', \[\]\)/,
+    /resource\.data\.get\('status', 'draft'\) == 'draft'\s*&&\s*request\.resource\.data\.get\('status', 'draft'\) == 'draft'\s*\)\s*\|\|\s*request\.resource\.data\.get\('weekPlan', \[\]\)\s*==\s*resource\.data\.get\('weekPlan', \[\]\)/,
   );
   // On the NON-admin branch only, matching every other pin in that block: an
   // admin adding a slot to a live run is a decision they own, not one to

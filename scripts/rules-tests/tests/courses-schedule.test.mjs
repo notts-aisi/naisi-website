@@ -207,6 +207,41 @@ describe("courseRuns — who may move the calendar", () => {
     }
   });
 
+  it("GUARD — one write cannot both leave draft AND reshape the plan", async () => {
+    // The pin used to read only the PRE-write status, so a draft run was still
+    // a draft at the moment the rule looked at it. An approver could therefore
+    // set status to 'applications-open' and reshape the week plan in the SAME
+    // update: the run left draft, and the plan the pin protects for the rest of
+    // the cohort's life was the reshaped one nothing ever checked.
+    await seedCast();
+    await seedRun("run1", { status: "draft" });
+    const db = await asUser("approver");
+    await assertFails(
+      db
+        .collection("courseRuns")
+        .doc("run1")
+        .update({ status: "applications-open", weekPlan: RESHAPED_PLAN }),
+    );
+
+    // Neither half is forbidden on its own. The status may move...
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run1").update({ status: "applications-open" }),
+    );
+    // ...and a section save that always includes the field still passes while
+    // it re-sends the plan verbatim, which is the disjunct that carve-out is
+    // for. (Re-seeded as a draft first: the two halves are being tested apart.)
+    await clearData();
+    await seedCast();
+    await seedRun("run1", { status: "draft" });
+    const again = await asUser("approver");
+    await assertSucceeds(
+      again
+        .collection("courseRuns")
+        .doc("run1")
+        .update({ status: "applications-open", weekPlan: WEEK_PLAN }),
+    );
+  });
+
   it("GUARD — an ADMIN can still reshape a live run's plan, and owns the consequences", async () => {
     // The carve-out, matching every other pin in this block: admins ride the
     // unconditional branch. Adding a slot to a live run shifts every later

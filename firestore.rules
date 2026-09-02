@@ -1120,12 +1120,27 @@ service cloud.firestore {
       // admin branch below, where the person making the change is the person
       // accountable for the date shift it causes.
       //
+      // BOTH sides of the status are checked. Reading only the pre-write one
+      // let a single update set status to 'applications-open' AND reshape the
+      // plan in the same write: the run was a draft when the rule looked, and
+      // was not one by the time the write landed, so the plan the pin then
+      // protects for the rest of the cohort's life is the reshaped one nothing
+      // ever checked. The status route is the intended lane for a status move
+      // and writes nothing else, so no honest client is caught by this.
+      //
+      // The unchanged-plan disjunct stands on its own, which is what still
+      // lets an approver flip the status while re-sending the plan verbatim
+      // (a section save that always includes the field).
+      //
       // Both sides default to [] so a run predating the field compares equal
       // and passes, and the status defaults to 'draft' so a run written before
       // the status union existed is treated as still editable rather than
       // frozen out of reach.
       function weekPlanLockRespected() {
-        return resource.data.get('status', 'draft') == 'draft'
+        return (
+            resource.data.get('status', 'draft') == 'draft'
+            && request.resource.data.get('status', 'draft') == 'draft'
+          )
           || request.resource.data.get('weekPlan', [])
             == resource.data.get('weekPlan', []);
       }
