@@ -7,6 +7,7 @@ import {
   listPublishedCourses,
   type CourseCatalogueEntry,
 } from "@/features/courses/fetchCourses";
+import CourseVisual from "@/features/courses/CourseVisual";
 import {
   formatRunStartShort,
   formatWindowDate,
@@ -70,8 +71,8 @@ export default async function CourseCataloguePage() {
 }
 
 function CourseCard({ entry }: { entry: CourseCatalogueEntry }) {
-  const { course, featuredRun } = entry;
-  const state = featuredRun?.window.state ?? null;
+  const { course, featuredRun, liveRound } = entry;
+  const state = liveRound?.state ?? featuredRun?.window.state ?? null;
   const dates = cardDates(entry);
   return (
     // Plain next/link, never TransitionLink: the public transition's ~960ms
@@ -79,6 +80,16 @@ function CourseCard({ entry }: { entry: CourseCatalogueEntry }) {
     // broken tap on a grid of cards.
     <Link href={`/courses/${course.id}`} className={styles.cardLink}>
       <Card padding="lg" interactive className={styles.card}>
+        {/* The same seed and cover the course page's hero uses, read in one
+            batch by the fetcher, so a course is one picture across the site. */}
+        <CourseVisual
+          seed={entry.visual.seed}
+          track={course.track}
+          coverImageUrl={entry.visual.coverImageUrl}
+          coverAlt={entry.visual.coverAlt}
+          className={styles.visual}
+        />
+
         <div className={styles.cardTop}>
           <Badge tone="accent">{COURSE_TRACK_LABELS[course.track]}</Badge>
           {course.level ? <span className={styles.level}>{course.level}</span> : null}
@@ -130,14 +141,19 @@ function stateClass(state: ApplicationWindowState | null): string {
  * and "Applications open for wd" is what that reads like in the wild.
  */
 function applicationState(entry: CourseCatalogueEntry): string {
+  const round = entry.liveRound;
   const found = entry.featuredRun;
-  if (!found) return "Next run TBA";
-  const noun = found.run.enrolMode === "open" ? "Sign-ups" : "Applications";
-  if (found.window.state === "open") return `${noun} open`;
-  if (found.window.state === "not-yet") {
-    return found.window.opensAt
-      ? `${noun} open ${formatWindowDate(found.window.opensAt)}`
-      : `${noun} open soon`;
+  if (!round && !found) return "Next run TBA";
+  // An open-enrolment run has no round and never will, so the noun is only
+  // ever "Sign-ups" on the run's own window.
+  const noun = found?.run.enrolMode === "open" ? "Sign-ups" : "Applications";
+  // The ROUND wins when there is one: it is the object people apply to, and
+  // its dates are the ones an admin typed. See `CourseCatalogueEntry`.
+  const state = round?.state ?? found?.window.state ?? null;
+  const opensAt = round ? round.opensAt : (found?.window.opensAt ?? null);
+  if (state === "open") return `${noun} open`;
+  if (state === "not-yet") {
+    return opensAt ? `${noun} open ${formatWindowDate(opensAt)}` : `${noun} open soon`;
   }
   return `${noun} closed`;
 }
@@ -151,14 +167,17 @@ function applicationState(entry: CourseCatalogueEntry): string {
  * and the state line above has already said it has passed.
  */
 function cardDates(entry: CourseCatalogueEntry): string {
+  const round = entry.liveRound;
   const found = entry.featuredRun;
-  if (!found) return "";
+  if (!round && !found) return "";
   const bits: string[] = [];
-  if (found.window.state !== "closed" && found.window.closesAt) {
-    const noun = found.run.enrolMode === "open" ? "Sign-ups" : "Applications";
-    bits.push(`${noun} close ${formatWindowDate(found.window.closesAt)}`);
+  const state = round?.state ?? found?.window.state ?? null;
+  const closesAt = round ? round.closesAt : (found?.window.closesAt ?? null);
+  if (state !== "closed" && closesAt) {
+    const noun = found?.run.enrolMode === "open" ? "Sign-ups" : "Applications";
+    bits.push(`${noun} close ${formatWindowDate(closesAt)}`);
   }
-  const starts = formatRunStartShort(found.run.startDate);
+  const starts = found ? formatRunStartShort(found.run.startDate) : undefined;
   if (starts) bits.push(`Starts ${starts}`);
   return bits.join(" · ");
 }

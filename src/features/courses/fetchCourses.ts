@@ -16,6 +16,12 @@ import { type ApplicationWindow } from "@/lib/courses/window";
 import { courseRunWindow } from "@/lib/courses/enrolWindow";
 import { COURSE_TRACKS } from "@/lib/firestore/courses";
 import {
+  COURSE_PAGES_COLLECTION,
+  normalizeCoursePage,
+  toPublicCoursePage,
+  type PublicCoursePage,
+} from "@/lib/firestore/coursePages";
+import {
   listLiveRoundsByCourse,
   type CourseLiveRound,
 } from "./fetchLiveRound";
@@ -92,6 +98,17 @@ export type CourseCatalogueEntry = {
    * them and the choice is made here rather than in the component.
    */
   liveRound: CourseLiveRound | null;
+  /**
+   * What the card's artwork is drawn from: the authored seed and cover, or
+   * the course id as the seed when nobody has authored a page.
+   *
+   * Read here rather than on the card so the catalogue tile and the hero on
+   * the course page are THE SAME picture. Seeding the card from the course id
+   * would have been one read cheaper and would have quietly given a course two
+   * different visuals, which is the sort of thing nobody reports and everybody
+   * notices.
+   */
+  visual: { seed: string; coverImageUrl: string | null; coverAlt: string };
 };
 
 /** A published course with the curriculum its showcase run puts on display. */
@@ -255,15 +272,40 @@ export async function listPublishedCourses(): Promise<CourseCatalogueEntry[]> {
     const courseId = d.data()?.courseId;
     if (typeof courseId === "string" && courseId) knownRuns.set(d.id, courseId);
   }
-  const roundsByCourse = await listLiveRoundsByCourse(knownRuns, now);
+  const courses = courseSnap.docs.map((d) => normalizeCourse(d.id, d.data()));
 
-  return courseSnap.docs
-    .map((d) => normalizeCourse(d.id, d.data()))
-    .map((course) => ({
-      course,
-      featuredRun: byCourse.get(course.id) ?? null,
-      liveRound: roundsByCourse.get(course.id) ?? null,
-    }))
+  const [roundsByCourse, pages] = await Promise.all([
+    listLiveRoundsByCourse(knownRuns, now),
+    // ONE batch read for every card's artwork. The page id IS the course id,
+    // so this needs no query and no index; a course with no authored page
+    // comes back missing and falls through to the id-seeded default.
+    courses.length > 0
+      ? db.getAll(
+          ...courses.map((c) => db.collection(COURSE_PAGES_COLLECTION).doc(c.id)),
+        )
+      : Promise.resolve([]),
+  ]);
+
+  const visuals = new Map<string, PublicCoursePage>();
+  for (const doc of pages) {
+    if (!doc.exists) continue;
+    visuals.set(doc.id, toPublicCoursePage(normalizeCoursePage(doc.id, doc.data() ?? {})));
+  }
+
+  return courses
+    .map((course) => {
+      const page = visuals.get(course.id) ?? null;
+      return {
+        course,
+        featuredRun: byCourse.get(course.id) ?? null,
+        liveRound: roundsByCourse.get(course.id) ?? null,
+        visual: {
+          seed: page?.visualSeed || course.id,
+          coverImageUrl: page?.coverImageUrl ?? null,
+          coverAlt: page?.coverAlt ?? "",
+        },
+      };
+    })
     .sort(compareCatalogueEntries);
 }
 
