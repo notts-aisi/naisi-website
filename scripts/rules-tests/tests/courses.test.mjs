@@ -1736,7 +1736,7 @@ describe("courseGroups: V3 server-owned fields and the capacity ceiling", () => 
     // The route's job is to count these groups and refuse the flip with
     // `groupCapacityError(null, "open")`'s sentence. If this test ever starts
     // FAILING (the edit succeeds), the rule stopped requiring a capacity and
-    // the route's 409 became theatre — fix the rule, not this test.
+    // the route's 409 became theatre, fix the rule, not this test.
     await seedCast();
     await seedRun("run-flip", { enrolMode: "admissions" });
     await seed(async (db) => {
