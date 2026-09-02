@@ -383,18 +383,26 @@ export default function CoursePageEditor({ courseId }: Props) {
           overwrite,
         });
         setReceipt(result);
-        // The route has ALREADY stored these themes. Folding them into the
-        // draft keeps the form honest about what is on the document; the rest
-        // of the form stays unsaved, which the dirty banner keeps saying.
-        setDraft({
-          ...page,
-          themes: result.weeklyThemes.map((t) => ({
-            key: rowKey(),
-            weekNumber: String(t.weekNumber),
-            title: t.title,
-            blurb: t.blurb,
-          })),
-        });
+        const themes = result.weeklyThemes.map((t) => ({
+          key: rowKey(),
+          weekNumber: String(t.weekNumber),
+          title: t.title,
+          blurb: t.blurb,
+        }));
+        // The route has ALREADY stored these themes, so they move on BOTH
+        // sides at once: into the draft, so the form shows what is on the
+        // document, and into the pinned baseline, so the dirty check stops
+        // counting them.
+        //
+        // The baseline half is not cosmetic. Once any save has pinned a
+        // baseline, `base` no longer follows the refetched document, so
+        // without this the generated rows would read as unsaved for the rest
+        // of the session: a banner that never clears, a navigation warning on
+        // every link, and an author pressing Save to fix something that was
+        // already saved. The rest of the form is untouched, so anything else
+        // still unsaved stays unsaved, which is what the banner is for.
+        setDraft({ ...page, themes });
+        setSaved({ ...base, themes });
         reload();
       },
       { savingMessage: "Reading the curriculum…", successMessage: "Themes generated" },
@@ -446,16 +454,41 @@ export default function CoursePageEditor({ courseId }: Props) {
     },
   ];
 
+  /**
+   * The sample-week choices: one per theme row, plus whatever is already
+   * stored even when no theme row claims that week.
+   *
+   * That last part is the whole point. `sampleWeekNumber` is authored against
+   * a curriculum that is still being written and the themes are regenerated
+   * from templates and runs, so week 6 routinely stops having a row. A select
+   * whose value is not among its options renders as if nothing were selected,
+   * so the author would see "No sample week", believe that, and clear a
+   * setting the public page is still honouring: the page falls back to the
+   * first published week only when the named one is not PUBLISHED, not when
+   * its theme row is gone.
+   *
+   * So the stored week is appended as its own option, in week order, labelled
+   * so the mismatch is visible rather than silently correct.
+   */
   const sampleOptions = useMemo<ResponsiveSelectOption[]>(() => {
     const weeks = page.themes
       .map((t) => Number(t.weekNumber))
-      .filter((n) => Number.isInteger(n) && n >= 1)
-      .sort((a, b) => a - b);
+      .filter((n) => Number.isInteger(n) && n >= 1);
+    const stored = Number(page.sampleWeekNumber);
+    const orphan =
+      page.sampleWeekNumber !== ""
+      && Number.isInteger(stored)
+      && stored >= 1
+      && !weeks.includes(stored);
+    const rows = [
+      ...weeks.map((n) => ({ n, label: `Week ${n}` })),
+      ...(orphan ? [{ n: stored, label: `Week ${stored} (no theme row)` }] : []),
+    ].sort((a, b) => a.n - b.n);
     return [
       { value: "", label: "No sample week" },
-      ...weeks.map((n) => ({ value: String(n), label: `Week ${n}` })),
+      ...rows.map((r) => ({ value: String(r.n), label: r.label })),
     ];
-  }, [page.themes]);
+  }, [page.themes, page.sampleWeekNumber]);
 
   if (loading || coursesLoading) {
     return (
