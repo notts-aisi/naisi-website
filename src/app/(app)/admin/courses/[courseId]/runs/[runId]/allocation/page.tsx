@@ -4,16 +4,19 @@ import AllocationBoard from "@/features/courses/AllocationBoard";
 /**
  * The admin mount of the group-allocation board.
  *
- * Thin on purpose: `(app)/admin/layout.tsx` already gates on `role === "admin"`
- * server-side, so this page owes nothing but the breadcrumb and the board.
+ * Thin on purpose: `courses/layout.tsx` gates the tree server-side with
+ * `requireCourseAuthorPage()` (admin, `draftCourse` or `approveCourse`), so
+ * this page owes nothing but the breadcrumb and the board.
  *
  * TRACK LEADS: the allocation ROUTES are gated to `admin ∪ run.trackLeadUids`,
- * which is wider than this page. That is not an oversight — a non-admin track
- * lead cannot reach `/admin/**` at all, and giving them a second admin-shaped
- * URL would mean two places where the gate has to be got right. Their mount is
- * the learn-side one in P7 (`/learn/[runId]/allocation`), rendering this same
- * component against the same routes; the route gate is the boundary either way,
- * and this page is only the admin's door to it.
+ * which OVERLAPS this page's gate rather than nesting inside it. A track lead
+ * who holds neither course permission cannot open this URL, and a drafter who
+ * is not a track lead opens it and gets 403s from the board's own calls. That
+ * is deliberate: the ROUTE is the boundary, this page is only one door to it,
+ * and the track lead's door is the learn-side mount in P7
+ * (`/learn/[runId]/allocation`), which renders this same component against
+ * these same routes. RunEditor hides the link for a caller the routes will
+ * refuse, so the dead end is not offered in the first place.
  */
 
 export default async function AdminRunAllocationPage({

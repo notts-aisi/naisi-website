@@ -14,6 +14,7 @@ import {
 } from "@/lib/firestore/courseExercises";
 import { normalizeCourseGroup } from "@/lib/firestore/courseGroups";
 import type { ExerciseResponseWire } from "@/app/api/courses/runs/[runId]/exercises/[exerciseId]/submit/route";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * A facilitator recording a verdict on one exercise response: a review status
@@ -111,6 +112,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ responseId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { responseId } = await ctx.params;
   if (!isAddressableId(responseId)) {
     return NextResponse.json({ error: "Response not found" }, { status: 404 });

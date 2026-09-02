@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentCollaborator, getCurrentUser } from "@/lib/firebase/session";
-import { getImpersonator } from "@/lib/firebase/impersonation";
+import { getImpersonator, markerIsLive } from "@/lib/firebase/impersonation";
 import AppShell from "@/layout/AppShell";
 import { SessionSanityGuard } from "@/auth/SessionSanityGuard";
 import { LastRouteTracker } from "@/features/pwa/LastRouteTracker";
@@ -23,10 +23,12 @@ export default async function AuthedLayout({ children }: { children: React.React
   // View-as banner. Only render when the impersonator marker is BOTH present
   // AND really annotates a borrowed session: if the marker's actorUid matches
   // the live user.uid the cookie is stale (admin re-signed in as themselves
-  // without the marker being cleared) and the banner would lie.
+  // without the marker being cleared) and the banner would lie. `markerIsLive`
+  // is that comparison, shared with the admin-tree gate and the write guard so
+  // all three agree on what counts as a session.
   const marker = await getImpersonator();
   const impersonation =
-    marker && marker.actorUid !== user.uid
+    markerIsLive(marker, user.uid)
       ? {
           actorName: marker.actorName,
           targetName: user.displayName ?? user.email ?? user.uid,

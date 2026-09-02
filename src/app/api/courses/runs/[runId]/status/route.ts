@@ -10,6 +10,7 @@ import {
   type CourseRunStatus,
 } from "@/lib/firestore/courses";
 import { canTransition } from "@/lib/courses/runStatus";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * Move a run along its lifecycle. Gated to admins and `approveCourse`
@@ -78,6 +79,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ runId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId } = await ctx.params;
 
   const actor = await getCurrentUser();

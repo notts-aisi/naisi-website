@@ -14,6 +14,7 @@ import {
 } from "@/lib/email/courseFacilitatorEmails";
 import { courseRunChannel } from "@/lib/firestore/courses";
 import { signToken } from "@/lib/signedTokens";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * EMAIL THE COHORT — the announcement lane. One message to everyone on a run:
@@ -86,6 +87,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ runId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId } = await ctx.params;
 
   // AUTHORIZATION BEFORE EXISTENCE, and before the body is parsed.

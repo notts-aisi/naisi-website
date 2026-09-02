@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/firebase/session";
 import { normalizeCourseGroup } from "@/lib/firestore/courseGroups";
 import { normalizeCourseWeek } from "@/lib/firestore/courses";
 import { templateWeekFields } from "@/lib/firestore/courseTemplates";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * FORK ONE WEEK into this group — the copy-on-write moment of v2 decision 4.
@@ -70,6 +71,9 @@ export async function POST(
   _req: Request,
   ctx: { params: Promise<{ groupId: string; weekId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { groupId, weekId } = await ctx.params;
   if (!isAddressableId(groupId) || !WEEK_ID.test(weekId)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

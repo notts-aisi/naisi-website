@@ -33,9 +33,11 @@ src/
 │   │   ├── committee/tasks/                 # committee task board
 │   │   ├── credentials/                     # placeholder page — feature not built
 │   │   ├── newsletter/  events/manage/      # drafter / approver tools
-│   │   └── admin/                           # Approvals, Members, Projects, Newsletter,
-│   │                                        #   Subscriptions, Email designs, Deliverability,
-│   │                                        #   Task templates, Danger zone
+│   │   └── admin/                           # two gated trees, see "Admin area gating":
+│   │       ├── (admin-only)/                #   full admins: Approvals, Members, Projects,
+│   │       │                                #   Newsletter, Subscriptions, Email designs,
+│   │       │                                #   Deliverability, Task templates, Danger zone
+│   │       └── courses/                     #   admins + draftCourse/approveCourse holders
 │   ├── verify-email/[tokenId]/       # uni-email magic-link landing
 │   └── api/                          # session, admin/*, events/*, tasks/*, newsletter/*,
 │                                     #   subscriptions/*, verify-email/*, webhooks/*, …
@@ -208,10 +210,39 @@ committee role clears `suRecognised`.
 ### `permissions` map (orthogonal to role, shipped)
 
 `users/{uid}.permissions` is an admin-granted map, independent of governance
-role: `draftNewsletter`, `approveNewsletter`, `draftEvent`, `approveEvent`.
-Admins implicitly hold all four. These gate the Newsletter and Events drafter
-tools and the matching Firestore rules, so a plain `member` can be granted
-`draftEvent` without being promoted to committee.
+role: `draftNewsletter`, `approveNewsletter`, `draftEvent`, `approveEvent`,
+`draftCourse`, `approveCourse`. Admins implicitly hold all six. These gate the
+Newsletter, Events and Course drafter tools and the matching Firestore rules,
+so a plain `member` can be granted `draftEvent` without being promoted to
+committee.
+
+### Admin area gating (two trees)
+
+`/admin` is no longer one role check. `(app)/admin/layout.tsx` admits an admin
+OR a holder of `draftCourse` / `approveCourse`, because those grants are
+useless if their holder is bounced off `/admin/courses`. The real per-page
+enforcement therefore sits one level down, in two route groups whose layouts
+call the helpers in `src/lib/firebase/pageGates.ts`:
+
+- `(app)/admin/(admin-only)/**` calls `requireAdminPage()`. Everything that is
+  not course authoring lives here (Approvals, Members, Collaborators,
+  Registrations, Projects, Newsletter, Subscriptions, Email designs,
+  Deliverability, Task templates, Site status, Danger zone). The group name is
+  in brackets, so it contributes nothing to the URLs.
+- `(app)/admin/courses/**` calls `requireCourseAuthorPage()`, the same
+  predicate the front door uses. Deliberately repeated: a subtree whose only
+  protection is a level above it loses that protection silently the next time
+  somebody widens that level.
+
+`AdminTabs` takes `isAdmin` from the layout and renders only the sections the
+caller may use, so a course drafter sees Courses and nothing else. A new admin
+page dropped straight into `src/app/(app)/admin/` has no role gate of its own;
+`tests/no-admin-gating.test.mjs` fails on exactly that.
+
+The whole tree is also closed while an admin is in a view-as session: the
+layout renders a notice instead of its children, because the course editors
+below it save client-direct and would record the writes as the member. See
+Admin "view as" below.
 
 ### `tracks` (admin tags, shipped)
 
@@ -251,13 +282,48 @@ Trust + safety properties:
   `marker.actorUid === user.uid` (admin re-signed in as themselves
   without the marker being cleared) so the banner can't lie.
 
+- High-trust writes are refused outright, and the admin tree is closed.
+  Two mechanisms, covering two different kinds of write:
+  - `assertNotImpersonating()` in `src/lib/firebase/impersonation.ts`
+    returns a 403 with honest copy while a LIVE marker is set, and every
+    mutating route handler under `src/app/api/courses/**` calls it
+    first. `tests/impersonation-guard.test.mjs` lists those routes
+    literally, checks each handler calls the guard at its top (in every
+    export form Next accepts, not just `export async function`), and
+    fails when a new mutating route appears in the tree without the
+    call. The list is the place to add the admissions, membership and
+    export routes as those land.
+  - `(app)/admin/layout.tsx` renders a notice instead of its children
+    while the marker is live. The course editors under `/admin/courses`
+    write to Firestore **client-direct** (`courseMutations.ts` from
+    CourseEditor, RunEditor, WeekEditor, GroupEditor), so no route
+    handler exists there for the guard to sit in, and a `draftCourse`
+    holder can now reach that tree. A notice rather than a redirect: a
+    redirect would tell the admin the member cannot reach `/admin` at
+    all, which is the wrong answer to the question view-as exists to ask.
+  - NOT covered: client-direct writes from any other surface. Those
+    answer to `firestore.rules`, which sees the target. A new surface
+    that writes client-direct needs its page tree closed the same way,
+    or its write routed.
+  - A marker whose `actorUid` equals the current session's uid is stale,
+    not a session (the admin is signed in as themselves again). The
+    banner, the admin gate and the write guard all decide that with the
+    same `markerIsLive()` helper, and the guard clears the cookie the
+    way `POST /api/admin/impersonate` does.
+
 Operational caveats (by design with full impersonation):
 - Writes during a view-as session are recorded by Firestore as the
   target performing them (`createdAt`/`updatedAt`/`actorUid` fields look
   identical to a real target write). The banner copy warns; the
   `impersonations` log records the start/end window for after-the-fact
   correlation, but per-write attribution to "admin acting as X" is not
-  reconstructable.
+  reconstructable. That is why the guard above refuses rather than
+  annotates.
+- The guard and the admin gate both read an httpOnly cookie, so no page
+  script can remove it, but an admin with devtools open can delete it
+  from their own browser and write as the target anyway. They enforce
+  intent against accidents, not against a determined admin, who in any
+  case holds the rights to make those writes under their own name.
 - Exit requires re-authentication: `signInWithCustomToken` on start
   replaced the admin's Firebase Auth client state with the target's,
   and Firebase Auth client SDK has no way to "restore" the previous

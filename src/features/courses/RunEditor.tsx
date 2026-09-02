@@ -12,6 +12,7 @@ import { Field, Input } from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import Switch from "@/components/ui/Switch";
+import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
 import { AdminLoadingBar } from "@/features/admin/adminList";
 import { useMembers } from "@/features/admin/useMembers";
@@ -194,6 +195,10 @@ function useCourseRun(runId: string) {
 
 export default function RunEditor({ courseId, runId }: Props) {
   const { toast, run: runAction, dismiss } = useActionToast();
+  // Who is looking. The admissions and allocation ROUTES answer to a narrower
+  // set than this page's gate does (see the two links below), so the editor
+  // needs the caller's identity to avoid offering a door that answers 403.
+  const { user: authUser, role } = useAuth();
   const { run, loading, notFound, error, reload } = useCourseRun(runId);
   const { users: members, loading: membersLoading } = useMembers();
   const {
@@ -272,6 +277,21 @@ export default function RunEditor({ courseId, runId }: Props) {
       setFormError(null);
     }
   }
+
+  // Staff surfaces this caller may actually open. The applications route is
+  // admins, the run's admissionsReviewerUids and its trackLeadUids; allocation
+  // is admins and trackLeadUids only, because reviewers decide WHO gets in and
+  // track leads decide WHERE they sit. This page is gated one level wider
+  // (admin, draftCourse or approveCourse), so a drafter with no role on this
+  // run would otherwise be handed two buttons that 403.
+  const isAdmin = role === "admin";
+  const myUid = authUser?.uid ?? null;
+  const onRun = (uids: string[]) => myUid !== null && uids.includes(myUid);
+  const canReview =
+    isAdmin
+    || (run !== null
+      && (onRun(run.admissionsReviewerUids) || onRun(run.trackLeadUids)));
+  const canAllocate = isAdmin || (run !== null && onRun(run.trackLeadUids));
 
   if (loading) return <AdminLoadingBar label="Loading run…" />;
 
@@ -637,29 +657,43 @@ export default function RunEditor({ courseId, runId }: Props) {
           {/* Admissions is its own surface, not a panel on this page: reviewing
               never edits the run, and reviewers who aren't admins reach the
               queue from /learn instead. The pending figure comes from the run
-              doc already loaded above — no second read for a link label. */}
-          <Link
-            href={`/admin/courses/${encodeURIComponent(courseId)}/runs/${encodeURIComponent(runId)}/applications`}
-          >
-            <Button type="button" variant="secondary">
-              {counts.pending > 0
-                ? `Review applications (${counts.pending} pending) →`
-                : "Review applications →"}
-            </Button>
-          </Link>
+              doc already loaded above, no second read for a link label. Shown
+              only to callers the applications route admits. */}
+          {canReview && (
+            <Link
+              href={`/admin/courses/${encodeURIComponent(courseId)}/runs/${encodeURIComponent(runId)}/applications`}
+            >
+              <Button type="button" variant="secondary">
+                {counts.pending > 0
+                  ? `Review applications (${counts.pending} pending) →`
+                  : "Review applications →"}
+              </Button>
+            </Link>
+          )}
           {/* Allocation is the step after review: it only ever places ACCEPTED
-              applicants, so the accepted figure — not the pending one — is what
+              applicants, so the accepted figure, not the pending one, is what
               tells you whether there is anything to do there. Same server-owned
-              counters, so still no extra read. */}
-          <Link
-            href={`/admin/courses/${encodeURIComponent(courseId)}/runs/${encodeURIComponent(runId)}/allocation`}
-          >
-            <Button type="button" variant="secondary">
-              {counts.accepted > 0
-                ? `Allocate places (${counts.accepted} accepted) →`
-                : "Allocate places →"}
-            </Button>
-          </Link>
+              counters, so still no extra read. Track leads and admins only. */}
+          {canAllocate && (
+            <Link
+              href={`/admin/courses/${encodeURIComponent(courseId)}/runs/${encodeURIComponent(runId)}/allocation`}
+            >
+              <Button type="button" variant="secondary">
+                {counts.accepted > 0
+                  ? `Allocate places (${counts.accepted} accepted) →`
+                  : "Allocate places →"}
+              </Button>
+            </Link>
+          )}
+          {/* Say why the buttons are missing rather than leaving a gap: the
+              reader holds a course permission, so "no link" reads as a bug
+              unless the run's staffing is named as the reason. */}
+          {!canReview && !canAllocate && (
+            <span className={styles.muted}>
+              Admissions and allocation are open to this run&apos;s reviewers and
+              track leads. Only an admin can set those roles.
+            </span>
+          )}
           {/* The look-back surface. It sits with the other "where to go next"
               links rather than beside the curriculum controls: it is read while
               drafting the NEXT run's weeks, and the ratings behind it belong to

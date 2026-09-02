@@ -23,6 +23,7 @@ import {
   type CourseRunStatus,
 } from "@/lib/firestore/courses";
 import { TASK_FIELD_LIMITS } from "@/lib/firestore/tasks";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * Lazy task mirroring — projecting the cohort's CURRENT week into the caller's
@@ -227,6 +228,9 @@ export async function POST(
   _req: Request,
   ctx: { params: Promise<{ runId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId } = await ctx.params;
   // 403 rather than 404 even for a malformed id: every refusal on this route is
   // the same refusal (see WHO MAY CALL).

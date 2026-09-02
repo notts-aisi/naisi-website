@@ -27,6 +27,7 @@ import {
   isSurfacePaused,
   normaliseSiteNotice,
 } from "@/lib/siteNotice";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * Course run application write API. ALL `courseApplications` writes go through
@@ -415,6 +416,9 @@ async function validatePayload(
 // ---------------------------------------------------------------------------
 
 export async function POST(req: Request, ctx: { params: Promise<{ runId: string }> }) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId } = await ctx.params;
 
   const caller = await requireApplicant();
@@ -561,6 +565,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
 // ---------------------------------------------------------------------------
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ runId: string }> }) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId } = await ctx.params;
 
   const caller = await requireApplicant();
@@ -654,6 +661,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ runId: string
 // ---------------------------------------------------------------------------
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ runId: string }> }) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { runId } = await ctx.params;
 
   // Note: no `rejected` check. Turning away an account from WITHDRAWING its own

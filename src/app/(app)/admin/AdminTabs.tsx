@@ -9,13 +9,25 @@ import { useCollaboratorCount } from "@/features/admin/useCollaboratorCount";
 import { useCourseApplicationCount } from "@/features/courses/useCourseApplicationCount";
 import styles from "./AdminTabs.module.css";
 
-const TABS = [
+type AdminTab = {
+  label: string;
+  href: string;
+  match: (p: string) => boolean;
+  /** True when a non-admin holding `draftCourse` or `approveCourse` may use
+   *  this section. Everything else needs a full admin, and the pages
+   *  themselves say so: the `(admin-only)` route group's layout runs
+   *  `requireAdminPage()`, so a tab hidden here is also a page that redirects.
+   *  This flag only spares a course author twelve links they cannot follow. */
+  courseAuthor?: true;
+};
+
+const TABS: AdminTab[] = [
   { label: "Approvals", href: "/admin", match: (p: string) => p === "/admin" },
   { label: "Members", href: "/admin/members", match: (p: string) => p.startsWith("/admin/members") },
   { label: "Collaborators", href: "/admin/collaborators", match: (p: string) => p.startsWith("/admin/collaborators") },
   { label: "Registrations", href: "/admin/registrations", match: (p: string) => p.startsWith("/admin/registrations") },
   { label: "Projects", href: "/admin/projects", match: (p: string) => p.startsWith("/admin/projects") },
-  { label: "Courses", href: "/admin/courses", match: (p: string) => p.startsWith("/admin/courses") },
+  { label: "Courses", href: "/admin/courses", match: (p: string) => p.startsWith("/admin/courses"), courseAuthor: true },
   { label: "Newsletter", href: "/admin/newsletter", match: (p: string) => p.startsWith("/admin/newsletter") },
   { label: "Subscriptions", href: "/admin/subscriptions", match: (p: string) => p.startsWith("/admin/subscriptions") },
   { label: "Email designs", href: "/admin/email-designs", match: (p: string) => p.startsWith("/admin/email-designs") },
@@ -23,12 +35,22 @@ const TABS = [
   { label: "Task templates", href: "/admin/task-templates", match: (p: string) => p.startsWith("/admin/task-templates") },
   { label: "Site status", href: "/admin/site-status", match: (p: string) => p.startsWith("/admin/site-status") },
   // TEMP — fire-once data-wipe controls. Remove this entry along with
-  // `src/app/(app)/admin/danger-zone/` and `src/app/api/admin/nuke-tasks/`
-  // once both environments have been reset.
+  // `src/app/(app)/admin/(admin-only)/danger-zone/` and
+  // `src/app/api/admin/nuke-tasks/` once both environments have been reset.
   { label: "Danger zone", href: "/admin/danger-zone", match: (p: string) => p.startsWith("/admin/danger-zone") },
 ];
 
-export default function AdminTabs() {
+/**
+ * The tab strip for the admin area.
+ *
+ * `isAdmin` comes from the server layout, which has already read the session:
+ * a full admin gets every section, a course drafter or approver gets only the
+ * sections marked `courseAuthor`. Passing it down rather than reading
+ * `useAuth()` here keeps the strip in step with the gate that actually decides
+ * (`requireAdminPage()` / `requireCourseAuthorPage()`), instead of a second
+ * client-side opinion that could drift from it.
+ */
+export default function AdminTabs({ isAdmin }: { isAdmin: boolean }) {
   const pathname = usePathname();
   const pendingCount = usePendingCount();
   const collaboratorCount = useCollaboratorCount();
@@ -36,6 +58,11 @@ export default function AdminTabs() {
   const activeRef = useRef<HTMLAnchorElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
+
+  const tabs = useMemo(
+    () => (isAdmin ? TABS : TABS.filter((tab) => tab.courseAuthor)),
+    [isAdmin],
+  );
 
   // `?? 0` for courses: that hook reports an unknown count as null (see its
   // doc comment), and a badge that hasn't been measured renders as no badge.
@@ -64,19 +91,19 @@ export default function AdminTabs() {
     if (query) setQuery("");
   }
 
-  const activeTab = TABS.find((t) => t.match(pathname)) ?? TABS[0];
-  const activeBadge = badgeFor(activeTab.href);
+  const activeTab = tabs.find((t) => t.match(pathname)) ?? tabs[0];
+  const activeBadge = activeTab ? badgeFor(activeTab.href) : 0;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return q ? TABS.filter((t) => t.label.toLowerCase().includes(q)) : TABS;
-  }, [query]);
+    return q ? tabs.filter((t) => t.label.toLowerCase().includes(q)) : tabs;
+  }, [query, tabs]);
 
   return (
     <>
       {/* Desktop / tablet: the horizontal strip (scrolls internally — see CSS). */}
       <nav className={styles.tabs} aria-label="Admin sections">
-        {TABS.map((tab) => {
+        {tabs.map((tab) => {
           const active = tab.match(pathname);
           const badgeCount = badgeFor(tab.href);
           return (
@@ -104,7 +131,7 @@ export default function AdminTabs() {
       >
         <span className={styles.mobileTriggerLabel}>
           <span className={styles.mobileTriggerHint}>Admin section</span>
-          <span className={styles.mobileTriggerValue}>{activeTab.label}</span>
+          <span className={styles.mobileTriggerValue}>{activeTab?.label ?? "Admin"}</span>
         </span>
         {activeBadge > 0 && <span className={styles.badge}>{activeBadge}</span>}
         <svg className={styles.mobileChevron} viewBox="0 0 12 8" aria-hidden="true">

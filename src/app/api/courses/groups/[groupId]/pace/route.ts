@@ -12,6 +12,7 @@ import {
   normalizeCourseRun,
   sanitizeWeekPlan,
 } from "@/lib/firestore/courses";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * RE-PACE ONE GROUP — the calendar half of v2 decision 4's copy-on-write.
@@ -206,6 +207,9 @@ export async function PATCH(
   req: Request,
   ctx: { params: Promise<{ groupId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { groupId } = await ctx.params;
   if (!isAddressableId(groupId)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

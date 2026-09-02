@@ -11,6 +11,7 @@ import { normalizeCourseEnrolment } from "@/lib/firestore/courseEnrolments";
 import { normalizeCourseGroup } from "@/lib/firestore/courseGroups";
 import { normalizeCourseRun } from "@/lib/firestore/courses";
 import { filterSuppressed } from "@/lib/firestore/suppression";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * EMAIL MY GROUP — the operational lane. "We're in B52 this week", "bring the
@@ -166,6 +167,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ groupId: string }> },
 ) {
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const { groupId } = await ctx.params;
   if (!isAddressableId(groupId)) {
     return NextResponse.json({ error: "Group not found" }, { status: 404 });
