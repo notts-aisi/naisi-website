@@ -104,12 +104,19 @@ export function conductChip(flag: MemberConductFlagDoc | null): { flagged: boole
  * destination is a JSON route payload; a `Date` would arrive at the browser as
  * a string anyway, and the conversion is better done once here than guessed at
  * by each reader.
+ *
+ * `byName` is part of the admin view rather than a key a caller bolts on
+ * beside it. One decision, one object: a route that spreads this projection
+ * and adds a sibling key has quietly moved the decision back out to the call
+ * site, and the next payload to copy that shape may be a reviewer's.
  */
 export type ConductFlagChip = { flagged: boolean };
 
 export type ConductFlagAdminView = ConductFlagChip & {
   reason: string;
   flaggedAt: string | null;
+  /** Display name of the admin who set the flag, never an email. */
+  byName: string;
 };
 
 export function conductFlagForQueue(
@@ -134,5 +141,6 @@ export function conductFlagForQueue(
     ...chip,
     reason: flag?.reason ?? "",
     flaggedAt: flag?.at ? flag.at.toISOString() : null,
+    byName: flag?.byName ?? "",
   };
 }

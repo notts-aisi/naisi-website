@@ -155,19 +155,22 @@ test("an unflagged member reads the same shape as a flagged one", () => {
   assert.deepEqual(Object.keys(none), ["flagged"]);
 });
 
-test("an admin viewer gets the reason and the date, and nothing more", () => {
+test("an admin viewer gets the reason, the date and the author, nothing more", () => {
   const view = conductFlagForQueue(FLAG, true);
-  assert.deepEqual(Object.keys(view).sort(), ["flagged", "flaggedAt", "reason"]);
+  // `byName` is part of the projection, not a key a route bolts on beside it:
+  // one function decides what an admin sees, so there is one place to read.
+  assert.deepEqual(Object.keys(view).sort(), ["byName", "flagged", "flaggedAt", "reason"]);
   assert.equal(view.flagged, true);
   assert.equal(view.reason, FLAG.reason);
   assert.equal(view.flaggedAt, "2026-10-12T09:30:00.000Z");
+  assert.equal(view.byName, "Admin One");
 });
 
 test("an admin viewing an unflagged member gets empties, not a missing key", () => {
   // The admin shape is what the Members row renders against, so it is stable
   // whether or not there is a flag; only the reviewer shape narrows.
   const view = conductFlagForQueue(null, true);
-  assert.deepEqual(view, { flagged: false, reason: "", flaggedAt: null });
+  assert.deepEqual(view, { flagged: false, reason: "", flaggedAt: null, byName: "" });
 });
 
 test("the reason survives the projection exactly, capped only by the normaliser", () => {
@@ -223,7 +226,57 @@ test("MODEL: clearing DELETES the row rather than writing flagged: false", () =>
   // so a kept row would only preserve the allegation with nothing pointing at
   // it, and the account-deletion sweep would have a second shape to handle.
   assert.match(ROUTE_CODE, /if \(!body\.flagged\) \{[\s\S]*?ref\.delete\(\)/);
-  assert.doesNotMatch(ROUTE_CODE, /flagged: false/);
+  // Scoped to the WRITE, not to the whole file: the route may say the words
+  // "flagged: false" in a comparison or an error string without writing one,
+  // and a pin that forbids a literal anywhere is a pin the next edit trips
+  // over for no reason.
+  const set = /ref\.set\(\{([\s\S]*?)\}\);/.exec(ROUTE_CODE);
+  assert.ok(set, "the flag write is no longer a single set()");
+  assert.doesNotMatch(set[1], /flagged:\s*false/);
+});
+
+test("MODEL: re-flagging an already-flagged member rewrites the reason only", () => {
+  // Correcting a typo must not re-date the record or reassign it to whoever
+  // fixed the wording, so the second write is an update of `reason` alone.
+  const post = ROUTE_CODE.slice(ROUTE_CODE.indexOf("export async function POST"));
+  assert.match(post, /const alreadyFlagged =/);
+  assert.match(post, /if \(alreadyFlagged\) \{\s*await ref\.update\(/);
+  const update = /ref\.update\(\{([\s\S]*?)\}\)/.exec(post);
+  assert.ok(update, "the correction path no longer goes through update()");
+  for (const kept of ["at:", "byUid:", "byName:"]) {
+    assert.ok(
+      !update[1].includes(kept),
+      `the correction write touches ${kept}, which belongs to the original flag`,
+    );
+  }
+});
+
+test("MODEL: an admin cannot flag their own account", () => {
+  // Another admin can still flag this one: the refusal is about the actor
+  // being the subject, not about the subject's role.
+  const post = ROUTE_CODE.slice(ROUTE_CODE.indexOf("export async function POST"));
+  const at = post.indexOf("uid === actor.uid");
+  assert.ok(at > -1, "POST no longer refuses a self-flag");
+  assert.match(post.slice(at, at + 300), /status: 400/);
+  assert.ok(at < post.indexOf("ref.set("), "the self check runs after the write");
+});
+
+test("MODEL: an empty display name still names somebody in the record", () => {
+  // `??` would keep an empty string, and the Members row would read "Set by "
+  // with nothing after it.
+  assert.match(ROUTE_CODE, /byName: actor\.displayName \|\| "An admin"/);
+});
+
+test("MODEL: the reason keeps its newlines, because MemberText renders pre-wrap", () => {
+  const clean = /function cleanReason\([\s\S]*?\n\}/.exec(ROUTE_CODE);
+  assert.ok(clean, "cleanReason is no longer a function in this file");
+  // The control-character sweep must SKIP \u000a. A class that spans it turns
+  // an admin's two-line reason into one run-on line the moment it is saved,
+  // and the renderer on the other side is `pre-wrap`.
+  assert.doesNotMatch(clean[0], /\\u0000-\\u001f/);
+  assert.match(clean[0], /\\u0000-\\u0009\\u000b-\\u001f/);
+  // And a paste of blank lines cannot stretch the Members row.
+  assert.match(clean[0], /\\n\{3,\}/);
 });
 
 test("MODEL: a flag without a reason is refused, and the cap is the shared one", () => {
@@ -250,4 +303,8 @@ test("MODEL: neither handler answers with the reviewer projection", () => {
   // `false` here would mean an admin control that cannot show its own state.
   assert.match(ROUTE_CODE, /conductFlagForQueue\(flag, true\)/);
   assert.doesNotMatch(ROUTE_CODE, /conductFlagForQueue\([^)]*, false\)/);
+  // And neither handler spreads the projection to add a sibling key. The
+  // moment a route does that, "what may this viewer see" is decided at the
+  // call site again, and the next route to copy the shape may be a reviewer's.
+  assert.doesNotMatch(ROUTE_CODE, /\.\.\.conductFlagForQueue/);
 });
