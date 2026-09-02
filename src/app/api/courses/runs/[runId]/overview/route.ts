@@ -203,7 +203,27 @@ export type OverviewPayload = {
     groupId: string | null;
     joinedWeekNumber: number;
   } | null;
+  /**
+   * The card the run home has always drawn: the caller's own placement, or the
+   * single group they facilitate. Kept for compatibility, and still the group
+   * every OTHER field on this payload is resolved through (the calendar, the
+   * current week, the week forks).
+   */
   group: OverviewGroup | null;
+  /**
+   * EVERY group this caller has staff or member standing in: their placement
+   * first, then each group they facilitate, deduped by id.
+   *
+   * `group` alone was the bug. A facilitator holding two groups had no
+   * "current" one, so the single field was null and the run home drew nothing
+   * — no roster, no register, no review queue, no group email, for the person
+   * who most needs all four. Running two sessions is ordinary here, so the
+   * payload carries the list and the page draws a card each.
+   *
+   * Never empty when `group` is set, and `group`, when set, is its first
+   * entry.
+   */
+  groups: OverviewGroup[];
   access: {
     isAdmin: boolean;
     /** An active or completed LEARNER enrolment — `enrolment.status` distinguishes. */
@@ -347,10 +367,11 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // The card is the caller's OWN group: their placement if they have one,
-  // otherwise the single group they facilitate. Facilitating two groups yields
-  // no card — there is no "current" one to show, and the roster route is the
-  // per-group surface.
+  // The caller's OWN group: their placement if they have one, otherwise the
+  // single group they facilitate. Facilitating two groups leaves this null
+  // deliberately — there is no "current" one to resolve a calendar or a week
+  // fork through, so those stay run-level. The CARDS are a separate question,
+  // answered by `groupCards` below, which does cover that case.
   //
   // RESOLVED BEFORE THE CALENDAR, and that ordering is now load-bearing: the
   // group is the first half of every resolution below it (V2-3).
@@ -375,17 +396,32 @@ export async function GET(
       ? memberCurrentWeek(run, ownGroup)
       : null;
 
-  // Stated as its own predicate rather than left implicit: every future edit to
-  // how `ownGroup` is chosen has to answer this question again.
-  const canSeeMeetingUrl =
-    isAdmin ||
-    Boolean(
-      ownGroup &&
-        ((liveEnrolment?.status === "active" && liveEnrolment.groupId === ownGroup.id) ||
-          ownGroup.facilitatorUids.includes(actor.uid)),
-    );
+  /**
+   * Every group that earns a card, in the order they are drawn: the caller's
+   * own placement first (so a learner who also facilitates still leads with
+   * their own room), then each group they facilitate, deduped by id.
+   */
+  const groupCards: CourseGroupDoc[] = [];
+  const seenGroupIds = new Set<string>();
+  for (const candidate of [ownGroup, ...facilitates]) {
+    if (!candidate || seenGroupIds.has(candidate.id)) continue;
+    seenGroupIds.add(candidate.id);
+    groupCards.push(candidate);
+  }
 
-  const facilitatorUids = ownGroup?.facilitatorUids ?? [];
+  // Per group, not once: an admin sees every link, a member sees their own
+  // room's, and a facilitator sees the link for each room they hold. The
+  // answer for `ownGroup` is byte-identical to what it was before.
+  const canSeeMeetingUrlFor = (group: CourseGroupDoc): boolean =>
+    isAdmin ||
+    (liveEnrolment?.status === "active" && liveEnrolment.groupId === group.id) ||
+    group.facilitatorUids.includes(actor.uid);
+
+  // The union across every card, deduped, so two groups sharing a facilitator
+  // cost one user read rather than two.
+  const facilitatorUids = [
+    ...new Set(groupCards.flatMap((group) => group.facilitatorUids)),
+  ];
   // One round trip for both: the facilitator names and the caller's own week
   // index, canonical with their group's forks laid over it by doc id. The fork
   // read is scoped to the ONE group this caller belongs to (never the run's
@@ -423,30 +459,35 @@ export async function GET(
     })
     .sort((a, b) => a.weekNumber - b.weekNumber || a.id.localeCompare(b.id));
 
-  let group: OverviewGroup | null = null;
-  if (ownGroup) {
-    // ONE week key for the slot fields — they describe the session the run
-    // home is about to name, which is the CURRENT one. The modes deliberately
-    // do NOT collapse to this key: see `sessionModes` on the wire type. A
-    // surface that draws another week reads that map and gets the room-vs-link
-    // swap for the week it is actually showing.
-    const weekId = currentWeekId(currentWeek);
-    const session = sessionForWeek(ownGroup, weekId);
-    group = {
-      id: ownGroup.id,
-      name: ownGroup.name,
+  // ONE week key for the slot fields — they describe the session the run home
+  // is about to name, which is the CURRENT one. The modes deliberately do NOT
+  // collapse to this key: see `sessionModes` on the wire type. A surface that
+  // draws another week reads that map and gets the room-vs-link swap for the
+  // week it is actually showing.
+  const weekId = currentWeekId(currentWeek);
+  const toCard = (source: CourseGroupDoc): OverviewGroup => {
+    const session = sessionForWeek(source, weekId);
+    return {
+      id: source.id,
+      name: source.name,
       sessionLabel: sessionLabel(session),
       weekday: session.weekday,
       startTimeLocal: session.startTimeLocal,
       durationMinutes: session.durationMinutes,
       location: session.location,
-      meetingUrl: canSeeMeetingUrl ? session.meetingUrl : null,
-      sessionModes: sessionModesOf(ownGroup),
-      facilitatorNames: facilitatorUids.map(
+      meetingUrl: canSeeMeetingUrlFor(source) ? session.meetingUrl : null,
+      sessionModes: sessionModesOf(source),
+      facilitatorNames: source.facilitatorUids.map(
         (uid) => nameByUid.get(uid) ?? "NAISI member",
       ),
     };
-  }
+  };
+
+  const groupCardPayloads = groupCards.map(toCard);
+  // `group` is the first card when there is one, which for every caller who
+  // had a card before is the same object they had before.
+  const group: OverviewGroup | null =
+    (ownGroup ? groupCardPayloads.find((c) => c.id === ownGroup.id) : null) ?? null;
 
   const payload: OverviewPayload = {
     run: {
@@ -476,6 +517,7 @@ export async function GET(
         }
       : null,
     group,
+    groups: groupCardPayloads,
     access: {
       isAdmin,
       isEnrolled,
