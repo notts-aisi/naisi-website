@@ -211,7 +211,18 @@ export default async function ApplyPage({ params }: Params) {
     <section className={styles.page}>
       <div className="container">
         <header className={styles.hero}>
-          <Badge tone="accent">{round.academicYear || copy.kicker}</Badge>
+          {/* The year is the badge every round has wanted, so it keeps the
+              accent. A facilitator round needs the kicker BESIDE it rather
+              than instead of it: as a fallback it only ever showed on a round
+              with no academic year set, which is nearly none of them, and
+              "Facilitator applications" is the one word of chrome that tells
+              somebody who followed a link what they are looking at. */}
+          <div className={styles.badges}>
+            <Badge tone="accent">{round.academicYear || copy.kicker}</Badge>
+            {round.kind === "appointment" && round.academicYear ? (
+              <Badge tone="neutral">{copy.kicker}</Badge>
+            ) : null}
+          </div>
           <h1 className={styles.title}>{round.label}</h1>
           {copy.standfirst ? (
             <p className={styles.kindNote}>{copy.standfirst}</p>

@@ -229,6 +229,30 @@
   margin: 0;
 }
 
+/* The way back to the applications hub. Deliberately quiet: on the start card
+   it sits under the primary action, and on the sent card it is the only thing
+   left to press, so it reads as a way onward rather than a second decision. */
+.hubLink {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.hubLink:hover {
+  color: var(--color-text);
+}
+
+.hubLink:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
 @media (max-width: 48rem) {
   .wrap {
     gap: var(--space-5);

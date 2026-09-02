@@ -439,6 +439,33 @@ test("an appointment round is called an application to facilitate, on every surf
   assert.deepEqual(applyCopy("something-else"), enrolment);
 });
 
+test("a facilitator round wears its kicker beside the year, not instead of it", () => {
+  // `{round.academicYear || copy.kicker}` meant "Facilitator applications"
+  // showed only on a round with no academic year, which is nearly none of
+  // them. The kicker is the one bit of chrome that tells somebody who followed
+  // a link which form they opened, so on this kind it gets its own badge.
+  const page = source("src/app/(public)/apply/[roundId]/page.tsx");
+  const hero = page.slice(page.indexOf("<header className={styles.hero}>"));
+  assert.match(hero.slice(0, 900), /round\.academicYear \|\| copy\.kicker/);
+  assert.match(
+    hero.slice(0, 900),
+    /round\.kind === "appointment" && round\.academicYear \? \(\s*<Badge tone="neutral">\{copy\.kicker\}<\/Badge>/,
+    "the second badge has to be kind-aware, and only where the year already took the first",
+  );
+});
+
+test("the apply page offers the way back to /applications, which nothing links to", () => {
+  const flow = source("src/features/admissions/ApplyFlow.tsx");
+  assert.match(flow, /href="\/applications"/);
+  assert.match(flow, /See all your applications/);
+
+  // Two mounts: the card before the form is started, and the card after it is
+  // sent. One shared element rather than two copies, so the wording cannot
+  // drift between the two ends of the same visit.
+  const uses = flow.match(/\{applicationsHubLink\}/g) ?? [];
+  assert.equal(uses.length, 2, "the hub link belongs on the start card and the sent card");
+});
+
 test("both apply surfaces take their wording from the one table", () => {
   const page = source("src/app/(public)/apply/[roundId]/page.tsx");
   assert.match(page, /import \{ applyCopy \} from "@\/lib\/admissions\/applyCopy"/);

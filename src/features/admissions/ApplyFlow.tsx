@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
@@ -360,6 +361,19 @@ export default function ApplyFlow({
     </p>
   ) : null;
 
+  /**
+   * The way back to /applications, the hub that lists every round this account
+   * has a row on. Nothing in the site's navigation points at it, so an
+   * applicant who lands here from an email would otherwise have to guess the
+   * address. It sits on the two cards that are the end of a visit: the one
+   * before the form is started, and the one after it is sent.
+   */
+  const applicationsHubLink = (
+    <Link href="/applications" className={styles.hubLink}>
+      See all your applications
+    </Link>
+  );
+
   // -------------------------------------------------------------------------
   // No row yet
   // -------------------------------------------------------------------------
@@ -391,6 +405,11 @@ export default function ApplyFlow({
           ) : (
             errorNote
           )}
+          {/* Quieter than the start button on purpose: somebody on this page
+              came here to fill this one in. The link is for the other case,
+              the person who followed a link, found nothing to do yet and is
+              wondering where the form they DID send has gone. */}
+          {applicationsHubLink}
         </Card>
         <ApplicationPrivacyNotice className={styles.privacy} />
         <RecaptchaInvisible ref={recaptcha} />
@@ -468,6 +487,7 @@ export default function ApplyFlow({
                 ? "The window closed while this was still a draft, so it did not reach us. Everything you wrote is still here, and it will be waiting if we run this round again."
                 : "This is what you sent us."}
           </p>
+          {applicationsHubLink}
         </Card>
       ) : null}
 

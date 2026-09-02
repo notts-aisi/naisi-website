@@ -29,6 +29,14 @@
   margin-bottom: var(--space-8);
 }
 
+/* The hero is a column, so the badges need their own row to sit side by side
+   on the facilitator round. Wraps rather than shrinks on a narrow phone. */
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 .title {
   margin: 0;
   font-size: var(--text-4xl);
