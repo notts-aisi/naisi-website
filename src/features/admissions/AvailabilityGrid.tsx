@@ -326,7 +326,7 @@ export default function AvailabilityGrid({
               data-active={day === activeDay ? "true" : "false"}
               role="row"
             >
-              <div className={styles.columnHead}>
+              <div className={styles.columnHead} role="columnheader">
                 <span aria-hidden="true">{WEEKDAY_SHORT[day]}</span>
                 <span className="visually-hidden">{WEEKDAY_LONG[day]}</span>
               </div>

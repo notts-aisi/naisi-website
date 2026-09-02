@@ -136,7 +136,18 @@ export default function ApplyFlow({
   );
   const [busy, setBusy] = useState<"" | "start" | "submit" | "withdraw" | "stage">("");
   const [error, setError] = useState("");
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  /**
+   * The server's per-question message, scoped to the stage it belongs to.
+   *
+   * Both halves matter. Question ids are unique within a stage but nothing
+   * stops two stages of the same round using the same id, so an unscoped map
+   * would hang "Why this? is required" under the identically-named question on
+   * a stage the applicant has not even opened.
+   */
+  const [fieldError, setFieldError] = useState<{
+    stageId: string | null;
+    byQuestion: Record<string, string>;
+  }>({ stageId: null, byQuestion: {} });
   const [withdrawTyped, setWithdrawTyped] = useState("");
   const [showWithdraw, setShowWithdraw] = useState(false);
 
@@ -175,7 +186,12 @@ export default function ApplyFlow({
   function surface(err: unknown) {
     if (err instanceof ApplyApiError) {
       setError(err.message);
-      if (err.questionId) setFieldErrors({ [err.questionId]: err.message });
+      if (err.questionId) {
+        setFieldError({
+          stageId: err.stageId ?? null,
+          byQuestion: { [err.questionId]: err.message },
+        });
+      }
       return;
     }
     console.error("[apply]", err);
@@ -206,7 +222,7 @@ export default function ApplyFlow({
     if (!isDraft) return false;
     setSaving(true);
     setError("");
-    setFieldErrors({});
+    setFieldError({ stageId: null, byQuestion: {} });
     try {
       const result = await saveDraft(round.id, {
         stageAnswers: answers,
@@ -229,7 +245,7 @@ export default function ApplyFlow({
   async function onSubmit() {
     setBusy("submit");
     setError("");
-    setFieldErrors({});
+    setFieldError({ stageId: null, byQuestion: {} });
     try {
       // Save FIRST, always. The submit route validates what is stored, not
       // what is on screen, so submitting without saving would review a version
@@ -247,7 +263,7 @@ export default function ApplyFlow({
   async function onSubmitStage(stageId: string) {
     setBusy("stage");
     setError("");
-    setFieldErrors({});
+    setFieldError({ stageId: null, byQuestion: {} });
     try {
       const result = await submitStage(
         round.id,
@@ -443,7 +459,11 @@ export default function ApplyFlow({
               <FormRenderer
                 questions={questions}
                 answers={stageAnswers}
-                errors={fieldErrors}
+                errors={
+                  fieldError.stageId === null || fieldError.stageId === stage.id
+                    ? fieldError.byQuestion
+                    : undefined
+                }
                 onChange={(next) => {
                   setAnswers((prev) => ({ ...prev, [stage.id]: next }));
                   setDirty(true);
