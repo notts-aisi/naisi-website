@@ -40,6 +40,19 @@ export type CoursesConfig = {
    */
   dropOutFeedbackUrl: string;
   /**
+   * The weekly feedback form the attendance push links to, resolved into the
+   * nudge email's `{feedbackUrl}` token.
+   *
+   * Empty = the paragraph carrying the token is dropped from the email
+   * whole, which is the renderer's existing degradation rule and a complete
+   * state: the reminder still goes out, it just asks for nothing. That is
+   * why this can ship before the survey machinery that will own the real
+   * link exists.
+   *
+   * ALWAYS `http://` or `https://` or empty; see `readCoursesConfig`.
+   */
+  weeklyFeedbackUrl: string;
+  /**
    * How far ahead the unmarked-register scan looks for a group's next
    * session. Bounds the work per tick and stops a run whose dates were typed
    * a year out from being scanned week after week.
@@ -62,6 +75,7 @@ export type CoursesConfig = {
 export const DEFAULT_COURSES_CONFIG: CoursesConfig = Object.freeze({
   unmarkedRegisterGraceHours: 36,
   dropOutFeedbackUrl: "",
+  weeklyFeedbackUrl: "",
   nextSessionMaxDays: 14,
   unmarkedScanBudgetMs: 20000,
   maxFollowUpTasksPerTick: 25,
@@ -109,6 +123,10 @@ export async function readCoursesConfig(db: Firestore): Promise<CoursesConfig> {
     // Scheme-checked, not merely type-checked: this one is rendered as an
     // href. See `externalUrlOrEmpty`.
     dropOutFeedbackUrl: externalUrlOrEmpty(data.dropOutFeedbackUrl),
+    // Same treatment, and for a sharper reason: this one is substituted into
+    // an email that reaches a whole cohort, where a bad href cannot be fixed
+    // after the fact.
+    weeklyFeedbackUrl: externalUrlOrEmpty(data.weeklyFeedbackUrl),
     nextSessionMaxDays: positiveInt(
       data.nextSessionMaxDays,
       DEFAULT_COURSES_CONFIG.nextSessionMaxDays,

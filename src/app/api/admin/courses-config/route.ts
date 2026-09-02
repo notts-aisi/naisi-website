@@ -54,9 +54,11 @@ export async function GET() {
   const config = await readCoursesConfig(db);
   return NextResponse.json({
     dropOutFeedbackUrl: config.dropOutFeedbackUrl,
+    weeklyFeedbackUrl: config.weeklyFeedbackUrl,
     unmarkedRegisterGraceHours: config.unmarkedRegisterGraceHours,
     defaults: {
       dropOutFeedbackUrl: DEFAULT_COURSES_CONFIG.dropOutFeedbackUrl,
+      weeklyFeedbackUrl: DEFAULT_COURSES_CONFIG.weeklyFeedbackUrl,
       unmarkedRegisterGraceHours:
         DEFAULT_COURSES_CONFIG.unmarkedRegisterGraceHours,
     },
@@ -86,34 +88,50 @@ export async function POST(req: Request) {
 
   const update: Record<string, unknown> = {};
 
-  if ("dropOutFeedbackUrl" in body) {
-    if (typeof body.dropOutFeedbackUrl !== "string") {
-      return NextResponse.json(
-        { error: "The feedback link must be text." },
-        { status: 400 },
-      );
+  /**
+   * The two link fields validate identically, so they share one check rather
+   * than two copies that could drift. Named per field so an admin reads about
+   * the box they typed in.
+   */
+  const readUrlField = (
+    key: "dropOutFeedbackUrl" | "weeklyFeedbackUrl",
+    what: string,
+  ): string | NextResponse => {
+    const raw = body[key];
+    if (typeof raw !== "string") {
+      return NextResponse.json({ error: `${what} must be text.` }, { status: 400 });
     }
-    const url = body.dropOutFeedbackUrl.trim();
-    // The scheme is checked HERE as well as in `readCoursesConfig`, and the
-    // duplication is deliberate: the reader's check is what makes rendering
-    // the value in an href safe whatever is already stored, and this one is
-    // what tells an admin they typed something wrong instead of silently
-    // storing a value that will never appear.
+    const url = raw.trim();
     if (url && !/^https?:\/\//i.test(url)) {
       return NextResponse.json(
         {
-          error:
-            "The feedback link needs to start with http:// or https://. Leave it empty to show no link at all.",
+          error: `${what} needs to start with http:// or https://. Leave it empty to show no link at all.`,
         },
         { status: 400 },
       );
     }
     if (url.length > 500) {
-      return NextResponse.json(
-        { error: "That link is too long to store." },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "That link is too long to store." }, { status: 400 });
     }
+    return url;
+  };
+
+  if ("weeklyFeedbackUrl" in body) {
+    // Rides the weekly reminder the attendance push sends, so an unset value
+    // is not a broken state: the renderer drops the sentence whole.
+    const url = readUrlField("weeklyFeedbackUrl", "The weekly feedback link");
+    if (typeof url !== "string") return url;
+    update.weeklyFeedbackUrl = url;
+  }
+
+  if ("dropOutFeedbackUrl" in body) {
+    // The scheme is checked HERE as well as in `readCoursesConfig`, and the
+    // duplication is deliberate: the reader's check is what makes rendering
+    // the value in an href safe whatever is already stored, and this one is
+    // what tells an admin they typed something wrong instead of silently
+    // storing a value that will never appear.
+    const url = readUrlField("dropOutFeedbackUrl", "The drop-out feedback link");
+    if (typeof url !== "string") return url;
     update.dropOutFeedbackUrl = url;
   }
 
@@ -152,6 +170,7 @@ export async function POST(req: Request) {
   return NextResponse.json({
     ok: true,
     dropOutFeedbackUrl: config.dropOutFeedbackUrl,
+    weeklyFeedbackUrl: config.weeklyFeedbackUrl,
     unmarkedRegisterGraceHours: config.unmarkedRegisterGraceHours,
   });
 }

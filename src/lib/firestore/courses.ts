@@ -354,6 +354,32 @@ export function weekDocId(weekNumber: number): string {
   return `w${String(weekNumber).padStart(2, "0")}`;
 }
 
+/**
+ * The key one SESSION is known by, everywhere: the register's doc id suffix
+ * (`attendanceDocId`), the unmarked-register marker, the follow-up task id,
+ * the rollup's `lastPushedSessionKey`.
+ *
+ * OCCURRENCE 1 IS `weekDocId(n)` EXACTLY, byte for byte. That invariant is
+ * what let the occurrence dimension ship without migrating a single register,
+ * and `src/lib/courses/sessions.ts` carries the long version of why.
+ *
+ * A HYPHEN for occurrence 2 and up, not `#` or `.`: the key is spliced into
+ * Firestore document ids and into URL query values, and a hyphen needs no
+ * escaping in either. `__` is the house id separator and is deliberately not
+ * reused inside one component.
+ *
+ * IT LIVES HERE, beside `weekDocId`, rather than in the resolver that uses it
+ * most. `courseAttendance.ts` needs it to build a doc id and is imported by
+ * three client components; importing it from `sessions.ts` dragged the whole
+ * schedule-resolution graph into their bundles for one line of string maths.
+ * A test pins that `courseAttendance.ts` never imports the resolver.
+ */
+export function sessionKey(weekNumber: number, occurrence: number = 1): string {
+  const base = weekDocId(weekNumber);
+  const n = Number.isInteger(occurrence) ? occurrence : 1;
+  return n <= 1 ? base : `${base}-${n}`;
+}
+
 export type CourseWeekDoc = {
   /** Firestore doc id: `weekDocId(weekNumber)`. */
   id: string;

@@ -57,6 +57,7 @@ export const COURSE_NUDGE_PREVIEW_SAMPLE = {
   weekPrep:
     "There are four things to read or watch and one exercise to write up this week, about 2 hours in total.",
   weekUrl: "https://naisi.uk/learn/asf-autumn-2026/weeks/3",
+  feedbackUrl: "https://forms.gle/naisi-weekly-feedback",
 } as const;
 
 /**
@@ -182,8 +183,15 @@ export function courseTemplateUsesWeekTokens(templateId: CourseTemplateId): bool
 }
 
 /**
- * Templates whose send path resolves `{feedbackUrl}`. One today: the drop-out
- * confirmation, which reads it from `config/courses.dropOutFeedbackUrl`.
+ * LIFECYCLE templates whose send path resolves `{feedbackUrl}`. One today: the
+ * drop-out confirmation, which reads it from
+ * `config/courses.dropOutFeedbackUrl`.
+ *
+ * The weekly nudge resolves a `{feedbackUrl}` of its own (the WEEKLY form,
+ * `config/courses.weeklyFeedbackUrl`) and is deliberately absent from this
+ * list: it takes the week-token branch below, where its whole map comes from
+ * `COURSE_NUDGE_PREVIEW_SAMPLE`. Two lanes, one token name, one meaning each,
+ * and each lane's sample map is the one its own send path can resolve.
  *
  * A caution the preview cannot show: on a REAL send with no form configured
  * the token stays literal, because `personaliseBlocks` never blanks an
