@@ -1263,6 +1263,20 @@ describe("the apply flow island", () => {
     assert.match(client, /application\?: ApplicantApplication \| null;/);
   });
 
+  test("a later stage is only offered while the window is open", () => {
+    // `isStageReleased` deliberately keeps saying yes after the deadline, so
+    // reviewers can read the questions. Without the window check the flow
+    // would render a live form against a route that refuses every POST.
+    assert.match(flow, /const laterStagesOpen = status === "submitted" && windowOpen;/);
+    assert.match(flow, /stageEditable = editable \|\| \(laterStagesOpen && !frozen\)/);
+    assert.match(flow, /\{laterStagesOpen && !frozen \? \(/);
+  });
+
+  test("a closed window with an unsent draft says so rather than claiming it was sent", () => {
+    assert.match(flow, /This one was never sent/);
+    assert.match(flow, /The window closed while this was still a draft/);
+  });
+
   test("the save bar autosaves on the interval the contract names", () => {
     const bar = source("src/features/admissions/DraftSaveBar.tsx");
     assert.match(bar, /AUTOSAVE_INTERVAL_MS = 120_000/);

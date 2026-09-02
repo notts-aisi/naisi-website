@@ -410,6 +410,14 @@ export default function ApplyFlow({
   // -------------------------------------------------------------------------
 
   const editable = isDraft && windowOpen;
+  /**
+   * A later stage is answerable once the first submission is in, and ONLY
+   * while the window is open. `isStageReleased` deliberately keeps saying yes
+   * after the deadline so reviewers can read the questions and an applicant
+   * can look back at what they were asked, so without the window check this
+   * would render a live form against a route that refuses every POST.
+   */
+  const laterStagesOpen = status === "submitted" && windowOpen;
 
   return (
     <div className={styles.wrap}>
@@ -425,21 +433,21 @@ export default function ApplyFlow({
       {!editable ? (
         <Card padding="lg" className={styles.card}>
           <h2 className={styles.cardTitle}>
-            {status === "submitted" ? "Your application is in" : "Your application"}
+            {status === "submitted"
+              ? "Your application is in"
+              : isDraft
+                ? "This one was never sent"
+                : "Your application"}
           </h2>
           <p className={styles.body}>
             {status === "submitted"
               ? round.decisionsByDate
                 ? `We will be in touch by ${round.decisionsByDate}. You can read what you sent below.`
                 : "We will be in touch once decisions are made. You can read what you sent below."
-              : "This is what you sent us."}
+              : isDraft
+                ? "The window closed while this was still a draft, so it did not reach us. Everything you wrote is still here, and it will be waiting if we run this round again."
+                : "This is what you sent us."}
           </p>
-          {!windowOpen && isDraft ? (
-            <p className={styles.body}>
-              The window closed before this was submitted, so it stays a draft.
-              Everything you wrote is still here.
-            </p>
-          ) : null}
         </Card>
       ) : null}
 
@@ -447,9 +455,7 @@ export default function ApplyFlow({
         const frozen = Boolean(application.stageSubmittedAt?.[stage.id]);
         const questions = stage.questions ?? [];
         const stageAnswers = answers[stage.id] ?? {};
-        // A later stage is answerable once the first submission is in, even
-        // though the application as a whole is no longer a draft.
-        const stageEditable = editable || (status === "submitted" && !frozen);
+        const stageEditable = editable || (laterStagesOpen && !frozen);
         return (
           <section key={stage.id} className={styles.stage}>
             <h2 className={styles.stageTitle}>{stage.label}</h2>
@@ -486,7 +492,7 @@ export default function ApplyFlow({
               </dl>
             )}
 
-            {status === "submitted" && !frozen ? (
+            {laterStagesOpen && !frozen ? (
               <div className={styles.stageActions}>
                 <Button
                   type="button"
