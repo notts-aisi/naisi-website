@@ -69,10 +69,22 @@ export async function PUT(
   if (!courseSnap.exists) {
     return NextResponse.json({ error: "Course not found" }, { status: 404 });
   }
-  const course = normalizeCourse(courseSnap.id, courseSnap.data() ?? {});
+  const courseRaw = courseSnap.data() ?? {};
+  const course = normalizeCourse(courseSnap.id, courseRaw);
 
   if (!canAuthorCoursePage(actor, course)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // A course mid-DESTROY refuses the write, the way the run archive route
+  // does. The cascade deletes this page in its final batch, so a save landing
+  // now is either lost seconds later or, if it lands after that batch,
+  // recreates the public page of a course that no longer exists.
+  if (courseRaw.destroying === true) {
+    return NextResponse.json(
+      { error: "This course is being destroyed and its page can't be edited." },
+      { status: 409 },
+    );
   }
 
   let body: Record<string, unknown>;

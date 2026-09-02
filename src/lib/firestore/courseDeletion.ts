@@ -1633,10 +1633,15 @@ export async function destroyCourseCascade(
 
     // V3 W1 PR7. The authored public page rides in the SAME final batch as the
     // course doc, not in a drain pass: there is exactly one, addressed at the
-    // course id, so pagination would be machinery for a single document. Its
-    // existence is re-read here rather than taken from the manifest so the
-    // recorded count is what this pass actually deleted, and a page written
-    // between the manifest and the marker is still removed.
+    // course id, so pagination would be machinery for a single document.
+    //
+    // The DELETE IS UNCONDITIONAL. Deleting a document that is not there is a
+    // no-op in Firestore, so gating the delete on the read would buy nothing
+    // and would lose the one case that matters: a page written between this
+    // read and the batch committing, which a conditional delete leaves behind
+    // as the live public page of a course that no longer exists. The read is
+    // kept only to say what this pass actually removed, which is why the audit
+    // count and not the delete is what branches on it.
     const pageRef = db.collection(COURSE_PAGES_COLLECTION).doc(courseId);
     const pageSnap = await pageRef.get();
 
@@ -1648,7 +1653,7 @@ export async function destroyCourseCascade(
       ...PASS_LEASE_RELEASED,
       completedAt: FieldValue.serverTimestamp(),
     });
-    if (pageSnap.exists) finalBatch.delete(pageRef);
+    finalBatch.delete(pageRef);
     finalBatch.delete(courseRef);
     await finalBatch.commit();
 
