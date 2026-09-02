@@ -99,12 +99,14 @@ const COURSE_TRIGGER_LABELS: Record<CourseTemplateTrigger, string> = {
   allocated: "On placement",
   "week-nudge": "Each week",
   "dropped-out": "On leaving",
+  "admissions-submitted": "On submitting",
+  "admissions-reinstated": "On reopening",
 };
 
 function CourseGroup({ byId }: { byId: Map<CourseTemplateId, CourseTemplateDoc> }) {
   return (
     <section className={styles.group}>
-      <h2 className={styles.groupHeader}>Course emails</h2>
+      <h2 className={styles.groupHeader}>Course and admissions emails</h2>
       <p
         style={{
           color: "var(--color-text-muted)",
@@ -112,9 +114,10 @@ function CourseGroup({ byId }: { byId: Map<CourseTemplateId, CourseTemplateDoc> 
           margin: 0,
         }}
       >
-        Sent to applicants and learners across a course run. Any template you
-        haven&apos;t edited sends NAISI&apos;s default copy — nothing is broken until
-        you touch it, and you can always reset back.
+        Sent to people applying to an admissions round, and to learners across
+        a course run. Any template you haven&apos;t edited sends NAISI&apos;s
+        default copy: nothing is broken until you touch it, and you can always
+        reset back.
       </p>
       {COURSE_TEMPLATE_IDS.map((id) => {
         const stored = byId.get(id);

@@ -29,6 +29,14 @@
   margin-bottom: var(--space-8);
 }
 
+/* The hero is a column, so the badges need their own row to sit side by side
+   on the facilitator round. Wraps rather than shrinks on a narrow phone. */
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 .title {
   margin: 0;
   font-size: var(--text-4xl);
@@ -52,6 +60,17 @@
   max-width: var(--prose-max-width);
   color: var(--color-text-muted);
   font-size: var(--text-lg);
+  line-height: 1.7;
+}
+
+/* What kind of form this is, for a round whose label does not say. Sits above
+   the round's own standfirst and reads a step firmer than it, because it is
+   the site talking rather than the round. */
+.kindNote {
+  margin: 0;
+  max-width: var(--prose-max-width);
+  color: var(--color-text);
+  font-size: var(--text-base);
   line-height: 1.7;
 }
 
@@ -140,6 +159,10 @@
 
   .lede {
     font-size: var(--text-base);
+  }
+
+  .kindNote {
+    font-size: var(--text-sm);
   }
 
   .button {

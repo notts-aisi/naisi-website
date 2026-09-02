@@ -1,6 +1,10 @@
 "use client";
 
-import { roundReadiness, type ReadinessInput } from "@/lib/admissions/readiness";
+import {
+  READINESS_KIND_NOTE,
+  roundReadiness,
+  type ReadinessInput,
+} from "@/lib/admissions/readiness";
 import styles from "./ReadinessPanel.module.css";
 
 /**
@@ -15,6 +19,10 @@ import styles from "./ReadinessPanel.module.css";
  * Met checks are shown too, greyed, rather than disappearing. A panel that
  * empties as you go gives no sense of what the bar actually is, and the first
  * time somebody authors a round they want to read the whole list.
+ *
+ * The kind note under the heading is there for the same reason. An appointment
+ * round is held to five checks and an enrolment round to six, and a list that
+ * is quietly one line shorter reads as a bug rather than as a decision.
  */
 export default function ReadinessPanel({
   round,
@@ -39,6 +47,7 @@ export default function ReadinessPanel({
             ? "Everything this round needs is in place."
             : `${readiness.unmet.length} thing${readiness.unmet.length === 1 ? "" : "s"} still to do.`}
         </p>
+        <p className={styles.kindNote}>{READINESS_KIND_NOTE[round.kind]}</p>
       </div>
 
       <ul className={styles.list}>

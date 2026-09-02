@@ -656,8 +656,17 @@ describe("admissions: a 25-document list on a readable sibling still serves", ()
     });
 
     const db = await asUser("member1");
-    const runs = await assertSucceeds(db.collection("courseRuns").get());
+    // V3 W3 PR20 narrowed the courseRuns read rule to `status != 'draft'` for
+    // a caller holding no course permission, and Firestore judges a list on
+    // the query's POTENTIAL result set rather than the rows that come back.
+    // An unfiltered list can potentially return a draft, so the constraint
+    // has to be on the query. The 25-document control the test exists for is
+    // untouched: 25 rows still come back through a per-document rule.
+    const runs = await assertSucceeds(
+      db.collection("courseRuns").where("status", "!=", "draft").get(),
+    );
     assert.equal(runs.size, 25);
+    await assertFails(db.collection("courseRuns").get());
 
     // The admissions side of the same page size: refused on permissions, not
     // on a document-access budget, and refused identically at one document

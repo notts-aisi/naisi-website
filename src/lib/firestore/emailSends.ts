@@ -46,6 +46,14 @@ export type EmailSendKind =
   // left get their confirmation" is a question the deliverability tab has to
   // answer without reading subject lines.
   | "course-enrolment"
+  // The ADMISSIONS lifecycle (V3): everything NAISI sends somebody about their
+  // application to a round. Kept apart from `course-application`, which means
+  // the V2 per-run funnel this replaces, because the deliverability tab has to
+  // answer "did the whole intake get its receipts" during the week an intake is
+  // live, and mixing the two would make a round's mail unreadable next to the
+  // legacy rows. Its `referenceId` is the ROUND id, not a run id: one round
+  // feeds several runs and an appointment round feeds none.
+  | "admissions"
   | "course-test"
   | "admin-test"
   | "subscription-confirm"

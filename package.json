@@ -10,6 +10,7 @@
     "test": "node --test tests/",
     "e2e": "node --test scripts/e2e/tests/",
     "e2e:local": "node scripts/e2e/run.mjs",
+    "e2e:funnel": "node scripts/run-applicant-funnel.mjs",
     "brand": "node scripts/generate-brand-assets.mjs"
   },
   "dependencies": {

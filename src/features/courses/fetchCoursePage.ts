@@ -15,9 +15,9 @@ import {
  * ## The obligation, restated because this file inherits it
  *
  * This reads through the ADMIN SDK, so Firestore rules provide no defence
- * here. `coursePages` is `allow read: if isSignedIn()` and this function
- * ignores that, deliberately, because the public page is rendered for
- * logged-out visitors. VISIBILITY IS THE CALLER'S TO ENFORCE: a page is only
+ * here. `coursePages` is readable only by course staff since V3 W3 PR20 and
+ * this function ignores that, deliberately, because the public page is
+ * rendered for logged-out visitors. VISIBILITY IS THE CALLER'S TO ENFORCE: a page is only
  * publishable copy when its course is `status === "published"`, and a caller
  * rendering to the world must check that before it renders anything from here.
  * `fetchCourses.ts` already does that check for the course itself, so the

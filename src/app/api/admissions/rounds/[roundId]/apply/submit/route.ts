@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
+import {
+  admissionApplicationUrl,
+  sendAdmissionEmail,
+} from "@/lib/email/admissionEmails";
 import { validateAnswers } from "@/lib/events/validateAnswers";
+import { formatRoundDeadline } from "@/lib/admissions/window";
+import { formatRunStartShort } from "@/lib/courses/window";
 import { hasPaidMembership, normalizeUser } from "@/lib/firestore/users";
 import {
   normalizeAdmissionApplication,
@@ -61,11 +67,13 @@ import {
  * admins. No branch here reads it as a condition, and none may: an unpaid
  * applicant is emailed about membership, not refused.
  *
- * ## No email here
+ * ## The receipt is sent AFTER the commit, and cannot fail the submission
  *
- * The `admissions-submitted` template and its send are PR14's. This route
- * commits the write and answers; a missing confirmation email is a courtesy
- * outstanding, not a broken submission.
+ * `admissions-submitted` goes out below the transaction, fire and forget. The
+ * send helper swallows everything (suppressed address, SMTP outage, missing
+ * template), so the worst case is a courtesy outstanding rather than a
+ * submitted application answered with a 500 the applicant reads as "it did not
+ * go through". Nothing after the transaction writes a document.
  */
 
 type Ctx = { params: Promise<{ roundId: string }> };
@@ -179,6 +187,36 @@ export async function POST(req: Request, ctx: Ctx) {
     });
 
     const loaded = await loadOwnApplication(db, round, user.uid);
+
+    // POST-COMMIT AND FIRE-AND-FORGET. The transaction above is the
+    // submission; this is the receipt. `sendAdmissionEmail` never throws and
+    // never awaits the caller's response, so a suppressed address, an SMTP
+    // hiccup or a missing template cannot turn a submitted application into a
+    // 500 that reads as "it did not go through". Nothing below the transaction
+    // may move a document, and nothing here does.
+    if (user.email) {
+      void sendAdmissionEmail({
+        kind: "submitted",
+        to: user.email,
+        name: loaded?.application.displayName || user.displayName?.trim() || "",
+        roundLabel: round.label,
+        applicationUrl: admissionApplicationUrl(roundId, "status"),
+        deadline: round.closesAt ? formatRoundDeadline(round.closesAt) : undefined,
+        decisionsBy: round.decisionsByDate
+          ? formatRunStartShort(round.decisionsByDate)
+          : undefined,
+        // Only on a round that asks in parts. On a single-stage round the
+        // stage IS the form, so naming it would be noise, and the token stays
+        // literal for an admin who put it in the copy anyway.
+        stageLabel:
+          round.stageIds.length > 1
+            ? open.map((stage) => stage.label).join(", ")
+            : undefined,
+        uid: user.uid,
+        roundId,
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       application: loaded

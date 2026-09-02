@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
+import {
+  admissionApplicationUrl,
+  sendAdmissionEmail,
+} from "@/lib/email/admissionEmails";
+import { formatRoundDeadline } from "@/lib/admissions/window";
 import { normalizeUser } from "@/lib/firestore/users";
 import {
   EMPTY_APPLICATION_PROGRAMME_PREFERENCE,
@@ -272,6 +277,28 @@ export async function POST(req: Request, ctx: Ctx) {
     const application = loaded
       ? serialiseApplicationForOwner(loaded.application, round, loaded.accessRequirements)
       : null;
+
+    // POST-COMMIT AND FIRE-AND-FORGET, and only on the re-open branch.
+    // Reopening is the one step in this lane that LOOKS like a submission and
+    // is not one: the form comes back with every answer still in it, so
+    // somebody who reopens on the deadline evening can easily believe they are
+    // done. The email says in writing that it is a draft again. Starting a
+    // fresh application gets nothing, because a blank form is unmistakably a
+    // blank form. `sendAdmissionEmail` never throws.
+    if (outcome === "reopened" && user.email) {
+      void sendAdmissionEmail({
+        kind: "reinstated",
+        to: user.email,
+        name: displayName,
+        roundLabel: round.label,
+        // The FORM, not the status hub: this application is a draft again, so
+        // the useful link is the one they finish it on.
+        applicationUrl: admissionApplicationUrl(roundId, "apply"),
+        deadline: round.closesAt ? formatRoundDeadline(round.closesAt) : undefined,
+        uid: user.uid,
+        roundId,
+      });
+    }
 
     if (outcome === "exists") {
       // 409 CARRYING THE ROW. A double tap on "Start your application" (or a

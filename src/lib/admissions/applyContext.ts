@@ -1,7 +1,6 @@
 import "server-only";
 import { NextResponse } from "next/server";
-import { getAdminDb } from "@/lib/firebase/admin";
-import { getCurrentUser, type SessionUser } from "@/lib/firebase/session";
+import { type Db } from "./applicantSession";
 import { verifyRecaptcha } from "@/lib/recaptcha/server";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 import {
@@ -12,6 +11,7 @@ import {
   normaliseSiteNotice,
 } from "@/lib/siteNotice";
 import {
+  APPLICATIONS_COLLECTION,
   admissionApplicationId,
   admissionApplicationPrivateId,
   normalizeAdmissionApplication,
@@ -43,10 +43,19 @@ import { APPLY_RATE_LIMITS, type RecaptchaAction } from "./applyRoutes";
  * reading it.
  */
 
-export const APPLICATIONS_COLLECTION = "admissionApplications";
 export const APPLICATION_PRIVATE_COLLECTION = "admissionApplicationPrivate";
 
-export type Db = NonNullable<ReturnType<typeof getAdminDb>>;
+/**
+ * The session gate moved to `applicantSession.ts` and is re-exported here so
+ * every existing call site is unchanged. It moved because THIS module can
+ * reach `admissionApplicationPrivate` (see `privateRef` and
+ * `loadOwnApplication` below), and the privacy scan in
+ * `tests/privacy-policy-v3.test.mjs` treats importing it as being able to
+ * reach that collection. A route that only needs to know who is calling should
+ * not have to argue about the access-requirements answer.
+ */
+export type { Db, Caller } from "./applicantSession";
+export { requireApplicant } from "./applicantSession";
 
 /** An error carrying the sentence and the status a handler should answer with. */
 export class ApplyError extends Error {
@@ -70,34 +79,6 @@ export function tooManyAttempts(retryAfterSeconds: number): NextResponse {
     { error: "Too many attempts. Please wait a few minutes and try again." },
     { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
   );
-}
-
-export type Caller = { user: SessionUser; db: Db };
-
-/**
- * Session plus the Admin SDK, or the response to return instead.
- *
- * `pending` accounts are ALLOWED, deliberately and load-bearingly: the whole
- * funnel is "register, then apply", and the account made at the fair on Monday
- * is still pending on Sunday when applications close. A `rejected` account is
- * the only signed-in caller turned away.
- */
-export async function requireApplicant(): Promise<Caller | NextResponse> {
-  const user = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-  }
-  if (user.role === "rejected") {
-    return NextResponse.json(
-      { error: "This account cannot apply." },
-      { status: 403 },
-    );
-  }
-  const db = getAdminDb();
-  if (!db) {
-    return NextResponse.json({ error: "Server not configured." }, { status: 500 });
-  }
-  return { user, db };
 }
 
 export type ThrottleKind = "create" | "save";
