@@ -883,6 +883,45 @@ service cloud.firestore {
     }
     // ===================== end V3 W3 PR6: scheduler ==========================
 
+    // ========================================================================
+    // V3 W3 PR12: dataExports
+    // ========================================================================
+    // One append-only row per CSV the site generates: the attendance register,
+    // the cohort roster, an admission round's applications, a membership
+    // period's list. Each export route writes its row through
+    // `logExport()` (src/lib/firestore/dataExports.ts) immediately BEFORE it
+    // streams the file, and refuses the export when that write fails.
+    //
+    // SHUT TO EVERY CLIENT, ADMINS INCLUDED, on both axes.
+    //
+    // WRITE. The actor of a logged export is almost always an admin, so an
+    // admin-writable log is a log its own subject can edit: a row could be
+    // deleted, back-dated, or have its rowCount reduced by the person who
+    // took the file. That is the `courseAudit` / `courseDeletions` posture
+    // stated in this file already, and the reason is the same one: an audit
+    // its own actor can amend is not an audit. A forged row is the other
+    // half of it, since a fabricated export could be attributed to somebody
+    // who never ran one.
+    //
+    // READ. Not `isAdmin()`, deliberately. Admins read the Exports tab
+    // through GET /api/admin/deliverability/exports on the Admin SDK, exactly
+    // as they already read `emailSends`, so a client read rule would buy the
+    // product nothing and would leave the collection one `isAdmin()` typo
+    // away from readable by whatever the next helper edit makes true. Rows
+    // also name applicants' rounds and cohorts' groups alongside the actor,
+    // so the list of who was exported and when is not something to hand to a
+    // browser that has no feature needing it.
+    //
+    // The block is written out EXPLICITLY rather than left to
+    // deny-by-default. `dataExports` is a top-level collection whose name
+    // sorts near nothing else, and an explicit match is the thing that stops
+    // a later PR adding a broad match, or a helper widened one line, from
+    // opening it without anybody noticing this collection existed.
+    match /dataExports/{exportId} {
+      allow read, write: if false;
+    }
+    // ==================== end V3 W3 PR12: dataExports ========================
+
     // === eventRsvps ===
     // RSVPs are attendee PII - never public read. All writes go through the
     // server route `/api/events/[id]/rsvp` (admin SDK), so rules are a safety

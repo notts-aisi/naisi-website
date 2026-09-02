@@ -221,6 +221,11 @@ const COUNT_META: Record<string, CountMeta> = {
     fate: "destroyed",
     note: "The authored programme page: the pitch, the weekly themes, the FAQ and the journey strip. Authored copy, not member work, and it goes with the course it describes.",
   },
+  dataExportRows: {
+    label: "Download-log rows",
+    fate: "retained",
+    note: "KEPT. `dataExports` is the append-only record of which spreadsheets were downloaded off this cohort and who asked for them. It holds no member content, and destroying what a file described does not undo the download.",
+  },
   templates: {
     label: "Saved templates",
     fate: "orphaned",
@@ -238,6 +243,7 @@ const COUNT_ALIASES: Record<string, string> = {
   templatesOrphaned: "templates",
   orphanedTemplates: "templates",
   emailSends: "emailSendRows",
+  dataExports: "dataExportRows",
   subscriptions: "subscriptionRows",
 };
 
