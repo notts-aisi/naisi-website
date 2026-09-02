@@ -23,6 +23,7 @@ import {
   type UserPermissions,
 } from "@/lib/firestore/users";
 import { startImpersonation } from "@/auth/impersonation";
+import ConductFlagControl from "./ConductFlagControl";
 import MemberEditForm from "./MemberEditForm";
 import {
   deleteUser,
@@ -573,6 +574,8 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                   label="Show on public /members page"
                 />
               </div>
+
+              <ConductFlagControl uid={user.uid} displayName={displayName} />
 
               <div className={styles.controlBlock}>
                 <span className={styles.controlLabel}>Debug</span>
