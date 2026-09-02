@@ -830,3 +830,19 @@ test("SOURCE: removing a self-enrolled learner gives the run's seat back", () =>
     assert.ok(block.includes(writer), `the doc comment no longer names the ${writer}`);
   }
 });
+
+test("SOURCE: the refusal knows which of the four ways they got here", () => {
+  // "You've already left this course" was told to removed and completed rows
+  // too. Somebody a facilitator took off did not leave, and somebody who
+  // finished last term did not either.
+  const at = ENROL_ROUTE.indexOf("function alreadyHereError(");
+  assert.ok(at > 0, "the already-enrolled copy no longer branches on status");
+  const fn = ENROL_ROUTE.slice(at, ENROL_ROUTE.indexOf("\n}", at));
+  for (const status of ["active", "withdrawn", "removed", "completed"]) {
+    assert.ok(fn.includes(`case "${status}":`), `no sentence for a ${status} row`);
+  }
+  assert.match(fn, /already signed up/);
+  assert.match(fn, /already left this course/);
+  assert.match(fn, /not on this course any more/);
+  assert.match(fn, /already finished this course/);
+});

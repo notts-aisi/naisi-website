@@ -353,6 +353,31 @@ export async function GET(_req: Request, ctx: Ctx) {
 // POST — take a seat
 // ---------------------------------------------------------------------------
 
+/**
+ * What a person is told when the deterministic id already holds a row.
+ *
+ * FOUR STATUSES, FOUR SENTENCES. The row is the whole history of this person
+ * on this run, and "you've already left this course" is only true of one of
+ * them: somebody a facilitator removed did not leave, and somebody who
+ * finished the course last term did not either. Telling either of them they
+ * left is both wrong and the kind of wrong that gets forwarded to staff.
+ *
+ * All four say what to do next, because none of them can be fixed from here:
+ * the row exists, so `tx.create` will never succeed again for this pair.
+ */
+function alreadyHereError(status: CourseEnrolmentStatus): string {
+  switch (status) {
+    case "active":
+      return "You're already signed up for this course.";
+    case "withdrawn":
+      return "You've already left this course, so you can't sign up again here. Email the team if you'd like to come back.";
+    case "removed":
+      return "You're not on this course any more. Email the team if you think that's a mistake.";
+    case "completed":
+      return "You've already finished this course, so there's no place here to take. Watch the courses page for the next run.";
+  }
+}
+
 export async function POST(req: Request, ctx: Ctx) {
   const blocked = await assertNotImpersonating();
   if (blocked) return blocked;
@@ -451,12 +476,7 @@ export async function POST(req: Request, ctx: Ctx) {
 
       if (existingSnap.exists) {
         const row = normalizeCourseEnrolment(existingSnap.id, existingSnap.data() ?? {});
-        throw new EnrolError(
-          row.status === "active"
-            ? "You're already signed up for this course."
-            : "You've already left this course, so you can't sign up again here. Email the team if you'd like to come back.",
-          409,
-        );
+        throw new EnrolError(alreadyHereError(row.status), 409);
       }
 
       // CAPACITY, against the count read inside this transaction. Two people
