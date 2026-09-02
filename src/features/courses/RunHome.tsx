@@ -359,7 +359,7 @@ function FacilitatorGroupPanel({
   showCohortLinks: boolean;
 }) {
   /*
-    The shared hook — the same one the facilitator group page and the email
+    The shared hook, the same one the facilitator group page and the email
     composer read from. It carries a manual refresh and a null-vs-zero member
     count that this page uses neither of; what it removes is the second copy of
     the fetch, the stale-response guard and the error copy.
@@ -379,7 +379,7 @@ function FacilitatorGroupPanel({
         (roster.members.length === 0 ? (
           <p className={styles.panelNote}>No one is placed in this group yet.</p>
         ) : (
-          /* Names only — the roster route sends nothing else, and this is a
+          /* Names only, because the roster route sends nothing else, and this is a
              cohort surface. InitialsChip is decorative and aria-hidden, so the
              name always renders beside it. */
           <ul className={styles.roster}>
@@ -421,8 +421,8 @@ function FacilitatorGroupPanel({
         </span>
       </Link>
 
-      {/* Only for someone who staffs the RUN — see the `canEmailCohort` prop
-          on RunHome. A group facilitator has the link above and not this one:
+      {/* Only for someone who staffs the RUN (see the `canEmailCohort` prop
+          on RunHome). A group facilitator has the link above and not this one:
           their room is theirs, the cohort is not. */}
       {showCohortLinks && (
         <Link
@@ -437,9 +437,9 @@ function FacilitatorGroupPanel({
       )}
 
       {/* Same gate as the cohort link above, and for the same reason: the
-          nudge addresses the whole run. Nothing sends it on a schedule — this
-          app has no scheduler — so the link has to exist for it to go out at
-          all. */}
+          nudge addresses the whole run. Nothing sends it on a schedule, since
+          this app has no scheduler, so the link has to exist for it to go out
+          at all. */}
       {showCohortLinks && (
         <Link
           className={styles.panelLink}
@@ -488,11 +488,11 @@ export default function RunHome({ runId, isAdmin, canEmailCohort }: Props) {
   });
 
   /*
-    The groups the caller FACILITATES — not merely the group on the payload.
+    The groups the caller FACILITATES, not merely the group on the payload.
 
     The overview sends EVERY group this caller holds: their learner placement
     first (if they have one), then each group they facilitate. Their placement
-    is their seat, not their post, so it is subtracted here — otherwise
+    is their seat, not their post, so it is subtracted here, because otherwise
     somebody who facilitates the run while sitting in group A would be told
     "you facilitate A".
 
@@ -658,7 +658,7 @@ export default function RunHome({ runId, isAdmin, canEmailCohort }: Props) {
         {/* One card per group they hold. A single card renders exactly as it
             always did; two or three simply stack, because this column already
             stacks everything else on the page. The cohort-wide links ride on
-            the FIRST card only — they address the run, not a room, so
+            the FIRST card only, because they address the run and not a room, so
             repeating them per group would be three copies of one lane. */}
         {facilitatedGroups.map((facilitated, index) => (
           <FacilitatorGroupPanel

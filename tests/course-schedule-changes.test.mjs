@@ -1157,7 +1157,7 @@ const ALLOWED_TRANSITIONS = {
   cancelled: [],
 };
 
-test("GUARD — the transition table is forward-only, terminal-safe, and the only one", () => {
+test("GUARD: the transition table is forward-only, terminal-safe, and the only one", () => {
   for (const [from, to] of Object.entries(ALLOWED_TRANSITIONS)) {
     assert.match(
       RUN_STATUS_LIB,
@@ -2051,7 +2051,10 @@ test("GUARD — virtual/in-person reaches the member, on the card and in the ema
   // refactor. The slot fields stay resolved for the current week.
   assert.match(OVERVIEW, /sessionModes: Record<string, GroupSessionMode>;/);
   assert.match(OVERVIEW, /const weekId = currentWeekId\(currentWeek\);/);
-  assert.match(OVERVIEW, /sessionModes: sessionModesOf\(ownGroup\),/);
+  // Built per card now that the payload carries every group the caller
+  // holds, so the map travels for each of them rather than only for the one
+  // the calendar resolved through.
+  assert.match(OVERVIEW, /sessionModes: sessionModesOf\(source\),/);
   // The facilitator's own group page builds the same shape and hands the card
   // the same week's entry, so the person who just flipped the switch sees what
   // their members will.
@@ -2078,8 +2081,14 @@ test("GUARD — virtual/in-person reaches the member, on the card and in the ema
 
   // THE PII GATE IS UNTOUCHED. `mode` is a display fact; it grants nobody the
   // meeting link, and this is the line that says so.
-  assert.match(OVERVIEW, /meetingUrl: canSeeMeetingUrl \? session\.meetingUrl : null,/);
-  assert.match(OVERVIEW, /const canSeeMeetingUrl =/);
+  // Decided PER GROUP now that a facilitator of two gets a card each, so the
+  // predicate takes the group it is answering about rather than closing over
+  // the one the calendar resolved through.
+  assert.match(
+    OVERVIEW,
+    /meetingUrl: canSeeMeetingUrlFor\(source\) \? session\.meetingUrl : null,/,
+  );
+  assert.match(OVERVIEW, /const canSeeMeetingUrlFor = \(group: CourseGroupDoc\): boolean =>/);
 });
 
 test("GUARD — the week page shows the VIEWED week's mode, not the current week's", () => {

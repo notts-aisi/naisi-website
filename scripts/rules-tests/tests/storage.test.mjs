@@ -267,7 +267,7 @@ describe("event-images — per-event scoping, matching firestore.rules", () => {
   });
 });
 
-describe("course-images — was missing entirely, so every week-guide image failed", () => {
+describe("course-images: was missing entirely, so every week-guide image failed", () => {
   // The third time this exact shape has bitten: no `course-images` match block
   // existed, so both editors' uploads hit deny-by-default. WeekEditor.tsx and
   // CourseEditor.tsx each carry a comment predicting it. These tests pin the
@@ -336,7 +336,7 @@ describe("course-images — was missing entirely, so every week-guide image fail
     );
   });
 
-  it("does not require the course or week to exist — the folder is unvalidated", async () => {
+  it("does not require the course or week to exist (the folder is unvalidated)", async () => {
     // Stated rather than assumed: unlike newsletter-images and event-images
     // there is no ownership test here, because `{folder}` is a courseId in one
     // editor and a runId__weekId pair in the other. See the block's comment.

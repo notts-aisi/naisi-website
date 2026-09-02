@@ -216,7 +216,7 @@ export type OverviewPayload = {
    *
    * `group` alone was the bug. A facilitator holding two groups had no
    * "current" one, so the single field was null and the run home drew nothing
-   * — no roster, no register, no review queue, no group email, for the person
+   * no roster, no register, no review queue, no group email, for the person
    * who most needs all four. Running two sessions is ordinary here, so the
    * payload carries the list and the page draws a card each.
    *
@@ -369,7 +369,7 @@ export async function GET(
 
   // The caller's OWN group: their placement if they have one, otherwise the
   // single group they facilitate. Facilitating two groups leaves this null
-  // deliberately — there is no "current" one to resolve a calendar or a week
+  // deliberately: there is no "current" one to resolve a calendar or a week
   // fork through, so those stay run-level. The CARDS are a separate question,
   // answered by `groupCards` below, which does cover that case.
   //
@@ -459,7 +459,7 @@ export async function GET(
     })
     .sort((a, b) => a.weekNumber - b.weekNumber || a.id.localeCompare(b.id));
 
-  // ONE week key for the slot fields — they describe the session the run home
+  // ONE week key for the slot fields, which describe the session the run home
   // is about to name, which is the CURRENT one. The modes deliberately do NOT
   // collapse to this key: see `sessionModes` on the wire type. A surface that
   // draws another week reads that map and gets the room-vs-link swap for the

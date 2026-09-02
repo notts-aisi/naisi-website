@@ -40,7 +40,7 @@ function declaredPermissionKeys() {
   return [...block[1].matchAll(/^\s*(\w+)\??:\s*boolean/gm)].map((m) => m[1]);
 }
 
-test("GUARD — UserPermissions still declares the six known permissions", () => {
+test("GUARD: UserPermissions still declares the six known permissions", () => {
   assert.deepEqual(declaredPermissionKeys().sort(), [
     "approveCourse",
     "approveEvent",
@@ -51,7 +51,7 @@ test("GUARD — UserPermissions still declares the six known permissions", () =>
   ]);
 });
 
-test("GUARD — setPermissions writes every declared key, as a real boolean", () => {
+test("GUARD: setPermissions writes every declared key, as a real boolean", () => {
   const keys = declaredPermissionKeys();
 
   // The list the write iterates. Pinned to the type above, so growing one
@@ -83,7 +83,7 @@ test("GUARD — setPermissions writes every declared key, as a real boolean", ()
   assert.match(MUTATIONS, /permissions: clean/);
 });
 
-test("GUARD — every permission is grantable in the UI and readable on the client", () => {
+test("GUARD: every permission is grantable in the UI and readable on the client", () => {
   const keys = declaredPermissionKeys();
   for (const key of keys) {
     assert.ok(

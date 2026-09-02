@@ -102,8 +102,8 @@ service firebase.storage {
 
     // Course images: the guide imagery in a week's editor and the intro on a
     // course's public page. Public read for the same reason as every block
-    // above — the published course page and the curriculum preview are served
-    // to signed-out visitors — and writes gated to admins plus the two course
+    // above (the published course page and the curriculum preview are served
+    // to signed-out visitors), and writes gated to admins plus the two course
     // permissions, matching `canDraftCourse` / `canApproveCourse` and the
     // `courses` rules in firestore.rules.
     //
