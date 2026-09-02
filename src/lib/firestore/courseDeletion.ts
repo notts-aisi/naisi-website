@@ -552,8 +552,8 @@ async function drainSubscriptionRows(
  * false things at once: `status: "accepted"` claims a place on a cohort that
  * no longer exists, `outcome.targetRunId` points at a document nothing can
  * resolve, and `seatApplicationId` names a `courseApplications` row this same
- * cascade has already deleted. The status hub would show a live placement,
- * and the round's own counters would keep counting the person as placed.
+ * cascade has already deleted. The status hub would show a live placement on
+ * a cohort nothing can open.
  *
  * So each row is RELEASED: `status` becomes `withdrawn`, and the two
  * pointers are cleared. What actually happened is still legible from the row
@@ -564,6 +564,28 @@ async function drainSubscriptionRows(
  * `withdrawn -> submitted` inside the counter transaction, so a released
  * applicant can be put back into a live round by the route that already
  * exists, rather than needing a repair nobody has written.
+ *
+ * `withdrawnAt` is deliberately NOT stamped. It records when THE APPLICANT
+ * withdrew, and reading it is how the reapply flow and the queue tell a
+ * person's own change of mind from anything else; a system release is not
+ * that, and back-dating one would put an act on the applicant's record that
+ * they never performed. The destroy audit row carries the when, the who and
+ * the how many for this release, and `updatedAt` moves, so nothing is lost.
+ *
+ * ## The round's counters are deliberately NOT moved here
+ *
+ * A release does not touch `admissionRounds.applicationCounts`, and nothing
+ * anywhere in this file writes an `admissionRounds` document (a test pins
+ * that). The counters are relative increments owned by the apply, submit and
+ * decide transactions; a second writer outside those transactions is how a
+ * counter goes wrong, not how it is repaired. And a round outlives every run
+ * it fed, so a run destroy must never reach one.
+ *
+ * The consequence is real and accepted: after a destroy, a round's accepted
+ * count can read higher than its rows justify. The repair is the round's own
+ * recount, `POST /api/admissions/rounds/[roundId]/recount` (PR33), which
+ * rebuilds the numbers from the rows themselves. It is the same repair the
+ * account cascade leans on for the same reason.
  *
  * ## Why clearing `outcome.targetRunId` is load-bearing, not tidiness
  *

@@ -251,6 +251,14 @@ export type AdmissionApplicationDoc = {
   reapplyCount: number;
   status: AdmissionApplicationStatus;
   submittedAt: Date | null;
+  /**
+   * When THE APPLICANT withdrew, and only that. A system release (the run
+   * destroy cascade moving a placed applicant to `withdrawn` because their
+   * cohort no longer exists) deliberately leaves this null rather than
+   * back-dating an act the person never performed, so a null here alongside
+   * `status: "withdrawn"` is expected and is not a missing write. See
+   * `releaseAdmissionSeats` in courseDeletion.ts.
+   */
   withdrawnAt: Date | null;
   outcome: AdmissionOutcome;
   /**
