@@ -575,7 +575,12 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                 />
               </div>
 
-              <ConductFlagControl uid={user.uid} displayName={displayName} />
+              {/* Not on your own row. A conduct flag is a record one admin
+                  keeps about another person, so a self-set one has nobody
+                  outside it who agreed to it; another admin can still flag
+                  this one. The route refuses a self-flag as well, so a
+                  hand-made request meets the same rule. */}
+              {!isSelf && <ConductFlagControl uid={user.uid} displayName={displayName} />}
 
               <div className={styles.controlBlock}>
                 <span className={styles.controlLabel}>Debug</span>

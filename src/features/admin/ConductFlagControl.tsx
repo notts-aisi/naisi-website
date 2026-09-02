@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Button from "@/components/ui/Button";
 import CountedTextarea from "@/components/ui/CountedTextarea";
 import MemberText from "@/components/ui/MemberText";
@@ -44,7 +44,9 @@ function readFlag(body: Partial<FlagState>): FlagState {
  *
  * The fetch happens on mount, and the component only mounts inside the expanded
  * panel, so opening the Members list does not ask the server about everybody's
- * conduct.
+ * conduct. MemberItem does not render this control on the admin's own row; the
+ * route refuses a self-flag as well, so the rule holds against a hand-made
+ * request too.
  */
 export default function ConductFlagControl({ uid, displayName }: Props) {
   const [state, setState] = useState<FlagState | null>(null);
@@ -54,11 +56,8 @@ export default function ConductFlagControl({ uid, displayName }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    // The row can be collapsed while the request is in flight, so the result
-    // is dropped rather than written into an unmounted component.
-    let cancelled = false;
-    (async () => {
+  const load = useCallback(
+    async (isCancelled: () => boolean) => {
       try {
         const res = await fetch(
           `/api/admin/members/${encodeURIComponent(uid)}/conduct-flag`,
@@ -66,7 +65,7 @@ export default function ConductFlagControl({ uid, displayName }: Props) {
         const body = (await res.json().catch(() => null)) as
           | (Partial<FlagState> & { error?: string })
           | null;
-        if (cancelled) return;
+        if (isCancelled()) return;
         if (!res.ok || !body) {
           setLoadError(body?.error ?? "Could not load the conduct flag.");
           return;
@@ -74,13 +73,30 @@ export default function ConductFlagControl({ uid, displayName }: Props) {
         setState(readFlag(body));
         setLoadError(null);
       } catch {
-        if (!cancelled) setLoadError("Could not load the conduct flag.");
+        if (!isCancelled()) setLoadError("Could not load the conduct flag.");
       }
+    },
+    [uid],
+  );
+
+  useEffect(() => {
+    // The row can be collapsed while the request is in flight, so the result
+    // is dropped rather than written into an unmounted component.
+    let cancelled = false;
+    void (async () => {
+      await load(() => cancelled);
     })();
     return () => {
       cancelled = true;
     };
-  }, [uid]);
+  }, [load]);
+
+  function onRetry() {
+    // A failed GET would otherwise be a dead end: no state means no buttons,
+    // and the only way back was to collapse the row and expand it again.
+    setLoadError(null);
+    void load(() => false);
+  }
 
   async function save(flagged: boolean, withReason: string) {
     setBusy(true);
@@ -107,19 +123,33 @@ export default function ConductFlagControl({ uid, displayName }: Props) {
     }
   }
 
-  function onFlag() {
+  const current = state ?? EMPTY;
+  /** Editing the wording of a live flag, rather than raising a new one. The
+   *  route keeps the original date and author in that case, so this is a
+   *  correction and not a re-flag. */
+  const editing = composing && current.flagged;
+
+  function onSubmit() {
     const trimmed = reason.trim();
     if (!trimmed) {
-      setError("Give a reason before flagging.");
+      setError(editing ? "Give a reason, or remove the flag." : "Give a reason before flagging.");
       return;
     }
-    const ok = window.confirm(
-      `Flag ${displayName}?\n\n`
-        + "Reviewers will see that a flag exists. They will not see the reason, "
-        + "and neither will the member.",
-    );
-    if (!ok) return;
+    if (!editing) {
+      const ok = window.confirm(
+        `Flag ${displayName}?\n\n`
+          + "Reviewers will see that a flag exists. They will not see the reason, "
+          + "and neither will the member.",
+      );
+      if (!ok) return;
+    }
     void save(true, trimmed);
+  }
+
+  function onEdit() {
+    setReason(current.reason);
+    setError(null);
+    setComposing(true);
   }
 
   function onClear() {
@@ -130,8 +160,6 @@ export default function ConductFlagControl({ uid, displayName }: Props) {
     void save(false, "");
   }
 
-  const current = state ?? EMPTY;
-
   return (
     <div className={styles.block}>
       <span className={styles.label}>
@@ -139,8 +167,24 @@ export default function ConductFlagControl({ uid, displayName }: Props) {
         <span className={styles.hint}>(admins only)</span>
       </span>
 
+      {/* Under the label in every state, not only while an admin is typing:
+          somebody reading an existing flag is deciding whether to leave it
+          standing, and needs to know who it is about to be shown to. */}
+      <p className={styles.muted}>
+        The reason is visible to admins only. Reviewers see a yes or no chip, and the
+        member never sees any of it.
+      </p>
+
       {state === null && loadError === null && <p className={styles.muted}>Checking…</p>}
-      {loadError !== null && <p className={styles.error}>{loadError}</p>}
+
+      {loadError !== null && (
+        <div className={styles.actions}>
+          <p className={styles.error}>{loadError}</p>
+          <Button size="sm" variant="ghost" onClick={onRetry}>
+            Retry
+          </Button>
+        </div>
+      )}
 
       {state !== null && current.flagged && (
         <div className={styles.flagged}>
@@ -150,9 +194,16 @@ export default function ConductFlagControl({ uid, displayName }: Props) {
             {current.byName ? `Set by ${current.byName}` : "Set by an admin"}
             {current.flaggedAt ? ` on ${new Date(current.flaggedAt).toLocaleDateString("en-GB")}` : ""}
           </p>
-          <Button size="sm" variant="ghost" onClick={onClear} disabled={busy}>
-            Remove flag
-          </Button>
+          {!composing && (
+            <div className={styles.actions}>
+              <Button size="sm" variant="ghost" onClick={onEdit} disabled={busy}>
+                Edit reason
+              </Button>
+              <Button size="sm" variant="ghost" onClick={onClear} disabled={busy}>
+                Remove flag
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -165,7 +216,7 @@ export default function ConductFlagControl({ uid, displayName }: Props) {
         </>
       )}
 
-      {state !== null && !current.flagged && composing && (
+      {state !== null && composing && (
         <div className={styles.compose}>
           <CountedTextarea
             value={reason}
@@ -173,16 +224,21 @@ export default function ConductFlagControl({ uid, displayName }: Props) {
             onChange={(e) => setReason(e.target.value)}
             rows={3}
             placeholder="What happened, and when"
-            aria-label={`Reason for flagging ${displayName}`}
+            aria-label={
+              editing
+                ? `Reason for the conduct flag on ${displayName}`
+                : `Reason for flagging ${displayName}`
+            }
             disabled={busy}
           />
-          <p className={styles.muted}>
-            The reason is visible to admins only. Reviewers see a yes or no chip, and the
-            member never sees any of it.
-          </p>
+          {editing && (
+            <p className={styles.muted}>
+              Saving a new wording keeps the original date and the admin who set the flag.
+            </p>
+          )}
           <div className={styles.actions}>
-            <Button size="sm" variant="danger" onClick={onFlag} disabled={busy}>
-              Flag
+            <Button size="sm" variant="danger" onClick={onSubmit} disabled={busy}>
+              {editing ? "Save reason" : "Flag"}
             </Button>
             <Button
               size="sm"

@@ -2,18 +2,24 @@
    sits among the permission toggles and should read as a record, not a button
    somebody reaches for. */
 
+/* Matches `.controlBlock` in MemberItem.module.css, which this block sits in
+   the same column as: same gap, same `min-width: 0` so a long reason wraps
+   inside the panel instead of widening the grid track it shares. */
 .block {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   align-items: flex-start;
+  min-width: 0;
 }
 
+/* `--color-text-muted`, the same as `.controlLabel` beside it: a quieter tone
+   here would read as a disabled control rather than a sibling of the toggles. */
 .label {
   font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--color-text-subtle);
+  color: var(--color-text-muted);
 }
 
 .hint {
@@ -78,10 +84,11 @@
 .actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-2);
 }
 
-@media (max-width: 48rem) {
+@media (max-width: 48rem) { /* --bp-md */
   .compose {
     max-width: 100%;
   }
