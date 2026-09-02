@@ -135,6 +135,38 @@ function source(relativePath) {
   return readFileSync(join(REPO_ROOT, ...relativePath.split("/")), "utf8");
 }
 
+/**
+ * The body of a handler's `db.runTransaction(...)` call, found by matching the
+ * parenthesis it opens with. Quoted strings are skipped, so copy containing a
+ * bracket cannot end the scan early.
+ *
+ * This is what lets a test say "that gate is INSIDE the transaction" rather
+ * than "that gate appears somewhere in the file", which is the difference
+ * between a re-check and a check-then-act.
+ */
+function transactionBody(handlerSource) {
+  const at = handlerSource.indexOf("db.runTransaction(");
+  assert.ok(at !== -1, "this handler runs no transaction at all");
+  const open = handlerSource.indexOf("(", at);
+  let depth = 0;
+  let quote = "";
+  for (let i = open; i < handlerSource.length; i += 1) {
+    const ch = handlerSource[i];
+    if (quote) {
+      if (ch === "\\") i += 1;
+      else if (ch === quote) quote = "";
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    else if (ch === "(") depth += 1;
+    else if (ch === ")") {
+      depth -= 1;
+      if (depth === 0) return handlerSource.slice(open + 1, i);
+    }
+  }
+  throw new Error("unbalanced parentheses after db.runTransaction(");
+}
+
 const APPLY_ROUTE = "src/app/api/admissions/rounds/[roundId]/apply/route.ts";
 const SUBMIT_ROUTE = "src/app/api/admissions/rounds/[roundId]/apply/submit/route.ts";
 const STAGE_ROUTE = "src/app/api/admissions/rounds/[roundId]/apply/stage/[stageId]/route.ts";
@@ -631,16 +663,11 @@ describe("access requirements", () => {
       false,
       "the access-requirements answer is being written onto the application row",
     );
-    // And it must reach the private row in the SAME batch as the row update,
-    // or a crash between the two writes leaves the two halves disagreeing.
-    const batch = src.slice(src.indexOf("const batch = db.batch();"));
-    assert.match(batch, /batch\.update\(applicationRef\(/);
-    assert.match(batch, /batch\.set\(\s*privateRef\(/);
-    assert.match(batch, /\{ accessRequirements \}/);
-    assert.ok(
-      batch.indexOf("await batch.commit()") > batch.indexOf("privateRef("),
-      "the private write is not inside the batch",
-    );
+    // And it must reach the private row in the SAME transaction as the row
+    // update, or a crash between the two writes leaves the halves disagreeing.
+    const tx = transactionBody(handler(src, "PATCH"));
+    assert.match(tx, /tx\.update\(appRef, update\)/);
+    assert.match(tx, /tx\.set\(ownPrivateRef, \{ accessRequirements \}, \{ merge: true \}\)/);
   });
 
   test("the owner projection carries the answer and nothing reviewer-only", () => {
@@ -1125,6 +1152,85 @@ describe("the route prologue", () => {
     const conflict = post.slice(post.indexOf('outcome === "exists"'));
     assert.match(conflict, /application,/);
     assert.match(conflict, /status: 409/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10b. A save that is still in flight when a submit lands
+// ---------------------------------------------------------------------------
+
+/**
+ * The autosave fires on a 120-second timer, so a PATCH can leave the browser
+ * before the applicant presses Submit and arrive at the server after the
+ * submit has committed. Under a check-then-act save (read the row, decide it
+ * is a draft, then write) that late request would overwrite answers the submit
+ * had already frozen and validated with required questions enforced, and
+ * nothing anywhere would record that it happened: the reviewer would read a
+ * version the applicant never submitted.
+ *
+ * The fix is that every gate the write depends on is re-checked against a read
+ * taken INSIDE the transaction that performs the write. These tests pin that
+ * shape from the source, plus the one half that can be executed here: the
+ * freeze check itself.
+ */
+describe("a save that lands after the submit", () => {
+  const patch = handler(source(APPLY_ROUTE), "PATCH");
+  const tx = transactionBody(patch);
+
+  test("the row is re-read inside the transaction, and the status gate reads that copy", () => {
+    const read = tx.indexOf("await tx.get(appRef)");
+    const gate = tx.indexOf('application.status !== "draft"');
+    assert.ok(read !== -1, "the save does not re-read the row inside its transaction");
+    assert.ok(
+      gate !== -1 && read < gate,
+      "the draft check is not made against the in-transaction read, so a submit that landed first can still be overwritten",
+    );
+  });
+
+  test("the freeze map comes from that read too, not from one taken earlier", () => {
+    assert.match(tx, /application\.stageSubmittedAt/);
+    assert.equal(
+      /loadOwnApplication\(/.test(patch.slice(0, patch.indexOf("db.runTransaction("))),
+      false,
+      "the save reads the row before opening its transaction, which is the check-then-act this test exists to stop",
+    );
+  });
+
+  test("both writes commit inside the same transaction, and no batch is left behind", () => {
+    assert.match(tx, /tx\.update\(appRef, update\)/);
+    assert.match(tx, /tx\.set\(ownPrivateRef,/);
+    assert.equal(
+      /db\.batch\(\)/.test(patch),
+      false,
+      "the save still commits through a batch, which cannot see the row move underneath it",
+    );
+  });
+
+  test("a row that moved underneath the save is answered 409, saying so", () => {
+    const moved = tx.slice(tx.indexOf('application.status !== "draft"'));
+    assert.match(moved, /409/);
+    assert.match(moved, /was submitted while this page was open/);
+    assert.match(moved, /was withdrawn while this page was open/);
+    // The copy has to send them somewhere: a refusal with no next step reads
+    // as a site fault rather than as "your work is safe, look at it".
+    assert.match(moved, /Reload the page/);
+  });
+
+  test("the stage the submit froze is refused rather than rewritten", () => {
+    // The executable half. `stageSubmittedAt` is what a submit writes, and the
+    // save reads it out of the same transaction, so this is the check that
+    // runs against the frozen row.
+    const refused = apply.readStageAnswers(
+      { s1: { q1: "a late edit" } },
+      [makeStage()],
+      makeRound(),
+      DURING_WINDOW,
+      { s1: new Date("2026-10-02T09:00:00Z") },
+      false,
+    );
+    assert.ok(apply.isFieldError(refused));
+    assert.equal(refused.stageId, "s1");
+    assert.match(refused.error, /already submitted/);
   });
 });
 

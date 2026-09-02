@@ -5,6 +5,7 @@ import { normalizeUser } from "@/lib/firestore/users";
 import {
   EMPTY_APPLICATION_PROGRAMME_PREFERENCE,
   EMPTY_OUTCOME,
+  normalizeAdmissionApplication,
   type AdmissionApplicationStatus,
 } from "@/lib/firestore/admissionApplications";
 import { emptyMask } from "@/lib/admissions/availability";
@@ -316,9 +317,23 @@ export async function POST(req: Request, ctx: Ctx) {
  *
  * ## Access requirements never touch the application row
  *
- * The answer goes to `admissionApplicationPrivate` in the SAME batch, and the
- * update below cannot write it: the field is not in the object. That is the
+ * The answer goes to `admissionApplicationPrivate` in the SAME transaction, and
+ * the update below cannot write it: the field is not in the object. That is the
  * structural half of the promise the privacy notice makes.
+ *
+ * ## One transaction, because a save can be in flight when a submit lands
+ *
+ * The autosave fires on a 120-second timer, so a request that left the browser
+ * before the applicant pressed Submit can arrive at the server after the submit
+ * committed. Reading the row, deciding it is still a draft, and then writing
+ * would let that late save overwrite answers the submit has already frozen and
+ * validated with required questions enforced, and nothing anywhere would say so.
+ *
+ * So the row is re-read INSIDE the transaction and every gate the write depends
+ * on is re-checked against that read: the status is still `draft`, and each
+ * stage the body names is still unfrozen. The application update and the
+ * private-row write commit together or not at all, and a row that moved
+ * underneath the request answers 409 saying exactly that.
  */
 export async function PATCH(req: Request, ctx: Ctx) {
   const blocked = await assertNotImpersonating();
@@ -354,78 +369,85 @@ export async function PATCH(req: Request, ctx: Ctx) {
       );
     }
 
-    const loaded = await loadOwnApplication(db, round, user.uid);
-    if (!loaded) {
-      return NextResponse.json({ error: "No application found." }, { status: 404 });
-    }
-    const { application } = loaded;
-    if (application.status !== "draft") {
-      return NextResponse.json(
-        {
-          error:
-            application.status === "withdrawn"
-              ? "You have withdrawn this application, so it cannot be edited."
-              : "This application has been submitted, so it cannot be edited.",
-        },
-        { status: 403 },
-      );
-    }
-
     const stages = await loadStages(db, roundId);
+    const appRef = applicationRef(db, roundId, user.uid);
+    const ownPrivateRef = privateRef(db, roundId, user.uid);
 
-    const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
-
-    if (body.stageAnswers !== undefined) {
-      const answers = readStageAnswers(
-        body.stageAnswers,
-        stages,
-        round,
-        now,
-        application.stageSubmittedAt,
-        false,
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(appRef);
+      if (!snap.exists) throw new ApplyError("No application found.", 404);
+      // The row AS OF THIS TRANSACTION. Every gate below reads off this copy,
+      // never off one fetched before the transaction opened, or a submit that
+      // landed in between would be overwritten by a save that was already in
+      // flight when it committed.
+      const application = normalizeAdmissionApplication(
+        snap.id,
+        snap.data() ?? {},
+        round.availabilityGrid,
       );
-      if (isFieldError(answers)) {
-        return NextResponse.json(answers, { status: 400 });
+
+      if (application.status !== "draft") {
+        throw new ApplyError(
+          application.status === "withdrawn"
+            ? "This application was withdrawn while this page was open, so nothing on it was saved. Reload the page to pick it back up."
+            : "This application was submitted while this page was open, so nothing on it was saved. Reload the page to read what was sent.",
+          409,
+        );
       }
-      // Merged per stage rather than replaced wholesale: a client that sends
-      // only the stage it is showing must not blank the other one.
-      for (const [stageId, stageAnswers] of Object.entries(answers)) {
-        update[`stageAnswers.${stageId}`] = stageAnswers;
+
+      const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
+
+      if (body.stageAnswers !== undefined) {
+        const answers = readStageAnswers(
+          body.stageAnswers,
+          stages,
+          round,
+          now,
+          // The freeze map from the in-transaction read, so a stage frozen by a
+          // submit moments ago is refused here rather than quietly rewritten.
+          application.stageSubmittedAt,
+          false,
+        );
+        if (isFieldError(answers)) {
+          throw new ApplyError(answers.error, 400, {
+            questionId: answers.questionId,
+            stageId: answers.stageId,
+          });
+        }
+        // Merged per stage rather than replaced wholesale: a client that sends
+        // only the stage it is showing must not blank the other one.
+        for (const [stageId, stageAnswers] of Object.entries(answers)) {
+          update[`stageAnswers.${stageId}`] = stageAnswers;
+        }
       }
-    }
 
-    if (body.availability !== undefined) {
-      const mask = readAvailability(body.availability, round.availabilityGrid);
-      if (isFieldError(mask)) return NextResponse.json(mask, { status: 400 });
-      update.availability = mask;
-      // Denormalised out of the mask so a staleness scan is one equality
-      // filter rather than a read of every application. A copy, never truth.
-      update.availabilityConfigVersion = mask.version;
-    }
+      if (body.availability !== undefined) {
+        const mask = readAvailability(body.availability, round.availabilityGrid);
+        if (isFieldError(mask)) throw new ApplyError(mask.error, 400);
+        update.availability = mask;
+        // Denormalised out of the mask so a staleness scan is one equality
+        // filter rather than a read of every application. A copy, never truth.
+        update.availabilityConfigVersion = mask.version;
+      }
 
-    if (body.programmePreference !== undefined) {
-      const preference = readProgrammePreference(body.programmePreference, round);
-      if (isFieldError(preference)) return NextResponse.json(preference, { status: 400 });
-      update.programmePreference = preference;
-    }
+      if (body.programmePreference !== undefined) {
+        const preference = readProgrammePreference(body.programmePreference, round);
+        if (isFieldError(preference)) throw new ApplyError(preference.error, 400);
+        update.programmePreference = preference;
+      }
 
-    let accessRequirements: string | null = null;
-    if (body.accessRequirements !== undefined) {
-      const value = readAccessRequirements(body.accessRequirements);
-      if (isFieldError(value)) return NextResponse.json(value, { status: 400 });
-      accessRequirements = value;
-    }
+      let accessRequirements: string | null = null;
+      if (body.accessRequirements !== undefined) {
+        const value = readAccessRequirements(body.accessRequirements);
+        if (isFieldError(value)) throw new ApplyError(value.error, 400);
+        accessRequirements = value;
+      }
 
-    const batch = db.batch();
-    batch.update(applicationRef(db, roundId, user.uid), update);
-    if (accessRequirements !== null) {
-      batch.set(
-        privateRef(db, roundId, user.uid),
-        { accessRequirements },
-        { merge: true },
-      );
-    }
-    await batch.commit();
+      tx.update(appRef, update);
+      if (accessRequirements !== null) {
+        tx.set(ownPrivateRef, { accessRequirements }, { merge: true });
+      }
+    });
 
     const saved = await loadOwnApplication(db, round, user.uid);
     return NextResponse.json({
