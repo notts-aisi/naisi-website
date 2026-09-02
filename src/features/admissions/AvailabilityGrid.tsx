@@ -320,7 +320,16 @@ export default function AvailabilityGrid({
           ref={containerRef}
           className={styles.cells}
           role="grid"
-          aria-label="When you could be in a room in Nottingham"
+          /*
+            The label states the AXES, because this grid is transposed against
+            the reading of it a screen reader will assume. Each `row` here is a
+            DAY and each cell in it is a time, so the arrow keys do the
+            opposite of what "grid" implies: up and down move through the day,
+            left and right change the day. Without saying so, somebody
+            navigating by keyboard has to press an arrow and infer the model
+            from where they land, on a form that decides who gets a place.
+          */
+          aria-label="When you could be in a room in Nottingham. Each row is one day: up and down move through that day's times, left and right change the day."
           aria-readonly={locked || undefined}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -335,7 +344,13 @@ export default function AvailabilityGrid({
               data-active={day === activeDay ? "true" : "false"}
               role="row"
             >
-              <div className={styles.columnHead} role="columnheader">
+              {/* A ROW header, not a column one. The element it names is a
+                  `role="row"` and everything after it in that row belongs to
+                  the same day, which is exactly what `rowheader` means;
+                  `columnheader` would tell a screen reader this cell heads a
+                  column of the cells BELOW it in other rows, which is the
+                  opposite of the DOM it is sitting in. */}
+              <div className={styles.columnHead} role="rowheader">
                 <span aria-hidden="true">{WEEKDAY_SHORT[day]}</span>
                 <span className="visually-hidden">{WEEKDAY_LONG[day]}</span>
               </div>

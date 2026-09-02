@@ -1519,6 +1519,18 @@ describe("the apply flow island", () => {
     assert.match(grid, /tabIndex=\{cursor\.day === day && cursor\.slot === slot \? 0 : -1\}/);
   });
 
+  test("the grid names its axes, and the day header heads a row", () => {
+    const grid = source("src/features/admissions/AvailabilityGrid.tsx");
+    // Each `role="row"` is a DAY, so the day's name is a rowheader. Calling it
+    // a columnheader tells a screen reader it heads the cells below it in
+    // other rows, which is the opposite of the DOM it sits in.
+    assert.match(grid, /role="rowheader"/);
+    assert.equal(/role="columnheader"/.test(grid), false);
+    // And the arrows do the opposite of what "grid" implies, so the label says
+    // which way is which rather than leaving it to be inferred by pressing.
+    assert.match(grid, /up and down move through that day's times, left and right change the day/);
+  });
+
   test("the grid stylesheet is mobile-first and hides the other days on a phone", () => {
     const css = source("src/features/admissions/AvailabilityGrid.module.css");
     assert.match(css, /\.column\[data-active="false"\] \{\s*display: none;/);
