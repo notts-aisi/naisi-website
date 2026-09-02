@@ -140,7 +140,7 @@ async function deleteOwnedCourseRows(
  * `updatedAt` is deliberately untouched: it records when a facilitator last
  * marked the register, and a deletion elsewhere is not a marking.
  */
-async function clearCourseAttendanceMarks(
+export async function clearCourseAttendanceMarks(
   db: Firestore,
   runIds: string[],
   uid: string,

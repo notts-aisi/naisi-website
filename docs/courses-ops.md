@@ -5,9 +5,10 @@ the codebase: secrets, the external scheduler, and the order things have to be
 deployed in.
 
 > Status: this file starts with the scheduler tick, which is the first piece of
-> courses V3 infrastructure that needs work in the Google Cloud console. Later
-> PRs extend it with the rules-and-indexes deploy order, the membership import
-> and the cutover checklist.
+> courses V3 infrastructure that needs work in the Google Cloud console, and
+> continues with PUSH ATTENDANCE, which is the one human action the weekly
+> emails hang off. Later PRs extend it with the rules-and-indexes deploy order,
+> the membership import and the cutover checklist.
 
 ---
 
@@ -322,3 +323,81 @@ Deletion begins within 24 hours of a document's `expiresAt` and is a background
 sweep, not an instant. Rows already written before this shipped carry no
 `expiresAt` and are never collected; delete them by hand if they matter, or
 leave them, since they stop accumulating the moment the policy is on.
+
+---
+
+## PUSH ATTENDANCE, and the two sends around it
+
+### What the push does, in the order it does it
+
+A facilitator marks their register during the session, saving as often as they
+like. Nothing has left the building at that point: the register is a draft and
+nobody outside the room can see it. Pressing **Push attendance** does three
+things, and the order is the design:
+
+1. **One transaction** stamps `pushedAt` and `pushedByUid` on the register, and
+   recomputes every member's `courseEnrolments.attendance` rollup IN FULL from
+   that group's pushed registers. Never a delta: a mirror that can be rebuilt
+   from its source cannot drift from it.
+2. **The send marker is claimed by a standalone `.create()` OUTSIDE that
+   transaction**, at `courseNudges/gnudge__{runId}__{groupId}__{nextSlotStartKey}`.
+   A create collision inside a transaction aborts the whole transaction, so
+   claiming it there would unlock a register because an email had already gone.
+3. **The group is emailed** about its next session, one message each, carrying
+   the next week's material and the weekly feedback link.
+
+The consequence worth knowing on the night: **a send failure leaves the
+register locked and the figures correct**, and the mail is recovered from the
+run's catch-up lane rather than by pushing again. A second press is an
+idempotent 200 that sends nothing.
+
+### After the push
+
+The register is admin-only. An admin corrects it from the same grid, and every
+mark they move appends its own `courseAudit` row with the before and the after.
+Participant notes stay open to the facilitator, deliberately: they are usually
+written after the session rather than during it.
+
+### The two sends, and which is which
+
+| Send | Who presses it | When |
+| --- | --- | --- |
+| The weekly reminder | the group's facilitator, by pushing the register | after every session |
+| The run-wide catch-up | an admin, from the run's nudge page | the session-1 welcome, and recovery |
+
+**The session-1 welcome has to be sent by hand.** No push exists before a run's
+first session, so nothing in the group lane can produce it. Send it from the
+run's nudge page before the first week. This is not a gap waiting to be closed
+with a "first session" branch on the push: that would need its own idempotency
+marker for a send that happens once per run, and the catch-up lane already has
+one.
+
+**The catch-up reads the group markers before it sends.** If any group has
+already had this week's reminder from its own push, the run-wide send is
+refused unless an admin forces it, and a force records the group markers it
+overrode on its own marker. A cohort mailed twice in one week is on the record
+either way.
+
+### If a facilitator never presses it
+
+Their group loses its reminder as well as its register, and every member of
+that group carries a session in a denominator reviewers will read as a
+shortfall. The unmarked-register follow-up task lands on every admin's board
+after the grace period (`config/courses.unmarkedRegisterGraceHours`, default
+36). Brief facilitators on the push **before** their first session, not after.
+
+### The knobs
+
+Both live on the site status page, under Course settings:
+
+- **Weekly feedback form** (`config/courses.weeklyFeedbackUrl`). Rides the
+  reminder as `{feedbackUrl}`. Leave it empty and the paragraph carrying it is
+  dropped from the email whole, which is a complete state rather than a broken
+  one.
+- **Unmarked register grace period**, above.
+
+### A cancelled session
+
+Use the **Didn't happen** switch on the column, then push as normal. A session
+marked not held leaves every denominator rather than counting as a room full of
+absences, and the group still gets its reminder about the next one.
