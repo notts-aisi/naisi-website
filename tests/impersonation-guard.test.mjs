@@ -23,10 +23,15 @@
  * The route list is written out in full rather than derived, so the guard is
  * legible as a list of decisions and a deletion shows up as a diff.
  *
- * HONEST LIMIT, restated from `assertNotImpersonating()`: the marker is an
- * httpOnly cookie. No page script can remove it, but an admin with devtools
- * open can delete it from their own browser. This enforces intent against
- * accidents, not against an admin who has decided to defeat it.
+ * SCOPE, restated from `assertNotImpersonating()`: this covers mutating route
+ * handlers in the listed trees, and `(app)/admin/layout.tsx` separately closes
+ * the whole admin page tree during a view-as session because the course
+ * editors there write client-direct, where no route guard can reach. Writes
+ * made client-direct from anywhere else answer to `firestore.rules` alone, and
+ * rules see the target. And the marker is an httpOnly cookie: no page script
+ * can remove it, but an admin with devtools open can delete it from their own
+ * browser. This enforces intent against accidents, not against an admin who
+ * has decided to defeat it.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -387,4 +392,27 @@ test("markerIsLive is the one comparison the banner, the gate and the guard shar
   assert.equal(markerIsLive(LIVE_MARKER, TARGET_UID), true);
   assert.equal(markerIsLive(LIVE_MARKER, ADMIN_UID), false);
   assert.equal(markerIsLive(LIVE_MARKER, null), true);
+});
+
+test("the admin page tree is closed while a view-as session is live", () => {
+  // The course editors under /admin/courses write to Firestore client-direct
+  // (courseMutations.ts), so no route handler exists for assertNotImpersonating
+  // to sit in. The layout closing the tree is what covers them, and now that a
+  // draftCourse holder can reach that tree, an admin viewing as one would
+  // otherwise land on the authoring surfaces.
+  const layout = readFileSync(
+    join(REPO_ROOT, "src", "app", "(app)", "admin", "layout.tsx"),
+    "utf8",
+  );
+  assert.match(
+    layout,
+    /markerIsLive\(/,
+    "(app)/admin/layout.tsx must consult the impersonation marker: the course " +
+      "editors below it write client-direct, where the route guard cannot reach.",
+  );
+  assert.match(
+    layout,
+    /getImpersonator\(/,
+    "(app)/admin/layout.tsx must read the marker it tests.",
+  );
 });
