@@ -15,6 +15,7 @@ import {
   type CourseRunDoc,
 } from "./courses";
 import { COURSE_MATERIAL_NOTES_COLLECTION } from "./courseMaterialNotes";
+import { SCHEDULER_MARKERS_COLLECTION } from "./schedulerMarkers";
 import { deleteEventsForSubscriptions } from "./subscriptions";
 import { ownedStoragePaths } from "./taskAttachments";
 
@@ -156,6 +157,23 @@ export type RunDestroyCounts = {
   materialNotes: number;
   mirroredTasks: number;
   subscriptionRows: number;
+  /**
+   * `schedulerMarkers` rows this run owns: the send-dedupe markers the
+   * scheduler tick writes before it sends anything.
+   *
+   * Two families name this run, and they name it differently. `breakret__`
+   * stores `runId` as a field; `unmarked__` stores only `groupId`, because
+   * the job that writes it is walking group sessions and never needs the run.
+   * Both are counted here, the second through the run's group ids.
+   *
+   * They carry no member work and no PII, so the number is small print rather
+   * than a warning. It is on the manifest because the house rule is that
+   * every collection a PR adds is counted and drained in that same PR, and
+   * because a marker outliving its run is not harmless: an `unmarked__` row
+   * keyed to a group id that comes round again would suppress a real
+   * follow-up on a different cohort, silently.
+   */
+  schedulerMarkers: number;
   emailSendRows: number;
 };
 
@@ -318,6 +336,87 @@ async function drainQuery(
     if (snap.size < limit) return { deleted, drained: true };
   }
   return { deleted, drained: false };
+}
+
+/** Firestore's ceiling on the value list of an `in` filter. */
+const IN_FILTER_MAX = 30;
+
+/** Split ids into `in`-filter-sized chunks. Empty in, empty out. */
+function chunkIds(ids: readonly string[]): string[][] {
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += IN_FILTER_MAX) {
+    chunks.push(ids.slice(i, i + IN_FILTER_MAX));
+  }
+  return chunks;
+}
+
+/**
+ * The run's live group ids, read with a projection (`.select()`) so the query
+ * carries ids and nothing else. Both the manifest and the scheduler-marker
+ * drain need them: the group-lane rows in `emailSends` and the `unmarked__`
+ * marker family are addressed by group, not by run.
+ */
+async function runGroupIds(db: Firestore, runId: string): Promise<string[]> {
+  const snap = await db
+    .collection("courseGroups")
+    .where("runId", "==", runId)
+    .select()
+    .get();
+  return snap.docs.map((d) => d.id);
+}
+
+/**
+ * Drain this run's `schedulerMarkers` rows.
+ *
+ * Two families name a run and they name it differently, which is why this is
+ * a function rather than one more `byRunId` line in the stage table:
+ *
+ *  - `breakret__{runId}__{groupId}__{slotStartKey}` stores `runId` as a
+ *    top-level field, so it drains on a single equality like every leaf;
+ *  - `unmarked__{groupId}__{sessionKey}` stores `groupId` and no run at all,
+ *    because the job that writes it walks group sessions. That family is
+ *    drained a chunk of group ids at a time, at Firestore's `in` cap.
+ *
+ * The group ids are read LIVE on each call rather than captured once, and
+ * this stage sits ABOVE `groups` in the table for that reason: while there
+ * are groups to read there are markers to find, and by the time the groups
+ * are gone this stage has already run in the same pass.
+ *
+ * Markers hold no member work and no PII. They are drained anyway because a
+ * marker that outlives its run is not inert: an `unmarked__` row keyed to a
+ * group id that comes round again suppresses a real follow-up on a different
+ * cohort, and a suppressed send is exactly the failure the marker design
+ * exists to make visible rather than cause.
+ */
+async function drainSchedulerMarkers(
+  db: Firestore,
+  runId: string,
+  budget: Budget,
+): Promise<DrainResult> {
+  let deleted = 0;
+  let drained = true;
+
+  const byRun = await drainQuery(
+    db,
+    "schedulerMarkers (runId)",
+    () => db.collection(SCHEDULER_MARKERS_COLLECTION).where("runId", "==", runId),
+    budget,
+  );
+  deleted += byRun.deleted;
+  if (!byRun.drained) return { deleted, drained: false };
+
+  for (const chunk of chunkIds(await runGroupIds(db, runId))) {
+    if (budget.remaining <= 0) return { deleted, drained: false };
+    const res = await drainQuery(
+      db,
+      "schedulerMarkers (groupId)",
+      () => db.collection(SCHEDULER_MARKERS_COLLECTION).where("groupId", "in", chunk),
+      budget,
+    );
+    deleted += res.deleted;
+    if (!res.drained) drained = false;
+  }
+  return { deleted, drained };
 }
 
 /**
@@ -534,24 +633,22 @@ export async function countRunDestroyTargets(
   // `referenceId: groupId` while run-lane sends log `referenceId: runId`
   // (courseFacilitatorEmails.ts), so an honest "history mentions this run"
   // number needs both. Chunked `in` filters at Firestore's 30-value cap.
-  const groupIdSnap = await db
-    .collection("courseGroups")
-    .where("runId", "==", runId)
-    .select()
-    .get();
-  const groupIds = groupIdSnap.docs.map((d) => d.id);
+  const groupIds = await runGroupIds(db, runId);
 
-  const emailRefIds = [runId, ...groupIds];
-  const emailCountPromises: Array<Promise<number>> = [];
-  for (let i = 0; i < emailRefIds.length; i += 30) {
-    emailCountPromises.push(
-      countAgg(
-        db
-          .collection("emailSends")
-          .where("referenceId", "in", emailRefIds.slice(i, i + 30)),
-      ),
-    );
-  }
+  const emailCountPromises = chunkIds([runId, ...groupIds]).map((chunk) =>
+    countAgg(db.collection("emailSends").where("referenceId", "in", chunk)),
+  );
+
+  // `schedulerMarkers` is counted the same way it is drained: one equality on
+  // `runId` for the `breakret__` family, and a chunked `in` over the run's
+  // group ids for `unmarked__`, which stores no run at all. See
+  // drainSchedulerMarkers for why the two families differ.
+  const markerCountPromises = [
+    countAgg(db.collection(SCHEDULER_MARKERS_COLLECTION).where("runId", "==", runId)),
+    ...chunkIds(groupIds).map((chunk) =>
+      countAgg(db.collection(SCHEDULER_MARKERS_COLLECTION).where("groupId", "in", chunk)),
+    ),
+  ];
 
   const [
     weeks,
@@ -563,6 +660,7 @@ export async function countRunDestroyTargets(
     materialNotes,
     mirroredTasks,
     subscriptionRows,
+    schedulerMarkerCounts,
     emailSendCounts,
   ] = await Promise.all([
     countAgg(db.collection("courseRuns").doc(runId).collection("weeks")),
@@ -591,6 +689,7 @@ export async function countRunDestroyTargets(
     countAgg(
       db.collection("subscriptions").where("channel", "==", courseRunChannel(runId)),
     ),
+    Promise.all(markerCountPromises),
     Promise.all(emailCountPromises),
   ]);
 
@@ -605,6 +704,7 @@ export async function countRunDestroyTargets(
     materialNotes,
     mirroredTasks,
     subscriptionRows,
+    schedulerMarkers: schedulerMarkerCounts.reduce((a, b) => a + b, 0),
     emailSendRows: emailSendCounts.reduce((a, b) => a + b, 0),
   };
 }
@@ -902,7 +1002,10 @@ function auditIncrements(totals: Record<string, number>): Record<string, unknown
  *  4. Mirrored My Work tasks (see drainMirroredTasks — the deliberate
  *     inversion of accountDeletion's retain-tasks rule, and the index note).
  *  5. Nudge markers (courseNudges) — send-dedupe machinery keyed by runId;
- *     hygiene, so counted in `deleted` but not in the manifest.
+ *     hygiene, so counted in `deleted` but not in the manifest. Then the
+ *     scheduler's own markers (schedulerMarkers), which ARE on the manifest:
+ *     they must go before the groups, because one of the two families that
+ *     names this run is addressed by group id rather than by run id.
  *  6. Subscription rows on the cohort channel + their event log (see
  *     drainSubscriptionRows). After this, nothing can mail the cohort.
  *  7. Groups, then weeks — the structural containers, after everything that
@@ -1029,6 +1132,13 @@ export async function destroyRunCascade(
     {
       key: "nudgeMarkers",
       drain: () => drainQuery(db, "courseNudges", byRunId("courseNudges"), budget),
+    },
+    {
+      key: "schedulerMarkers",
+      // ABOVE `groups` deliberately: the `unmarked__` family is addressed by
+      // group id, so this stage has to run while the run's groups are still
+      // readable. See drainSchedulerMarkers.
+      drain: () => drainSchedulerMarkers(db, runId, budget),
     },
     {
       key: "subscriptionRows",

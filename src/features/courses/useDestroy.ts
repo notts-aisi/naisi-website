@@ -196,6 +196,11 @@ const COUNT_META: Record<string, CountMeta> = {
     fate: "destroyed",
     note: "The rows on this run's cohort channel. Members' other subscriptions are untouched.",
   },
+  schedulerMarkers: {
+    label: "Scheduler send markers",
+    fate: "destroyed",
+    note: "The dedupe rows that record which timed sends this run's groups have already had. No member work and no addresses, but they have to go with the run: a marker left behind can suppress a real send later.",
+  },
   emailSendRows: {
     label: "Delivery-log rows",
     fate: "retained",
