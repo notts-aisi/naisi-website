@@ -1113,7 +1113,7 @@ service cloud.firestore {
           //
           // `streams` looks like authored content and is not. The enrol route
           // validates a member's requested stream against this list, and
-          // `courseEnrolments.streamId` is `allow write: if false` — so a
+          // `courseEnrolments.streamId` is `allow write: if false`, so a
           // client-direct edit here could invalidate rows in a collection the
           // client cannot repair. Same class as `applicationCounts`.
           //
@@ -1143,7 +1143,7 @@ service cloud.firestore {
       // Why the rules now carry a table the route already owns: the week-plan
       // freeze above is keyed on the status, and `canApproveCourse()` could
       // write ANY status value. So an approver could walk a live run back to
-      // `draft`, reshape the frozen plan, and walk it forward again — three
+      // `draft`, reshape the frozen plan, and walk it forward again: three
       // writes, no route, and the freeze is defeated. A freeze keyed on a
       // field its subject can set to anything is not a freeze.
       //
@@ -1154,7 +1154,7 @@ service cloud.firestore {
       //   running              -> completed | cancelled
       //   completed, cancelled -> nothing (terminal)
       // `draft` appears on nobody's list on purpose: nothing returns to draft.
-      // `applications-open -> running` is the open-enrolment entry — a
+      // `applications-open -> running` is the open-enrolment entry: a
       // pre-course keeps its sign-ups open into its first teaching weeks and
       // has no review stage to close.
       //
@@ -1280,7 +1280,7 @@ service cloud.firestore {
         // runPinnedFieldsUnchanged() above. Update only PINS them, so without
         // these a drafter could mint a run BORN in open enrolment, pre-seeded
         // with streams no route assigned, or claiming a cohort it does not
-        // have — and the pin would then protect the lie for the run's whole
+        // have, and the pin would then protect the lie for the run's whole
         // life. This is the admissionsReviewerUids lesson, stated verbatim at
         // the top of this create rule.
         //
@@ -1471,7 +1471,7 @@ service cloud.firestore {
       // `attendance/route.ts` throws RegisterFullError on the MERGED records
       // map for the WHOLE POST once a register passes ATTENDANCE_LIMITS
       // .maxRecords (40) keys. So an uncapped "everyone gets a place" group
-      // does not merely leave its 41st member unmarked — it makes a bulk
+      // does not merely leave its 41st member unmarked: it makes a bulk
       // "rest present" fail for everybody in the room and zeroes the
       // completion signal the pre-course bar is computed from.
       //
@@ -1532,7 +1532,7 @@ service cloud.firestore {
         // groupPinnedFieldsUnchanged(). Update only PINS them, so without
         // these a group could be BORN tagged to a stream the enrol route
         // would then honour, or carrying appointment records naming
-        // facilitators nobody appointed — and the pin would protect both for
+        // facilitators nobody appointed, and the pin would protect both for
         // the life of the group. Same argument as the pace fields above.
         && request.resource.data.get('streamId', null) == null
         && request.resource.data.get('facilitatorAppointments', {}).size() == 0
@@ -1931,7 +1931,7 @@ service cloud.firestore {
     // this match is identical to Firestore's implicit deny, so no rules
     // deploy is owed for it. It exists so the lockdown of a collection that
     // is about to gain several documents is VISIBLE here rather than inferred
-    // from the absence of a block — the failure mode being a later wildcard
+    // from the absence of a block. The failure mode is a later wildcard
     // opening a collection nobody remembered was closed.
     match /config/{doc} {
       allow read, write: if false;

@@ -3,7 +3,7 @@
  *
  * `course-register` is the follow-up task raised when a group's register goes
  * unmarked past its grace window: assigned to the admins, about one (run,
- * group, session). TYPE AND LABEL ONLY at this point — nothing mints one yet,
+ * group, session). TYPE AND LABEL ONLY at this point: nothing mints one yet,
  * the job that does lands with the register work.
  *
  * A NOTE FOR WHOEVER BUILDS THAT JOB. The task create rule constrains

@@ -74,7 +74,7 @@ export const EMPTY_ATTENDANCE_ROLLUP: EnrolmentAttendanceRollup = {
 
 export const ENROLMENT_LIMITS = {
   /** Free text a member types when they drop out. Optional, and never shown
-      back to the cohort — it goes to the staff review surface only. */
+      back to the cohort: it goes to the staff review surface only. */
   dropOutReason: 500,
 } as const;
 
@@ -97,7 +97,7 @@ export type CourseEnrolmentDoc = {
    * checklist items they see, through `src/lib/courses/streamScope.ts`.
    *
    * The whole collection is already `allow write: if false`, so this is
-   * server-owned by construction — which is precisely why the run's `streams`
+   * server-owned by construction, which is precisely why the run's `streams`
    * list had to move to the server-owned tier too: a client-direct edit there
    * could invalidate the ids stored here.
    */

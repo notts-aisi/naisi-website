@@ -158,7 +158,7 @@ export type RunDestroyCounts = {
   mirroredTasks: number;
   subscriptionRows: number;
   /**
-   * `courseAudit` rows scoped to this run (V3 W1 PR5) — registers pushed and
+   * `courseAudit` rows scoped to this run (V3 W1 PR5): registers pushed and
    * edited, facilitators appointed and removed, drop-outs, the enrolment-mode
    * flips, the run being settled.
    *
@@ -1065,7 +1065,7 @@ export async function destroyRunCascade(
       // the other leaves: an audit row is `read: if false` to every client
       // and written only by Admin SDK routes, so nothing can recreate one
       // behind the cascade, and the ordering is consistency rather than
-      // necessity — which is what stops the next reader working out which
+      // necessity, which is what stops the next reader working out which
       // rule this one follows.
       drain: () =>
         drainQuery(

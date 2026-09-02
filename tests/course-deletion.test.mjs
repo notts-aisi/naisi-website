@@ -264,7 +264,7 @@ const RUN_COUNT_KEYS = [
   "materialNotes",
   "mirroredTasks",
   "subscriptionRows",
-  // `courseAudit` — the run's operational log (V3 W1 PR5). Added to the
+  // `courseAudit`, the run's operational log (V3 W1 PR5). Added to the
   // manifest in the same change that gave the cascade a stage for it, for the
   // reason materialNotes was: an unlisted collection means the dialog lies
   // about what a destroy takes.

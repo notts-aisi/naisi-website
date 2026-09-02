@@ -1430,3 +1430,362 @@ describe("tasks — fellowship-reminder mirrors", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// V3 W1 PR5: open mode, streams, and the fields that open a write door
+// ---------------------------------------------------------------------------
+
+/**
+ * The four fields `courseRuns` gained are all SERVER-OWNED, and each is
+ * server-owned for a stated reason rather than by analogy:
+ *
+ *  - `enrolMode` opens a WRITE DOOR. An `open` run admits an enrolment with
+ *    no application behind it, which is a capability change, not content.
+ *  - `streams` is an ELIGIBILITY list the enrol route validates against,
+ *    while `courseEnrolments.streamId` is `allow write: if false`. A
+ *    client-direct edit here can strand rows in a collection no client can
+ *    repair.
+ *  - `enrolledCount` is a counter over rows written transactionally.
+ *  - `submissionExerciseRef` is the run's completion bar.
+ *
+ * Each therefore needs BOTH halves: pinned on update AND birth-pinned on
+ * create, because update only pins and a run born dirty stays dirty forever.
+ */
+describe("courseRuns: V3 open-mode fields are server-owned", () => {
+  it("refuses a drafter creating a run already in open mode, or pre-seeded with streams", async () => {
+    await seedCast();
+    const db = await asUser("drafter");
+    await assertFails(
+      db.collection("courseRuns").doc("run-a").set(runDoc("run-a", { enrolMode: "open" })),
+    );
+    await assertFails(
+      db
+        .collection("courseRuns")
+        .doc("run-b")
+        .set(runDoc("run-b", { streams: [{ id: "technical", label: "Technical" }] })),
+    );
+    await assertFails(
+      db.collection("courseRuns").doc("run-c").set(runDoc("run-c", { enrolledCount: 30 })),
+    );
+    // The clean shapes still pass, both spellings: written explicitly (what
+    // `createRun` does) and left absent (a legacy client).
+    await assertSucceeds(
+      db
+        .collection("courseRuns")
+        .doc("run-ok")
+        .set(runDoc("run-ok", { enrolMode: "admissions", streams: [], enrolledCount: 0 })),
+    );
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run-bare").set(runDoc("run-bare")),
+    );
+  });
+
+  it("refuses an APPROVER flipping enrol mode, streams or the counter", async () => {
+    // The approver is the interesting case throughout this block: they are
+    // authorised to move the run's status and are still refused these, so the
+    // change always goes through the route that owns it.
+    await seedCast();
+    await seedRun("run1", { trackLeadUids: ["lead"] });
+    for (const uid of ["approver", "drafter", "lead"]) {
+      const db = await asUser(uid);
+      await assertFails(
+        db.collection("courseRuns").doc("run1").update({ enrolMode: "open" }),
+      );
+      await assertFails(
+        db
+          .collection("courseRuns")
+          .doc("run1")
+          .update({ streams: [{ id: "technical", label: "Technical" }] }),
+      );
+      await assertFails(
+        db.collection("courseRuns").doc("run1").update({ enrolledCount: 99 }),
+      );
+      await assertFails(
+        db
+          .collection("courseRuns")
+          .doc("run1")
+          .update({ submissionExerciseRef: { weekId: "w06", exerciseId: "x1" } }),
+      );
+    }
+  });
+
+  it("lets an ADMIN write them, the route's own lane and the escape hatch", async () => {
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("admin1");
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run1").update({
+        enrolMode: "open",
+        streams: [{ id: "technical", label: "Technical" }],
+        enrolledCount: 4,
+      }),
+    );
+  });
+
+  it("REGRESSION: a stored null submissionExerciseRef WEDGES a whole-document save, absent does not", async () => {
+    // WHY THIS FIELD IS SPECIFIED AS ABSENT-NEVER-NULL, demonstrated rather
+    // than asserted. The pin is `.get('submissionExerciseRef', {})` on BOTH
+    // sides, so the two shapes behave differently and the difference is a
+    // property of the WRITE SHAPE, not of the field:
+    //
+    //  - a MERGE update (`updateDoc`, what `updateRun` issues today) carries
+    //    the stored value through into `request.resource.data`, so null == null
+    //    and the write lands. That is why the bug can sit dormant.
+    //  - a WHOLE-DOCUMENT save (`setDoc`, what every rehydrate-then-save path
+    //    and every fixture here does) OMITS the key, so the request side falls
+    //    back to `{}` while the stored side is null. `{} != null`, and the run
+    //    is refused to every non-admin for the rest of its life, on writes
+    //    that never mention the field.
+    //
+    // This is the `templateId` trap recorded a few dozen lines up in
+    // firestore.rules, which is why that route writes strings and never null.
+    // If this test goes red on the wedged half, do NOT relax the pin: find
+    // whatever started writing null and stop it.
+    await seedCast();
+
+    // ABSENT (what normalizeCourseRun and createRun produce): a whole-document
+    // save keeps working, which is the state every run is in today.
+    await seedRun("run-absent", { trackLeadUids: ["lead"] });
+    for (const uid of ["approver", "drafter", "lead"]) {
+      const db = await asUser(uid);
+      await assertSucceeds(
+        db
+          .collection("courseRuns")
+          .doc("run-absent")
+          .set(runDoc("run-absent", { trackLeadUids: ["lead"], label: `Saved by ${uid}` })),
+      );
+    }
+
+    // A REAL POINTER re-sent verbatim: also fine, because both sides read the
+    // same map.
+    const ref = { weekId: "w06", exerciseId: "x1" };
+    await seedRun("run-set", { submissionExerciseRef: ref });
+    const set = await asUser("approver");
+    await assertSucceeds(
+      set
+        .collection("courseRuns")
+        .doc("run-set")
+        .set(runDoc("run-set", { submissionExerciseRef: ref, label: "Still editable" })),
+    );
+    // ...and CHANGING it is still refused, because it is a pinned field.
+    await assertFails(
+      set
+        .collection("courseRuns")
+        .doc("run-set")
+        .set(runDoc("run-set", { submissionExerciseRef: { weekId: "w01", exerciseId: "x9" } })),
+    );
+
+    // NULL: wedged. The save omits the key, the defaults disagree, and
+    // nothing an approver, a drafter-owner or a track lead sends is accepted.
+    await seedRun("run-null", {
+      submissionExerciseRef: null,
+      trackLeadUids: ["lead"],
+    });
+    for (const uid of ["approver", "drafter", "lead"]) {
+      const db = await asUser(uid);
+      await assertFails(
+        db
+          .collection("courseRuns")
+          .doc("run-null")
+          .set(runDoc("run-null", { trackLeadUids: ["lead"], label: "Wedged" })),
+      );
+    }
+    // Only an admin can still touch it, which is what makes the state
+    // recoverable rather than terminal.
+    const admin = await asUser("admin1");
+    await assertSucceeds(
+      admin.collection("courseRuns").doc("run-null").update({ submissionExerciseRef: ref }),
+    );
+    const repaired = await asUser("approver");
+    await assertSucceeds(
+      repaired
+        .collection("courseRuns")
+        .doc("run-null")
+        .set(runDoc("run-null", { submissionExerciseRef: ref, trackLeadUids: ["lead"] })),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V3 W1 PR5: courseGroups stream tag, appointments, and the register ceiling
+// ---------------------------------------------------------------------------
+
+describe("courseGroups: V3 server-owned fields and the capacity ceiling", () => {
+  it("refuses a group BORN tagged to a stream or carrying appointments", async () => {
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("approver");
+    await assertFails(
+      db
+        .collection("courseGroups")
+        .doc("grp-a")
+        .set(groupDoc({ streamId: "technical" })),
+    );
+    await assertFails(
+      db
+        .collection("courseGroups")
+        .doc("grp-b")
+        .set(
+          groupDoc({
+            facilitatorAppointments: {
+              facil: { at: new Date(), byUid: "approver", byName: "A", agreedAt: null },
+            },
+          }),
+        ),
+    );
+    await assertSucceeds(db.collection("courseGroups").doc("grp-ok").set(groupDoc()));
+  });
+
+  it("refuses a facilitator retagging their own group's stream or its appointments", async () => {
+    await seedCast();
+    await seedRun("run1");
+    await seed(async (db) => {
+      await db
+        .collection("courseGroups")
+        .doc("grp1")
+        .set(groupDoc({ facilitatorUids: ["facil"] }));
+    });
+    const db = await asUser("facil");
+    // They CAN still edit their session, which is the lane the pin must not
+    // close.
+    await assertSucceeds(
+      db
+        .collection("courseGroups")
+        .doc("grp1")
+        .update({ session: { ...groupDoc().session, location: "Portland Building" } }),
+    );
+    await assertFails(
+      db.collection("courseGroups").doc("grp1").update({ streamId: "technical" }),
+    );
+    await assertFails(
+      db
+        .collection("courseGroups")
+        .doc("grp1")
+        .update({
+          facilitatorAppointments: {
+            facil: { at: new Date(), byUid: "facil", byName: "Self", agreedAt: null },
+          },
+        }),
+    );
+  });
+
+  it("refuses a capacity past the register ceiling, on any run", async () => {
+    // 40 is ATTENDANCE_LIMITS.maxRecords, and it is not a taste decision: the
+    // marking route throws RegisterFullError on the MERGED map for the WHOLE
+    // post past that, so a 41-person group makes bulk marking fail for
+    // everybody in it rather than merely leaving one person unmarked.
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("approver");
+    await assertFails(
+      db.collection("courseGroups").doc("grp-big").set(groupDoc({ capacity: 41 })),
+    );
+    await assertSucceeds(
+      db.collection("courseGroups").doc("grp-max").set(groupDoc({ capacity: 40 })),
+    );
+    await assertFails(
+      db.collection("courseGroups").doc("grp-max").update({ capacity: 41 }),
+    );
+    await assertFails(
+      db.collection("courseGroups").doc("grp-zero").set(groupDoc({ capacity: 0 })),
+    );
+  });
+
+  it("requires a capacity on an OPEN-mode run, and leaves admissions runs alone", async () => {
+    await seedCast();
+    await seedRun("run-open", { enrolMode: "open" });
+    await seedRun("run-adm", { enrolMode: "admissions" });
+    const db = await asUser("approver");
+
+    // Open mode: uncapped is refused, capped is fine.
+    await assertFails(
+      db
+        .collection("courseGroups")
+        .doc("open-uncapped")
+        .set(groupDoc({ runId: "run-open", capacity: null })),
+    );
+    await assertSucceeds(
+      db
+        .collection("courseGroups")
+        .doc("open-capped")
+        .set(groupDoc({ runId: "run-open", capacity: 12 })),
+    );
+    // ...and it cannot be un-capped later either.
+    await assertFails(
+      db.collection("courseGroups").doc("open-capped").update({ capacity: null }),
+    );
+
+    // Admissions: an uncapped group is still legal, because allocation is a
+    // deliberate act by a human who can see the size of the group.
+    await assertSucceeds(
+      db
+        .collection("courseGroups")
+        .doc("adm-uncapped")
+        .set(groupDoc({ runId: "run-adm", capacity: null })),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V3 W1 PR5: a member cannot write their own attendance
+// ---------------------------------------------------------------------------
+
+describe("courseEnrolments: the attendance rollup is not the member's to write", () => {
+  it("refuses a member writing attendance or submissionDone onto their OWN row", async () => {
+    // The rollup lives on a row the member can READ, which is what lets a
+    // learner see their own attendance with no new read rule. That makes the
+    // write side worth an explicit test rather than an inherited one: the
+    // collection is `allow write: if false`, and the completion bar for the
+    // whole pre-course is computed from these two fields.
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    const db = await asUser("learner");
+    const ref = db.collection("courseEnrolments").doc("run1__learner");
+
+    // Reading their own row: yes, and that is the point.
+    await assertSucceeds(ref.get());
+
+    await assertFails(
+      ref.update({
+        attendance: {
+          sessionsHeld: 6,
+          attendedInFull: 6,
+          late: 0,
+          leftEarly: 0,
+          absent: 0,
+          excused: 0,
+          lastPushedSessionKey: "w06",
+          lastComputedAt: new Date(),
+        },
+      }),
+    );
+    await assertFails(ref.update({ submissionDone: true }));
+    await assertFails(ref.update({ status: "completed" }));
+    await assertFails(ref.update({ streamId: "technical" }));
+    await assertFails(ref.update({ droppedOutAt: null }));
+    // Nor by minting a fresh row at their own deterministic id.
+    await assertFails(
+      db.collection("courseEnrolments").doc("run2__learner").set({
+        runId: "run2",
+        courseId: "course1",
+        uid: "learner",
+        groupId: null,
+        status: "active",
+        role: "learner",
+        submissionDone: true,
+      }),
+    );
+  });
+
+  it("refuses an ADMIN client-writing the rollup too; the push transaction owns it", async () => {
+    // The rollup is a FULL RECOMPUTE inside the attendance push, never a
+    // delta. A hand write is exactly the unreconcilable drift that
+    // applicationCounts already demonstrates.
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    const db = await asUser("admin1");
+    await assertFails(
+      db.collection("courseEnrolments").doc("run1__learner").update({ submissionDone: true }),
+    );
+  });
+});

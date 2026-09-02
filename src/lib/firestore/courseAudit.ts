@@ -1,14 +1,15 @@
 /**
- * `courseAudit/{autoId}` — ONE append-only log for every course operational
+ * `courseAudit/{autoId}`: ONE append-only log for every course operational
  * action that has to stay answerable after the fact.
  *
  * WHY ONE COLLECTION AND NOT ONE PER FEATURE. The codebase already carries
  * three per-feature audits (`impersonations`, `courseDeletions`,
  * `subscriptionEvents`) and no general one, so every new course action that
  * wanted logging was reaching for a fourth, a fifth and a sixth. The
- * questions asked of them are the same questions — who did this, to what,
- * when, and what did they say about it — and answering "what happened to this
- * run" across six collections is six queries and six chances to forget one.
+ * questions asked of them are the same questions (who did this, to what,
+ * when, and what did they say about it), and answering "what happened to
+ * this run" across six collections is six queries and six chances to forget
+ * one.
  * `kind` is the discriminator; `runId` is the query axis.
  *
  * APPEND-ONLY, AND WRITE-SHUT TO EVERY CLIENT INCLUDING ADMINS. This is the

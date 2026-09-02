@@ -58,7 +58,7 @@ export const ATTENDANCE_STATUS_LABEL: Record<AttendanceStatus, string> = {
 
 export const ATTENDANCE_LIMITS = {
   /**
-   * Cap on uids per register — a group is never anywhere near this big, and
+   * Cap on uids per register. A group is never anywhere near this big, and
    * `courseGroups.MAX_OPEN_MODE_CAPACITY` is pinned to this number because
    * the marking route fails the WHOLE post once a merged map passes it.
    */
@@ -115,7 +115,7 @@ export type CourseAttendanceDoc = {
    * PERSONAL DATA ABOUT A NAMED STUDENT, WRITTEN BY ANOTHER STUDENT. That is
    * why the whole collection stays `read: if false` and why account deletion
    * has to clear this map key by key with a `FieldPath` delete, exactly as it
-   * already does for `records` — deleting the doc would erase the group's
+   * already does for `records`. Deleting the doc would erase the group's
    * marks for that session.
    */
   participantNotes: Record<string, string>;

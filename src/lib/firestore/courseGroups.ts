@@ -103,7 +103,7 @@ export type GroupSessionOverride = Partial<GroupSession> & {
  * Keyed by uid alongside `facilitatorUids` rather than replacing it, because
  * `facilitatorUids` is what every rule, query and route already reads and an
  * array is what Firestore can index on. This map is the RECORD of how each of
- * those uids got there — decisions.md asks for facilitator appointments to be
+ * those uids got there: decisions.md asks for facilitator appointments to be
  * recorded, and "the array contains them" answers neither who nor when.
  *
  * Routes-only and birth-pinned empty, exactly like `facilitatorUids` itself:
@@ -138,7 +138,7 @@ export type CourseGroupDoc = {
   /**
    * The stream this group teaches, or null when it is open to every stream.
    *
-   * SERVER-OWNED, birth-pinned null, pinned on update — the same correction
+   * SERVER-OWNED, birth-pinned null, pinned on update, the same correction
    * as `courseRuns.streams`, and for the same reason: the enrol route decides
    * who may pick this group by comparing their stream against this field,
    * while `courseEnrolments.streamId` is `allow write: if false`. A
@@ -150,7 +150,7 @@ export type CourseGroupDoc = {
    * Allocation cap; null = uncapped.
    *
    * REQUIRED, and at most `MAX_OPEN_MODE_CAPACITY`, for a group belonging to
-   * an OPEN-mode run — see `groupCapacityError`. Still nullable in the type
+   * an OPEN-mode run; see `groupCapacityError`. Still nullable in the type
    * because the admissions runs that predate open mode legitimately carry
    * null, and because this doc alone cannot tell which kind of run it is on.
    */
@@ -200,7 +200,7 @@ export const GROUP_FIELD_LIMITS = {
   maxDurationMinutes: 480,
   maxFacilitators: 5,
   maxSessionOverrides: 20,
-  /** One appointment record per facilitator slot — see `maxFacilitators`. */
+  /** One appointment record per facilitator slot; see `maxFacilitators`. */
   maxFacilitatorAppointments: 5,
   appointedByName: 120,
 } as const;
@@ -210,7 +210,7 @@ export const GROUP_FIELD_LIMITS = {
  * decision: `attendance/route.ts` throws `RegisterFullError` on the MERGED
  * records map for the WHOLE POST once a register passes
  * `ATTENDANCE_LIMITS.maxRecords` keys. So an uncapped "everyone gets a place"
- * group does not merely leave its 41st member unmarked — it makes a bulk
+ * group does not merely leave its 41st member unmarked: it makes a bulk
  * "rest present" fail for everyone in the room, and zeroes the completion
  * signal the pre-course bar is computed from.
  *
@@ -472,7 +472,7 @@ export function normalizeCourseGroup(id: string, data: Raw): CourseGroupDoc {
     facilitatorAppointments: normalizeFacilitatorAppointments(
       data.facilitatorAppointments,
     ),
-    // Absent, empty and non-string all mean "open to every stream" — the same
+    // Absent, empty and non-string all mean "open to every stream", the same
     // degrade-to-the-widest-safe-state rule the pace fields follow. A garbled
     // id would otherwise scope a group to a stream nobody is on, which reads
     // as an empty group rather than as an error.

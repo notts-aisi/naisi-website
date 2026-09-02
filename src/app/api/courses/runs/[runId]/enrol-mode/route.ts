@@ -77,7 +77,7 @@ export async function PATCH(
 
   const data = snap.data() ?? {};
 
-  // A run mid-destroy owns its own document until it is gone — the same 409
+  // A run mid-destroy owns its own document until it is gone, the same 409
   // the status and archive routes give, for the same reason.
   if (data.destroying === true) {
     return NextResponse.json(

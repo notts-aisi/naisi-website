@@ -113,7 +113,7 @@ const GLYPH: Record<AttendanceStatus, string> = {
   // tap can set it and it never reaches the legend; the entries here exist so
   // a register carrying one (an admin edit, or a future register surface)
   // still renders something readable rather than an empty cell. The register
-  // PR owns giving it its own tone and its place in the cycle — this PR
+  // PR owns giving it its own tone and its place in the cycle. This PR
   // deliberately does not restyle the grid.
   "left-early": "↘",
 };

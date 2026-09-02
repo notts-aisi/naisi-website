@@ -142,7 +142,7 @@ export const COURSE_ENROL_MODE_LABEL: Record<CourseEnrolMode, string> = {
  * does not belong in the content band.
  */
 export type CourseRunStream = {
-  /** Short slug, stable for the life of the run — item `streamIds` name it. */
+  /** Short slug, stable for the life of the run; item `streamIds` name it. */
   id: string;
   label: string;
 };
@@ -154,7 +154,7 @@ export type CourseRunStream = {
  * STORED ABSENT WHEN UNSET, NEVER NULL. `firestore.rules` pins this field
  * with `.get('submissionExerciseRef', {})` on BOTH sides, and a stored null
  * compares unequal to that default, which would wedge every later non-admin
- * edit of the run — the exact trap already recorded for `templateId` at
+ * edit of the run, the exact trap already recorded for `templateId` at
  * courses.ts:729 and in the rules block itself. The normaliser therefore
  * omits the key rather than returning null, so a doc round-tripped through it
  * can never reintroduce one.
@@ -198,7 +198,7 @@ export type CourseRunDoc = {
   status: CourseRunStatus;
   /**
    * Server-owned (see `CourseEnrolMode`). Absent on every run written before
-   * V3, which normalises to "admissions" — the behaviour those runs already
+   * V3, which normalises to "admissions", the behaviour those runs already
    * had.
    */
   enrolMode: CourseEnrolMode;
@@ -207,14 +207,15 @@ export type CourseRunDoc = {
   /**
    * Server-owned counter: how many enrolments this run currently holds. Moved
    * only by the transactions that write `courseEnrolments`, so it can never
-   * drift from the rows it summarises — the `groupCount` / `memberCount`
+   * drift from the rows it summarises, following the `groupCount` /
+   * `memberCount`
    * precedent. Read by the open-enrol picker and by the enrol-mode route,
    * which refuses to change the mode once anybody is on the run.
    */
   enrolledCount: number;
   /**
    * The run's submission bar, or ABSENT when it has none. Never null on the
-   * wire — see `SubmissionExerciseRef`.
+   * wire. See `SubmissionExerciseRef`.
    */
   submissionExerciseRef?: SubmissionExerciseRef;
   /**
@@ -332,7 +333,7 @@ type BaseMaterial = {
   estimatedMinutes?: number;
   /** Optional/extension material — excluded from completion percentages. */
   optional?: boolean;
-  /** Stream scope — see `ItemStreamIds`. */
+  /** Stream scope; see `ItemStreamIds`. */
   streamIds?: string[];
 };
 
@@ -350,7 +351,7 @@ type BaseMaterial = {
  * differently would make an item silently vanish for the whole cohort.
  *
  * ONE READER. `src/lib/courses/streamScope.ts` is the single helper every
- * surface resolves this through — the week view, the curriculum list, the
+ * surface resolves this through. The week view, the curriculum list, the
  * progress page and the overview rail each count items independently today,
  * and a second interpretation shows one learner two different percentages for
  * the same week, which is worse than one wrong number.
@@ -396,7 +397,7 @@ export type Material =
  * Spread into a rebuilt row (`...streamIdsKey(raw)`) so an item with no stream
  * scope carries no key at all: Firestore refuses `undefined`, and an empty
  * array on every row of every week is bytes with no meaning (see
- * `ItemStreamIds` — absent and empty already mean the same thing).
+ * `ItemStreamIds`: absent and empty already mean the same thing).
  *
  * Ids are de-duplicated, order-preserved, and capped both per-id and in
  * number. Nothing here checks an id against the run's declared streams: the
@@ -555,12 +556,12 @@ export type Exercise = {
   /** When true, cohort members can read each other's responses. */
   peerVisible: boolean;
   /**
-   * Rough time cost of answering, in minutes — the same budget line the
+   * Rough time cost of answering, in minutes: the same budget line the
    * materials carry, so a week's total can be summed over readings AND
    * questions rather than over readings alone.
    */
   estimatedMinutes?: number;
-  /** Stream scope — see `ItemStreamIds`. */
+  /** Stream scope; see `ItemStreamIds`. */
   streamIds?: string[];
 };
 
@@ -645,7 +646,7 @@ export type ChecklistItem = {
    * so the projection stays idempotent across re-syncs.
    */
   mirrorToMyWork: boolean;
-  /** Stream scope — see `ItemStreamIds`. */
+  /** Stream scope; see `ItemStreamIds`. */
   streamIds?: string[];
 };
 
@@ -900,7 +901,7 @@ export function sanitizeStreams(raw: unknown): CourseRunStream[] {
 /**
  * The submission pointer, or `null` for "this run has no submission bar".
  *
- * The null here is a READ-SIDE convenience only — `normalizeCourseRun` turns
+ * The null here is a READ-SIDE convenience only: `normalizeCourseRun` turns
  * it back into an ABSENT key, because a stored null wedges the rules pin (see
  * `SubmissionExerciseRef`). Both halves of the ref must be present: a pointer
  * naming a week with no exercise is not a weaker pointer, it is one that
@@ -983,7 +984,7 @@ export function normalizeCourseRun(id: string, data: Raw): CourseRunDoc {
     createdAt: tsToDate(data.createdAt),
     updatedAt: tsToDate(data.updatedAt),
   };
-  // ABSENT, never null — the key is only ever set when a real pointer is
+  // ABSENT, never null: the key is only ever set when a real pointer is
   // stored. See `SubmissionExerciseRef` for why a null here wedges the run.
   const submissionExerciseRef = asSubmissionExerciseRef(data.submissionExerciseRef);
   if (submissionExerciseRef) doc.submissionExerciseRef = submissionExerciseRef;

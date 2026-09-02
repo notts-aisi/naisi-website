@@ -2,7 +2,7 @@ import "server-only";
 import type { Firestore } from "firebase-admin/firestore";
 
 /**
- * `config/courses` — the courses feature's runtime knobs, in the existing
+ * `config/courses`: the courses feature's runtime knobs, in the existing
  * server-only `config` collection alongside `config/taskEmails`.
  *
  * ADMIN SDK ONLY, both ways. The collection has no client read rule and now
@@ -13,9 +13,10 @@ import type { Firestore } from "firebase-admin/firestore";
  * default that keeps the platform working when it is absent.
  *
  * MISSING MEANS DEFAULTS, never "feature off". The whole doc is optional and
- * so is every field in it — the `readTaskEmailConfig` rule, for the same
- * reason: a fresh Firestore project must behave like a working one, and a
- * mistyped key must degrade to the documented number rather than to zero.
+ * so is every field in it, following the `readTaskEmailConfig` rule, for
+ * the same reason: a fresh Firestore project must behave like a working
+ * one, and a mistyped key must degrade to the documented number rather
+ * than to zero.
  */
 
 export const COURSE_CONFIG_PATH = {
