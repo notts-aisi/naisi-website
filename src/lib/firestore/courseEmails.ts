@@ -22,6 +22,14 @@ export const COURSE_TEMPLATE_IDS = [
   "course-allocated",
   "course-week-nudge",
   "course-dropped-out",
+  // The ADMISSIONS lifecycle (V3). Same collection and same editor as the
+  // course templates above, because they are the same job to an admin: the
+  // boilerplate NAISI sends people about their application. The ids carry the
+  // `admissions-` prefix because a round is not a run, and the retired
+  // `course-application-*` ids stay in the list until the surfaces that send
+  // them are gone.
+  "admissions-submitted",
+  "admissions-reinstated",
 ] as const;
 
 export type CourseTemplateId = (typeof COURSE_TEMPLATE_IDS)[number];
@@ -33,7 +41,9 @@ export type CourseTemplateTrigger =
   | "rejected"
   | "allocated"
   | "week-nudge"
-  | "dropped-out";
+  | "dropped-out"
+  | "admissions-submitted"
+  | "admissions-reinstated";
 
 /**
  * Trigger each template belongs to. Used by the send paths to decide which
@@ -47,6 +57,8 @@ export const COURSE_TEMPLATE_TRIGGER: Record<CourseTemplateId, CourseTemplateTri
   "course-allocated": "allocated",
   "course-week-nudge": "week-nudge",
   "course-dropped-out": "dropped-out",
+  "admissions-submitted": "admissions-submitted",
+  "admissions-reinstated": "admissions-reinstated",
 };
 
 export type CourseTemplateDoc = {
@@ -138,6 +150,31 @@ export type CourseTokenMap = {
    * form can place it in the sentence they prefer.
    */
   feedbackUrl?: string;
+  /**
+   * THE ADMISSIONS TOKENS (V3). Each is optional and each is omitted rather
+   * than blanked when the send path does not know it, so the house convention
+   * holds: an admin who puts `{cohortLabel}` in the application-received email
+   * sees the literal token in a test send and moves it.
+   *
+   * `applicationUrl` is where THIS applicant reads THIS application on the
+   * site, resolved at the call site: the form while it is still theirs to
+   * finish, the status hub once it has been sent. It is not used by the seed
+   * copy, for the same reason `feedbackUrl` is not: a bare `{applicationUrl}`
+   * in a sentence is a broken link the day a send path forgets to pass it. The
+   * admissions email components render the link themselves. The token is here
+   * for an admin who wants it in their own wording.
+   */
+  applicationUrl?: string;
+  /** The round's public name, e.g. "Autumn 2026 intake". */
+  roundLabel?: string;
+  /** One part of a multi-part form, e.g. "Week 2 questions". */
+  stageLabel?: string;
+  /** Human-formatted application deadline, e.g. "Sun 18 Oct, 23:59". */
+  deadline?: string;
+  /** Human-formatted date decisions are promised by, e.g. "Fri 23 Oct". */
+  decisionsBy?: string;
+  /** The structured cohort name, e.g. "Autumn 2026, cohort 2". */
+  cohortLabel?: string;
   preferredName: string;
   firstName: string;
 };
@@ -155,6 +192,12 @@ export type CourseTokenInput = {
   facilitatorNames?: string;
   firstSessionWhen?: string;
   feedbackUrl?: string;
+  applicationUrl?: string;
+  roundLabel?: string;
+  stageLabel?: string;
+  deadline?: string;
+  decisionsBy?: string;
+  cohortLabel?: string;
 };
 
 export function buildCourseTokens(input: CourseTokenInput): CourseTokenMap {
@@ -175,6 +218,15 @@ export function buildCourseTokens(input: CourseTokenInput): CourseTokenMap {
       ? { firstSessionWhen: input.firstSessionWhen }
       : {}),
     ...(input.feedbackUrl ? { feedbackUrl: input.feedbackUrl } : {}),
+    // The admissions tokens, omitted rather than blanked: an empty string
+    // substitutes a hole into somebody's sentence, while a missing key leaves
+    // the token visible to the admin who wrote it.
+    ...(input.applicationUrl ? { applicationUrl: input.applicationUrl } : {}),
+    ...(input.roundLabel ? { roundLabel: input.roundLabel } : {}),
+    ...(input.stageLabel ? { stageLabel: input.stageLabel } : {}),
+    ...(input.deadline ? { deadline: input.deadline } : {}),
+    ...(input.decisionsBy ? { decisionsBy: input.decisionsBy } : {}),
+    ...(input.cohortLabel ? { cohortLabel: input.cohortLabel } : {}),
   };
 }
 
@@ -186,6 +238,8 @@ export const COURSE_DEFAULT_LABELS: Record<CourseTemplateId, string> = {
   "course-allocated": "Placed in a group",
   "course-week-nudge": "Weekly reminder",
   "course-dropped-out": "Left a course",
+  "admissions-submitted": "Application received",
+  "admissions-reinstated": "Application picked back up",
 };
 
 function rt(html: string): Block {
@@ -305,6 +359,46 @@ export const courseTemplateDefaults: Record<
           "<p>{weekPrep}</p>" +
           '<p><a href="{weekUrl}" style="color:#2563eb">Open this week on the site</a></p>' +
           "<p>Read what you can. The week stays open, and nobody is keeping score.</p>",
+      ),
+    ],
+  },
+  /**
+   * The admissions pair (V3). Three things an editor should know before
+   * rewriting them:
+   *
+   *  1. **They resolve a DIFFERENT token set.** `{roundLabel}`, `{deadline}`,
+   *     `{decisionsBy}` and `{applicationUrl}` resolve here; `{courseTitle}`,
+   *     `{runLabel}` and `{startDate}` do NOT, because a round is not a run
+   *     and nobody has been placed on anything yet. A course token in this
+   *     copy stays literal in the inbox.
+   *  2. **The link is rendered by the component, not by a token.** See
+   *     `applicationUrl` on `CourseTokenMap`. Do not paste a bare
+   *     `{applicationUrl}` into the body unless you mean to depend on the
+   *     send path passing it.
+   *  3. **Neither may promise a decision, or hint at one.** These go to
+   *     everybody who applies, weeks before anybody has read anything. The
+   *     only thing they may say about the outcome is when it will arrive.
+   */
+  "admissions-submitted": {
+    label: COURSE_DEFAULT_LABELS["admissions-submitted"],
+    subject: "We have your application, {firstName}",
+    blocks: [
+      h("Thanks for applying, {firstName}"),
+      rt(
+        "<p>Your application to <strong>{roundLabel}</strong> is in. There is nothing else you need to do right now.</p>" +
+          "<p>We read everything after the deadline rather than as it arrives, so a quiet few weeks is normal and is not a sign of anything. You will hear from us by {decisionsBy}, whatever the answer is.</p>" +
+          "<p>Until applications close on {deadline} you can still read what you sent, and withdraw it if your plans change.</p>",
+      ),
+    ],
+  },
+  "admissions-reinstated": {
+    label: COURSE_DEFAULT_LABELS["admissions-reinstated"],
+    subject: "Your {roundLabel} application is open again",
+    blocks: [
+      h("Picked back up, {firstName}"),
+      rt(
+        "<p>You have reopened your application to <strong>{roundLabel}</strong>. Everything you had written is still there, and it is a draft again, so nothing has been sent to us yet.</p>" +
+          "<p>Finish it and press submit before applications close on {deadline}. A draft sitting at the deadline is not an application, and we would rather you knew that now than found out afterwards.</p>",
       ),
     ],
   },

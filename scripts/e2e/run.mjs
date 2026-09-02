@@ -429,6 +429,22 @@ async function sweepStaleHarnessAccounts() {
   }
 }
 
+/**
+ * Which test files this run drives. Defaults to the auth batteries, so
+ * `npm run e2e:local` is byte-identical to what it has always been.
+ *
+ * The override exists for the applicant-funnel run
+ * (`scripts/run-applicant-funnel.mjs`), which needs the SAME captcha-relaxed,
+ * loopback-SMTP local server this script builds and no part of what it asserts.
+ * Duplicating the server bootstrap there would have meant two places that must
+ * agree about which environment is safe to relax, which is precisely the thing
+ * this file exists to keep in one place.
+ */
+const TEST_PATHS = (process.env.E2E_TEST_PATHS ?? "scripts/e2e/tests/")
+  .split(",")
+  .map((p) => p.trim())
+  .filter(Boolean);
+
 function runTests(serverEnv) {
   return new Promise((resolve) => {
     const child = spawn(
@@ -436,7 +452,7 @@ function runTests(serverEnv) {
       // Serial file execution: the batteries share one server and one mail
       // catcher, and the two flakes the emulator suite taught us both came
       // from cross-file concurrency.
-      ["--test", "--test-concurrency=1", "scripts/e2e/tests/"],
+      ["--test", "--test-concurrency=1", ...TEST_PATHS],
       {
         cwd: REPO_ROOT,
         stdio: "inherit",

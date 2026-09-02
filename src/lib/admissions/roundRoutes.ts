@@ -102,15 +102,35 @@ export type SerialisedStage = Omit<
   updatedAt: string | null;
 };
 
+/**
+ * FIELD BY FIELD, not a spread of the document.
+ *
+ * A spread sends whatever the stored document happens to carry, which is a
+ * different thing from what `SerialisedStage` declares: the type is checked at
+ * compile time and the object is built at run time, so a field written by an
+ * older build, by a migration, or by a staff tool that got ahead of the
+ * normaliser rides out to whoever asked. This function feeds an APPLICANT
+ * surface as well as the staff ones (`serialiseStageForApplicant` wraps it, on
+ * both `/apply/[roundId]` and the status hub), and the whole point of the
+ * timed-release rule is that a stage tells an applicant only what it is meant
+ * to. So the fields are listed, and a new one reaches the wire when somebody
+ * adds it here on purpose.
+ */
 export function serialiseStage(
   stage: AdmissionStageDoc,
   includeQuestions: boolean,
 ): SerialisedStage {
-  const { questions, ...rest } = stage;
   return {
-    ...rest,
-    ...(includeQuestions ? { questions } : {}),
-    questionCount: questions.length,
+    id: stage.id,
+    roundId: stage.roundId,
+    label: stage.label,
+    intro: stage.intro,
+    releaseAt: stage.releaseAt,
+    releaseTimeLocal: stage.releaseTimeLocal,
+    locksOnSubmit: stage.locksOnSubmit,
+    order: stage.order,
+    ...(includeQuestions ? { questions: stage.questions } : {}),
+    questionCount: stage.questions.length,
     manualReleasedAt: iso(stage.manualReleasedAt),
     closesAt: iso(stage.closesAt),
     createdAt: iso(stage.createdAt),

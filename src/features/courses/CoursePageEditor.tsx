@@ -69,7 +69,7 @@ import styles from "./CoursePageEditor.module.css";
  *
  * ## Reads client-direct, writes through the route
  *
- * `coursePages` is `allow read: if isSignedIn(); allow write: if false`. See
+ * `coursePages` is read-by-staff, `allow write: if false`. See
  * `useCoursePage.ts` for why that asymmetry is the design and not an
  * oversight.
  */

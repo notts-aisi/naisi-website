@@ -90,6 +90,24 @@ export type Readiness = {
 };
 
 /**
+ * One line under the panel heading saying WHICH bar this round is being held
+ * to.
+ *
+ * The two kinds are checked against different lists, and a panel that showed
+ * six lines for one round and five for another with no explanation reads as a
+ * missing line rather than as a deliberate one. The appointment sentence is
+ * also the only place in the console that says out loud what an appointment
+ * round is for, which is the question an author has the first time they meet
+ * the kind selector.
+ */
+export const READINESS_KIND_NOTE: Record<AdmissionRoundKind, string> = {
+  enrolment:
+    "This round offers places on a course run, so it needs somewhere to put the people it accepts.",
+  appointment:
+    "This round appoints people to a job rather than placing them on a course. It has no outcome run and asks nothing about programme choice; everything else is the same bar.",
+};
+
+/**
  * The first stage in asked order. `order` is denormalised onto each stage from
  * its position in `round.stageIds`, so this does not need the round's list and
  * cannot disagree with it about which stage an applicant meets first.
