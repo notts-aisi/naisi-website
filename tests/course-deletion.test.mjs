@@ -264,6 +264,11 @@ const RUN_COUNT_KEYS = [
   "materialNotes",
   "mirroredTasks",
   "subscriptionRows",
+  // `courseAudit` — the run's operational log (V3 W1 PR5). Added to the
+  // manifest in the same change that gave the cascade a stage for it, for the
+  // reason materialNotes was: an unlisted collection means the dialog lies
+  // about what a destroy takes.
+  "auditRows",
   "emailSendRows",
 ];
 /** `CourseDestroyCounts`, mirrored. */
@@ -312,12 +317,12 @@ test("GUARD — the survivors are not counted as deaths, and the arithmetic foll
   const counts = Object.fromEntries(
     [...RUN_COUNT_KEYS, ...COURSE_COUNT_KEYS].map((k) => [k, 10]),
   );
-  // Twelve counters at ten rows each: ten run counters that die, `materialNotes`
-  // among them, plus the two survivors.
-  assert.equal(sumCounts(counts), 130);
+  // Thirteen counters at ten rows each: eleven run counters that die,
+  // `materialNotes` and `auditRows` among them, plus the two survivors.
+  assert.equal(sumCounts(counts), 140);
   // The progress denominator counts only what actually dies, so a large
   // retained counter cannot inflate it into a bar that never fills.
-  assert.equal(destroyedTotal(counts), 110);
+  assert.equal(destroyedTotal(counts), 120);
 });
 
 test("MODEL — every key the cascade can report has copy, including the ones the manifest never shows", () => {
@@ -473,6 +478,10 @@ test("MODEL — the cascade's declared stage order is the one the contract needs
     "mirroredTasks",
     "nudgeMarkers",
     "subscriptionRows",
+    // Another run-keyed leaf, drained with the rest. It is `write: if false`
+    // to every client, so nothing can recreate a row behind the cascade and
+    // its position is consistency rather than necessity.
+    "auditRows",
     "groups",
     "weeks",
   ]);

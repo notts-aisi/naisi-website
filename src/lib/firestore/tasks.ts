@@ -1,4 +1,34 @@
-export type TaskSource = "committee" | "fellowship-reminder" | "personal";
+/**
+ * Where a task came from.
+ *
+ * `course-register` is the follow-up task raised when a group's register goes
+ * unmarked past its grace window: assigned to the admins, about one (run,
+ * group, session). TYPE AND LABEL ONLY at this point — nothing mints one yet,
+ * the job that does lands with the register work.
+ *
+ * A NOTE FOR WHOEVER BUILDS THAT JOB. The task create rule constrains
+ * `sourceRef` to null on the committee lane and constrains neither `source`
+ * nor the doc id at all, so an SU-committee member can create a task at the
+ * job's own deterministic id outright, and any signed-in member can squat it
+ * on the personal lane. Do NOT write a rules test asserting they cannot.
+ * Adopt the `sync-tasks` read-back instead: on ALREADY_EXISTS, read the doc
+ * back and treat it as the tick's own only if `source`, `sourceRef.cohortId`
+ * and the admin completer set all match; otherwise log it and mint at a
+ * fallback id.
+ */
+export type TaskSource =
+  | "committee"
+  | "fellowship-reminder"
+  | "personal"
+  | "course-register";
+
+/** Board-facing names for the sources above. */
+export const TASK_SOURCE_LABELS: Record<TaskSource, string> = {
+  committee: "Committee",
+  "fellowship-reminder": "Fellowship",
+  personal: "Personal",
+  "course-register": "Register",
+};
 
 export type TaskKind =
   | "generic"

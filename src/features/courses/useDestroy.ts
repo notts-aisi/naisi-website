@@ -196,6 +196,11 @@ const COUNT_META: Record<string, CountMeta> = {
     fate: "destroyed",
     note: "The rows on this run's cohort channel. Members' other subscriptions are untouched.",
   },
+  auditRows: {
+    label: "Course audit rows",
+    fate: "destroyed",
+    note: "The operational log for this run: registers pushed and edited, facilitators appointed and removed, drop-outs, the run being settled. Unlike the delivery log these describe rows this destroy is deleting, so they do not outlive it.",
+  },
   emailSendRows: {
     label: "Delivery-log rows",
     fate: "retained",

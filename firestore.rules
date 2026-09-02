@@ -1102,7 +1102,88 @@ service cloud.firestore {
           && request.resource.data.get('templateId', '')
             == resource.data.get('templateId', '')
           && request.resource.data.get('templateLabel', '')
-            == resource.data.get('templateLabel', '');
+            == resource.data.get('templateLabel', '')
+          // ---- V3 W1 PR5: courses open mode -------------------------------
+          //
+          // `enrolMode` opens a WRITE DOOR rather than describing content: an
+          // `open` run admits an enrolment with no application behind it, so
+          // it belongs in this tier with the role arrays and the counters and
+          // not in the drafter's content band. Its only writer is
+          // PATCH /api/courses/runs/[runId]/enrol-mode (admin only).
+          //
+          // `streams` looks like authored content and is not. The enrol route
+          // validates a member's requested stream against this list, and
+          // `courseEnrolments.streamId` is `allow write: if false` — so a
+          // client-direct edit here could invalidate rows in a collection the
+          // client cannot repair. Same class as `applicationCounts`.
+          //
+          // `enrolledCount` is a counter moved only by the transactions that
+          // write the enrolment rows it summarises, exactly like `groupCount`.
+          //
+          // `submissionExerciseRef` is pinned with a `{}` default on BOTH
+          // sides and is stored ABSENT when unset, NEVER null: this file
+          // already records at the templateId pin above that a stored null
+          // compares unequal to a `.get()` default and wedges every later
+          // non-admin edit of the run. `courses.ts` omits the key rather than
+          // writing null so a doc round-tripped through the normaliser cannot
+          // reintroduce one, and the emulator suite pins both halves.
+          && request.resource.data.get('enrolMode', 'admissions')
+            == resource.data.get('enrolMode', 'admissions')
+          && request.resource.data.get('streams', [])
+            == resource.data.get('streams', [])
+          && request.resource.data.get('enrolledCount', 0)
+            == resource.data.get('enrolledCount', 0)
+          && request.resource.data.get('submissionExerciseRef', {})
+            == resource.data.get('submissionExerciseRef', {});
+      }
+
+      // ---- V3 W1 PR5: courses open mode ---------------------------------
+      // THE STATUS TRANSITION TABLE, mirroring src/lib/courses/runStatus.ts.
+      //
+      // Why the rules now carry a table the route already owns: the week-plan
+      // freeze above is keyed on the status, and `canApproveCourse()` could
+      // write ANY status value. So an approver could walk a live run back to
+      // `draft`, reshape the frozen plan, and walk it forward again — three
+      // writes, no route, and the freeze is defeated. A freeze keyed on a
+      // field its subject can set to anything is not a freeze.
+      //
+      // Read as: from this status, these are the reachable ones.
+      //   draft                -> applications-open | cancelled
+      //   applications-open    -> applications-closed | running | cancelled
+      //   applications-closed  -> running | cancelled
+      //   running              -> completed | cancelled
+      //   completed, cancelled -> nothing (terminal)
+      // `draft` appears on nobody's list on purpose: nothing returns to draft.
+      // `applications-open -> running` is the open-enrolment entry — a
+      // pre-course keeps its sign-ups open into its first teaching weeks and
+      // has no review stage to close.
+      //
+      // Staying put is always legal: an ordinary content save re-sends the
+      // status it already had, and this must not refuse those.
+      //
+      // ADMINS RIDE THEIR OWN BRANCH, as with every other pin in this block.
+      // That costs nothing here: an admin already holds unconditional update
+      // on runs including `weekPlan` itself, so denying them the backwards
+      // move would protect nothing they cannot do directly. The person this
+      // table exists to bound is the approver.
+      //
+      // Both sides default to 'draft' so a run written before the status
+      // union existed is treated as a draft rather than frozen out of reach.
+      function runStatusMoveAllowed() {
+        return request.resource.data.get('status', 'draft')
+            == resource.data.get('status', 'draft')
+          || request.resource.data.get('status', 'draft') in {
+              'draft': ['applications-open', 'cancelled'],
+              'applications-open': ['applications-closed', 'running', 'cancelled'],
+              'applications-closed': ['running', 'cancelled'],
+              'running': ['completed', 'cancelled'],
+              'completed': [],
+              'cancelled': []
+            // `.get(key, [])` rather than `[key]`, so a run carrying a status
+            // outside the union (a hand-edited doc, or one written before a
+            // rename) is simply frozen for non-admins instead of erroring
+            // every update on the branch.
+            }.get(resource.data.get('status', 'draft'), []);
       }
       // THE WEEK PLAN LOCK. `weekPlan` is the run's calendar spine: the Nth
       // taught entry IS week N, and every member-facing surface addresses that
@@ -1194,6 +1275,23 @@ service cloud.firestore {
         // provenance from apply-template or not at all.
         && request.resource.data.get('templateId', '') == ''
         && request.resource.data.get('templateLabel', '') == ''
+        // ---- V3 W1 PR5: courses open mode ----------------------------------
+        // The birth pins for the four fields added to
+        // runPinnedFieldsUnchanged() above. Update only PINS them, so without
+        // these a drafter could mint a run BORN in open enrolment, pre-seeded
+        // with streams no route assigned, or claiming a cohort it does not
+        // have — and the pin would then protect the lie for the run's whole
+        // life. This is the admissionsReviewerUids lesson, stated verbatim at
+        // the top of this create rule.
+        //
+        // `submissionExerciseRef` must be ABSENT, not null: `{} == {}` passes
+        // for an absent key and a stored null fails it, which is precisely
+        // the wedge the pin's comment describes. Refusing it at birth is what
+        // stops a run being created into that state.
+        && request.resource.data.get('enrolMode', 'admissions') == 'admissions'
+        && request.resource.data.get('streams', []).size() == 0
+        && request.resource.data.get('enrolledCount', 0) == 0
+        && request.resource.data.get('submissionExerciseRef', {}) == {}
         && runContentOk();
 
       // Status moves (applications-open, running, cancelled, ...) change what
@@ -1218,6 +1316,9 @@ service cloud.firestore {
             request.resource.data.status == resource.data.status
             || canApproveCourse()
           )
+          // V3 W1 PR5: and even an approver may only make a move the table
+          // allows. See runStatusMoveAllowed().
+          && runStatusMoveAllowed()
         );
 
       allow delete: if false;
@@ -1307,7 +1408,26 @@ service cloud.firestore {
           && request.resource.data.get('paceStartDate', null)
             == resource.data.get('paceStartDate', null)
           && request.resource.data.get('paceWeekPlan', null)
-            == resource.data.get('paceWeekPlan', null);
+            == resource.data.get('paceWeekPlan', null)
+          // ---- V3 W1 PR5: courses open mode -------------------------------
+          //
+          // `streamId` is the same correction as `courseRuns.streams`, one
+          // level down: the enrol route decides who may join THIS group by
+          // comparing their stream against this field, and
+          // `courseEnrolments.streamId` is `allow write: if false`. A
+          // facilitator retagging their own group client-direct would strand
+          // rows in a collection no client can repair. Null default, like the
+          // pace fields, so absent (every legacy group) and cleared compare
+          // equal and this pin can never wedge a legitimate session edit.
+          //
+          // `facilitatorAppointments` records WHO put each uid in
+          // `facilitatorUids`, and when. `facilitatorUids` itself has been
+          // routes-only since it existed; a provenance map the same people
+          // could rewrite would be worth less than no map at all.
+          && request.resource.data.get('streamId', null)
+            == resource.data.get('streamId', null)
+          && request.resource.data.get('facilitatorAppointments', {})
+            == resource.data.get('facilitatorAppointments', {});
       }
       // The per-week virtual/in-person mode ("v2 decision 7") is server-owned
       // too — the session route is the writer, so the room-notice prefill and
@@ -1340,7 +1460,56 @@ service cloud.firestore {
                 && request.resource.data.session.meetingUrl.size() <= 300)
           )
           && request.resource.data.get(['session', 'notes'], '').size() <= 500
-          && request.resource.data.get('sessionOverrides', {}).size() <= 20;
+          && request.resource.data.get('sessionOverrides', {}).size() <= 20
+          // V3 W1 PR5: see groupCapacityOk().
+          && groupCapacityOk();
+      }
+
+      // ---- V3 W1 PR5: courses open mode -----------------------------------
+      // CAPACITY, and why 40 is not a taste decision.
+      //
+      // `attendance/route.ts` throws RegisterFullError on the MERGED records
+      // map for the WHOLE POST once a register passes ATTENDANCE_LIMITS
+      // .maxRecords (40) keys. So an uncapped "everyone gets a place" group
+      // does not merely leave its 41st member unmarked — it makes a bulk
+      // "rest present" fail for everybody in the room and zeroes the
+      // completion signal the pre-course bar is computed from.
+      //
+      // Two halves:
+      //  - a capacity, when set, is a whole number in [1, 40] for EVERY run.
+      //    An admissions group has the same register ceiling.
+      //  - a capacity is REQUIRED on a group belonging to an open-mode run,
+      //    which is the only cross-document part and the only reason a get()
+      //    appears here. It is a WRITE rule, so this is not the
+      //    get()-in-a-read-rule trap: `allow read` also grants `list` and
+      //    would bill this per candidate document, whereas a write touches
+      //    exactly one.
+      //
+      // The get() is deliberately the SECOND operand of the `||`, so it is
+      // only evaluated when the capacity is missing. Every honest write on an
+      // open-mode run carries one, so in practice the parent read never
+      // happens. `runId` is read from request.resource.data, which is the
+      // merged document on an update and is pinned unchanged by
+      // groupPinnedFieldsUnchanged() anyway, so it names the same run either
+      // way. `courseGroups.groupCapacityError()` carries the same rule for
+      // the routes and the editor, with the sentence a human reads.
+      function parentRunEnrolMode() {
+        return get(/databases/$(database)/documents/courseRuns/$(request.resource.data.get('runId', '')))
+          .data.get('enrolMode', 'admissions');
+      }
+      function groupCapacityOk() {
+        return (
+            request.resource.data.get('capacity', null) == null
+            || (
+              request.resource.data.capacity is int
+              && request.resource.data.capacity >= 1
+              && request.resource.data.capacity <= 40
+            )
+          )
+          && (
+            request.resource.data.get('capacity', null) != null
+            || parentRunEnrolMode() != 'open'
+          );
       }
 
       allow read: if isAdmin() || canDraftCourse() || canApproveCourse();
@@ -1359,6 +1528,14 @@ service cloud.firestore {
         && request.resource.data.get('paceStartDate', null) == null
         && request.resource.data.get('paceWeekPlan', null) == null
         && request.resource.data.get('sessionModes', {}).size() == 0
+        // V3 W1 PR5: the birth pins for the two fields added to
+        // groupPinnedFieldsUnchanged(). Update only PINS them, so without
+        // these a group could be BORN tagged to a stream the enrol route
+        // would then honour, or carrying appointment records naming
+        // facilitators nobody appointed — and the pin would protect both for
+        // the life of the group. Same argument as the pace fields above.
+        && request.resource.data.get('streamId', null) == null
+        && request.resource.data.get('facilitatorAppointments', {}).size() == 0
         && groupContentOk();
 
       // A named facilitator edits their own group's session (move the slot,
@@ -1714,6 +1891,50 @@ service cloud.firestore {
       allow read: if isAdmin() || canDraftCourse() || canApproveCourse()
         || isNotedRunTrackLead();
       allow write: if false;
+    }
+
+    // ==================== V3 W1 PR5: courses open mode ====================
+    //
+    // === courseAudit ===
+    // ONE append-only log for every course operational action that has to
+    // stay answerable after the fact: a register pushed or edited after the
+    // lock, a facilitator appointed or removed, a member dropping out, a run
+    // settled, a run's enrolment mode changed, a week unlocked early, and an
+    // applicant's access-requirements answer being read.
+    //
+    // The posture is `courseDeletions`', verbatim and for its reason: reads
+    // are admin-only and writes are shut to EVERY client, admins included.
+    // An append-only log its own actor can amend is not an audit trail. Every
+    // writer is an Admin SDK route.
+    //
+    // Rows are staff-action METADATA, never member content: `detail` is a
+    // route-written sentence, and nothing here holds an applicant's answers,
+    // their access requirements or a facilitator's notes about them, only the
+    // fact that a named actor touched them. See src/lib/firestore/courseAudit
+    // .ts for the retention decision (audits survive account deletion, as
+    // impersonations and courseDeletions already do) and the kind union.
+    //
+    // ⚠ A `firebase deploy --only firestore:rules` IS OWED when this merges,
+    // the same standing RULES-FIRST order as courseDeletions below: until it
+    // lands the collection is deny-by-default, so the Admin SDK writers keep
+    // working and the admin log renders empty.
+    match /courseAudit/{auditId} {
+      allow read:  if isAdmin();
+      allow write: if false;
+    }
+
+    // === config ===
+    // Server-only runtime config, written by the Admin SDK and read only by
+    // routes: `config/taskEmails` (the task-email kill switch),
+    // `config/courses` (grace windows, the drop-out feedback URL, the
+    // scheduler scan budgets). NOTE, like pushSubscriptions: with no `allow`
+    // this match is identical to Firestore's implicit deny, so no rules
+    // deploy is owed for it. It exists so the lockdown of a collection that
+    // is about to gain several documents is VISIBLE here rather than inferred
+    // from the absence of a block — the failure mode being a later wildcard
+    // opening a collection nobody remembered was closed.
+    match /config/{doc} {
+      allow read, write: if false;
     }
 
     // === courseDeletions ===

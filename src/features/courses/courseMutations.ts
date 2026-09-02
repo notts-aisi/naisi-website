@@ -19,7 +19,9 @@ import {
   courseRunChannel,
   weekDocId,
   type ChecklistItem,
+  type CourseEnrolMode,
   type CourseRunStatus,
+  type CourseRunStream,
   type CourseStatus,
   type CourseTrack,
   type CourseWeekDoc,
@@ -231,6 +233,19 @@ export async function createRun(
     trackLeadUids: [] as string[],
     applicationCounts: EMPTY_APPLICATION_COUNTS,
     groupCount: 0,
+    // Also server-owned, and also birth-pinned: a run is born on the
+    // application path with no streams and nobody on it, and only
+    // PATCH /api/courses/runs/[runId]/enrol-mode moves it. Written
+    // explicitly rather than left to the rules' `.get()` defaults so the
+    // fields exist for the queries that filter on them.
+    //
+    // `submissionExerciseRef` is deliberately NOT written: the rules pin it
+    // with `.get('submissionExerciseRef', {})`, and a stored null compares
+    // unequal to that default and wedges every later non-admin edit of the
+    // run. Absent is the only legal unset form. See courses.ts.
+    enrolMode: "admissions" satisfies CourseEnrolMode,
+    streams: [] as CourseRunStream[],
+    enrolledCount: 0,
     channel: courseRunChannel(ref.id),
     authorUid: uid,
     createdAt: serverTimestamp(),

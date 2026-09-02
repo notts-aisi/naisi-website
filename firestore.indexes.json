@@ -295,6 +295,14 @@
         { "fieldPath": "groupId", "order": "ASCENDING" },
         { "fieldPath": "weekNumber", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "courseAudit",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "runId", "order": "ASCENDING" },
+        { "fieldPath": "at", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

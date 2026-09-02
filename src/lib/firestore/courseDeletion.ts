@@ -14,6 +14,7 @@ import {
   type CourseDoc,
   type CourseRunDoc,
 } from "./courses";
+import { COURSE_AUDIT_COLLECTION } from "./courseAudit";
 import { COURSE_MATERIAL_NOTES_COLLECTION } from "./courseMaterialNotes";
 import { deleteEventsForSubscriptions } from "./subscriptions";
 import { ownedStoragePaths } from "./taskAttachments";
@@ -156,6 +157,21 @@ export type RunDestroyCounts = {
   materialNotes: number;
   mirroredTasks: number;
   subscriptionRows: number;
+  /**
+   * `courseAudit` rows scoped to this run (V3 W1 PR5) — registers pushed and
+   * edited, facilitators appointed and removed, drop-outs, the enrolment-mode
+   * flips, the run being settled.
+   *
+   * DESTROYED, unlike `emailSendRows` beside it, and the difference is what
+   * each log is evidence OF. `emailSends` is evidence about a message that
+   * left the platform and reached a person's inbox, which outlives the run it
+   * mentions. A `courseAudit` row is evidence about a row this cascade is
+   * deleting in the same pass: once the register, the group and the
+   * enrolments are gone, "an admin edited register X" names nothing. Leaving
+   * them would accumulate orphans nothing can render and nothing can query,
+   * which is the failure the house rule about manifests exists to prevent.
+   */
+  auditRows: number;
   emailSendRows: number;
 };
 
@@ -563,6 +579,7 @@ export async function countRunDestroyTargets(
     materialNotes,
     mirroredTasks,
     subscriptionRows,
+    auditRows,
     emailSendCounts,
   ] = await Promise.all([
     countAgg(db.collection("courseRuns").doc(runId).collection("weeks")),
@@ -591,6 +608,10 @@ export async function countRunDestroyTargets(
     countAgg(
       db.collection("subscriptions").where("channel", "==", courseRunChannel(runId)),
     ),
+    // `runId` is a stored FIELD on every audit row (the doc id is a Firestore
+    // auto-id and is never parsed), so this is the same single-equality shape
+    // as the leaves above and is served by the automatic single-field index.
+    countAgg(db.collection(COURSE_AUDIT_COLLECTION).where("runId", "==", runId)),
     Promise.all(emailCountPromises),
   ]);
 
@@ -605,6 +626,7 @@ export async function countRunDestroyTargets(
     materialNotes,
     mirroredTasks,
     subscriptionRows,
+    auditRows,
     emailSendRows: emailSendCounts.reduce((a, b) => a + b, 0),
   };
 }
@@ -1036,6 +1058,22 @@ export async function destroyRunCascade(
       // channel someone else owns would otherwise aim this drain at their
       // subscriber list. See drainSubscriptionRows.
       drain: () => drainSubscriptionRows(db, courseRunChannel(runId), budget, totals),
+    },
+    {
+      key: "auditRows",
+      // V3 W1 PR5. Drained BEFORE the groups and weeks it references, with
+      // the other leaves: an audit row is `read: if false` to every client
+      // and written only by Admin SDK routes, so nothing can recreate one
+      // behind the cascade, and the ordering is consistency rather than
+      // necessity — which is what stops the next reader working out which
+      // rule this one follows.
+      drain: () =>
+        drainQuery(
+          db,
+          COURSE_AUDIT_COLLECTION,
+          byRunId(COURSE_AUDIT_COLLECTION),
+          budget,
+        ),
     },
     {
       key: "groups",

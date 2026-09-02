@@ -48,6 +48,7 @@ const SOURCE_LABELS: Record<string, string> = {
   committee: "Committee",
   "fellowship-reminder": "Fellowship",
   personal: "Personal",
+  "course-register": "Register",
 };
 
 /**

@@ -109,6 +109,13 @@ const GLYPH: Record<AttendanceStatus, string> = {
   absent: "✕",
   excused: "E",
   late: "L",
+  // `left-early` is DATA-ONLY on this grid for now. It is not in CYCLE, so no
+  // tap can set it and it never reaches the legend; the entries here exist so
+  // a register carrying one (an admin edit, or a future register surface)
+  // still renders something readable rather than an empty cell. The register
+  // PR owns giving it its own tone and its place in the cycle — this PR
+  // deliberately does not restyle the grid.
+  "left-early": "↘",
 };
 
 /**
@@ -123,6 +130,10 @@ const STATUS_CLASS: Record<AttendanceStatus, string> = {
   absent: styles.isAbsent,
   excused: styles.isExcused,
   late: styles.isLate,
+  // Borrows `late`'s tone on purpose: both are partial attendance, the glyphs
+  // already tell them apart, and inventing a fifth tone here would be the
+  // restyle this PR is staying out of. See GLYPH.
+  "left-early": styles.isLate,
 };
 
 /** A beat over `--dur-settle` (260ms), so the pop class outlives its own animation. */

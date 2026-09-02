@@ -33,6 +33,51 @@ export const ENROLMENT_STATUS_LABEL: Record<CourseEnrolmentStatus, string> = {
  */
 export type CourseEnrolmentRole = "learner" | "facilitator";
 
+/**
+ * This member's attendance across the run, as one rolled-up row.
+ *
+ * FULL RECOMPUTE, NEVER A DELTA. The attendance push recomputes this member's
+ * whole record from their group's PUSHED registers inside the push
+ * transaction, rather than adding one to a counter. That is the direct lesson
+ * from `applicationCounts`, which moves only as relative increments, has no
+ * recount pass anywhere, and is therefore unreconcilable once it drifts. A
+ * rollup that can be rebuilt from its source at any time cannot drift at all.
+ *
+ * `sessionsHeld` counts only registers marked `held`, so a cancelled session
+ * leaves every ratio built on this alone rather than silently deflating it.
+ *
+ * `lastPushedSessionKey` is the idempotency marker: a re-push of the same
+ * session recomputes to the same numbers, and the key says which session the
+ * figures are current as of.
+ */
+export type EnrolmentAttendanceRollup = {
+  sessionsHeld: number;
+  attendedInFull: number;
+  late: number;
+  leftEarly: number;
+  absent: number;
+  excused: number;
+  lastPushedSessionKey: string | null;
+  lastComputedAt: Date | null;
+};
+
+export const EMPTY_ATTENDANCE_ROLLUP: EnrolmentAttendanceRollup = {
+  sessionsHeld: 0,
+  attendedInFull: 0,
+  late: 0,
+  leftEarly: 0,
+  absent: 0,
+  excused: 0,
+  lastPushedSessionKey: null,
+  lastComputedAt: null,
+};
+
+export const ENROLMENT_LIMITS = {
+  /** Free text a member types when they drop out. Optional, and never shown
+      back to the cohort — it goes to the staff review surface only. */
+  dropOutReason: 500,
+} as const;
+
 export type CourseEnrolmentDoc = {
   /** Firestore doc id: `courseEnrolmentId(runId, uid)`. */
   id: string;
@@ -46,6 +91,43 @@ export type CourseEnrolmentDoc = {
   groupId: string | null;
   status: CourseEnrolmentStatus;
   role: CourseEnrolmentRole;
+  /**
+   * The run stream this member is on (`courseRuns.streams[].id`), or null on
+   * a run with no streams. Scopes which of a week's materials, exercises and
+   * checklist items they see, through `src/lib/courses/streamScope.ts`.
+   *
+   * The whole collection is already `allow write: if false`, so this is
+   * server-owned by construction — which is precisely why the run's `streams`
+   * list had to move to the server-owned tier too: a client-direct edit there
+   * could invalidate the ids stored here.
+   */
+  streamId: string | null;
+  /**
+   * Rolled-up attendance (see `EnrolmentAttendanceRollup`). Living here, on a
+   * row the member can already read, is what lets a learner see their own
+   * attendance without any new read rule: the registers themselves stay
+   * `read: if false` because one register carries the whole group's marks.
+   */
+  attendance: EnrolmentAttendanceRollup;
+  /** Whether this member has cleared the run's submission bar
+      (`courseRuns.submissionExerciseRef`). */
+  submissionDone: boolean;
+  /**
+   * When the member dropped out themselves. Self-service drop-out is
+   * IRREVERSIBLE by decision: it frees the seat and stops the nudges, and
+   * coming back is a new enrolment rather than an undo. Null on every
+   * enrolment that has not been dropped.
+   */
+  droppedOutAt: Date | null;
+  /** Optional free text from the drop-out form (see `ENROLMENT_LIMITS`). */
+  dropOutReason: string | null;
+  /**
+   * True when the member enrolled themselves on an OPEN-mode run, false when
+   * a seat was allocated to them out of admissions. Kept as its own field
+   * rather than derived from `applicationId == null`, because a direct
+   * admin-created enrolment is also application-less and is not self-service.
+   */
+  selfEnrolled: boolean;
   /** The application this enrolment came from; null for direct enrolments. */
   applicationId: string | null;
   /**
@@ -97,6 +179,28 @@ function str(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
+function asCount(v: unknown): number {
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return 0;
+  return Math.floor(v);
+}
+
+function asAttendanceRollup(v: unknown): EnrolmentAttendanceRollup {
+  const raw = (v ?? {}) as Raw;
+  return {
+    sessionsHeld: asCount(raw.sessionsHeld),
+    attendedInFull: asCount(raw.attendedInFull),
+    late: asCount(raw.late),
+    leftEarly: asCount(raw.leftEarly),
+    absent: asCount(raw.absent),
+    excused: asCount(raw.excused),
+    lastPushedSessionKey:
+      typeof raw.lastPushedSessionKey === "string" && raw.lastPushedSessionKey
+        ? raw.lastPushedSessionKey
+        : null,
+    lastComputedAt: tsToDate(raw.lastComputedAt),
+  };
+}
+
 export function normalizeCourseEnrolment(id: string, data: Raw): CourseEnrolmentDoc {
   const status = data.status as CourseEnrolmentStatus;
   const doc: CourseEnrolmentDoc = {
@@ -107,6 +211,16 @@ export function normalizeCourseEnrolment(id: string, data: Raw): CourseEnrolment
     groupId: (data.groupId as string | null | undefined) ?? null,
     status: ENROLMENT_STATUSES.includes(status) ? status : "active",
     role: data.role === "facilitator" ? "facilitator" : "learner",
+    streamId:
+      typeof data.streamId === "string" && data.streamId ? data.streamId : null,
+    attendance: asAttendanceRollup(data.attendance),
+    submissionDone: data.submissionDone === true,
+    droppedOutAt: tsToDate(data.droppedOutAt),
+    dropOutReason:
+      typeof data.dropOutReason === "string" && data.dropOutReason
+        ? data.dropOutReason.slice(0, ENROLMENT_LIMITS.dropOutReason)
+        : null,
+    selfEnrolled: data.selfEnrolled === true,
     applicationId: (data.applicationId as string | null | undefined) ?? null,
     joinedWeekNumber:
       typeof data.joinedWeekNumber === "number" && Number.isFinite(data.joinedWeekNumber)
