@@ -35,6 +35,8 @@ export type CoursesConfig = {
    * The anonymous feedback form a member is offered when they drop out.
    * Empty = no link shown, which is a complete state: the drop-out still
    * works, it just asks for nothing.
+   *
+   * ALWAYS `http://` or `https://` or empty; see `readCoursesConfig`.
    */
   dropOutFeedbackUrl: string;
   /**
@@ -65,6 +67,23 @@ export const DEFAULT_COURSES_CONFIG: CoursesConfig = Object.freeze({
   maxFollowUpTasksPerTick: 25,
 });
 
+/**
+ * The stored feedback link, or "" when it is not one this app will render.
+ *
+ * A CONFIG DOC IS NOT A TRUSTED SOURCE OF HREFS. It is Admin-SDK-only today,
+ * but the value ends up in an `href` on a page a member is looking at, and
+ * `javascript:` and `data:` URLs in an href are script execution in the
+ * member's session. Anchoring on `^https?://` is what makes "rendered
+ * verbatim" safe to say, and it costs nothing: a real feedback form is a
+ * web page. Anything else degrades to "" and the drop-out simply asks for
+ * nothing, which is already a complete state.
+ */
+function externalUrlOrEmpty(v: unknown): string {
+  if (typeof v !== "string") return "";
+  const trimmed = v.trim();
+  return /^https?:\/\//i.test(trimmed) ? trimmed : "";
+}
+
 function positiveNumber(v: unknown, fallback: number): number {
   if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return fallback;
   return v;
@@ -87,11 +106,9 @@ export async function readCoursesConfig(db: Firestore): Promise<CoursesConfig> {
       data.unmarkedRegisterGraceHours,
       DEFAULT_COURSES_CONFIG.unmarkedRegisterGraceHours,
     ),
-    // Not URL-validated here. The value is admin-typed, is only ever rendered
-    // as an href on a page the member reached by pressing "drop out", and a
-    // typo shows a broken link rather than doing anything.
-    dropOutFeedbackUrl:
-      typeof data.dropOutFeedbackUrl === "string" ? data.dropOutFeedbackUrl : "",
+    // Scheme-checked, not merely type-checked: this one is rendered as an
+    // href. See `externalUrlOrEmpty`.
+    dropOutFeedbackUrl: externalUrlOrEmpty(data.dropOutFeedbackUrl),
     nextSessionMaxDays: positiveInt(
       data.nextSessionMaxDays,
       DEFAULT_COURSES_CONFIG.nextSessionMaxDays,

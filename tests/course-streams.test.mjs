@@ -158,6 +158,10 @@ const {
   normalizeCourseGroup,
 } = await loadTs("lib/firestore/courseGroups.ts");
 
+const { DEFAULT_COURSES_CONFIG, readCoursesConfig } = await loadTs(
+  "lib/firestore/config.ts",
+);
+
 const {
   COURSE_AUDIT_KIND_LABEL,
   UNKNOWN_COURSE_AUDIT_LABEL,
@@ -625,4 +629,46 @@ test("GUARD §7.1 an unrecognised audit kind is kept verbatim, not degraded", ()
   assert.equal(missing.kind, "");
   assert.equal(missing.kindKnown, false);
   assert.equal(courseAuditKindLabel(missing.kind), UNKNOWN_COURSE_AUDIT_LABEL);
+});
+
+// ===========================================================================
+// §8. config/courses: the one field that becomes an href
+// ===========================================================================
+
+/** The smallest thing that answers `db.collection(c).doc(d).get()`. */
+function fakeConfigDb(stored) {
+  return {
+    collection: () => ({
+      doc: () => ({
+        get: async () => ({ exists: stored !== null, data: () => stored }),
+      }),
+    }),
+  };
+}
+
+test("GUARD §8.1 dropOutFeedbackUrl is http(s) or empty, never a script url", async () => {
+  // The value is rendered as an href on a page the member is looking at, so
+  // a `javascript:` or `data:` url here is script execution in their session.
+  // A config doc being Admin-SDK-only today is not a reason to render it raw
+  // tomorrow.
+  const good = await readCoursesConfig(
+    fakeConfigDb({ dropOutFeedbackUrl: "https://forms.example/leaving " }),
+  );
+  assert.equal(good.dropOutFeedbackUrl, "https://forms.example/leaving");
+
+  for (const hostile of [
+    "javascript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "  javascript:alert(1)",
+    "/relative/path",
+    "forms.example/leaving",
+    42,
+  ]) {
+    const cfg = await readCoursesConfig(fakeConfigDb({ dropOutFeedbackUrl: hostile }));
+    assert.equal(cfg.dropOutFeedbackUrl, "", `refused: ${String(hostile)}`);
+  }
+
+  // Missing doc still means documented defaults, never "feature off".
+  const absent = await readCoursesConfig(fakeConfigDb(null));
+  assert.deepEqual(absent, DEFAULT_COURSES_CONFIG);
 });
