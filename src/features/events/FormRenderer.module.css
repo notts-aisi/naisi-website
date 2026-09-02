@@ -62,7 +62,14 @@
    of two CSS modules wins a specificity tie depends on bundle order, so the
    long-text look would be decided by something nobody controls. Descendant
    selectors (0,2,0) pin it here instead and keep the frozen events RSVP
-   baseline exactly as it was. See docs/mobile-baseline-events.md. */
+   baseline exactly as it was. See docs/mobile-baseline-events.md.
+
+   Every property `.control` sets has to be answered here, including the ones
+   this box never declared. A property left out is not "unchanged", it is
+   inherited from a module this box was never styled by: line-height, the
+   focus transition and the placeholder colour all arrived that way, and
+   line-height in particular changes how many lines of a long answer are
+   visible on a phone. */
 .wrap .textarea {
   padding: 0.55rem 0.7rem;
   background: var(--color-bg-elevated);
@@ -74,6 +81,21 @@
   font-family: inherit;
   resize: vertical;
   min-height: 5rem;
+  /* The box never set line-height, so it took the browser default that comes
+     with a textarea. `--leading-normal` off `.control` is looser and would
+     retune the height of every answer on the frozen flow. */
+  line-height: normal;
+  /* And it never animated its border, so its focus was instant and matched
+     the short-text `.input` sitting directly above it in the same form. */
+  transition: none;
+}
+
+/* Same reasoning: `.control::placeholder` paints `--color-text-subtle`, which
+   this box never had, and which its `.input` sibling still does not have.
+   `revert` drops back to the browser's own placeholder colour, the one the
+   frozen baseline was verified against. */
+.wrap .textarea::placeholder {
+  color: revert;
 }
 
 .wrap .textarea:focus {
