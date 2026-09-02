@@ -79,17 +79,6 @@ type VerificationState =
  */
 const AUTH_NEXT_COOKIE = "__auth_next";
 
-/**
- * Where a return address is allowed to point after registration.
- *
- * The allowlist itself moved to `src/lib/authReturn.ts` when the admission
- * rounds added a second funnel (`/apply/`): `AuthEntry` decides the same
- * question on the sign-in leg, and two copies of a redirect allowlist is two
- * chances for one of them to be widened alone. The reasoning for a prefix
- * allowlist rather than an open-redirect parser lives there.
- */
-const safeCourseNext = safeFunnelReturn;
-
 /** The `__auth_next` value, or null. Browser-only: reads `document.cookie`. */
 function readAuthNextCookie(): string | null {
   if (typeof document === "undefined") return null;
@@ -144,8 +133,13 @@ function RegisterPageInner() {
 
   /**
    * Where finishing registration lands you. `/pending-approval` for almost
-   * everyone; the course apply page they came from when they arrived through
-   * the application funnel.
+   * everyone; the form they came from when they arrived through one of the
+   * application funnels, a course apply page or an admission round.
+   *
+   * Which addresses qualify is `safeFunnelReturn` in `src/lib/authReturn.ts`,
+   * shared with `AuthEntry`, which decides the same question on the sign-in
+   * leg. Two copies of a redirect allowlist is two chances for one of them to
+   * be widened alone.
    *
    * Resolved lazily and CACHED in a ref, for two reasons. It reads
    * `document.cookie` (the fallback for the Google new-account hop, which
@@ -156,7 +150,8 @@ function RegisterPageInner() {
   const returnToRef = useRef<string | null>(null);
   const returnTo = useCallback((): string => {
     if (returnToRef.current === null) {
-      const found = safeCourseNext(nextParam) ?? safeCourseNext(readAuthNextCookie());
+      const found =
+        safeFunnelReturn(nextParam) ?? safeFunnelReturn(readAuthNextCookie());
       if (found) clearAuthNextCookie();
       returnToRef.current = found ?? "/pending-approval";
     }
