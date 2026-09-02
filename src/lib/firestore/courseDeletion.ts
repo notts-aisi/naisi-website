@@ -603,6 +603,17 @@ async function releaseAdmissionSeats(
 
     const batch = db.batch();
     for (const d of snap.docs) {
+      // The dotted key IS a field path here, and that is what is wanted:
+      // `outcome` is a map and only its `targetRunId` leaf moves, so the
+      // decision, the decider and the reason all survive untouched.
+      //
+      // `update` on a document deleted between the read and the commit aborts
+      // the whole batch. The only thing that deletes an admission application
+      // is an account cascade, so the race is a member deleting their account
+      // mid-destroy: the batch fails, this stage throws, and the destroy stops
+      // with its audit row open for a resume that will simply not see the row.
+      // That is the same failure shape the delete stages have, and the same
+      // recovery.
       batch.update(d.ref, {
         status: "withdrawn",
         seatApplicationId: null,

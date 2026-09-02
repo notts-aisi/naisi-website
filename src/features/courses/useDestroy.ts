@@ -659,6 +659,11 @@ export function useDestroy(kind: DestroyKind, targetId: string, fallbackLabel: s
   // Manifest counts are taken BEFORE the cascade, so on a resume they describe
   // only what is left; the interrupted report says what already went. The max()
   // then stops the ratio ever reading "1,900 of ~250" if either is off.
+  // The receipt also carries stage keys whose fate is not `destroyed` (the
+  // released admission places), so the numerator can legitimately exceed a
+  // denominator built from the destroyed counters alone. The max() below
+  // already absorbs that; it is noted here so the next reader knows it is
+  // understood rather than missed.
   const manifestTotal = manifest ? destroyedTotal(manifest.counts) : 0;
   const alreadyGone = interrupted ? sumCounts(interrupted.deleted) : 0;
   const estimatedTotal = Math.max(manifestTotal + alreadyGone, deletedTotal);
