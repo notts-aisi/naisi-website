@@ -622,6 +622,10 @@ export async function POST(
     .collection("courseAttendance")
     .doc(attendanceDocId(runId, groupId, session.weekNumber, session.occurrence));
   const { startsAt } = sessionInstants(session);
+  // The register's OWN value after the write, not the request's: a POST that
+  // sends no `held` must report what the session actually is rather than
+  // assuming the default.
+  let held = true;
 
   try {
     // A TRANSACTION for one document, because the 40-key cap is a property of
@@ -633,6 +637,7 @@ export async function POST(
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       const data = snap.data() ?? {};
+      held = hasHeld ? body.held === true : data.held !== false;
       // THE LOCK. A pushed register has already mailed the group and moved the
       // rollups a reviewer reads; a later draft-lane write would leave the two
       // describing different sessions. PATCH is the admin's door.
@@ -706,7 +711,7 @@ export async function POST(
     weekNumber: session.weekNumber,
     occurrence: session.occurrence,
     marked: wanted.size,
-    held: hasHeld ? body.held === true : true,
+    held,
   };
   return NextResponse.json(result);
 }
@@ -762,6 +767,7 @@ export async function PATCH(
 
   let logged = 0;
   let changed = 0;
+  let held = true;
   try {
     await db.runTransaction(async (tx) => {
       logged = 0;
@@ -787,6 +793,7 @@ export async function PATCH(
       }
       const heldBefore = data.held !== false;
       const heldAfter = hasHeld ? body.held === true : heldBefore;
+      held = heldAfter;
 
       // Only the marks that actually MOVE are written or logged. An audit row
       // per unchanged cell would bury the one row that matters.
@@ -920,7 +927,7 @@ export async function PATCH(
     weekNumber: session.weekNumber,
     occurrence: session.occurrence,
     marked: changed,
-    held: hasHeld ? body.held === true : true,
+    held,
     logged,
   };
   return NextResponse.json(result);
