@@ -450,17 +450,29 @@ export async function PATCH(
     }
 
     if ("programmePreference" in body) {
-      if (current.kind === "appointment") {
-        // The companion refusal to the outcome-runs one above, and it is a
-        // refusal rather than a silent normalise for the same reason: an
-        // appointment round asks somebody to run a group, not to pick which
-        // programme they would like a place on. The apply flow renders no
-        // programme section for this kind, so a preference stored here would
-        // be a question no applicant was ever asked, sitting on the document
-        // the decide route reads.
+      const preference = readProgrammePreference(body.programmePreference);
+      // The companion refusal to the outcome-runs one above, and it is a
+      // refusal rather than a silent normalise for the same reason: an
+      // appointment round asks somebody to run a group, not to pick which
+      // programme they would like a place on. The apply flow renders no
+      // programme section for this kind, so a preference stored here would be
+      // a question no applicant was ever asked, sitting on the document the
+      // decide route reads.
+      //
+      // It reads the value FIRST and refuses only a preference that actually
+      // asks something, exactly as the outcome-runs refusal above only fires
+      // on a non-empty list. A round authored before this kind existed can
+      // carry a stored preference, and an unconditional refusal here would
+      // leave it with no way back: the one save that clears it, an empty
+      // preference, would be the save that is turned away.
+      const asksSomething =
+        preference.enabled
+        || preference.streams.length > 0
+        || preference.fellowships.length > 0;
+      if (current.kind === "appointment" && asksSomething) {
         bad("An appointment round does not ask applicants to choose a programme.");
       }
-      update.programmePreference = readProgrammePreference(body.programmePreference);
+      update.programmePreference = preference;
     }
 
     /**

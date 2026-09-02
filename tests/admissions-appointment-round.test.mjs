@@ -263,21 +263,44 @@ test("the round PATCH refuses an outcome run on an appointment round", () => {
   assert.match(clause.slice(0, 900), /does not place people on a course run/);
 });
 
-test("the round PATCH refuses a programme preference on an appointment round", () => {
+function programmeClause() {
   const start = roundPatch.indexOf('if ("programmePreference" in body)');
   assert.ok(start > 0, "the programme branch is gone");
-  const clause = roundPatch.slice(start, start + 900);
+  return roundPatch.slice(start, roundPatch.indexOf("\n    }\n", start));
+}
+
+test("the round PATCH refuses a programme preference on an appointment round", () => {
+  const clause = programmeClause();
   assert.match(clause, /current\.kind === "appointment"/);
   assert.match(
     clause,
     /bad\("An appointment round does not ask applicants to choose a programme\."\)/,
   );
-  // The refusal must come BEFORE the value is read, or a malformed body would
-  // answer with a shape complaint about a section this round cannot have.
-  assert.ok(
-    clause.indexOf('current.kind === "appointment"')
-      < clause.indexOf("readProgrammePreference(body.programmePreference)"),
-  );
+});
+
+test("the refusal is on a preference that ASKS something, so an empty one still saves", () => {
+  // The round predating this kind is the reachable case: it can carry a
+  // stored preference, and a refusal that fired on the mere presence of the
+  // field would make the one save that clears it the one save that is turned
+  // away. So the value is read first, and only a preference that is switched
+  // on or carries options is refused.
+  const clause = programmeClause();
+
+  const readAt = clause.indexOf("readProgrammePreference(body.programmePreference)");
+  const refuseAt = clause.indexOf('current.kind === "appointment"');
+  assert.ok(readAt > 0 && refuseAt > 0);
+  assert.ok(readAt < refuseAt, "the value has to be read before the kind is judged");
+
+  // The three things that make a preference a question. All three, because a
+  // check that only read `enabled` would let a round keep a list of streams
+  // sitting under a switched-off flag, one flip away from being asked.
+  assert.match(clause, /preference\.enabled/);
+  assert.match(clause, /preference\.streams\.length > 0/);
+  assert.match(clause, /preference\.fellowships\.length > 0/);
+
+  // And the refusal reads that verdict rather than the body's presence.
+  assert.match(clause, /current\.kind === "appointment" && asksSomething/);
+  assert.match(clause, /update\.programmePreference = preference;/);
 });
 
 test("a round's kind is refused on the way in rather than dropped", () => {
