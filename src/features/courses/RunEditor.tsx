@@ -16,7 +16,11 @@ import { getClientDb } from "@/lib/firebase/client";
 import { AdminLoadingBar } from "@/features/admin/adminList";
 import { useMembers } from "@/features/admin/useMembers";
 import FormBuilder from "@/features/events/FormBuilder";
-import { sanitizeSignupForm, type FormQuestion } from "@/lib/firestore/events";
+import {
+  sanitizeSignupForm,
+  validateQuestionLimits,
+  type FormQuestion,
+} from "@/lib/firestore/events";
 import { ACADEMIC_YEAR_PATTERN } from "@/lib/firestore/users";
 import { isValidDateKey } from "@/lib/courses/weekPlan";
 import { ALLOWED_TRANSITIONS } from "@/lib/courses/runStatus";
@@ -121,9 +125,15 @@ function cleanQuestion(q: FormQuestion): FormQuestion {
 /**
  * Editor-side validation of the application form. Not a security boundary —
  * `sanitizeSignupForm` is the shape check and the rules cap the size. This
- * catches the two half-finished states the builder can leave behind, both of
- * which would otherwise ship to a public page as a blank question or an
- * unanswerable choice.
+ * catches the half-finished states the builder can leave behind, which would
+ * otherwise ship to a public page as a blank question or an unanswerable
+ * choice, plus a per-question limit typed outside its range.
+ *
+ * Expects the questions UNCLAMPED, i.e. `sanitizeSignupForm(raw, {
+ * clampLimits: false })`. A run's form is written client-direct, so there is no
+ * route to refuse an out-of-range limit: clamping before the check would turn
+ * a typed 5000 into a passing 4000 and store it without a word, while the
+ * builder's own hint says saving is refused until it is fixed.
  */
 function applicationFormError(questions: FormQuestion[]): string | null {
   if (questions.length > MAX_APPLICATION_FORM_QUESTIONS) {
@@ -142,6 +152,8 @@ function applicationFormError(questions: FormQuestion[]): string | null {
       }
     }
   }
+  const limitProblem = validateQuestionLimits(questions);
+  if (limitProblem) return limitProblem.error;
   return null;
 }
 
@@ -497,13 +509,20 @@ export default function RunEditor({ courseId, runId }: Props) {
   async function saveApplicationForm() {
     // Clean first, then validate: trimming is what turns a label of spaces
     // into the blank the check below is looking for.
-    const cleaned = sanitizeSignupForm(applicationForm.map(cleanQuestion));
-    const problem = applicationFormError(cleaned);
+    const tidied = applicationForm.map(cleanQuestion);
+    // Validate the limits as TYPED, store them clamped. The unclamped pass is
+    // what lets the refusal quote the author's own 5000 back at them; the
+    // clamped write stays as the backstop for anything that never reached this
+    // check, and can only ever be a no-op once the check has passed.
+    const problem = applicationFormError(
+      sanitizeSignupForm(tidied, { clampLimits: false }),
+    );
     if (problem) {
       setFormError(problem);
       return;
     }
     setFormError(null);
+    const cleaned = sanitizeSignupForm(tidied);
 
     let ok = false;
     await runAction(
