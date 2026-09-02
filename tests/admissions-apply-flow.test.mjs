@@ -756,6 +756,15 @@ describe("access requirements", () => {
     assert.equal(Object.prototype.hasOwnProperty.call(wire, "outcome"), false);
     assert.equal(Object.prototype.hasOwnProperty.call(wire, "evidence"), false);
     assert.equal(Object.prototype.hasOwnProperty.call(wire, "membershipAtApply"), false);
+    // The identity fields the row carries FROM THE SESSION. They are not
+    // secret from the person they belong to, but they are not the projection's
+    // job either: it is built field by field precisely so that adding one to
+    // `AdmissionApplicationDoc` does not silently add it to this payload, and
+    // an address on the wire is the shape a copy-paste into a staff payload
+    // starts from.
+    assert.equal(Object.prototype.hasOwnProperty.call(wire, "email"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(wire, "displayName"), false);
+    assert.equal(json.includes("someone@example.com"), false);
   });
 });
 
