@@ -46,12 +46,20 @@ export async function generateMetadata({
   const { courseId } = await params;
   const context = await getApplyContext(courseId);
   if (!context) return { title: "Applications closed" };
-  const open = context.window.state === "open";
+  // THREE states, not two. A window that has not opened yet is still an APPLY
+  // page: the form is ahead of the reader, not behind them. Collapsing it into
+  // "closed" is how a run that opens next month gets a title asserting the
+  // reader has already applied to it.
+  const state = context.window.state;
+  const title = context.course.title || "Course";
   return {
-    title: `${open ? "Apply" : "Your application"}: ${context.course.title || "Course"}`,
-    description: open
-      ? `Apply for ${context.course.title}. Open to anyone with a NAISI account, including brand-new ones.`
-      : `Applications for ${context.course.title} aren't open right now. Sign in to check an application you've already sent.`,
+    title: `${state === "closed" ? "Your application" : "Apply"}: ${title}`,
+    description:
+      state === "open"
+        ? `Apply for ${title}. Open to anyone with a NAISI account, including brand-new ones.`
+        : state === "not-yet"
+          ? `Applications for ${title} haven't opened yet. The curriculum is up already, so you can read the whole thing before you decide.`
+          : `Applications for ${title} have closed. Sign in to check an application you've already sent.`,
     // A personal form is no use in search results, and the page renders
     // per-viewer state; the course page is the canonical public surface.
     robots: { index: false, follow: true },
@@ -109,7 +117,14 @@ export default async function CourseApplyPage({
   const nextParam = encodeURIComponent(applyPath);
   // Formatted HERE, on the server, in Europe/London. See `lib/courses/window.ts`.
   const runWindow = toApplyWindow(run, window);
+  // The window has THREE states and this page renders all three differently.
+  // `open` and `closed` used to be the only two, with `not-yet` folded into
+  // the closed branch, so a run opening next month greeted its first visitor
+  // with "Your application" and an offer to sign in and check the one they
+  // could not possibly have sent.
   const open = window.state === "open";
+  const notYet = window.state === "not-yet";
+  const closed = !open && !notYet;
   const dates = [
     open && runWindow.closesOn ? `Applications close ${runWindow.closesOn}` : null,
     runWindow.startsOn ? `Starts ${runWindow.startsOn}` : null,
@@ -125,22 +140,44 @@ export default async function CourseApplyPage({
               an admin typed, so it must never land inside a sentence. */}
           <Badge tone="accent">{run.label}</Badge>
           <Reveal variant="mask-wipe" as="h1" className={styles.title}>
-            {open ? "Apply" : "Your application"}: {course.title || "Course"}
+            {closed ? "Your application" : "Apply"}: {course.title || "Course"}
           </Reveal>
+          {/* The separator is decoration, so it is hidden from assistive tech
+              rather than read out as "middle dot" between two dates. Mirrors
+              CourseCTA, which renders the same pair of facts. */}
           {dates.length > 0 ? (
-            <p className={styles.dates}>{dates.join(" · ")}</p>
+            <p className={styles.dates}>
+              {dates.map((bit, i) => (
+                <span key={bit}>
+                  {i > 0 ? (
+                    <span aria-hidden="true" className={styles.dot}>
+                      ·
+                    </span>
+                  ) : null}
+                  {bit}
+                </span>
+              ))}
+            </p>
           ) : null}
           <p className={styles.lede}>
             {open
               ? "A short form, read by people rather than a filter. We're looking for why this matters to you and whether the weekly commitment is realistic right now, not for the right vocabulary. Take ten minutes over it; you can edit your answers until the team reviews them."
-              : "Applications for this run aren't open. If you've already sent one, it's below."}
+              : notYet
+                ? runWindow.opensOn
+                  ? `Applications for this run open on ${runWindow.opensOn}. The curriculum is up already, so you can read the whole thing before you decide.`
+                  : "Applications for this run open shortly. The curriculum is up already, so you can read the whole thing before you decide."
+                : "Applications for this run have closed. If you sent one, it's below."}
           </p>
         </header>
 
         {!user ? (
           <Card padding="lg" className={styles.gateCard}>
             <h2 className={styles.gateTitle}>
-              {open ? "Sign in to apply" : "Sign in to check your application"}
+              {open
+                ? "Sign in to apply"
+                : notYet
+                  ? opensHeading(runWindow)
+                  : "Sign in to check your application"}
             </h2>
             <p className={styles.gateBody}>
               {open ? (
@@ -150,6 +187,14 @@ export default async function CourseApplyPage({
                   <strong>Any account can apply</strong>, including one you make
                   in the next minute, and one that&apos;s still waiting on
                   committee approval.
+                </>
+              ) : notYet ? (
+                <>
+                  There is nothing to fill in yet. When the form opens it will be
+                  tied to a NAISI account, so making one now is the whole of the
+                  head start available.{" "}
+                  <strong>Any account can apply</strong>, including one
+                  that&apos;s still waiting on committee approval.
                 </>
               ) : (
                 <>
@@ -170,16 +215,20 @@ export default async function CourseApplyPage({
             <Link href={`/login?next=${nextParam}`} className={styles.button}>
               {open ? "Sign in to apply" : "Sign in"}
             </Link>
-            {/* Offered only while the window is open: telling someone to make
-                an account for a run they can no longer apply to would be a
-                wasted five minutes. */}
-            {open ? (
+            {/* The account offer is for the two states where an account is
+                worth having: one about to be needed, and one already open. A
+                CLOSED run gets the "you never applied" line instead, because
+                telling someone to make an account for a run they can no longer
+                apply to would be a wasted five minutes. */}
+            {open || notYet ? (
               <p className={styles.gateNote}>
                 No account yet?{" "}
                 <Link href={`/register?next=${nextParam}`} className={styles.gateLink}>
                   Create one
                 </Link>{" "}
-                and we&apos;ll bring you straight back to this form.
+                {open
+                  ? "and we'll bring you straight back to this form."
+                  : "and this page will have the form on it the day it opens."}
               </p>
             ) : (
               <p className={styles.gateNote}>
@@ -250,13 +299,22 @@ function toApplyWindow(run: CourseRunDoc, window: ApplicationWindow): ApplyWindo
   };
 }
 
-/** One sentence naming why the window is shut, with the date it happened. */
+/**
+ * The signed-out gate heading while the window is still AHEAD. Not a
+ * "sign in to check" line: there is nothing yet to check.
+ */
+function opensHeading(runWindow: ApplyWindow): string {
+  return runWindow.opensOn
+    ? `Applications open ${runWindow.opensOn}`
+    : "Applications open soon";
+}
+
+/**
+ * One sentence naming when the window shut, with the date it happened. Reached
+ * only from the CLOSED branch: a window that has not opened yet is a different
+ * sentence, and used to borrow this one.
+ */
 function closedLine(runWindow: ApplyWindow): string {
-  if (runWindow.state === "not-yet") {
-    return runWindow.opensOn
-      ? `Applications open on ${runWindow.opensOn}.`
-      : "Applications open shortly.";
-  }
   return runWindow.closesOn
     ? `Applications closed on ${runWindow.closesOn}.`
     : "Applications for this run have closed.";

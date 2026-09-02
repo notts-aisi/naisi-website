@@ -142,6 +142,14 @@
   font-weight: 600;
 }
 
+/* A window that has not opened YET is news, not an epitaph. Rendering
+   "Applications open Mon 21 Sep" in the same muted grey as "Applications
+   closed" is how a card announcing the next cohort reads as a dead one. */
+.stateSoon {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
 .stateClosed {
   color: var(--color-text-subtle);
 }

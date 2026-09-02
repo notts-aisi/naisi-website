@@ -10,6 +10,7 @@ import {
 import {
   formatRunStartShort,
   formatWindowDate,
+  type ApplicationWindowState,
 } from "@/lib/courses/window";
 import Reveal from "../Reveal";
 import styles from "./courses.module.css";
@@ -92,9 +93,10 @@ function CourseCard({ entry }: { entry: CourseCatalogueEntry }) {
               {formatWeeklyHours(course.estimatedWeeklyHours)}
             </span>
           ) : null}
-          <span className={state === "open" ? styles.stateOpen : styles.stateClosed}>
-            {applicationState(entry)}
-          </span>
+          {/* Three tones for three states. "Applications open Mon 21 Sep" is a
+              date to plan around, so it must not be painted the same muted
+              grey as "Applications closed" and read as a run that is over. */}
+          <span className={stateClass(state)}>{applicationState(entry)}</span>
           {/* Shares `.commitment` (muted, tabular numerals) rather than
               growing the stylesheet a near-identical class: it is the same
               kind of line, and `.cardFoot` is already the flex column that
@@ -104,6 +106,13 @@ function CourseCard({ entry }: { entry: CourseCatalogueEntry }) {
       </Card>
     </Link>
   );
+}
+
+/** Open is live, not-yet is upcoming, everything else is over. */
+function stateClass(state: ApplicationWindowState | null): string {
+  if (state === "open") return styles.stateOpen;
+  if (state === "not-yet") return styles.stateSoon;
+  return styles.stateClosed;
 }
 
 /**

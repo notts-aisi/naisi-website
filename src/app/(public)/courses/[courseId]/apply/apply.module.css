@@ -94,6 +94,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Decoration between two date facts, hidden from assistive tech in the markup
+   so it is never announced as "middle dot". Mirrors CourseCTA.module.css. */
+.dot {
+  margin: 0 var(--space-2);
+  color: var(--color-text-subtle);
+  font-weight: 400;
+}
+
 /* === Signed-out / ineligible gate === */
 
 .gateCard {
