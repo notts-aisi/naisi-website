@@ -62,6 +62,20 @@ const COURSE_PAGE_SIZE = 300;
 const COURSE_MAX_PAGES = 60;
 
 /**
+ * Rows per page for the admissions sweep, and deliberately NOT
+ * `COURSE_PAGE_SIZE`.
+ *
+ * `deleteAdmissionApplications` commits TWO deletes per row in ONE batch (the
+ * application and its `admissionApplicationPrivate` twin), and that single
+ * batch is load-bearing rather than incidental: see that function for why the
+ * two rows cannot be torn down by separate sweeps. A 300-row page would ask
+ * one batch for up to 600 writes, past Firestore's 500-write cap, so the page
+ * is the cap halved and rounded down. 250 × 2 = 500 exactly, and no real
+ * account comes near even one page.
+ */
+const ADMISSION_PAGE_SIZE = 250;
+
+/**
  * Delete every row a member owns in one course collection, a page at a time.
  *
  * No cursor: the rows are deleted as they are read, so the next query's first
@@ -194,6 +208,10 @@ async function clearCourseAttendanceMarks(
  * a failure leaves both, and a retry (re-reading the smaller remainder) is
  * the same operation again.
  *
+ * That is also why the page size is `ADMISSION_PAGE_SIZE` (250) and not the
+ * 300 the other course sweeps use: two deletes per row against Firestore's
+ * 500-write batch cap.
+ *
  * ## The counters are deliberately left alone
  *
  * Deleting an application does NOT move `admissionRounds.applicationCounts`.
@@ -216,7 +234,7 @@ async function deleteAdmissionApplications(
     const snap = await db
       .collection("admissionApplications")
       .where("uid", "==", uid)
-      .limit(COURSE_PAGE_SIZE)
+      .limit(ADMISSION_PAGE_SIZE)
       .get();
     if (snap.empty) return { applications, privateRows };
 
@@ -235,7 +253,7 @@ async function deleteAdmissionApplications(
 
     applications += snap.size;
     privateRows += livePrivate.length;
-    if (snap.size < COURSE_PAGE_SIZE) return { applications, privateRows };
+    if (snap.size < ADMISSION_PAGE_SIZE) return { applications, privateRows };
   }
   throw new Error(
     `admissionApplications did not drain after ${COURSE_MAX_PAGES} pages`,
