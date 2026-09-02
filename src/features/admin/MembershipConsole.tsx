@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import CountedTextarea from "@/components/ui/CountedTextarea";
 import { Input } from "@/components/ui/Input";
 import {
   ALL_MEMBERSHIP_TIERS,
@@ -12,6 +13,7 @@ import {
   type MembershipTier,
 } from "@/lib/firestore/memberships";
 import { currentAcademicYear } from "@/lib/firestore/users";
+import { resetCurrentPeriodCache } from "./currentPeriodCache";
 import styles from "./MembershipConsole.module.css";
 
 /**
@@ -112,6 +114,11 @@ export default function MembershipConsole({ isAdmin }: { isAdmin: boolean }) {
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error ?? "That did not save.");
+      // Creating a period, and above all making one current, changes the
+      // answer every membership chip on the Members list is drawn from. That
+      // answer is shared and memoised, so it has to be dropped here or the
+      // rows keep reporting the state from before this write until a reload.
+      resetCurrentPeriodCache();
       await load();
       return true;
     } catch (err) {
@@ -133,6 +140,9 @@ export default function MembershipConsole({ isAdmin }: { isAdmin: boolean }) {
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error ?? "That did not save.");
+      // An edit can move the label the chips render, so it drops the shared
+      // answer for the same reason a create does.
+      resetCurrentPeriodCache();
       await load();
       return true;
     } catch (err) {
@@ -283,6 +293,13 @@ export default function MembershipConsole({ isAdmin }: { isAdmin: boolean }) {
             ))}
           </ul>
         )}
+
+        <p className={styles.footnote}>
+          Recording somebody as a member, or taking it back, is done from their
+          row on the Members page and needs a full admin. Membership admin on
+          its own reaches the periods and this page; the member table and the
+          SU list import are a later change.
+        </p>
       </Card>
     </div>
   );
@@ -367,11 +384,15 @@ function PeriodForm({
       </label>
       <label className={`${styles.field} ${styles.fieldWide}`}>
         <span className={styles.fieldLabel}>Note (internal)</span>
-        <Input
+        {/* Two hundred characters is a sentence or three, not a line, and the
+            cap is silent: a single-line input just stops accepting keystrokes.
+            The counter is how an admin sees the limit coming. */}
+        <CountedTextarea
           value={values.note}
           onChange={(e) => set("note", e.target.value)}
           placeholder="Anything the next admin should know about this year"
-          maxLength={MEMBERSHIP_FIELD_LIMITS.note}
+          max={MEMBERSHIP_FIELD_LIMITS.note}
+          rows={3}
         />
       </label>
       <div className={styles.formActions}>
