@@ -173,6 +173,20 @@ export type RunDestroyCounts = {
    * round that placed people on it. Destroying a ROUND is a separate
    * protocol with its own typed confirmation and its own manifest, and it is
    * not built yet.
+   *
+   * KNOWN GAP, deliberately left for PR8 or PR33: a round POINTS AT runs
+   * from two array fields, `evidenceRunIds` (the pre-course runs a reviewer
+   * scores attendance from) and `outcomeRunIds` (the runs a decider may
+   * place people on), and neither `runDestroyBlockers` nor this counter
+   * looks at either. So a run can be destroyed while a live round still
+   * names it, leaving the round's evidence builder pointed at a cohort with
+   * no register and its decide screen offering a target run that no longer
+   * resolves. Fixing it means one of two things, and it is a product
+   * decision rather than a mechanical one: either naming the round a
+   * BLOCKER (safest, and consistent with "a live child blocks a destroy"),
+   * or counting the referencing rounds here and pruning the arrays as a
+   * release stage. Whichever wins, the round write it needs belongs in the
+   * round's own PR, not in this file, which is why nothing here does it yet.
    */
   admissionSeatOffers: number;
   emailSendRows: number;
