@@ -36,6 +36,17 @@
  * the real `/login` form, which leaves the browser with real Firebase Auth
  * client state AND the cookie the server wants.
  *
+ * ## It writes a completion marker, and the runner insists on it
+ *
+ * Every way this file can decline to run (no Playwright, no fixture, a skip)
+ * still exits `node --test` at 0, which is indistinguishable from a pass. So
+ * each step records its name as it finishes and the list is written to
+ * `MARKER_PATH` in the `finally`; `scripts/run-applicant-funnel.mjs` deletes
+ * that file before the run and refuses to report success unless it comes back
+ * naming every step in `FUNNEL_STEPS` (the list lives in the fixture module,
+ * and a guard test pins it against the step names below). A run that opened no
+ * browser is a failure, loudly.
+ *
  * ## It is one test with ordered steps, not thirteen tests
  *
  * The funnel is a sequence: there is no "withdraw" to check without a
@@ -45,16 +56,53 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { assertTarget, REPO_ROOT } from "../../scripts/e2e/lib/env.mjs";
-import { WITHDRAW_WORD } from "../../scripts/seed-fake-applicants.mjs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { assertTarget } from "../../scripts/e2e/lib/env.mjs";
+import {
+  MARKER_PATH,
+  STATE_PATH as DEFAULT_STATE_PATH,
+  WITHDRAW_WORD,
+} from "../../scripts/seed-fake-applicants.mjs";
 
-const STATE_PATH =
-  process.env.E2E_FUNNEL_STATE ?? join(REPO_ROOT, ".next", "e2e-funnel-state.json");
+const STATE_PATH = process.env.E2E_FUNNEL_STATE ?? DEFAULT_STATE_PATH;
+const MARKER = process.env.E2E_FUNNEL_MARKER ?? MARKER_PATH;
 
 /** Every locator waits at most this long. Generous: dev is a cold Cloud Run. */
 const WAIT_MS = 30_000;
+
+/**
+ * The steps this file actually completed, written out at the end whether the
+ * run passed or failed.
+ *
+ * A skipped spec and a passing spec are the same exit code, so the runner
+ * cannot tell them apart from `node --test` alone: it reads this instead, and
+ * refuses to call a run green unless every step in `FUNNEL_STEPS` is named
+ * here. Written in the `finally` rather than after the last step so a failed
+ * run still says which step it got to.
+ */
+const completed = [];
+
+function writeMarker() {
+  try {
+    writeFileSync(
+      MARKER,
+      `${JSON.stringify({ finishedAt: new Date().toISOString(), steps: completed }, null, 2)}\n`,
+      "utf8",
+    );
+  } catch (err) {
+    console.error(`[funnel-spec] could not write the completion marker: ${err.message}`);
+  }
+}
+
+/** Runs one named step and records it only if it finished without throwing. */
+async function step(t, name, fn) {
+  let ok = false;
+  await t.test(name, async (st) => {
+    await fn(st);
+    ok = true;
+  });
+  if (ok) completed.push(name);
+}
 
 function loadState() {
   try {
@@ -127,7 +175,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
   const page = await context.newPage();
 
   try {
-    await t.test("the public course page shows the seeded session slots", async () => {
+    await step(t, "the public course page shows the seeded session slots", async () => {
       await page.goto(courseUrl, { waitUntil: "domcontentloaded" });
       await page.getByText(state.courseTitle, { exact: false }).first().waitFor({ timeout: WAIT_MS });
       for (const name of ["Funnel session A", "Funnel session B"]) {
@@ -135,7 +183,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       }
     });
 
-    await t.test("a signed-out visitor gets the sign-in gate on the apply page", async () => {
+    await step(t, "a signed-out visitor gets the sign-in gate on the apply page", async () => {
       await page.goto(applyUrl, { waitUntil: "domcontentloaded" });
       await page.getByRole("heading", { name: "Sign in to apply" }).waitFor({ timeout: WAIT_MS });
       // The gate must not render the form behind it. A "Start your
@@ -148,11 +196,11 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       );
     });
 
-    await t.test("applicant 1 signs in", async () => {
+    await step(t, "applicant 1 signs in", async () => {
       await signIn(page, origin, applicant);
     });
 
-    await t.test("starting an application opens an editable draft", async () => {
+    await step(t, "starting an application opens an editable draft", async () => {
       await page.goto(applyUrl, { waitUntil: "domcontentloaded" });
       await page.getByRole("button", { name: "Start your application" }).click();
       await page.locator(`#${state.questionId}-input`).waitFor({ timeout: WAIT_MS });
@@ -160,7 +208,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
 
     const answer = `Funnel run ${state.funnelRunId}: this answer is written by an automated run.`;
 
-    await t.test("the draft saves", async () => {
+    await step(t, "the draft saves", async () => {
       await page.locator(`#${state.questionId}-input`).fill(answer);
       await page.getByRole("button", { name: "Save draft" }).click();
       // The bar's status line is what tells an applicant their work is on the
@@ -170,7 +218,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       await page.getByText(/Saved at /).waitFor({ timeout: WAIT_MS });
     });
 
-    await t.test("the draft survives a reload", async () => {
+    await step(t, "the draft survives a reload", async () => {
       await page.reload({ waitUntil: "domcontentloaded" });
       const field = page.locator(`#${state.questionId}-input`);
       await field.waitFor({ timeout: WAIT_MS });
@@ -181,7 +229,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       );
     });
 
-    await t.test("the availability grid paints and the marks persist", async () => {
+    await step(t, "the availability grid paints and the marks persist", async () => {
       // Monday (weekday 1), the first eight quarter hours: 09:00 to 11:00.
       const from = page.locator('[data-day="1"][data-slot="0"]');
       const to = page.locator('[data-day="1"][data-slot="7"]');
@@ -218,7 +266,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       );
     });
 
-    await t.test("submitting moves the application to view-only", async () => {
+    await step(t, "submitting moves the application to view-only", async () => {
       await page.getByRole("button", { name: "Submit application" }).click();
       await page.getByRole("heading", { name: "Your application is in" }).waitFor({ timeout: WAIT_MS });
       // View-only means the controls are GONE, not merely disabled: the flow
@@ -236,7 +284,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       await page.getByText(answer, { exact: false }).first().waitFor({ timeout: WAIT_MS });
     });
 
-    await t.test("withdrawing needs the typed word and then takes it back", async () => {
+    await step(t, "withdrawing needs the typed word and then takes it back", async () => {
       await page.getByRole("button", { name: "Withdraw this application" }).click();
       const confirm = page.getByLabel(`Type ${WITHDRAW_WORD} to confirm`);
       await confirm.waitFor({ timeout: WAIT_MS });
@@ -253,7 +301,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
         .waitFor({ timeout: WAIT_MS });
     });
 
-    await t.test("picking it back up restores the answers and submits again", async () => {
+    await step(t, "picking it back up restores the answers and submits again", async () => {
       await page.getByRole("button", { name: "Pick it back up" }).click();
       const field = page.locator(`#${state.questionId}-input`);
       await field.waitFor({ timeout: WAIT_MS });
@@ -266,7 +314,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       await page.getByRole("heading", { name: "Your application is in" }).waitFor({ timeout: WAIT_MS });
     });
 
-    await t.test("the applicant status hub lists the round", async (st) => {
+    await step(t, "the applicant status hub lists the round", async (st) => {
       // PR14 owns /applications. Until it lands the route 404s, and a funnel
       // that went red over a page nobody has written yet would be noise: the
       // assertion is armed by the route existing, and says so either way.
@@ -283,7 +331,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       ).first().waitFor({ timeout: WAIT_MS });
     });
 
-    await t.test("taking a pre-course seat", async () => {
+    await step(t, "taking a pre-course seat", async () => {
       await page.goto(courseUrl, { waitUntil: "domcontentloaded" });
       const slot = page.locator(`input[name="course-session"][value="${state.groupIds[0]}"]`);
       await slot.waitFor({ timeout: WAIT_MS });
@@ -298,7 +346,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       await page.getByRole("button", { name: "Leave this course" }).waitFor({ timeout: WAIT_MS });
     });
 
-    await t.test("leaving the course needs the typed course title", async () => {
+    await step(t, "leaving the course needs the typed course title", async () => {
       await page.getByRole("button", { name: "Leave this course" }).click();
       const confirm = page.locator("#dropout-confirm");
       await confirm.waitFor({ timeout: WAIT_MS });
@@ -324,5 +372,6 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
   } finally {
     await context.close();
     await browser.close();
+    writeMarker();
   }
 });

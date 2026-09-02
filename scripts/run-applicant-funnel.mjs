@@ -26,13 +26,23 @@
  * path of every production deploy, and a browser automation library plus a
  * downloaded Chromium has no business on that path (the same argument that
  * put `scripts/rules-tests` in its own package). So the runner CHECKS for
- * Playwright and prints the one-line install when it is missing, and the spec
- * skips rather than failing.
+ * Playwright and REFUSES to run without it, printing the one-line install.
+ *
+ * ## A run that drove no browser is a failure
+ *
+ * Everything the spec can do short of running exits `node --test` at 0: a
+ * missing Playwright, a missing fixture, a skip. Three separate ways to get a
+ * green command that opened nothing. So the spec writes a completion marker
+ * naming the steps it finished, this file deletes that marker before the run,
+ * and success requires it back with every step in `FUNNEL_STEPS` on it.
  */
 import { spawn } from "node:child_process";
+import { readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import {
   DEFAULT_APPLICANTS,
+  FUNNEL_STEPS,
+  MARKER_PATH,
   STATE_PATH,
   assertFixtureTarget,
   countFunnelRows,
@@ -60,9 +70,9 @@ const argv = parseArgs(process.argv.slice(2));
 
 /**
  * Resolves Playwright without importing it, so a missing install is a printed
- * sentence rather than a stack trace. Not fatal: the spec's own skip is the
- * authority, and a run that seeds, skips and tears down cleanly still proves
- * the fixture half of this harness works.
+ * sentence rather than a stack trace. FATAL: a run that cannot open a browser
+ * has nothing to say about the funnel, and seeding a throwaway world on a
+ * shared project to prove that is not worth the rows.
  */
 function playwrightPresent() {
   try {
@@ -100,8 +110,35 @@ function runLocal() {
       ...process.env,
       E2E_TEST_PATHS: SPEC,
       E2E_FUNNEL_STATE: STATE_PATH,
+      E2E_FUNNEL_MARKER: MARKER_PATH,
     },
   );
+}
+
+/**
+ * Reads the marker the spec writes and says, in one sentence, why this run
+ * cannot be called a pass. Null when every step was completed.
+ *
+ * The marker is the answer to "did a browser actually do anything": without
+ * it, a spec that skipped and a spec that drove all thirteen steps are the
+ * same exit code and the same silence.
+ */
+function markerShortfall() {
+  let marker;
+  try {
+    marker = JSON.parse(readFileSync(MARKER_PATH, "utf8"));
+  } catch {
+    return (
+      "the spec wrote no completion marker, so it never ran: node --test exits 0 " +
+      "over a skipped file, and this run drove no browser."
+    );
+  }
+  const done = new Set(Array.isArray(marker.steps) ? marker.steps : []);
+  const missing = FUNNEL_STEPS.filter((name) => !done.has(name));
+  return missing.length === 0
+    ? null
+    : `the spec completed ${done.size} of ${FUNNEL_STEPS.length} steps and stopped at ` +
+        `"${missing[0]}".`;
 }
 
 /** Dev mode runs the spec directly: the server is already deployed. */
@@ -110,6 +147,7 @@ function runAgainstTarget(origin) {
     ...process.env,
     E2E_TARGET: origin,
     E2E_FUNNEL_STATE: STATE_PATH,
+    E2E_FUNNEL_MARKER: MARKER_PATH,
   });
 }
 
@@ -125,15 +163,17 @@ async function main() {
     console.error(`[e2e:funnel] ${err.message}`);
     return 1;
   }
-  log(`Project ${target.projectId}${target.emulator ? " (emulator)" : ""}.`);
+  log(`Project ${target.projectId}.`);
 
   if (!playwrightPresent()) {
-    log(
-      "Playwright is not installed, so the browser steps will SKIP. To run them:\n" +
+    console.error(
+      "[e2e:funnel] Playwright is not installed, so there is no browser to drive. " +
+        "Install it and run this again:\n" +
         "  npm install --no-save playwright && npx playwright install chromium\n" +
         "(--no-save on purpose: the root package.json is on the production deploy's " +
         "npm ci path and must not grow a browser.)",
     );
+    return 1;
   }
 
   let state = null;
@@ -172,11 +212,24 @@ async function main() {
   process.on("SIGINT", onSignal("SIGINT"));
   process.on("SIGTERM", onSignal("SIGTERM"));
 
+  // A marker left by an earlier run would answer for this one, so it goes
+  // before the spec starts rather than after it finishes.
+  try {
+    rmSync(MARKER_PATH);
+  } catch {
+    /* nothing to clear */
+  }
+
   try {
     state = await seedFunnelFixtures({ applicants: argv.applicants });
     testCode = argv.local
       ? await runLocal()
       : await runAgainstTarget(process.env.E2E_TARGET ?? "https://dev.naisi.uk");
+    const shortfall = markerShortfall();
+    if (shortfall) {
+      console.error(`[e2e:funnel] NOT A PASS: ${shortfall}`);
+      testCode = 1;
+    }
   } catch (err) {
     console.error(err);
     testCode = 1;
