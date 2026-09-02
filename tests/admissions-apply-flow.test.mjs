@@ -1198,6 +1198,29 @@ describe("the route prologue", () => {
     assert.match(stage, /enforceRequired: true/);
   });
 
+  test("only a submitted application may file a later stage", () => {
+    // An allowlist, not a list of refusals. Naming `draft` and `withdrawn`
+    // left `accepted`, `fellowship-offered`, `waitlisted` and `rejected`
+    // falling through to the write, so somebody already told their outcome
+    // could still add answers to a decided application, and the row would
+    // carry work no reviewer read and no decision weighed.
+    const stage = handler(source(STAGE_ROUTE), "POST");
+    assert.match(stage, /if \(status !== "submitted"\)/);
+    // And the decided statuses get a sentence of their own rather than the
+    // "submit your application first" one, which would be nonsense to read
+    // after an acceptance email.
+    assert.match(stage, /has already been decided/);
+    // A guard written the other way round would have to enumerate the union,
+    // which is the shape this test exists to keep out of the file.
+    assert.equal(
+      /status === "accepted"|status === "waitlisted"|status === "rejected"|status === "fellowship-offered"/.test(
+        stage,
+      ),
+      false,
+      "the later-stage submit is enumerating the statuses it refuses again, which is how the last four got missed",
+    );
+  });
+
   test("the applicant's email comes from the session, never the body", () => {
     const post = handler(source(APPLY_ROUTE), "POST");
     assert.match(post, /email: user\.email \?\? null/);

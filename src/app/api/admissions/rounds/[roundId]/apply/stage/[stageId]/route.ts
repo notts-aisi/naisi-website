@@ -114,18 +114,25 @@ export async function POST(req: Request, ctx: Ctx) {
         round.availabilityGrid,
       );
 
+      // ALLOWLIST, not a pair of refusals. Naming the statuses that may not
+      // file a stage left `accepted`, `fellowship-offered`, `waitlisted` and
+      // `rejected` falling through to the write, so somebody already told
+      // their outcome could still add answers to a decided application and the
+      // row would carry work that no reviewer read and no decision weighed.
+      // `submitted` is the only status this route is for.
       const status: AdmissionApplicationStatus = application.status;
-      if (status === "draft") {
-        // A first submission moves counters and freezes every released stage
-        // at once, so it has to go through the submit route or the round's
-        // `draft` count would never come down.
+      if (status !== "submitted") {
         throw new ApplyError(
-          "Submit your application first, and this part will be here afterwards.",
+          status === "draft"
+            ? // A first submission moves counters and freezes every released
+              // stage at once, so it has to go through the submit route or the
+              // round's `draft` count would never come down.
+              "Submit your application first, and this part will be here afterwards."
+            : status === "withdrawn"
+              ? "You withdrew this application."
+              : "This application has already been decided, so nothing more can be added to it. Reply to any email from us and we will sort it out.",
           409,
         );
-      }
-      if (status === "withdrawn") {
-        throw new ApplyError("You withdrew this application.", 409);
       }
       if (application.stageSubmittedAt[stageId]) {
         throw new ApplyError(`You have already submitted "${stage.label}".`, 409);
