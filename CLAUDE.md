@@ -33,9 +33,11 @@ src/
 │   │   ├── committee/tasks/                 # committee task board
 │   │   ├── credentials/                     # placeholder page — feature not built
 │   │   ├── newsletter/  events/manage/      # drafter / approver tools
-│   │   └── admin/                           # Approvals, Members, Projects, Newsletter,
-│   │                                        #   Subscriptions, Email designs, Deliverability,
-│   │                                        #   Task templates, Danger zone
+│   │   └── admin/                           # two gated trees, see "Admin area gating":
+│   │       ├── (admin-only)/                #   full admins: Approvals, Members, Projects,
+│   │       │                                #   Newsletter, Subscriptions, Email designs,
+│   │       │                                #   Deliverability, Task templates, Danger zone
+│   │       └── courses/                     #   admins + draftCourse/approveCourse holders
 │   ├── verify-email/[tokenId]/       # uni-email magic-link landing
 │   └── api/                          # session, admin/*, events/*, tasks/*, newsletter/*,
 │                                     #   subscriptions/*, verify-email/*, webhooks/*, …
@@ -208,10 +210,34 @@ committee role clears `suRecognised`.
 ### `permissions` map (orthogonal to role, shipped)
 
 `users/{uid}.permissions` is an admin-granted map, independent of governance
-role: `draftNewsletter`, `approveNewsletter`, `draftEvent`, `approveEvent`.
-Admins implicitly hold all four. These gate the Newsletter and Events drafter
-tools and the matching Firestore rules, so a plain `member` can be granted
-`draftEvent` without being promoted to committee.
+role: `draftNewsletter`, `approveNewsletter`, `draftEvent`, `approveEvent`,
+`draftCourse`, `approveCourse`. Admins implicitly hold all six. These gate the
+Newsletter, Events and Course drafter tools and the matching Firestore rules,
+so a plain `member` can be granted `draftEvent` without being promoted to
+committee.
+
+### Admin area gating (two trees)
+
+`/admin` is no longer one role check. `(app)/admin/layout.tsx` admits an admin
+OR a holder of `draftCourse` / `approveCourse`, because those grants are
+useless if their holder is bounced off `/admin/courses`. The real per-page
+enforcement therefore sits one level down, in two route groups whose layouts
+call the helpers in `src/lib/firebase/pageGates.ts`:
+
+- `(app)/admin/(admin-only)/**` calls `requireAdminPage()`. Everything that is
+  not course authoring lives here (Approvals, Members, Collaborators,
+  Registrations, Projects, Newsletter, Subscriptions, Email designs,
+  Deliverability, Task templates, Site status, Danger zone). The group name is
+  in brackets, so it contributes nothing to the URLs.
+- `(app)/admin/courses/**` calls `requireCourseAuthorPage()`, the same
+  predicate the front door uses. Deliberately repeated: a subtree whose only
+  protection is a level above it loses that protection silently the next time
+  somebody widens that level.
+
+`AdminTabs` takes `isAdmin` from the layout and renders only the sections the
+caller may use, so a course drafter sees Courses and nothing else. A new admin
+page dropped straight into `src/app/(app)/admin/` has no role gate of its own;
+`tests/no-admin-gating.test.mjs` fails on exactly that.
 
 ### `tracks` (admin tags, shipped)
 
