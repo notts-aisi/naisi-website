@@ -557,6 +557,95 @@ export async function getCourseRunSet(courseId: string): Promise<CourseRunSet> {
   return { runIds, runsById, featuredRun: best };
 }
 
+/** One sitemap row: a published course and the week URLs hanging off it. */
+export type CourseSitemapRow = {
+  courseId: string;
+  /** `courses.updatedAt`, for `lastModified`. Absent on a pre-V2 document. */
+  updatedAt: Date | null;
+  /** The showcase run's PUBLISHED week numbers, ascending. Never a doc id. */
+  weekNumbers: number[];
+};
+
+/**
+ * The sitemap's own read: every published course id, plus the week numbers
+ * that have a public page.
+ *
+ * A NARROW fetcher rather than a reuse of `listPublishedCourses`, which is
+ * built for a page of cards and pays for it: two site-wide run queries, a scan
+ * of every admission round, a batch of `coursePages` for the artwork, and then
+ * one `getPublishedCourse` per course on top. A crawler needs none of that.
+ * This costs one course query, ONE batch read of the showcase runs, and one
+ * keys-plus-`weekNumber` query per course that has a public run.
+ *
+ * It inherits the module's visibility obligation in full, and by the same
+ * rules `getPublishedCourse` applies: published courses only, and a showcase
+ * run that is neither `draft` nor `archived`, so a run mid-destroy takes its
+ * weeks off the sitemap the moment the cascade sets the flag. A sitemap is a
+ * published list of URLs, so a draft leaked here would be worse than one
+ * leaked on a page, not better.
+ */
+export async function listCourseSitemapRows(): Promise<CourseSitemapRow[]> {
+  const db = getAdminDb();
+  if (!db) return [];
+
+  const courseSnap = await db
+    .collection("courses")
+    .where("status", "==", "published")
+    .limit(100)
+    .get();
+  const courses = courseSnap.docs.map((d) => normalizeCourse(d.id, d.data()));
+  if (courses.length === 0) return [];
+
+  // ONE batch read for every showcase run: the run ids are already on the
+  // course documents, so this needs no query and no index.
+  const withRun = courses.filter((c) => c.showcaseRunId);
+  const runDocs =
+    withRun.length > 0
+      ? await db.getAll(
+          ...withRun.map((c) => db.collection("courseRuns").doc(c.showcaseRunId as string)),
+        )
+      : [];
+
+  const showcase: { courseId: string; runId: string }[] = [];
+  runDocs.forEach((doc, i) => {
+    if (!doc.exists) return;
+    const run = normalizeCourseRun(doc.id, doc.data() ?? {});
+    if (run.status === "draft" || run.archived) return;
+    showcase.push({ courseId: withRun[i].id, runId: run.id });
+  });
+
+  // One query per showcase run, and no way around it: a collection-group read
+  // over `weeks` would need an index this feature has not shipped. They go
+  // together, and each asks for the ONE field the sitemap prints rather than
+  // for whole week documents with their materials and guide blocks in them.
+  const weekSnaps = await Promise.all(
+    showcase.map(({ runId }) =>
+      db
+        .collection("courseRuns")
+        .doc(runId)
+        .collection("weeks")
+        .where("published", "==", true)
+        .select("weekNumber")
+        .get(),
+    ),
+  );
+
+  const weeksByCourse = new Map<string, number[]>();
+  weekSnaps.forEach((snap, i) => {
+    const numbers = snap.docs
+      .map((d) => d.get("weekNumber"))
+      .filter((n): n is number => typeof n === "number" && Number.isInteger(n))
+      .sort((a, b) => a - b);
+    weeksByCourse.set(showcase[i].courseId, numbers);
+  });
+
+  return courses.map((course) => ({
+    courseId: course.id,
+    updatedAt: course.updatedAt ?? null,
+    weekNumbers: weeksByCourse.get(course.id) ?? [],
+  }));
+}
+
 /**
  * One published week of a published course's showcase run, by week NUMBER (the
  * public URL segment) rather than doc id — week ids are preserved across

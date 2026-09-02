@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { listPublishedCourses, getPublishedCourse } from "@/features/courses/fetchCourses";
+import { listCourseSitemapRows } from "@/features/courses/fetchCourses";
 import { baseUrl } from "@/lib/events/rsvpToken";
 
 /**
@@ -32,6 +32,14 @@ import { baseUrl } from "@/lib/events/rsvpToken";
  * Errors are swallowed to an empty list rather than thrown: a sitemap that
  * 500s is a worse outcome than a sitemap that is briefly short, and this runs
  * against the Admin SDK, which is absent in a build with no credentials.
+ *
+ * ## Its own fetcher
+ *
+ * `listCourseSitemapRows()` rather than the catalogue's entry builder. That
+ * one exists to draw cards: it runs two site-wide run queries, scans every
+ * admission round and batches `coursePages` for the artwork, and the sitemap
+ * then added one `getPublishedCourse` per course on top of it for the weeks.
+ * A crawler wants ids and week numbers, so it asks for ids and week numbers.
  */
 /**
  * Rendered PER REQUEST, not at build.
@@ -52,33 +60,26 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${base}/courses`, changeFrequency: "weekly", priority: 0.9 },
   ];
 
-  let entries: Awaited<ReturnType<typeof listPublishedCourses>> = [];
+  let rows: Awaited<ReturnType<typeof listCourseSitemapRows>> = [];
   try {
-    entries = await listPublishedCourses();
+    rows = await listCourseSitemapRows();
   } catch {
     return roots;
   }
 
   const courses: MetadataRoute.Sitemap = [];
-  for (const entry of entries) {
-    const id = entry.course.id;
+  for (const row of rows) {
+    const id = row.courseId;
     courses.push({
       url: `${base}/courses/${encodeURIComponent(id)}`,
-      lastModified: entry.course.updatedAt ?? undefined,
+      lastModified: row.updatedAt ?? undefined,
       changeFrequency: "weekly",
       priority: 0.8,
     });
 
-    // The week pages, read through the same published-only fetcher the pages
-    // themselves use, so a week that 404s can never be listed here.
-    let weeks: number[] = [];
-    try {
-      const found = await getPublishedCourse(id);
-      weeks = found?.weeks.map((w) => w.weekNumber) ?? [];
-    } catch {
-      weeks = [];
-    }
-    for (const weekNumber of weeks) {
+    // The week pages, filtered on `published` by the fetcher exactly as the
+    // pages themselves are, so a week that 404s can never be listed here.
+    for (const weekNumber of row.weekNumbers) {
       courses.push({
         url: `${base}/courses/${encodeURIComponent(id)}/weeks/${weekNumber}`,
         changeFrequency: "monthly",
