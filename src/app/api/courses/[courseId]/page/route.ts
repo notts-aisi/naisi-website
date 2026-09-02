@@ -30,11 +30,21 @@ import { isValidDateKey } from "@/lib/courses/weekPlan";
  * FULL REPLACE, not a patch. The editor holds the whole page and sends the
  * whole page back, so a partial write here would mean a field the editor
  * failed to send silently keeping an old value the author thought they had
- * cleared. The two exceptions are the provenance pair, which is carried
- * forward from the stored document whatever the body says: they are written
- * only by the generate-themes route, on the same argument that makes
+ * cleared.
+ *
+ * THE EDITOR MUST ALWAYS SEND `weeklyThemes`, including when the list is
+ * empty. There is no "leave the themes alone" body: an omitted key is an empty
+ * list, exactly as an omitted `headline` is an empty headline. A save that
+ * drops the key because the themes section was not open is a save that clears
+ * the themes.
+ *
+ * The two exceptions to the full replace are the provenance pair, which is
+ * carried forward from the stored document whatever the body says: they are
+ * written only by the generate-themes route, on the same argument that makes
  * `courseRuns.templateId` server-owned. Provenance the editor can also type is
- * not provenance.
+ * not provenance. The one thing that CAN clear them from here is the themes
+ * list going empty, because provenance for a list that no longer exists is a
+ * claim about nothing.
  */
 
 /** Reject a string field that is over its cap, naming it. Empty is fine. */
@@ -252,8 +262,12 @@ export async function PUT(
     coverImageUrl,
     coverAlt: text.coverAlt,
     visualSeed: text.visualSeed,
-    themesSourceTemplateId: existing.themesSourceTemplateId,
-    themesSourceLabel: existing.themesSourceLabel,
+    // Provenance survives an edit to the themes, and does NOT survive their
+    // deletion: "generated from the Autumn 2026 snapshot" printed beside an
+    // empty list describes nothing, and would then be carried forward by every
+    // later save until somebody regenerated.
+    themesSourceTemplateId: weeklyThemes.length > 0 ? existing.themesSourceTemplateId : null,
+    themesSourceLabel: weeklyThemes.length > 0 ? existing.themesSourceLabel : null,
   };
 
   await pageRef.set({
