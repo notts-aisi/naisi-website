@@ -243,7 +243,38 @@ const ALLOWED_ATTRS: Record<string, Set<string>> = {
 };
 
 /** Attribute values that must resolve to an http(s) or mailto target. */
-const SAFE_HREF = /^(https?:|mailto:|\/|#)/i;
+export const SAFE_HREF = /^(https?:|mailto:|\/|#)/i;
+
+/**
+ * The two `SAFE_HREF` targets that cannot address an image. A link may point
+ * at an inbox or at an anchor on the same page; an `<img src>` that does is
+ * either a broken image or a mistyped field.
+ */
+const NOT_AN_IMAGE_SRC = /^(mailto:|#)/i;
+
+/**
+ * Is this a cover image URL we are willing to put in an `src`?
+ *
+ * `SAFE_HREF` is the allowlist, reused rather than restated so the cover image
+ * and a link inside the pitch cannot disagree about what a safe scheme is. The
+ * two subtractions narrow it to what the finding asks for, an http(s) URL or a
+ * site-relative path:
+ *
+ *  - `mailto:` and `#`, which are link targets rather than image sources; and
+ *  - a PROTOCOL-RELATIVE `//host/x`, which passes the site-relative branch of
+ *    `SAFE_HREF` by looking like a path and then loads from another origin.
+ *
+ * Control characters are stripped before the test for the reason
+ * `keptAttributes` strips them: `java\nscript:` is the same URL to a browser,
+ * so a check run on the raw string can be walked straight past.
+ */
+export function isSafeCoverImageUrl(raw: string): boolean {
+  const cleaned = raw.replace(/[\u0000-\u0020]/g, "");
+  if (!cleaned) return false;
+  if (cleaned.startsWith("//")) return false;
+  if (NOT_AN_IMAGE_SRC.test(cleaned)) return false;
+  return SAFE_HREF.test(cleaned);
+}
 
 function escapeAngles(text: string): string {
   return text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -476,6 +507,20 @@ export function sanitizeJourney(raw: unknown): CoursePageJourneyStep[] {
   return out;
 }
 
+/**
+ * The stored cover image, or null when it is missing, over its cap, or not a
+ * scheme we will put in an `src`.
+ *
+ * The read end runs the same check as the route for the reason the block
+ * neutering does: a row that reached the collection some other way still ends
+ * up harmless, rather than harmless only when the route was the writer.
+ */
+function coverImageUrlOrNull(v: unknown): string | null {
+  const value = strOrNull(v, COURSE_PAGE_LIMITS.coverImageUrl);
+  if (!value) return null;
+  return isSafeCoverImageUrl(value) ? value : null;
+}
+
 function asSampleWeekNumber(v: unknown): number | null {
   if (typeof v !== "number" || !Number.isFinite(v)) return null;
   const n = Math.floor(v);
@@ -506,7 +551,7 @@ export function normalizeCoursePage(id: string, data: Raw): CoursePageDoc {
     sampleWeekNumber: asSampleWeekNumber(data.sampleWeekNumber),
     faq: sanitizeFaq(data.faq),
     journey: sanitizeJourney(data.journey),
-    coverImageUrl: strOrNull(data.coverImageUrl, COURSE_PAGE_LIMITS.coverImageUrl),
+    coverImageUrl: coverImageUrlOrNull(data.coverImageUrl),
     coverAlt: str(data.coverAlt, COURSE_PAGE_LIMITS.coverAlt),
     visualSeed: str(data.visualSeed, COURSE_PAGE_LIMITS.visualSeed),
     themesSourceTemplateId: strOrNull(

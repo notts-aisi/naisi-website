@@ -8,6 +8,7 @@ import {
   COURSE_PAGES_COLLECTION,
   COURSE_PAGE_LIMITS,
   canAuthorCoursePage,
+  isSafeCoverImageUrl,
   normalizeCoursePage,
   sanitizeCoursePageBlocks,
   sanitizeFaq,
@@ -130,6 +131,16 @@ export async function PUT(
     typeof coverRaw === "string" && coverRaw.trim() ? coverRaw.trim() : null;
   if (coverImageUrl && coverImageUrl.length > COURSE_PAGE_LIMITS.coverImageUrl) {
     return NextResponse.json({ error: "That cover image URL is too long." }, { status: 400 });
+  }
+  // The same scheme allowlist the pitch blocks' hrefs answer to, narrowed to
+  // what can address an image. The read end applies it again inside
+  // `normalizeCoursePage`, so a `javascript:` cover that arrived some other way
+  // reads back as null rather than reaching an `src`.
+  if (coverImageUrl && !isSafeCoverImageUrl(coverImageUrl)) {
+    return NextResponse.json(
+      { error: "A cover image must be an https link or a path on this site." },
+      { status: 400 },
+    );
   }
   // An image with no alternative text is an image a screen reader announces as
   // nothing on a page whose job is to explain a programme.

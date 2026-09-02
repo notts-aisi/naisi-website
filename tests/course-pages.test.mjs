@@ -165,6 +165,7 @@ const {
   canAuthorCoursePage,
   coursePageHasContent,
   emptyCoursePage,
+  isSafeCoverImageUrl,
   mergeGeneratedThemes,
   neuterRichTextHtml,
   normalizeCoursePage,
@@ -384,6 +385,37 @@ test("§2 GUARD the sample week must name a week that could exist", () => {
     );
   }
   assert.equal(normalizeCoursePage("c", { sampleWeekNumber: 3 }).sampleWeekNumber, 3);
+});
+
+test("§2 GUARD a cover image must be an http(s) link or a path on this site", () => {
+  // The cover ends up in an `src`. `SAFE_HREF` is the allowlist the pitch
+  // blocks' hrefs already answer to, minus the two targets that cannot address
+  // an image and minus the protocol-relative form that looks like a path and
+  // is not one.
+  for (const good of [
+    "https://naisi.uk/brand/cover.png",
+    "http://localhost:3000/cover.png",
+    "/brand/courses/asf.png",
+  ]) {
+    assert.equal(isSafeCoverImageUrl(good), true, `${good} was refused`);
+    assert.equal(normalizeCoursePage("c", { coverImageUrl: good }).coverImageUrl, good);
+  }
+  for (const bad of [
+    "javascript:alert(1)",
+    "java\nscript:alert(1)",
+    "data:image/svg+xml;base64,PHN2Zz48c2NyaXB0Pg==",
+    "mailto:committee@naisi.uk",
+    "#top",
+    "//evil.example/cover.png",
+    "  ",
+  ]) {
+    assert.equal(isSafeCoverImageUrl(bad), false, `${JSON.stringify(bad)} was accepted`);
+    assert.equal(
+      normalizeCoursePage("c", { coverImageUrl: bad }).coverImageUrl,
+      null,
+      `${JSON.stringify(bad)} survived the read end`,
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------
