@@ -183,6 +183,7 @@ function cardDates(entry: CourseCatalogueEntry): string {
   const round = entry.liveRound;
   const found = entry.featuredRun;
   if (!round && !found) return "";
+
   const bits: string[] = [];
   const viaRound = roundOwnsDates(round, found?.run.enrolMode ?? null);
   const state = cardState(entry);
@@ -191,7 +192,13 @@ function cardDates(entry: CourseCatalogueEntry): string {
     const noun = found?.run.enrolMode === "open" ? "Sign-ups" : "Applications";
     bits.push(`${noun} close ${formatWindowDate(closesAt)}`);
   }
-  const starts = found ? formatRunStartShort(found.run.startDate) : undefined;
+  // The start date belongs to whichever run the card is speaking for. When a
+  // round owns the card that is the run the round will place people onto,
+  // which is normally still `draft` and so is never the featured run; the
+  // fetcher resolves it as `roundRun`. No target run means no start date,
+  // rather than the featured run's, which would be a different intake's.
+  const startingRun = viaRound ? entry.roundRun : (found?.run ?? null);
+  const starts = startingRun ? formatRunStartShort(startingRun.startDate) : undefined;
   if (starts) bits.push(`Starts ${starts}`);
   return bits.join(" · ");
 }

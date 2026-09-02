@@ -1,6 +1,7 @@
 import "server-only";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { normalizeAdmissionRound } from "@/lib/firestore/admissionRounds";
+import { normalizeCourseRun, type CourseRunDoc } from "@/lib/firestore/courses";
 import { pickLiveRound, type LiveRoundCandidate } from "@/lib/admissions/liveRound";
 import type { RoundWindowState } from "@/lib/admissions/window";
 
@@ -34,9 +35,9 @@ import type { RoundWindowState } from "@/lib/admissions/window";
  */
 
 /**
- * The round as a STRANGER may see it. Five fields, every one of them something
- * the page prints: when the form opens, when it shuts, and when a decision is
- * promised.
+ * The round as a STRANGER may see it. Five printable fields, every one of them
+ * something the page shows: when the form opens, when it shuts, and when a
+ * decision is promised. Plus the run ids, which are not printable at all.
  */
 export type CourseLiveRound = {
   id: string;
@@ -46,6 +47,19 @@ export type CourseLiveRound = {
   closesAt: Date | null;
   /** Civil "YYYY-MM-DD", Europe/London. The promise about a day. */
   decisionsByDate: string | null;
+  /**
+   * The runs this round places people onto, as authored. A LOOKUP KEY, never a
+   * rendered string: `roundTargetRun` in `fetchCourses.ts` resolves it against
+   * the course's own runs so the page can name the cohort someone is applying
+   * FOR, and nothing hands these ids to a component.
+   *
+   * They earn their place in a deliberately narrow projection because the
+   * alternative is worse: without them the page falls back to the featured
+   * run, which is by construction never the draft target run an open round
+   * places people onto, so the cohort chip and the start date belong to a
+   * different intake than the deadline above them.
+   */
+  outcomeRunIds: string[];
 };
 
 /**
@@ -90,28 +104,49 @@ export async function fetchLiveRoundForRuns(
     .limit(50)
     .get();
 
-  const candidates: (LiveRoundCandidate & { decisionsByDate: string | null })[] =
-    snap.docs.map((doc) => {
-      const round = normalizeAdmissionRound(doc.id, doc.data() ?? {});
-      return {
-        id: round.id,
-        status: round.status,
-        archived: round.archived,
-        opensAt: round.opensAt,
-        closesAt: round.closesAt,
-        decisionsByDate: round.decisionsByDate,
-      };
-    });
+  const candidates: RoundCandidate[] = snap.docs.map((doc) =>
+    toCandidate(normalizeAdmissionRound(doc.id, doc.data() ?? {})),
+  );
 
   const best = pickLiveRound(candidates, now);
   if (!best) return null;
   return toCourseLiveRound(best.round, best.window);
 }
 
+/**
+ * The round fields the ranking and the projection between them need. Written
+ * once so the two fetchers cannot read a different set.
+ */
+type RoundCandidate = LiveRoundCandidate & {
+  decisionsByDate: string | null;
+  outcomeRunIds: string[];
+};
+
+/** The one narrowing, applied the moment a round document is read. */
+function toCandidate(round: {
+  id: string;
+  status: RoundCandidate["status"];
+  archived: boolean;
+  opensAt: Date | null;
+  closesAt: Date | null;
+  decisionsByDate: string | null;
+  outcomeRunIds: string[];
+}): RoundCandidate {
+  return {
+    id: round.id,
+    status: round.status,
+    archived: round.archived,
+    opensAt: round.opensAt,
+    closesAt: round.closesAt,
+    decisionsByDate: round.decisionsByDate,
+    outcomeRunIds: round.outcomeRunIds,
+  };
+}
+
 /** The one projection. Both fetchers go through it, so the single-course page
  *  and the catalogue card cannot disagree about what a round exposes. */
 function toCourseLiveRound(
-  round: LiveRoundCandidate & { decisionsByDate: string | null },
+  round: RoundCandidate,
   window: { state: RoundWindowState; opensAt: Date | null; closesAt: Date | null },
 ): CourseLiveRound {
   return {
@@ -120,6 +155,7 @@ function toCourseLiveRound(
     opensAt: window.opensAt,
     closesAt: window.closesAt,
     decisionsByDate: round.decisionsByDate,
+    outcomeRunIds: round.outcomeRunIds,
   };
 }
 
@@ -131,25 +167,37 @@ function toCourseLiveRound(
  * currently renders in three. So it goes the other way round, reading every
  * round once and posting each to the courses its outcome runs belong to.
  *
- * `knownRuns` is the run-to-course map the caller has already built from its
- * own run queries. Rounds naming a run the caller never loaded (an intake
- * whose target run is still `draft`, which is the normal state of affairs in
- * the fortnight before a term) trigger ONE capped `getAll` for the missing
- * documents rather than a query per round.
+ * `knownRuns` is the run documents the caller has already read, by id. Rounds
+ * naming a run the caller never loaded (an intake whose target run is still
+ * `draft`, which is the normal state of affairs in the fortnight before a
+ * term) trigger ONE capped `getAll` for the missing documents rather than a
+ * query per round.
+ *
+ * Those extra documents come BACK to the caller in `runs` rather than being
+ * thrown away, because the catalogue needs them for exactly the same reason
+ * the single-course page does: the run a round will place people onto is the
+ * one whose cohort and start date the card should print, and it is precisely
+ * the run the catalogue's own status queries do not return.
  */
 export async function listLiveRoundsByCourse(
-  knownRuns: Map<string, string>,
+  knownRuns: Map<string, CourseRunDoc>,
   now: Date = new Date(),
-): Promise<Map<string, CourseLiveRound>> {
+): Promise<{
+  /** The live round per course id. Courses with none are simply absent. */
+  rounds: Map<string, CourseLiveRound>;
+  /** `knownRuns`, plus every run a round named that the caller had not read. */
+  runs: Map<string, CourseRunDoc>;
+}> {
   const out = new Map<string, CourseLiveRound>();
+  const runToCourse = new Map(knownRuns);
   const db = getAdminDb();
-  if (!db) return out;
+  if (!db) return { rounds: out, runs: runToCourse };
 
   // No `where` clause: the site authors a handful of rounds a year, draft and
   // archived ones are dropped by the ranking anyway, and an equality on
   // `archived` would still return every live round.
   const snap = await db.collection(ROUNDS_COLLECTION).limit(100).get();
-  if (snap.empty) return out;
+  if (snap.empty) return { rounds: out, runs: runToCourse };
 
   const rounds = snap.docs.map((doc) =>
     normalizeAdmissionRound(doc.id, doc.data() ?? {}),
@@ -160,46 +208,34 @@ export async function listLiveRoundsByCourse(
   const missing = new Set<string>();
   for (const round of rounds) {
     for (const runId of round.outcomeRunIds) {
-      if (!knownRuns.has(runId)) missing.add(runId);
+      if (!runToCourse.has(runId)) missing.add(runId);
     }
   }
-  const runToCourse = new Map(knownRuns);
   const lookups = [...missing].slice(0, MAX_MISSING_RUN_LOOKUPS);
   if (lookups.length > 0) {
     const docs = await db.getAll(
       ...lookups.map((id) => db.collection("courseRuns").doc(id)),
     );
     for (const doc of docs) {
-      const courseId = (doc.data() ?? {}).courseId;
-      if (doc.exists && typeof courseId === "string" && courseId) {
-        runToCourse.set(doc.id, courseId);
-      }
+      if (!doc.exists) continue;
+      const run = normalizeCourseRun(doc.id, doc.data() ?? {});
+      if (run.courseId) runToCourse.set(doc.id, run);
     }
   }
 
   // One candidate list per course, then the SAME ranking the single-course
   // fetcher uses. Two surfaces naming two different rounds for one course is
   // the drift a shared helper exists to stop.
-  const byCourse = new Map<
-    string,
-    (LiveRoundCandidate & { decisionsByDate: string | null })[]
-  >();
+  const byCourse = new Map<string, RoundCandidate[]>();
   for (const round of rounds) {
     const courseIds = new Set<string>();
     for (const runId of round.outcomeRunIds) {
-      const courseId = runToCourse.get(runId);
+      const courseId = runToCourse.get(runId)?.courseId;
       if (courseId) courseIds.add(courseId);
     }
     for (const courseId of courseIds) {
       const list = byCourse.get(courseId) ?? [];
-      list.push({
-        id: round.id,
-        status: round.status,
-        archived: round.archived,
-        opensAt: round.opensAt,
-        closesAt: round.closesAt,
-        decisionsByDate: round.decisionsByDate,
-      });
+      list.push(toCandidate(round));
       byCourse.set(courseId, list);
     }
   }
@@ -209,5 +245,5 @@ export async function listLiveRoundsByCourse(
     if (!best) continue;
     out.set(courseId, toCourseLiveRound(best.round, best.window));
   }
-  return out;
+  return { rounds: out, runs: runToCourse };
 }

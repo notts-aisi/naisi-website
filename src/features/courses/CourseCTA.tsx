@@ -70,6 +70,23 @@ export type CourseCTARound = {
   closesOn: string | null;
   /** "Fri 23 Oct", the day decisions are promised by, or null. */
   decisionsOn: string | null;
+  /**
+   * THE COHORT OF THE RUN THIS ROUND PLACES PEOPLE ONTO, e.g. "Autumn 2026,
+   * cohort 2". Empty when the round names no run of this course, and the chip
+   * is then omitted entirely.
+   *
+   * The round carries these two run-derived rows rather than letting the CTA
+   * read them off `run`, because `run` is the FEATURED run: the one whose own
+   * window is live. An open round's target run is normally still `draft`, so
+   * the featured run is by construction a DIFFERENT intake, and taking the
+   * chip from it captions this round's deadline with last term's cohort.
+   *
+   * Empty is not a licence to fall back to `run.cohortLabel`. No chip is the
+   * honest answer.
+   */
+  cohortLabel: string;
+  /** "Mon 26 Oct" for that same run, or null when none resolves. */
+  startsOn: string | null;
 };
 
 type Props = {
@@ -183,27 +200,33 @@ export default function CourseCTA({
     );
   }
 
-  // ONE state and ONE pair of dates for the whole component, resolved here so
-  // no branch below can read the round's deadline beside the run's state.
+  // ONE state and ONE set of dates for the whole component, resolved here so
+  // no branch below can read the round's deadline beside the run's state. The
+  // COHORT and the START DATE are in that set: when the round is speaking they
+  // describe the run it will place people onto, not the featured run, and they
+  // are empty rather than borrowed when no such run resolves.
   const state = viaRound ? round.state : (run?.state ?? "closed");
   const opensOn = viaRound ? round.opensOn : (run?.opensOn ?? null);
   const closesOn = viaRound ? round.closesOn : (run?.closesOn ?? null);
+  const chip = viaRound ? round.cohortLabel : (run?.cohortLabel ?? "");
+  const startsOn = viaRound ? round.startsOn : (run?.startsOn ?? null);
 
   const dates = [
     state !== "closed" && closesOn
       ? `${open ? "Sign-ups close" : "Applications close"} ${closesOn}`
       : null,
     viaRound && round.decisionsOn ? `Decisions by ${round.decisionsOn}` : null,
-    run?.startsOn ? `Starts ${run.startsOn}` : null,
+    startsOn ? `Starts ${startsOn}` : null,
   ].filter(Boolean) as string[];
 
   return (
     <div className={wrap}>
       {/* The chip is the structured cohort, never the run's admin label, and
-          it is omitted rather than guessed at when a run has no cohort. */}
-      {run?.cohortLabel ? (
+          it is omitted rather than guessed at when there is no cohort to
+          show. */}
+      {chip ? (
         <p className={styles.chipRow}>
-          <span className={styles.chip}>{run.cohortLabel}</span>
+          <span className={styles.chip}>{chip}</span>
         </p>
       ) : null}
 

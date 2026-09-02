@@ -21,6 +21,10 @@
  * and then RANKING them. The ranking is the part worth pinning: open beats
  * opening-soon beats closed, a draft round is not a candidate at all, and "no
  * round" is an ordinary answer that sends the page back to the run's window.
+ * The round then names the run whose cohort and start date the page prints,
+ * which is a second thing worth pinning: that run is normally still `draft`,
+ * so it is never the featured run, and taking those two rows from the featured
+ * run captions a live deadline with a previous intake's dates.
  *
  * §3 THE LONDON DAY BOUNDARY. The journey strip marks the step the reader is
  * standing in by comparing civil date keys, and the key comes from
@@ -170,7 +174,7 @@ const { currentJourneyStepIndex, journeyStepStates } = await loadTs(
   "lib/courses/journeyStep.ts",
 );
 const { londonDateKey } = await loadTs("lib/courses/weekPlan.ts");
-const { compareCatalogueEntries, roundOwnsDates } = await loadTs(
+const { compareCatalogueEntries, roundOwnsDates, roundTargetRun } = await loadTs(
   "features/courses/fetchCourses.ts",
 );
 const { default: WeekCurriculum } = await loadTs(
@@ -192,6 +196,7 @@ function codeOnly(relativePath) {
 
 const PAGE_SOURCE = codeOnly("app/(public)/courses/[courseId]/page.tsx");
 const CTA_SOURCE = codeOnly("features/courses/CourseCTA.tsx");
+const LIVE_ROUND_SOURCE = codeOnly("features/courses/fetchLiveRound.ts");
 
 // ---------------------------------------------------------------------------
 // §1 The byte-identical public week render
@@ -422,6 +427,54 @@ test("§2 MODEL two closed rounds: the most recent one wins", () => {
   assert.equal(pickLiveRound([thisYear, lastYear], NOW)?.round.id, "this-year");
 });
 
+test("§2 MODEL the round names the run whose cohort and start date the page prints", () => {
+  // THE BUG this pins. `getCourseRunSet`'s featured run is picked from runs
+  // whose OWN window is live, and an open round's target run is normally still
+  // `draft`: so the featured run is, by construction, never the run an open
+  // round places people onto. Reading the chip and the Starts row off it
+  // captions this round's deadline with a different intake's dates.
+  const autumn = { id: "autumn-run", courseId: "fellowship", startDate: "2026-10-26" };
+  const lastTerm = { id: "spring-run", courseId: "fellowship", startDate: "2026-01-19" };
+  const otherCourse = { id: "incubator-run", courseId: "incubator", startDate: "2026-10-05" };
+  const runs = new Map([
+    [autumn.id, autumn],
+    [lastTerm.id, lastTerm],
+    [otherCourse.id, otherCourse],
+  ]);
+
+  // 1. THE TARGET RUN RESOLVES. One intake feeds several courses, so the first
+  //    outcome run that belongs to THIS course wins, not simply the first.
+  const shared = { outcomeRunIds: [otherCourse.id, autumn.id] };
+  assert.equal(roundTargetRun(shared, runs, "fellowship")?.id, "autumn-run");
+  assert.equal(roundTargetRun(shared, runs, "incubator")?.id, "incubator-run");
+
+  // 2. NONE RESOLVES. An appointment round places nobody onto a run, and an
+  //    intake whose targets are not chosen yet names none either. Null, so the
+  //    caller prints no cohort and no start date, rather than reaching for
+  //    `lastTerm` and dating a live deadline from January.
+  assert.equal(roundTargetRun({ outcomeRunIds: [] }, runs, "fellowship"), null);
+  assert.equal(roundTargetRun({ outcomeRunIds: ["deleted-run"] }, runs, "fellowship"), null);
+  // A run of ANOTHER course is not this course's target either.
+  assert.equal(
+    roundTargetRun({ outcomeRunIds: [otherCourse.id] }, runs, "fellowship"),
+    null,
+  );
+
+  // 3. NO ROUND. The ordinary case for an open-enrolment course, and the one
+  //    that sends the page back to the featured run's own dates.
+  assert.equal(roundTargetRun(null, runs, "fellowship"), null);
+});
+
+test("§2 GUARD the projection carries the run ids, because that is the join", () => {
+  // `outcomeRunIds` is the only thing in the round projection that is not
+  // printable, and it is there because the resolution above has nothing to
+  // work with otherwise. If a future edit drops it from the type, the chip
+  // silently goes back to the featured run's cohort with no test failing, so
+  // the field is pinned at its source.
+  assert.match(LIVE_ROUND_SOURCE, /outcomeRunIds: string\[\];/);
+  assert.match(LIVE_ROUND_SOURCE, /outcomeRunIds: round\.outcomeRunIds,/);
+});
+
 test("§2 GUARD a passed deadline closes an OPEN round, so the CTA cannot offer a dead form", () => {
   const passed = round("passed", {
     status: "open",
@@ -511,7 +564,12 @@ test("§4 GUARD the programme page never reads run.label", () => {
 
 test("§4 GUARD the CTA chip is the cohort, and is omitted rather than guessed", () => {
   assert.doesNotMatch(CTA_SOURCE, /\brun\.label\b/);
-  assert.match(CTA_SOURCE, /run\?\.cohortLabel \? \(/);
+  // The chip is ONE resolved value, and both halves of it are a `cohortLabel`
+  // the server produced: the round's target run when a round owns the page,
+  // the featured run otherwise. Rendering it is a plain truthiness test, so an
+  // absent cohort omits the chip rather than falling back to anything.
+  assert.match(CTA_SOURCE, /const chip = viaRound \? round\.cohortLabel : \(run\?\.cohortLabel \?\? ""\);/);
+  assert.match(CTA_SOURCE, /\{chip \? \(/);
 });
 
 // ---------------------------------------------------------------------------

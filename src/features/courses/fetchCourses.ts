@@ -101,6 +101,17 @@ export type CourseCatalogueEntry = {
    */
   liveRound: CourseLiveRound | null;
   /**
+   * The run `liveRound` will place people onto, resolved by `roundTargetRun`,
+   * or null when there is no round or the round names no run of this course.
+   *
+   * NOT the same object as `featuredRun`, and that is the whole reason it is
+   * here: the featured run is picked from the runs whose own window is live,
+   * and an open round's target run is normally still `draft`. The card's start
+   * date has to come from this one when the round is speaking, or it prints
+   * last term's.
+   */
+  roundRun: CourseRunDoc | null;
+  /**
    * What the card's artwork is drawn from: the authored seed and cover, or
    * the course id as the seed when nobody has authored a page.
    *
@@ -266,17 +277,18 @@ export async function listPublishedCourses(): Promise<CourseCatalogueEntry[]> {
     );
   }
 
-  // The rounds pass reuses the run documents already read above as its
-  // run-to-course map, so the only rows it has to fetch are the runs a round
-  // names that no run query returned (a target run still in `draft`).
-  const knownRuns = new Map<string, string>();
+  // The rounds pass reuses the run documents already read above, so the only
+  // rows it has to fetch are the runs a round names that no run query returned
+  // (a target run still in `draft`). It hands those back, which is what lets
+  // the card below name the cohort a round is recruiting for.
+  const knownRuns = new Map<string, CourseRunDoc>();
   for (const d of runDocs) {
-    const courseId = d.data()?.courseId;
-    if (typeof courseId === "string" && courseId) knownRuns.set(d.id, courseId);
+    const run = normalizeCourseRun(d.id, d.data());
+    if (run.courseId) knownRuns.set(run.id, run);
   }
   const courses = courseSnap.docs.map((d) => normalizeCourse(d.id, d.data()));
 
-  const [roundsByCourse, pages] = await Promise.all([
+  const [roundPass, pages] = await Promise.all([
     listLiveRoundsByCourse(knownRuns, now),
     // ONE batch read for every card's artwork. The page id IS the course id,
     // so this needs no query and no index; a course with no authored page
@@ -297,10 +309,12 @@ export async function listPublishedCourses(): Promise<CourseCatalogueEntry[]> {
   return courses
     .map((course) => {
       const page = visuals.get(course.id) ?? null;
+      const liveRound = roundPass.rounds.get(course.id) ?? null;
       return {
         course,
         featuredRun: byCourse.get(course.id) ?? null,
-        liveRound: roundsByCourse.get(course.id) ?? null,
+        liveRound,
+        roundRun: roundTargetRun(liveRound, roundPass.runs, course.id),
         visual: {
           seed: page?.visualSeed || course.id,
           coverImageUrl: page?.coverImageUrl ?? null,
@@ -342,6 +356,43 @@ export function roundOwnsDates(
 ): boolean {
   if (!round || round.state === "inactive") return false;
   return enrolMode !== "open";
+}
+
+/**
+ * THE RUN A ROUND WILL PLACE PEOPLE ONTO, for one course: the first of the
+ * round's `outcomeRunIds` that belongs to it.
+ *
+ * A round feeds several runs across several courses (one autumn intake feeds
+ * the incubator and up to three fellowships), so "the target run" is only a
+ * question with an answer once a course is named, and the answer is the run
+ * whose cohort and start date this course's surfaces should print.
+ *
+ * `runs` must include DRAFT and ARCHIVED runs. That is the case this function
+ * exists for: an intake is authored and opened while the run it will place
+ * people onto is still `draft`, which is exactly the fortnight the page most
+ * needs to say "Autumn 2026, cohort 2, starts Mon 26 Oct". Every window-based
+ * ranking in this file drops those runs, so a caller passing only its featured
+ * run gets null here and prints nothing, which is right.
+ *
+ * Null is an ordinary answer: an appointment round places nobody onto a run at
+ * all, and an intake whose outcome targets are not chosen yet has none either.
+ * The caller then shows NO cohort and NO start date, rather than falling back
+ * to another intake's run and captioning a live deadline with last term's
+ * dates.
+ */
+export function roundTargetRun(
+  round: { outcomeRunIds: string[] } | null,
+  runs: Map<string, CourseRunDoc>,
+  courseId: string,
+): CourseRunDoc | null {
+  if (!round) return null;
+  for (const runId of round.outcomeRunIds) {
+    const run = runs.get(runId);
+    // The course check is what makes this safe on the catalogue, where `runs`
+    // holds every course's runs at once.
+    if (run && run.courseId === courseId) return run;
+  }
+  return null;
 }
 
 /**
@@ -447,6 +498,13 @@ export type CourseRunSet = {
   /** Every run of this course, draft and archived included. */
   runIds: string[];
   /**
+   * The same runs as documents, by id. Draft and archived included, and that
+   * is the point: the run an open round will place people onto is normally
+   * still `draft`, and it is the run whose cohort and start date the page has
+   * to name. `roundTargetRun` resolves it out of this map.
+   */
+  runsById: Map<string, CourseRunDoc>;
+  /**
    * The run the public surfaces describe, or null when the course has never
    * had a public run.
    *
@@ -473,7 +531,7 @@ export type CourseRunSet = {
  */
 export async function getCourseRunSet(courseId: string): Promise<CourseRunSet> {
   const db = getAdminDb();
-  if (!db) return { runIds: [], featuredRun: null };
+  if (!db) return { runIds: [], runsById: new Map(), featuredRun: null };
   const snap = await db
     .collection("courseRuns")
     .where("courseId", "==", courseId)
@@ -482,10 +540,12 @@ export async function getCourseRunSet(courseId: string): Promise<CourseRunSet> {
   // One clock reading for every candidate, so the ranking is a total order.
   const now = new Date();
   const runIds: string[] = [];
+  const runsById = new Map<string, CourseRunDoc>();
   let best: RunWindow | null = null;
   for (const d of snap.docs) {
     runIds.push(d.id);
     const run = normalizeCourseRun(d.id, d.data());
+    runsById.set(run.id, run);
     const window = courseRunWindow(run, now);
     // Draft and archived alike: unfinished authoring and withdrawn runs are
     // not public, and the destroy cascade sets `archived` first, so this is
@@ -494,7 +554,7 @@ export async function getCourseRunSet(courseId: string): Promise<CourseRunSet> {
     const candidate: RunWindow = { run, window };
     best = best ? preferredRunWindow(best, candidate) : candidate;
   }
-  return { runIds, featuredRun: best };
+  return { runIds, runsById, featuredRun: best };
 }
 
 /**

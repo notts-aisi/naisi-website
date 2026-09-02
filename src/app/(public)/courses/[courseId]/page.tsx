@@ -3,11 +3,16 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import Badge from "@/components/ui/Badge";
 import BlockView from "@/features/events/BlockView";
-import { COURSE_TRACK_LABELS, type CourseTrack } from "@/lib/firestore/courses";
+import {
+  COURSE_TRACK_LABELS,
+  type CourseRunDoc,
+  type CourseTrack,
+} from "@/lib/firestore/courses";
 import {
   getCourseRunSet,
   getPublishedCourse,
   roundOwnsDates,
+  roundTargetRun,
   type RunWindow,
 } from "@/features/courses/fetchCourses";
 import {
@@ -53,12 +58,16 @@ import styles from "./course.module.css";
  *
  * 1. THE ROUND OWNS THE DATES. `courseRuns.admissionRoundIds` does not exist
  *    yet, so the live round is derived at read time by asking which rounds
- *    name one of this course's runs (`fetchLiveRound.ts`). When one exists,
- *    the CTA points at `/apply/[roundId]` and every date on the page comes
- *    from the round. When none does, the page falls back to the run's own
- *    application window, or to the enrolment window and the session picker
- *    for an open-enrolment pre-course. Two objects naming the same deadline is
- *    the drift V3 exists to stop, so exactly one of them is read per render.
+ *    name one of this course's runs (`fetchLiveRound.ts`). `roundOwnsDates`
+ *    decides whether it or the run's own window speaks, and it is the same
+ *    helper the catalogue asks. When the round speaks, the CTA points at
+ *    `/apply/[roundId]` and every date on the page comes from the round OR
+ *    from the run the round will place people onto (`roundTargetRun`), which
+ *    is not the same run as the featured one and is normally still `draft`.
+ *    When no round speaks, the page falls back to the featured run's own
+ *    application window, or to the enrolment window and the session picker for
+ *    an open-enrolment pre-course. Two objects naming the same deadline is the
+ *    drift V3 exists to stop, so exactly one of them is read per render.
  *
  * 2. NO RAW `run.label` REACHES A VISITOR. The cohort is named by
  *    `cohortLabel(run)` and by nothing else. `run.label` survives on the
@@ -169,11 +178,20 @@ export default async function PublicCoursePage({
     ? round
     : null;
 
+  // The run the SPEAKING ROUND will place people onto, which is the run whose
+  // cohort and start date this page should print. It is normally still
+  // `draft`, so it is looked up in the whole run set rather than taken from
+  // `featuredRun`, which by construction is a run whose own window is live and
+  // therefore a different intake. Null when the round names no run of this
+  // course, and the chip and the Starts row then disappear rather than
+  // borrowing another cohort's.
+  const targetRun = roundTargetRun(speakingRound, runSet.runsById, course.id);
+
   // Dates are formatted HERE, on the server, in Europe/London. The CTA is a
   // client island, and formatting a Nottingham deadline in the visitor's own
   // timezone is how someone reads "closes Sat 17 Oct" and applies a day late.
   const ctaRun = toCTARun(applicationRun);
-  const ctaRound = toCTARound(speakingRound);
+  const ctaRound = toCTARound(speakingRound, targetRun);
 
   // OPEN-ENROLMENT runs put the session picker on this page, so the slots are
   // fetched with the page rather than by the client island: a signed-out
@@ -185,7 +203,13 @@ export default async function PublicCoursePage({
       ? await fetchGroupPicker(ctaRun.id)
       : [];
 
-  const cohort = cohortLabel(applicationRun?.run ?? null);
+  // Whichever run the page is speaking for: the round's target when a round
+  // owns the page, the featured run otherwise. `cohortLabel` returns "" for a
+  // run with no structured cohort and for no run at all, and no chip is then
+  // rendered, which is the honest answer either way.
+  const cohort = cohortLabel(
+    speakingRound ? targetRun : (applicationRun?.run ?? null),
+  );
   const meta = [
     course.level,
     page.weeklyHoursText.trim()
@@ -264,7 +288,7 @@ export default async function PublicCoursePage({
         </header>
 
         <CourseFactsRail
-          facts={buildFacts(page, speakingRound, applicationRun)}
+          facts={buildFacts(page, speakingRound, applicationRun, targetRun)}
           notes={buildNotes(page)}
         />
 
@@ -378,6 +402,7 @@ function buildFacts(
   page: PublicCoursePage,
   round: CourseLiveRound | null,
   run: RunWindow | null,
+  targetRun: CourseRunDoc | null,
 ): CourseFact[] {
   const openMode = run?.run.enrolMode === "open";
   const viaRound = round !== null;
@@ -414,9 +439,18 @@ function buildFacts(
     },
     {
       label: "Starts",
-      value: run ? (formatRunStartShort(run.run.startDate) ?? "") : "",
+      // The ROUND's target run when a round owns the page, because that is the
+      // run someone applying today would join. Blank when none resolves: an
+      // empty fact is dropped by the rail, and a start date lifted off the
+      // featured run would be a different intake's.
+      value: startDateOf(viaRound ? targetRun : (run?.run ?? null)),
     },
   ];
+}
+
+/** "Mon 26 Oct", or "" for no run and for a run with no start date. */
+function startDateOf(run: CourseRunDoc | null): string {
+  return run ? (formatRunStartShort(run.startDate) ?? "") : "";
 }
 
 /** The facts rail's prose half. Empty fields are dropped by the component. */
@@ -463,8 +497,18 @@ function toCTARun(found: RunWindow | null): CourseCTARun | null {
   };
 }
 
-/** The same flattening for the round, whose state can never be `inactive`. */
-function toCTARound(round: CourseLiveRound | null): CourseCTARound | null {
+/**
+ * The same flattening for the round, whose state can never be `inactive`.
+ *
+ * `targetRun` is the run the round will place people onto, and the two rows
+ * derived from it (the cohort chip and the start date) are EMPTY when it is
+ * null rather than falling back to the featured run: they would then describe
+ * a different intake than the deadline beside them.
+ */
+function toCTARound(
+  round: CourseLiveRound | null,
+  targetRun: CourseRunDoc | null,
+): CourseCTARound | null {
   if (!round || round.state === "inactive") return null;
   const past = round.state === "closed";
   return {
@@ -479,5 +523,8 @@ function toCTARound(round: CourseLiveRound | null): CourseCTARound | null {
     decisionsOn: round.decisionsByDate
       ? (formatRunStartShort(round.decisionsByDate) ?? null)
       : null,
+    // The structured cohort, never the admin label. See rule 2 at the top.
+    cohortLabel: cohortLabel(targetRun),
+    startsOn: targetRun ? (formatRunStartShort(targetRun.startDate) ?? null) : null,
   };
 }
