@@ -5,7 +5,7 @@ import { getCurrentUser } from "@/lib/firebase/session";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 import {
   ADMISSION_ROUND_FIELD_LIMITS,
-  admissionStageId,
+  nextAdmissionStageId,
   normalizeAdmissionRound,
   normalizeAdmissionStage,
 } from "@/lib/firestore/admissionRounds";
@@ -83,11 +83,38 @@ export async function PUT(
   }
   const round = normalizeAdmissionRound(roundSnap.id, roundSnap.data() ?? {});
 
-  // A stage id is either one this round already has, or the NEXT one in
-  // sequence. Anything else would leave `stageIds` and the subcollection
-  // describing different forms, and `order` is derived from the list.
+  /**
+   * ## Creating and editing are DIFFERENT requests
+   *
+   * A PUT that infers which one it is from whether the id happens to exist is
+   * how a new stage lands on a live one. `stageIds` has holes in it after a
+   * delete, so an id derived from its length can name a stage that is still
+   * there, and the write below is a merge: the new stage's empty question list
+   * would blank the questions on the one it collided with, and nothing on
+   * screen would say so.
+   *
+   * So the client states its intention and the server refuses the mismatch in
+   * both directions. `create: true` on an id the round already has is a stale
+   * console, and an edit to an id the round no longer has is a stale console
+   * too; neither is a write to make quietly.
+   */
+  const wantsCreate = body.create === true;
   const existingIndex = round.stageIds.indexOf(stageId);
   const isNew = existingIndex === -1;
+  if (wantsCreate && !isNew) {
+    return NextResponse.json(
+      {
+        error: `This round already has a stage ${stageId}. Reload the console before adding another, or the new one would overwrite it.`,
+      },
+      { status: 409 },
+    );
+  }
+  if (!wantsCreate && isNew) {
+    return NextResponse.json(
+      { error: "That stage is not on this round any more. Reload the console." },
+      { status: 404 },
+    );
+  }
   if (isNew) {
     if (round.stageIds.length >= L.maxStages) {
       return NextResponse.json(
@@ -95,11 +122,12 @@ export async function PUT(
         { status: 400 },
       );
     }
-    if (stageId !== admissionStageId(round.stageIds.length)) {
+    const expected = nextAdmissionStageId(round.stageIds);
+    if (stageId !== expected) {
+      // One past the highest id this round has used, never the list's length:
+      // see `nextAdmissionStageId`.
       return NextResponse.json(
-        {
-          error: `The next stage on this round is ${admissionStageId(round.stageIds.length)}.`,
-        },
+        { error: `The next stage on this round is ${expected}.` },
         { status: 400 },
       );
     }
@@ -187,6 +215,20 @@ export async function PUT(
   const order = isNew ? round.stageIds.length : existingIndex;
   const stageRef = roundRef.collection(STAGES_SUBCOLLECTION).doc(stageId);
 
+  if (isNew && (await stageRef.get()).exists) {
+    // The round does not list this stage but a document is sitting at the id.
+    // Nothing this route does can produce that (a delete takes the row and the
+    // list entry in one batch), so it is somebody else's leftover and a
+    // creation on top of it would be the overwrite this whole path is written
+    // to prevent.
+    return NextResponse.json(
+      {
+        error: `There is already a stage document at ${stageId} that this round does not list. Somebody has to look at it before another stage takes that id.`,
+      },
+      { status: 409 },
+    );
+  }
+
   const batch = db.batch();
   batch.set(
     stageRef,
@@ -205,12 +247,16 @@ export async function PUT(
         : {}),
       updatedAt: FieldValue.serverTimestamp(),
     },
-    // Merge so a manual release already stamped on this stage survives an
-    // edit to its wording. A release cannot be taken back.
-    { merge: true },
+    // An EDIT merges, so a manual release already stamped on this stage
+    // survives a change to its wording: a release cannot be taken back. A
+    // CREATE writes the whole document, because there is nothing of this
+    // stage's to keep and a merge would inherit whatever a leftover row held.
+    isNew ? {} : { merge: true },
   );
   if (isNew) {
     batch.update(roundRef, {
+      // arrayUnion rather than a rewritten list: two creates racing each other
+      // can then only ever produce the ids they asked for, never a duplicate.
       stageIds: FieldValue.arrayUnion(stageId),
       updatedAt: FieldValue.serverTimestamp(),
     });

@@ -399,6 +399,30 @@ export function admissionStageId(order: number): string {
   return `s${Math.max(1, Math.floor(order) + 1)}`;
 }
 
+/**
+ * The id a NEW stage takes: one past the highest number this round has ever
+ * used, read off `stageIds`.
+ *
+ * NOT `stageIds.length`, which is the bug this function exists to make
+ * impossible. Deleting a stage leaves a hole in the sequence: `s1, s2, s3`
+ * minus `s1` is `["s2", "s3"]`, and a length-derived id would name `s2`, a
+ * stage that is still there. The save behind it is a merge, so the new stage's
+ * empty question list would blank a live stage's questions and the author
+ * would be looking at two rows that are the same document.
+ *
+ * Ids are therefore monotonic per round rather than dense, and `order` stays
+ * the position in `stageIds`. A round that has added and deleted its way to
+ * `s7` with three stages on it is correct, not broken.
+ */
+export function nextAdmissionStageId(stageIds: string[]): string {
+  let highest = 0;
+  for (const id of stageIds) {
+    const match = /^s(\d+)$/.exec(id);
+    if (match) highest = Math.max(highest, Number(match[1]));
+  }
+  return `s${highest + 1}`;
+}
+
 // ---------------------------------------------------------------------------
 // Normalisers
 // ---------------------------------------------------------------------------

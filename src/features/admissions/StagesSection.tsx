@@ -9,7 +9,7 @@ import FormBuilder from "@/features/events/FormBuilder";
 import type { FormQuestion } from "@/lib/firestore/events";
 import {
   ADMISSION_ROUND_FIELD_LIMITS,
-  admissionStageId,
+  nextAdmissionStageId,
   type AdmissionRoundDoc,
 } from "@/lib/firestore/admissionRounds";
 import { deleteStage, releaseStage, saveStage, type Stage } from "./roundClient";
@@ -47,20 +47,38 @@ export default function StagesSection({
   onRoundChange: (stageIds: string[]) => void;
 }) {
   const canAddStage = round.stageIds.length < ADMISSION_ROUND_FIELD_LIMITS.maxStages;
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
 
   async function addStage() {
-    const stageId = admissionStageId(round.stageIds.length);
-    const saved = await saveStage(round.id, stageId, {
-      label: `Stage ${round.stageIds.length + 1}`,
-      intro: "",
-      questions: [],
-      releaseAt: null,
-      releaseTimeLocal: "09:00",
-      closesAt: null,
-      locksOnSubmit: false,
-    });
-    onStagesChange([...stages, saved]);
-    onRoundChange([...round.stageIds, stageId]);
+    // One past the highest id this round has used, matching the server. The
+    // list's LENGTH would name a stage that is still there as soon as one has
+    // been deleted, and the save behind it would blank that stage's questions.
+    const stageId = nextAdmissionStageId(round.stageIds);
+    setAdding(true);
+    setAddError(null);
+    try {
+      const saved = await saveStage(
+        round.id,
+        stageId,
+        {
+          label: `Stage ${round.stageIds.length + 1}`,
+          intro: "",
+          questions: [],
+          releaseAt: null,
+          releaseTimeLocal: "09:00",
+          closesAt: null,
+          locksOnSubmit: false,
+        },
+        { create: true },
+      );
+      onStagesChange([...stages, saved]);
+      onRoundChange([...round.stageIds, stageId]);
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : "That stage was not added.");
+    } finally {
+      setAdding(false);
+    }
   }
 
   return (
@@ -83,8 +101,13 @@ export default function StagesSection({
       ))}
 
       <div className={styles.actions}>
-        <Button type="button" variant="secondary" onClick={addStage} disabled={!canAddStage}>
-          Add a stage
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={addStage}
+          disabled={!canAddStage || adding}
+        >
+          {adding ? "Adding…" : "Add a stage"}
         </Button>
         {!canAddStage && (
           <span className={styles.hint}>
@@ -92,6 +115,7 @@ export default function StagesSection({
           </span>
         )}
       </div>
+      {addError && <p className={styles.error}>{addError}</p>}
     </div>
   );
 }

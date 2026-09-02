@@ -201,6 +201,12 @@ export async function setRoundRoles(
 // Stages
 // ---------------------------------------------------------------------------
 
+/**
+ * Save one stage. `create` is the caller's INTENTION, not a hint: the route
+ * refuses a create that lands on a stage the round already has, and refuses an
+ * edit to a stage it no longer has. Guessing between the two is what let a new
+ * stage overwrite a surviving one after a delete.
+ */
 export async function saveStage(
   roundId: string,
   stageId: string,
@@ -213,10 +219,11 @@ export async function saveStage(
     closesAt: string | null;
     locksOnSubmit: boolean;
   },
+  { create = false }: { create?: boolean } = {},
 ): Promise<Stage> {
   const body = await call<{ stage: StagePayload }>(
     `/api/admissions/rounds/${encodeURIComponent(roundId)}/stages/${encodeURIComponent(stageId)}`,
-    { method: "PUT", body: JSON.stringify(stage) },
+    { method: "PUT", body: JSON.stringify({ ...stage, create }) },
   );
   return hydrateStage(body.stage);
 }
