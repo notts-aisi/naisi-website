@@ -772,9 +772,19 @@ export async function DELETE(req: Request, ctx: Ctx) {
     .doc(courseEnrolmentId(runId, user.uid));
 
   let leftGroupId: string | null = null;
+  // Whether THIS request is the one that took them off, as opposed to a
+  // double-tapped confirm arriving after the first has committed. Everything
+  // after the commit (the audit row, the unsubscribe, the task sweep, the
+  // email) hangs off it, so a second tap is a quiet 200 rather than a second
+  // confirmation email about a course somebody left a moment ago.
+  let dropped = false;
 
   try {
     await db.runTransaction(async (tx) => {
+      // Reset per attempt: Firestore retries a contended transaction, and a
+      // flag carried over from a discarded attempt would report work that
+      // never committed.
+      dropped = false;
       const snap = await tx.get(enrolmentRef);
       if (!snap.exists) {
         throw new EnrolError("You're not signed up for this course.", 404);
@@ -797,6 +807,7 @@ export async function DELETE(req: Request, ctx: Ctx) {
       }
 
       leftGroupId = row.groupId;
+      dropped = true;
 
       tx.update(enrolmentRef, {
         status: "withdrawn" satisfies CourseEnrolmentStatus,
@@ -838,6 +849,11 @@ export async function DELETE(req: Request, ctx: Ctx) {
 
   const config = await readCoursesConfig(db).catch(() => null);
   const feedbackUrl = config?.dropOutFeedbackUrl ?? "";
+
+  // A repeat of an already-committed drop-out: the answer is the same, and
+  // the feedback link is still worth handing back, but nothing is written or
+  // sent a second time.
+  if (!dropped) return NextResponse.json({ ok: true, feedbackUrl });
 
   // ── Everything after the commit is best effort ────────────────────────────
   // The member has left; none of the tidying below may turn that into an
