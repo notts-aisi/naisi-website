@@ -631,7 +631,7 @@ function asCount(v: unknown): number {
 }
 
 /**
- * "YYYY-MM-DD" or empty string — never a partial, garbled, or IMPOSSIBLE date.
+ * "YYYY-MM-DD" or empty string, never a partial, garbled, or IMPOSSIBLE date.
  *
  * `isValidDateKey` rather than a bare shape regex, because the shape is the
  * easy half. `2026-02-31` matches `\d{4}-\d{2}-\d{2}` and is not a day, so a

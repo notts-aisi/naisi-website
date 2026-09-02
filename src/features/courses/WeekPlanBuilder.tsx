@@ -186,7 +186,7 @@ export default function WeekPlanBuilder({
   const [now] = useState<Date>(() => new Date());
 
   // The status fallback for a parent that doesn't pass one. Starts null, which
-  // reads as LOCKED — a plan that is briefly un-reorderable is a much smaller
+  // reads as LOCKED. A plan that is briefly un-reorderable is a much smaller
   // harm than one that offers a reorder the rules are about to refuse, and the
   // read resolves in a round trip. A parent that passes `status` never gets
   // here at all.

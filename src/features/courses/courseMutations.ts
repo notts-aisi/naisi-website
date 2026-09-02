@@ -540,7 +540,7 @@ export type WeekIdMove = {
   from: string;
   to: string;
   weekNumber: number;
-  /** False when the slot has no authored document yet — a plan-only fix. */
+  /** False when the slot has no authored document yet: a plan-only fix. */
   hasDoc: boolean;
 };
 
@@ -554,7 +554,7 @@ export type NormaliseWeeksResult = {
  * Re-address a DRAFT run's weeks so the plan's `weekId` and the id every
  * member-facing surface derives (`weekDocId(weekNumber)`) agree again.
  *
- * Admin SDK, and refused outright once the run leaves draft — see the route
+ * Admin SDK, and refused outright once the run leaves draft. See the route
  * for why the draft boundary is the only place this is free. `dryRun` returns
  * the same moves without writing, which is what the builder previews.
  */
@@ -603,7 +603,7 @@ function assertWeekAddress(weekId: string, weekNumber: number): number {
   }
   // Deliberately does NOT require `weekId === weekDocId(n)`. A reordered plan
   // legitimately carries a week whose id and number disagree, and that is the
-  // whole point of preserving the id across a renumber — the alternative moves
+  // whole point of preserving the id across a renumber; the alternative moves
   // authored curriculum and saved progress under a live cohort. Callers that
   // care about the disagreement ask `weekAddressDrift()` below, which reports
   // it rather than refusing the write.
@@ -627,7 +627,7 @@ export type WeekAddressDrift = {
  * `weekId`; `/learn/{run}/weeks/{n}`, the week rail, the nudge, the task
  * mirror and the attendance grid all derive `weekDocId(weekNumber)`. They
  * agree on a plan that has only ever grown at the end, and diverge from the
- * first reorder or removal — silently, because both sides resolve a real
+ * first reorder or removal, silently, because both sides resolve a real
  * document, just not the same one.
  *
  * Reported, never thrown: on a live run the divergence is the lesser evil and

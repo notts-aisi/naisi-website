@@ -29,7 +29,7 @@ import {
  * repair is free, and it refuses to run outside it.
  *
  * The companion half is `weekPlanLockRespected()` in firestore.rules, which
- * pins `weekPlan` for non-admins once a run leaves draft — so a plan that
+ * pins `weekPlan` for non-admins once a run leaves draft, so a plan that
  * leaves this window canonical stays canonical unless an admin deliberately
  * reshapes it.
  *

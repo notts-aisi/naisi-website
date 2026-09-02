@@ -134,7 +134,7 @@ function progressDoc(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe("courseRuns — who may move the calendar", () => {
-  /** The plan with a reading week dropped in after week 1 — the everyday edit. */
+  /** The plan with a reading week dropped in after week 1: the everyday edit. */
   const RESHAPED_PLAN = [
     WEEK_PLAN[0],
     { kind: "break", label: "Reading week" },
@@ -154,10 +154,10 @@ describe("courseRuns — who may move the calendar", () => {
     );
   });
 
-  it("GUARD — the week plan is reshapeable by the run's cast while it is a DRAFT", async () => {
+  it("GUARD: the week plan is reshapeable by the run's cast while it is a DRAFT", async () => {
     // The authoring state, and the other half of the lock below. Nobody is
     // enrolled, no register exists, no task has been mirrored, so renumbering
-    // the plan repoints nothing — which is exactly why the boundary is drawn
+    // the plan repoints nothing, which is exactly why the boundary is drawn
     // at draft and not earlier.
     await seedCast();
     await seedRun("run1", { status: "draft" });
@@ -169,7 +169,7 @@ describe("courseRuns — who may move the calendar", () => {
     }
   });
 
-  it("GUARD — the week plan is PINNED to non-admins the moment a run leaves draft", async () => {
+  it("GUARD: the week plan is PINNED to non-admins the moment a run leaves draft", async () => {
     // `weekPlan` is the calendar spine: the Nth taught entry IS week N, and
     // every member-facing surface addresses that week as
     // `weekDocId(weekNumber)`. Reordering or removing a slot on a live run
@@ -207,7 +207,7 @@ describe("courseRuns — who may move the calendar", () => {
     }
   });
 
-  it("GUARD — one write cannot both leave draft AND reshape the plan", async () => {
+  it("GUARD: one write cannot both leave draft AND reshape the plan", async () => {
     // The pin used to read only the PRE-write status, so a draft run was still
     // a draft at the moment the rule looked at it. An approver could therefore
     // set status to 'applications-open' and reshape the week plan in the SAME
@@ -242,7 +242,7 @@ describe("courseRuns — who may move the calendar", () => {
     );
   });
 
-  it("GUARD — an ADMIN can still reshape a live run's plan, and owns the consequences", async () => {
+  it("GUARD: an ADMIN can still reshape a live run's plan, and owns the consequences", async () => {
     // The carve-out, matching every other pin in this block: admins ride the
     // unconditional branch. Adding a slot to a live run shifts every later
     // date, so it is a change that belongs to the person accountable for it
@@ -314,7 +314,7 @@ describe("courseRuns — who may move the calendar", () => {
     }
   });
 
-  it("GUARD — an IMPOSSIBLE date is the NORMALISER's job, and the rules stay out of it", async () => {
+  it("GUARD: an IMPOSSIBLE date is the NORMALISER's job, and the rules stay out of it", async () => {
     // Was a PROVEN GAP until 2026-09-02, and it is green for the same reason it
     // always was: `runContentOk` checks the SHAPE with a regex, and
     // `2026-02-31` is the right shape and is not a day, so the write lands.

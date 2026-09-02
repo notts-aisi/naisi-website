@@ -494,7 +494,7 @@ test("GUARD — a plan that has never been reordered is canonically addressed", 
   );
 });
 
-test("GUARD — one press of ▲ still permutes the addressing, and that is now BOUNDED", () => {
+test("GUARD: one press of ▲ still permutes the addressing, and that is now BOUNDED", () => {
   // The exact sequence from the audit: add a week (it takes the lowest free id,
   // w05) then move it to position 2.
   const added = renumber([...plainPlan(4), { kind: "week", weekNumber: 0, weekId: "w05" }]);
@@ -530,7 +530,7 @@ test("GUARD — one press of ▲ still permutes the addressing, and that is now 
   // where permuting it costs nothing.
 });
 
-test("GUARD — weekAddressDrift names exactly the slots whose two spellings disagree", () => {
+test("GUARD: weekAddressDrift names exactly the slots whose two spellings disagree", () => {
   const added = renumber([...plainPlan(4), { kind: "week", weekNumber: 0, weekId: "w05" }]);
   const moved = renumber([added[0], added[4], added[1], added[2], added[3]]);
 
@@ -573,7 +573,7 @@ test("GUARD — weekAddressDrift names exactly the slots whose two spellings dis
   assert.match(WEEK_PLAN_BUILDER, /!locked && drift\.length > 0/);
 });
 
-test("GUARD — the normalise route refuses outside the one window where it is free", () => {
+test("GUARD: the normalise route refuses outside the one window where it is free", () => {
   // The whole safety argument is the draft check plus the emptiness checks: in
   // draft there is nothing keyed on the old ids, so moving them repoints
   // nothing. Every one of these is load-bearing.
@@ -665,7 +665,7 @@ const everyDestination = (moves) => new Set(moves.map((m) => m.to));
 const writtenDestinations = (moves) =>
   new Set(moves.filter((m) => m.hasDoc).map((m) => m.to));
 
-test("GUARD — a plan-only move cannot leave a week authored at two addresses", () => {
+test("GUARD: a plan-only move cannot leave a week authored at two addresses", () => {
   // The permutation that broke it, from the builder's own affordances: four
   // weeks with only w01 and w02 actually authored, add a fifth slot (it takes
   // the lowest free id, w05), then move it to position 1.
@@ -699,7 +699,7 @@ test("GUARD — a plan-only move cannot leave a week authored at two addresses",
 
   // THE FIX: only a destination a copy actually lands on may hold a delete
   // back. w01's content has moved to w02, nothing was written to w01, so w01
-  // goes — which is right, because the plan now puts the un-authored w05 slot
+  // goes, which is right, because the plan now puts the un-authored w05 slot
   // in position 1.
   const after = commitMoves(stored, moves, writtenDestinations(moves));
   assert.equal(after.has("w01"), false);
@@ -727,7 +727,7 @@ test("GUARD — a plan-only move cannot leave a week authored at two addresses",
   assert.doesNotMatch(NORMALISE_WEEKS, /const destinations = new Set\(moves\.map/);
 });
 
-test("GUARD — the rules pin weekPlan the moment a run stops being a draft", () => {
+test("GUARD: the rules pin weekPlan the moment a run stops being a draft", () => {
   // The affordance in the builder is not the enforcement. This is.
   assert.match(RULES, /function weekPlanLockRespected\(\)/);
   // BOTH sides of the status, not just the pre-write one: a single write that
@@ -760,7 +760,7 @@ function refusesDraftExit(from, to, plan) {
   return weekAddressDrift(plan).length > 0;
 }
 
-test("GUARD — a run cannot leave draft while its two week spellings disagree", () => {
+test("GUARD: a run cannot leave draft while its two week spellings disagree", () => {
   // The bound on the drift has three legs: it is REPORTED, it is RECONCILABLE
   // only in draft, and it is UNREACHABLE afterwards. The door itself was the
   // gap. Nothing refused a drifted plan walking out of draft, and the moment it
@@ -962,7 +962,7 @@ test("GUARD — sessionOverrides is capped at 20 keys, dead keys included", () =
   assert.match(COURSE_MUTATIONS, /GROUP_FIELD_LIMITS\.maxSessionOverrides/);
 });
 
-test("GUARD — the three-way drift has exactly ONE reconciler, and it is draft-only", () => {
+test("GUARD: the three-way drift has exactly ONE reconciler, and it is draft-only", () => {
   // The three spellings are unchanged: the plan says one thing, the week doc's
   // own `weekNumber` field says another, and `weekDocId(n)` addresses a third.
   assert.match(COURSE_MUTATIONS, /weekNumber/);
@@ -970,7 +970,7 @@ test("GUARD — the three-way drift has exactly ONE reconciler, and it is draft-
     COURSE_MUTATIONS,
     /so the editor can reconcile a doc whose number has drifted/,
   );
-  // The ordinary save still writes ONLY `weekPlan` — it does not quietly
+  // The ordinary save still writes ONLY `weekPlan`; it does not quietly
   // re-stamp week docs behind the admin's back, which on a live run would be
   // the very repointing the preserved id exists to prevent.
   assert.match(WEEK_PLAN_BUILDER, /await updateRun\(runId, \{ weekPlan: plan \}\)/);
@@ -982,7 +982,7 @@ test("GUARD — the three-way drift has exactly ONE reconciler, and it is draft-
   assert.match(PROGRESS_BODY, /byWeek\.get\(week\.weekNumber\)/);
 
   // CLOSED 2026-09-02: there is now a reconciler, it lives in one place, and it
-  // re-stamps the stored field as part of the same batch that moves the docs —
+  // re-stamps the stored field as part of the same batch that moves the docs,
   // including the slots that are already at the right id but carry a stale
   // number ("restamps"), which is the case no move would have touched.
   assert.match(NORMALISE_WEEKS, /restamps\.push\(\{ weekId: to, from: doc\.weekNumber, to: taught \}\)/);
@@ -1863,7 +1863,7 @@ test("GUARD — every date-driven consumer guards with isValidDateKey before pac
   assert.throws(() => currentWeekFor({ startDate: "", weekPlan: [] }), RangeError);
 });
 
-test("GUARD — an impossible date normalises to unset rather than killing the run", () => {
+test("GUARD: an impossible date normalises to unset rather than killing the run", () => {
   // Closed 2026-09-02 (this test was the PROVEN GAP that demanded it):
   // `asCivilDate` now calls `isValidDateKey` instead of a bare shape regex.
   // `2026-02-31` matches the shape and is not a day; storing it used to leave
