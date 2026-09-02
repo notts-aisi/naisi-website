@@ -199,7 +199,7 @@ export default function RoundEditor({
   }
 
   return (
-    <div className={styles.page}>
+    <div className={`${styles.page} ${canAuthor ? "" : styles.pageSolo}`}>
       <div className={styles.column}>
         <header className={styles.head}>
           <Link className={styles.back} href="/admin/admissions">
@@ -246,24 +246,30 @@ export default function RoundEditor({
         )}
       </div>
 
-      <aside className={styles.side}>
-        <ReadinessPanel
-          round={{
-            kind: round.kind,
-            status: round.status,
-            closesAt: round.closesAt,
-            decisionsByDate: round.decisionsByDate,
-            outcomeRunIds: round.outcomeRunIds,
-            reviewerUids: round.reviewerUids,
-            finalDeciderUid: round.finalDeciderUid,
-            stages: stages.map((s) => ({
-              id: s.id,
-              order: s.order,
-              questionCount: s.questionCount,
-            })),
-          }}
-        />
-      </aside>
+      {/* Every line in the panel links to a section that only an author has,
+          and every blocker it lists is somebody else's job to clear. A
+          reviewer reading "3 things still to do" beside links that go nowhere
+          is being handed work they cannot do. */}
+      {canAuthor && (
+        <aside className={styles.side}>
+          <ReadinessPanel
+            round={{
+              kind: round.kind,
+              status: round.status,
+              closesAt: round.closesAt,
+              decisionsByDate: round.decisionsByDate,
+              outcomeRunIds: round.outcomeRunIds,
+              reviewerUids: round.reviewerUids,
+              finalDeciderUid: round.finalDeciderUid,
+              stages: stages.map((s) => ({
+                id: s.id,
+                order: s.order,
+                questionCount: s.questionCount,
+              })),
+            }}
+          />
+        </aside>
+      )}
     </div>
   );
 }

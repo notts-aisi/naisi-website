@@ -5,6 +5,13 @@
   align-items: start;
 }
 
+/* No readiness panel beside the column, so the reserved track goes with it.
+   A reviewer gets one full-width summary rather than a narrowed one and an
+   empty 20rem gutter. */
+.pageSolo {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .column {
   display: flex;
   flex-direction: column;
