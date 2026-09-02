@@ -276,3 +276,49 @@ npx firebase deploy --only firestore:rules,firestore:indexes --project <default|
 
 Composite indexes take a few minutes to build and the query fails until they
 are `READY`.
+
+### Retention (a one-time owner step, per project)
+
+Both collections grow forever on their own. A tick every 15 minutes is about
+35,000 receipts a year, and a marker is written for every unit of timed work the
+platform ever does.
+
+The code already writes the field the cleanup keys on:
+
+| Collection | Field | Written when | Horizon |
+| --- | --- | --- | --- |
+| `schedulerRuns` | `expiresAt` | the receipt opens | 90 days |
+| `schedulerMarkers` | `expiresAt` | the marker settles (`sentAt` or `skippedReason`) | 180 days |
+
+A marker still in flight, and one stamped `failedAt` waiting on **Stuck sends**,
+deliberately get no `expiresAt`: neither may vanish from under the person it is
+waiting for. Retry clears the field along with the skip that set it.
+
+Markers get twice the receipt horizon because they answer a question that
+arrives late: "did this person actually get their email", asked in February
+about a January send.
+
+**The field does nothing until a TTL policy exists**, and creating one is an
+owner-level step (`datastore.owner`, or Firestore Database Admin) that is not
+part of a deploy. Do it once per project, on both:
+
+```sh
+gcloud firestore fields ttls update expiresAt \
+  --collection-group=schedulerRuns --enable-ttl --project=<PROJECT_ID>
+
+gcloud firestore fields ttls update expiresAt \
+  --collection-group=schedulerMarkers --enable-ttl --project=<PROJECT_ID>
+```
+
+The same two switches live in the Firebase console under Firestore, TTL. Either
+way it is a console-side setting: nothing in this repo turns it on, and nothing
+in this repo will tell you it is off. Check it with:
+
+```sh
+gcloud firestore fields ttls list --project=<PROJECT_ID>
+```
+
+Deletion begins within 24 hours of a document's `expiresAt` and is a background
+sweep, not an instant. Rows already written before this shipped carry no
+`expiresAt` and are never collected; delete them by hand if they matter, or
+leave them, since they stop accumulating the moment the policy is on.

@@ -61,6 +61,7 @@ import {
 import {
   MAX_TICK_DEPTH,
   SCHEDULER_RUNS_COLLECTION,
+  schedulerRunExpiry,
   tickBucketKey,
   tickReceiptId,
   type SchedulerRunJobEntry,
@@ -236,6 +237,11 @@ export async function POST(req: Request) {
       rearmNote: null,
       skipped: null,
       receiptCollision: false,
+      // Retention. A tick every 15 minutes is ~35,000 receipts a year and
+      // nobody reads one after the week it describes. The field is inert
+      // until the Firestore TTL policy exists on the collection group, which
+      // is an owner-level step per project (docs/courses-ops.md).
+      expiresAt: schedulerRunExpiry(startedAt),
     });
   } catch (err) {
     const code = (err as { code?: unknown } | null)?.code;

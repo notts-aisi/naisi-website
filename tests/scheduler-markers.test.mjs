@@ -148,10 +148,12 @@ async function loadTs(relativePath) {
 const {
   DEFAULT_MARKER_POLICY,
   SCHEDULER_MARKERS_COLLECTION,
+  SCHEDULER_MARKER_RETENTION_DAYS,
   breakReturnMarker,
   claim,
   errorText,
   retryFailedMarker,
+  schedulerMarkerExpiry,
   stampError,
   stampSent,
   stampSkipped,
@@ -485,6 +487,9 @@ describe("stampSent / stampError / stampSkipped", () => {
     assert.deepEqual(stored.sentAt, sentAt);
     assert.equal(stored.lastError, null);
     assert.equal(stored.attempts, 1, "a stamp must not disturb the claim it belongs to");
+    // Settled, so the retention clock starts. Inert until the collection
+    // group's TTL policy exists, which is an owner step per project.
+    assert.deepEqual(stored.expiresAt, schedulerMarkerExpiry(sentAt));
   });
 
   test("stampError leaves sentAt null, because a failure is not terminal", async () => {
@@ -496,6 +501,11 @@ describe("stampSent / stampError / stampSkipped", () => {
     assert.equal(stored.lastError, "boom");
     assert.equal(stored.sentAt, null, "the re-claim rule needs this marker back");
     assert.equal(stored.failedAt, null, "one failure is not giving up");
+    assert.equal(
+      stored.expiresAt,
+      undefined,
+      "a marker still in play must not be given an expiry to vanish on",
+    );
   });
 
   test("stampSkipped is terminal and its reason is bounded", async () => {
@@ -506,6 +516,32 @@ describe("stampSent / stampError / stampSkipped", () => {
     const stored = db.read(REF.id);
     assert.equal(stored.skippedReason.length, 200);
     assert.equal(stored.sentAt, null, "skipped is not sent, and must not read as sent");
+    assert.ok(stored.expiresAt instanceof Date, "a skip settles the marker");
+  });
+
+  test("a marker that gives up is NOT given an expiry", async () => {
+    // It is waiting for a human under Stuck sends. A TTL on it would delete
+    // the evidence of the send that never happened.
+    const db = makeDb();
+    db.seed(
+      REF.id,
+      seededMarker({
+        attempts: DEFAULT_MARKER_POLICY.maxAttempts,
+        claimedAt: minutesAgo(60),
+      }),
+    );
+    await claim(db, REF, { job: JOB });
+    assert.ok(db.read(REF.id).failedAt instanceof Date);
+    assert.equal(db.read(REF.id).expiresAt, undefined);
+  });
+
+  test("the horizons are the ones the runbook's TTL policies are written for", () => {
+    assert.equal(SCHEDULER_MARKER_RETENTION_DAYS, 180);
+    const from = new Date("2026-10-11T09:00:00.000Z");
+    assert.equal(
+      schedulerMarkerExpiry(from).toISOString(),
+      "2027-04-09T09:00:00.000Z",
+    );
   });
 
   test("errorText trims a thrown value to something safe to store", () => {
@@ -538,6 +574,7 @@ describe("retryFailedMarker", () => {
     assert.equal(stored.failedAt, null);
     assert.equal(stored.skippedReason, null);
     assert.equal(stored.lastError, null);
+    assert.equal(stored.expiresAt, null, "back in play means back to no expiry");
     // Back to 0, not decremented: the counter exists to stop an UNATTENDED
     // loop, and an admin clicking Retry is attendance.
     assert.equal(stored.attempts, 0);

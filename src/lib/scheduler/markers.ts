@@ -29,6 +29,7 @@ import {
   SCHEDULER_MARKERS_COLLECTION,
   decideMarkerClaim,
   normalizeSchedulerMarker,
+  schedulerMarkerExpiry,
   type MarkerPolicy,
   type SchedulerMarker,
   type SchedulerMarkerRef,
@@ -38,12 +39,14 @@ export {
   DEFAULT_MARKER_POLICY,
   MARKER_FAMILIES,
   SCHEDULER_MARKERS_COLLECTION,
+  SCHEDULER_MARKER_RETENTION_DAYS,
   breakReturnMarker,
   decideMarkerClaim,
   isStaleWork,
   markerFamilyOf,
   normalizeSchedulerMarker,
   reminderMarker,
+  schedulerMarkerExpiry,
   stageReleaseMarker,
   unmarkedRegisterMarker,
 } from "@/lib/firestore/schedulerMarkers";
@@ -161,7 +164,13 @@ export async function claim(
   });
 }
 
-/** Step 3: the side effect succeeded. */
+/**
+ * Step 3: the side effect succeeded.
+ *
+ * This is also where the marker's retention clock starts. A settled marker
+ * describes history and gets an `expiresAt`; one still in flight, or one
+ * stamped `failedAt` and waiting for an admin, deliberately does not.
+ */
 export async function stampSent(
   db: Firestore,
   markerId: string,
@@ -170,7 +179,10 @@ export async function stampSent(
   await db
     .collection(SCHEDULER_MARKERS_COLLECTION)
     .doc(markerId)
-    .set({ sentAt, lastError: null }, { merge: true });
+    .set(
+      { sentAt, lastError: null, expiresAt: schedulerMarkerExpiry(sentAt) },
+      { merge: true },
+    );
 }
 
 /**
@@ -198,11 +210,19 @@ export async function stampSkipped(
   db: Firestore,
   markerId: string,
   reason: string,
+  at: Date = new Date(),
 ): Promise<void> {
   await db
     .collection(SCHEDULER_MARKERS_COLLECTION)
     .doc(markerId)
-    .set({ skippedReason: reason.slice(0, 200) }, { merge: true });
+    .set(
+      {
+        skippedReason: reason.slice(0, 200),
+        // Settled, so the retention clock starts here too.
+        expiresAt: schedulerMarkerExpiry(at),
+      },
+      { merge: true },
+    );
 }
 
 /** What an admin Retry did, and when it did nothing, why. */
@@ -258,6 +278,9 @@ export async function retryFailedMarker(
       skippedReason: null,
       attempts: 0,
       lastError: null,
+      // Back in play means back to live, so the retention clock a skip
+      // started is cleared with the skip that started it.
+      expiresAt: null,
       retriedAt: FieldValue.serverTimestamp(),
       retriedByUid: actorUid,
     },

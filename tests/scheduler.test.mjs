@@ -87,10 +87,12 @@ async function loadModule(url, label) {
 
 const {
   MAX_TICK_DEPTH,
+  SCHEDULER_RUN_RETENTION_DAYS,
   TICK_BUCKET_MINUTES,
   formatBucketKey,
   normalizeSchedulerRun,
   parseTickReceiptId,
+  schedulerRunExpiry,
   tickBucketKey,
   tickReceiptId,
 } = await loadModule(RUNS_URL, "schedulerRuns");
@@ -168,6 +170,20 @@ describe("tickReceiptId / parseTickReceiptId", () => {
   test("formats a bucket for the panel", () => {
     assert.equal(formatBucketKey("20260902T1415Z"), "2026-09-02 14:15 UTC");
     assert.equal(formatBucketKey("not-a-bucket"), "not-a-bucket");
+  });
+
+  test("a receipt carries a TTL horizon the runbook's policy can act on", () => {
+    // Retention is a field plus an owner-level console step. The field is
+    // written here so the policy has something to act on the moment it is
+    // turned on, rather than expiring nothing for the first 90 days after
+    // somebody remembers.
+    assert.equal(SCHEDULER_RUN_RETENTION_DAYS, 90);
+    assert.equal(
+      schedulerRunExpiry(new Date("2026-09-02T14:15:00.000Z")).toISOString(),
+      "2026-12-01T14:15:00.000Z",
+    );
+    const tick = readFileSync(fileURLToPath(TICK_ROUTE_URL), "utf8");
+    assert.match(tick, /expiresAt: schedulerRunExpiry\(startedAt\)/);
   });
 
   test("MAX_TICK_DEPTH bounds the self re-arm chain", () => {

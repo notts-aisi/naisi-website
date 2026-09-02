@@ -49,6 +49,29 @@ export const TICK_BUCKET_MINUTES = 15;
  */
 export const MAX_TICK_DEPTH = 3;
 
+/**
+ * How long a receipt is worth keeping, in days.
+ *
+ * A tick every 15 minutes is ~35,000 receipts a year, each one a small
+ * document nobody reads after the week it describes. The panel shows the last
+ * twenty; an incident is investigated within days, not seasons.
+ *
+ * The field is only half of it. `expiresAt` is inert data until a Firestore
+ * TTL policy is created on the collection group, which is an owner-level
+ * console step per project (docs/courses-ops.md). Writing the field first is
+ * deliberate: the policy can then be turned on at any time and immediately
+ * has something to act on, rather than expiring nothing until 90 days after
+ * somebody remembers.
+ */
+export const SCHEDULER_RUN_RETENTION_DAYS = 90;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** When a receipt started at `from` becomes eligible for TTL deletion. */
+export function schedulerRunExpiry(from: Date): Date {
+  return new Date(from.getTime() + SCHEDULER_RUN_RETENTION_DAYS * DAY_MS);
+}
+
 /** Why a tick did no work. `null` on a tick that ran jobs. */
 export type TickSkipReason = "disabled" | "no-jobs";
 
@@ -75,6 +98,8 @@ export type SchedulerRun = {
   rearmNote: string | null;
   skipped: TickSkipReason | null;
   receiptCollision: boolean;
+  /** TTL horizon. `null` on a receipt written before retention existed. */
+  expiresAt: Date | null;
 };
 
 /**
@@ -171,5 +196,6 @@ export function normalizeSchedulerRun(
     rearmNote: typeof data.rearmNote === "string" ? data.rearmNote : null,
     skipped: skipped === "disabled" || skipped === "no-jobs" ? skipped : null,
     receiptCollision: data.receiptCollision === true,
+    expiresAt: toDate(data.expiresAt),
   };
 }

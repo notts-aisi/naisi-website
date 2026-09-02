@@ -194,6 +194,32 @@ export function markerFamilyOf(id: string): SchedulerMarkerFamily | null {
     : null;
 }
 
+/**
+ * How long a SETTLED marker is worth keeping, in days.
+ *
+ * Twice the receipt horizon, because a marker is the answer to "did this
+ * person get their email", which is a question that arrives late: a member
+ * asking in February about a January send, a deliverability complaint, a
+ * facilitator sure they were never told. Two terms of cover is enough of it.
+ *
+ * Only a marker that has SETTLED gets the field. A marker with `sentAt` or
+ * `skippedReason` is finished and describes history; one still in flight, or
+ * one stamped `failedAt` and waiting for an admin, must not quietly vanish
+ * from under the person it is waiting for.
+ *
+ * As with the receipts, the field is inert until a Firestore TTL policy is
+ * created on the collection group, which is an owner-level step per project
+ * (docs/courses-ops.md).
+ */
+export const SCHEDULER_MARKER_RETENTION_DAYS = 180;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** When a marker settled at `from` becomes eligible for TTL deletion. */
+export function schedulerMarkerExpiry(from: Date): Date {
+  return new Date(from.getTime() + SCHEDULER_MARKER_RETENTION_DAYS * DAY_MS);
+}
+
 export type SchedulerMarker = {
   id: string;
   job: string;
@@ -204,6 +230,8 @@ export type SchedulerMarker = {
   failedAt: Date | null;
   skippedReason: string | null;
   lastError: string | null;
+  /** TTL horizon. Set when the marker settles; `null` while it is live. */
+  expiresAt: Date | null;
   /** The id components, stored so markers are queryable without parsing ids. */
   components: Record<string, string>;
 };
@@ -252,6 +280,7 @@ export function normalizeSchedulerMarker(
       typeof data.lastError === "string" && data.lastError !== ""
         ? data.lastError
         : null,
+    expiresAt: toDate(data.expiresAt),
     components,
   };
 }
