@@ -211,14 +211,22 @@ export type CourseRunDoc = {
    * following the `groupCount` / `memberCount` precedent.
    *
    * ── WHAT IT COUNTS, EXACTLY ─────────────────────────────────────────────
-   * Enrolments that are BOTH `status: "active"` AND `selfEnrolled`. Three
-   * writers move it and all three agree on that definition: the open-enrol
-   * route increments on the seat and decrements on the drop-out, and the
-   * account-deletion sweep decrements for the self-enrolled active rows it
-   * deletes. Nothing counts an allocated admissions learner, so nothing may
-   * uncount one either: a decrement for a row that was never counted drives
-   * this negative and then wedges the enrol-mode route, which reads it as "is
-   * anybody on this run".
+   * Enrolments that are BOTH `status: "active"` AND `selfEnrolled`. Every
+   * writer agrees on that definition, and there are four of them:
+   *
+   *  1. the open-enrol route, +1 on the seat and -1 on the drop-out;
+   *  2. the remove route, -1 when the row it retires was active and
+   *     self-enrolled (a removed open-enrol cohort that still read as
+   *     populated is how the enrol-mode route ends up refusing to reopen a
+   *     run nobody is on);
+   *  3. the reinstate route, +1 when it flips a withdrawn self-enrolled row
+   *     back to active;
+   *  4. the account-deletion sweep, -1 per self-enrolled active row it
+   *     deletes.
+   *
+   * Nothing counts an allocated admissions learner, so nothing may uncount
+   * one either: a decrement for a row that was never counted drives this
+   * negative.
    *
    * KNOWN GAP, stated rather than hidden: the allocation route does NOT move
    * it, so an ADMISSIONS run reads 0 however many learners it has. Nothing

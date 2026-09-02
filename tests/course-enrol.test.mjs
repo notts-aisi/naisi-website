@@ -62,6 +62,13 @@ const REINSTATE_ROUTE = readFileSync(
   ),
   "utf8",
 );
+const REMOVE_ROUTE = readFileSync(
+  join(
+    SRC, "app", "api", "courses", "runs", "[runId]", "enrolments", "[uid]",
+    "remove", "route.ts",
+  ),
+  "utf8",
+);
 const ENROL_MODE_ROUTE = readFileSync(
   join(SRC, "app", "api", "courses", "runs", "[runId]", "enrol-mode", "route.ts"),
   "utf8",
@@ -803,4 +810,23 @@ test("SOURCE: the drop-out no longer points at the allocation board", () => {
   const del = ENROL_ROUTE.slice(ENROL_ROUTE.indexOf("// DELETE"));
   assert.doesNotMatch(ENROL_ROUTE, /Staff can still re-place someone/);
   assert.match(del, /reinstate/);
+});
+
+test("SOURCE: removing a self-enrolled learner gives the run's seat back", () => {
+  // `memberCount` and `enrolledCount` count different sets, so the remove
+  // route has to move both: a run whose whole open-enrolled cohort was
+  // removed used to still read as populated, and the enrol-mode route would
+  // then refuse to reopen a run nobody was on.
+  assert.match(REMOVE_ROUTE, /const heldOpenSeat = status === "active" && existing\.selfEnrolled === true;/);
+  assert.match(REMOVE_ROUTE, /if \(heldOpenSeat\) \{/);
+  assert.match(REMOVE_ROUTE, /enrolledCount: FieldValue\.increment\(-1\)/);
+  // And the counter's own doc comment names every writer, because a writer
+  // that disagrees about what is counted is how it goes negative.
+  const COURSES = readFileSync(join(SRC, "lib", "firestore", "courses.ts"), "utf8");
+  const at = COURSES.indexOf("WHAT IT COUNTS, EXACTLY");
+  assert.ok(at > 0, "the enrolledCount doc comment is gone");
+  const block = COURSES.slice(at, COURSES.indexOf("enrolledCount: number;", at));
+  for (const writer of ["open-enrol route", "remove route", "reinstate route", "account-deletion sweep"]) {
+    assert.ok(block.includes(writer), `the doc comment no longer names the ${writer}`);
+  }
 });
