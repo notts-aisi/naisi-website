@@ -28,6 +28,13 @@
  * already recorded for `submissionExerciseRef`. Source-pinned, because the
  * failure it prevents is a run nobody can edit again.
  *
+ * §2c THE FETCHER RETURNS LESS THAN IT READS. `fetchCoursePage` hands back a
+ * `PublicCoursePage`, which is the stored document minus the staff-facing
+ * provenance pair. `themesSourceLabel` can be a run's free-text label, the
+ * exact string V3 stopped showing visitors, so the assertion is on the KEY
+ * being absent rather than on its value: a renderer cannot print a key that is
+ * not there, and a future `{...page}` spread cannot leak one either.
+ *
  * §4 ONE COHORT FORMATTER, ALWAYS SHOWING THE NUMBER. `cohortLabel` is the
  * only function that turns the stored triple into words, and the decision that
  * the cohort number always shows is deliberate: the function sees one run and
@@ -51,8 +58,19 @@ const SRC = join(REPO_ROOT, "src");
 
 const SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"']+)\2/g;
 
-/** See `course-nudge.test.mjs`; nothing here is reachable from an assertion. */
-const STUBS = new Map([["server-only", "export {};"]]);
+/**
+ * See `course-nudge.test.mjs`; nothing here is reachable from an assertion,
+ * EXCEPT the admin stub, which §2c drives on purpose. `getAdminDb` reads a
+ * global rather than closing over a fixture so one test can hand the fetcher a
+ * stored row and the next can hand it nothing.
+ */
+const STUBS = new Map([
+  ["server-only", "export {};"],
+  [
+    "@/lib/firebase/admin",
+    "export function getAdminDb() { return globalThis.__TEST_ADMIN_DB__ ?? null; }",
+  ],
+]);
 
 function resolveLocalTs(specifier, fromFile) {
   const base = specifier.startsWith("@/")
@@ -147,7 +165,10 @@ const {
   sanitizeFaq,
   sanitizeJourney,
   sanitizeWeeklyThemes,
+  toPublicCoursePage,
 } = await loadTs("lib/firestore/coursePages.ts");
+
+const { fetchCoursePage } = await loadTs("features/courses/fetchCoursePage.ts");
 
 const {
   COHORT_LIMITS,
@@ -356,6 +377,74 @@ test("§2 GUARD the sample week must name a week that could exist", () => {
     );
   }
   assert.equal(normalizeCoursePage("c", { sampleWeekNumber: 3 }).sampleWeekNumber, 3);
+});
+
+// ---------------------------------------------------------------------------
+// §2c The fetcher returns less than it reads
+// ---------------------------------------------------------------------------
+
+/** The stored row, provenance pair and all, as the fetcher would find it. */
+const STORED_PAGE = {
+  headline: "Learn how AI could go wrong",
+  pitchBlocks: [],
+  whoItIsFor: "Any student.",
+  weeklyThemes: [{ weekNumber: 1, title: "Week 1", blurb: "An intro." }],
+  themesSourceTemplateId: "asf-autumn-2026__ab12cd34",
+  themesSourceLabel: "Autumn 2026 (pilot, do not publish)",
+};
+
+function withAdminDb(stored) {
+  globalThis.__TEST_ADMIN_DB__ = {
+    collection: () => ({
+      doc: () => ({
+        get: async () => ({ exists: stored !== null, data: () => stored ?? {} }),
+      }),
+    }),
+  };
+}
+
+test("§2c GUARD fetchCoursePage returns NO themesSourceLabel key at all", async () => {
+  // The key, not the value. A renderer cannot print what is not there, and a
+  // `{...page}` spread into a client component cannot carry it over either.
+  // The stored label here is the failure this prevents: a run label an author
+  // wrote for themselves, on a page for strangers.
+  withAdminDb(STORED_PAGE);
+  const page = await fetchCoursePage("course1");
+
+  assert.equal("themesSourceLabel" in page, false);
+  assert.equal("themesSourceTemplateId" in page, false);
+  assert.equal(
+    JSON.stringify(page).includes("do not publish"),
+    false,
+    "the staff-facing run label reached the public object",
+  );
+
+  // The copy still arrives. A stripper that ate the page would be noticed;
+  // one that ate a field would not.
+  assert.equal(page.headline, "Learn how AI could go wrong");
+  assert.deepEqual(page.weeklyThemes.map((t) => t.weekNumber), [1]);
+});
+
+test("§2c GUARD the empty page and the no-database page are stripped too", async () => {
+  // Three exits, one shape. The `!snap.exists` and `!db` branches build their
+  // page from `emptyCoursePage`, which is a full CoursePageDoc, so a stripper
+  // applied on only the found-document path would leak on the other two.
+  withAdminDb(null);
+  const missing = await fetchCoursePage("course1");
+  assert.equal("themesSourceLabel" in missing, false);
+  assert.equal(coursePageHasContent(missing), false);
+
+  globalThis.__TEST_ADMIN_DB__ = null;
+  const unconfigured = await fetchCoursePage("course1");
+  assert.equal("themesSourceLabel" in unconfigured, false);
+  assert.equal("themesSourceTemplateId" in unconfigured, false);
+});
+
+test("§2c MODEL toPublicCoursePage keeps everything else", () => {
+  const full = normalizeCoursePage("c", STORED_PAGE);
+  const publicPage = toPublicCoursePage(full);
+  const dropped = Object.keys(full).filter((key) => !(key in publicPage));
+  assert.deepEqual(dropped.sort(), ["themesSourceLabel", "themesSourceTemplateId"]);
 });
 
 // ---------------------------------------------------------------------------

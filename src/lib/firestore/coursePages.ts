@@ -154,6 +154,41 @@ export type CoursePageDoc = {
   updatedByUid?: string | null;
 };
 
+/**
+ * The page as a STRANGER may see it: the stored document minus the provenance
+ * pair.
+ *
+ * Both dropped keys are staff-facing. `themesSourceLabel` can be a run's free
+ * text label, which is the exact string V3 stopped showing visitors and which
+ * an author may well have written for themselves ("Autumn 2026 (pilot, do not
+ * publish)"); `themesSourceTemplateId` names an internal snapshot. Neither is
+ * copy, so neither travels to a public renderer.
+ *
+ * This is a TYPE, not a convention: `fetchCoursePage` returns it, so a public
+ * component cannot render `page.themesSourceLabel` without the compiler saying
+ * no first.
+ */
+export type PublicCoursePage = Omit<
+  CoursePageDoc,
+  "themesSourceTemplateId" | "themesSourceLabel"
+>;
+
+/**
+ * Strip the provenance pair. Written as a destructure so a field ADDED to
+ * `CoursePageDoc` later is carried through by default: a new key is far more
+ * likely to be copy than to be a staff-only field, and the failure mode of the
+ * opposite default (an allowlist) is a public page silently missing content an
+ * author wrote.
+ */
+export function toPublicCoursePage(page: CoursePageDoc): PublicCoursePage {
+  const {
+    themesSourceTemplateId: _templateId,
+    themesSourceLabel: _label,
+    ...publicFields
+  } = page;
+  return publicFields;
+}
+
 // ---------------------------------------------------------------------------
 // HTML neutering for the one dangerouslySetInnerHTML surface
 // ---------------------------------------------------------------------------
@@ -498,8 +533,11 @@ export function emptyCoursePage(id: string): CoursePageDoc {
 /**
  * Does this page have enough on it to be worth rendering? The public page
  * falls back to the course's own `summaryBlocks` when it does not.
+ *
+ * Typed on `PublicCoursePage` so the public renderer, which only ever holds
+ * that narrower object, can ask. A full `CoursePageDoc` satisfies it too.
  */
-export function coursePageHasContent(page: CoursePageDoc): boolean {
+export function coursePageHasContent(page: PublicCoursePage): boolean {
   return (
     page.headline.trim().length > 0
     || page.pitchBlocks.length > 0
