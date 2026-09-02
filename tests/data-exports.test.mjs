@@ -16,11 +16,13 @@
  *    id into a failed write and, through the rule above, a refused export.
  *  - **An unrecognised `kind` is kept verbatim.** A rolled-back deploy reading
  *    rows a newer build wrote must not re-label them as a different export.
- *  - **RETENTION POSTURE.** Neither cascade touches this collection, and the
- *    two tests at the bottom pin that against the cascade SOURCES. They are
+ *  - **RETENTION POSTURE.** Neither cascade DELETES from this collection, and
+ *    the tests at the bottom pin that against the cascade SOURCES. They are
  *    the executable half of the module comment: a future PR that adds a
  *    `dataExports` drain to account deletion or to DESTROY goes red and has
- *    to argue the case rather than land quietly.
+ *    to argue the case rather than land quietly. Counting is a different
+ *    thing and is required, not forbidden: the run destroy manifest reports
+ *    `dataExportRows` as retained, and a test below pins that too.
  *
  * ## The loader dance
  *
@@ -350,7 +352,7 @@ describe("normalizeDataExport", () => {
 });
 
 // ---------------------------------------------------------------------------
-// §4 Retention posture: NEITHER cascade touches this collection
+// §4 Retention posture: NEITHER cascade deletes from this collection
 // ---------------------------------------------------------------------------
 
 /**
@@ -363,26 +365,64 @@ const CASCADE_SOURCES = [
   ["src/lib/firestore/courseDeletion.ts", "the run and course DESTROY cascade"],
 ];
 
+/**
+ * A delete addressed at this collection. NARROWED from the original "does not
+ * mention dataExports at all": the run cascade now COUNTS these rows for the
+ * destroy manifest (`dataExportRows`, fate retained), so a mention is not only
+ * allowed, it is required by the house rule that every collection a PR adds is
+ * named in the manifest. What must never appear is a delete or a drain.
+ */
+const DELETE_NEAR_EXPORTS =
+  /collection\(\s*(?:DATA_EXPORTS_COLLECTION|"dataExports")\s*\)[\s\S]{0,400}?\.(?:delete|bulkDelete|recursiveDelete)\(/;
+
+/** A cascade stage or drain function named after this collection. */
+const EXPORT_DRAIN = /(?:drain|delete|purge|sweep)[A-Za-z]*DataExports?\b/;
+
+const RETENTION_ARGUMENT =
+  "Export rows are RETAINED by both cascades on purpose: a row names the " +
+  "ACTOR of a staff action and holds no member content (a kind, an actor, a " +
+  "scope of ids, a row count, a filename and a time), so erasing it because " +
+  "that actor deleted their account, or because the run they exported was " +
+  "destroyed, would delete the only evidence the export happened while " +
+  "protecting nobody. `emailSends` and `impersonations` are the precedents, " +
+  "each evidence about something that already left the platform. " +
+  "`courseAudit` is NOT: the run cascade destroys it, because an audit row " +
+  "about a register describes a row that same pass is deleting. If this is " +
+  "being changed on purpose, change the module comment in " +
+  "src/lib/firestore/dataExports.ts and the Retention section of the current " +
+  "privacy policy in the same commit.";
+
 describe("retention", () => {
   for (const [path, what] of CASCADE_SOURCES) {
-    test(`${what} does not sweep dataExports`, () => {
+    test(`${what} never deletes or drains dataExports`, () => {
       const source = readFileSync(join(REPO_ROOT, path), "utf8");
       assert.ok(
-        !source.includes("dataExports") && !source.includes("DATA_EXPORTS_COLLECTION"),
-        `${path} references dataExports. Export rows are RETAINED by both ` +
-          "cascades on purpose: a row names the ACTOR of a staff action and " +
-          "holds no member content (a kind, an actor, a scope of ids, a row " +
-          "count, a filename and a time), so erasing it because that actor " +
-          "deleted their account, or because the run they exported was " +
-          "destroyed, would delete the only evidence the export happened " +
-          "while protecting nobody. `impersonations`, `courseDeletions` and " +
-          "`courseAudit` are retained on the same reasoning. If this is being " +
-          "changed on purpose, change the module comment in " +
-          "src/lib/firestore/dataExports.ts and the Retention section of the " +
-          "current privacy policy in the same commit.",
+        !DELETE_NEAR_EXPORTS.test(source),
+        `${path} deletes from dataExports. ${RETENTION_ARGUMENT}`,
+      );
+      assert.ok(
+        !EXPORT_DRAIN.test(source),
+        `${path} has a drain stage for dataExports. ${RETENTION_ARGUMENT}`,
       );
     });
   }
+
+  test("the destroy manifest counts the rows it is keeping", () => {
+    // The other half of the narrowing. A collection absent from the manifest
+    // is one the confirmation dialog says nothing about, which leaves an
+    // admin to guess whether the log goes with the run.
+    const engine = readFileSync(
+      join(REPO_ROOT, "src/lib/firestore/courseDeletion.ts"),
+      "utf8",
+    );
+    assert.match(engine, /dataExportRows:\s*number;/);
+    assert.match(engine, /DATA_EXPORTS_COLLECTION/);
+    const meta = readFileSync(
+      join(REPO_ROOT, "src/features/courses/useDestroy.ts"),
+      "utf8",
+    );
+    assert.match(meta, /dataExportRows:\s*\{[\s\S]{0,200}?fate:\s*"retained"/);
+  });
 
   test("the module comment still states the retained posture", () => {
     // The comment is the sentence a reader meets first; the tests above are

@@ -16,23 +16,30 @@
  * the site are recorded" for exactly that reason. Do not let a later PR
  * upgrade that sentence to "every export is logged".
  *
- * APPEND-ONLY, AND SHUT TO EVERY CLIENT INCLUDING ADMINS. The `courseAudit`
- * and `courseDeletions` posture verbatim: an audit its own actor can amend is
- * not an audit, and the actor here is usually an admin. Rules are
- * `allow read, write: if false` in an EXPLICIT match block, so a later
- * wildcard cannot open the collection by accident; the admin Exports tab
- * reads it through GET /api/admin/deliverability/exports on the Admin SDK,
- * the same shape the deliverability send log already uses.
+ * APPEND-ONLY, AND SHUT TO EVERY CLIENT INCLUDING ADMINS. On the WRITE axis
+ * that is the `courseAudit` and `courseDeletions` posture verbatim,
+ * `allow write: if false`: an audit its own actor can amend is not an audit,
+ * and the actor here is usually an admin. On the READ axis this collection
+ * goes FURTHER than either of them. Both are `allow read: if isAdmin()`;
+ * this one is `allow read: if false`, so no client reaches a row at all. The
+ * whole thing sits in an EXPLICIT match block, so a later wildcard cannot
+ * open the collection by accident, and the admin Exports tab reads it
+ * through GET /api/admin/deliverability/exports on the Admin SDK, the same
+ * shape the deliverability send log already uses.
  *
  * RETAINED BY BOTH CASCADES, ON PURPOSE. Neither `deleteAccountCascade` nor
- * the run/course DESTROY cascade touches this collection, and that is a
+ * the run/course DESTROY cascade deletes anything here, and that is a
  * decision rather than an oversight:
  *
  *  - a row names the ACTOR of a staff action. Erasing the record of who
  *    exported a cohort's roster because that committee member later deleted
  *    their own account would destroy the only evidence the export ever
- *    happened. `impersonations`, `courseDeletions` and `courseAudit` are
- *    retained on the same reasoning;
+ *    happened. `emailSends` and `impersonations` are the precedents: each is
+ *    evidence about something that has already left the platform, so it
+ *    outlives the rows it names. `courseAudit` is NOT a precedent for this,
+ *    whatever an earlier draft of this comment said: the run cascade
+ *    destroys it, because an audit row about a register is evidence about a
+ *    row the same pass is deleting;
  *  - a row holds NO member content: a kind, an actor, a scope of ids, a row
  *    count, a filename and a time. Nobody's answers, marks or notes are here,
  *    so retaining it does not retain anything about the people who were in
@@ -40,8 +47,14 @@
  *  - destroying a run destroys the things an export described, but not the
  *    fact that somebody took a copy of them first. That fact is the point.
  *
- * tests/data-exports.test.mjs pins both halves of that posture against the
- * two cascade sources, so a future PR that quietly adds a drain goes red.
+ * COUNTED, THOUGH. The run destroy manifest carries a `dataExportRows`
+ * counter beside `emailSendRows`, with the same `retained` fate, so an admin
+ * reading the confirmation dialog is told how much of this log names the run
+ * they are about to destroy AND that it survives. A collection missing from
+ * the manifest is one an admin has to guess about.
+ *
+ * tests/data-exports.test.mjs pins that against the two cascade sources: they
+ * may COUNT these rows, never delete or drain them.
  */
 
 import { FieldValue, type Firestore } from "firebase-admin/firestore";
