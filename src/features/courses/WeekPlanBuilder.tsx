@@ -120,6 +120,32 @@ function nextWeekId(plan: WeekPlanEntry[]): string {
   return weekDocId(COURSE_FIELD_LIMITS.maxWeekPlanEntries);
 }
 
+/**
+ * The dry run's result, in two sentences rather than one list.
+ *
+ * A move with `hasDoc: false` re-addresses a slot the admin has not written
+ * yet, so the batch copies nothing for it. Announcing it as "Will move w05 to
+ * w01" describes a write that never happens and pads the list past the moves
+ * that do.
+ */
+function PreviewLine({ moves }: { moves: WeekIdMove[] }) {
+  const real = moves.filter((m) => m.hasDoc);
+  const planOnly = moves.length - real.length;
+  if (moves.length === 0) {
+    return <p className={styles.hint}>Nothing to move. The plan is already lined up.</p>;
+  }
+  return (
+    <p className={styles.hint}>
+      {real.length > 0
+        ? `Will move ${real.map((m) => `${m.from} to ${m.to}`).join(", ")}.`
+        : "No week has content to move."}
+      {planOnly > 0
+        ? ` ${planOnly === 1 ? "1 slot is" : `${planOnly} slots are`} re-addressed with no document to move.`
+        : ""}
+    </p>
+  );
+}
+
 export default function WeekPlanBuilder({
   runId,
   startDate,
@@ -132,8 +158,15 @@ export default function WeekPlanBuilder({
   const [plan, setPlan] = useState<WeekPlanEntry[]>(weekPlan);
   const [syncedPlan, setSyncedPlan] = useState<WeekPlanEntry[]>(weekPlan);
   const [planError, setPlanError] = useState<string | null>(null);
-  const { role } = useAuth();
+  const { role, permissions } = useAuth();
   const isAdmin = role === "admin";
+  // The normalise route is gated to admins and `approveCourse` holders, and the
+  // drift panel opens for anyone who can open the run editor at all. Without
+  // this the run's drafter-owner and its track leads got a bare "Forbidden"
+  // from a button the page had just offered them. The explanation stays
+  // visible for everyone: knowing the two ids disagree is useful even to
+  // someone who cannot be the one to reconcile them.
+  const canNormalise = isAdmin || permissions.approveCourse === true;
 
   // Reseed whenever the saved plan changes identity (first load, or a reload
   // after any save). Adjusted during render rather than in an effect, per the
@@ -343,15 +376,17 @@ export default function WeekPlanBuilder({
           <p className={styles.hint}>Every slot in this plan has now elapsed.</p>
         )}
 
-        {locked && (
+        {/* Nothing at all until the status is known. The controls are already
+            locked while it resolves (see the fallback above), and announcing
+            "checking whether this run is still a draft" on every open of a
+            draft is a notice about the component's plumbing, not about the
+            run. A parent that passes `status` never renders this at all. */}
+        {locked && status && (
           <p className={styles.warn}>
-            {status
-              ? `This run is ${COURSE_RUN_STATUS_LABEL[status].toLowerCase()}, so its weeks can no longer be reordered or removed.`
-              : "Checking whether this run is still a draft…"}{" "}
-            {status &&
-              (isAdmin
-                ? "You can still add a slot at the end, which shifts every date after it."
-                : "An admin can still add a slot at the end.")}
+            {`This run is ${COURSE_RUN_STATUS_LABEL[status].toLowerCase()}, so its weeks can no longer be reordered or removed.`}{" "}
+            {isAdmin
+              ? "You can still add a slot at the end, which shifts every date after it."
+              : "An admin can still add a slot at the end."}
           </p>
         )}
         {locked && status && isAdmin && (
@@ -385,34 +420,37 @@ export default function WeekPlanBuilder({
               </li>
             ))}
           </ul>
-          {preview && (
+          {/* A slot with no authored document has nothing to move: listing
+              "Will move w05 to w01" for it describes a write that never
+              happens, and buries the ones that do. The two are counted apart. */}
+          {preview && <PreviewLine moves={preview} />}
+          {canNormalise ? (
+            <div className={styles.driftActions}>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => void normalise(false)}
+                disabled={disabled || normalising}
+              >
+                {preview ? "Re-check moves" : "Preview the moves"}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void normalise(true)}
+                disabled={disabled || normalising || !preview || preview.length === 0}
+              >
+                Normalise week ids
+              </Button>
+            </div>
+          ) : (
             <p className={styles.hint}>
-              {preview.length === 0
-                ? "Nothing to move. The plan is already lined up."
-                : `Will move ${preview
-                    .map((m) => `${m.from} to ${m.to}`)
-                    .join(", ")}.`}
+              Lining the two ids up is an admin or course-approver job, and it
+              can only be done while this run is a draft. Ask one of them before
+              the run opens for applications, after which it is fixed for good.
             </p>
           )}
-          <div className={styles.driftActions}>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => void normalise(false)}
-              disabled={disabled || normalising}
-            >
-              {preview ? "Re-check moves" : "Preview the moves"}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => void normalise(true)}
-              disabled={disabled || normalising || !preview || preview.length === 0}
-            >
-              Normalise week ids
-            </Button>
-          </div>
         </div>
       )}
 

@@ -890,10 +890,14 @@ export default function RunEditor({ courseId, runId }: Props) {
       {/* ---- Week plan ---- */}
       <Card padding="lg">
         <h3 className={styles.sectionTitle}>Week plan</h3>
+        {/* `status` is threaded through rather than left to the builder's own
+            getDoc fallback: without it every open of a DRAFT run rendered the
+            locked state until a round trip came back and said otherwise. */}
         <WeekPlanBuilder
           runId={runId}
           startDate={run.startDate}
           weekPlan={run.weekPlan}
+          status={run.status}
           runAction={runAction}
           onSaved={reload}
         />
