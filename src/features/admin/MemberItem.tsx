@@ -536,6 +536,25 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
               </div>
 
               <div className={styles.controlBlock}>
+                <span className={styles.controlLabel}>
+                  Course permissions
+                  {isAdminRole && (
+                    <span className={styles.hint}> (admins always have both)</span>
+                  )}
+                </span>
+                <SegmentedControl
+                  ariaLabel="Course permissions"
+                  value={permissionTier(user.permissions, "draftCourse", "approveCourse")}
+                  onChange={(next) =>
+                    onChangePermissionTier("draftCourse", "approveCourse", next)
+                  }
+                  options={PERMISSION_OPTIONS}
+                  size="sm"
+                  disabled={busy || isAdminRole}
+                />
+              </div>
+
+              <div className={styles.controlBlock}>
                 <span className={styles.controlLabel}>Email subscriptions</span>
                 <Link
                   href={`/admin/subscriptions?audienceId=${encodeURIComponent(user.uid)}`}

@@ -167,6 +167,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           approveNewsletter: Boolean(raw.approveNewsletter),
           draftEvent: Boolean(raw.draftEvent),
           approveEvent: Boolean(raw.approveEvent),
+          draftCourse: Boolean(raw.draftCourse),
+          approveCourse: Boolean(raw.approveCourse),
         });
         setSuRecognised(Boolean(data?.suRecognised));
       },
