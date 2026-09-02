@@ -72,12 +72,18 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Cloud Run's request timeout for this backend is 60s (apphosting.yaml,
- * `runConfig.timeoutSeconds`). 45 leaves 15s of headroom: the job budget below
- * has to stop with enough time left to finish the receipt write and, when a
- * re-arm is due, to hand off to the child request. A `maxDuration` at or above
- * the platform timeout would be a lie: the container is killed first, and a
- * killed tick leaves a receipt that says "running" forever.
+ * The ceiling this tick INTENDS to run to. Documentation, not enforcement.
+ *
+ * What actually stops the request is `apphosting.yaml`'s
+ * `runConfig.timeoutSeconds: 60`: Cloud Run kills the container at 60s
+ * whatever this export says, and a killed tick leaves a receipt stuck at
+ * "running". So this number is here to state the intent (45s, i.e. 15s of
+ * headroom under the platform timeout) and to keep any future host that DOES
+ * read it from picking something higher than the platform allows.
+ *
+ * What keeps a real tick inside that ceiling is `JOB_BUDGET_MS` below. The
+ * job list is cut off at 28s, and the remainder is wind-down: the receipt
+ * write, and the re-arm handoff when there is more to do.
  */
 export const maxDuration = 45;
 
@@ -103,6 +109,19 @@ const JOB_BUDGET_MS = 28_000;
  * delivery, which is safe by construction, because every job derives its due
  * state at tick time and every send is marker-guarded. A dropped re-arm costs
  * latency, never correctness.
+ *
+ * OVERLAPPING TICKS ARE EXPECTED, and this is where they come from. The
+ * parent hands off and stops answering, but the child carries on working, so
+ * a chain that starts near the end of a 15-minute bucket is still running
+ * when the external scheduler delivers the next one. Nothing prevents that
+ * and nothing should: the alternative is a lock, and a lock that outlives a
+ * crashed container is how a scheduler goes quiet for a day.
+ *
+ * THE RULE THAT FALLS OUT OF IT, for anyone writing a job handler: EVERY
+ * HANDLER MUST BE SAFE TO RUN CONCURRENTLY WITH ITSELF. Claim before you
+ * send, one marker per unit of work, and let the `.create()` decide who owns
+ * it. A handler that instead reads a list, does the work and writes a "done"
+ * flag at the end will double-send the day two ticks overlap.
  */
 const REARM_HANDOFF_MS = 8_000;
 
