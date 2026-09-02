@@ -51,11 +51,20 @@ const SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"']+)\2/g;
 
 /**
  * Specifiers replaced with a no-op module. NOTHING BELOW IS REACHABLE FROM AN
- * ASSERTION IN THIS FILE: only the send path touches the email components and
- * the transport, and calling it would put real mail on the wire, which is the
- * one thing a unit test of this feature must never do.
+ * ASSERTION IN THIS FILE: only the send path touches the email components, the
+ * transport and the Admin SDK, and calling it would put real mail on the wire,
+ * which is the one thing a unit test of this feature must never do. The stubs
+ * are what let the send helper's own token contract be IMPORTED and compared
+ * with the seed copy, rather than pattern-matched out of its source.
  */
-const STUBS = new Map([["server-only", "export {};"]]);
+const STUBS = new Map([
+  ["server-only", "export {};"],
+  ["@/emails/AdmissionsSubmittedEmail", "export default function Stub() { return null; }"],
+  ["@/emails/AdmissionsReinstatedEmail", "export default function Stub() { return null; }"],
+  ["@/lib/firebase/admin", "export function getAdminDb() { return null; }"],
+  ["@/lib/firestore/suppression", "export async function isSuppressed() { return false; }"],
+  ["./send", "export async function sendEmail() {}"],
+]);
 
 function resolveLocalTs(specifier, fromFile) {
   const base = specifier.startsWith("@/")
@@ -138,6 +147,8 @@ async function loadTs(relativePath) {
 const hub = await loadTs("lib/admissions/statusHub.ts");
 const emails = await loadTs("lib/firestore/courseEmails.ts");
 const samples = await loadTs("features/admin/emailDesigns/courseEmailSamples.ts");
+const blurbs = await loadTs("features/admissions/applicationStatus.ts");
+const sendHelper = await loadTs("lib/email/admissionEmails.ts");
 
 function source(relativePath) {
   return readFileSync(join(REPO_ROOT, ...relativePath.split("/")), "utf8");
@@ -431,6 +442,25 @@ describe("the status row projection", () => {
     );
   });
 
+  test("a stored field nobody serialised never reaches the applicant", () => {
+    // `serialiseStage` lists its fields rather than spreading the document, so
+    // a field written by an older build, a migration or a staff tool that got
+    // ahead of the normaliser cannot ride out to whoever asked.
+    const sentinel = "SENTINEL-internal-marker-scribble";
+    const row = hub.buildStatusRow(
+      makeApplication(),
+      makeRound(),
+      [makeStage("s1", 0, { internalNote: sentinel, reviewerUids: ["reviewer-1"] })],
+      NOW,
+    );
+    assert.ok(
+      !wire(row).includes(sentinel),
+      "an unlisted stage field reached the applicant through the status hub",
+    );
+    assert.equal("internalNote" in row.stages[0], false);
+    assert.equal("reviewerUids" in row.stages[0], false);
+  });
+
   test("a released stage does carry its questions, so answers can be labelled", () => {
     const row = hub.buildStatusRow(
       makeApplication(),
@@ -533,6 +563,39 @@ describe("what the applicant is told to do next", () => {
     assert.equal(sent.href, "/apply/autumn-2026-intake__k3f9a2b1");
   });
 
+  test("a draft the deadline overtook is not offered a form to carry on with", () => {
+    // The blurb above the link says it was never sent. "Carry on writing it"
+    // underneath would be the same card contradicting itself, and the form it
+    // pointed at renders read-only anyway.
+    const row = hub.buildStatusRow(
+      makeApplication({ status: "draft" }),
+      makeRound({ status: "closed" }),
+      [makeStage("s1", 0)],
+      NOW,
+    );
+    assert.equal(row.round.windowState, "closed");
+    assert.notEqual(row.hrefKind, "resume");
+    assert.equal(row.hrefKind, "view");
+    // The link stays: `/apply/[roundId]` reads a closed round's draft back in
+    // full ("This one was never sent", every answer still there).
+    assert.equal(row.href, "/apply/autumn-2026-intake__k3f9a2b1");
+  });
+
+  test("a draft on an archived round is neither resumable nor linked", () => {
+    const row = hub.buildStatusRow(
+      makeApplication({ status: "draft" }),
+      makeRound({ archived: true }),
+      [makeStage("s1", 0)],
+      NOW,
+    );
+    assert.equal(row.round.windowState, "inactive");
+    assert.notEqual(row.hrefKind, "resume");
+    // `/apply/[roundId]` answers 404 for an archived round, so there is no
+    // link to give: the row says what happened in its own words instead.
+    assert.equal(row.href, null);
+    assert.equal(row.application.stageAnswers.s1.q1, "Because I want to work on this.");
+  });
+
   test("an archived round's row still renders, with no dead link on it", () => {
     const row = hub.buildStatusRow(
       makeApplication(),
@@ -602,6 +665,59 @@ describe("ordering", () => {
   });
 });
 
+describe("the sentence under the chip", () => {
+  const draft = (windowState) => blurbs.applicationStatusBlurb("draft", windowState);
+
+  test("an open window invites the applicant to finish it", () => {
+    assert.match(draft("open"), /Saved but not sent/);
+    assert.match(draft("not-yet"), /Saved but not sent/);
+  });
+
+  test("a closed window says plainly that it was never sent", () => {
+    assert.match(draft("closed"), /never sent to us/);
+    assert.ok(!/until you submit it/.test(draft("closed")));
+  });
+
+  test("an inactive round gets its own sentence, not the open one", () => {
+    // A draft or archived round resolves to `inactive`, not `closed`. Before
+    // this arm existed it fell through to "it stays exactly as you left it
+    // until you submit it", on a row whose form answers 404 and which the hub
+    // does not even link to.
+    const inactive = draft("inactive");
+    assert.match(inactive, /no longer taking applications/);
+    assert.ok(!/until you submit it/.test(inactive));
+    assert.notEqual(inactive, draft("open"));
+  });
+
+  test("the window changes nothing for a status that is not a draft", () => {
+    for (const status of ["submitted", "accepted", "rejected", "withdrawn", "waitlisted"]) {
+      const seen = new Set(
+        ["open", "not-yet", "closed", "inactive"].map((state) =>
+          blurbs.applicationStatusBlurb(status, state),
+        ),
+      );
+      assert.equal(seen.size, 1, `${status} says different things in different windows`);
+    }
+  });
+
+  test("every status has a sentence", () => {
+    for (const status of [
+      "draft",
+      "submitted",
+      "accepted",
+      "fellowship-offered",
+      "waitlisted",
+      "rejected",
+      "withdrawn",
+    ]) {
+      assert.ok(
+        blurbs.applicationStatusBlurb(status, "closed").length > 0,
+        `${status} has no sentence`,
+      );
+    }
+  });
+});
+
 describe("answerText", () => {
   test("every stored answer shape becomes a sentence, never [object Object]", () => {
     assert.equal(hub.answerText(undefined), "");
@@ -629,6 +745,27 @@ describe("the hub reads nothing it does not log", () => {
           "nothing.",
       );
     }
+  });
+
+  test("neither the loader nor the route imports the apply context", () => {
+    // `applyContext.ts` exports `privateRef` and `loadOwnApplication`, both of
+    // which address `admissionApplicationPrivate`, and the privacy scan treats
+    // importing it as being able to reach that collection. The collection NAME
+    // lives on the firestore leaf module for exactly this reason: a string
+    // constant is not a reason to give up the guarantee.
+    for (const file of [LOADER, ME_ROUTE]) {
+      const src = source(file);
+      assert.ok(
+        !/applyContext/.test(src),
+        `${file} imports the apply context, which can address the ` +
+          "access-requirements collection on a caller's behalf",
+      );
+    }
+    assert.match(
+      source(LOADER),
+      /APPLICATIONS_COLLECTION,?\n?[^}]*\}\s*from\s*"@\/lib\/firestore\/admissionApplications"/,
+      "the loader no longer takes the collection name from the firestore leaf",
+    );
   });
 
   test("the route addresses the caller's own rows and nobody else's", () => {
@@ -703,10 +840,19 @@ describe("the lifecycle sends happen after the commit", () => {
     assert.match(body, /try \{/);
     assert.match(body, /catch \(err\) \{[\s\S]*console\.error/);
     // A round is not a run: the three course tokens are dropped rather than
-    // resolved to a blank.
-    assert.match(src, /delete tokens\.courseTitle/);
-    assert.match(src, /delete tokens\.runLabel/);
-    assert.match(src, /delete tokens\.startDate/);
+    // resolved to a blank. The filter is by kind, so this is asserted against
+    // the map itself rather than against three delete statements.
+    for (const kind of ["submitted", "reinstated"]) {
+      const supplied = sendHelper.TOKENS_BY_KIND[kind];
+      for (const courseToken of ["courseTitle", "runLabel", "startDate"]) {
+        assert.equal(
+          supplied.includes(courseToken),
+          false,
+          `the ${kind} send resolves {${courseToken}}, and a round is not a run`,
+        );
+      }
+    }
+    assert.match(src, /const allowed = new Set<string>\(TOKENS_BY_KIND\[opts\.kind\]\)/);
   });
 });
 
@@ -729,31 +875,32 @@ describe("the admissions email templates", () => {
     }
   });
 
-  test("every token the seed copy uses is one the send path resolves", () => {
-    // What `sendAdmissionEmail` puts in the token map, read off its own source
-    // so this cannot drift into a list of what it used to pass.
-    const helper = source(SEND_HELPER);
-    const resolved = new Set(["firstName", "preferredName"]);
-    for (const name of [
-      "applicationUrl",
-      "roundLabel",
-      "stageLabel",
-      "deadline",
-      "decisionsBy",
-    ]) {
-      if (helper.includes(`${name}: opts.`)) resolved.add(name);
-    }
-    for (const id of ADMISSIONS_IDS) {
+  test("every token the seed copy uses is one THIS TRIGGER supplies", () => {
+    // Per kind, not per helper. The helper ACCEPTS a `decisionsBy` and a
+    // `stageLabel`; the reinstate call site passes neither, so a check against
+    // what the helper can take would bless `{decisionsBy}` in the reinstated
+    // copy and ship those thirteen characters to an applicant. `TOKENS_BY_KIND`
+    // is the contract each trigger keeps, and the send path filters on it.
+    for (const kind of ["submitted", "reinstated"]) {
+      const id = sendHelper.TEMPLATE_FOR_KIND[kind];
+      const supplied = new Set(sendHelper.TOKENS_BY_KIND[kind]);
       const seed = emails.courseTemplateDefaults[id];
       const text = seed.subject + JSON.stringify(seed.blocks);
       for (const [, token] of text.matchAll(/\{([a-zA-Z]+)\}/g)) {
         assert.ok(
-          resolved.has(token),
-          `${id}'s seed copy uses {${token}}, which the send path never resolves, ` +
-            "so it would arrive as literal text in somebody's inbox",
+          supplied.has(token),
+          `${id}'s seed copy uses {${token}}, which the ${kind} trigger never ` +
+            "supplies, so it would arrive as literal text in somebody's inbox",
         );
       }
     }
+  });
+
+  test("the two admissions template ids are the two the send path knows", () => {
+    assert.deepEqual(
+      Object.values(sendHelper.TEMPLATE_FOR_KIND).sort(),
+      [...ADMISSIONS_IDS].sort(),
+    );
   });
 
   test("the seed copy does not put a url in a sentence", () => {
@@ -771,7 +918,8 @@ describe("the admissions email templates", () => {
   });
 
   test("the designer's sample resolves exactly what a real send resolves", () => {
-    for (const id of ADMISSIONS_IDS) {
+    for (const kind of ["submitted", "reinstated"]) {
+      const id = sendHelper.TEMPLATE_FOR_KIND[kind];
       assert.equal(samples.courseTemplateUsesAdmissionsTokens(id), true);
       const tokens = samples.courseSampleTokens(id, "Alex Taylor");
       // A round is not a run: previewing a course token as resolved would show
@@ -779,17 +927,33 @@ describe("the admissions email templates", () => {
       for (const absent of ["courseTitle", "runLabel", "startDate", "cohortLabel"]) {
         assert.equal(absent in tokens, false, `the preview resolves {${absent}}`);
       }
-      for (const present of [
-        "firstName",
-        "roundLabel",
-        "deadline",
-        "decisionsBy",
-        "stageLabel",
-        "applicationUrl",
-      ]) {
-        assert.ok(tokens[present], `the preview does not resolve {${present}}`);
+      // EXACTLY, both ways: every token this trigger supplies is previewed,
+      // and nothing else is. A preview that filled in a token the trigger does
+      // not pass is how an admin writes a sentence around it.
+      assert.deepEqual(
+        Object.keys(tokens).sort(),
+        [...sendHelper.TOKENS_BY_KIND[kind]].sort(),
+        `the ${id} preview and the ${kind} send resolve different tokens`,
+      );
+      for (const token of Object.keys(tokens)) {
+        assert.ok(tokens[token], `the preview leaves {${token}} empty`);
       }
     }
+  });
+
+  test("the editor's token help is narrowed to the open template's trigger", () => {
+    // The editor lists tokens from `admissionsTokensFor`, and this is the
+    // assertion that the client-side copy of the contract still agrees with
+    // the server-only one it mirrors.
+    for (const kind of ["submitted", "reinstated"]) {
+      const id = sendHelper.TEMPLATE_FOR_KIND[kind];
+      assert.deepEqual(
+        [...samples.admissionsTokensFor(id)].sort(),
+        [...sendHelper.TOKENS_BY_KIND[kind]].sort(),
+        `${id}'s editor help and its send path disagree about the tokens`,
+      );
+    }
+    assert.equal(samples.admissionsTokensFor("course-allocated").size, 0);
   });
 
   test("course templates keep their own token pass", () => {
