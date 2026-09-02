@@ -4,7 +4,7 @@ import { sendCourseApplicationEmail } from "@/lib/email/courseApplicationEmails"
 import { validateAnswers } from "@/lib/events/validateAnswers";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser, type SessionUser } from "@/lib/firebase/session";
-import { COURSE_TZ } from "@/lib/courses/weekPlan";
+import { applicationWindow, formatRunStart } from "@/lib/courses/window";
 import {
   APPLICATION_FIELD_LIMITS,
   buildApplication,
@@ -228,33 +228,29 @@ async function loadRun(db: Db, runId: string): Promise<CourseRunDoc | null> {
 }
 
 /**
- * The application window: the run's status is the switch, `archived` closes
- * it regardless, and the dates are optional bounds on either side. Each bound
- * applies only when set — a null `applicationsCloseAt` means "open until an
- * admin closes it", not "closed".
+ * The application window, translated into the applicant's sentence.
  *
- * An ARCHIVED run refuses applications with the same sentence as a run that
- * was never open, deliberately: archiving is a withdrawal (it takes the run
- * off the catalogue and out of the apply page's lookup), and the destroy
- * cascade sets the same flag before it deletes anything — so this is also
- * what stops an application landing on a run whose rows are being deleted, in
- * the window before its status or its document goes. The copy does not
- * distinguish the two, because an applicant has no business learning which.
+ * The PREDICATE lives in `lib/courses/window.ts` and nowhere else. That is
+ * the whole point: this route used to own the only date check on the site,
+ * while the catalogue, the course page CTA and the apply page all keyed on
+ * `status === "applications-open"` alone. A run left open past its deadline
+ * therefore advertised an open application, rendered the whole form, and
+ * refused the POST after the applicant had written it. Discovery and submit
+ * now read the same three lines of arithmetic and cannot disagree again.
+ *
+ * An `inactive` run (a draft, or an ARCHIVED one) refuses applications with
+ * the same sentence as a run that was never open, deliberately: archiving is
+ * a withdrawal, and the destroy cascade sets that flag before it deletes
+ * anything, so this is also what stops an application landing on a run whose
+ * rows are being deleted. The copy does not distinguish the two, because an
+ * applicant has no business learning which.
  */
 function windowError(run: CourseRunDoc, now: Date): string | null {
-  if (run.archived) {
-    return "This course run isn't accepting applications.";
-  }
-  if (run.status !== "applications-open") {
-    return "This course run isn't accepting applications.";
-  }
-  if (run.applicationsOpenAt && now.getTime() < run.applicationsOpenAt.getTime()) {
-    return "Applications for this run haven't opened yet.";
-  }
-  if (run.applicationsCloseAt && now.getTime() > run.applicationsCloseAt.getTime()) {
-    return "Applications for this run have closed.";
-  }
-  return null;
+  const { state } = applicationWindow(run, now);
+  if (state === "open") return null;
+  if (state === "not-yet") return "Applications for this run haven't opened yet.";
+  if (state === "closed") return "Applications for this run have closed.";
+  return "This course run isn't accepting applications.";
 }
 
 /**
@@ -316,20 +312,6 @@ async function loadApplicant(db: Db, user: SessionUser): Promise<Applicant> {
     displayName: user.displayName?.trim() ?? "",
     paidMembershipAtApply: false,
   };
-}
-
-/** "Monday 6 October" in Europe/London, from the run's civil start date. */
-function formatRunStart(startDate: string): string | undefined {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) return undefined;
-  // Noon UTC: far enough from either edge that no DST shift can move the date.
-  const at = new Date(`${startDate}T12:00:00Z`);
-  if (Number.isNaN(at.getTime())) return undefined;
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: COURSE_TZ,
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  }).format(at);
 }
 
 // ---------------------------------------------------------------------------
