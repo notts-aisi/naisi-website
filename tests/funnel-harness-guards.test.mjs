@@ -26,15 +26,22 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertTarget } from "../scripts/e2e/lib/env.mjs";
 import {
   FIXTURE_COLLECTIONS,
+  FUNNEL_STEPS,
+  MARKER_PATH,
+  STATE_PATH,
+  WITHDRAW_WORD,
   applicationId,
   assertFixtureCollection,
+  cohortChannel,
+  emailDocId,
   enrolmentId,
+  subscriptionId,
 } from "../scripts/seed-fake-applicants.mjs";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -256,10 +263,130 @@ test("assertTarget still refuses production for the funnel's default", () => {
   }
 });
 
-test("the fixture's deterministic ids are construct-only and stable", () => {
-  // Both ids are the ones the ROUTES compute (`admissionApplicationId`,
-  // `courseEnrolmentId`). If the fixture's copies drift, teardown deletes
-  // documents that do not exist and reports a clean manifest over live rows.
+test("the fixture's restated production constants are pinned to literals", () => {
+  // Every one of these is a copy of a rule that lives in src/. The fixture
+  // cannot import them (they are TypeScript, and `emailDocId` is
+  // `server-only`), so it restates them, and a restatement that drifts is
+  // worse than no teardown at all: it deletes ids that do not exist and then
+  // reports a clean manifest over live rows.
+  //
+  // Pinned to LITERALS rather than compared against the source, because a
+  // comparison would drift in lockstep. The literals are what the routes
+  // compute today; changing one here should be a deliberate, reviewable act.
+  //
+  //   applicationId   -> admissionApplicationId
+  //   enrolmentId     -> courseEnrolmentId
+  //   WITHDRAW_WORD   -> src/features/admissions/applyClient.ts
+  //   emailDocId      -> src/lib/firestore/emailDocId.ts
+  //   cohortChannel   -> courseRunChannel, src/lib/firestore/courses.ts
+  //   subscriptionId  -> subscriptionDocId, src/lib/firestore/subscriptions.ts
   assert.equal(applicationId("round__abc", "uid1"), "round__abc__uid1");
   assert.equal(enrolmentId("run__abc", "uid1"), "run__abc__uid1");
+  assert.equal(WITHDRAW_WORD, "WITHDRAW");
+  assert.equal(emailDocId("  E2E-Ab@E2E.Invalid  "), "e2e-ab@e2e.invalid");
+  // The sanitiser's whole job: anything outside the safe set becomes "_".
+  assert.equal(emailDocId("a b!c@x.test"), "a_b_c@x.test");
+  assert.equal(cohortChannel("e2e-funnel-run__abc"), "cohort:e2e-funnel-run__abc");
+  assert.equal(
+    subscriptionId("E2E-Ab@e2e.invalid", "cohort:run__abc"),
+    "sub_e2e-ab@e2e.invalid__cohort:run__abc",
+  );
+});
+
+test("the funnel's scratch files live outside the build output", () => {
+  // The regression this pins: the ledger used to sit in `.next/`, and
+  // `next build` clears that directory, so `--local` wrote the fixture ids and
+  // then had the build delete them before the spec looked. The spec found no
+  // fixture, skipped, and the command exited 0 having opened no browser.
+  for (const [name, path] of [
+    ["STATE_PATH", STATE_PATH],
+    ["MARKER_PATH", MARKER_PATH],
+  ]) {
+    assert.ok(
+      !path.split(/[\\/]/).includes(".next"),
+      `${name} is ${path}, inside the build output. next build clears that ` +
+        "directory, so anything a run needs to survive a build cannot live there.",
+    );
+  }
+});
+
+test("the runner and the spec agree on every step of the funnel", () => {
+  // The completion marker is what turns "node --test exited 0" into "a browser
+  // drove all thirteen steps". It only means that while the names the spec
+  // records are the names the runner checks for.
+  const spec = sourceOf(FUNNEL_FILES[2]);
+  for (const name of FUNNEL_STEPS) {
+    assert.ok(
+      spec.includes(`step(t, ${JSON.stringify(name)}`),
+      `FUNNEL_STEPS names ${JSON.stringify(name)}, which the spec does not run ` +
+        "through step(). The runner would then demand a step nothing can record " +
+        "and every run would fail.",
+    );
+  }
+  const recorded = [...spec.matchAll(/step\(t, "([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(
+    recorded,
+    FUNNEL_STEPS,
+    "the spec's steps and FUNNEL_STEPS have diverged. A step the list does not " +
+      "name is a step the runner would let a run skip silently.",
+  );
+  assert.match(
+    sourceOf(FUNNEL_FILES[1]),
+    /markerShortfall/,
+    "the runner must check the completion marker: without it a skipped spec and " +
+      "a passing one are the same exit code.",
+  );
+});
+
+/**
+ * Routes the funnel drives that could hand mail to Resend, and the promise the
+ * fixture makes about them.
+ *
+ * Seeding suppresses every fixture address before anything runs, which only
+ * means "this run cannot cause mail" while the send path consults the
+ * suppression list. `sendEmail()` in src/lib/email/send.ts does NOT: the
+ * per-feature helpers do, individually. So the check is on the helpers these
+ * routes actually import, and it arms itself for new ones automatically, which
+ * is what matters as PR14's admissionEmails.ts joins the submit route.
+ */
+const FUNNEL_ROUTES = [
+  "src/app/api/admissions/rounds/[roundId]/apply/route.ts",
+  "src/app/api/admissions/rounds/[roundId]/apply/stage/[stageId]/route.ts",
+  "src/app/api/admissions/rounds/[roundId]/apply/submit/route.ts",
+  "src/app/api/courses/runs/[runId]/enrol/route.ts",
+];
+
+test("every email helper the funnel's routes import consults the suppression list", () => {
+  let checked = 0;
+  for (const route of FUNNEL_ROUTES) {
+    const path = join(REPO_ROOT, route);
+    assert.ok(
+      existsSync(path),
+      `${route} is gone or moved. This list is the fixture's no-mail promise; a ` +
+        "route renamed out of it silently stops being covered.",
+    );
+    const source = readFileSync(path, "utf8");
+    for (const match of source.matchAll(/from\s+["']@\/lib\/email\/([A-Za-z0-9_]+)["']/g)) {
+      const helper = join(REPO_ROOT, "src", "lib", "email", `${match[1]}.ts`);
+      assert.ok(existsSync(helper), `${route} imports a missing helper: ${match[1]}`);
+      const helperSource = readFileSync(helper, "utf8");
+      assert.match(
+        helperSource,
+        // Singular for one address, plural for a batch. Both read the same
+        // suppression list; neither is optional on a path a fixture drives.
+        /\b(isSuppressed|filterSuppressed)\(/,
+        `src/lib/email/${match[1]}.ts is imported by ${route}, which the funnel ` +
+          "drives, but it never checks the suppression list. Seeding suppresses " +
+          "every fixture address before it runs, and that is only a no-mail " +
+          "guarantee while the helper looks.",
+      );
+      checked += 1;
+    }
+  }
+  assert.ok(
+    checked > 0,
+    "no @/lib/email import was found in any funnel route, so this test asserted " +
+      "nothing. Either the routes moved or the send was refactored behind another " +
+      "module, and the fixture's no-mail promise needs re-checking by hand.",
+  );
 });
