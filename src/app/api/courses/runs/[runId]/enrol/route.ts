@@ -65,8 +65,11 @@ import {
  * A consequence worth stating out loud: because the row survives a drop-out,
  * SELF RE-ENROLMENT AFTER DROPPING OUT IS IMPOSSIBLE, and that is the decision
  * ("irreversible: it frees the seat and stops the nudges, and coming back is a
- * new enrolment rather than an undo"). Staff can still re-place someone
- * through the allocation board, which flips the same row back to active.
+ * new enrolment rather than an undo"). Staff can put somebody back through
+ * POST .../enrolments/[uid]/reinstate, which flips this same row to active
+ * and gives the two counters back. NOT through the allocation board: that
+ * route refuses any uid whose application is not `accepted`, and a
+ * self-enrolled member never had an application at all.
  *
  * ── WHO MAY ENROL ───────────────────────────────────────────────────────────
  * Any signed-in account EXCEPT a `rejected` one, `pending` included. That is
@@ -740,6 +743,11 @@ export async function PATCH(req: Request, ctx: Ctx) {
  * two is real work with no owner yet, so the route refuses rather than
  * offering a repair it cannot perform: an admissions cohort member asks staff,
  * who use the remove route.
+ *
+ * The way back is the reinstate route (admins and the run's track leads),
+ * which flips this row to active in the group it names and re-increments both
+ * counters. It is the only way back: the enrolment row is still sitting at
+ * the deterministic id, so nothing here can create a second one.
  */
 export async function DELETE(req: Request, ctx: Ctx) {
   const blocked = await assertNotImpersonating();

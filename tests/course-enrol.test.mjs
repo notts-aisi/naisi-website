@@ -55,6 +55,13 @@ const ACCOUNT_DELETION = readFileSync(
   join(SRC, "lib", "firestore", "accountDeletion.ts"),
   "utf8",
 );
+const REINSTATE_ROUTE = readFileSync(
+  join(
+    SRC, "app", "api", "courses", "runs", "[runId]", "enrolments", "[uid]",
+    "reinstate", "route.ts",
+  ),
+  "utf8",
+);
 const ENROL_MODE_ROUTE = readFileSync(
   join(SRC, "app", "api", "courses", "runs", "[runId]", "enrol-mode", "route.ts"),
   "utf8",
@@ -751,4 +758,49 @@ test("SOURCE: the post-drop confirmation outlives the card that did the drop", (
   assert.match(left, /You&apos;re off the course/);
   assert.match(left, /href=\{justLeft\}/);
   assert.match(left, /tell us anonymously what got in the way/);
+});
+
+// ---------------------------------------------------------------------------
+// The way back
+// ---------------------------------------------------------------------------
+
+test("SOURCE: reinstating exists, and is the repair the copy promises", () => {
+  // The drop-out copy says the team can put somebody back. The allocation
+  // board cannot: it refuses any uid whose application is not `accepted`, and
+  // a self-enrolled member never had one. So the promise needed a route.
+  assert.match(REINSTATE_ROUTE, /export async function POST\(/);
+  // Guarded first, like every mutating course route (and pinned repo-wide by
+  // tests/impersonation-guard.test.mjs).
+  const head = REINSTATE_ROUTE.slice(
+    REINSTATE_ROUTE.indexOf("export async function POST("),
+    REINSTATE_ROUTE.indexOf("export async function POST(") + 400,
+  );
+  assert.match(head, /const blocked = await assertNotImpersonating\(\);/);
+  // Admins and the run's track leads: the remove route's gate, because
+  // reinstating is its exact inverse.
+  assert.match(REINSTATE_ROUTE, /run\.trackLeadUids\.includes\(actor\.uid\)/);
+
+  // Withdrawn AND self-enrolled only. A `removed` row was staff's own
+  // decision and is undone on the board; an allocated learner was never
+  // counted by `enrolledCount`, so re-incrementing it for one would inflate
+  // the number the enrol-mode route reads.
+  assert.match(REINSTATE_ROUTE, /row\.status !== "withdrawn"/);
+  assert.match(REINSTATE_ROUTE, /!row\.selfEnrolled/);
+
+  // One transaction, both counters, and a hard capacity check against the
+  // count read inside it: somebody else may have taken the seat.
+  assert.match(REINSTATE_ROUTE, /db\.runTransaction\(/);
+  assert.match(REINSTATE_ROUTE, /groupFullError\(/);
+  assert.match(REINSTATE_ROUTE, /memberCount: FieldValue\.increment\(1\)/);
+  assert.match(REINSTATE_ROUTE, /enrolledCount: FieldValue\.increment\(1\)/);
+  // Idempotent: a double-clicked button must not spend a second seat.
+  assert.match(REINSTATE_ROUTE, /if \(row\.status === "active"\) return;/);
+});
+
+test("SOURCE: the drop-out no longer points at the allocation board", () => {
+  // It did, and the board refuses these rows outright, so the comment sent a
+  // reader to a repair that does not work.
+  const del = ENROL_ROUTE.slice(ENROL_ROUTE.indexOf("// DELETE"));
+  assert.doesNotMatch(ENROL_ROUTE, /Staff can still re-place someone/);
+  assert.match(del, /reinstate/);
 });

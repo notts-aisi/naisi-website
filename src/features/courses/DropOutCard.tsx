@@ -104,7 +104,8 @@ export default function DropOutCard({ runId, courseTitle, onDropped }: Props) {
     <div className={styles.card}>
       <p className={styles.warning}>
         Leaving frees your place for somebody else and stops the emails. It
-        can&apos;t be undone from here: coming back means asking the team.
+        can&apos;t be undone from here: coming back means asking the team, and
+        they can only put you back if the session still has room.
       </p>
 
       <label className={styles.label} htmlFor="dropout-reason">

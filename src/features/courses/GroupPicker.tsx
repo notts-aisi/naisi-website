@@ -344,7 +344,8 @@ export default function GroupPicker({
         ) : null}
         <p className={styles.note}>
           You came off this course. Signing up again isn&apos;t something you
-          can do here, but the team can put you back on: email us and say so.
+          can do here, but the team can put you back in the same session if
+          there is still room: email us and say so.
         </p>
         {justLeft ? (
           <p className={styles.note}>

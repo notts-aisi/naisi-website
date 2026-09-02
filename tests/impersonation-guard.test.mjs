@@ -90,6 +90,7 @@ const MUST_GUARD = [
   ["src/app/api/courses/runs/[runId]/email/route.ts", "sends email to a cohort"],
   ["src/app/api/courses/runs/[runId]/enrol/route.ts", "takes, moves and gives up a seat on an open-enrolment run in the member's own name"],
   ["src/app/api/courses/runs/[runId]/enrolments/[uid]/remove/route.ts", "removes a learner from a run"],
+  ["src/app/api/courses/runs/[runId]/enrolments/[uid]/reinstate/route.ts", "puts a member who left back on a run, taking a seat back off the group"],
   ["src/app/api/courses/runs/[runId]/enrol-mode/route.ts", "flips a run between admissions and open enrolment, which changes what the enrol route accepts"],
   ["src/app/api/courses/runs/[runId]/exercises/[exerciseId]/submit/route.ts", "submits a learner's answer in their own name"],
   ["src/app/api/courses/runs/[runId]/material-notes/route.ts", "records feedback attributed to the reader"],
