@@ -60,6 +60,27 @@
   font-weight: 600;
 }
 
+/* The link fills the heading rather than sitting inside it as a smaller
+   target, and it is underlined from the start: this is a list of ordinary
+   prose headings, and an underline that only appears on hover is invisible on
+   a phone and to anyone scanning for something to click. */
+.titleLink {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--color-border-strong);
+  text-underline-offset: 0.18em;
+  border-radius: var(--radius-sm);
+}
+
+.titleLink:hover {
+  text-decoration-color: currentColor;
+}
+
+.titleLink:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
 .blurb {
   margin: var(--space-2) 0 0;
   color: var(--color-text-muted);

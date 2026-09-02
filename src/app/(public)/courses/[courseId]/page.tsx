@@ -298,7 +298,14 @@ export default async function PublicCoursePage({
           </section>
         ) : null}
 
-        <WeeklyThemes themes={page.weeklyThemes} note={PRE_START_NOTE} />
+        {/* `weeks` is already the showcase run's PUBLISHED weeks, so a theme
+            row links out only when there is a page behind it. */}
+        <WeeklyThemes
+          themes={page.weeklyThemes}
+          courseId={course.id}
+          publishedWeeks={weeks.map((w) => w.weekNumber)}
+          note={PRE_START_NOTE}
+        />
 
         {sampleWeek ? (
           <section className={styles.sample}>
