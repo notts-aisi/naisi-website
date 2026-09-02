@@ -85,11 +85,58 @@ const ALLOWED = new Map([
 const CLIENT_SDK = /from "firebase\/firestore"/;
 
 /**
- * A `collection(...)` or `doc(...)` call whose first path segment is one of the
- * two narrowed collections. The trailing group captures the rest of the call so
- * a path continuing into "weeks" can be skipped.
+ * A `collection(...)` or `doc(...)` call, captured as (first path segment, rest
+ * of the call). The segment is captured RAW rather than matched as a
+ * double-quoted literal: `collection(db, \`courses\`)` and
+ * `collection(db, COURSES)` reach the same rule as `collection(db, "courses")`
+ * and must reach the same guard. `resolveSegment` decides what the raw text
+ * names. The trailing group is the rest of the call, so a path continuing into
+ * "weeks" can be skipped.
  */
-const PATH_CALL = /\b(?:collection|doc)\(\s*[A-Za-z0-9_.()]+\s*,\s*"(courses|courseRuns)"([^)]*)\)/g;
+const PATH_CALL = /\b(?:collection|doc)\(\s*[A-Za-z0-9_.()]+\s*,\s*([^,)]+)([^)]*)\)/g;
+
+/** A quoted string literal in any of the three quotings TypeScript offers. */
+const QUOTED = /^(?:"([^"]*)"|'([^']*)'|`([^`$\\]*)`)$/;
+
+/** A bare identifier, which has to be resolved to the string it holds. */
+const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+/**
+ * `const NAME = "value"` anywhere under src, exported or not, in any quoting.
+ * One flat repo-wide map rather than a per-file scan, because the constant is
+ * usually declared in `src/lib/firestore/<collection>.ts` and imported by the
+ * file that issues the read (`COURSE_PAGES_COLLECTION` is the live example).
+ */
+function collectConstants(files) {
+  const map = new Map();
+  const DECL = /\bconst\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=]+)?=\s*(?:"([^"]*)"|'([^']*)'|`([^`$\\]*)`)\s*;/g;
+  for (const full of files) {
+    for (const m of readFileSync(full, "utf8").matchAll(DECL)) {
+      map.set(m[1], m[2] ?? m[3] ?? m[4]);
+    }
+  }
+  return map;
+}
+
+/**
+ * What the raw first path segment names, or `null` when it cannot be worked
+ * out. `null` is NOT "not a course": it is reported, because a segment this
+ * test cannot read is a segment it cannot guard.
+ */
+function resolveSegment(raw, constants) {
+  const text = raw.trim();
+  const quoted = QUOTED.exec(text);
+  if (quoted) return quoted[1] ?? quoted[2] ?? quoted[3] ?? "";
+  if (IDENTIFIER.test(text)) {
+    return constants.has(text) ? constants.get(text) : null;
+  }
+  // A template literal with a substitution, a ternary, a call: not a constant
+  // collection name at all, so there is nothing to resolve and nothing to
+  // guard. Firestore path segments in this codebase are always constants.
+  return "";
+}
+
+const NARROWED = new Set(["courses", "courseRuns"]);
 
 function walk(dir) {
   const out = [];
@@ -106,21 +153,38 @@ function toPosix(full) {
 }
 
 test("only the named surfaces read courses/courseRuns through the client SDK", () => {
+  const files = walk(SRC);
+  const constants = collectConstants(files);
   const found = new Map();
+  const unresolved = [];
 
-  for (const full of walk(SRC)) {
+  for (const full of files) {
     const source = readFileSync(full, "utf8");
     if (!CLIENT_SDK.test(source)) continue;
 
     for (const match of source.matchAll(PATH_CALL)) {
+      const collectionName = resolveSegment(match[1], constants);
+      if (collectionName === null) {
+        unresolved.push(`${toPosix(full)}: ${match[1].trim()}`);
+        continue;
+      }
+      if (!NARROWED.has(collectionName)) continue;
       // A path that continues into the weeks subcollection is out of scope:
       // that rule was deliberately left at `allow read: if isSignedIn()`.
-      if (match[2].includes('"weeks"')) continue;
+      if (/["\'`]weeks["\'`]/.test(match[2])) continue;
       const rel = toPosix(full);
       if (!found.has(rel)) found.set(rel, new Set());
-      found.get(rel).add(match[1]);
+      found.get(rel).add(collectionName);
     }
   }
+
+  assert.deepEqual(
+    unresolved.sort(),
+    [],
+    `A Firestore path segment here is a bare identifier this test cannot resolve to a collection name, so it cannot tell whether the caller reads a narrowed collection. Declare it as a plain \`const NAME = "collectionName"\` under src, or inline the string:\n\n  ${unresolved.join(
+      "\n  ",
+    )}`,
+  );
 
   const unexpected = [...found.keys()].filter((f) => !ALLOWED.has(f)).sort();
   assert.deepEqual(
