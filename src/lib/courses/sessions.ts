@@ -10,7 +10,7 @@ import {
   type CourseGroupDoc,
   type GroupSession,
 } from "@/lib/firestore/courseGroups";
-import { weekDocId, type CourseRunDoc } from "@/lib/firestore/courses";
+import { sessionKey, weekDocId, type CourseRunDoc } from "@/lib/firestore/courses";
 
 /**
  * THE TAUGHT SESSIONS OF ONE GROUP, in order, with the OCCURRENCE dimension.
@@ -109,12 +109,14 @@ export type ResolvedSession = {
  *
  * OCCURRENCE 1 IS `weekDocId(n)` EXACTLY. See the module header for why that
  * is the invariant the whole seam rests on.
+ *
+ * DEFINED IN `firestore/courses.ts`, beside `weekDocId`, and re-exported here
+ * so every caller that thinks in sessions still reads it off this module.
+ * `courseAttendance.ts` builds register ids from it and is imported by three
+ * client components; taking it from here would pull the whole resolver graph
+ * below into their bundles for one line of string maths.
  */
-export function sessionKey(weekNumber: number, occurrence: number = 1): string {
-  const base = weekDocId(weekNumber);
-  const n = Number.isInteger(occurrence) ? occurrence : 1;
-  return n <= 1 ? base : `${base}-${n}`;
-}
+export { sessionKey };
 
 /**
  * The taught weeks of a plan, in PLAN ORDER, with the index of each entry in

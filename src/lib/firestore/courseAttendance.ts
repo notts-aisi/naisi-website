@@ -1,4 +1,4 @@
-import { sessionKey } from "@/lib/courses/sessions";
+import { sessionKey } from "./courses";
 
 /**
  * `courseAttendance/{runId}__{groupId}__wNN` — one register per (group,
@@ -39,6 +39,13 @@ import { sessionKey } from "@/lib/courses/sessions";
  * session per taught week and every register is an occurrence-1 register. The
  * resolver, the ids, the register and the push are ready for the second one;
  * the data field is what is owed.
+ *
+ * THIS FILE IMPORTS NOTHING FROM `src/lib/courses`. It is pulled into three
+ * client components (the grid, its hook, the note drawer), so a single import
+ * of the session RESOLVER would drag the schedule graph (`groupResolve`, the
+ * calendar, the week plan) into their bundles for one line of string maths.
+ * `sessionKey` therefore lives beside `weekDocId` in `./courses`, and a test
+ * pins that this module never reaches for `lib/courses/sessions.ts`.
  */
 
 /**

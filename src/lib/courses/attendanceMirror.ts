@@ -2,7 +2,7 @@ import "server-only";
 import type { DocumentReference, Firestore, Transaction } from "firebase-admin/firestore";
 import { recomputeRollup, type RegisterFact } from "./attendanceRollup";
 import type { ResolvedSession } from "./sessions";
-import type { RegisterMember } from "./registerAccess";
+import type { MirrorMember } from "./registerAccess";
 import {
   attendanceDocId,
   normalizeCourseAttendance,
@@ -37,6 +37,15 @@ import {
  * is one `getAll` over ids built from `resolveSessions` rather than a query.
  * No index, no ordering surprise, and a session with no register yet simply
  * comes back missing, which is the same thing as a session nobody has marked.
+ *
+ * ── SCOPE: EVERY ENROLMENT ON THE GROUP, NOT EVERY ACTIVE ONE ───────────────
+ * The `members` this is handed come from `loadMirrorMembers`, which reads all
+ * four enrolment statuses. A rollup is read on surfaces a withdrawn or removed
+ * member still appears on (the admin's enrolment view, their own run
+ * overview), so recomputing only the active ones would freeze everybody else's
+ * figures at their pre-correction values the moment an admin fixes a register.
+ * The REGISTER's rows are a different list, the active members, because they
+ * are who a facilitator can mark.
  */
 
 /** What one caller is changing about one register, laid over what was read. */
@@ -71,7 +80,13 @@ export async function readMirrorPlan(
     runId: string;
     groupId: string;
     sessions: ResolvedSession[];
-    members: RegisterMember[];
+    /**
+     * WHOSE ROLLUP THIS REWRITES. Pass `loadMirrorMembers`, not the register's
+     * own rows: the rows are the ACTIVE members, and a withdrawn member's
+     * figures are still read on the admin surfaces and on their own run
+     * overview. See the module header.
+     */
+    members: MirrorMember[];
     /** Keyed by session key. */
     overrides?: Map<string, RegisterOverride>;
     now: Date;

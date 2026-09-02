@@ -1,7 +1,10 @@
 import "server-only";
 import type { Firestore } from "firebase-admin/firestore";
 import type { SessionUser } from "@/lib/firebase/session";
-import { normalizeCourseEnrolment } from "@/lib/firestore/courseEnrolments";
+import {
+  ENROLMENT_STATUSES,
+  normalizeCourseEnrolment,
+} from "@/lib/firestore/courseEnrolments";
 import { normalizeCourseGroup, type CourseGroupDoc } from "@/lib/firestore/courseGroups";
 
 /**
@@ -107,12 +110,65 @@ export async function gateGroupRegister(
   return { ok: true, group, runId: group.runId, isAdmin };
 }
 
-/** One row of the register: a person, and the week their record starts at. */
-export type RegisterMember = {
+/**
+ * The least a rollup recompute needs to know about a person: who they are, and
+ * the week their record starts at. `RegisterMember` is this plus a name.
+ */
+export type MirrorMember = {
   uid: string;
-  displayName: string;
   joinedWeekNumber: number;
 };
+
+/** One row of the register: a person, and the week their record starts at. */
+export type RegisterMember = MirrorMember & {
+  displayName: string;
+};
+
+/**
+ * EVERY ENROLMENT ON THE GROUP WHOSE ATTENDANCE IS READ DOWNSTREAM, for the
+ * rollup recompute. Not the register's rows: those are the ACTIVE members,
+ * because they are who a facilitator can mark.
+ *
+ * All four statuses are included, and each one is here for a reason rather
+ * than by default:
+ *  · `active` is the room.
+ *  · `completed` is the finished cohort, and its figures are exactly what a
+ *    reviewer reads months later.
+ *  · `withdrawn` and `removed` still carry an `attendance` rollup that the
+ *    admin surfaces and the member's own run overview render.
+ * Filtering any of them out would freeze that person's figures at whatever
+ * they were before an admin's correction, which is the one moment the numbers
+ * were known to be wrong. Nothing is excluded, so there is nothing to name.
+ *
+ * `status in [...]` rather than dropping the filter: it is the same
+ * (runId, groupId, status) composite index the roster and the register query
+ * already use, so this needs no new index.
+ *
+ * NO NAMES ARE RESOLVED. The mirror never renders anybody, so this skips the
+ * `users` read the register's own loader does.
+ */
+export async function loadMirrorMembers(
+  db: Firestore,
+  runId: string,
+  groupId: string,
+): Promise<MirrorMember[]> {
+  const snap = await db
+    .collection("courseEnrolments")
+    .where("runId", "==", runId)
+    .where("groupId", "==", groupId)
+    .where("status", "in", ENROLMENT_STATUSES)
+    .limit(MAX_REGISTER_MEMBERS)
+    .get();
+
+  const byUid = new Map<string, MirrorMember>();
+  for (const d of snap.docs) {
+    const e = normalizeCourseEnrolment(d.id, d.data() ?? {});
+    if (e.uid && !byUid.has(e.uid)) {
+      byUid.set(e.uid, { uid: e.uid, joinedWeekNumber: e.joinedWeekNumber });
+    }
+  }
+  return [...byUid.values()];
+}
 
 /**
  * The group's ACTIVE members, name-sorted, with the joined week that scopes
