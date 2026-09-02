@@ -267,15 +267,21 @@ export default function AvailabilityGrid({
 
   return (
     <div className={styles.wrap}>
-      <div className={styles.strip} role="tablist" aria-label="Day">
+      {/*
+        A group of toggle buttons, NOT a tablist. A tablist promises tabpanels
+        with ids to point `aria-controls` at, and there are none: the grid
+        below is one element whose visible column changes. `aria-pressed` says
+        exactly what is true, which is better than a richer pattern half kept.
+        Hidden entirely from 48rem, where all seven columns are on screen.
+      */}
+      <div className={styles.strip} role="group" aria-label="Which day to show">
         {WEEKDAY_SHORT.map((label, day) => {
           const count = columns[day]?.filter(Boolean).length ?? 0;
           return (
             <button
               key={label}
               type="button"
-              role="tab"
-              aria-selected={day === activeDay}
+              aria-pressed={day === activeDay}
               className={styles.stripButton}
               data-selected={day === activeDay ? "true" : "false"}
               onClick={() => {
@@ -283,12 +289,15 @@ export default function AvailabilityGrid({
                 setCursor((c) => ({ day, slot: c.slot }));
               }}
             >
-              <span className={styles.stripDay}>{label}</span>
+              <span className={styles.stripDay} aria-hidden="true">
+                {label}
+              </span>
               <span className={styles.stripCount} aria-hidden="true">
                 {count > 0 ? count : ""}
               </span>
               <span className="visually-hidden">
-                {count > 0 ? `${count} slots selected` : "nothing selected"}
+                {WEEKDAY_LONG[day]},{" "}
+                {count > 0 ? `${count} slots marked` : "nothing marked"}
               </span>
             </button>
           );
