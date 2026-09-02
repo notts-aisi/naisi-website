@@ -63,6 +63,11 @@ const GATED_TREES = [
     gate: "requireAdmissionsPage",
     why: "the admission round console, open to approveCourse holders who author rounds and to the reviewers a round has appointed",
   },
+  {
+    dir: "membership",
+    gate: "requireMembershipPage",
+    why: "the membership console, open to manageMembership holders as well as admins",
+  },
 ];
 
 /** Pages a course permission holder must never be able to open. Spot-checks of

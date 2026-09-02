@@ -2,8 +2,6 @@
 
 import {
   addDoc,
-  arrayRemove,
-  arrayUnion,
   collection,
   deleteDoc,
   deleteField,
@@ -18,12 +16,7 @@ import {
 } from "firebase/firestore";
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import type { Role } from "@/lib/firebase/session";
-import {
-  ACADEMIC_YEAR_PATTERN,
-  FIELD_LIMITS,
-  type Track,
-  type UserPermissions,
-} from "@/lib/firestore/users";
+import { type Track, type UserPermissions } from "@/lib/firestore/users";
 import { normalizeTask } from "@/lib/firestore/tasks";
 
 function actingAdminUid(): string {
@@ -80,40 +73,6 @@ export async function setTracks(uid: string, tracks: Track[]) {
 }
 
 /**
- * Admin-only: tag/untag a user as a paid member for ONE academic year
- * ("2026/27"). The tag is a BADGE shown to admissions reviewers, never a gate —
- * nothing may branch access on it. Firestore rules pin the field against
- * self-edits exactly like `tracks`, so an admin writes it client-direct.
- *
- * The array is capped at `FIELD_LIMITS.maxPaidMembershipYears`: `normalizeUser`
- * truncates past that, so a doc that grew beyond the cap would silently stop
- * showing its newest tag. arrayUnion is a no-op on a year already present, so
- * only a genuinely new tag has to fit under the cap.
- */
-export async function setPaidMembership(uid: string, year: string, paid: boolean) {
-  if (!ACADEMIC_YEAR_PATTERN.test(year)) {
-    throw new Error(`"${year}" isn't an academic year (expected e.g. 2026/27).`);
-  }
-  const db = getClientDb();
-  if (!paid) {
-    await updateDoc(doc(db, "users", uid), { paidMembershipYears: arrayRemove(year) });
-    return;
-  }
-  const snap = await getDoc(doc(db, "users", uid));
-  const raw = snap.data()?.paidMembershipYears;
-  const existing = Array.isArray(raw) ? (raw as unknown[]) : [];
-  if (
-    !existing.includes(year) &&
-    existing.length >= FIELD_LIMITS.maxPaidMembershipYears
-  ) {
-    throw new Error(
-      `This user already has ${FIELD_LIMITS.maxPaidMembershipYears} paid-membership years. Remove an older one first.`,
-    );
-  }
-  await updateDoc(doc(db, "users", uid), { paidMembershipYears: arrayUnion(year) });
-}
-
-/**
  * Admin-only: mark a committee member as recognised by the SU. SU-recognised
  * committee may read member PII (the users collection) and the committee task
  * board; non-SU committee are scoped to the tasks they are on. The Firestore
@@ -138,6 +97,7 @@ export const PERMISSION_KEYS = [
   "approveEvent",
   "draftCourse",
   "approveCourse",
+  "manageMembership",
 ] as const satisfies readonly (keyof UserPermissions)[];
 
 /**

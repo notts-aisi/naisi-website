@@ -40,7 +40,7 @@ function declaredPermissionKeys() {
   return [...block[1].matchAll(/^\s*(\w+)\??:\s*boolean/gm)].map((m) => m[1]);
 }
 
-test("GUARD: UserPermissions still declares the six known permissions", () => {
+test("GUARD: UserPermissions still declares the seven known permissions", () => {
   assert.deepEqual(declaredPermissionKeys().sort(), [
     "approveCourse",
     "approveEvent",
@@ -48,6 +48,7 @@ test("GUARD: UserPermissions still declares the six known permissions", () => {
     "draftCourse",
     "draftEvent",
     "draftNewsletter",
+    "manageMembership",
   ]);
 });
 

@@ -1051,9 +1051,12 @@ test("MODEL: every admissions step is best-effort and none can abort the cascade
   // The one FATAL step is the subscription rows, because a surviving row keeps
   // mailing a deleted user. Nothing in admissions has that property, and a
   // throw from any of it would cost the caller the Auth deletion.
+  // Ends at the membership sweep, which is the next step after admissions and
+  // is not one: counting its try as an admissions collection would let a
+  // future admissions step go missing without this failing.
   const block = ACCOUNT_DELETION.slice(
     ACCOUNT_DELETION.indexOf("// 5d. ADMISSIONS"),
-    ACCOUNT_DELETION.indexOf("// 6. Firebase Auth user"),
+    ACCOUNT_DELETION.indexOf("// 5e. MEMBERSHIP"),
   );
   assert.ok(block.length > 0, "the admissions block moved or lost its marker comment");
   // Four collections the account OWNS rows in, plus the rounds that merely
