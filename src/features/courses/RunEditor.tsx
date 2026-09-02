@@ -1156,7 +1156,12 @@ export default function RunEditor({ courseId, runId }: Props) {
         <div className={styles.groups}>
           {creatingGroup && (
             <NewGroupForm
-              run={{ id: run.id, courseId: run.courseId, label: run.label }}
+              run={{
+                id: run.id,
+                courseId: run.courseId,
+                label: run.label,
+                enrolMode: run.enrolMode,
+              }}
               runAction={runAction}
               onCreated={() => {
                 setCreatingGroup(false);
@@ -1178,6 +1183,7 @@ export default function RunEditor({ courseId, runId }: Props) {
               key={group.id}
               group={group}
               members={members}
+              enrolMode={run.enrolMode}
               runAction={runAction}
               onSaved={reloadGroups}
             />

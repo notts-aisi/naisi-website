@@ -30,6 +30,7 @@ import {
 } from "@/lib/firestore/courses";
 import {
   GROUP_FIELD_LIMITS,
+  groupCapacityError,
   type GroupSession,
 } from "@/lib/firestore/courseGroups";
 
@@ -360,18 +361,46 @@ export type CreateGroupInput = {
 };
 
 /**
+ * THE CAPACITY RULE, in the one layer that can see both documents.
+ *
+ * `groupCapacityError` needs the parent run's `enrolMode`, which is why the
+ * group normaliser cannot carry this check and why both group writers take
+ * the run's mode as an argument rather than reading it off the group. Without
+ * it the rules' `groupCapacityOk()` is the only thing standing between an
+ * uncapped open-mode group and a register that fails for everybody in it, and
+ * what a facilitator sees when it fires is a raw permission-denied.
+ *
+ * Thrown, not returned: these two functions are the last thing between the
+ * editor and Firestore, and a caller that forgets to check gets a message a
+ * human can read instead of a rules rejection nobody can act on. The editor
+ * checks first anyway, so in practice this throw is the backstop.
+ */
+function assertGroupCapacity(
+  capacity: number | null,
+  enrolMode: CourseEnrolMode,
+): void {
+  const message = groupCapacityError(capacity, enrolMode);
+  if (message) throw new Error(message);
+}
+
+/**
  * Create a group inside `run`. `facilitatorUids` and `memberCount` start
  * empty/zero (rule-enforced): facilitators arrive via
  * `setGroupFacilitators()` and the count moves only inside the allocation
  * transaction, so it can never drift from the enrolment docs it summarises.
+ *
+ * `run.enrolMode` is required because an open-mode run's groups MUST carry a
+ * capacity; see `assertGroupCapacity`.
  */
 export async function createGroup(
-  run: { id: string; courseId: string; label: string },
+  run: { id: string; courseId: string; label: string; enrolMode: CourseEnrolMode },
   input: CreateGroupInput,
 ): Promise<string> {
   const db = getClientDb();
   const name = capped(input.name, GROUP_FIELD_LIMITS.name);
   if (!name) throw new Error("Group name required");
+  const capacity = positiveIntOrNull(input.capacity);
+  assertGroupCapacity(capacity, run.enrolMode);
 
   const ref = doc(collection(db, "courseGroups"), slugId(`${run.label} ${name}`));
   await setDoc(ref, {
@@ -379,7 +408,7 @@ export async function createGroup(
     courseId: run.courseId,
     name,
     facilitatorUids: [] as string[],
-    capacity: positiveIntOrNull(input.capacity),
+    capacity,
     memberCount: 0,
     session: normalizeSessionInput(input.session),
     sessionOverrides: {},
@@ -399,9 +428,15 @@ export type CourseGroupPatch = Partial<{
   archived: boolean;
 }>;
 
+/**
+ * Patch one group. `enrolMode` is the PARENT RUN's, and it is a required
+ * argument for the same reason `createGroup` takes one: a capacity edit is
+ * only valid against the run's mode, and this function cannot read it.
+ */
 export async function updateGroup(
   groupId: string,
   patch: CourseGroupPatch,
+  enrolMode: CourseEnrolMode,
 ): Promise<void> {
   const db = getClientDb();
   const out: Record<string, unknown> = {};
@@ -411,7 +446,11 @@ export async function updateGroup(
     if (!name) throw new Error("Group name required");
     out.name = name;
   }
-  if (patch.capacity !== undefined) out.capacity = positiveIntOrNull(patch.capacity);
+  if (patch.capacity !== undefined) {
+    const capacity = positiveIntOrNull(patch.capacity);
+    assertGroupCapacity(capacity, enrolMode);
+    out.capacity = capacity;
+  }
   if (patch.archived !== undefined) out.archived = patch.archived;
 
   // Dotted field paths so a partial slot edit (just the room, just the time)
