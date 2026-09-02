@@ -158,6 +158,13 @@ const {
   normalizeCourseGroup,
 } = await loadTs("lib/firestore/courseGroups.ts");
 
+const {
+  COURSE_AUDIT_KIND_LABEL,
+  UNKNOWN_COURSE_AUDIT_LABEL,
+  courseAuditKindLabel,
+  normalizeCourseAudit,
+} = await loadTs("lib/firestore/courseAudit.ts");
+
 /**
  * Read as TEXT, not imported: the enrol-mode route is an Admin SDK module and
  * pulling it in here would drag `firebase-admin` and `next/server` into a unit
@@ -591,4 +598,31 @@ test("GUARD §6.4 the enrol-mode route checks the run's GROUPS before it opens i
   // refusals, not a 400 that reads like a malformed request.
   const guardBlock = ENROL_MODE_ROUTE.slice(guardAt, writeAt);
   assert.match(guardBlock, /status: 409/);
+});
+
+// ===========================================================================
+// §7. An audit row never claims to be an action it was not
+// ===========================================================================
+
+test("GUARD §7.1 an unrecognised audit kind is kept verbatim, not degraded", () => {
+  // The first cut mapped an unknown kind onto `attendance-edit`, which turns
+  // a rollback (or a newer route writing a kind this bundle predates) into a
+  // log full of rows asserting the wrong action. An audit that lies is worse
+  // than one that admits it does not know.
+  const known = normalizeCourseAudit("a1", { kind: "enrol-mode-change", runId: "run1" });
+  assert.equal(known.kind, "enrol-mode-change");
+  assert.equal(known.kindKnown, true);
+  assert.equal(courseAuditKindLabel(known.kind), COURSE_AUDIT_KIND_LABEL["enrol-mode-change"]);
+
+  const future = normalizeCourseAudit("a2", { kind: "certificate-revoked", runId: "run1" });
+  assert.equal(future.kind, "certificate-revoked");
+  assert.equal(future.kindKnown, false);
+  assert.equal(courseAuditKindLabel(future.kind), UNKNOWN_COURSE_AUDIT_LABEL);
+  assert.notEqual(courseAuditKindLabel(future.kind), COURSE_AUDIT_KIND_LABEL["attendance-edit"]);
+
+  // A missing kind is the same case, not a crash and not a wrong label.
+  const missing = normalizeCourseAudit("a3", { runId: "run1" });
+  assert.equal(missing.kind, "");
+  assert.equal(missing.kindKnown, false);
+  assert.equal(courseAuditKindLabel(missing.kind), UNKNOWN_COURSE_AUDIT_LABEL);
 });

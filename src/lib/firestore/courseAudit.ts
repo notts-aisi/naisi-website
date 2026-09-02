@@ -71,6 +71,9 @@ export const COURSE_AUDIT_KINDS: CourseAuditKind[] = [
   "access-requirements-read",
 ];
 
+/** The label for a kind this build does not know. See `courseAuditKindLabel`. */
+export const UNKNOWN_COURSE_AUDIT_LABEL = "Unrecognised action";
+
 export const COURSE_AUDIT_KIND_LABEL: Record<CourseAuditKind, string> = {
   "attendance-edit": "Register edited after push",
   "attendance-push": "Register pushed",
@@ -83,6 +86,25 @@ export const COURSE_AUDIT_KIND_LABEL: Record<CourseAuditKind, string> = {
   "access-requirements-read": "Access requirements read",
 };
 
+/**
+ * The label for one row's `kind`, INCLUDING a kind this build has never heard
+ * of. Always render through this: a rolled-back deploy, or a newer route
+ * writing a kind this bundle predates, must not make a row claim to be a
+ * different action than it was. `detail` still carries the sentence a reader
+ * actually needs, so an unrecognised row is readable, just unlabelled.
+ */
+export function courseAuditKindLabel(kind: CourseAuditKind | string): string {
+  return isCourseAuditKind(kind)
+    ? COURSE_AUDIT_KIND_LABEL[kind]
+    : UNKNOWN_COURSE_AUDIT_LABEL;
+}
+
+export function isCourseAuditKind(kind: unknown): kind is CourseAuditKind {
+  return (
+    typeof kind === "string" && COURSE_AUDIT_KINDS.includes(kind as CourseAuditKind)
+  );
+}
+
 export const COURSE_AUDIT_LIMITS = {
   /** Human sentence describing the row, shown verbatim in the admin log. */
   detail: 1000,
@@ -93,7 +115,16 @@ export const COURSE_AUDIT_LIMITS = {
 export type CourseAuditDoc = {
   /** Firestore auto-id. Rows are never addressed individually. */
   id: string;
-  kind: CourseAuditKind;
+  /**
+   * WHAT WAS STORED, VERBATIM, even when this build does not recognise it.
+   * Degrading an unknown kind to a known one would silently mis-label the
+   * row as a different action, which is worse than a row that says it is
+   * unrecognised: an audit that lies is not an audit. Render through
+   * `courseAuditKindLabel`, and read `kindKnown` before branching on it.
+   */
+  kind: CourseAuditKind | string;
+  /** False when `kind` is a string this build has no label or meaning for. */
+  kindKnown: boolean;
   /**
    * The run the action belongs to. THE query axis, and the key the destroy
    * cascade drains on, so a row without one is unreachable by both. Rows for
@@ -131,14 +162,16 @@ function strOrNull(v: unknown): string | null {
 }
 
 export function normalizeCourseAudit(id: string, data: Raw): CourseAuditDoc {
-  const kind = data.kind as CourseAuditKind;
+  // A kind this build does not recognise is KEPT as written and flagged,
+  // never mapped onto a known one. The row still has to appear in the log
+  // (hiding it would let a rollback silently shrink an audit trail), and
+  // `detail` carries the sentence a reader needs, but nothing may claim it
+  // was an action it was not.
+  const rawKind = typeof data.kind === "string" ? data.kind : "";
   return {
     id,
-    // A kind this build does not recognise degrades to `attendance-edit`
-    // rather than being dropped: the row still has to appear in the log, and
-    // `detail` carries the sentence a reader actually needs. The alternative,
-    // hiding the row, would let a rollback silently shrink an audit trail.
-    kind: COURSE_AUDIT_KINDS.includes(kind) ? kind : "attendance-edit",
+    kind: rawKind,
+    kindKnown: isCourseAuditKind(rawKind),
     runId: typeof data.runId === "string" ? data.runId : "",
     groupId: strOrNull(data.groupId),
     subjectUid: strOrNull(data.subjectUid),
