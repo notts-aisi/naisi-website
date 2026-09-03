@@ -205,8 +205,16 @@ export default function ProfileForm() {
   useEffect(() => {
     if (!user) return;
     const db = getClientDb();
+    // Both clauses are load-bearing. firestore.rules grants a non-admin read
+    // on `audience == 'user' && audienceId == auth.uid`, and Firestore
+    // judges a query by its shape, not its results: a query that does not
+    // itself pin `audience` could in principle match another audience's
+    // row, so the whole listen is denied (permission-denied in the console,
+    // and an Email Preferences grid that silently shows nothing). Admins
+    // never noticed because the admin branch of the rule has no such clause.
     const q = query(
       collection(db, "subscriptions"),
+      where("audience", "==", "user"),
       where("audienceId", "==", user.uid),
     );
     const unsub = onSnapshot(q, (snap) => {
