@@ -47,6 +47,7 @@ export {
   normalizeSchedulerMarker,
   reminderMarker,
   schedulerMarkerExpiry,
+  stageRecipientMarker,
   stageReleaseMarker,
   unmarkedRegisterMarker,
 } from "@/lib/firestore/schedulerMarkers";
@@ -223,6 +224,51 @@ export async function stampSkipped(
       },
       { merge: true },
     );
+}
+
+/**
+ * Write a marker that is SETTLED THE MOMENT IT IS WRITTEN, and claim nothing.
+ *
+ * The claim / stamp pair exists to protect a side effect: it hands one tick
+ * the right to do a thing, and it counts the attempts so an unattended loop
+ * cannot run forever. A verdict with no side effect behind it needs neither.
+ * A stage the clock has already ruled too late to announce is exactly that:
+ * the job re-derives the same answer on every tick, nobody is mailed either
+ * way, and putting it through `claim()` would spend one of the unit's three
+ * attempts to record an opinion.
+ *
+ * So this is one `.create()` of an already-terminal document. Returns false
+ * when a marker is already there, which is the normal case from the second
+ * tick onwards and is not an error: the verdict was recorded the first time.
+ */
+export async function createSettled(
+  db: Firestore,
+  ref: SchedulerMarkerRef,
+  meta: { job: string; reason: string; at?: Date },
+): Promise<boolean> {
+  const at = meta.at ?? new Date();
+  try {
+    await db
+      .collection(SCHEDULER_MARKERS_COLLECTION)
+      .doc(ref.id)
+      .create({
+        job: meta.job,
+        family: ref.family,
+        ...ref.fields,
+        claimedAt: at,
+        // Never claimed for work, so it has spent no attempt on anything.
+        attempts: 0,
+        sentAt: null,
+        failedAt: null,
+        skippedReason: meta.reason.slice(0, 200),
+        lastError: null,
+        expiresAt: schedulerMarkerExpiry(at),
+      });
+    return true;
+  } catch (err) {
+    if (isAlreadyExists(err)) return false;
+    throw err;
+  }
 }
 
 /** What an admin Retry did, and when it did nothing, why. */

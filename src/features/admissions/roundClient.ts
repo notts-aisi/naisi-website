@@ -235,12 +235,68 @@ export async function deleteStage(roundId: string, stageId: string): Promise<voi
   );
 }
 
-export async function releaseStage(roundId: string, stageId: string): Promise<Stage> {
-  const body = await call<{ stage: StagePayload }>(
+/**
+ * Why the release route sent what it sent. Mirrors `NoticeReason` on the
+ * route, and every value has its own sentence in `StagesSection`: an admin who
+ * is told "already announced" about a round whose window is shut presses the
+ * button again looking for the real reason.
+ */
+export type StageReleaseReason =
+  | "announced"
+  | "already-announced"
+  | "round-not-in-window"
+  | "stage-not-released"
+  | "too-late"
+  | "no-live-applications"
+  | "scheduler-off"
+  | "job-off"
+  | "failed";
+
+/**
+ * What the release route did about telling people. The release itself is the
+ * durable half and has already happened by the time this is read; a `note` is
+ * how the route explains a send that did not go out (the scheduler off, the
+ * job dark, a send that threw) without pretending the press failed.
+ */
+export type StageReleaseNotice = {
+  attempted: boolean;
+  /** The job made this stage's announcement on this run. See the route. */
+  announced: boolean;
+  /** Which kind of nothing, or which kind of something. See the route. */
+  reason: StageReleaseReason;
+  sent: number;
+  skipped: number;
+  failed: number;
+  stale: number;
+  hasMore: boolean;
+  note?: string;
+};
+
+export type StageReleaseResult = {
+  stage: Stage;
+  alreadyReleased: boolean;
+  notice: StageReleaseNotice | null;
+};
+
+export async function releaseStage(
+  roundId: string,
+  stageId: string,
+): Promise<StageReleaseResult> {
+  const body = await call<{
+    stage: StagePayload;
+    alreadyReleased?: boolean;
+    notice?: StageReleaseNotice;
+  }>(
     `/api/admissions/rounds/${encodeURIComponent(roundId)}/stages/${encodeURIComponent(stageId)}/release`,
     { method: "POST" },
   );
-  return hydrateStage(body.stage);
+  return {
+    stage: hydrateStage(body.stage),
+    alreadyReleased: body.alreadyReleased === true,
+    // A stage that was already released sends nothing and reports nothing:
+    // the announcement went with the first press.
+    notice: body.notice ?? null,
+  };
 }
 
 // ---------------------------------------------------------------------------

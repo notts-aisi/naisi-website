@@ -29,6 +29,7 @@ import {
   CATEGORY_LABELS,
   getVerifiedEmails,
   isSubscriptionCategory,
+  normaliseNotifications,
   serialiseNotifications,
   SUBSCRIPTION_CATEGORIES,
   type NotificationPrefs,
@@ -79,6 +80,24 @@ function readCourseAnnouncements(data: Record<string, unknown> | undefined): boo
   return (categories as Record<string, unknown>).courses !== false;
 }
 
+/**
+ * The push switches are NOT on this form: they live on the push card, beside
+ * the per-device opt-in they qualify. This form still has to read them,
+ * because its save writes the whole `profile.notifications` map and would
+ * otherwise reset both keys to the default every time somebody changed their
+ * preferred name. Read through `normaliseNotifications` so "absent" resolves
+ * to the same default the card shows.
+ */
+function readPushPrefs(
+  data: Record<string, unknown> | undefined,
+): NotificationPrefs["push"] {
+  const profile = (data?.profile as Record<string, unknown> | undefined) ?? {};
+  return normaliseNotifications({
+    notifications: profile.notifications,
+    newsletter: profile.newsletter,
+  }).push;
+}
+
 function asDate(v: unknown): Date | null {
   if (!v) return null;
   if (v instanceof Date) return v;
@@ -103,6 +122,7 @@ function legacyPrefsFromMatrix(
   matrix: Matrix,
   verifiedEmails: VerifiedEmail[],
   courseAnnouncements: boolean,
+  push: NotificationPrefs["push"],
 ): NotificationPrefs {
   const newsletter = verifiedEmails.some(
     (ve) => matrix[ve.email]?.newsletter,
@@ -125,6 +145,10 @@ function legacyPrefsFromMatrix(
     // email route would read that as an explicit refusal.
     categories: { newsletter, events, courses: courseAnnouncements },
     channels: { gmail: gmailGetsAnything, uniEmail: uniEmailGetsAnything },
+    // Passed straight through from the stored document, never derived here.
+    // This form does not own the push switches; it only has to avoid
+    // trampling them. See readPushPrefs.
+    push,
   };
 }
 
@@ -139,6 +163,12 @@ export default function ProfileForm() {
   // Account-level, not per-address. Starts ON: absent = "hasn't answered",
   // and cohort mail is an opt-out. See readCourseAnnouncements.
   const [courseAnnouncements, setCourseAnnouncements] = useState(true);
+  // Read-only here, and edited on the push card. Held in state purely so the
+  // save below can write the map back unchanged. See readPushPrefs.
+  const [pushPrefs, setPushPrefs] = useState<NotificationPrefs["push"]>({
+    tasks: true,
+    courseDecisions: true,
+  });
 
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -162,6 +192,7 @@ export default function ProfileForm() {
       // Raw data, not the normalized doc: `UserProfile.notifications` is typed
       // as the full shape, so a missing `courses` reads as `false` through it.
       setCourseAnnouncements(readCourseAnnouncements(snap.data()));
+      setPushPrefs(readPushPrefs(snap.data()));
       setLoading(false);
     });
     return unsub;
@@ -279,6 +310,7 @@ export default function ProfileForm() {
         matrix,
         verifiedEmails,
         courseAnnouncements,
+        pushPrefs,
       );
       const patch: Record<string, unknown> = {
         "profile.preferredName": preferredName.trim(),

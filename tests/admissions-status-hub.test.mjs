@@ -69,6 +69,10 @@ const STUBS = new Map([
     "@/emails/AdmissionsDeadlineReminderEmail",
     "export default function Stub() { return null; }",
   ],
+  [
+    "@/emails/AdmissionsStageReleasedEmail",
+    "export default function Stub() { return null; }",
+  ],
   ["@/emails/AdmissionsAppointedEmail", "export default function Stub() { return null; }"],
   ["@/emails/AdmissionsDeclinedEmail", "export default function Stub() { return null; }"],
   ["@/lib/firebase/admin", "export function getAdminDb() { return null; }"],
@@ -885,6 +889,7 @@ const ADMISSIONS_IDS = [
   "admissions-submitted",
   "admissions-reinstated",
   "admissions-deadline-reminder",
+  "admissions-stage-released",
   "admissions-appointed",
   "admissions-declined",
 ];
@@ -894,6 +899,7 @@ const ADMISSIONS_KINDS = [
   "submitted",
   "reinstated",
   "deadline-reminder",
+  "stage-released",
   "appointed",
   "declined",
 ];

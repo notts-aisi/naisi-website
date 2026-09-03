@@ -1,8 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { doc, onSnapshot, updateDoc } from "firebase/firestore";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import Switch from "@/components/ui/Switch";
+import { useAuth } from "@/auth/AuthProvider";
+import { getClientDb } from "@/lib/firebase/client";
+import {
+  ALL_PUSH_KEYS,
+  PUSH_DESCRIPTIONS,
+  PUSH_LABELS,
+  normaliseNotifications,
+  serialisePush,
+  setPushPreference,
+  type NotificationPrefs,
+  type PushNotificationKey,
+} from "@/lib/firestore/notifications";
 import { getInstallPlatform, isStandaloneNow } from "@/lib/pwa/displayMode";
 import { mark, warn } from "@/lib/devMonitor";
 import styles from "./PushSettings.module.css";
@@ -33,6 +47,13 @@ import styles from "./PushSettings.module.css";
  *   - On mount, an EXISTING subscription is re-synced to the server. Safari
  *     iOS never fires pushsubscriptionchange, so re-asserting on every visit
  *     is the only way the server's record stays honest.
+ *
+ * The ACCOUNT-LEVEL topic switches (`PushTopics` below) are a SIBLING card,
+ * not a section of this one, and /profile renders both. They were nested here
+ * once and that was a bug: this card returns null on any environment without a
+ * VAPID key and on any browser without push, so nesting them made two account
+ * settings unreachable everywhere the feature is not yet provisioned. The two
+ * settings answer different questions and only one of them is about hardware.
  */
 
 const PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
@@ -228,6 +249,102 @@ export function PushSettings() {
         </>
       )}
       {note && <p className={styles.note}>{note}</p>}
+    </Card>
+  );
+}
+
+/**
+ * The account-level topic switches, rendered on /profile as their own card.
+ *
+ * INDEPENDENT OF THIS DEVICE, and therefore of `PushSettings`. The only gates
+ * are a signed-in user and a resolved read of their stored preference. A
+ * member on a laptop where push is blocked, or on any browser at all before
+ * the VAPID secrets are provisioned, is still saying something true about the
+ * phone they have enabled, so hiding these behind the per-device card would
+ * hide an account setting behind unrelated hardware.
+ *
+ * SAVED ON TOGGLE, not behind a Save button, and that is the difference
+ * between this and the notification preferences on the profile form. The
+ * write goes to the same place a profile save goes, `users/{uid}`, under the
+ * `profile.notifications.push` field path so it touches neither `channels`
+ * nor `categories` (the profile form owns those, and carries this map through
+ * untouched when it writes).
+ *
+ * ABSENT MEANS ON. `normaliseNotifications` resolves an unwritten map to both
+ * switches on, which is exactly what the member has already consented to by
+ * enabling notifications on a device, so nothing is stored until they turn
+ * one off.
+ */
+export function PushTopics() {
+  const { user } = useAuth();
+  const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    const db = getClientDb();
+    return onSnapshot(
+      doc(db, "users", user.uid),
+      (snap) => {
+        const profile = (snap.data()?.profile ?? {}) as {
+          notifications?: unknown;
+          newsletter?: unknown;
+        };
+        setPrefs(normaliseNotifications(profile));
+      },
+      // A read that fails leaves the switches hidden rather than showing a
+      // default that is not the member's stored answer.
+      (err) => {
+        warn("[push] topic preferences unreadable", { err });
+        setPrefs(null);
+      },
+    );
+  }, [user]);
+
+  const onToggle = useCallback(
+    async (key: PushNotificationKey, next: boolean) => {
+      if (!user || !prefs) return;
+      const previous = prefs;
+      // The shared setter, so the "touch one key, leave channels and
+      // categories alone" rule lives in one tested place rather than in an
+      // object spread here.
+      const updated = setPushPreference(prefs, key, next);
+      setPrefs(updated);
+      setError(null);
+      try {
+        await updateDoc(doc(getClientDb(), "users", user.uid), {
+          "profile.notifications.push": serialisePush(updated.push),
+        });
+      } catch (err) {
+        warn("[push] saving topic preference failed", { err });
+        setPrefs(previous);
+        setError("That did not save. Try again in a moment.");
+      }
+    },
+    [prefs, user],
+  );
+
+  if (!user || !prefs) return null;
+
+  return (
+    <Card padding="lg" className={styles.card}>
+      <h2 className={styles.heading}>Notifications</h2>
+      <p className={styles.topicsEyebrow}>All your devices, not just this one</p>
+      <div className={styles.topicsRows}>
+        {ALL_PUSH_KEYS.map((key) => (
+          <Switch
+            key={key}
+            checked={prefs.push[key]}
+            onChange={(next) => void onToggle(key, next)}
+            label={PUSH_LABELS[key]}
+            description={PUSH_DESCRIPTIONS[key]}
+          />
+        ))}
+      </div>
+      <p className={styles.topicsNote}>
+        Turning one off stops the notification, never the email.
+      </p>
+      {error && <p className={styles.topicsError}>{error}</p>}
     </Card>
   );
 }

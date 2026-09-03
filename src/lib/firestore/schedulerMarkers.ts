@@ -136,7 +136,18 @@ export function reminderMarker(
   };
 }
 
-/** `stagerel__{roundId}__{stageId}`, an application stage release notice. */
+/**
+ * `stagerel__{roundId}__{stageId}`, the STAGE-level record of an announcement
+ * that was dropped for being too late.
+ *
+ * It is deliberately NOT the unit of work a send is claimed against. One
+ * marker per stage means one attempt budget per stage, and a round large
+ * enough to need several ticks would burn that budget on ordinary partial
+ * runs and be given up on with the last applicants unmailed. The send claims
+ * {@link stageRecipientMarker} instead, one per person, exactly as the
+ * deadline reminder does. This id records a single stage-wide verdict (the
+ * stale rule) and nothing else.
+ */
 export function stageReleaseMarker(
   roundId: string,
   stageId: string,
@@ -147,6 +158,36 @@ export function stageReleaseMarker(
   };
   return {
     id: `stagerel__${fields.roundId}__${fields.stageId}`,
+    family: "stagerel",
+    fields,
+  };
+}
+
+/**
+ * `stagerel__{roundId}__{stageId}__{uid}`, ONE PERSON'S copy of a stage
+ * release notice.
+ *
+ * The id extends the stage-level one with a uid, so the two can never
+ * collide: a Firebase uid is 28 characters and `assertKeyComponent` refuses a
+ * `__` in it, so `stagerel__{round}__{stage}` has no second reading.
+ *
+ * Per recipient, because that is the unit of work that can actually fail on
+ * its own. A stage-wide claim gives a big round one attempt budget to spend
+ * across every partial run it needs, and a per-person claim gives each person
+ * their own retry, their own skip reason and their own stamp.
+ */
+export function stageRecipientMarker(
+  roundId: string,
+  stageId: string,
+  uid: string,
+): SchedulerMarkerRef {
+  const fields = {
+    roundId: assertDocIdComponent("roundId", roundId),
+    stageId: assertKeyComponent("stageId", stageId),
+    uid: assertKeyComponent("uid", uid),
+  };
+  return {
+    id: `stagerel__${fields.roundId}__${fields.stageId}__${fields.uid}`,
     family: "stagerel",
     fields,
   };

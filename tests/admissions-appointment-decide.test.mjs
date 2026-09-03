@@ -76,6 +76,10 @@ const STUBS = new Map([
     "@/emails/AdmissionsDeadlineReminderEmail",
     "export default function Stub() { return null; }",
   ],
+  [
+    "@/emails/AdmissionsStageReleasedEmail",
+    "export default function Stub() { return null; }",
+  ],
   ["@/emails/AdmissionsAppointedEmail", "export default function Stub() { return null; }"],
   ["@/emails/AdmissionsDeclinedEmail", "export default function Stub() { return null; }"],
   ["@/lib/firebase/admin", "export function getAdminDb() { return null; }"],

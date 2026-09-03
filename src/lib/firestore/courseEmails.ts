@@ -31,6 +31,10 @@ export const COURSE_TEMPLATE_IDS = [
   "admissions-submitted",
   "admissions-reinstated",
   "admissions-deadline-reminder",
+  // The weekly-questions announcement. The RELEASE itself is derived at read
+  // time by `isStageReleased`, so this template announces something that has
+  // already happened: a missed send delays an email and never gates access.
+  "admissions-stage-released",
   // The APPOINTMENT round's two endings. A facilitator round decides who runs
   // a group, so its outcome names a run and its refusal is about a role rather
   // than about a place on a course. Both send through `sendAdmissionEmail`.
@@ -57,6 +61,7 @@ export type CourseTemplateTrigger =
   | "admissions-submitted"
   | "admissions-reinstated"
   | "admissions-deadline-reminder"
+  | "admissions-stage-released"
   | "admissions-appointed"
   | "admissions-declined";
 
@@ -75,6 +80,7 @@ export const COURSE_TEMPLATE_TRIGGER: Record<CourseTemplateId, CourseTemplateTri
   "admissions-submitted": "admissions-submitted",
   "admissions-reinstated": "admissions-reinstated",
   "admissions-deadline-reminder": "admissions-deadline-reminder",
+  "admissions-stage-released": "admissions-stage-released",
   "admissions-appointed": "admissions-appointed",
   "admissions-declined": "admissions-declined",
 };
@@ -278,6 +284,7 @@ export const COURSE_DEFAULT_LABELS: Record<CourseTemplateId, string> = {
   "admissions-submitted": "Application received",
   "admissions-reinstated": "Application picked back up",
   "admissions-deadline-reminder": "Deadline reminder",
+  "admissions-stage-released": "New questions released",
   "admissions-appointed": "Appointed as a facilitator",
   "admissions-declined": "Facilitator application declined",
 };
@@ -470,6 +477,45 @@ export const courseTemplateDefaults: Record<
         "<p>You have started an application to <strong>{roundLabel}</strong> and it is still a draft, so it has not reached us yet.</p>" +
           "<p>Applications close on {deadline}. A draft sitting at the deadline is not an application, and we would rather you knew that now than found out afterwards.</p>" +
           "<p>If you have changed your mind, you can leave it. Nothing else happens, and this is the only kind of reminder we send about it.</p>",
+      ),
+    ],
+  },
+  /**
+   * The stage-released announcement (V3 W3). Sent by the scheduler tick, or by
+   * the admin release button, once a stage's questions are actually out.
+   * Three things an editor should know:
+   *
+   *  1. **It announces, it does not authorise.** The questions are released by
+   *     `isStageReleased` at read time, so by the time this arrives they are
+   *     already on the applicant's form. A tick that never ran costs an email
+   *     and never costs access, and the copy must not imply the reader has to
+   *     do anything to unlock anything.
+   *  2. **The audience is drafts AND submitted applications.** Somebody who
+   *     sent stage one weeks ago is still in it, so the copy has to reassure
+   *     them that what they already sent is untouched.
+   *  3. **{stageLabel} is the stage's own name**, as the round authored it
+   *     ("Stage 2", "The technical exercise"), and {deadline} is the earlier
+   *     of the stage's own closing time and the round's.
+   *  4. **The deadline sentence is a block of its own, and that is load
+   *     bearing.** A round may legitimately have no `closesAt` (it means "no
+   *     automatic deadline"), and `sendAdmissionEmail` drops whole any block
+   *     whose only supplied token had no value on that send. Fold the
+   *     deadline back into the paragraph above it and the copy either ships
+   *     "it is due by {deadline}." to an applicant or takes a sentence that
+   *     still made sense with it.
+   */
+  "admissions-stage-released": {
+    label: COURSE_DEFAULT_LABELS["admissions-stage-released"],
+    subject: "{stageLabel} is open: your {roundLabel} application",
+    blocks: [
+      h("The next part is open, {firstName}"),
+      rt(
+        "<p><strong>{stageLabel}</strong> of the {roundLabel} application is open, and its questions are on your application now.</p>" +
+          "<p>Anything you have already sent us stays exactly as it is. This part is new writing.</p>",
+      ),
+      rt("<p>It is due by {deadline}.</p>"),
+      rt(
+        "<p>If you have decided not to carry on, you can leave it there. Nothing else happens, and nobody chases you.</p>",
       ),
     ],
   },

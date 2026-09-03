@@ -112,6 +112,7 @@ export const ADMISSIONS_TEMPLATES = [
   "admissions-submitted",
   "admissions-reinstated",
   "admissions-deadline-reminder",
+  "admissions-stage-released",
   "admissions-appointed",
   "admissions-declined",
 ] as const satisfies readonly CourseTemplateId[];
@@ -169,6 +170,16 @@ export const ADMISSIONS_TOKENS_BY_TEMPLATE: Partial<
     "preferredName",
     "firstName",
     "roundLabel",
+    "applicationUrl",
+    "deadline",
+  ],
+  // The scheduler's other send. It knows which part of the form has opened
+  // and the deadline that part is due by, and nothing about a decision.
+  "admissions-stage-released": [
+    "preferredName",
+    "firstName",
+    "roundLabel",
+    "stageLabel",
     "applicationUrl",
     "deadline",
   ],

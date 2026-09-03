@@ -102,6 +102,7 @@ const COURSE_TRIGGER_LABELS: Record<CourseTemplateTrigger, string> = {
   "admissions-submitted": "On submitting",
   "admissions-reinstated": "On reopening",
   "admissions-deadline-reminder": "Before the deadline",
+  "admissions-stage-released": "On releasing questions",
   "admissions-appointed": "On appointment",
   "admissions-declined": "On declining a facilitator",
 };
