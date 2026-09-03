@@ -139,7 +139,12 @@ export function hexCharsPerDay(grid: AvailabilityGrid): number {
   return Math.ceil(slotCountFor(grid) / 4);
 }
 
-function minuteLabel(minute: number): string {
+/**
+ * A wall-clock minute as "HH:MM". Exported because the appointment queue's
+ * span summaries name the same clock this grid's row headers do, and two
+ * copies of a time formatter is how one of them ends up rendering "9:5".
+ */
+export function minuteLabel(minute: number): string {
   const h = Math.floor(minute / 60) % 24;
   const m = minute % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
@@ -253,9 +258,20 @@ export function emptyMask(grid: AvailabilityGrid): AvailabilityMask {
   };
 }
 
-/** How many slots are marked across the whole answer. Powers "no availability given". */
-export function markedSlotCount(mask: AvailabilityMask): number {
-  const grid = gridOf(mask);
+/**
+ * How many slots are marked across the whole answer. Powers "no availability
+ * given".
+ *
+ * `fallback` is the round's CURRENT geometry and is used only when the stored
+ * answer carries none of its own, the pre-geometry legacy case. Without it a
+ * legacy answer counts zero and reads as "they drew nothing", which on the
+ * appointment queue is a sentence telling the decider to go and ask them.
+ */
+export function markedSlotCount(
+  mask: AvailabilityMask,
+  fallback?: AvailabilityGrid,
+): number {
+  const grid = gridOf(mask, fallback);
   if (!isUsableGrid(grid)) return 0;
   let total = 0;
   for (const column of decodeMask(mask.days, grid)) {

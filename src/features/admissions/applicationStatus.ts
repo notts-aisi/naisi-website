@@ -1,6 +1,7 @@
 import type { ChipTone } from "@/components/ui/Chip";
 import type { RoundWindowState } from "@/lib/admissions/window";
 import type { AdmissionApplicationStatus } from "@/lib/firestore/admissionApplications";
+import type { AdmissionRoundKind } from "@/lib/firestore/admissionRounds";
 
 /**
  * How each application status READS to the person who wrote the application:
@@ -31,6 +32,7 @@ export const APPLICATION_STATUS_TONE: Record<AdmissionApplicationStatus, ChipTon
   waitlisted: "warning",
   rejected: "neutral",
   withdrawn: "neutral",
+  appointed: "success",
 };
 
 /**
@@ -47,7 +49,26 @@ export const APPLICATION_STATUS_TONE: Record<AdmissionApplicationStatus, ChipTon
 export function applicationStatusBlurb(
   status: AdmissionApplicationStatus,
   windowState: RoundWindowState,
+  kind: AdmissionRoundKind = "enrolment",
 ): string {
+  // THE APPOINTMENT ARM, and it comes first so no sentence below it can be
+  // read by somebody who applied to facilitate. A facilitator round shares
+  // this hub with the intake, and "we could not offer you a place this time,
+  // cohorts are small" is the wrong sentence twice over for somebody who
+  // offered to run one. `kind` defaults to `enrolment` so a caller that has no
+  // round in hand gets the sentences this function has always given.
+  if (kind === "appointment") {
+    switch (status) {
+      case "appointed":
+        return "You are on the facilitator team. The email says which group and when the training runs.";
+      case "rejected":
+        return "We are not able to take you on as a facilitator this time. It is a small team and it says nothing about you as a participant: applying again next term is genuinely welcome.";
+      case "submitted":
+        return "Sent. We read facilitator applications together after the deadline, and you do not need to do anything else.";
+      default:
+        break;
+    }
+  }
   switch (status) {
     case "draft":
       if (windowState === "closed") {
@@ -69,5 +90,10 @@ export function applicationStatusBlurb(
       return "We could not offer you a place this time. Cohorts are small, and applying again next term is genuinely welcome.";
     case "withdrawn":
       return "You withdrew this application, so it is out of the queue.";
+    case "appointed":
+      // Reachable only if an appointment outcome is ever written on an
+      // enrolment round, which the decide route refuses. Said plainly rather
+      // than left to fall through to an empty string.
+      return "You have been appointed. Everything you need comes by email.";
   }
 }

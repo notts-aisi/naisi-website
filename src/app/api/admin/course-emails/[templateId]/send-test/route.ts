@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
+import AdmissionsAppointedEmail from "@/emails/AdmissionsAppointedEmail";
+import AdmissionsDeadlineReminderEmail from "@/emails/AdmissionsDeadlineReminderEmail";
 import AdmissionsReinstatedEmail from "@/emails/AdmissionsReinstatedEmail";
+import AdmissionsDeclinedEmail from "@/emails/AdmissionsDeclinedEmail";
 import AdmissionsSubmittedEmail from "@/emails/AdmissionsSubmittedEmail";
 import ApplicationEmail from "@/emails/ApplicationEmail";
 import CourseNudgeEmail from "@/emails/CourseNudgeEmail";
@@ -7,6 +10,7 @@ import {
   ADMISSIONS_PREVIEW_SAMPLE,
   courseSampleTokens,
   courseTemplateUsesAdmissionsTokens,
+  type AdmissionsTemplateId,
 } from "@/features/admin/emailDesigns/courseEmailSamples";
 import {
   courseNudgeTokensFrom,
@@ -37,16 +41,83 @@ import {
  * no seed step, so "no doc" is a normal state and the defaults are what a real
  * send would use — a test that 404'd there would be testing the wrong thing.
  *
- * Six of the nine templates render through the same `ApplicationEmail`
+ * Six of the twelve templates render through the same `ApplicationEmail`
  * component the real course sends use, so what lands here is what an applicant
- * gets. THREE HAVE THEIR OWN COMPONENT AND ARE RENDERED THROUGH IT, for the
+ * gets. SIX HAVE THEIR OWN COMPONENT AND ARE RENDERED THROUGH IT, for the
  * same reason in each case: that is the one implementation the recipient
  * receives, footer and degradation rules included, and a rehearsal that
  * rendered it any other way would be proofing an email nobody gets. The weekly
- * nudge goes through `renderCourseNudge` into `CourseNudgeEmail`; the two
- * admissions receipts go through `AdmissionsSubmittedEmail` and
- * `AdmissionsReinstatedEmail`. Keep this count honest when a template is added.
+ * nudge goes through `renderCourseNudge` into `CourseNudgeEmail`; the five
+ * admissions templates go through `admissionsPreview` below, which is
+ * exhaustive over `AdmissionsTemplateId` so a sixth one cannot be added
+ * without a branch. The count above is checked by nothing, so keep it honest
+ * when a template is added.
  */
+/**
+ * Sample paragraphs for the appointment round's two decisions, so a rehearsal
+ * shows the whole email an applicant receives rather than the admin-authored
+ * half of it. Both are plain text and both are rendered as text nodes by their
+ * component.
+ */
+const APPOINTMENT_NOTE_SAMPLE =
+  "Facilitator training is Wednesday 8 October, 18:00 to 20:00 in Hallward B12, with a shorter follow-up the week after. Bring a laptop.";
+const DECLINED_REASON_SAMPLE =
+  "We had more people offering than we have groups this term, so this was a decision about numbers rather than about your application.";
+
+/**
+ * One admissions template, rendered through the component it really sends as.
+ *
+ * NO `default` ARM. The parameter is the admissions union rather than the
+ * whole template id, so every member has to be named and a new admissions
+ * template is a type error here instead of a test send that silently proofs
+ * the wrong component.
+ */
+function admissionsPreview(
+  templateId: AdmissionsTemplateId,
+  subject: string,
+  blocks: Block[],
+  preheader: string,
+) {
+  switch (templateId) {
+    case "admissions-appointed":
+      return AdmissionsAppointedEmail({
+        subject,
+        blocks,
+        note: APPOINTMENT_NOTE_SAMPLE,
+        applicationUrl: ADMISSIONS_PREVIEW_SAMPLE.applicationUrl,
+        preheader,
+      });
+    case "admissions-declined":
+      return AdmissionsDeclinedEmail({
+        subject,
+        blocks,
+        sharedReason: DECLINED_REASON_SAMPLE,
+        preheader,
+      });
+    case "admissions-deadline-reminder":
+      return AdmissionsDeadlineReminderEmail({
+        subject,
+        blocks,
+        applicationUrl: ADMISSIONS_PREVIEW_SAMPLE.applicationUrl,
+        preheader,
+      });
+    case "admissions-reinstated":
+      return AdmissionsReinstatedEmail({
+        subject,
+        blocks,
+        applicationUrl: ADMISSIONS_PREVIEW_SAMPLE.applicationUrl,
+        preheader,
+      });
+    case "admissions-submitted":
+      return AdmissionsSubmittedEmail({
+        subject,
+        blocks,
+        applicationUrl: ADMISSIONS_PREVIEW_SAMPLE.applicationUrl,
+        preheader,
+      });
+  }
+}
+
 export async function POST(
   _req: Request,
   ctx: { params: Promise<{ templateId: string }> },
@@ -140,27 +211,22 @@ export async function POST(
    * unsubscribe page's "Invalid or expired link" state, which changes nothing.
    */
   /**
-   * The admissions pair render through THEIR OWN components for the same
-   * reason the nudge does: each carries a footer link back to the application,
-   * and a rehearsal that went through `ApplicationEmail` would proof an email
-   * nobody receives. The url is the sample one, so following it from a test
-   * send lands on a round that does not exist rather than on the admin's own
-   * application.
+   * The admissions family renders through THEIR OWN components for the same
+   * reason the nudge does: each carries something `ApplicationEmail` has no
+   * slot for (a footer link back to the application, the appointment's note,
+   * the refusal's shared reason), and a rehearsal that went through the shared
+   * component would proof an email nobody receives. The url is the sample one,
+   * so following it from a test send lands on a round that does not exist
+   * rather than on the admin's own application.
+   *
+   * The two DECISION templates carry a member-authored paragraph on a real
+   * send: the decider's note on an appointment, their shared reason on a
+   * refusal. Both are sampled here so an admin can see where their own words
+   * will land relative to the copy they are writing, and neither is ever put
+   * through the block path, on a test send or a real one.
    */
   const admissions = courseTemplateUsesAdmissionsTokens(templateId)
-    ? templateId === "admissions-submitted"
-      ? AdmissionsSubmittedEmail({
-          subject: personalisedSubject,
-          blocks: personalisedBlocks,
-          applicationUrl: ADMISSIONS_PREVIEW_SAMPLE.applicationUrl,
-          preheader: testSubject,
-        })
-      : AdmissionsReinstatedEmail({
-          subject: personalisedSubject,
-          blocks: personalisedBlocks,
-          applicationUrl: ADMISSIONS_PREVIEW_SAMPLE.applicationUrl,
-          preheader: testSubject,
-        })
+    ? admissionsPreview(templateId, personalisedSubject, personalisedBlocks, testSubject)
     : null;
 
   const react = admissions

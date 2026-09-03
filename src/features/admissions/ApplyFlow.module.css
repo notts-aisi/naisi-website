@@ -39,6 +39,10 @@
   font-size: var(--text-sm);
   font-weight: 600;
   color: var(--color-text);
+  /* `anywhere`, not `break-word`: only `anywhere` lowers the min-content width,
+     and the min-content width is what a stage label typed as one long word sets
+     the strip item to (src/components/ui/MemberText.module.css). */
+  overflow-wrap: anywhere;
 }
 
 .stripState {
@@ -57,7 +61,16 @@
 
 .cardTitle {
   margin: 0;
+  /* `.card` aligns to flex-start, so this heading is a flex item sized on its
+     own content rather than stretched to the card: without `min-width: 0` its
+     automatic minimum size is its min-content width. */
+  min-width: 0;
   font-size: var(--text-2xl);
+  /* Round and stage labels are admin-typed and can be one long word. `anywhere`
+     rather than `break-word`, because only `anywhere` lowers the min-content
+     width; `break-word` wraps the visible line and leaves the box as wide as
+     the longest word. */
+  overflow-wrap: anywhere;
 }
 
 .body {
@@ -82,6 +95,9 @@
 .stageTitle {
   margin: 0;
   font-size: var(--text-xl);
+  /* `.stage` already carries `min-width: 0` and stretches its children, so all
+     this heading needs is a break opportunity inside a long word. */
+  overflow-wrap: anywhere;
 }
 
 .intro {
@@ -253,7 +269,7 @@
   border-radius: var(--radius-sm);
 }
 
-@media (max-width: 48rem) {
+@media (max-width: 48rem) { /* --bp-md */
   .wrap {
     gap: var(--space-5);
   }
@@ -274,5 +290,33 @@
 
   .withdrawActions > * {
     flex: 1 1 10rem;
+  }
+}
+
+/* Small phones. The section padding is the whole of what stands between the
+   availability grid and the screen edge, so it comes off first: at 320px the
+   card padding was taking 32 of the 288 usable pixels away from a drag
+   surface that needs every one of them. */
+@media (max-width: 36rem) { /* --bp-sm */
+  .cardTitle {
+    font-size: var(--text-xl);
+  }
+
+  .stageTitle {
+    font-size: var(--text-lg);
+  }
+
+  .stage {
+    padding: var(--space-3);
+  }
+
+  .withdrawBox {
+    padding: var(--space-3);
+  }
+
+  /* Withdraw and Keep it stop sharing a row. Two adjacent buttons at 130px, one
+     of them destructive, is the shape a thumb gets wrong. */
+  .withdrawActions > * {
+    flex-basis: 100%;
   }
 }

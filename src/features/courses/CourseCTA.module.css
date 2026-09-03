@@ -135,7 +135,19 @@
     padding: var(--space-6);
   }
   .button {
-    /* Full-bleed tap target on phones — the CTA is the page's one action. */
+    /* Full-bleed tap target on phones - the CTA is the page's one action. */
     width: 100%;
+  }
+}
+
+/* Small phones. The closing panel gives up padding rather than the button
+   inside it giving up width. */
+@media (max-width: 36rem) { /* --bp-sm */
+  .foot {
+    margin-top: var(--space-8);
+    padding: var(--space-4);
+  }
+  .dot {
+    margin: 0 var(--space-1);
   }
 }

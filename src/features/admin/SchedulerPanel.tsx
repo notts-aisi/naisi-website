@@ -35,6 +35,8 @@ type JobRow = {
   maxLateHours: number;
   reclaimAfterMinutes: number;
   enabled: boolean;
+  /** What no stored switch means for this job. False = it ships dark. */
+  enabledByDefault: boolean;
   lastRunAt: string | null;
   lastProcessed: number;
   lastError: string | null;
@@ -301,6 +303,13 @@ export default function SchedulerPanel() {
                     <span>Skips work over {job.maxLateHours}h late</span>
                   )}
                 </div>
+                {!job.enabled && !job.enabledByDefault && (
+                  <p className={styles.jobDescription}>
+                    This job emails people, so it does not switch itself on
+                    when it deploys. Turn it on here once you have watched a
+                    run on dev.
+                  </p>
+                )}
                 {job.lastError !== null && (
                   <p className={styles.jobError}>
                     Threw at {formatWhen(job.lastErrorAt)}: {job.lastError}

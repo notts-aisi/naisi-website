@@ -125,6 +125,8 @@ const MUST_GUARD = [
   ["src/app/api/admissions/rounds/[roundId]/stages/[stageId]/route.ts", "writes and deletes the questions a stage asks"],
   ["src/app/api/admissions/rounds/[roundId]/stages/[stageId]/release/route.ts", "releases a stage's questions to applicants, which cannot be undone"],
   ["src/app/api/admissions/rounds/[roundId]/roles/route.ts", "appoints reviewers and the final decider, which grants access to applications"],
+  ["src/app/api/admissions/rounds/[roundId]/reminders/send-now/route.ts", "emails every applicant holding a draft on the round, which cannot be recalled"],
+  ["src/app/api/admissions/rounds/[roundId]/decide/route.ts", "decides somebody's application, writes them onto a run's facilitator list and emails them the answer"],
   // Admissions: the applicant's own lane. Every write here is recorded by
   // Firestore as the MEMBER performing it, and each one is a fact about their
   // intake: an application starting, an answer changing, a submission going in

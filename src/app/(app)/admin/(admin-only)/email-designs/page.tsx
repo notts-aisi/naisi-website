@@ -101,6 +101,9 @@ const COURSE_TRIGGER_LABELS: Record<CourseTemplateTrigger, string> = {
   "dropped-out": "On leaving",
   "admissions-submitted": "On submitting",
   "admissions-reinstated": "On reopening",
+  "admissions-deadline-reminder": "Before the deadline",
+  "admissions-appointed": "On appointment",
+  "admissions-declined": "On declining a facilitator",
 };
 
 function CourseGroup({ byId }: { byId: Map<CourseTemplateId, CourseTemplateDoc> }) {

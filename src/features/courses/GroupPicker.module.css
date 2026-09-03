@@ -109,10 +109,17 @@
 .slotName {
   display: flex;
   align-items: center;
+  /* This wraps the pill's OWN children (the name and the "your session" tag)
+     onto a second line. It says nothing about how wide this box may get inside
+     `.slotBody`; keeping the name in the card is the `overflow-wrap` below. */
+  flex-wrap: wrap;
   gap: var(--space-2);
   font-size: var(--text-sm);
   font-weight: 600;
   color: var(--color-text);
+  /* `anywhere`, not `break-word`: only `anywhere` lowers the min-content width,
+     and in the read-only list this name is a flex item sized on its content. */
+  overflow-wrap: anywhere;
 }
 
 .slotWhen {
@@ -129,6 +136,9 @@
 
 .slotStatic .slotName {
   flex: 1 1 auto;
+  /* Here the name is a direct flex item of the card rather than a child of
+     `.slotBody`, so it needs its own lifted minimum size. */
+  min-width: 0;
 }
 
 .currentTag {
@@ -267,8 +277,24 @@
     flex-wrap: wrap;
     row-gap: var(--space-1);
   }
+  /* And this is what makes them drop. `flex-wrap` alone changed nothing: the
+     body beside them carries `min-width: 0`, so it shrank instead and the
+     seats count sat squeezed against the right edge on the one screen where
+     "3 seats left" is the deciding fact. A full-width basis puts it on its own
+     line, still inside the same tap target. */
+  .slotSeats {
+    flex: 1 0 100%;
+  }
   .button,
   .secondary {
     width: 100%;
+  }
+}
+
+/* Small phones. */
+@media (max-width: 36rem) { /* --bp-sm */
+  .slot,
+  .slotStatic {
+    padding: var(--space-3);
   }
 }

@@ -45,6 +45,10 @@ const MARKERS_URL = new URL(
   "../src/lib/firestore/schedulerMarkers.ts",
   import.meta.url,
 );
+const CONFIG_URL = new URL(
+  "../src/lib/firestore/schedulerConfig.ts",
+  import.meta.url,
+);
 const TICK_ROUTE_URL = new URL(
   "../src/app/api/scheduler/tick/route.ts",
   import.meta.url,
@@ -108,6 +112,11 @@ const {
   stageReleaseMarker,
   unmarkedRegisterMarker,
 } = await loadModule(MARKERS_URL, "schedulerMarkers");
+
+const { jobStateFor, normalizeSchedulerConfig } = await loadModule(
+  CONFIG_URL,
+  "schedulerConfig",
+);
 
 const iso = (s) => new Date(s);
 
@@ -527,6 +536,54 @@ describe("isStaleWork", () => {
 // Source-level guards on the tick route
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The kill switches, and what a MISSING switch means
+// ---------------------------------------------------------------------------
+
+describe("jobStateFor", () => {
+  const configWith = (jobs) => normalizeSchedulerConfig({ jobs });
+
+  test("no row at all falls to the job's own default", () => {
+    // Both directions matter. Most jobs must run on an environment nobody has
+    // touched the panel on; a job that MAILS PEOPLE must not arm itself the
+    // moment it deploys.
+    assert.equal(jobStateFor(configWith({}), "heartbeat").enabled, true);
+    assert.equal(jobStateFor(configWith({}), "heartbeat", true).enabled, true);
+    assert.equal(jobStateFor(configWith({}), "heartbeat", false).enabled, false);
+  });
+
+  test("a row written by Run now is not somebody having touched the switch", () => {
+    // POST /api/admin/scheduler/run merges `lastRunAt` onto a job's row
+    // without an `enabled` key. If that counted as an explicit choice, one
+    // manual test run would silently arm a job that ships dark.
+    const config = configWith({
+      "admissions-deadline-reminders": { lastRunAt: null, lastProcessed: 3 },
+    });
+    assert.equal(config.jobs["admissions-deadline-reminders"].enabled, null);
+    assert.equal(
+      jobStateFor(config, "admissions-deadline-reminders", false).enabled,
+      false,
+      "a lastRunAt write armed a job that ships dark",
+    );
+  });
+
+  test("an explicit switch beats the default, both ways", () => {
+    const on = configWith({ "admissions-deadline-reminders": { enabled: true } });
+    const off = configWith({ heartbeat: { enabled: false } });
+    assert.equal(
+      jobStateFor(on, "admissions-deadline-reminders", false).enabled,
+      true,
+      "the owner turning a dark job on did not stick",
+    );
+    assert.equal(jobStateFor(off, "heartbeat", true).enabled, false);
+  });
+
+  test("the site-wide switch still means enabled when it is missing", () => {
+    assert.equal(normalizeSchedulerConfig({}).enabled, true);
+    assert.equal(normalizeSchedulerConfig({ enabled: false }).enabled, false);
+  });
+});
+
 describe("POST /api/scheduler/tick source guards", () => {
   const source = readFileSync(fileURLToPath(TICK_ROUTE_URL), "utf8");
 
@@ -573,6 +630,12 @@ describe("POST /api/scheduler/tick source guards", () => {
       !/from "@\/lib\/rateLimit"/.test(source),
       "the tick must not import the rate limiter",
     );
+  });
+
+  test("asks each job what a missing switch means for it", () => {
+    // Without the second argument every job falls to "missing means enabled",
+    // and a job that ships dark is armed by the first tick after it deploys.
+    assert.match(source, /jobStateFor\(config, job\.id, jobDefaultEnabled\(job\)\)/);
   });
 
   test("re-arms through NEXT_PUBLIC_APP_URL, never the host header", () => {

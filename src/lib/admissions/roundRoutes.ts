@@ -31,7 +31,10 @@ import type {
  * than defaulting: a caller that forgets has to write `false` on purpose.
  */
 
-export const ROUNDS_COLLECTION = "admissionRounds";
+// Re-exported so the whole `/api/admissions/rounds` tree keeps its one
+// import. The constant itself lives with the collection's normaliser.
+export { ROUNDS_COLLECTION } from "@/lib/firestore/admissionRounds";
+
 export const STAGES_SUBCOLLECTION = "stages";
 
 /** Everything the access decision needs, and nothing else. */

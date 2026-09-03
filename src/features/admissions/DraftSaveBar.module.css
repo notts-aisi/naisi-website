@@ -51,14 +51,27 @@
   }
 }
 
-@media (max-width: 48rem) {
+@media (max-width: 48rem) { /* --bp-md */
   .bar {
     flex-direction: column;
     align-items: stretch;
     gap: var(--space-3);
-    /* Within thumb reach at the bottom of the form rather than pinned: a
-       sticky bar over a 252-cell grid eats the one row somebody is aiming at. */
+    /* Documentary, not enforcement: `static` is the initial value and nothing
+       above sets this bar sticky. It is written out so the decision survives a
+       reader who wonders why a save bar on a phone is not pinned. It is not,
+       because a sticky bar over a 252-cell grid covers the one row somebody is
+       aiming at, and because a bar that is never anchored to the viewport edge
+       has no safe-area inset to clear (docs/pwa.md). Deleting this line changes
+       no pixel; deleting the reasoning loses the argument. */
     position: static;
+  }
+
+  /* Save first, then what happened, then the running status. Stretching the
+     column would otherwise turn a small "Saved" pill into a full-width green
+     band sitting ABOVE the button that produced it. */
+  .flash {
+    order: 1;
+    align-self: flex-start;
   }
 
   .status {

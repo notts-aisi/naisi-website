@@ -64,11 +64,12 @@ export const COURSE_NUDGE_PREVIEW_SAMPLE = {
  * Sample values for the ADMISSIONS tokens (V3), which no course template
  * resolves.
  *
- * `cohortLabel` is in the map and is deliberately NOT handed to either
- * template below: a round's receipts are sent weeks before anybody is placed
- * on a cohort, and this module's rule is that whatever a template gets here is
- * exactly what its send path can resolve. The decision templates, which do
- * know a cohort, add themselves to that branch when they land.
+ * `cohortLabel` is in the map and is deliberately NOT handed to any template
+ * below: a round's receipts are sent weeks before anybody is placed on a
+ * cohort, an appointment names a run rather than a cohort, and this module's
+ * rule is that whatever a template gets here is exactly what its send path can
+ * resolve. The enrolment decisions, which do know a cohort, add themselves to
+ * that branch when they land.
  *
  * `deadline` carries the time of day and `decisionsBy` does not, matching the
  * two formatters the send path uses: a deadline is an instant somebody has to
@@ -84,27 +85,59 @@ export const ADMISSIONS_PREVIEW_SAMPLE = {
 } as const;
 
 /**
+ * The run tokens an APPOINTMENT resolves, which no other admissions template
+ * does. Separate from `COURSE_PREVIEW_SAMPLE` because these three reach the
+ * admissions branch of `courseSampleTokens` and that branch supplies no course
+ * tokens at all by default; folding them in would have resolved
+ * `{courseTitle}` on the two receipts, where a real send leaves it literal.
+ */
+export const ADMISSIONS_APPOINTMENT_SAMPLE = {
+  courseTitle: "AI Safety Fundamentals",
+  runLabel: "Autumn 2026",
+  startDate: "Monday 26 October",
+} as const;
+
+/**
  * The admissions templates: the ones whose send path is
  * `sendAdmissionEmail` rather than either course path.
  *
- * They resolve the admissions tokens and NONE of the course ones. A round is
- * not a run, so `{courseTitle}`, `{runLabel}` and `{startDate}` stay literal
- * in a real send, and the preview shows that by not supplying them either.
+ * They resolve the admissions tokens, and the course tokens only where the
+ * send really knows a run. A round is not a run, so `{courseTitle}`,
+ * `{runLabel}` and `{startDate}` stay literal on the receipts, on the deadline
+ * reminder and on the refusal, and the preview shows that by not supplying
+ * them either. The appointment is the exception: it has written the person
+ * onto a run, so it names one.
  */
-export const ADMISSIONS_TEMPLATES: readonly CourseTemplateId[] = [
+export const ADMISSIONS_TEMPLATES = [
   "admissions-submitted",
   "admissions-reinstated",
-];
+  "admissions-deadline-reminder",
+  "admissions-appointed",
+  "admissions-declined",
+] as const satisfies readonly CourseTemplateId[];
+
+/**
+ * The admissions half of `CourseTemplateId`, as its own union.
+ *
+ * It exists so a `switch` over the admissions templates can be EXHAUSTIVE: a
+ * default arm would have quietly rendered a newly-added admissions template
+ * through whichever component the arm happened to name, and the point of
+ * rendering a test send through the real component is that nobody is proofing
+ * an email nobody receives.
+ */
+export type AdmissionsTemplateId = (typeof ADMISSIONS_TEMPLATES)[number];
 
 /**
  * Which admissions tokens each template's TRIGGER actually supplies.
  *
- * The two triggers are not the same: submitting an application knows the
+ * The five triggers are not the same: submitting an application knows the
  * decisions-by date and, on a round asking in parts, which part this is;
- * reopening one knows neither, because the reopen branch of
- * `POST .../apply` passes neither. A preview that filled both in would show an
- * admin a resolved `{decisionsBy}` and let them write a sentence around it
- * that arrives as nine literal characters in an applicant's inbox.
+ * reopening one knows neither, because the reopen branch of `POST .../apply`
+ * passes neither; the scheduler's deadline reminder knows only the round and
+ * the deadline it derived its own due date from; and only an appointment
+ * knows a run. A preview that filled in what a trigger does not pass would
+ * show an admin a resolved `{decisionsBy}` and let them write a sentence
+ * around it that arrives as nine literal characters in an applicant's inbox.
  *
  * MIRRORS `TOKENS_BY_KIND` in `src/lib/email/admissionEmails.ts`, which is the
  * send path's own copy and the one that actually filters. Two copies because
@@ -130,6 +163,35 @@ export const ADMISSIONS_TOKENS_BY_TEMPLATE: Partial<
     "applicationUrl",
     "deadline",
   ],
+  // The scheduler's own send. It knows the round and the deadline it derived
+  // its due date from, and nothing about stages or the decisions-by promise.
+  "admissions-deadline-reminder": [
+    "preferredName",
+    "firstName",
+    "roundLabel",
+    "applicationUrl",
+    "deadline",
+  ],
+  // The one admissions template that resolves the COURSE tokens: an
+  // appointment has written this person onto a run, so the email may name it.
+  "admissions-appointed": [
+    "preferredName",
+    "firstName",
+    "roundLabel",
+    "applicationUrl",
+    "courseTitle",
+    "runLabel",
+    "startDate",
+  ],
+  // No `reason`: the component renders the decider's shared note as its own
+  // paragraph, so a token would print it twice. Mirrors `TOKENS_BY_KIND`.
+  "admissions-declined": [
+    "preferredName",
+    "firstName",
+    "roundLabel",
+    "applicationUrl",
+    "decisionsBy",
+  ],
 };
 
 /** The tokens one admissions template resolves, as a set the callers can ask. */
@@ -141,8 +203,8 @@ export function admissionsTokensFor(
 
 export function courseTemplateUsesAdmissionsTokens(
   templateId: CourseTemplateId,
-): boolean {
-  return ADMISSIONS_TEMPLATES.includes(templateId);
+): templateId is AdmissionsTemplateId {
+  return (ADMISSIONS_TEMPLATES as readonly CourseTemplateId[]).includes(templateId);
 }
 
 /**
@@ -239,6 +301,7 @@ export function courseSampleTokens(
       stageLabel: ADMISSIONS_PREVIEW_SAMPLE.stageLabel,
       deadline: ADMISSIONS_PREVIEW_SAMPLE.deadline,
       decisionsBy: ADMISSIONS_PREVIEW_SAMPLE.decisionsBy,
+      ...ADMISSIONS_APPOINTMENT_SAMPLE,
     };
     const out: TokenValues = {};
     for (const [key, value] of Object.entries(all)) {

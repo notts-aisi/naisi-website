@@ -5,11 +5,22 @@
  * `{ enabled, jobs: Record<jobId, { enabled, lastRunAt, lastError }>,
  *    updatedAt, updatedByUid }`.
  *
- * MISSING MEANS ENABLED, at both levels. A fresh Firestore project, or a job
- * registered by a later PR before anyone has touched the panel, must run.
- * The alternative is a scheduler that is silently off on a new environment
- * and a deadline reminder nobody notices did not send. Switching a job OFF is
- * an explicit `enabled: false`, exactly like `readTaskEmailConfig`.
+ * MISSING MEANS ENABLED for the site-wide switch, and for a job it means the
+ * JOB'S OWN DEFAULT. A fresh Firestore project, or a job registered by a
+ * later PR before anyone has touched the panel, must run: the alternative is
+ * a scheduler that is silently off on a new environment and a deadline
+ * reminder nobody notices did not send.
+ *
+ * The exception a job declares for itself is `enabledByDefault: false`
+ * (`src/lib/scheduler/registry.ts`), for a job that MAILS PEOPLE and would
+ * otherwise arm itself the moment it deployed. `jobStateFor` takes that
+ * default as an argument rather than importing the registry, which would be a
+ * cycle: the registry imports the jobs, and a job imports this module.
+ *
+ * A stored row is only an explicit choice when it actually carries an
+ * `enabled` boolean. The manual Run now writes `lastRunAt` onto a job's row
+ * without one, so a row that exists is NOT on its own evidence that anybody
+ * has touched the switch; `enabled: null` is how this module says so.
  *
  * `config` has no match block in firestore.rules, so it is default-deny to
  * every client and every write here is Admin SDK. (PR5 adds an EXPLICIT
@@ -26,11 +37,21 @@ export const SCHEDULER_CONFIG_PATH = {
 } as const;
 
 export type SchedulerJobState = {
-  enabled: boolean;
+  /**
+   * The switch as STORED: `true` or `false` when somebody has set it, `null`
+   * when the doc carries no explicit choice for this job. Null is not "on":
+   * it is resolved against the job's own default by {@link jobStateFor}.
+   */
+  enabled: boolean | null;
   lastRunAt: Date | null;
   lastError: string | null;
   lastErrorAt: Date | null;
   lastProcessed: number;
+};
+
+/** A job state with the switch resolved. What every caller actually reads. */
+export type ResolvedSchedulerJobState = Omit<SchedulerJobState, "enabled"> & {
+  enabled: boolean;
 };
 
 export type SchedulerConfig = {
@@ -52,7 +73,7 @@ function toDate(raw: unknown): Date | null {
 
 export function defaultJobState(): SchedulerJobState {
   return {
-    enabled: true,
+    enabled: null,
     lastRunAt: null,
     lastError: null,
     lastErrorAt: null,
@@ -64,7 +85,7 @@ function normaliseJobState(raw: unknown): SchedulerJobState {
   if (raw === null || typeof raw !== "object") return defaultJobState();
   const row = raw as Record<string, unknown>;
   return {
-    enabled: row.enabled === false ? false : true,
+    enabled: typeof row.enabled === "boolean" ? row.enabled : null,
     lastRunAt: toDate(row.lastRunAt),
     lastError:
       typeof row.lastError === "string" && row.lastError !== ""
@@ -109,10 +130,19 @@ export async function readSchedulerConfig(
   );
 }
 
-/** State for one job, defaulted the "missing means enabled" way. */
+/**
+ * State for one job, with the switch resolved.
+ *
+ * `enabledByDefault` is the job's own answer to "what does no stored switch
+ * mean", and it is an ARGUMENT rather than a lookup so this module never
+ * imports the registry. It defaults to `true`, which is the right answer for
+ * everything that does not mail a human.
+ */
 export function jobStateFor(
   config: SchedulerConfig,
   jobId: string,
-): SchedulerJobState {
-  return config.jobs[jobId] ?? defaultJobState();
+  enabledByDefault = true,
+): ResolvedSchedulerJobState {
+  const stored = config.jobs[jobId] ?? defaultJobState();
+  return { ...stored, enabled: stored.enabled ?? enabledByDefault };
 }

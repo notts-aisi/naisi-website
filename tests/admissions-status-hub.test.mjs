@@ -1,5 +1,5 @@
 /**
- * The applicant status hub and the two admissions lifecycle emails.
+ * The applicant status hub and the admissions lifecycle emails.
  *
  * Run with `npm test` (Node's built-in runner, no dependencies).
  *
@@ -61,6 +61,16 @@ const STUBS = new Map([
   ["server-only", "export {};"],
   ["@/emails/AdmissionsSubmittedEmail", "export default function Stub() { return null; }"],
   ["@/emails/AdmissionsReinstatedEmail", "export default function Stub() { return null; }"],
+  // The scheduler's reminder and the appointment round's two decisions.
+  // Stubbed for the same reason as the pair above: the send helper imports all
+  // five, and a real `.tsx` here would be transpiled without the JSX option and
+  // throw before a single assertion ran.
+  [
+    "@/emails/AdmissionsDeadlineReminderEmail",
+    "export default function Stub() { return null; }",
+  ],
+  ["@/emails/AdmissionsAppointedEmail", "export default function Stub() { return null; }"],
+  ["@/emails/AdmissionsDeclinedEmail", "export default function Stub() { return null; }"],
   ["@/lib/firebase/admin", "export function getAdminDb() { return null; }"],
   ["@/lib/firestore/suppression", "export async function isSuppressed() { return false; }"],
   ["./send", "export async function sendEmail() {}"],
@@ -841,8 +851,10 @@ describe("the lifecycle sends happen after the commit", () => {
     assert.match(body, /catch \(err\) \{[\s\S]*console\.error/);
     // A round is not a run: the three course tokens are dropped rather than
     // resolved to a blank. The filter is by kind, so this is asserted against
-    // the map itself rather than against three delete statements.
-    for (const kind of ["submitted", "reinstated"]) {
+    // the map itself rather than against three delete statements. `appointed`
+    // is left out because it DOES name a run, and that side is asserted in
+    // `admissions-appointment-decide.test.mjs`.
+    for (const kind of ROUND_ONLY_KINDS) {
       const supplied = sendHelper.TOKENS_BY_KIND[kind];
       for (const courseToken of ["courseTitle", "runLabel", "startDate"]) {
         assert.equal(
@@ -860,10 +872,42 @@ describe("the lifecycle sends happen after the commit", () => {
 // The template registry
 // ---------------------------------------------------------------------------
 
-const ADMISSIONS_IDS = ["admissions-submitted", "admissions-reinstated"];
+/**
+ * Every template whose send path is `sendAdmissionEmail`. The two RECEIPTS
+ * (this file's own subject), the scheduler's deadline reminder, and the
+ * appointment round's two DECISIONS, which land with the appointment decide
+ * path and have their own executed tests in
+ * `admissions-appointment-decide.test.mjs`. They are all listed here because
+ * the registry checks below are about the registry, not about a trigger: an id
+ * with no label or no seed copy is broken whichever route sends it.
+ */
+const ADMISSIONS_IDS = [
+  "admissions-submitted",
+  "admissions-reinstated",
+  "admissions-deadline-reminder",
+  "admissions-appointed",
+  "admissions-declined",
+];
+
+/** The kinds `sendAdmissionEmail` accepts, in the same order as the ids above. */
+const ADMISSIONS_KINDS = [
+  "submitted",
+  "reinstated",
+  "deadline-reminder",
+  "appointed",
+  "declined",
+];
+
+/**
+ * The kinds that know a ROUND and nothing more, which is every kind but
+ * `appointed`: an appointment has written the person onto a run, so it is the
+ * one send that may name a course. The checks that assert a course token stays
+ * literal run over this list rather than over every kind.
+ */
+const ROUND_ONLY_KINDS = ADMISSIONS_KINDS.filter((kind) => kind !== "appointed");
 
 describe("the admissions email templates", () => {
-  test("both ids are registered, with a trigger, a label and seed copy", () => {
+  test("every id is registered, with a trigger, a label and seed copy", () => {
     for (const id of ADMISSIONS_IDS) {
       assert.ok(emails.COURSE_TEMPLATE_IDS.includes(id), `${id} is not a template id`);
       assert.equal(emails.isCourseTemplateId(id), true);
@@ -881,7 +925,7 @@ describe("the admissions email templates", () => {
     // what the helper can take would bless `{decisionsBy}` in the reinstated
     // copy and ship those thirteen characters to an applicant. `TOKENS_BY_KIND`
     // is the contract each trigger keeps, and the send path filters on it.
-    for (const kind of ["submitted", "reinstated"]) {
+    for (const kind of ADMISSIONS_KINDS) {
       const id = sendHelper.TEMPLATE_FOR_KIND[kind];
       const supplied = new Set(sendHelper.TOKENS_BY_KIND[kind]);
       const seed = emails.courseTemplateDefaults[id];
@@ -896,7 +940,7 @@ describe("the admissions email templates", () => {
     }
   });
 
-  test("the two admissions template ids are the two the send path knows", () => {
+  test("the admissions template ids are exactly the ones the send path knows", () => {
     assert.deepEqual(
       Object.values(sendHelper.TEMPLATE_FOR_KIND).sort(),
       [...ADMISSIONS_IDS].sort(),
@@ -918,13 +962,20 @@ describe("the admissions email templates", () => {
   });
 
   test("the designer's sample resolves exactly what a real send resolves", () => {
-    for (const kind of ["submitted", "reinstated"]) {
+    for (const kind of ADMISSIONS_KINDS) {
       const id = sendHelper.TEMPLATE_FOR_KIND[kind];
       assert.equal(samples.courseTemplateUsesAdmissionsTokens(id), true);
       const tokens = samples.courseSampleTokens(id, "Alex Taylor");
       // A round is not a run: previewing a course token as resolved would show
-      // an admin an email nobody receives.
-      for (const absent of ["courseTitle", "runLabel", "startDate", "cohortLabel"]) {
+      // an admin an email nobody receives. The appointment is the exception,
+      // because it has written the person onto a run and names it; nobody is
+      // ever placed on a cohort by an admissions send, so `cohortLabel` stays
+      // unresolved on all five.
+      const absentTokens =
+        kind === "appointed"
+          ? ["cohortLabel"]
+          : ["courseTitle", "runLabel", "startDate", "cohortLabel"];
+      for (const absent of absentTokens) {
         assert.equal(absent in tokens, false, `the preview resolves {${absent}}`);
       }
       // EXACTLY, both ways: every token this trigger supplies is previewed,
@@ -945,7 +996,7 @@ describe("the admissions email templates", () => {
     // The editor lists tokens from `admissionsTokensFor`, and this is the
     // assertion that the client-side copy of the contract still agrees with
     // the server-only one it mirrors.
-    for (const kind of ["submitted", "reinstated"]) {
+    for (const kind of ADMISSIONS_KINDS) {
       const id = sendHelper.TEMPLATE_FOR_KIND[kind];
       assert.deepEqual(
         [...samples.admissionsTokensFor(id)].sort(),

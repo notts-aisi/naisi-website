@@ -68,6 +68,7 @@ import {
 } from "@/lib/firestore/schedulerRuns";
 import {
   JOBS,
+  jobDefaultEnabled,
   policyFor,
   type JobBudget,
   type JobRegistration,
@@ -321,7 +322,9 @@ export async function POST(req: Request) {
   let ranSomething = false;
 
   for (const job of JOBS as readonly JobRegistration[]) {
-    const state = jobStateFor(config, job.id);
+    // A job with no stored switch falls to its OWN default, which is off for
+    // a job that mails people (see `enabledByDefault`).
+    const state = jobStateFor(config, job.id, jobDefaultEnabled(job));
     if (!state.enabled) {
       entries.push({
         id: job.id,

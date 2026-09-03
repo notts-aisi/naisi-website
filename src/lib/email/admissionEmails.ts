@@ -1,5 +1,8 @@
 import "server-only";
+import AdmissionsAppointedEmail from "@/emails/AdmissionsAppointedEmail";
+import AdmissionsDeadlineReminderEmail from "@/emails/AdmissionsDeadlineReminderEmail";
 import AdmissionsReinstatedEmail from "@/emails/AdmissionsReinstatedEmail";
+import AdmissionsDeclinedEmail from "@/emails/AdmissionsDeclinedEmail";
 import AdmissionsSubmittedEmail from "@/emails/AdmissionsSubmittedEmail";
 import { getAdminDb } from "@/lib/firebase/admin";
 import {
@@ -12,15 +15,22 @@ import { isSuppressed } from "@/lib/firestore/suppression";
 import {
   personaliseBlocks,
   personaliseString,
+  type Block,
   type TokenValues,
 } from "@/lib/firestore/newsletterBlocks";
 import { sendEmail } from "./send";
 
 /**
  * ADMISSIONS lifecycle mail: the applicant's own receipts on an admission
- * round. Two sends today, one per template id, and the rest of the round's
- * lifecycle (stage released, deadline reminder, and the four decisions) lands
- * on this module as those routes are built.
+ * round, and the appointment round's two decisions. Five sends today, one per
+ * template id, and the rest of the round's lifecycle (stage released, and the
+ * enrolment decisions) lands on this module as those routes are built.
+ *
+ * Four of the five are fired by somebody's own action, the applicant's or the
+ * decider's, and one, the deadline reminder, is fired by the scheduler tick.
+ * That difference is why this function returns an outcome (see
+ * `AdmissionSendOutcome`): a claimed marker has to know whether the send
+ * actually happened.
  *
  * ## Why it is not `courseApplicationEmails.ts`
  *
@@ -55,12 +65,46 @@ import { sendEmail } from "./send";
  * reads as "it did not go through".
  */
 
-export type AdmissionEmailKind = "submitted" | "reinstated";
+/**
+ * `declined` is the APPOINTMENT round's refusal: we cannot take you on as a
+ * facilitator. The ENROLMENT round's refusal is a different send about a
+ * different thing (a place on a course rather than a role running one) and it
+ * arrives with the enrolment decide path under its own kind and its own
+ * template id. Naming this one `rejected` would have taken that id.
+ */
+export type AdmissionEmailKind =
+  | "submitted"
+  | "reinstated"
+  | "deadline-reminder"
+  | "appointed"
+  | "declined";
 
 export const TEMPLATE_FOR_KIND: Record<AdmissionEmailKind, CourseTemplateId> = {
   submitted: "admissions-submitted",
   reinstated: "admissions-reinstated",
+  "deadline-reminder": "admissions-deadline-reminder",
+  appointed: "admissions-appointed",
+  declined: "admissions-declined",
 };
+
+/**
+ * What one send DID, for the one caller that has to know.
+ *
+ * The applicant-lane call sites and the decide route fire this and walk away:
+ * a receipt is a courtesy, and so is the letter about a decision the commit
+ * already recorded, so `void sendAdmissionEmail(...)` is the right shape in
+ * both places. The SCHEDULER cannot walk away. It holds a marker it claimed
+ * before the send, and stamping `sentAt` on a send that threw would be
+ * permanent silent non-delivery: every later tick would re-derive the same
+ * reminder, find a stamped marker, and skip. So the outcome comes back, and
+ * the tick stamps `sentAt` only on `sent`, leaves the marker unstamped on
+ * `failed` (which is what the re-claim rule exists to pick up), and settles it
+ * as skipped on `suppressed`.
+ *
+ * Returning a value costs the fire-and-forget callers nothing: `void` on a
+ * promise that resolves to a string is the same statement it always was.
+ */
+export type AdmissionSendOutcome = "sent" | "suppressed" | "failed";
 
 /**
  * The tokens each TRIGGER actually supplies, and the list is per kind rather
@@ -78,9 +122,24 @@ export const TEMPLATE_FOR_KIND: Record<AdmissionEmailKind, CourseTemplateId> = {
  * its own kind's set. A trigger that starts supplying a token adds it here in
  * the same commit as the call site.
  *
- * The three COURSE tokens are absent from every entry, which is what drops
- * them: a round is not a run, so `{courseTitle}` stays literal rather than
- * resolving to a blank and cutting a hole in a sentence.
+ * The three COURSE tokens are absent from every entry but `appointed`, which
+ * is what drops them: a round is not a run, so `{courseTitle}` stays literal
+ * rather than resolving to a blank and cutting a hole in a sentence. They ARE
+ * present on `appointed`, and that is not an inconsistency: an appointment
+ * names a run, because it writes the person onto one. It is the one admissions
+ * send that knows a course.
+ *
+ * `appointed` may therefore resolve all three to whatever the run says, blank
+ * included, and nothing here re-checks that. The decide route is where an
+ * appointment onto a run with no start date is refused, so by the time this
+ * function is called the date exists. A second guard here would have been a
+ * filter quietly rescuing a decision the route should not have let through.
+ *
+ * `declined` carries NO `reason` token, and its absence is the point.
+ * `AdmissionsDeclinedEmail` renders the decider's shared note as its own
+ * paragraph, so a `{reason}` in the body would print the same sentence a
+ * second time. The share gate lives on the prop; the token set does not
+ * duplicate it.
  */
 export const TOKENS_BY_KIND: Record<AdmissionEmailKind, readonly string[]> = {
   submitted: [
@@ -93,6 +152,32 @@ export const TOKENS_BY_KIND: Record<AdmissionEmailKind, readonly string[]> = {
     "stageLabel",
   ],
   reinstated: ["preferredName", "firstName", "roundLabel", "applicationUrl", "deadline"],
+  // The tick knows the round and its deadline and nothing else: no stage is
+  // involved in a draft reminder, and the decisions-by date is a promise the
+  // submitted receipt makes, not this one.
+  "deadline-reminder": [
+    "preferredName",
+    "firstName",
+    "roundLabel",
+    "applicationUrl",
+    "deadline",
+  ],
+  appointed: [
+    "preferredName",
+    "firstName",
+    "roundLabel",
+    "applicationUrl",
+    "courseTitle",
+    "runLabel",
+    "startDate",
+  ],
+  declined: [
+    "preferredName",
+    "firstName",
+    "roundLabel",
+    "applicationUrl",
+    "decisionsBy",
+  ],
 };
 
 export type AdmissionEmailOptions = {
@@ -118,6 +203,29 @@ export type AdmissionEmailOptions = {
    * single-stage round, where naming "the form" as a stage would be noise.
    */
   stageLabel?: string;
+  /**
+   * THE APPOINTMENT TRIO. Only the `appointed` kind supplies these, because
+   * only an appointment has written the person onto a run. Everything else
+   * leaves them out and the filter drops them.
+   */
+  courseTitle?: string;
+  runLabel?: string;
+  /** Human-formatted run start ("Monday 26 October"). */
+  startDate?: string;
+  /**
+   * The decider's note, rendered by `AdmissionsAppointedEmail` as its own
+   * paragraph. MEMBER-AUTHORED PLAIN TEXT: it never reaches the token map and
+   * never reaches a `richText` block, so it cannot land in
+   * `dangerouslySetInnerHTML`. `appointed` only.
+   */
+  note?: string;
+  /**
+   * The decider's reason, and ONLY when they ticked "share this". Passed to
+   * `AdmissionsDeclinedEmail` as a PROP and as nothing else: the component
+   * owns the paragraph, so there is no matching token and no way for one note
+   * to be printed twice. `declined` only.
+   */
+  sharedReason?: string;
   /** The applicant's uid, the deliverability log's actor. */
   uid: string;
   /** The round id, the log's reference, so one intake's mail is greppable. */
@@ -135,7 +243,66 @@ export function admissionApplicationUrl(
   return `${base}/${path}/${encodeURIComponent(roundId)}`;
 }
 
-export async function sendAdmissionEmail(opts: AdmissionEmailOptions): Promise<void> {
+/**
+ * One kind, one component, chosen exhaustively.
+ *
+ * A `switch` over the union rather than a chain of ternaries, so adding a kind
+ * without a component is a TYPE ERROR here instead of a silently
+ * wrong-looking email: `renderFor` has no default arm and TypeScript checks
+ * that every member returns.
+ *
+ * The two member-authored strings (`note` on an appointment, `sharedReason` on
+ * a refusal) are handed to their component as PROPS. They are deliberately not
+ * in `personalisedBlocks`: those blocks reach `dangerouslySetInnerHTML`.
+ */
+function renderFor(
+  opts: AdmissionEmailOptions,
+  subject: string,
+  blocks: Block[],
+) {
+  switch (opts.kind) {
+    case "submitted":
+      return AdmissionsSubmittedEmail({
+        subject,
+        blocks,
+        applicationUrl: opts.applicationUrl,
+        preheader: subject,
+      });
+    case "reinstated":
+      return AdmissionsReinstatedEmail({
+        subject,
+        blocks,
+        applicationUrl: opts.applicationUrl,
+        preheader: subject,
+      });
+    case "deadline-reminder":
+      return AdmissionsDeadlineReminderEmail({
+        subject,
+        blocks,
+        applicationUrl: opts.applicationUrl,
+        preheader: subject,
+      });
+    case "appointed":
+      return AdmissionsAppointedEmail({
+        subject,
+        blocks,
+        note: opts.note ?? "",
+        applicationUrl: opts.applicationUrl,
+        preheader: subject,
+      });
+    case "declined":
+      return AdmissionsDeclinedEmail({
+        subject,
+        blocks,
+        sharedReason: opts.sharedReason ?? "",
+        preheader: subject,
+      });
+  }
+}
+
+export async function sendAdmissionEmail(
+  opts: AdmissionEmailOptions,
+): Promise<AdmissionSendOutcome> {
   try {
     const templateId = TEMPLATE_FOR_KIND[opts.kind];
     const defaults = courseTemplateDefaults[templateId];
@@ -148,7 +315,7 @@ export async function sendAdmissionEmail(opts: AdmissionEmailOptions): Promise<v
     if (db) {
       if (await isSuppressed(db, opts.to)) {
         console.log(`[admissions email:${opts.kind}] skipped, suppressed:`, opts.to);
-        return;
+        return "suppressed";
       }
       try {
         const snap = await db.collection("courseEmailTemplates").doc(templateId).get();
@@ -169,17 +336,21 @@ export async function sendAdmissionEmail(opts: AdmissionEmailOptions): Promise<v
       // `name` is already the resolved preferredName / displayName fallback
       // at the call site, so it feeds the builder as the display name.
       user: { displayName: opts.name },
-      // A round is not a run. These three are passed empty and then dropped by
-      // the filter below, so a course token pasted into admissions copy stays
-      // literal in a test send instead of resolving to a blank.
-      courseTitle: "",
-      runLabel: "",
-      startDate: "",
+      // A round is not a run, so these three are empty on every kind EXCEPT
+      // `appointed`, which has just written the recipient onto one. Where they
+      // are empty the filter below drops them, so a course token pasted into
+      // an application receipt stays literal instead of resolving to a blank.
+      courseTitle: opts.courseTitle ?? "",
+      runLabel: opts.runLabel ?? "",
+      startDate: opts.startDate ?? "",
       applicationUrl: opts.applicationUrl,
       roundLabel: opts.roundLabel,
       stageLabel: opts.stageLabel,
       deadline: opts.deadline,
       decisionsBy: opts.decisionsBy,
+      // NO `reason`. The shared note reaches the refusal as a component prop,
+      // and a token as well would put the same paragraph in twice. See
+      // `CourseTokenMap.reason`.
     });
     // THE FILTER, by kind: anything this trigger does not supply is dropped
     // rather than resolved, so an unsupplied token stays visible as `{token}`
@@ -187,26 +358,14 @@ export async function sendAdmissionEmail(opts: AdmissionEmailOptions): Promise<v
     const allowed = new Set<string>(TOKENS_BY_KIND[opts.kind]);
     const tokens: TokenValues = {};
     for (const [key, value] of Object.entries(built)) {
-      if (allowed.has(key)) tokens[key] = value;
+      if (!allowed.has(key)) continue;
+      tokens[key] = value;
     }
 
     const personalisedSubject = personaliseString(subject, tokens);
     const personalisedBlocks = personaliseBlocks(blocks, tokens);
 
-    const react =
-      opts.kind === "submitted"
-        ? AdmissionsSubmittedEmail({
-            subject: personalisedSubject,
-            blocks: personalisedBlocks,
-            applicationUrl: opts.applicationUrl,
-            preheader: personalisedSubject,
-          })
-        : AdmissionsReinstatedEmail({
-            subject: personalisedSubject,
-            blocks: personalisedBlocks,
-            applicationUrl: opts.applicationUrl,
-            preheader: personalisedSubject,
-          });
+    const react = renderFor(opts, personalisedSubject, personalisedBlocks);
 
     await sendEmail({
       to: opts.to,
@@ -217,7 +376,9 @@ export async function sendAdmissionEmail(opts: AdmissionEmailOptions): Promise<v
       actorUid: opts.uid,
       referenceId: opts.roundId,
     });
+    return "sent";
   } catch (err) {
     console.error(`[admissions email:${opts.kind}] send failed`, opts.roundId, err);
+    return "failed";
   }
 }

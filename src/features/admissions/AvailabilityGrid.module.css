@@ -78,6 +78,17 @@
 /* --- The board ---------------------------------------------------------- */
 
 .board {
+  /* Column heads and rail head in lockstep: they are siblings in two different
+     boxes, and the grid only lines up while they agree. 2.75rem rather than the
+     2rem this started at because the head strip is the scroller's handle (see
+     `.columnHead`), and a handle is an interactive surface. */
+  --head-height: 2.75rem;
+  /* The phone cell height, and the reason it is declared here rather than left
+     to the fallback on `.cell`: 2.75rem is the enforced touch floor for a
+     public funnel surface (docs/touch-targets.md), and one number on the
+     container is what the 48rem block reaches for to switch the whole board to
+     desktop density. */
+  --slot-height: 2.75rem;
   display: flex;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -96,7 +107,7 @@
 }
 
 .railHead {
-  height: 2rem;
+  height: var(--head-height, 2rem);
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -113,10 +124,30 @@
   transform: translateY(-0.35em);
 }
 
+/*
+ * If the day columns ever have to scroll, they scroll HERE, never the document.
+ *
+ * The rail is a sibling of this box rather than a column inside it, so the
+ * time labels stay put while the days move under them, and the board's own
+ * right border is the visible edge the columns disappear behind. No fade
+ * overlay: the kanban's mask-image read as a shadow on the last column rather
+ * than as an affordance, and it was removed for that reason (CLAUDE.md).
+ *
+ * NOTHING IN THE FUNNEL REACHES THIS TODAY, and that is worth stating plainly
+ * so nobody goes looking for it on a handset. On the phone layout one column is
+ * on screen. From 48rem the seven columns hold a 3.5rem floor, which is 448px
+ * of columns against a container that is already about 600px at 768px, so they
+ * fit. This is a forward defence for the day the round grid widens (more days,
+ * a wider floor), not a behaviour to verify on a device. The handle that would
+ * make it usable by touch is `.columnHead`; the cells themselves refuse pans so
+ * a drag paints.
+ */
 .cells {
   flex: 1 1 auto;
   display: flex;
   min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
 }
 
 .column {
@@ -133,7 +164,11 @@
 }
 
 .columnHead {
-  height: 2rem;
+  height: var(--head-height, 2rem);
+  /* The horizontal handle, matching the rail's vertical one. The cells below
+     are `touch-action: none` so a drag paints, which leaves the two head strips
+     as the only places a finger can move the board from. */
+  touch-action: pan-x;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -236,6 +271,13 @@
 
   .column[data-active="false"] {
     display: flex;
+  }
+
+  /* A floor rather than a fixed width: seven columns share whatever is going,
+     and below about 34rem of grid the box scrolls rather than squeezing the
+     cells past the width a finger can land on. */
+  .column {
+    min-width: 3.5rem;
   }
 
   .column + .column {
