@@ -1,0 +1,132 @@
+/* One facilitated group's card on the run home. Lifted out of
+   RunHome.module.css with the panel primitives copied rather than shared: the
+   two modules now describe two different things (a run's own cards, and a
+   group's), and a card that grows a schedule block should not be able to move
+   the admissions card underneath it. */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.panelTitle {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--color-text);
+}
+
+.panelNote {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* ---- This group's own calendar ---- */
+
+/* A quiet block rather than a second card: it describes the group named in
+   the heading above it, and a facilitator holding two rooms reads the pair by
+   scanning down. */
+.schedule {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-hover);
+}
+
+.scheduleWeek {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.scheduleLine {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* The disclosure: this room has left the run's clock. Same fact the pacing
+   banner makes to members, said once, per group, to the person who set it. */
+.scheduleOwnPace {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+}
+
+.roster {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+}
+
+.rosterItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+
+.panelLink {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* Vertical padding rather than a min-height: this is an inline text link in
+     a card, the aspirational tier of docs/touch-targets.md, and a 44px block
+     would read as a second button competing with the hero CTA. */
+  padding: var(--space-2) 0;
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.panelLink:hover {
+  text-decoration: underline;
+}
+
+.panelLink:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring);
+}
+
+.arrow {
+  transition: transform var(--dur-quick) var(--ease-naisi);
+}
+
+.panelLink:hover .arrow {
+  transform: translateX(3px);
+}
+
+/* === Reduced motion === */
+@media (prefers-reduced-motion: reduce) {
+  .arrow,
+  .panelLink:hover .arrow {
+    transition: none;
+    transform: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .schedule {
+    padding: var(--space-3);
+  }
+
+  .roster {
+    /* Two columns of names read as a list on a narrow screen; one wrapping row
+       reads as a paragraph. Tighter gaps keep it a list. */
+    gap: var(--space-2) var(--space-4);
+  }
+}

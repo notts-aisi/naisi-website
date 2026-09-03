@@ -447,13 +447,20 @@ test("reset drops the answer, and an in-flight request cannot undo the reset", a
 // ---------------------------------------------------------------------------
 
 /**
- * `users.paidMembershipYears` has exactly ONE writer: the grant route, which
- * moves it in the same transaction as the membership row and pre-checks the
- * cap. `adminMutations.setPaidMembership` used to write it client-direct from
- * the Members row and could only ever tag the CURRENT year, which is what made
- * a June reconciliation tag the wrong one. It is deleted, and this is what
- * keeps it deleted: a second writer would put a badge on somebody with no row
- * behind it, or move the cache without moving the period's totals.
+ * `users.paidMembershipYears` has exactly TWO writers, and both obey the same
+ * rule: the cache moves in the SAME TRANSACTION as the membership row it
+ * describes, through `addPaidMembershipYear` / `removePaidMembershipYear`,
+ * after the ten-year cap has been pre-checked. Those are the grant route and,
+ * from PR28, the import commit route, which is the grant written a chunk at a
+ * time.
+ *
+ * `adminMutations.setPaidMembership` used to write it client-direct from the
+ * Members row and could only ever tag the CURRENT year, which is what made a
+ * June reconciliation tag the wrong one. It is deleted, and this is what keeps
+ * it deleted: a writer that does not follow the rule above would put a badge
+ * on somebody with no row behind it, or move the cache without moving the
+ * period's totals. Adding a name to ALLOWED is a decision about that rule, not
+ * a way past a failing test.
  */
 function sourceFiles(dir) {
   const out = [];
@@ -465,10 +472,68 @@ function sourceFiles(dir) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// The totals recount
+// ---------------------------------------------------------------------------
+
+test("the recount writes only the tiers that were wrong", () => {
+  const plan = memberships.planTotalsRecount(
+    { paid: 12, comped: 3, alumni: 0, staff: 1 },
+    { paid: 9, comped: 3, alumni: 0, staff: 1 },
+  );
+  assert.deepEqual(plan.update, { "totals.paid": 12 });
+  assert.deepEqual(plan.corrected, [{ tier: "paid", was: 9, now: 12 }]);
+  assert.deepEqual(plan.totals, { paid: 12, comped: 3, alumni: 0, staff: 1 });
+});
+
+test("a period whose totals already agree is not written at all", () => {
+  const counted = { paid: 4, comped: 0, alumni: 2, staff: 0 };
+  const plan = memberships.planTotalsRecount(counted, { ...counted });
+  assert.deepEqual(plan.update, {});
+  assert.deepEqual(plan.corrected, []);
+});
+
+test("the recount moves a tier down as readily as up", () => {
+  // The drift this repairs runs both ways: a totals update that failed after
+  // a commit leaves the counts LOW, and a hand-edited period can leave them
+  // high. A repair that only ever increased would fix half of it.
+  const plan = memberships.planTotalsRecount(
+    { paid: 0, comped: 0, alumni: 0, staff: 0 },
+    { paid: 40, comped: 2, alumni: 0, staff: 0 },
+  );
+  assert.deepEqual(plan.update, { "totals.paid": 0, "totals.comped": 0 });
+  assert.deepEqual(plan.corrected, [
+    { tier: "paid", was: 40, now: 0 },
+    { tier: "comped", was: 2, now: 0 },
+  ]);
+});
+
+test("a period with junk or missing totals is repaired, not refused", () => {
+  // Absent, negative, a string, a nested object: a hand-edited period is a
+  // thing that happens, and every one of these reads as zero rather than as a
+  // reason to leave the counts as they are.
+  const plan = memberships.planTotalsRecount(
+    { paid: 5 },
+    { paid: "lots", comped: -3, staff: { n: 1 } },
+  );
+  assert.deepEqual(plan.update, { "totals.paid": 5 });
+  assert.deepEqual(plan.totals, { paid: 5, comped: 0, alumni: 0, staff: 0 });
+});
+
+test("a period document with no totals at all recounts from zero", () => {
+  const plan = memberships.planTotalsRecount({ paid: 2 }, undefined);
+  assert.deepEqual(plan.update, { "totals.paid": 2 });
+  assert.deepEqual(plan.corrected, [{ tier: "paid", was: 0, now: 2 }]);
+});
+
 test("GUARD: only the grant route writes paidMembershipYears", () => {
   const ALLOWED = new Set([
     // The writer.
     "src/app/api/admin/membership/grant/route.ts",
+    // The same write, a chunk at a time: the import commit reads each person's
+    // cache, applies the same pure helpers with the same cap pre-check, and
+    // writes it in the same transaction as the `memberships` row it creates.
+    "src/app/api/admin/membership/import/[batchId]/commit/route.ts",
     // The field's own declaration, normaliser and cap.
     "src/lib/firestore/users.ts",
     // The pure cache helpers the writer uses.

@@ -1908,7 +1908,6 @@ test("GUARD — every date-driven consumer guards with isValidDateKey before pac
   // of 500ing a page mount. Remove any one guard and that surface throws.
   for (const [source, name] of [
     [ME, "me"],
-    [OVERVIEW, "overview"],
     [NUDGE, "nudge"],
     [SYNC_TASKS, "sync-tasks"],
     [ATTENDANCE, "attendance"],
@@ -1921,6 +1920,18 @@ test("GUARD — every date-driven consumer guards with isValidDateKey before pac
   }
   assert.match(ALLOCATE, /joinedWeekFor\(/, "allocate no longer resolves a joining week");
   assert.match(ENROL_ROUTE, /joinedWeekFor\(/, "open enrol no longer resolves a joining week");
+  // The overview reaches the same guard one level down, exactly as `allocate`
+  // and the open-enrol route reach it through `joinedWeekFor`. PR26 made the
+  // overview resolve a calendar PER GROUP, and a guard repeated at every call
+  // site is a guard one of those sites will eventually be written without;
+  // `resolveGroupCalendar` holds it once, for every group, and answers with a
+  // null week rather than throwing.
+  assert.match(
+    OVERVIEW,
+    /resolveGroupCalendar\(/,
+    "overview no longer reaches the date guard through the resolver",
+  );
+  assert.match(GROUP_RESOLVE, /currentWeek: isValidDateKey\(calendar\.startDate\)/);
   assert.throws(() => currentWeekFor({ startDate: "2026-02-31", weekPlan: [] }), RangeError);
   assert.throws(() => currentWeekFor({ startDate: "", weekPlan: [] }), RangeError);
 });
@@ -2447,7 +2458,15 @@ test("GUARD — virtual/in-person reaches the member, on the card and in the ema
   // per-week test below for why that distinction is a bug fix and not a
   // refactor. The slot fields stay resolved for the current week.
   assert.match(OVERVIEW, /sessionModes: Record<string, GroupSessionMode>;/);
-  assert.match(OVERVIEW, /const weekId = currentWeekId\(currentWeek\);/);
+  // The slot fields stay resolved for the current week, and since PR26 that is
+  // THE CARD'S OWN group's current week rather than the caller's: one shared
+  // key computed once put a group paced three weeks behind the run under the
+  // run's week's room. The map above is untouched by that and still travels
+  // whole.
+  assert.match(
+    OVERVIEW,
+    /const session = sessionForWeek\(source, currentWeekId\(groupCalendar\.currentWeek\)\);/,
+  );
   // Built per card now that the payload carries every group the caller
   // holds, so the map travels for each of them rather than only for the one
   // the calendar resolved through.
@@ -2996,8 +3015,19 @@ test("GUARD — nothing outside the allowlist calls currentWeekFor, anywhere in 
     );
   }
 
-  // The two that escaped, now named: both resolve group-first.
-  assert.match(GROUP_PAGE, /currentWeek = memberCurrentWeek\(access\.run, group\);/);
+  // The two that escaped, now named: both resolve group-first. The group home
+  // page moved up to `resolveGroupCalendar` in PR26, which is the same
+  // group-first resolution plus the date guard and the taught-week count, so
+  // its card agrees with the run home's card for the same group.
+  assert.match(
+    GROUP_PAGE,
+    /const groupCalendar = resolveGroupCalendar\(access\.run, group, now\);/,
+  );
+  // On the page's OWN clock, passed in rather than defaulted twice: the week
+  // counter and the "next session" line are resolved from one instant, so they
+  // cannot land either side of a midnight on the same render.
+  assert.match(GROUP_PAGE, /const now = new Date\(\);/);
+  assert.match(GROUP_PAGE, /sessionRange\(\s*resolveSessions\([^)]*\),\s*now,\s*\)/);
   assert.match(GROUP_REVIEW_PAGE, /const calendar = resolveCalendar\(access\.run, group\);/);
   assert.match(GROUP_REVIEW_PAGE, /const current = memberCurrentWeek\(access\.run, group\);/);
   assert.match(GROUP_REVIEW_PAGE, /calendar\.weekPlan\.flatMap\(/);

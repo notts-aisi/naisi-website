@@ -1,0 +1,36 @@
+.wrap {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 16rem;
+}
+
+.fieldLabel {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.note {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  max-width: 32rem;
+  padding-bottom: var(--space-2);
+}
+
+@media (max-width: 48rem) {
+  .field {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .note {
+    padding-bottom: 0;
+  }
+}

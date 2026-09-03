@@ -58,6 +58,12 @@ const STUBS = new Map([
       "  constructor(date) { this._date = date; }\n" +
       "  static fromDate(date) { return new Timestamp(date); }\n" +
       "  toDate() { return this._date; }\n" +
+      "}\n" +
+      // The registry imports every registered job, and a job that keeps a
+      // resume cursor addresses its own row on that document by field path.
+      // Exported so this suite still loads once such a job is registered.
+      "export class FieldPath {\n" +
+      "  constructor(...segments) { this.segments = segments; }\n" +
       "}",
   ],
   ["@/lib/firebase/admin", "export const getAdminDb = () => globalThis.__db ?? null;"],

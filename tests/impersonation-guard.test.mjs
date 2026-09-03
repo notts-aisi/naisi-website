@@ -152,8 +152,28 @@ const MUST_GUARD = [
   // here changes a badge on somebody else's account.
   ["src/app/api/admin/membership/periods/route.ts", "creates the membership period every badge is about"],
   ["src/app/api/admin/membership/periods/[periodId]/route.ts", "edits a membership period's dates and internal note"],
+  [
+    "src/app/api/admin/membership/periods/[periodId]/recount/route.ts",
+    "rewrites the cached headcount the whole console reports",
+  ],
   ["src/app/api/admin/membership/current/route.ts", "moves the CURRENT period pointer, which re-badges the whole site"],
   ["src/app/api/admin/membership/grant/route.ts", "grants and revokes a member's tier, and writes the badge cache"],
+  // The SU list. The import writes a batch of named people; the commit turns
+  // that batch into memberships and badges on other people's accounts; the
+  // export takes a list of named people off the platform and writes the
+  // `dataExports` row that is the only record it happened. The list route is
+  // a GET and is deliberately absent: reading what somebody sees is what
+  // view-as is for.
+  ["src/app/api/admin/membership/import/route.ts", "uploads and matches the SU membership list"],
+  [
+    "src/app/api/admin/membership/import/[batchId]/commit/route.ts",
+    "writes a batch of memberships and badge-cache entries onto other people's accounts",
+  ],
+  [
+    "src/app/api/admin/membership/import/[batchId]/abandon/route.ts",
+    "closes an import, which is a judgement about a file recorded under a name",
+  ],
+  ["src/app/api/admin/membership/export/route.ts", "takes a list of named people off the platform"],
 ];
 
 /**

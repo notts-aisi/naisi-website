@@ -1,16 +1,21 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import type { CurrentWeek, WeekPlanEntry } from "@/lib/courses/weekPlan";
 import {
-  isValidDateKey,
-  type CurrentWeek,
-  type WeekPlanEntry,
-} from "@/lib/courses/weekPlan";
-import {
-  memberCurrentWeek,
-  resolveCalendar,
+  resolveGroupCalendar,
+  resolveGroupCalendars,
   resolveWeekDocs,
+  type GroupCalendar,
+  type WeekSource,
 } from "@/lib/courses/groupResolve";
+import { resolveSessions, sessionRange } from "@/lib/courses/sessions";
+import {
+  ownAttendanceSessions,
+  sessionsFromJoinWeek,
+  type OwnAttendanceSession,
+} from "@/lib/courses/ownAttendance";
+import { attendanceDocId } from "@/lib/firestore/courseAttendance";
 import {
   courseEnrolmentId,
   normalizeCourseEnrolment,
@@ -82,6 +87,39 @@ import {
  * A caller with no group — unallocated, an admin, a facilitator of two groups
  * — resolves to the run canonical by construction, because `ownGroup` is null
  * and `resolveCalendar(run, null)` is the run's own calendar.
+ *
+ * ── ONE CALENDAR PER GROUP, NOT ONE PER CALLER ──────────────────────────────
+ * The paragraph above is still true of the TOP-LEVEL fields, and it was once
+ * the whole story: the page drew at most one group card, so the caller's
+ * calendar and that card's calendar were the same object. They are not the
+ * same thing, and a facilitator holding two groups is where the difference
+ * shows. Their `ownGroup` is null, so every top-level field resolves to the
+ * run canonical, and a card drawn off that would show a group three weeks
+ * behind the run its own start date, its own week number and the wrong week's
+ * session override, twice, identically, with nothing on the page to say which
+ * of the two rooms was being described.
+ *
+ * So every entry in `groups[]` carries its OWN resolved calendar
+ * (`OverviewGroup.calendar`) and every slot field on that entry is resolved
+ * through it. `resolveGroupCalendar` is the same helper the singular path
+ * uses, called once per group on one clock.
+ *
+ * `group` (singular) stays NULL for a multi-group facilitator rather than
+ * becoming `groups[0]`. `ownGroup` is resolved BEFORE the calendar and that
+ * ordering is load-bearing: picking an arbitrary group there would anchor the
+ * whole run home, the rail, the pacing banner and the week forks to one of
+ * two rooms.
+ *
+ * ── THE CALLER'S OWN ATTENDANCE ─────────────────────────────────────────────
+ * `ownAttendance` is a learner's own row out of their group's registers, and
+ * it is the only place a member ever sees one. `courseAttendance` stays
+ * `read: if false` because one register holds the whole room's marks plus the
+ * facilitator's private notes about named students; `ownAttendanceSessions`
+ * projects four fields out of each register and copies nothing.
+ *
+ * GATED ON `pushedAt`, so a register the facilitator is still filling in
+ * during the session is invisible here by construction rather than by a flag
+ * a later edit could forget.
  * ────────────────────────────────────────────────────────────────────────────
  */
 
@@ -89,9 +127,58 @@ import {
 // Wire types (the contract the run home renders from)
 // ---------------------------------------------------------------------------
 
+/**
+ * The next session a group holds that has not finished yet, or null once its
+ * term is over. Resolved from `resolveSessions` + `sessionRange`, so a group
+ * that meets twice a week gets its NEXT meeting rather than its next week.
+ */
+export type OverviewNextSession = {
+  weekNumber: number;
+  /** 1-based. 2 and up are the week's later meetings. */
+  occurrence: number;
+  /** `sessionKey(weekNumber, occurrence)`, the register's own key. */
+  sessionKey: string;
+  /** Civil date "YYYY-MM-DD" (Europe/London). Never empty on a next session. */
+  dateKey: string;
+  /** Wall-clock start in Europe/London, "HH:MM" 24h. */
+  startTimeLocal: string;
+  durationMinutes: number;
+};
+
+/**
+ * ONE GROUP'S OWN CALENDAR: the fix this shape exists for.
+ *
+ * Every group on `groups[]` carries its own, resolved through the group's
+ * pacing overrides rather than the caller's. Two groups on different pacing
+ * therefore report different current weeks and different date ranges on the
+ * same payload, which is what a facilitator holding both needs to read.
+ *
+ * `source` is the same disclosure `calendarSource` makes at the top level, per
+ * group: `"group"` means this room has left the run's clock.
+ */
+export type OverviewGroupCalendar = {
+  source: WeekSource;
+  /** Civil date "YYYY-MM-DD", empty on a half-authored calendar. */
+  startDate: string;
+  /** Taught weeks in THIS group's plan, breaks excluded. */
+  totalWeeks: number;
+  /** Null on a draft run or one with no usable start date. */
+  currentWeek: CurrentWeek | null;
+  /** First taught session's civil date, empty when none can be dated. */
+  firstSessionDate: string;
+  /** Last taught session's civil date, empty when none can be dated. */
+  lastSessionDate: string;
+  nextSession: OverviewNextSession | null;
+};
+
 export type OverviewGroup = {
   id: string;
   name: string;
+  /**
+   * THIS group's calendar, never the caller's. Every slot field below is
+   * resolved through it. See the module header.
+   */
+  calendar: OverviewGroupCalendar;
   /** e.g. "Tuesdays 18:00–19:30"; empty when the slot isn't set up yet. */
   sessionLabel: string;
   /** 0 = Sunday .. 6 = Saturday (JS `Date.getDay()` convention). */
@@ -204,10 +291,20 @@ export type OverviewPayload = {
     joinedWeekNumber: number;
   } | null;
   /**
+   * @deprecated Read `groups[]` instead. REMOVED IN PR38, which rebuilds the
+   * learn hub's structure and is the last consumer that needs it.
+   *
    * The card the run home has always drawn: the caller's own placement, or the
-   * single group they facilitate. Kept for compatibility, and still the group
-   * every OTHER field on this payload is resolved through (the calendar, the
-   * current week, the week forks).
+   * single group they facilitate. Still the group the TOP-LEVEL fields are
+   * resolved through (the run calendar, `currentWeek`, `forkedWeekIds`), which
+   * is why it cannot simply be deleted today.
+   *
+   * NULL FOR A MULTI-GROUP FACILITATOR, never `groups[0]`. `ownGroup` is the
+   * anchor of every top-level resolution below it, so naming one of two rooms
+   * here would silently pace the whole page by that room. A caller who wants a
+   * group's dates reads them off that group's own `calendar` entry.
+   *
+   * When set, it is `groups[0]`, but the implication runs one way only.
    */
   group: OverviewGroup | null;
   /**
@@ -224,6 +321,31 @@ export type OverviewPayload = {
    * entry.
    */
   groups: OverviewGroup[];
+  /**
+   * THE CALLER'S OWN ATTENDANCE, and nobody else's. Null for anyone without a
+   * live learner enrolment placed in a group: a facilitator, an admin reading
+   * over the cohort's shoulder, an unallocated member.
+   *
+   * `sessions` lists only the sessions whose register has been PUSHED (see the
+   * module header); `rollup` is the mirror already stored on the caller's own
+   * enrolment row, recomputed by the push. The two can disagree on an unmarked
+   * cell on purpose: the rollup counts it as an absence, the session list
+   * leaves it null so a page can say "not marked" rather than accuse anyone.
+   */
+  ownAttendance: {
+    sessions: OwnAttendanceSession[];
+    rollup: {
+      sessionsHeld: number;
+      attendedInFull: number;
+      late: number;
+      leftEarly: number;
+      absent: number;
+      excused: number;
+      lastPushedSessionKey: string | null;
+      /** ISO 8601, or null before the first push. */
+      lastComputedAt: string | null;
+    };
+  } | null;
   access: {
     isAdmin: boolean;
     /** An active or completed LEARNER enrolment — `enrolment.status` distinguishes. */
@@ -237,6 +359,15 @@ export type OverviewPayload = {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Read cap on the caller's own registers. A course is a term long, and the
+ * week plan is already bounded at 60 entries by the rules, but a group that
+ * meets twice a week doubles the session count and this route runs on the page
+ * members open daily. Ninety sessions is far past any real cohort and still a
+ * bounded `getAll`.
+ */
+const MAX_OWN_ATTENDANCE_SESSIONS = 90;
 
 /** Index = `GroupSession.weekday` (`Date.getDay()`, 0 = Sunday). */
 const WEEKDAY_NAMES = [
@@ -380,26 +511,17 @@ export async function GET(
       ? (groups.find((g) => g.id === liveEnrolment.groupId) ?? null)
       : null) ?? (facilitates.length === 1 ? facilitates[0] : null);
 
-  // GROUP-FIRST, THROUGH THE ONE HELPER. `resolveCalendar` returns the group's
-  // pacing override when it has set one and the run's calendar otherwise, so
-  // an unallocated member and a group that has never touched its pacing are
-  // byte-identical to the pre-V2-3 payload.
-  const calendar = resolveCalendar(run, ownGroup);
-
-  // SERVERS ALWAYS RECOMPUTE. A half-authored run (created, no start date
-  // chosen) is a legitimate state and the week maths throws on a malformed key
-  // by design, so the guard is required, not defensive noise — and it guards
-  // the RESOLVED date, since a group's own start date is just as capable of
-  // being half-authored as the run's.
-  const currentWeek =
-    run.status !== "draft" && isValidDateKey(calendar.startDate)
-      ? memberCurrentWeek(run, ownGroup)
-      : null;
+  // ONE CLOCK for every resolution in this request. Two groups resolved a
+  // millisecond apart across a midnight would land in different cohort weeks,
+  // and the page would be reporting its own timing rather than their pacing.
+  const now = new Date();
 
   /**
    * Every group that earns a card, in the order they are drawn: the caller's
    * own placement first (so a learner who also facilitates still leads with
    * their own room), then each group they facilitate, deduped by id.
+   *
+   * Built BEFORE the calendars because it is the list they are resolved over.
    */
   const groupCards: CourseGroupDoc[] = [];
   const seenGroupIds = new Set<string>();
@@ -408,6 +530,46 @@ export async function GET(
     seenGroupIds.add(candidate.id);
     groupCards.push(candidate);
   }
+
+  /**
+   * ONE GROUP'S CALENDAR, THROUGH THE ONE HELPER: resolved ONCE PER GROUP over
+   * the card list, plus one run-level resolution for the caller's top-level
+   * fields when they hold no group.
+   *
+   * `resolveGroupCalendars` is that per-group pass, and it is the shared clock
+   * in one place rather than a `now` threaded through a closure: every entry in
+   * the map was resolved from the same instant, so no card can report the
+   * request's timing as pacing. `calendarFor` then READS the map, which is why
+   * the caller's own group is resolved once here and not again per card.
+   *
+   * `resolveGroupCalendar` returns the group's pacing override when it has set
+   * one and the run's calendar otherwise, so an unallocated member and a group
+   * that has never touched its pacing are byte-identical to the pre-V2-3
+   * payload.
+   *
+   * SERVERS ALWAYS RECOMPUTE, and a half-authored run (created, no start date
+   * chosen) is a legitimate state: the helper already returns a null week for
+   * an unusable RESOLVED start date, since a group's own start date is just as
+   * capable of being half-authored as the run's. The DRAFT suppression is this
+   * route's own rule and is applied here so every group gets it identically.
+   */
+  const groupCalendars = resolveGroupCalendars(run, groupCards, now);
+  const scheduled = run.status !== "draft";
+  const asScheduled = (resolved: GroupCalendar): GroupCalendar =>
+    scheduled ? resolved : { ...resolved, currentWeek: null };
+  // The run canonical, for a caller with no group of their own. Resolved once,
+  // on the same clock, and never re-derived per card.
+  const runCalendar = asScheduled(resolveGroupCalendar(run, null, now));
+  const calendarFor = (group: CourseGroupDoc | null): GroupCalendar => {
+    if (!group) return runCalendar;
+    const resolved = groupCalendars.get(group.id);
+    // Every group `calendarFor` is called with is a card, so the map answers.
+    return resolved ? asScheduled(resolved) : asScheduled(resolveGroupCalendar(run, group, now));
+  };
+
+  const own = calendarFor(ownGroup);
+  const calendar = own.calendar;
+  const currentWeek = own.currentWeek;
 
   // Per group, not once: an admin sees every link, a member sees their own
   // room's, and a facilitator sees the link for each room they hold. The
@@ -433,11 +595,65 @@ export async function GET(
   // week REPLACES its canonical row (same id, same number, the group's own
   // title and published flag), which is what makes the rail agree with the
   // page each row links to.
-  const [userDocs, weekEntries] = await Promise.all([
+  /**
+   * The caller's own registers, when they are a LEARNER placed in a group.
+   *
+   * A facilitator's own attendance is not a thing (they run the room), and an
+   * admin reading over the cohort's shoulder has no row of their own either,
+   * so both resolve to no reads at all rather than to an empty list built out
+   * of documents nobody needed.
+   *
+   * ADDRESSED, never queried: the ids are `attendanceDocId`, which is
+   * construct-only by contract, and there is no way to spell another group's
+   * register from here. Bounded by the group's own taught sessions and capped
+   * again below, so a corrupt plan cannot turn one page load into a hundred
+   * reads.
+   */
+  /*
+   * THEIR OWN PLACEMENT, never merely `ownGroup`. `ownGroup` falls back to the
+   * single group the caller FACILITATES, so a learner whose own group has been
+   * archived (it is filtered out above) would otherwise have their attendance
+   * read out of the registers of a room they teach rather than sit in: real
+   * marks, belonging to somebody, under the wrong group's dates. The id has to
+   * match the enrolment for these registers to be theirs.
+   */
+  const ownLearnerGroup =
+    liveEnrolment?.role === "learner" &&
+    liveEnrolment.groupId &&
+    ownGroup?.id === liveEnrolment.groupId
+      ? ownGroup
+      : null;
+  // From the week they JOINED, then capped: a mid-run joiner has no row for
+  // the weeks before their placement, and the read is bounded from that week
+  // too rather than spending the cap on sessions about to be dropped.
+  const ownSessions = ownLearnerGroup
+    ? sessionsFromJoinWeek(
+        resolveSessions(run, ownLearnerGroup, own.calendar),
+        liveEnrolment?.joinedWeekNumber ?? 1,
+      ).slice(0, MAX_OWN_ATTENDANCE_SESSIONS)
+    : [];
+
+  const [userDocs, weekEntries, ownRegisterDocs] = await Promise.all([
     facilitatorUids.length
       ? db.getAll(...facilitatorUids.map((uid) => db.collection("users").doc(uid)))
       : Promise.resolve([]),
     resolveWeekDocs(db, runId, ownGroup?.id ?? null),
+    ownLearnerGroup && ownSessions.length
+      ? db.getAll(
+          ...ownSessions.map((s) =>
+            db
+              .collection("courseAttendance")
+              .doc(
+                attendanceDocId(
+                  runId,
+                  ownLearnerGroup.id,
+                  s.weekNumber,
+                  s.occurrence,
+                ),
+              ),
+          ),
+        )
+      : Promise.resolve([]),
   ]);
   const nameByUid = new Map<string, string>();
   for (const doc of userDocs) {
@@ -459,17 +675,51 @@ export async function GET(
     })
     .sort((a, b) => a.weekNumber - b.weekNumber || a.id.localeCompare(b.id));
 
-  // ONE week key for the slot fields, which describe the session the run home
-  // is about to name, which is the CURRENT one. The modes deliberately do NOT
-  // collapse to this key: see `sessionModes` on the wire type. A surface that
-  // draws another week reads that map and gets the room-vs-link swap for the
-  // week it is actually showing.
-  const weekId = currentWeekId(currentWeek);
+  /**
+   * ONE CARD, ON ITS OWN GROUP'S CLOCK.
+   *
+   * The week key for the slot fields is THIS group's current week, not the
+   * caller's. That is the bug this PR closes: the key used to be resolved once
+   * from the caller's `currentWeek`, so a facilitator holding a group paced
+   * three weeks behind the run saw the run's week's session override rendered
+   * over that group's card: the wrong room, on the wrong date, with no way to
+   * tell from the page.
+   *
+   * The modes deliberately do NOT collapse to this key: see `sessionModes` on
+   * the wire type. A surface that draws another week reads that map and gets
+   * the room-vs-link swap for the week it is actually showing.
+   */
   const toCard = (source: CourseGroupDoc): OverviewGroup => {
-    const session = sessionForWeek(source, weekId);
+    const groupCalendar = calendarFor(source);
+    const session = sessionForWeek(source, currentWeekId(groupCalendar.currentWeek));
+    // The group's own sessions, resolved off the calendar just resolved rather
+    // than off a second one: `resolveSessions` would otherwise re-derive it,
+    // and a second derivation is a second chance to disagree.
+    const range = sessionRange(
+      resolveSessions(run, source, groupCalendar.calendar),
+      now,
+    );
     return {
       id: source.id,
       name: source.name,
+      calendar: {
+        source: groupCalendar.calendar.source,
+        startDate: groupCalendar.calendar.startDate,
+        totalWeeks: groupCalendar.totalWeeks,
+        currentWeek: groupCalendar.currentWeek,
+        firstSessionDate: range.firstDateKey,
+        lastSessionDate: range.lastDateKey,
+        nextSession: range.next
+          ? {
+              weekNumber: range.next.weekNumber,
+              occurrence: range.next.occurrence,
+              sessionKey: range.next.sessionKey,
+              dateKey: range.next.dateKey,
+              startTimeLocal: range.next.session.startTimeLocal,
+              durationMinutes: range.next.session.durationMinutes,
+            }
+          : null,
+      },
       sessionLabel: sessionLabel(session),
       weekday: session.weekday,
       startTimeLocal: session.startTimeLocal,
@@ -485,9 +735,55 @@ export async function GET(
 
   const groupCardPayloads = groupCards.map(toCard);
   // `group` is the first card when there is one, which for every caller who
-  // had a card before is the same object they had before.
+  // had a card before is the same object they had before. NULL for a
+  // multi-group facilitator, because `ownGroup` is. See the wire type.
   const group: OverviewGroup | null =
     (ownGroup ? groupCardPayloads.find((c) => c.id === ownGroup.id) : null) ?? null;
+
+  /**
+   * THE PROJECTION, keyed by session key rather than by array position.
+   * `getAll` does answer in request order, but a register landing under the
+   * wrong session would be a silent, plausible-looking lie about which evening
+   * somebody missed, and `attendanceDocId` makes the id-to-session map free.
+   *
+   * `ownAttendanceSessions` reads four fields out of each register and copies
+   * nothing: the whole room's marks and the facilitator's private participant
+   * notes never enter this payload, and cannot start to when a field is added.
+   */
+  const ownRegisters = new Map<string, Record<string, unknown>>();
+  if (ownLearnerGroup) {
+    const sessionByDocId = new Map(
+      ownSessions.map((s) => [
+        attendanceDocId(runId, ownLearnerGroup.id, s.weekNumber, s.occurrence),
+        s.sessionKey,
+      ]),
+    );
+    for (const snap of ownRegisterDocs) {
+      const key = sessionByDocId.get(snap.id);
+      if (!snap.exists || !key) continue;
+      ownRegisters.set(key, snap.data() ?? {});
+    }
+  }
+
+  const rollup = liveEnrolment?.attendance ?? null;
+  const ownAttendance: OverviewPayload["ownAttendance"] =
+    ownLearnerGroup && rollup
+      ? {
+          sessions: ownAttendanceSessions(actor.uid, ownSessions, ownRegisters),
+          rollup: {
+            sessionsHeld: rollup.sessionsHeld,
+            attendedInFull: rollup.attendedInFull,
+            late: rollup.late,
+            leftEarly: rollup.leftEarly,
+            absent: rollup.absent,
+            excused: rollup.excused,
+            lastPushedSessionKey: rollup.lastPushedSessionKey,
+            lastComputedAt: rollup.lastComputedAt
+              ? rollup.lastComputedAt.toISOString()
+              : null,
+          },
+        }
+      : null;
 
   const payload: OverviewPayload = {
     run: {
@@ -502,7 +798,7 @@ export async function GET(
       // has overridden its pacing.
       startDate: calendar.startDate,
       weekPlan: calendar.weekPlan,
-      totalWeeks: calendar.weekPlan.filter((entry) => entry.kind === "week").length,
+      totalWeeks: own.totalWeeks,
     },
     calendarSource: calendar.source,
     currentWeek,
@@ -518,6 +814,7 @@ export async function GET(
       : null,
     group,
     groups: groupCardPayloads,
+    ownAttendance,
     access: {
       isAdmin,
       isEnrolled,

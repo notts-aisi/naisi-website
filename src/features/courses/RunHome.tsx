@@ -5,22 +5,19 @@ import Link from "next/link";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import EmptyState from "@/components/ui/EmptyState";
-import InitialsChip from "@/components/ui/InitialsChip";
-import MemberName from "@/components/ui/MemberName";
 import Skeleton from "@/components/ui/Skeleton";
 import DigitRoll from "@/components/motion/DigitRoll";
 import PageEnter from "@/components/motion/PageEnter";
 import { useMagneticPull } from "@/hooks/useMagneticPull";
+import FacilitatorGroupPanel from "./FacilitatorGroupPanel";
+import { weekHref } from "./links";
 import SessionCard from "./SessionCard";
 import WeekRail from "./WeekRail";
-import { useGroupRoster } from "./useGroupRoster";
 import { useRunOverview } from "./useRunOverview";
 import { useSyncTasks } from "./useSyncTasks";
+import { ATTENDANCE_STATUS_LABEL } from "@/lib/firestore/courseAttendance";
 import { weekDocId } from "@/lib/firestore/courses";
-import type {
-  OverviewGroup,
-  OverviewPayload,
-} from "@/app/api/courses/runs/[runId]/overview/route";
+import type { OverviewPayload } from "@/app/api/courses/runs/[runId]/overview/route";
 import type { WeekPlanEntry } from "@/lib/courses/weekPlan";
 import styles from "./RunHome.module.css";
 
@@ -90,10 +87,6 @@ const RAIL_DRAWN_KEY_PREFIX = "naisi:rail-drawn:";
  * Shared empty array — read-only by contract, never mutated.
  */
 const NO_COMPLETED_WEEKS: number[] = [];
-
-function weekHref(runId: string, weekNumber: number): string {
-  return `/learn/${encodeURIComponent(runId)}/weeks/${weekNumber}`;
-}
 
 /**
  * `timeZone: "UTC"` because a run's `startDate` is a civil date parsed at UTC
@@ -328,138 +321,120 @@ function RunHomeSkeleton() {
 }
 
 // ---------------------------------------------------------------------------
-// FacilitatorGroupPanel
+// Your progress
 // ---------------------------------------------------------------------------
 
 /**
- * One facilitated group's tools: its roster, its register, its review queue
- * and its own email lane.
- *
- * A COMPONENT rather than inline JSX because each card needs its own roster
- * fetch, and a hook cannot be called in a loop. That is the whole reason it
- * exists: the page previously drew at most one of these, so the hook could sit
- * at the top of `RunHome` and a facilitator holding two groups got nothing at
- * all.
- *
- * The cohort-wide links (announcements, the weekly nudge) are passed in rather
- * than derived here, and only the first card is asked to draw them: they
- * address the RUN, and repeating them under every group would read as three
- * separate lanes.
+ * "SATURDAY 3 NOVEMBER", from a civil date key. Module scoped for the same
+ * reason `START_DATE_FORMAT` is, and `timeZone: "UTC"` for the same reason:
+ * these are dates, not instants, and re-zoning one can only move it.
  */
-function FacilitatorGroupPanel({
+const ATTENDANCE_DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "UTC",
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+});
+
+function attendanceDateLabel(dateKey: string): string | null {
+  if (!dateKey) return null;
+  const parsed = new Date(`${dateKey}T00:00:00Z`);
+  return Number.isNaN(parsed.getTime()) ? null : ATTENDANCE_DATE_FORMAT.format(parsed);
+}
+
+/**
+ * THE MEMBER'S OWN RECORD, and the way into the progress page.
+ *
+ * Two things that had nowhere to live until now. `/learn/[runId]/progress`
+ * shipped with no link to it from anywhere, and a member's own attendance was
+ * readable by nobody: the registers are `read: if false`, so the only honest
+ * route to it is the overview payload's projection.
+ *
+ * SESSIONS APPEAR ONLY ONCE PUSHED, and the copy says so, because the absence
+ * of a row is otherwise indistinguishable from an absence. That gate is
+ * server-side (`ownAttendanceSessions`); this component could not show an
+ * unpushed mark if it tried.
+ *
+ * An unmarked cell in a pushed register reads "Not marked" rather than
+ * "Absent". The ROLLUP counts it as an absence and the summary line reflects
+ * that; the per-session row reports what was written down. Saying "absent" in
+ * both places would turn a facilitator's slip into an accusation.
+ *
+ * A NULL `ownAttendance` is its own case, not an empty one. The route sends it
+ * for a learner who has not been allocated to a group yet, and the standing
+ * copy ("once your facilitator finishes each session's register") would name a
+ * facilitator they have not got. That branch says what is actually next for
+ * them instead.
+ */
+function ProgressPanel({
   runId,
-  group,
-  targetWeekNumber,
-  showCohortLinks,
+  ownAttendance,
 }: {
   runId: string;
-  group: OverviewGroup;
-  /** The published week to link materials for, or null when there isn't one. */
-  targetWeekNumber: number | null;
-  showCohortLinks: boolean;
+  ownAttendance: OverviewPayload["ownAttendance"];
 }) {
-  /*
-    The shared hook, the same one the facilitator group page and the email
-    composer read from. It carries a manual refresh and a null-vs-zero member
-    count that this page uses neither of; what it removes is the second copy of
-    the fetch, the stale-response guard and the error copy.
-  */
-  const roster = useGroupRoster(group.id);
-  const groupHref = `/learn/${encodeURIComponent(runId)}/group/${encodeURIComponent(group.id)}`;
+  const held = ownAttendance?.rollup.sessionsHeld ?? 0;
+  const inFull = ownAttendance?.rollup.attendedInFull ?? 0;
+  const sessions = ownAttendance?.sessions ?? [];
 
   return (
     <Card as="section" padding="md" className={styles.panel}>
-      <h3 className={styles.panelTitle}>You facilitate {group.name}</h3>
+      <h3 className={styles.panelTitle}>Your progress</h3>
 
-      {roster.loading && (
-        <Skeleton lines={2} height="1.25rem" ariaLabel="Loading the roster…" />
+      {ownAttendance === null ? (
+        /* No group yet. The route sends `ownAttendance: null` for exactly this
+           case, and the line above it must not name a facilitator this member
+           does not have one of: there is no room, no register and nobody to be
+           waiting on. Allocation is the thing that has to happen next, so that
+           is what the copy says. */
+        <p className={styles.panelNote}>
+          You&apos;ll be placed in a group soon; your attendance appears here
+          after that.
+        </p>
+      ) : held > 0 ? (
+        <p className={styles.panelNote}>
+          You have been at {inFull} of {held}{" "}
+          {held === 1 ? "session" : "sessions"} in full so far.
+        </p>
+      ) : (
+        <p className={styles.panelNote}>
+          Your attendance appears here once your facilitator finishes each
+          session&apos;s register.
+        </p>
       )}
-      {roster.error && <p className={styles.panelNote}>{roster.error.message}</p>}
-      {roster.group &&
-        (roster.members.length === 0 ? (
-          <p className={styles.panelNote}>No one is placed in this group yet.</p>
-        ) : (
-          /* Names only, because the roster route sends nothing else, and this is a
-             cohort surface. InitialsChip is decorative and aria-hidden, so the
-             name always renders beside it. */
-          <ul className={styles.roster}>
-            {roster.members.map((member) => (
-              <li key={member.uid} className={styles.rosterItem}>
-                <InitialsChip name={member.displayName} uid={member.uid} size="sm" />
-                <span>
-                  <MemberName name={member.displayName} />
+
+      {sessions.length > 0 && (
+        <ul className={styles.attendance}>
+          {sessions.map((session) => {
+            const when = attendanceDateLabel(session.dateKey);
+            return (
+              <li key={session.sessionKey} className={styles.attendanceRow}>
+                <span className={styles.attendanceWhen}>
+                  Week {session.weekNumber}
+                  {when ? `, ${when}` : ""}
+                </span>
+                <span className={styles.attendanceMark}>
+                  {!session.held
+                    ? "Cancelled"
+                    : session.status
+                      ? ATTENDANCE_STATUS_LABEL[session.status]
+                      : "Not marked"}
                 </span>
               </li>
-            ))}
-          </ul>
-        ))}
+            );
+          })}
+        </ul>
+      )}
 
-      {/* Unconditional, unlike the materials link below: the review queue is
-          where a facilitator's own work is, and it stays reachable even in a
-          week nobody has published yet. */}
-      <Link className={styles.panelLink} href={`${groupHref}/review`}>
-        Review exercises
+      <Link
+        className={styles.panelLink}
+        href={`/learn/${encodeURIComponent(runId)}/progress`}
+      >
+        See your progress week by week
         <span className={styles.arrow} aria-hidden="true">
           →
         </span>
       </Link>
-
-      {/* Unconditional for the same reason as the review link above: the
-          register and the roster are a facilitator's own tools, and they stay
-          reachable in a week nobody has published yet. */}
-      <Link className={styles.panelLink} href={groupHref}>
-        Roster and attendance
-        <span className={styles.arrow} aria-hidden="true">
-          →
-        </span>
-      </Link>
-
-      <Link className={styles.panelLink} href={`${groupHref}/email`}>
-        Email the group
-        <span className={styles.arrow} aria-hidden="true">
-          →
-        </span>
-      </Link>
-
-      {/* Only for someone who staffs the RUN (see the `canEmailCohort` prop
-          on RunHome). A group facilitator has the link above and not this one:
-          their room is theirs, the cohort is not. */}
-      {showCohortLinks && (
-        <Link
-          className={styles.panelLink}
-          href={`/learn/${encodeURIComponent(runId)}/email`}
-        >
-          Email the whole cohort
-          <span className={styles.arrow} aria-hidden="true">
-            →
-          </span>
-        </Link>
-      )}
-
-      {/* Same gate as the cohort link above, and for the same reason: the
-          nudge addresses the whole run. Nothing sends it on a schedule, since
-          this app has no scheduler, so the link has to exist for it to go out
-          at all. */}
-      {showCohortLinks && (
-        <Link
-          className={styles.panelLink}
-          href={`/learn/${encodeURIComponent(runId)}/nudge`}
-        >
-          Send this week&apos;s nudge
-          <span className={styles.arrow} aria-hidden="true">
-            →
-          </span>
-        </Link>
-      )}
-
-      {targetWeekNumber !== null && (
-        <Link className={styles.panelLink} href={weekHref(runId, targetWeekNumber)}>
-          Open week {targetWeekNumber} materials
-          <span className={styles.arrow} aria-hidden="true">
-            →
-          </span>
-        </Link>
-      )}
     </Card>
   );
 }
@@ -557,8 +532,15 @@ export default function RunHome({ runId, isAdmin, canEmailCohort }: Props) {
   // all describe one session. (`WeekView` asks the same map for the week the
   // reader is actually on; one mode resolved server-side for everybody is the
   // bug that made this a map.)
-  const cardWeekNumber = currentWeek
-    ? (currentWeek.weekNumber ?? currentWeek.anchorWeekNumber)
+  //
+  // Read off THE CARD'S OWN GROUP's week, not the page's. For the caller's own
+  // placement the two are the same week by construction (the payload resolves
+  // its top-level fields through exactly that group), and taking it from the
+  // card's own calendar is what keeps the mode, the date and the room on this
+  // card describing one session if they ever part company.
+  const cardCurrentWeek = group?.calendar.currentWeek ?? null;
+  const cardWeekNumber = cardCurrentWeek
+    ? (cardCurrentWeek.weekNumber ?? cardCurrentWeek.anchorWeekNumber)
     : 0;
   const cardSessionMode =
     cardWeekNumber >= 1 ? (group?.sessionModes[weekDocId(cardWeekNumber)] ?? null) : null;
@@ -576,6 +558,14 @@ export default function RunHome({ runId, isAdmin, canEmailCohort }: Props) {
         : `Continue week ${target.weekNumber}`;
 
   const showAdmissions = access.isReviewer || access.isTrackLead || isAdmin;
+  /*
+    The week numbers each facilitator card picks its OWN materials link from.
+    Passed as a list rather than a resolved week because two groups a fortnight
+    apart must not share one: see FacilitatorGroupPanel's `publishedWeekNumbers`.
+  */
+  const publishedWeekNumbers = data.weeks
+    .filter((w) => w.published)
+    .map((w) => w.weekNumber);
 
   return (
     <PageEnter className={styles.page}>
@@ -647,12 +637,29 @@ export default function RunHome({ runId, isAdmin, canEmailCohort }: Props) {
           an h2 to justify. */}
       <div className={`${styles.stack} ${styles.staggered}`}>
         {group && (
+          /* Dated by THIS group's own calendar, which for the caller's own
+             placement is also the calendar the hero above was resolved from.
+             Reading it off `group.calendar` rather than off `currentWeek` is
+             what keeps that true when the two ever part company. */
           <SessionCard
             group={group}
-            slotStartKey={currentWeek?.slotStartKey ?? null}
+            slotStartKey={group.calendar.currentWeek?.slotStartKey ?? null}
             mode={cardSessionMode}
-            title={currentWeek?.phase === "before" ? "Your first session" : undefined}
+            title={
+              group.calendar.currentWeek?.phase === "before"
+                ? "Your first session"
+                : undefined
+            }
           />
+        )}
+
+        {/* Learners only. A facilitator has no attendance of their own, and an
+            admin or reviewer reading over the cohort's shoulder has no row on
+            this run at all. `access.isEnrolled` covers a completed enrolment
+            too, deliberately: a finished cohort is the member's own history and
+            their record is exactly what they may still want. */}
+        {access.isEnrolled && (
+          <ProgressPanel runId={runId} ownAttendance={data.ownAttendance} />
         )}
 
         {/* One card per group they hold. A single card renders exactly as it
@@ -665,7 +672,7 @@ export default function RunHome({ runId, isAdmin, canEmailCohort }: Props) {
             key={facilitated.id}
             runId={runId}
             group={facilitated}
-            targetWeekNumber={target?.published ? target.weekNumber : null}
+            publishedWeekNumbers={publishedWeekNumbers}
             showCohortLinks={canEmailCohort && index === 0}
           />
         ))}

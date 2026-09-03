@@ -191,6 +191,11 @@ const COUNT_META: Record<string, CountMeta> = {
     fate: "destroyed",
     note: "The week reminders this run wrote onto members' task boards.",
   },
+  registerTasks: {
+    label: "Unmarked-register follow-ups",
+    fate: "destroyed",
+    note: "The committee cards raised when one of this run's groups left a register unpushed, and any comments on them. The chase history goes with the run.",
+  },
   subscriptionRows: {
     label: "Cohort email subscriptions",
     fate: "destroyed",

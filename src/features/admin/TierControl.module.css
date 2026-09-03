@@ -1,0 +1,35 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.select {
+  min-width: 7rem;
+}
+
+.error {
+  color: var(--color-danger);
+  font-size: var(--text-xs);
+  max-width: 20rem;
+}
+
+@media (max-width: 48rem) {
+  .controls {
+    /* Full width, so the select and both buttons stay comfortable targets. */
+    width: 100%;
+  }
+
+  .select {
+    min-width: 0;
+    flex: 1 1 8rem;
+  }
+}

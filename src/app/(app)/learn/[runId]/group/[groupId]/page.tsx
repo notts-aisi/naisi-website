@@ -5,7 +5,8 @@ import AttendanceGrid from "@/features/courses/AttendanceGrid";
 import GroupRoster from "@/features/courses/GroupRoster";
 import SessionCard from "@/features/courses/SessionCard";
 import { getRunAccess, getSessionUser } from "@/features/courses/runAccess";
-import { memberCurrentWeek } from "@/lib/courses/groupResolve";
+import { resolveGroupCalendar } from "@/lib/courses/groupResolve";
+import { resolveSessions, sessionRange } from "@/lib/courses/sessions";
 import { type CurrentWeek } from "@/lib/courses/weekPlan";
 import { getAdminDb } from "@/lib/firebase/admin";
 import {
@@ -193,26 +194,31 @@ export default async function GroupHomePage({
   }
 
   /**
-   * THIS GROUP's position, for the session card underneath — not the run's.
+   * THIS GROUP's whole calendar, for the session card underneath, not the
+   * run's.
    *
-   * `memberCurrentWeek` is the group-first replacement for `currentWeekFor`
+   * `resolveGroupCalendar` is the group-first replacement for `currentWeekFor`
    * (V2-3): a group that has re-paced itself is on its own week, and a
    * facilitator's own page is the last place that should disagree with what
    * their members are looking at. It resolves to the run's calendar for the
-   * overwhelmingly common group that has overridden nothing.
+   * overwhelmingly common group that has overridden nothing, and it answers
+   * with a null week on a calendar with no usable start date rather than
+   * throwing: a legitimate half-authored state, on which the card falls back
+   * to the recurring label and stays stateless.
    *
-   * It inherits `currentWeekFor`'s `RangeError` contract on a calendar with no
-   * usable start date, which is a legitimate half-authored state rather than an
-   * error: the card then falls back to the recurring label and stays stateless.
-   * The try wraps ONLY that call — `redirect()` signals by throwing, so it must
-   * never sit inside a catch.
+   * It is the SAME helper the overview route builds every group card from, so
+   * this page and the run home cannot drift apart about this group's dates.
    */
-  let currentWeek: CurrentWeek | null = null;
-  try {
-    currentWeek = memberCurrentWeek(access.run, group);
-  } catch {
-    // Unusable start date — no resolved week, and the card says less.
-  }
+  // ONE CLOCK for both resolutions on this render. Two default clocks a
+  // millisecond apart across a midnight would put the week counter and the
+  // "next session" line in different cohort weeks, on one page.
+  const now = new Date();
+  const groupCalendar = resolveGroupCalendar(access.run, group, now);
+  const currentWeek: CurrentWeek | null = groupCalendar.currentWeek;
+  const range = sessionRange(
+    resolveSessions(access.run, group, groupCalendar.calendar),
+    now,
+  );
 
   // A break week and the before/after phases have no week doc of their own, so
   // the session override falls back to the anchor (the last taught week that
@@ -227,6 +233,27 @@ export default async function GroupHomePage({
   const sessionGroup: OverviewGroup = {
     id: group.id,
     name: group.name,
+    // THIS group's calendar, resolved through the same helper the overview
+    // route uses, so a facilitator's own page and their run home agree about
+    // which week this room is on and when its term runs.
+    calendar: {
+      source: groupCalendar.calendar.source,
+      startDate: groupCalendar.calendar.startDate,
+      totalWeeks: groupCalendar.totalWeeks,
+      currentWeek,
+      firstSessionDate: range.firstDateKey,
+      lastSessionDate: range.lastDateKey,
+      nextSession: range.next
+        ? {
+            weekNumber: range.next.weekNumber,
+            occurrence: range.next.occurrence,
+            sessionKey: range.next.sessionKey,
+            dateKey: range.next.dateKey,
+            startTimeLocal: range.next.session.startTimeLocal,
+            durationMinutes: range.next.session.durationMinutes,
+          }
+        : null,
+    },
     sessionLabel: sessionLabel(session),
     weekday: session.weekday,
     startTimeLocal: session.startTimeLocal,

@@ -111,6 +111,74 @@ export function memberCurrentWeek(
 }
 
 /**
+ * ONE GROUP'S WHOLE CALENDAR, resolved: the dates it is paced by, how many
+ * taught weeks that plan holds, and where it is right now.
+ *
+ * ── WHY THIS EXISTS AS A UNIT ───────────────────────────────────────────────
+ * `resolveCalendar` and `memberCurrentWeek` were always meant to be read as a
+ * pair, and every caller that read one and not the other has been a bug. The
+ * run overview resolved ONE calendar for the caller and then drew a card per
+ * group off it, so a facilitator holding a Monday group on the run's pacing and
+ * a Thursday group three weeks behind was shown the same week number, the same
+ * slot start and the same session override on both cards. Two groups, one
+ * calendar, and no way to tell from the page which one was lying.
+ *
+ * So the unit of resolution is A GROUP, not a caller. Hand this function each
+ * group in turn and every card is answered on its own clock.
+ *
+ * `currentWeek` is null on an unusable start date rather than throwing: a
+ * half-authored run is a legitimate state (see the module header), and the
+ * `RangeError` contract belongs to `currentWeekFor`, not to a summary a page
+ * renders. A caller that must ALSO suppress the week for another reason (a
+ * draft run, say) nulls it downstream; this function knows only about dates.
+ */
+export type GroupCalendar = {
+  calendar: ResolvedCalendar;
+  /** Taught weeks in the RESOLVED plan, breaks excluded. */
+  totalWeeks: number;
+  /** Null when the resolved start date is not a usable civil date. */
+  currentWeek: CurrentWeek | null;
+};
+
+export function resolveGroupCalendar(
+  run: RunCalendarSource,
+  group: GroupPaceSource | null,
+  now: Date = new Date(),
+): GroupCalendar {
+  const calendar = resolveCalendar(run, group);
+  return {
+    calendar,
+    totalWeeks: calendar.weekPlan.filter((entry) => entry.kind === "week").length,
+    currentWeek: isValidDateKey(calendar.startDate) ? currentWeekFor(calendar, now) : null,
+  };
+}
+
+/** A group as this resolver needs it: its id, plus its pace overrides. */
+export type IdentifiedGroup = GroupPaceSource & { id: string };
+
+/**
+ * The same answer for a LIST of groups, keyed by id: one resolution each, on
+ * one clock.
+ *
+ * The shared clock is the point: resolving group A at 23:59:59 and group B a
+ * millisecond later can land them in different cohort weeks across a midnight,
+ * and a page that reported that would be reporting the request's timing rather
+ * than the groups' pacing.
+ */
+export function resolveGroupCalendars(
+  run: RunCalendarSource,
+  groups: readonly IdentifiedGroup[],
+  now: Date = new Date(),
+): Map<string, GroupCalendar> {
+  const out = new Map<string, GroupCalendar>();
+  for (const group of groups) {
+    if (out.has(group.id)) continue;
+    out.set(group.id, resolveGroupCalendar(run, group, now));
+  }
+  return out;
+}
+
+/**
  * The cohort week a FRESH enrolment joins at, ON THE TARGET GROUP'S CLOCK.
  *
  * `anchorWeekNumber` is the last taught week that has started (0 before the

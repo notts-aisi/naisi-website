@@ -80,7 +80,13 @@ const STUBS = new Map([
     "firebase-admin/firestore",
     "export const FieldValue = {\n" +
       `  serverTimestamp: () => ({ __sentinel: "${SERVER_TIMESTAMP}" }),\n` +
-      "};",
+      "};\n" +
+      // The cursor writer names its job's field path explicitly so a removed
+      // failure count is a removal rather than a merge. Only the constructor
+      // shape matters here; nothing in this suite inspects one.
+      "export class FieldPath {\n" +
+      "  constructor(...segments) { this.segments = segments; }\n" +
+      "}",
   ],
   [
     "@/lib/email/admissionEmails",

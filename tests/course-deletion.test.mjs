@@ -263,6 +263,13 @@ const RUN_COUNT_KEYS = [
   // described and the dialog never mentioned them.
   "materialNotes",
   "mirroredTasks",
+  // The SECOND sweep on `tasks`, for the source the unmarked-register
+  // scheduler job mints (V3 W2 PR25). Counted separately from the mirrors
+  // even though the two share a collection and a predicate shape: they are
+  // different things to the person reading the dialog, and a run's chase
+  // history dying with it is a sentence that has to be on the manifest rather
+  // than discovered afterwards.
+  "registerTasks",
   "subscriptionRows",
   // Admission applications whose outcome placed somebody on this run (V3 W1).
   // They are the one thing the cascade WRITES rather than deletes: the
@@ -342,15 +349,15 @@ test("GUARD — the survivors are not counted as deaths, and the arithmetic foll
   const counts = Object.fromEntries(
     [...RUN_COUNT_KEYS, ...COURSE_COUNT_KEYS].map((k) => [k, 10]),
   );
-  // Eighteen counters at ten rows each: fourteen that die, `materialNotes`,
-  // `auditRows`, `schedulerMarkers` and the V3 `coursePages` among them, plus
-  // the four survivors (`admissionSeatOffers` is released, `dataExportRows`
-  // is retained).
-  assert.equal(sumCounts(counts), 180);
+  // Nineteen counters at ten rows each: fifteen that die, `materialNotes`,
+  // `auditRows`, `schedulerMarkers`, the V3 `coursePages` and the V3 W2
+  // `registerTasks` among them, plus the four survivors
+  // (`admissionSeatOffers` is released, `dataExportRows` is retained).
+  assert.equal(sumCounts(counts), 190);
   // The progress denominator counts only what actually dies, so a large
   // retained counter cannot inflate it into a bar that never fills. Adding a
-  // survivor must not move this number.
-  assert.equal(destroyedTotal(counts), 140);
+  // survivor must not move this number; adding a DESTROYED counter must.
+  assert.equal(destroyedTotal(counts), 150);
 });
 
 test("MODEL — every key the cascade can report has copy, including the ones the manifest never shows", () => {
@@ -514,6 +521,10 @@ test("MODEL — the cascade's declared stage order is the one the contract needs
     // would orphan the seat row in the window between the two.
     "admissionSeatOffers",
     "mirroredTasks",
+    // Immediately after the mirrors, because it is the same collection under
+    // the same predicate with a different source. A separate stage rather
+    // than one `in` filter so each is budgeted, paged and resumed on its own.
+    "registerTasks",
     "nudgeMarkers",
     // The scheduler tick's own markers. It sits here rather than beside the
     // other leaves because half of it is addressed by GROUP id (`unmarked__`
@@ -563,6 +574,7 @@ test("MODEL — leaf before index: every dependent stage precedes the one that n
       "applications",
       "admissionSeatOffers",
       "mirroredTasks",
+      "registerTasks",
       // Not consistency: a REQUIREMENT. The `unmarked__` marker family is
       // addressed by group id, so the drain resolves the run's groups and
       // would find nothing at all if the groups had already gone.
@@ -633,7 +645,7 @@ test("MODEL: the scheduler's markers are counted and drained on BOTH the shapes 
   // that should have gone out on a different cohort silently does not.
   const drain = ENGINE.slice(
     ENGINE.indexOf("async function drainSchedulerMarkers"),
-    ENGINE.indexOf("async function drainMirroredTasks"),
+    ENGINE.indexOf("async function drainSourcedTasks"),
   );
   assert.ok(drain.length > 0, "the cascade has no scheduler-marker drain");
   assert.match(drain, /where\("runId", "==", runId\)/);
@@ -1520,23 +1532,34 @@ test("GUARD — the mirrored-task sweep is filtered on `source`, not just the po
   // an unfiltered sweep aimed the admin's own destroy at anything a committee
   // member chose. The source filter is the half that also protects rows
   // written before the rules pin.
-  // The constant now lives in `courseTasks.ts`, beside the code that STAMPS
-  // the value on a mirror, and is imported here. What the guard is actually
-  // about is the two filters below and their order; this line only pins that
-  // the sweep is still bound to one named source rather than to a literal
-  // somebody could widen in passing.
-  assert.match(ENGINE, /import \{ MIRRORED_TASK_SOURCE \} from "\.\/courseTasks"/);
+  // The constants now live in `courseTasks.ts`, beside the code that STAMPS
+  // them, and are imported here. What the guard is actually about is the two
+  // filters below and their order; these lines only pin that the sweep is
+  // still bound to named sources rather than to a literal somebody could
+  // widen in passing.
+  assert.match(ENGINE, /MIRRORED_TASK_SOURCE,\n\s*REGISTER_FOLLOW_UP_TASK_SOURCE,\n\} from "\.\/courseTasks"/);
   const drain = ENGINE.slice(
-    ENGINE.indexOf("async function drainMirroredTasks"),
+    ENGINE.indexOf("async function drainSourcedTasks"),
     ENGINE.indexOf("async function drainSubscriptionRows"),
   );
-  assert.ok(drain.length > 0, "drainMirroredTasks is gone");
-  assert.match(drain, /\.where\("source", "==", MIRRORED_TASK_SOURCE\)/);
+  assert.ok(drain.length > 0, "the sourced-task drain is gone");
+  assert.match(drain, /\.where\("source", "==", source\)/);
   assert.match(drain, /\.where\("sourceRef\.cohortId", "==", runId\)/);
   assert.ok(
     drain.indexOf('where("source"') < drain.indexOf('where("sourceRef.cohortId"'),
     "the sweep no longer leads with the source filter",
   );
+
+  // BOTH sources go through it, and neither is a literal at the call site.
+  // The second one (`course-register`, the unmarked-register follow-up) is
+  // the weaker half of the pair on its own: the tasks create rule constrains
+  // neither `source` nor the doc id on the committee lane, so an SU-committee
+  // member CAN mint a task carrying it. What they cannot do is aim it, which
+  // is why the `sourceRef.cohortId` filter above is the half that holds here.
+  const stages = ENGINE.slice(ENGINE.indexOf('key: "mirroredTasks"'));
+  assert.match(stages, /drainSourcedTasks\(db, storage, MIRRORED_TASK_SOURCE, runId, budget\)/);
+  assert.match(stages, /REGISTER_FOLLOW_UP_TASK_SOURCE,\n\s*runId,\n\s*budget,/);
+
   // The manifest counts the SAME rows — a manifest that counted forged
   // pointers would promise to destroy rows the cascade rightly leaves alone.
   const counts = ENGINE.slice(
@@ -1544,6 +1567,7 @@ test("GUARD — the mirrored-task sweep is filtered on `source`, not just the po
     ENGINE.indexOf("export async function runDestroyBlockers"),
   );
   assert.match(counts, /\.where\("source", "==", MIRRORED_TASK_SOURCE\)/);
+  assert.match(counts, /\.where\("source", "==", REGISTER_FOLLOW_UP_TASK_SOURCE\)/);
 });
 
 test("GUARD — the cohort channel is COMPUTED, never read off the run document", () => {

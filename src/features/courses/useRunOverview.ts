@@ -8,7 +8,13 @@ import type { OverviewPayload } from "@/app/api/courses/runs/[runId]/overview/ro
  * `GET /api/courses/runs/[runId]/overview` — the run and its week plan, the
  * computed current week, the published week index, the caller's own enrolment,
  * every group they hold (their placement and each group they facilitate),
- * and the `access` flags the `[runId]` layout gates on.
+ * their own attendance, and the `access` flags the `[runId]` layout gates on.
+ *
+ * EVERY GROUP CARRIES ITS OWN CALENDAR (`OverviewGroup.calendar`), and a
+ * consumer drawing a group must read that rather than the payload's top-level
+ * `currentWeek`. The top-level fields are resolved through the caller's OWN
+ * group, which for a facilitator holding two is neither of them: the run's.
+ * `group` (singular) is deprecated and null in exactly that case.
  *
  * One-shot with a manual refresh, same argument as `useMyRuns`: the payload
  * joins `courseRuns` + its `weeks` subcollection + `courseEnrolments` +

@@ -236,9 +236,26 @@ export type SubtaskStats = {
   total: number;
 };
 
+/**
+ * The pointer that binds a machine-minted task to what it is about.
+ *
+ * `cohortId` + `weekNumber` are the original pair, written by the week mirror
+ * and swept on by the run destroy. `groupId` and `sessionKey` are the
+ * unmarked-register follow-up's two extra components: they let the push
+ * archive its own card, and the destroy sweep find it, by DATA rather than by
+ * parsing a doc id (run and group ids are `slugId()` values carrying their own
+ * `__`, so those ids have no second valid split).
+ *
+ * ABSENT, NOT NULL, on a task that has no group or session. The tasks rules
+ * pin `sourceRef` by equality on the committee update lane, and a field stored
+ * as null is a field a later write has to keep spelling as null; absent is the
+ * state every other pinned map field in this codebase uses.
+ */
 export type SourceRef = {
   cohortId: string;
   weekNumber: number;
+  groupId?: string;
+  sessionKey?: string;
 } | null;
 
 export type TaskDoc = {
@@ -399,7 +416,14 @@ function normalizeSourceRef(raw: unknown): SourceRef {
   const cohortId = typeof s.cohortId === "string" ? s.cohortId : null;
   const weekNumber = typeof s.weekNumber === "number" ? s.weekNumber : null;
   if (!cohortId || weekNumber == null) return null;
-  return { cohortId, weekNumber };
+  const ref: SourceRef = { cohortId, weekNumber };
+  // Kept only when they are really there, so a mirror normalises back to the
+  // two-key shape it was written with (see SourceRef: absent, not null).
+  if (typeof s.groupId === "string" && s.groupId) ref.groupId = s.groupId;
+  if (typeof s.sessionKey === "string" && s.sessionKey) {
+    ref.sessionKey = s.sessionKey;
+  }
+  return ref;
 }
 
 export function normalizeTask(id: string, data: Raw): TaskDoc {
