@@ -39,9 +39,16 @@
 
 .title {
   margin: 0;
+  /* `.hero` aligns to flex-start, so the title is a flex item sized on its own
+     content and its automatic minimum size is its min-content width. */
+  min-width: 0;
   font-size: var(--text-4xl);
   line-height: 1.1;
   letter-spacing: -0.02em;
+  /* Round labels are typed by an admin and are not always short. `anywhere`
+     rather than `break-word`: only `anywhere` lowers the min-content width, so
+     only `anywhere` stops a long one setting the width of the page. */
+  overflow-wrap: anywhere;
 }
 
 .dates {
@@ -85,6 +92,7 @@
   font-size: var(--text-xl);
   line-height: 1.2;
   letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
 }
 
 .gateBody {
@@ -148,7 +156,7 @@
   box-shadow: var(--focus-ring);
 }
 
-@media (max-width: 48rem) {
+@media (max-width: 48rem) { /* --bp-md */
   .page {
     padding: var(--space-8) 0 var(--space-12);
   }
@@ -167,5 +175,30 @@
 
   .button {
     width: 100%;
+  }
+}
+
+/* Small phones: the fair queue. The hero gives up height so the first thing on
+   screen after the title is the form, not three paragraphs of chrome. */
+@media (max-width: 36rem) { /* --bp-sm */
+  .page {
+    padding: var(--space-6) 0 var(--space-10);
+  }
+
+  .title {
+    font-size: var(--text-2xl);
+  }
+
+  .hero {
+    gap: var(--space-2);
+    margin-bottom: var(--space-6);
+  }
+
+  .gateTitle {
+    font-size: var(--text-lg);
+  }
+
+  .gateBody {
+    margin-bottom: var(--space-5);
   }
 }

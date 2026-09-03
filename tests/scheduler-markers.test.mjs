@@ -45,7 +45,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -57,6 +57,23 @@ const SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"']+)\2/g;
 /** The sentinel the stubbed `FieldValue.serverTimestamp()` returns. */
 const SERVER_TIMESTAMP = "__serverTimestamp__";
 
+/**
+ * The stubs.
+ *
+ * `server-only` and `firebase-admin/firestore` are the originals. The four
+ * `@/…` entries below arrived with the first REAL job in the registry, and
+ * they are doors to the outside world rather than logic: the registry imports
+ * its job modules by value (that is how a registration is a registration), so
+ * loading `registry.ts` here loads every job, and the reminders job reaches
+ * the Resend send path, the JSX email components and the Admin SDK. Without
+ * these the loader tries to transpile a `.tsx` component it has no JSX
+ * setting for, and this suite fails on a syntax error that has nothing to do
+ * with markers.
+ *
+ * Stubbing the DOORS rather than the job module keeps the test honest: `JOBS`
+ * still holds each job's real registration, so the caps-and-windows
+ * assertions below are still checking the numbers that ship.
+ */
 const STUBS = new Map([
   ["server-only", "export {};"],
   [
@@ -65,14 +82,35 @@ const STUBS = new Map([
       `  serverTimestamp: () => ({ __sentinel: "${SERVER_TIMESTAMP}" }),\n` +
       "};",
   ],
+  [
+    "@/lib/email/admissionEmails",
+    "export const admissionApplicationUrl = () => '';\n" +
+      "export const sendAdmissionEmail = async () => 'sent';",
+  ],
+  [
+    "@/lib/email/courseFacilitatorEmails",
+    "export const hasOptedOutOfCourseAnnouncements = () => false;\n" +
+      "export const memberNameOf = () => '';",
+  ],
+  ["@/lib/firebase/admin", "export const getAdminDb = () => null;"],
+  ["@/lib/firestore/suppression", "export const isSuppressed = async () => false;"],
 ]);
 
+/**
+ * A FILE, never a directory. The extension candidates come first and the bare
+ * path is only accepted when it is a file, because `@/lib/devBypass` is both a
+ * directory and a module: taking the directory hands `readFileSync` an EISDIR
+ * instead of a module, which is what happened the first time the registry
+ * imported a job whose graph reaches `session.ts`.
+ */
 function resolveLocalTs(specifier, fromFile) {
   const base = specifier.startsWith("@/")
     ? join(SRC, specifier.slice(2))
     : resolve(dirname(fromFile), specifier);
-  for (const candidate of [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) {
-    if (existsSync(candidate)) return candidate;
+  for (const candidate of [`${base}.ts`, `${base}.tsx`, base, join(base, "index.ts")]) {
+    if (!existsSync(candidate)) continue;
+    if (statSync(candidate).isDirectory()) continue;
+    return candidate;
   }
   return null;
 }
@@ -158,7 +196,7 @@ const {
   stampSent,
   stampSkipped,
 } = await loadTs("lib/scheduler/markers.ts");
-const { JOBS, MIN_RECLAIM_AFTER_MINUTES, policyFor } =
+const { JOBS, MIN_RECLAIM_AFTER_MINUTES, jobDefaultEnabled, policyFor } =
   await loadTs("lib/scheduler/registry.ts");
 const { heartbeatJob } = await loadTs("lib/scheduler/jobs/heartbeat.ts");
 
@@ -683,7 +721,42 @@ describe("policyFor", () => {
   test("the heartbeat claims nothing, and is still not registered with a zero window", () => {
     // Nothing reads the heartbeat's window. It is a real number anyway,
     // because it is the entry the next job author copies.
-    assert.equal(heartbeatJob.id, JOBS[0].id, "the heartbeat is registered first");
+    assert.ok(
+      JOBS.some((job) => job.id === heartbeatJob.id),
+      "the heartbeat is not registered at all",
+    );
     assert.ok(heartbeatJob.reclaimAfterMinutes > 0);
+  });
+
+  test("a job that emails people ships switched off", () => {
+    // `config/scheduler` treats a missing row as the job's own default, so a
+    // job that mails a live audience must declare that default as OFF or it
+    // arms itself the moment it deploys. The owner turns it on from the panel
+    // once the round is open and a run has been proven on dev.
+    const reminders = JOBS.find((job) => job.id === "admissions-deadline-reminders");
+    assert.ok(reminders, "the deadline reminders job is not registered");
+    assert.equal(reminders.enabledByDefault, false);
+    assert.equal(jobDefaultEnabled(reminders), false);
+  });
+
+  test("a job that sends nothing does not have to be switched on", () => {
+    // The default default. A job registered by a later PR must not be
+    // silently off on an environment nobody has touched the panel on.
+    assert.equal(heartbeatJob.enabledByDefault, undefined);
+    assert.equal(jobDefaultEnabled(heartbeatJob), true);
+  });
+
+  test("the registration order is alphabetical by job id", () => {
+    // The ORDER used to be editorial (heartbeat first, so it could never be
+    // the job that ate the budget). It is alphabetical now because this array
+    // is the one line every job-adding PR touches, and three agents appending
+    // to the bottom of it in parallel is three conflicts in one place.
+    //
+    // Nothing is lost by moving the heartbeat down it: the budget is checked
+    // BEFORE each job runs, a job it cannot reach is reported as skipped for
+    // budget on the receipt, and the receipt itself, not the heartbeat, is
+    // what says a tick arrived.
+    const ids = JOBS.map((job) => job.id);
+    assert.deepEqual(ids, [...ids].sort(), `registration order is ${ids.join(", ")}`);
   });
 });

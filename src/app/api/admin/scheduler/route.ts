@@ -24,7 +24,7 @@ import {
   SCHEDULER_RUNS_COLLECTION,
   normalizeSchedulerRun,
 } from "@/lib/firestore/schedulerRuns";
-import { JOBS, isSchedulerJobId } from "@/lib/scheduler/registry";
+import { JOBS, isSchedulerJobId, jobDefaultEnabled } from "@/lib/scheduler/registry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -95,7 +95,7 @@ export async function GET(req: Request) {
     updatedAt: config.updatedAt?.toISOString() ?? null,
     updatedByUid: config.updatedByUid,
     jobs: JOBS.map((job) => {
-      const state = jobStateFor(config, job.id);
+      const state = jobStateFor(config, job.id, jobDefaultEnabled(job));
       return {
         id: job.id,
         label: job.label,
@@ -104,6 +104,8 @@ export async function GET(req: Request) {
         maxLateHours: job.maxLateHours,
         reclaimAfterMinutes: job.reclaimAfterMinutes,
         enabled: state.enabled,
+        // So the panel can say WHY a job nobody has touched reads as off.
+        enabledByDefault: jobDefaultEnabled(job),
         lastRunAt: state.lastRunAt?.toISOString() ?? null,
         lastProcessed: state.lastProcessed,
         lastError: state.lastError,

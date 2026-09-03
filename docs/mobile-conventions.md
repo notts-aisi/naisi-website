@@ -76,6 +76,13 @@ Draft spec, not in any stable browser. Not viable.
 
 44×44 CSS px minimum for interactive elements (Apple HIG / WCAG 2.5.5). See [touch-targets.md](touch-targets.md) for the enforced-vs-aspirational split and the specific files that comply or are exempt.
 
+## The applicant funnel has its own device walk
+
+The courses funnel (catalogue, programme page, apply form, availability grid,
+status hub) is walked on real hardware before an admission round opens. The
+ordered steps, and which module governs each one, are in
+[mobile-funnel-checklist.md](mobile-funnel-checklist.md).
+
 ## Don't regress the events RSVP flow
 
 The events RSVP page is the site's most mobile-mature surface and must not regress. See [mobile-baseline-events.md](mobile-baseline-events.md) for the regression contract.

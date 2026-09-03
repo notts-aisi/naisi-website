@@ -103,6 +103,15 @@ skip an hour in March.
 
 Create the prod job **paused** and unpause it as the last step of cutover.
 
+Cutover order, because two of these are switches rather than deploys:
+
+1. deploy, with `admissions-deadline-reminders` still dark (it ships that way);
+2. unpause the Cloud Scheduler job and watch heartbeat receipts for 24 hours;
+3. prove the reminders job on dev with **Run now** on a round with a due date;
+4. only then turn **Application deadline reminders** on from Site status, on the
+   environment you mean to send from. Planned for 26 September, before the first
+   reminder date on the autumn round.
+
 ### Verifying it
 
 Everything below is answerable from **/admin/site-status**, which is the point
@@ -157,9 +166,20 @@ the last job that reported.
 ### Kill switches
 
 `config/scheduler` holds `{ enabled, jobs: { <jobId>: { enabled, lastRunAt,
-lastError } } }`. **Missing means enabled** at both levels, so a fresh project
-runs and a job registered by a later PR is never silently off on an environment
-nobody has touched the panel on.
+lastError } } }`. **Missing means enabled** for the site-wide switch, and for a
+job it means **that job's own default**, which is enabled for everything except
+a job that mails people. A fresh project therefore runs, and a job registered by
+a later PR is never silently off on an environment nobody has touched the panel
+on.
+
+The exception is declared in the registry as `enabledByDefault: false` and is
+currently set on `admissions-deadline-reminders` alone. A job that emails a live
+audience must not arm itself the moment it deploys, so it ships dark and the
+owner switches it on from the panel. The panel says so on the job's row.
+
+A stored row only counts as somebody having touched the switch when it actually
+carries an `enabled` boolean: **Run now** writes `lastRunAt` onto a job's row
+without one, and that must not arm a job that ships dark.
 
 - Global off: ticks still arrive and still leave a receipt (so the panel does
   not go blank and read as "the scheduler has died"), but no job runs.
@@ -167,7 +187,9 @@ nobody has touched the panel on.
 
 Both switches live on the panel. Turning the global switch off also blocks
 **Run now**, on the grounds that a site-wide off is usually off because
-something is actively going wrong.
+something is actively going wrong. **Run now** deliberately ignores a job's OWN
+switch (the admin is looking straight at that switch when they press it), so it
+is the lane for proving a dark job on dev without arming it.
 
 ### Markers, and what to do about a stuck one
 
@@ -200,6 +222,100 @@ Marker families and where they live:
 House rule: **scheduler-tick markers live in `schedulerMarkers`; human-triggered
 course send markers stay in `courseNudges`.** The facilitator's attendance push
 is a human action and keeps its `gnudge__` marker where it is.
+
+### The registered jobs
+
+`JOBS` in [`src/lib/scheduler/registry.ts`](../src/lib/scheduler/registry.ts) is
+ordered **alphabetically by job id**. Not an aesthetic: that array is the one
+line every job-adding PR touches, so alphabetical gives each new entry exactly
+one correct position and the parallel merges stop arguing. Nothing depends on
+the order, because the budget is checked before each job runs and a job the
+tick could not reach is reported as skipped for budget on its receipt.
+
+#### `admissions-deadline-reminders`
+
+Emails everybody still holding an **unsubmitted draft** on an open admission
+round, on the dates that round's reminder schedule works out from its deadline.
+
+| | |
+| --- | --- |
+| Handler | [`src/lib/scheduler/jobs/admissionsReminders.ts`](../src/lib/scheduler/jobs/admissionsReminders.ts) |
+| Marker | `remind__{roundId}__{uid}__{dueAtKey}` |
+| Audience | `admissionApplications` where `roundId` matches and `status == "draft"` |
+| Cap | 200 sends per tick |
+| Stale after | 24 hours |
+| Template | `admissions-deadline-reminder`, editable under Admin → Email designs |
+
+**Nothing is scheduled.** Each tick reads every open round's `closesAt` and its
+`reminderOffsets` and derives the due instants again: `closesAt` minus the
+offset's days, in **civil** days, then set to that offset's London wall clock.
+So moving a deadline moves its reminders with it, and there is nothing to
+reschedule.
+
+**The marker keys on the resolved civil date**, never on the offset id. Two
+consequences, both deliberate:
+
+- editing the schedule cannot re-send a date that has already gone out (nudging
+  "10:00" to "12:00" on the morning it went is the same key, so nobody is
+  mailed twice);
+- two offsets that resolve to the same day are **one** email, sent at the
+  earlier of the two times.
+
+**Stale work is dropped whole, not mailed late.** A due date more than 24 hours
+old is recorded with `skippedReason: "stale"` and nobody is emailed: a "closes
+in 7 days" email that lands three days after the deadline is worse than
+silence. That stamp is **one marker per round and date**, with `nobody` in the
+uid slot, rather than one per applicant, because the verdict is
+identical for everybody on that date and is re-derived on every tick.
+
+**A stale date is not on Stuck sends, and there is no button for it.** Stuck
+sends lists markers stamped `failedAt`; a stale one is stamped
+`skippedReason: "stale"` with `failedAt` null, so it never appears there.
+Neither the tick nor **Send now** will send that date afterwards either: both
+re-derive it from the same clock and reach the same verdict. The only signal
+that a date went by unsent is the **stale** count on a Send now receipt (and
+the job's log line).
+
+If a date really has been missed and the email is still worth sending, the
+remedy is a manual one-off, outside the scheduler entirely: read the wording
+under Admin, Email designs (its Send test mails it to you, not to the round),
+and have the committee send that note by hand to the people who need it. An
+explicit admin override that puts a stale date back in play is a plausible
+follow-up; it does not exist today.
+
+**Who is skipped.** A suppressed address, an explicit courses opt-out
+(`profile.notifications.categories.courses === false`; an unanswered preference
+is not a refusal), or an applicant with no address on file. Each is stamped with
+its reason rather than left unmarked, so the tick does not re-decide it every
+fifteen minutes.
+
+**It ships switched off.** `admissions-deadline-reminders` is registered with
+`enabledByDefault: false`, so on a fresh environment it is dark and the panel
+says why on its row. **The owner turns it on from Site status once the round is
+open and a run has been proven on dev** (planned for 26 September, ahead of the
+first reminder date). Until then the tick skips it and **Send now** refuses,
+naming the switch, so the manual lane cannot bypass the dark period by accident.
+**Run now** on the panel still runs it, which is how you prove it on dev without
+arming it.
+
+**Send now.** The round page's Deadline reminders section has a **Send due
+reminders now** button (admins and `approveCourse` holders). It calls
+`POST /api/admissions/rounds/[roundId]/reminders/send-now`, which runs the SAME
+handler scoped to that round: it claims the same markers, so pressing it twice
+sends nothing the second time, and it honours the same 24-hour rule, so it
+cannot be used to mail a reminder late. It refuses a round that is not open, refuses
+while the site-wide scheduler switch is off, and refuses while the reminders
+job's own switch is off. The receipt it shows is
+`sent / skipped / stale`, plus `failed` when it is not zero, and "There may be more: press again" when the run stopped at its ceiling.
+
+Use it when a tick has slipped on one of the named dates. It is also what makes
+this whole lane safe to cut under time pressure: without the scheduler,
+deadline reminders are a committee member pressing one button on three days.
+
+#### `heartbeat`
+
+Sends nothing and claims no marker. Leave it on: it is how you tell a scheduler
+that is running from one that is silently down.
 
 ### Budget, re-arm, and the Cloud Run caveat
 

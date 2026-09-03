@@ -24,10 +24,13 @@ import {
   type ReminderOffset,
   type ReminderOffsetId,
 } from "@/lib/firestore/admissionRounds";
+import { appointmentDecideBlock } from "@/lib/admissions/appointmentRules";
 import { nextStatuses, planStatusChange } from "@/lib/admissions/roundStatus";
 import { normalizeCourseRun, type CourseRunDoc } from "@/lib/firestore/courses";
+import AppointmentsLink from "./AppointmentsLink";
 import ReadinessPanel from "./ReadinessPanel";
 import SectionCard from "./SectionCard";
+import SendRemindersNow from "./SendRemindersNow";
 import StagesSection from "./StagesSection";
 import {
   RoundApiError,
@@ -238,6 +241,14 @@ export default function RoundEditor({
                 onRoundChange={(stageIds) => setRound({ ...round, stageIds })}
               />
             </SectionCard>
+            {round.kind === "appointment" && (
+              <AppointmentsLink
+                roundId={round.id}
+                // One rule, one place. The queue's own page and the decide
+                // route ask the same function.
+                readOnly={appointmentDecideBlock(round) !== null}
+              />
+            )}
             {round.kind === "enrolment" ? (
               <ProgrammeSection round={round} runs={runs} patch={patch} />
             ) : (
@@ -1222,6 +1233,7 @@ function RemindersSection({ round, patch }: { round: Round; patch: PatchFn }) {
           Add {REMINDER_LABEL[unused[0]].toLowerCase()}
         </Button>
       )}
+      <SendRemindersNow roundId={round.id} disabled={round.status !== "open"} />
     </SectionCard>
   );
 }

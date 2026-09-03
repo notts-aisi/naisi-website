@@ -66,7 +66,8 @@ export type AdmissionApplicationStatus =
   | "fellowship-offered"
   | "waitlisted"
   | "rejected"
-  | "withdrawn";
+  | "withdrawn"
+  | "appointed";
 
 export const ADMISSION_APPLICATION_STATUSES: AdmissionApplicationStatus[] = [
   "draft",
@@ -76,6 +77,7 @@ export const ADMISSION_APPLICATION_STATUSES: AdmissionApplicationStatus[] = [
   "waitlisted",
   "rejected",
   "withdrawn",
+  "appointed",
 ];
 
 export const ADMISSION_APPLICATION_STATUS_LABEL: Record<
@@ -89,24 +91,70 @@ export const ADMISSION_APPLICATION_STATUS_LABEL: Record<
   waitlisted: "Waitlisted",
   rejected: "Not offered a place",
   withdrawn: "Withdrawn",
+  appointed: "Appointed",
 };
 
-/** What the final decider pressed. Distinct from the resulting status. */
-export type AdmissionDecision = "accept" | "offer-fellowship" | "waitlist" | "reject";
+/**
+ * What the final decider pressed. Distinct from the resulting status.
+ *
+ * The last two belong to an APPOINTMENT round (`round.kind`), where the
+ * outcome is a facilitator role on a run rather than a seat on one. They are
+ * members of the same union rather than a second enum because
+ * `outcome.decision` is one field on one document, and a normaliser that had
+ * to know the round's kind before it could tell a stored value from a corrupt
+ * one would be reading two documents to read one.
+ *
+ * Nothing mixes the two sets: the decide route refuses an enrolment decision
+ * on an appointment round, and the enrolment half of that route does not exist
+ * yet.
+ */
+export type AdmissionDecision =
+  | "accept"
+  | "offer-fellowship"
+  | "waitlist"
+  | "reject"
+  | "appoint"
+  | "decline";
 
 export const ADMISSION_DECISIONS: AdmissionDecision[] = [
   "accept",
   "offer-fellowship",
   "waitlist",
   "reject",
+  "appoint",
+  "decline",
 ];
 
-/** The status a decision lands the application in. One place, so decide and recount agree. */
+/** The decisions an APPOINTMENT round may take. The decide route's whitelist. */
+export const APPOINTMENT_DECISIONS = ["appoint", "decline"] as const;
+
+export type AppointmentDecision = (typeof APPOINTMENT_DECISIONS)[number];
+
+export function isAppointmentDecision(v: unknown): v is AppointmentDecision {
+  return (
+    typeof v === "string" && (APPOINTMENT_DECISIONS as readonly string[]).includes(v)
+  );
+}
+
+/**
+ * The status a decision lands the application in. One place, so decide and
+ * recount agree.
+ *
+ * `appoint` gets its OWN status rather than reusing `accepted`. The two are
+ * different endings and the applicant reads about them on the same hub: an
+ * accepted enrolment applicant has a place on a course, an appointed
+ * facilitator is being asked to run a group. Sharing a status would have made
+ * the hub tell one of them the other's sentence. `decline` reuses `rejected`,
+ * because that ending IS the same ending; the hub's sentence for it is chosen
+ * by the round's kind rather than by a second status member nobody needed.
+ */
 export const DECISION_STATUS: Record<AdmissionDecision, AdmissionApplicationStatus> = {
   accept: "accepted",
   "offer-fellowship": "fellowship-offered",
   waitlist: "waitlisted",
   reject: "rejected",
+  appoint: "appointed",
+  decline: "rejected",
 };
 
 // ---------------------------------------------------------------------------

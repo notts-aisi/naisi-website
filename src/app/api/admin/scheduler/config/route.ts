@@ -1,11 +1,12 @@
 /**
  * POST /api/admin/scheduler/config: the kill switches.
  *
- * One global `enabled` plus one per job. MISSING MEANS ENABLED at both levels
- * (see src/lib/firestore/schedulerConfig.ts), so this route only ever writes
- * the explicit values an admin has chosen; it never seeds defaults, or a
- * later PR's newly registered job would arrive switched off because nobody
- * had heard of it when the doc was written.
+ * One global `enabled` plus one per job. A missing global switch means
+ * enabled; a missing per-job row falls to that job's own `enabledByDefault`
+ * (see src/lib/firestore/schedulerConfig.ts and jobDefaultEnabled in the
+ * registry), so this route only ever writes the explicit values an admin has
+ * chosen; it never seeds defaults, or a later PR's newly registered job would
+ * arrive with a choice nobody made when the doc was written.
  *
  * A POST, never a write on a GET.
  */

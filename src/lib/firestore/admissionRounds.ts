@@ -53,6 +53,13 @@ import { slugId } from "./slugId";
  * `questions` key.
  */
 
+/**
+ * The collection name, here rather than in the route helpers, because the
+ * scheduler job reads rounds without going near a route module and a second
+ * copy of the string is a second thing to keep in step.
+ */
+export const ROUNDS_COLLECTION = "admissionRounds";
+
 // ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------

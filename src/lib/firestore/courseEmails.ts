@@ -30,6 +30,18 @@ export const COURSE_TEMPLATE_IDS = [
   // them are gone.
   "admissions-submitted",
   "admissions-reinstated",
+  "admissions-deadline-reminder",
+  // The APPOINTMENT round's two endings. A facilitator round decides who runs
+  // a group, so its outcome names a run and its refusal is about a role rather
+  // than about a place on a course. Both send through `sendAdmissionEmail`.
+  //
+  // `admissions-declined` is the APPOINTMENT refusal and nothing else. The
+  // ENROLMENT round's refusal is a separate template about a separate thing (a
+  // place on a course, not a role running one) and it arrives with the
+  // enrolment decide path, so the id it will take is deliberately not
+  // registered here yet.
+  "admissions-appointed",
+  "admissions-declined",
 ] as const;
 
 export type CourseTemplateId = (typeof COURSE_TEMPLATE_IDS)[number];
@@ -43,7 +55,10 @@ export type CourseTemplateTrigger =
   | "week-nudge"
   | "dropped-out"
   | "admissions-submitted"
-  | "admissions-reinstated";
+  | "admissions-reinstated"
+  | "admissions-deadline-reminder"
+  | "admissions-appointed"
+  | "admissions-declined";
 
 /**
  * Trigger each template belongs to. Used by the send paths to decide which
@@ -59,6 +74,9 @@ export const COURSE_TEMPLATE_TRIGGER: Record<CourseTemplateId, CourseTemplateTri
   "course-dropped-out": "dropped-out",
   "admissions-submitted": "admissions-submitted",
   "admissions-reinstated": "admissions-reinstated",
+  "admissions-deadline-reminder": "admissions-deadline-reminder",
+  "admissions-appointed": "admissions-appointed",
+  "admissions-declined": "admissions-declined",
 };
 
 export type CourseTemplateDoc = {
@@ -175,6 +193,23 @@ export type CourseTokenMap = {
   decisionsBy?: string;
   /** The structured cohort name, e.g. "Autumn 2026, cohort 2". */
   cohortLabel?: string;
+  /**
+   * The decider's shared reason for a decision, and ONLY when they ticked
+   * "share this with the applicant". Absent otherwise, which is what makes an
+   * unshared reason structurally unable to reach a template: a caller passes
+   * nothing rather than a blank, so a paragraph built around `{reason}` keeps
+   * the literal token in front of the admin who wrote it instead of quietly
+   * closing over a hole.
+   *
+   * NO TRIGGER SUPPLIES IT TODAY. The appointment round's refusal renders the
+   * shared note as its own paragraph in `AdmissionsDeclinedEmail`, so offering
+   * `{reason}` as well would have printed it twice; the enrolment refusal,
+   * which has no such paragraph, is the send this is here for.
+   *
+   * Never confuse this with `outcome.reason`, which is the decider's whole
+   * note. Only the SHARED half is ever handed to a token map.
+   */
+  reason?: string;
   preferredName: string;
   firstName: string;
 };
@@ -198,6 +233,7 @@ export type CourseTokenInput = {
   deadline?: string;
   decisionsBy?: string;
   cohortLabel?: string;
+  reason?: string;
 };
 
 export function buildCourseTokens(input: CourseTokenInput): CourseTokenMap {
@@ -227,6 +263,7 @@ export function buildCourseTokens(input: CourseTokenInput): CourseTokenMap {
     ...(input.deadline ? { deadline: input.deadline } : {}),
     ...(input.decisionsBy ? { decisionsBy: input.decisionsBy } : {}),
     ...(input.cohortLabel ? { cohortLabel: input.cohortLabel } : {}),
+    ...(input.reason ? { reason: input.reason } : {}),
   };
 }
 
@@ -240,6 +277,9 @@ export const COURSE_DEFAULT_LABELS: Record<CourseTemplateId, string> = {
   "course-dropped-out": "Left a course",
   "admissions-submitted": "Application received",
   "admissions-reinstated": "Application picked back up",
+  "admissions-deadline-reminder": "Deadline reminder",
+  "admissions-appointed": "Appointed as a facilitator",
+  "admissions-declined": "Facilitator application declined",
 };
 
 function rt(html: string): Block {
@@ -365,8 +405,8 @@ export const courseTemplateDefaults: Record<
     ],
   },
   /**
-   * The admissions pair (V3). Three things an editor should know before
-   * rewriting them:
+   * The two admissions RECEIPTS (V3). Three things an editor should know
+   * before rewriting them:
    *
    *  1. **They resolve a DIFFERENT token set.** `{roundLabel}`, `{deadline}`,
    *     `{decisionsBy}` and `{applicationUrl}` resolve here; `{courseTitle}`,
@@ -401,6 +441,80 @@ export const courseTemplateDefaults: Record<
       rt(
         "<p>You have reopened your application to <strong>{roundLabel}</strong>. Everything you had written is still there, and it is a draft again, so nothing has been sent to us yet.</p>" +
           "<p>Finish it and press submit before applications close on {deadline}. A draft sitting at the deadline is not an application, and we would rather you knew that now than found out afterwards.</p>",
+      ),
+    ],
+  },
+  /**
+   * The deadline reminder (V3 W3). Sent by the scheduler tick to everybody
+   * still holding an UNSUBMITTED draft, on the dates the round's reminder
+   * schedule resolves to. Three things an editor should know:
+   *
+   *  1. **The audience is drafts only.** Nobody who has submitted ever
+   *      receives this, so the copy may say "still a draft" as a fact rather
+   *      than as a hedge. It must never read as a chase: plenty of people
+   *      start an application and decide against it, and that is fine.
+   *  2. **It resolves fewer tokens than its siblings.** `{roundLabel}` and
+   *      `{deadline}` resolve; `{decisionsBy}` and `{stageLabel}` do NOT,
+   *      because the tick knows the round's deadline and nothing about
+   *      stages. A token this trigger does not supply stays literal.
+   *  3. **It can arrive up to a day late and no later.** A tick that has been
+   *      down stamps anything over `maxLateHours` as stale rather than
+   *      sending it, so this copy is never read after the deadline has gone.
+   */
+  "admissions-deadline-reminder": {
+    label: COURSE_DEFAULT_LABELS["admissions-deadline-reminder"],
+    subject: "Still a draft: your {roundLabel} application",
+    blocks: [
+      h("Hi {firstName},"),
+      rt(
+        "<p>You have started an application to <strong>{roundLabel}</strong> and it is still a draft, so it has not reached us yet.</p>" +
+          "<p>Applications close on {deadline}. A draft sitting at the deadline is not an application, and we would rather you knew that now than found out afterwards.</p>" +
+          "<p>If you have changed your mind, you can leave it. Nothing else happens, and this is the only kind of reminder we send about it.</p>",
+      ),
+    ],
+  },
+  /**
+   * THE APPOINTMENT ROUND'S TWO ENDINGS, and three rules govern the copy.
+   *
+   *  1. **The appointment names a real run**, so `{courseTitle}`, `{runLabel}`
+   *     and `{startDate}` DO resolve here, unlike on the two receipts above.
+   *     That is the whole difference between an appointment and an
+   *     application: by the time this sends, the person has been written onto
+   *     a run's facilitator list.
+   *  2. **The training dates are the decider's own sentence.** There is no
+   *     training-dates field on a round, so the decide route's `note` is
+   *     rendered as its own paragraph by `AdmissionsAppointedEmail`, below the
+   *     body and above the footer. It is member-authored plain text and it is
+   *     NOT a token: putting it through `personaliseBlocks` would put a
+   *     typed-in string into a `richText` block that reaches
+   *     `dangerouslySetInnerHTML`.
+   *  3. **The refusal says nothing about the person.** A facilitator team is
+   *     small, so most good applicants are not on it, and the sentence has to
+   *     make that the reason. The decider's shared note is NOT a token here
+   *     either: `AdmissionsDeclinedEmail` renders it as its own paragraph, so
+   *     a `{reason}` in the body would print it a second time. The declined
+   *     trigger supplies no such token, which is what stops that happening.
+   */
+  "admissions-appointed": {
+    label: COURSE_DEFAULT_LABELS["admissions-appointed"],
+    subject: "You are facilitating {courseTitle}, {firstName}",
+    blocks: [
+      h("Welcome to the team, {firstName}"),
+      rt(
+        "<p>We would like you to facilitate on <strong>{courseTitle}</strong> ({runLabel}), which starts {startDate}. Thank you for offering: we had more good applications to {roundLabel} than we had groups.</p>" +
+          "<p>Facilitator training comes before the first session, and the note below says when. Everything else, your group and its weekly material, appears in your course area on the site once groups are set.</p>" +
+          "<p>If you can no longer do it, tell us as soon as you can. A group with no facilitator is the one thing we cannot fix late.</p>",
+      ),
+    ],
+  },
+  "admissions-declined": {
+    label: COURSE_DEFAULT_LABELS["admissions-declined"],
+    subject: "Your {roundLabel} application",
+    blocks: [
+      h("Thank you for applying, {firstName}"),
+      rt(
+        "<p>We are not able to take you on for <strong>{roundLabel}</strong> this time. We had more people offering than we have groups, so this is about the number of places and not about your application.</p>" +
+          "<p>Please do stay involved. Coming along as a participant is genuinely the usual route in, and applying again next term is welcome.</p>",
       ),
     ],
   },

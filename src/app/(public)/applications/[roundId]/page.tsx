@@ -162,7 +162,11 @@ export default async function ApplicationDetailPage({ params }: Params) {
             {ADMISSION_APPLICATION_STATUS_LABEL[row.application.status]}
           </Badge>
           <p className={styles.lede}>
-            {applicationStatusBlurb(row.application.status, row.round.windowState)}
+            {applicationStatusBlurb(
+              row.application.status,
+              row.round.windowState,
+              row.round.kind,
+            )}
           </p>
         </header>
 

@@ -1,0 +1,37 @@
+/* Desktop-first with one mobile adapt block at the foot, per
+   docs/mobile-conventions.md. Tokens only; no CSS variables in the media
+   query. */
+
+.link {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  text-decoration: none;
+  /* A whole card is the target, so it clears 44px without a min-height. */
+}
+
+.link:hover {
+  background: var(--color-surface-hover);
+}
+
+.title {
+  font-size: var(--text-base);
+  font-weight: 650;
+  color: var(--color-text);
+}
+
+.note {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: 1.6;
+}
+
+@media (max-width: 48rem) {
+  .link {
+    padding: var(--space-3);
+  }
+}

@@ -193,6 +193,7 @@ export default async function ApplicationsPage() {
                       {applicationStatusBlurb(
                         row.application.status,
                         row.round.windowState,
+                        row.round.kind,
                       )}
                     </p>
 

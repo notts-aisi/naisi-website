@@ -87,12 +87,20 @@
   color: var(--color-accent);
 }
 
+/* Hidden, not removed. `display: none` took the column away, so a list where
+   only some options are ranked stepped its labels in and out by 1.25rem plus a
+   gap. `visibility: hidden` keeps the reserved width and the labels line up. */
 .rank:empty {
-  display: none;
+  visibility: hidden;
 }
 
 .optionLabel {
   min-width: 0;
+  /* Stream names are admin-typed. A long one wraps to a second line inside the
+     pill (the pill has a min-height, not a height) rather than pushing the row
+     past the screen. `anywhere` rather than `break-word`: only `anywhere`
+     lowers the min-content width the pill is sized against. */
+  overflow-wrap: anywhere;
 }
 
 .fallback {
@@ -105,7 +113,7 @@
   background: var(--color-surface);
 }
 
-@media (max-width: 48rem) {
+@media (max-width: 48rem) { /* --bp-md */
   .options {
     flex-direction: column;
     align-items: stretch;
@@ -113,5 +121,17 @@
 
   .option {
     justify-content: flex-start;
+    /* Vertical padding so a wrapped two-line label sits in a taller pill
+       instead of pressing against the border. */
+    padding: var(--space-2) var(--space-4);
+    text-align: left;
+  }
+
+  /* The rank keeps its column so the labels of a ranked list line up down the
+     left edge. `auto` rather than a 1.25rem basis: the unconditional
+     `min-width: 1.25rem` above already reserves the column, and a fixed basis
+     would clip a two-digit rank on a programme with ten or more streams. */
+  .rank {
+    flex: 0 0 auto;
   }
 }

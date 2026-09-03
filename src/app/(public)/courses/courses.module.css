@@ -127,6 +127,10 @@
   line-height: 1.25;
   letter-spacing: -0.01em;
   margin: 0;
+  /* Course titles are authored; a long one wraps rather than widening the card
+     past the grid track. `anywhere` rather than `break-word`, because only
+     `anywhere` lowers the min-content width the track is measured against. */
+  overflow-wrap: anywhere;
 }
 
 .tagline {
@@ -191,5 +195,18 @@
   }
   .card .visual {
     margin: calc(var(--space-6) * -1) calc(var(--space-6) * -1) 0;
+  }
+}
+
+/* Small phones. */
+@media (max-width: 36rem) { /* --bp-sm */
+  .page {
+    padding: var(--space-8) 0;
+  }
+  .cardTitle {
+    font-size: var(--text-lg);
+  }
+  .cardTop {
+    gap: var(--space-2);
   }
 }

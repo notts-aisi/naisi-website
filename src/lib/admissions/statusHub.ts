@@ -14,7 +14,6 @@ import type {
   AdmissionRoundDoc,
   AdmissionStageDoc,
 } from "@/lib/firestore/admissionRounds";
-import type { RsvpAnswer } from "@/lib/firestore/events";
 
 /**
  * The applicant STATUS HUB projection: one application row, joined to its
@@ -45,15 +44,16 @@ import type { RsvpAnswer } from "@/lib/firestore/events";
  * evidence, no unshared reason on the wire) rather than read it and hope.
  */
 
-/** One stored answer as a sentence, for the read-back of a submitted form. */
-export function answerText(value: RsvpAnswer | undefined): string {
-  if (value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (Array.isArray(value)) return value.join(", ");
-  const other = value.other?.trim();
-  return [...value.checked, other ? `Other: ${other}` : ""].filter(Boolean).join(", ");
-}
+/**
+ * One stored answer as a sentence, for the read-back of a submitted form.
+ *
+ * Re-exported rather than defined here so every existing call site is
+ * unchanged. It moved to a leaf because the appointment queue needs it and
+ * that queue is reached from a client component, while this module imports the
+ * apply tree's serialisers and so carries `server-only` behind it. See
+ * `answerText.ts`.
+ */
+export { answerText } from "./answerText";
 
 /**
  * The statuses that still have a form in front of them. A decided or
