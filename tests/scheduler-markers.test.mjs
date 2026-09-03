@@ -189,6 +189,7 @@ const {
   SCHEDULER_MARKER_RETENTION_DAYS,
   breakReturnMarker,
   claim,
+  createSettled,
   errorText,
   retryFailedMarker,
   schedulerMarkerExpiry,
@@ -587,6 +588,72 @@ describe("stampSent / stampError / stampSkipped", () => {
     assert.equal(errorText("plain string"), "plain string");
     assert.equal(errorText(new Error("y".repeat(400))).length, 300);
     assert.equal(errorText(null), "null");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createSettled
+// ---------------------------------------------------------------------------
+
+describe("createSettled", () => {
+  test("writes a marker that is finished the moment it exists, and claims nothing", async () => {
+    const db = makeDb();
+
+    const written = await createSettled(db, REF, {
+      job: JOB,
+      reason: "stale",
+      at: NOW,
+    });
+
+    assert.equal(written, true);
+    const stored = db.read(REF.id);
+    assert.equal(stored.job, JOB);
+    assert.equal(stored.skippedReason, "stale");
+    assert.equal(stored.sentAt, null);
+    assert.equal(stored.failedAt, null);
+    // THE POINT. A verdict authorises no side effect, so it must not spend one
+    // of the unit's three claim attempts: a job that recorded the same verdict
+    // on three ticks would otherwise be given up on for work it never had.
+    assert.equal(stored.attempts, 0, "recording a verdict consumed an attempt");
+    assert.deepEqual(stored.expiresAt, schedulerMarkerExpiry(NOW));
+    // Every component is a field, so a sweep never parses ids.
+    for (const [key, value] of Object.entries(REF.fields)) {
+      assert.equal(stored[key], value);
+    }
+  });
+
+  test("a second call is a no-op rather than an error", async () => {
+    // The normal case from the second tick onwards: the job re-derives the
+    // same verdict every time and must not treat the existing record as a
+    // failure, or overwrite the timestamp on it.
+    const db = makeDb();
+    await createSettled(db, REF, { job: JOB, reason: "stale", at: NOW });
+    const first = db.read(REF.id);
+
+    const again = await createSettled(db, REF, {
+      job: JOB,
+      reason: "stale",
+      at: new Date(NOW.getTime() + 3_600_000),
+    });
+
+    assert.equal(again, false);
+    assert.deepEqual(db.read(REF.id), first, "the verdict was rewritten");
+  });
+
+  test("the marker it writes refuses a later claim", async () => {
+    const db = makeDb();
+    await createSettled(db, REF, { job: JOB, reason: "stale", at: NOW });
+
+    const outcome = await claim(db, REF, { job: JOB });
+
+    assert.equal(outcome.claimed, false);
+    assert.equal(outcome.reason, "skipped");
+  });
+
+  test("the reason is bounded, like every other stored reason", async () => {
+    const db = makeDb();
+    await createSettled(db, REF, { job: JOB, reason: "x".repeat(500) });
+    assert.equal(db.read(REF.id).skippedReason.length, 200);
   });
 });
 

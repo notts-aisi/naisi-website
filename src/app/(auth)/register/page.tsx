@@ -405,6 +405,11 @@ function RegisterPageInner() {
   const [prefs, setPrefs] = useState<NotificationPrefs>({
     channels: { gmail: true, uniEmail: false },
     categories: { newsletter: true, events: true, courses: true },
+    // No switch on this form, and there should not be one: push is per
+    // device and a registrant has not enabled notifications on anything yet.
+    // The stored defaults are written so the shape is complete from the
+    // first save; both switches live on /profile beside the device opt-in.
+    push: { tasks: true, courseDecisions: true },
   });
 
   // Verification state

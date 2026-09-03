@@ -71,9 +71,48 @@ export const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   uniEmail: "University email",
 };
 
+/**
+ * PUSH IS ITS OWN AXIS, and that separation is the point of this block.
+ *
+ * `channels` is EMAIL-ADDRESS ROUTING (which inbox a send lands in) and
+ * `categories` is which mail somebody wants. A push notification has no
+ * address and belongs to a device, so folding it into either would break
+ * `addressesForSend`, which reads `channels` as a list of inboxes to write
+ * into. Push gets a third, sibling map instead.
+ *
+ * The keys name what a push is ABOUT, never which route sends it:
+ *   - `tasks`: the task board's mirror of every task email.
+ *   - `courseDecisions`: an application decision or a course placement.
+ * The weekly course nudge has no key here because it does not push at all,
+ * and `tests/push-preferences.test.mjs` pins that it never learns to.
+ */
+export type PushNotificationKey = "tasks" | "courseDecisions";
+export const ALL_PUSH_KEYS: PushNotificationKey[] = ["tasks", "courseDecisions"];
+
+export const PUSH_LABELS: Record<PushNotificationKey, string> = {
+  tasks: "Task emails",
+  courseDecisions: "Course and application decisions",
+};
+
+export const PUSH_DESCRIPTIONS: Record<PushNotificationKey, string> = {
+  tasks:
+    "A notification alongside each task email: added to a task, a comment, a mention, a review request, a review outcome.",
+  // This copy is exhaustive TODAY, and only because the two moments named are
+  // the only ones that push. RE-READ IT if a stage announcement is ever put
+  // behind this key: an announcement is not "a decision on your application",
+  // so the switch would then be promising less than it delivers. The V3
+  // contract and `tests/push-preferences.test.mjs` disagree about whether the
+  // stage release should push at all; that is an open owner decision, and
+  // whoever settles it owns this string too.
+  courseDecisions:
+    "A notification when a decision on your application lands, or when you're placed in a course group. The email is sent either way.",
+};
+
 export type NotificationPrefs = {
   channels: Record<NotificationChannel, boolean>;
   categories: Record<NotificationCategory, boolean>;
+  /** Per-topic push switches. A sibling of the two above, never folded in. */
+  push: Record<PushNotificationKey, boolean>;
 };
 
 /**
@@ -92,6 +131,25 @@ export type NotificationPrefs = {
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   channels: { gmail: true, uniEmail: false },
   categories: { newsletter: false, events: false, courses: false },
+  /*
+   * BOTH PUSH KEYS DEFAULT TRUE, and that is not an inconsistency with the
+   * categories above.
+   *
+   * A category default of false is right because nobody consented to bulk
+   * mail by having an email address. Push is the opposite case: a device only
+   * receives anything at all after its owner granted the browser notification
+   * permission and pressed Enable on this very page, which is a deliberate,
+   * per-device opt-in that no amount of default-false here could improve on.
+   *
+   * Defaulting these false would also silently break what already ships: task
+   * emails have mirrored to enabled devices since the push pipeline landed
+   * (docs/pwa.md), with no preference field to consult, so a false default
+   * would switch off, for everyone at once, notifications they had already
+   * turned on. These switches are therefore an OPT-OUT layered on top of the
+   * device opt-in, and an absent key reads as "hasn't answered", not as a
+   * refusal.
+   */
+  push: { tasks: true, courseDecisions: true },
 };
 
 type LegacyNewsletter = {
@@ -103,7 +161,22 @@ type LegacyNewsletter = {
 type MaybeNew = {
   channels?: { gmail?: unknown; uniEmail?: unknown };
   categories?: { newsletter?: unknown; events?: unknown; courses?: unknown };
+  push?: { tasks?: unknown; courseDecisions?: unknown };
 };
+
+/**
+ * Resolve the push map off whatever is stored, defaulting each key to ON.
+ *
+ * Only a stored `false` turns a key off; absent, null, or any non-boolean
+ * reads as the default. That asymmetry is deliberate and matches the
+ * `categories.courses` opt-out: the member has to have said no.
+ */
+function resolvePush(stored: MaybeNew["push"]): Record<PushNotificationKey, boolean> {
+  return {
+    tasks: stored?.tasks !== false,
+    courseDecisions: stored?.courseDecisions !== false,
+  };
+}
 
 /**
  * Read the effective notification prefs off a user profile, tolerating either
@@ -112,12 +185,22 @@ type MaybeNew = {
  * Precedence: new shape wins if present. Legacy shape only applies when no
  * `notifications` field is written yet. Once a user saves under the new UI,
  * they move to the new shape permanently.
+ *
+ * PUSH IS RESOLVED OUTSIDE THAT CHOICE, on purpose. The email shapes are two
+ * competing versions of one answer, so exactly one of them may win; push is a
+ * third axis that neither version ever carried, so it is read once and
+ * attached to whichever branch returns. That is what makes a LEGACY profile,
+ * which has `newsletter` and no `notifications` at all, still come out with
+ * both push keys on, and it is why a member who has only ever touched the
+ * push switches (leaving `channels` and `categories` unwritten) still has
+ * their stored `false` honoured instead of quietly reverting to the default.
  */
 export function normaliseNotifications(profile: {
   notifications?: unknown;
   newsletter?: unknown;
 }): NotificationPrefs {
   const modern = profile.notifications as MaybeNew | undefined;
+  const push = resolvePush(modern?.push);
   if (modern && (modern.channels || modern.categories)) {
     return {
       channels: {
@@ -129,6 +212,7 @@ export function normaliseNotifications(profile: {
         events: Boolean(modern.categories?.events),
         courses: Boolean(modern.categories?.courses),
       },
+      push,
     };
   }
   const legacy = profile.newsletter as LegacyNewsletter | undefined;
@@ -151,9 +235,10 @@ export function normaliseNotifications(profile: {
         events: false,
         courses: false,
       },
+      push,
     };
   }
-  return DEFAULT_NOTIFICATION_PREFS;
+  return { ...DEFAULT_NOTIFICATION_PREFS, push };
 }
 
 /**
@@ -225,6 +310,43 @@ export function setChannel(
   };
 }
 
+/** True iff this member wants push for this topic. */
+export function wantsPush(
+  prefs: NotificationPrefs,
+  key: PushNotificationKey,
+): boolean {
+  return prefs.push[key] !== false;
+}
+
+/** Per-key set/unset helper for the profile's push switches. */
+export function setPushPreference(
+  prefs: NotificationPrefs,
+  key: PushNotificationKey,
+  enabled: boolean,
+): NotificationPrefs {
+  return {
+    ...prefs,
+    push: { ...prefs.push, [key]: enabled },
+  };
+}
+
+/**
+ * The push half of the stored shape, on its own.
+ *
+ * Written under the `profile.notifications.push` field path so the switches
+ * on the push card can save without restating `channels` and `categories`,
+ * which belong to the profile form. Both writers use the same normalising
+ * read, so neither can invent a value for the other's half.
+ */
+export function serialisePush(
+  push: Record<PushNotificationKey, boolean>,
+): Record<PushNotificationKey, boolean> {
+  return {
+    tasks: Boolean(push.tasks),
+    courseDecisions: Boolean(push.courseDecisions),
+  };
+}
+
 /**
  * Shape written to Firestore. Kept identical to the in-memory shape so
  * `setDoc(ref, { "profile.notifications": prefs })` works without a converter.
@@ -237,6 +359,12 @@ export function serialiseNotifications(prefs: NotificationPrefs): NotificationPr
       events: Boolean(prefs.categories.events),
       courses: Boolean(prefs.categories.courses),
     },
+    // This write REPLACES the whole map, so push has to be carried even
+    // though nothing in the profile form edits it: dropping it here would
+    // reset both switches to the default on every unrelated profile save.
+    // ProfileForm reads the stored value off its live snapshot for exactly
+    // this reason.
+    push: serialisePush(prefs.push),
   };
 }
 

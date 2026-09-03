@@ -3,6 +3,7 @@ import AdmissionsAppointedEmail from "@/emails/AdmissionsAppointedEmail";
 import AdmissionsDeadlineReminderEmail from "@/emails/AdmissionsDeadlineReminderEmail";
 import AdmissionsReinstatedEmail from "@/emails/AdmissionsReinstatedEmail";
 import AdmissionsDeclinedEmail from "@/emails/AdmissionsDeclinedEmail";
+import AdmissionsStageReleasedEmail from "@/emails/AdmissionsStageReleasedEmail";
 import AdmissionsSubmittedEmail from "@/emails/AdmissionsSubmittedEmail";
 import { getAdminDb } from "@/lib/firebase/admin";
 import {
@@ -22,12 +23,14 @@ import { sendEmail } from "./send";
 
 /**
  * ADMISSIONS lifecycle mail: the applicant's own receipts on an admission
- * round, and the appointment round's two decisions. Five sends today, one per
- * template id, and the rest of the round's lifecycle (stage released, and the
- * enrolment decisions) lands on this module as those routes are built.
+ * round, the weekly-questions announcement, and the appointment round's two
+ * decisions. Six sends today, one per template id, and the rest of the
+ * round's lifecycle (the enrolment decisions) lands on this module as those
+ * routes are built.
  *
- * Four of the five are fired by somebody's own action, the applicant's or the
- * decider's, and one, the deadline reminder, is fired by the scheduler tick.
+ * Four of the six are fired by somebody's own action, the applicant's or the
+ * decider's, and two, the deadline reminder and the stage announcement, are
+ * fired by the scheduler tick.
  * That difference is why this function returns an outcome (see
  * `AdmissionSendOutcome`): a claimed marker has to know whether the send
  * actually happened.
@@ -76,6 +79,7 @@ export type AdmissionEmailKind =
   | "submitted"
   | "reinstated"
   | "deadline-reminder"
+  | "stage-released"
   | "appointed"
   | "declined";
 
@@ -83,6 +87,7 @@ export const TEMPLATE_FOR_KIND: Record<AdmissionEmailKind, CourseTemplateId> = {
   submitted: "admissions-submitted",
   reinstated: "admissions-reinstated",
   "deadline-reminder": "admissions-deadline-reminder",
+  "stage-released": "admissions-stage-released",
   appointed: "admissions-appointed",
   declined: "admissions-declined",
 };
@@ -159,6 +164,18 @@ export const TOKENS_BY_KIND: Record<AdmissionEmailKind, readonly string[]> = {
     "preferredName",
     "firstName",
     "roundLabel",
+    "applicationUrl",
+    "deadline",
+  ],
+  // The stage announcement knows the round, the part of the form that has
+  // just opened, and the deadline that part is due by (the earlier of the
+  // stage's own and the round's). It knows nothing about a decision, so no
+  // `decisionsBy`.
+  "stage-released": [
+    "preferredName",
+    "firstName",
+    "roundLabel",
+    "stageLabel",
     "applicationUrl",
     "deadline",
   ],
@@ -282,6 +299,13 @@ function renderFor(
         applicationUrl: opts.applicationUrl,
         preheader: subject,
       });
+    case "stage-released":
+      return AdmissionsStageReleasedEmail({
+        subject,
+        blocks,
+        applicationUrl: opts.applicationUrl,
+        preheader: subject,
+      });
     case "appointed":
       return AdmissionsAppointedEmail({
         subject,
@@ -298,6 +322,56 @@ function renderFor(
         preheader: subject,
       });
   }
+}
+
+const TOKEN_PATTERN = /\{([a-zA-Z][a-zA-Z0-9_]*)\}/g;
+
+/**
+ * Drop a block whose sentence depends entirely on a token this trigger
+ * SUPPLIES and this send had no value for.
+ *
+ * The house convention is that an unresolved token stays literal, so an admin
+ * who typed `{courseTitle}` into an application receipt sees it and fixes it.
+ * That convention is right for a token the trigger never supplies, and wrong
+ * for one it supplies conditionally: a round with no `closesAt` (a legitimate
+ * shape, meaning "no automatic deadline") would otherwise mail an applicant
+ * the literal characters "it is due by {deadline}." Nobody typed a mistake
+ * there; the data simply is not there.
+ *
+ * So the rule is exact rather than a heuristic, and it is the same one the
+ * weekly nudge uses. A block is dropped only when it references at least one
+ * SUPPLIED token and every supplied token it references came back with no
+ * value. A block that resolved anything is kept whole, and a token outside
+ * this trigger's set is not considered at all, so it still stays visible.
+ *
+ * The copy rule that falls out of it, and the seed copy obeys it: KEEP A
+ * CONDITIONAL TOKEN IN A BLOCK OF ITS OWN. A deadline folded into a paragraph
+ * that says other things takes those other things with it.
+ */
+export function dropDataAbsentBlocks(
+  blocks: Block[],
+  kind: AdmissionEmailKind,
+  tokens: TokenValues,
+): Block[] {
+  const supplied = new Set<string>(TOKENS_BY_KIND[kind]);
+  const missing = new Set(
+    [...supplied].filter((token) => tokens[token] === undefined),
+  );
+  if (missing.size === 0) return blocks;
+  return blocks.filter((block) => {
+    const text =
+      block.type === "heading"
+        ? block.text
+        : block.type === "richText"
+          ? block.html
+          : null;
+    if (text === null) return true;
+    const referenced = [...text.matchAll(TOKEN_PATTERN)]
+      .map((match) => match[1])
+      .filter((token) => supplied.has(token));
+    if (referenced.length === 0) return true;
+    return !referenced.every((token) => missing.has(token));
+  });
 }
 
 export async function sendAdmissionEmail(
@@ -363,7 +437,10 @@ export async function sendAdmissionEmail(
     }
 
     const personalisedSubject = personaliseString(subject, tokens);
-    const personalisedBlocks = personaliseBlocks(blocks, tokens);
+    const personalisedBlocks = personaliseBlocks(
+      dropDataAbsentBlocks(blocks, opts.kind, tokens),
+      tokens,
+    );
 
     const react = renderFor(opts, personalisedSubject, personalisedBlocks);
 

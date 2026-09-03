@@ -27,6 +27,7 @@ import {
 } from "@/lib/firestore/courses";
 import { subscribe } from "@/lib/firestore/subscriptions";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
+import { mirrorCourseDecisionToPush } from "@/lib/push/courseNotifications";
 
 /**
  * Publish the allocation: the moment placements stop being a draft on a board
@@ -58,6 +59,12 @@ import { assertNotImpersonating } from "@/lib/firebase/impersonation";
  * decision emails — rather than through the notification-preference fan-out
  * used for bulk mail. The cohort-channel subscribe alongside it is what the
  * later announcement emails (P9) will fan out over.
+ *
+ * It is also one of the two moments that PUSH: being placed is an answer the
+ * member has been waiting for. The push is mirrored per recipient in a second
+ * pass after the email loop, respects their
+ * `notifications.push.courseDecisions` switch, names the course and the group
+ * and nothing else, and cannot fail a publish.
  */
 
 type Ctx = { params: Promise<{ runId: string }> };
@@ -69,6 +76,19 @@ type Ctx = { params: Promise<{ runId: string }> };
  * simply continues where this request stopped, and the response says so.
  */
 const MAX_EMAILS_PER_REQUEST = 200;
+
+/**
+ * Hard cap on the placement pushes, which are sent in a second pass AFTER the
+ * email loop and therefore on whatever is left of the same 60s budget once
+ * the cap above and its pacing sleeps have spent most of it. Each push is one
+ * Firestore read plus a POST per enabled device.
+ *
+ * Recipients past this cap keep their email and their stamp and simply get no
+ * notification, and a re-publish will not send it later (the stamp is already
+ * written). That is the right way round: the mirror only repeats what the
+ * email already said, so losing it costs the member nothing.
+ */
+const MAX_PUSHES_PER_REQUEST = 50;
 
 const SLEEP_MS = 200;
 
@@ -257,6 +277,8 @@ export async function POST(_req: Request, ctx: Ctx) {
 
   let emailed = 0;
   let skipped = 0;
+  /** Recipients stamped by THIS request, for the push pass below the loop. */
+  const placed: { uid: string; groupName: string }[] = [];
 
   for (const app of pending) {
     const enrolment = enrolmentByUid.get(app.uid);
@@ -335,6 +357,10 @@ export async function POST(_req: Request, ctx: Ctx) {
           allocatedEmailAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
         });
+
+      // Stamped, so this recipient is owed the mirror push. Recorded here and
+      // sent after the loop, never inside it: see the push pass below.
+      placed.push({ uid: app.uid, groupName: group.name });
       emailed += 1;
       await sleep(SLEEP_MS);
     } catch (err) {
@@ -343,6 +369,31 @@ export async function POST(_req: Request, ctx: Ctx) {
       console.error("[allocation publish] send failed", runId, app.uid, err);
       skipped += 1;
     }
+  }
+
+  // THE PLACEMENT PUSH PASS, over the recipients this request stamped.
+  //
+  // Deliberately not inside the loop above. There, each push added a serial
+  // Firestore read and an un-timed HTTPS POST per device to a body already
+  // spending SLEEP_MS per recipient under a 60s request budget, so a slow
+  // push service could eat the budget the EMAILS need. Out here every email
+  // and every idempotency stamp is already written, so a request that dies
+  // mid-pass loses only a mirror of something already sent.
+  //
+  // Hanging the pass off the stamps keeps the exactly-once property the
+  // in-loop version had: a re-publish only reaches the newly stamped.
+  //
+  // Awaited, because Cloud Run may reap work that outlives the response. The
+  // mirror never throws, and with no VAPID configuration it returns before
+  // doing any I/O at all, so today this pass costs nothing.
+  for (const { uid, groupName } of placed.slice(0, MAX_PUSHES_PER_REQUEST)) {
+    await mirrorCourseDecisionToPush(uid, {
+      title: "You've got a place",
+      // `groupName` is a group's name: committee-authored text, not member
+      // text, so it is interpolated rather than passed through MemberText.
+      body: `${run.courseTitle}: you're in ${groupName}. The details are in your email.`,
+      url: `/learn/${encodeURIComponent(runId)}`,
+    });
   }
 
   return NextResponse.json({

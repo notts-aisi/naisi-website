@@ -3,6 +3,7 @@ import AdmissionsAppointedEmail from "@/emails/AdmissionsAppointedEmail";
 import AdmissionsDeadlineReminderEmail from "@/emails/AdmissionsDeadlineReminderEmail";
 import AdmissionsReinstatedEmail from "@/emails/AdmissionsReinstatedEmail";
 import AdmissionsDeclinedEmail from "@/emails/AdmissionsDeclinedEmail";
+import AdmissionsStageReleasedEmail from "@/emails/AdmissionsStageReleasedEmail";
 import AdmissionsSubmittedEmail from "@/emails/AdmissionsSubmittedEmail";
 import ApplicationEmail from "@/emails/ApplicationEmail";
 import CourseNudgeEmail from "@/emails/CourseNudgeEmail";
@@ -96,6 +97,13 @@ function admissionsPreview(
       });
     case "admissions-deadline-reminder":
       return AdmissionsDeadlineReminderEmail({
+        subject,
+        blocks,
+        applicationUrl: ADMISSIONS_PREVIEW_SAMPLE.applicationUrl,
+        preheader,
+      });
+    case "admissions-stage-released":
+      return AdmissionsStageReleasedEmail({
         subject,
         blocks,
         applicationUrl: ADMISSIONS_PREVIEW_SAMPLE.applicationUrl,

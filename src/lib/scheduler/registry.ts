@@ -34,6 +34,7 @@ import {
   type MarkerPolicy,
 } from "@/lib/firestore/schedulerMarkers";
 import { admissionsRemindersJob } from "./jobs/admissionsReminders";
+import { admissionsStageReleaseJob } from "./jobs/admissionsStageRelease";
 import { heartbeatJob } from "./jobs/heartbeat";
 
 /**
@@ -195,6 +196,7 @@ export function policyFor(job: JobRegistration): MarkerPolicy {
 /** Registration order, ALPHABETICAL BY JOB ID. See the module header. */
 export const JOBS: readonly JobRegistration[] = [
   admissionsRemindersJob,
+  admissionsStageReleaseJob,
   heartbeatJob,
 ];
 

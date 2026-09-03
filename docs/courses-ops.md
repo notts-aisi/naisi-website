@@ -215,7 +215,7 @@ Marker families and where they live:
 | Family | Id | Written by |
 | --- | --- | --- |
 | `remind__` | `{roundId}__{uid}__{dueAtKey}` | admissions deadline reminders |
-| `stagerel__` | `{roundId}__{stageId}` | application stage release notices |
+| `stagerel__` | `{roundId}__{stageId}__{uid}` | application stage release notices (one per recipient; the `{roundId}__{stageId}` form, with no uid, is the stale verdict for a whole stage) |
 | `unmarked__` | `{groupId}__{sessionKey}` | unmarked-register follow-ups |
 | `breakret__` | `{runId}__{groupId}__{slotStartKey}` | back-after-the-break notices |
 
@@ -311,6 +311,114 @@ job's own switch is off. The receipt it shows is
 Use it when a tick has slipped on one of the named dates. It is also what makes
 this whole lane safe to cut under time pressure: without the scheduler,
 deadline reminders are a committee member pressing one button on three days.
+
+#### `admissions-stage-release`
+
+Tells everybody still live on an admission round when the **next part of its
+form** opens.
+
+| | |
+| --- | --- |
+| Handler | [`src/lib/scheduler/jobs/admissionsStageRelease.ts`](../src/lib/scheduler/jobs/admissionsStageRelease.ts) |
+| Marker | `stagerel__{roundId}__{stageId}__{uid}`, one per recipient |
+| Audience | `admissionApplications` where `roundId` matches and `status` is `draft` or `submitted` |
+| Cap | 200 sends per tick |
+| Stale after | 72 hours |
+| Template | `admissions-stage-released`, editable under Admin, Email designs |
+
+**It announces; it does not release.** The release is derived at read time by
+`isStageReleased`, on every serialisation of every stage, so a stage whose
+release instant has passed is already serving its questions whatever this job
+does. A tick that never ran, a scheduler somebody switched off, a send that
+bounced: none of them can hold a question back. That is the whole point of
+putting the boundary in a predicate, and it is why this job is safe to leave
+switched off.
+
+**Who hears about it.** Everybody on the round holding a `draft` (still
+writing) or a `submitted` application (sent an earlier stage, and now has more
+to write). Withdrawn and decided rows are out.
+
+**A stage that opens WITH the round is never announced.** `releaseAt: null`
+means "this stage is the form": it becomes readable the moment the round opens,
+which is when the round's own announcement and apply link are the news. Such a
+stage claims no marker and sends nothing.
+
+**One marker per RECIPIENT**, `stagerel__{roundId}__{stageId}__{uid}`, claimed
+before that person's send and stamped after it. Exactly the deadline
+reminder's shape, and for the same two reasons.
+
+The first is the attempt budget. A claim is capped at three attempts, and a
+round bigger than one tick's 200-send ceiling needs a re-claim per partial run.
+A stage-wide marker therefore spent its whole budget on ordinary partial runs:
+a round over roughly ninety live applications was given up on after three
+healthy ticks, stamped `failedAt` with a "no send" error it had not had, and
+the last applicants were never told. The second is write throughput. The
+stage-wide shape carried a resume cursor on one document, written once per
+recipient, against Firestore's ceiling of about one write per second per
+document; the write was swallowed on failure, so under load the cursor quietly
+stopped advancing and a re-claim re-mailed people who had already had the
+email. Both are gone: there is no cursor, and each person carries their own
+attempt budget.
+
+**A single failed send IS retried**, on the next tick, for that person alone. A
+failed send leaves that recipient's marker unstamped (`stampError` writes only
+`lastError`), which is what the re-claim rule picks up after
+`reclaimAfterMinutes`. Nobody else is touched, and nobody is mailed twice. A
+recipient who is still failing after three claims is stamped `failedAt` and
+appears under **Stuck sends** with a Retry button.
+
+**Stale work is dropped whole.** A release more than 72 hours old is recorded
+on ONE stage-level marker, `stagerel__{roundId}__{stageId}` with no uid, as
+`skippedReason: "stale"`, and nobody is mailed. Three days rather than the
+reminders job's one, because this is news rather than a countdown. That marker
+is written already settled and is never claimed: it records a verdict rather
+than authorising a send, so it spends no attempt on anything. Once a stage is
+stamped stale, **neither the tick nor the Release now button will announce it
+afterwards**: both re-derive the same verdict from the same clock. **Retry on a
+stale marker will not announce the stage either**: the button puts the marker
+back in play, and the next run re-derives "too late" and settles it again, so
+the only thing Retry changes is the marker. The stage is still released and its
+questions are still being served. If the announcement is still worth making,
+send it by hand (the wording is under Admin, Email designs; its Send test mails
+it to you, not to the round).
+
+**Lateness is measured from when the stage could first be SEEN**, which is the
+later of its release instant and the round's `opensAt`. A stage scheduled for a
+date before the round opened was visible to nobody on that date, and measuring
+from the schedule alone would have stamped it stale on the day it first
+appeared.
+
+**It ships switched off.** `enabledByDefault: false`, same reasoning as the
+deadline reminders: it emails applicants, and a missing `config/scheduler` row
+must not arm it on whatever data an environment happens to hold. Arm it from
+Site status once a round's stages are authored and a run has been proven on
+dev. **Run now** on the panel still runs it while it is dark, which is how you
+prove it without arming it.
+
+**Release now.** The round console's stage card has a **Release now** button
+(admins and `approveCourse` holders). It is a POST and only ever a POST: a read
+path that could publish an intake's questions is the one thing this tree cannot
+have. It stamps `manualReleasedAt`, which brings a release forward and can
+never push one back, and then runs THIS job scoped to that one stage, claiming
+the same per-recipient markers. So a hand release and a tick a minute later
+cannot both mail anybody, and a second press reports the release it already
+made, moves no timestamp and sends nothing.
+
+It refuses a round whose application window is not open (draft, archived,
+not yet opened, closed, or cancelled), mirroring the predicate the job itself
+gates on: releasing a stage there either does nothing or quietly publishes the
+questions the moment the window opens, neither of which is what the button
+says.
+
+The button honours both switches, so while the scheduler is off site-wide or
+this job is dark it releases the stage and says plainly that nobody was
+emailed. The release is committed before the send is attempted, so a Resend
+outage can only cost the email. The receipt names WHICH kind of nothing
+happened: announced, already announced, the round not in its window, the stage
+not read as newly opened, too late, the scheduler or the job switched off, no
+live applications, or a send that failed. Each is its own sentence, because an
+admin told "already announced" about a round whose window is shut goes looking
+for an announcement nobody made.
 
 #### `heartbeat`
 

@@ -109,6 +109,7 @@ const {
   markerFamilyOf,
   normalizeSchedulerMarker,
   reminderMarker,
+  stageRecipientMarker,
   stageReleaseMarker,
   unmarkedRegisterMarker,
 } = await loadModule(MARKERS_URL, "schedulerMarkers");
@@ -332,6 +333,24 @@ describe("marker ids", () => {
       stageId: "s2",
     });
 
+    const perPerson = stageRecipientMarker(
+      "autumn-2026-intake__k3f9a2b1",
+      "s2",
+      "uid1",
+    );
+    assert.equal(perPerson.id, "stagerel__autumn-2026-intake__k3f9a2b1__s2__uid1");
+    assert.equal(perPerson.family, "stagerel");
+    assert.deepEqual(perPerson.fields, {
+      roundId: "autumn-2026-intake__k3f9a2b1",
+      stageId: "s2",
+      uid: "uid1",
+    });
+    // The stage-wide id is a strict prefix of the per-person one, which is
+    // fine and is why neither is ever parsed back: the stale verdict and one
+    // person's notice are different documents, and every component of both is
+    // stored as a field.
+    assert.notEqual(perPerson.id, stagerel.id);
+
     const unmarked = unmarkedRegisterMarker("tuesdays-1800__aa11bb22", "w03-1");
     assert.equal(unmarked.id, "unmarked__tuesdays-1800__aa11bb22__w03-1");
     assert.deepEqual(unmarked.fields, {
@@ -361,6 +380,7 @@ describe("marker ids", () => {
     // handed, since every slugId carries one.
     assert.throws(() => reminderMarker("round1", "uid__1", "20261011"), /uid/);
     assert.throws(() => stageReleaseMarker("round1", "s1/s2"), /stageId/);
+    assert.throws(() => stageRecipientMarker("round1", "s1", "uid__1"), /uid/);
     assert.throws(() => unmarkedRegisterMarker("g1", "w03.1"), /sessionKey/);
     assert.throws(() => breakReturnMarker("", "g1", "20270201"), /runId/);
     assert.throws(() => unmarkedRegisterMarker("g/1", "w03"), /groupId/);
@@ -369,6 +389,10 @@ describe("marker ids", () => {
   test("family is recoverable from a stored id", () => {
     assert.equal(markerFamilyOf("remind__r__u__d"), "remind");
     assert.equal(markerFamilyOf(stageReleaseMarker("r1", "s1").id), "stagerel");
+    assert.equal(
+      markerFamilyOf(stageRecipientMarker("r1", "s1", "uid1").id),
+      "stagerel",
+    );
     assert.equal(markerFamilyOf(unmarkedRegisterMarker("g1", "w03").id), "unmarked");
     assert.equal(
       markerFamilyOf(breakReturnMarker("run1", "g1", "20270201").id),

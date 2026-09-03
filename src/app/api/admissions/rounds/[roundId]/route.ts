@@ -374,6 +374,25 @@ export async function PATCH(
     if ("closesAt" in body) {
       const parsed = parseInstant(body.closesAt, "The deadline");
       if (!parsed.ok) bad(parsed.error);
+      // A null `closesAt` means "no automatic deadline", which is a legitimate
+      // shape for a round that has not opened yet. It is NOT a legitimate
+      // thing to do to a round that is already taking applications: every
+      // deadline sentence the site has already sent (the submitted receipt,
+      // the reminder, the stage announcement) is written against a date, and
+      // taking the date away leaves those sends resolving `{deadline}` to
+      // nothing while the applicants who already read one were told
+      // otherwise. Move the deadline, or close the round; do not delete it
+      // out from under an open one.
+      if (
+        parsed.value === null
+        && current.closesAt !== null
+        && current.status === "open"
+        && !current.archived
+      ) {
+        bad(
+          "This round is open and its deadline has already been published. Move the deadline to another date, or close the round; it cannot be cleared while people are applying.",
+        );
+      }
       closesAt = parsed.value;
       update.closesAt = parsed.value;
     }

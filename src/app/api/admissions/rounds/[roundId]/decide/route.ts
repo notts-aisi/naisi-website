@@ -7,6 +7,7 @@ import {
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { mirrorCourseDecisionToPush } from "@/lib/push/courseNotifications";
 import {
   appointmentDecideBlock,
   appointmentDecideDisposition,
@@ -85,6 +86,11 @@ import { normalizeCourseRun } from "@/lib/firestore/courses";
  * outage, a missing template), so the worst case is a courtesy outstanding
  * rather than a committed appointment answered with a 500 that reads as "it
  * did not save". Nothing below the transaction writes a document.
+ *
+ * The same is true of the decision push that goes with it: it is mirrored to
+ * whatever devices the applicant has enabled, respects their
+ * `notifications.push.courseDecisions` switch, sends nothing where the
+ * environment has no VAPID configuration, and cannot fail the decision.
  */
 
 /** Cap on the decider's note. Their sentence, not an essay. */
@@ -336,7 +342,8 @@ export async function POST(req: Request, ctx: Ctx) {
   // is asking for it to be.
   if (alreadyDecided) return NextResponse.json({ ok: true, alreadyDecided: true });
 
-  // POST-COMMIT AND FIRE-AND-FORGET. See the module comment.
+  // POST-COMMIT. The emails are fire-and-forget (see the module comment); the
+  // push below is awaited, for the reason given at that call.
   const to = recipient as { email: string; name: string; uid: string } | null;
   const run = appointedRun as {
     id: string;
@@ -376,6 +383,30 @@ export async function POST(req: Request, ctx: Ctx) {
         roundId,
       });
     }
+  }
+
+  // THE DECISION PUSH, on both branches, outside the address guard: a member
+  // with no address on file can still have a device enabled, and this is one
+  // of the two moments they are actually waiting on us. It names the round or
+  // the course and never the reason (see the mirror's module comment), so
+  // what lands on a lock screen is "there is an answer", not the answer.
+  //
+  // AWAITED, unlike the emails above. Cloud Run may reap work that outlives
+  // the response, and the mirror's own contract is that callers await it. It
+  // never throws, and with no VAPID configuration it returns before any I/O,
+  // so awaiting costs a committed decision nothing.
+  if (to && to.uid) {
+    await mirrorCourseDecisionToPush(to.uid, {
+      title:
+        decision === "appoint" && run
+          ? `You're facilitating ${run.courseTitle}`
+          : "A decision on your application",
+      body:
+        decision === "appoint" && run
+          ? `${run.label}, from the ${round.label} round. The details are in your email.`
+          : `There's a decision on your ${round.label} application. Open it to read it.`,
+      url: `/applications/${encodeURIComponent(roundId)}`,
+    });
   }
 
   return NextResponse.json({

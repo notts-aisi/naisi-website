@@ -12,7 +12,13 @@ import {
   nextAdmissionStageId,
   type AdmissionRoundDoc,
 } from "@/lib/firestore/admissionRounds";
-import { deleteStage, releaseStage, saveStage, type Stage } from "./roundClient";
+import {
+  deleteStage,
+  releaseStage,
+  saveStage,
+  type Stage,
+  type StageReleaseResult,
+} from "./roundClient";
 import styles from "./RoundEditor.module.css";
 
 /**
@@ -120,6 +126,68 @@ export default function StagesSection({
   );
 }
 
+/**
+ * One plain sentence about what pressing Release just did.
+ *
+ * The release and the announcement are two different things and this line
+ * always says so, because "released" on its own leaves an admin guessing
+ * whether anybody was told.
+ *
+ * ONE SENTENCE PER REASON, and the reason comes off the notice rather than
+ * being inferred here. An earlier version inferred it, and said "this stage
+ * had already been announced" to every case the job declined, a round whose
+ * window is not open included: an admin reading that goes looking for an
+ * announcement nobody made.
+ *
+ * FAILURES ARE READ FIRST. A transport outage during a hand release leaves an
+ * empty audience behind it, and reporting that as "nobody has a live
+ * application" would be the one wrong answer with a remedy attached.
+ */
+function releaseNoteFor(result: StageReleaseResult): string {
+  if (result.alreadyReleased) {
+    return "This stage was already released, so nothing changed and nobody was emailed again.";
+  }
+  const notice = result.notice;
+  if (!notice) return "Released.";
+  if (!notice.attempted) return notice.note ?? "Released. Nobody was emailed.";
+
+  if (notice.failed > 0 && notice.sent === 0) {
+    const n = notice.failed;
+    return (
+      `Released. Nothing was emailed: ${n} send${n === 1 ? "" : "s"} failed. ` +
+      "The questions are on everybody's form regardless; docs/courses-ops.md " +
+      "says what to do about the people who were not told."
+    );
+  }
+
+  switch (notice.reason) {
+    case "too-late":
+      return "Released. No announcement went out: this stage opened too long ago for an email about it to be worth sending. Tell people by hand if it still matters.";
+    case "already-announced":
+      return "Released. No announcement went out: everybody live on this round has already had it.";
+    case "round-not-in-window":
+      return "Released. Nobody was emailed: this round is not taking applications right now, so there was nobody to tell.";
+    case "stage-not-released":
+      return "Released. Nobody was emailed: the announcement job does not read this stage as newly opened, so it has nothing to announce.";
+    case "no-live-applications":
+      return "Released. Nobody has a live application on this round, so no email went out.";
+    case "scheduler-off":
+    case "job-off":
+    case "failed":
+      return notice.note ?? "Released. Nobody was emailed.";
+    case "announced":
+      break;
+  }
+
+  const parts = [
+    `Released, and emailed ${notice.sent} applicant${notice.sent === 1 ? "" : "s"}`,
+  ];
+  if (notice.skipped > 0) parts.push(`${notice.skipped} skipped`);
+  if (notice.failed > 0) parts.push(`${notice.failed} did not send`);
+  const tail = notice.hasMore ? " The rest go out on the next scheduler run." : "";
+  return `${parts.join(", ")}.${tail}`;
+}
+
 function StageEditor({
   round,
   stage,
@@ -143,6 +211,13 @@ function StageEditor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  /**
+   * What the release did about telling people. Kept separate from `error`:
+   * the release itself succeeded in every case that puts a line here, and
+   * conflating the two would have the console reporting a released stage as
+   * a failure because the scheduler is dark.
+   */
+  const [releaseNote, setReleaseNote] = useState<string | null>(null);
 
   async function save() {
     setBusy(true);
@@ -173,8 +248,11 @@ function StageEditor({
   async function release() {
     setBusy(true);
     setError(null);
+    setReleaseNote(null);
     try {
-      onSaved(await releaseStage(round.id, stage.id));
+      const result = await releaseStage(round.id, stage.id);
+      onSaved(result.stage);
+      setReleaseNote(releaseNoteFor(result));
     } catch (err) {
       setError(err instanceof Error ? err.message : "That did not release.");
     } finally {
@@ -281,6 +359,7 @@ function StageEditor({
         </Button>
         {saved && !error && <span className={styles.saved}>Saved.</span>}
       </div>
+      {releaseNote && <p className={styles.hint}>{releaseNote}</p>}
       {error && <p className={styles.error}>{error}</p>}
     </div>
   );

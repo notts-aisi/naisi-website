@@ -1,16 +1,26 @@
 import "server-only";
 
+import { isPushConfigured } from "./config";
+import { wantsPushFor } from "./preferences";
 import { sendPushToUid } from "./send";
 
 /*
  * The task system's push mirror.
  *
- * Policy, deliberately simple: any time the task pipeline EMAILS a member, it
- * also pushes to whatever devices that member has enabled. Having enabled
- * notifications on a device IS the opt-in, exactly as native apps behave, so
- * there is no new preference field and no touching the email-routing model
- * in lib/firestore/notifications.ts (whose docblock warns that `channels`
- * means email-address routing, not transport).
+ * Policy: any time the task pipeline EMAILS a member, it also pushes to
+ * whatever devices that member has enabled, UNLESS they have switched
+ * `notifications.push.tasks` off on their profile. Enabling notifications on
+ * a device is still the opt-in that makes any of this happen; the switch is
+ * the opt-out on top of it, for the member who wants their phone to buzz for
+ * a decision but not for every comment on a task.
+ *
+ * The switch is its own axis in lib/firestore/notifications.ts, alongside
+ * (never inside) `channels`, which means email-address routing rather than
+ * transport.
+ *
+ * COST: an enabled member now costs one user-doc read before the
+ * subscriptions query. A member who has switched tasks off costs only that
+ * read, and nothing is sent.
  *
  * Two consequences of mirroring the EMAIL sends specifically:
  *   - the config/task-emails kill switch covers push for free, because every
@@ -34,6 +44,10 @@ export async function mirrorTaskEmailToPush(
   { title, body, taskId }: { title: string; body: string; taskId: string },
 ): Promise<void> {
   try {
+    // Cheapest gate first: with no VAPID keys the whole feature is dormant
+    // and there is no reason to read anybody's preferences.
+    if (!isPushConfigured()) return;
+    if (!(await wantsPushFor(uid, "tasks"))) return;
     await sendPushToUid(uid, {
       title,
       body,

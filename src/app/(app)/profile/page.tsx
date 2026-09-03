@@ -1,7 +1,7 @@
 import Badge from "@/components/ui/Badge";
 import { MaintenanceNotice } from "@/features/admin/AdminLockUI";
 import ProfileForm from "@/features/profile/ProfileForm";
-import { PushSettings } from "@/features/pwa/PushSettings";
+import { PushSettings, PushTopics } from "@/features/pwa/PushSettings";
 
 export default function ProfilePage() {
   return (
@@ -17,6 +17,11 @@ export default function ProfilePage() {
       {/* Per-device push opt-in. Renders nothing until VAPID keys are
           provisioned (docs/pwa.md) and on browsers without push. */}
       <PushSettings />
+      {/* The account-level topic switches. A SIBLING of the card above, never
+          nested inside it: they are about the account, so they must survive
+          every environment and browser where the per-device card renders
+          nothing. */}
+      <PushTopics />
       {/* Shows a notice while an admin is editing this member's details. */}
       <MaintenanceNotice />
     </div>
