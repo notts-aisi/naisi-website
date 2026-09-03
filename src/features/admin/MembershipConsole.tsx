@@ -14,17 +14,37 @@ import {
 } from "@/lib/firestore/memberships";
 import { currentAcademicYear } from "@/lib/firestore/users";
 import { resetCurrentPeriodCache } from "./currentPeriodCache";
+import ImportPanel from "./ImportPanel";
+import MembershipTable from "./MembershipTable";
+import PeriodSwitcher from "./PeriodSwitcher";
+import {
+  MEMBERSHIP_LIST_MAX_PAGES,
+  type MembershipListRow,
+} from "./membershipList";
 import styles from "./MembershipConsole.module.css";
 
 /**
  * The membership console: the periods, their dates, their per-tier totals, and
  * which one is CURRENT.
  *
- * Deliberately small. Grants and revokes live where the people are, on the
- * admin Members row, and the SU CSV import, the filterable member table and
- * the logged export are a later PR. What this page owns is the object those
- * things hang off: a period exists, it has dates, and exactly one of them is
- * the one every badge on the site is about.
+ * Four things, in the order somebody works through them: the periods and which
+ * one is CURRENT, the period being LOOKED AT, the table of every account
+ * against that period, and the SU list import.
+ *
+ * ## Looking at a period is not making it current
+ *
+ * The switcher changes what this page shows. `config/membership` decides what
+ * every badge on the site reads, is moved by a separate button, and is full
+ * admins only. Conflating the two is how somebody re-badges the society while
+ * meaning to check last year, so they are two controls that look different.
+ *
+ * ## Where the counts come from
+ *
+ * The per-tier counts are the CACHE on the period document, maintained by the
+ * grant and commit routes. They are not counted from the table: a headcount
+ * that scanned two periods of memberships plus every account on each page load
+ * would be slow in exactly the term it matters. "Nothing recorded" and
+ * "lapsed" come from the rows the table has loaded, and the table says so.
  *
  * Every read and write is a route call. `membershipPeriods` is
  * `allow read, write: if false`, so there is no client-direct path to fall
@@ -58,6 +78,15 @@ export default function MembershipConsole({ isAdmin }: { isAdmin: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // The period being LOOKED AT. Empty until the periods land, then the current
+  // one, because that is what somebody opening this page came to see.
+  const [viewingId, setViewingId] = useState("");
+  const [rows, setRows] = useState<MembershipListRow[]>([]);
+  const [rowsLoading, setRowsLoading] = useState(false);
+  const [rowsTruncated, setRowsTruncated] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [recounting, setRecounting] = useState(false);
+  const [recountNote, setRecountNote] = useState<string | null>(null);
 
   /**
    * ONE load, called by the mount effect and again after every write. State
@@ -81,6 +110,12 @@ export default function MembershipConsole({ isAdmin }: { isAdmin: boolean }) {
           setPeriods(data.periods);
           setCurrentPeriodId(data.currentPeriodId);
           setCanSetCurrent(data.canSetCurrent);
+          // Only ever a DEFAULT: an admin who has switched to another period
+          // stays where they are when this reloads after a write.
+          setViewingId((current) => {
+            if (current && data.periods.some((p) => p.id === current)) return current;
+            return data.currentPeriodId ?? data.periods[0]?.id ?? "";
+          });
           setError(null);
         })
         .catch((err: unknown) => {
@@ -152,6 +187,143 @@ export default function MembershipConsole({ isAdmin }: { isAdmin: boolean }) {
       setBusy(false);
     }
   }
+
+  /**
+   * Every account for the period being viewed, following the cursor to the
+   * end. One request per page rather than one per row, and a bounded number of
+   * them: a society that grew past the cap is told the table is partial rather
+   * than being shown a number that quietly is not the whole list.
+   */
+  const loadRows = useCallback(
+    (periodId: string, isCancelled: () => boolean = () => false) =>
+      // Every state change happens in a callback rather than in the body, the
+      // shape `load` above uses: state moved synchronously from an effect is
+      // a cascading render, and this is called from one.
+      Promise.resolve().then(async () => {
+        if (!periodId) {
+          setRows([]);
+          return;
+        }
+        setRowsLoading(true);
+        setRowsTruncated(false);
+        const collected: MembershipListRow[] = [];
+        let cursor: string | null = null;
+        try {
+          for (let page = 0; page < MEMBERSHIP_LIST_MAX_PAGES; page += 1) {
+            const params = new URLSearchParams({ periodId });
+            if (cursor) params.set("cursor", cursor);
+            const res = await fetch(`/api/admin/membership/list?${params.toString()}`);
+            const data = (await res.json()) as {
+              rows: MembershipListRow[];
+              nextCursor: string | null;
+              error?: string;
+            };
+            if (!res.ok) throw new Error(data.error ?? "Could not load the accounts.");
+            if (isCancelled()) return;
+            collected.push(...data.rows);
+            cursor = data.nextCursor;
+            if (!cursor) break;
+            if (page === MEMBERSHIP_LIST_MAX_PAGES - 1) setRowsTruncated(true);
+          }
+          if (isCancelled()) return;
+          setRows(collected);
+        } catch (err) {
+          if (isCancelled()) return;
+          setError(err instanceof Error ? err.message : "Could not load the accounts.");
+        } finally {
+          if (!isCancelled()) setRowsLoading(false);
+        }
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadRows(viewingId, () => cancelled);
+    return () => {
+      cancelled = true;
+    };
+  }, [loadRows, viewingId]);
+
+  /**
+   * The export. A POST, because it writes the `dataExports` row that records
+   * the download, and a GET would be prefetched and retried. The file is
+   * handed over as a blob the browser saves, so the request carries the
+   * session cookie the way every other call here does.
+   */
+  async function exportCsv() {
+    if (!viewingId) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/admin/membership/export?periodId=${encodeURIComponent(viewingId)}`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error ?? "That export did not run.");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `naisi-membership-${viewingId}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "That export did not run.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  /**
+   * Rebuild the four cached tier counts for the period being viewed.
+   *
+   * The counts are maintained by `increment` from the grant route and each
+   * chunk of an import commit, and the commit deliberately does not fail when
+   * that update fails. This is the repair for the drift that leaves: it counts
+   * the membership rows themselves and writes the answer. Pressing it on a
+   * period that was already right writes nothing and says so.
+   */
+  async function recount() {
+    if (!viewingId) return;
+    setRecounting(true);
+    setRecountNote(null);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/admin/membership/periods/${encodeURIComponent(viewingId)}/recount`,
+        { method: "POST" },
+      );
+      const data = (await res.json()) as {
+        corrected?: { tier: MembershipTier; was: number; now: number }[];
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error ?? "Those totals did not recount.");
+      const corrected = data.corrected ?? [];
+      setRecountNote(
+        corrected.length === 0
+          ? "Counted. The totals already agreed with the rows."
+          : `Corrected ${corrected
+              .map(
+                (c) => `${MEMBERSHIP_TIER_LABELS[c.tier]} ${c.was} to ${c.now}`,
+              )
+              .join(", ")}.`,
+      );
+      resetCurrentPeriodCache();
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Those totals did not recount.");
+    } finally {
+      setRecounting(false);
+    }
+  }
+
+  const viewing = periods.find((p) => p.id === viewingId) ?? null;
 
   return (
     <div className={styles.wrap}>
@@ -295,12 +467,109 @@ export default function MembershipConsole({ isAdmin }: { isAdmin: boolean }) {
         )}
 
         <p className={styles.footnote}>
-          Recording somebody as a member, or taking it back, is done from their
-          row on the Members page and needs a full admin. Membership admin on
-          its own reaches the periods and this page; the member table and the
-          SU list import are a later change.
+          Membership is a badge and a record: it gates nothing anywhere on the
+          site. Recording somebody, changing their tier or taking it back is
+          done from the table below, or from their row on the Members page.
         </p>
       </Card>
+
+      {viewing && (
+        <Card padding="lg">
+          <div className={styles.sectionHead}>
+            <h3 className={styles.subheading}>Members</h3>
+            <div className={styles.rowActions}>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={recounting || rowsLoading}
+                onClick={recount}
+                title="Rebuild the four counts below from the membership rows"
+              >
+                {recounting ? "Recounting…" : "Recount"}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={exporting || rowsLoading}
+                onClick={exportCsv}
+              >
+                {exporting ? "Exporting…" : "Export CSV"}
+              </Button>
+            </div>
+          </div>
+
+          <PeriodSwitcher
+            periods={periods}
+            value={viewingId}
+            currentPeriodId={currentPeriodId}
+            onChange={setViewingId}
+            disabled={rowsLoading}
+          />
+
+          <div className={styles.facts}>
+            {ALL_MEMBERSHIP_TIERS.map((tier) => (
+              <span key={tier} className={styles.fact}>
+                {MEMBERSHIP_TIER_LABELS[tier]}: {viewing.totals[tier] ?? 0}
+              </span>
+            ))}
+          </div>
+          <p className={styles.blurb}>
+            Those four counts are the period&apos;s own, kept up to date by every
+            grant and every import. Everything below is counted from the
+            accounts loaded here. If an import ever says it could not move them,
+            Recount rebuilds all four from the membership rows.
+          </p>
+          {recountNote && <p className={styles.blurb}>{recountNote}</p>}
+          <p className={styles.blurb}>
+            Downloading the CSV is recorded: who took it, which period, and how
+            many people were in it.
+          </p>
+
+          <MembershipTable
+            rows={rows}
+            periodId={viewingId}
+            loading={rowsLoading}
+            truncated={rowsTruncated}
+            onRowChanged={(uid, tier) => {
+              // The row settles locally rather than re-paging every account to
+              // move one of them. The period totals move server-side, so the
+              // periods list is refetched for the counts strip.
+              setRows((current) =>
+                current.map((row) =>
+                  row.uid === uid
+                    ? {
+                        ...row,
+                        tier,
+                        source: tier ? "manual" : null,
+                        matchedOn: tier ? "manual" : null,
+                        recordedAt: tier ? new Date().toISOString() : null,
+                      }
+                    : row,
+                ),
+              );
+              resetCurrentPeriodCache();
+              void load();
+            }}
+          />
+        </Card>
+      )}
+
+      {viewing && (
+        <Card padding="lg">
+          <div className={styles.sectionHead}>
+            <h3 className={styles.subheading}>Import the SU list</h3>
+          </div>
+          <ImportPanel
+            periodId={viewing.id}
+            periodLabel={viewing.label || viewing.year}
+            onCommitted={() => {
+              resetCurrentPeriodCache();
+              void load();
+              void loadRows(viewing.id);
+            }}
+          />
+        </Card>
+      )}
     </div>
   );
 }

@@ -461,6 +461,16 @@ export default function WeekView({ runId, weekNumber, uid, viewerRole }: Props) 
           </Link>
           <span aria-hidden="true"> — </span>
           Week {weekNumber} of {payload.run.totalWeeks}
+          {/* THE RUN'S SUB NAV, such as it is. There is no standing nav
+              component under `/learn/[runId]`: this eyebrow row is the only
+              run-scoped navigation that rides on every page inside a run, so
+              it is where the progress page gets its second door. Without it
+              `/learn/[runId]/progress` is reachable from the run home alone,
+              which is one link away from being an orphan again. */}
+          <span aria-hidden="true"> {"·"} </span>
+          <Link href={`${runHomeHref}/progress`} className={styles.eyebrowLink}>
+            Progress
+          </Link>
         </p>
         <h1 className={styles.title}>{weekDoc.title || `Week ${weekNumber}`}</h1>
         {(weekDoc.estimatedMinutes !== null || !weekDoc.published || week.forked) && (

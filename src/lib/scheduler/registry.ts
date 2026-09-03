@@ -23,7 +23,8 @@
  * whether or not the heartbeat was reached.
  *
  * ADDING A JOB (later PRs): write `src/lib/scheduler/jobs/<name>.ts`
- * exporting a `JobRegistration`, import it here, and append it to `JOBS`. The
+ * exporting a `JobRegistration`, import it here, and splice it into `JOBS` in
+ * id order. The
  * `SchedulerJobId` union already names every job the courses V3 contract
  * plans, so a new entry needs no type change. That is deliberate: the panel
  * and `config/scheduler` key on those ids, and renaming one after it has
@@ -36,6 +37,7 @@ import {
 import { admissionsRemindersJob } from "./jobs/admissionsReminders";
 import { admissionsStageReleaseJob } from "./jobs/admissionsStageRelease";
 import { heartbeatJob } from "./jobs/heartbeat";
+import { unmarkedRegistersJob } from "./jobs/unmarkedRegisters";
 
 /**
  * Every job id the platform will register. The union is complete ahead of the
@@ -197,6 +199,7 @@ export function policyFor(job: JobRegistration): MarkerPolicy {
 export const JOBS: readonly JobRegistration[] = [
   admissionsRemindersJob,
   admissionsStageReleaseJob,
+  unmarkedRegistersJob,
   heartbeatJob,
 ];
 

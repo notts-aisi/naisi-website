@@ -187,6 +187,46 @@
   color: var(--color-text);
 }
 
+/* ---- Your own attendance ---- */
+
+/* A two-column list rather than a table: it is at most a term's worth of rows,
+   each one a date and a word, and a table would bring a header nobody needs
+   and a horizontal scroll container to keep it inside the shell. */
+.attendance {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.attendanceRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-sm);
+}
+
+.attendanceRow:last-child {
+  border-bottom: none;
+}
+
+.attendanceWhen {
+  color: var(--color-text-muted);
+}
+
+.attendanceMark {
+  color: var(--color-text);
+  font-weight: 600;
+  /* The mark is the answer being looked for, so it never wraps away from its
+     own row's date. */
+  white-space: nowrap;
+}
+
 .panelLink {
   align-self: flex-start;
   display: inline-flex;
@@ -292,5 +332,14 @@
        the mobile follow-up PR owns closing that gap (house convention: mobile
        adaptations land per surface, separately). */
     padding: var(--space-4) 0;
+  }
+
+  .attendanceRow {
+    /* Date over mark rather than a squeezed pair: "Week 3, Tue 3 Nov" plus
+       "Left early" does not fit one narrow line, and a wrapped justified row
+       reads as two unrelated fragments. */
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
   }
 }

@@ -272,6 +272,72 @@ export function sessionInstants(session: ResolvedSession): {
 }
 
 /**
+ * THE SHAPE OF ONE GROUP'S TERM: when it first meets, when it last meets, and
+ * which session is next.
+ *
+ * Pure, and derived from the sessions the caller ALREADY resolved rather than
+ * from the calendar a second time. A second derivation is a second chance to
+ * disagree, and this is the range a facilitator reads off a card beside a week
+ * counter that has to have come from the same list.
+ *
+ * ── WHAT "NEXT" MEANS ───────────────────────────────────────────────────────
+ * The SOONEST-STARTING session that has not FINISHED. A session in progress is
+ * still the next one: a facilitator opening this page ten minutes into their
+ * own room wants that room named, not the one a week away.
+ *
+ * Soonest by START INSTANT, never by array position. The array is in schedule
+ * order per week, but a week's second session can sit on an earlier weekday
+ * than its first, so "the first unfinished element" would name next Thursday
+ * while tonight's Tuesday session went unannounced.
+ *
+ * `sessionInstants` answers "cannot say" with nulls on a session it cannot
+ * date, and those are SKIPPED rather than read as past or future. Guessing
+ * either way would either hide a session that is about to happen or announce
+ * one that already has.
+ *
+ * Dates compare as CIVIL DATE KEYS, which sort correctly as plain strings, so
+ * the ends of the range are read off without parsing anything. A group with no
+ * usable start date has no range at all, which is a real state rather than a
+ * failure: the register still has its columns, and the card simply says less.
+ */
+export type SessionRange = {
+  /** First datable session, "YYYY-MM-DD". Empty when none can be dated. */
+  firstDateKey: string;
+  /** Last datable session, "YYYY-MM-DD". Empty when none can be dated. */
+  lastDateKey: string;
+  /** The soonest session still to finish, or null once the term is over. */
+  next: ResolvedSession | null;
+};
+
+export function sessionRange(
+  sessions: readonly ResolvedSession[],
+  now: Date = new Date(),
+): SessionRange {
+  let firstDateKey = "";
+  let lastDateKey = "";
+  let next: ResolvedSession | null = null;
+  let nextStartsAt = Infinity;
+
+  for (const session of sessions) {
+    if (session.dateKey) {
+      if (!firstDateKey || session.dateKey < firstDateKey) firstDateKey = session.dateKey;
+      if (session.dateKey > lastDateKey) lastDateKey = session.dateKey;
+    }
+    const { startsAt, endsAt } = sessionInstants(session);
+    if (!startsAt || !endsAt) continue;
+    if (endsAt.getTime() < now.getTime()) continue;
+    // The MINIMUM start among the unfinished, so an extra session on an
+    // earlier weekday than its week's first one still reads as next.
+    if (startsAt.getTime() < nextStartsAt) {
+      nextStartsAt = startsAt.getTime();
+      next = session;
+    }
+  }
+
+  return { firstDateKey, lastDateKey, next };
+}
+
+/**
  * The session a (week, occurrence) pair names, or null when this group holds
  * no such session. The one lookup every write path uses before it touches a
  * register: a mark for a session the group does not hold must be refused, not

@@ -437,3 +437,52 @@ export function validatePeriodDates(
   }
   return { startsOn, endsOn };
 }
+
+/**
+ * Rebuild a period's four cached tier totals from a real headcount.
+ *
+ * The totals on a period document are a CACHE, moved by `increment` from the
+ * grant route and the import commit. Increments drift: a commit whose totals
+ * update failed writes the memberships and not the counter, and after that the
+ * console reports a headcount nobody can reconcile against the table under it.
+ * This is the repair, and it is pure so it can be tested without a Firestore.
+ *
+ * `counted` is what the aggregate queries came back with, one per tier.
+ * `existing` is whatever the period document currently holds, which may be
+ * absent, negative or not a number at all: a hand-edited period is a thing
+ * that happens, and every one of those cases reads as zero here rather than
+ * as a reason to refuse the repair.
+ *
+ * A tier that is already right is left out of `update` entirely, so a period
+ * whose counts are correct is not rewritten and `corrected` is empty. That is
+ * what lets the console say "nothing was wrong" instead of claiming a fix it
+ * did not make.
+ */
+export function planTotalsRecount(
+  counted: Readonly<Partial<Record<MembershipTier, number>>>,
+  existing: unknown,
+): {
+  update: Record<string, number>;
+  totals: Record<MembershipTier, number>;
+  corrected: { tier: MembershipTier; was: number; now: number }[];
+} {
+  const before = (existing ?? {}) as Record<string, unknown>;
+  const clean = (v: unknown): number =>
+    typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
+
+  const update: Record<string, number> = {};
+  const totals = {} as Record<MembershipTier, number>;
+  const corrected: { tier: MembershipTier; was: number; now: number }[] = [];
+
+  for (const tier of ALL_MEMBERSHIP_TIERS) {
+    const now = clean(counted[tier]);
+    const was = clean(before[tier]);
+    totals[tier] = now;
+    if (was !== now) {
+      update[`totals.${tier}`] = now;
+      corrected.push({ tier, was, now });
+    }
+  }
+
+  return { update, totals, corrected };
+}

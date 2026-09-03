@@ -121,7 +121,7 @@ async function loadTs(relativePath) {
   return import(await transpileToDataUrl(join(SRC, relativePath)));
 }
 
-const { findSession, resolveSessions, sessionInstants, sessionKey } =
+const { findSession, resolveSessions, sessionInstants, sessionKey, sessionRange } =
   await loadTs("lib/courses/sessions.ts");
 const { recomputeRollup } = await loadTs("lib/courses/attendanceRollup.ts");
 const { attendanceDocId, normalizeCourseAttendance } = await loadTs(
@@ -745,4 +745,95 @@ test("a participant note is capped in KEYS as well as in characters", () => {
   assert.ok(transaction > 0, "the key cap is a property of the MERGED map");
   assert.ok(cap > transaction, "so it is checked inside the transaction");
   assert.match(text, /status:\s*409/, "and refused as a conflict, like the marks lane");
+});
+
+// ---------------------------------------------------------------------------
+// sessionRange (PR26): the shape of one group's term
+// ---------------------------------------------------------------------------
+
+test("the range spans the first and last DATABLE session", () => {
+  // Six Tuesdays from a Monday 21 Sep start, with a reading week after week 3.
+  const sessions = resolveSessions(run(), group());
+  const range = sessionRange(sessions, new Date("2026-09-01T09:00:00Z"));
+
+  assert.equal(range.firstDateKey, sessions[0].dateKey);
+  assert.equal(range.lastDateKey, sessions[sessions.length - 1].dateKey);
+  assert.ok(range.firstDateKey < range.lastDateKey);
+  // Before the term, the next session is the first one.
+  assert.equal(range.next.sessionKey, "w01");
+});
+
+test("next is the soonest session that has not FINISHED, not the next date", () => {
+  const sessions = resolveSessions(run(), group());
+  const second = sessions[1]; // Tuesday of week 2, 18:00 to 19:30 London
+
+  // Ten minutes into that session: it is still the next one. A facilitator
+  // opening the page mid-session wants the room they are standing in.
+  const midSession = new Date(`${second.dateKey}T17:10:00Z`); // 18:10 BST
+  assert.equal(sessionRange(sessions, midSession).next.sessionKey, second.sessionKey);
+
+  // An hour after it ended: the next one has moved on.
+  const afterwards = new Date(`${second.dateKey}T21:00:00Z`);
+  assert.equal(sessionRange(sessions, afterwards).next.sessionKey, sessions[2].sessionKey);
+});
+
+test("next is the SOONEST start, never the first unfinished in array order", () => {
+  // What `extraSession` will look like: a second session in the same week, on
+  // an EARLIER weekday than the group's standing slot, sitting after it in a
+  // list that is in schedule order per week. Read positionally, the standing
+  // Tuesday would be announced as next while the Monday it follows went
+  // unmentioned, and a facilitator would be told the wrong room.
+  const sessions = resolveSessions(run(), group());
+  const tuesday = sessions[1];
+  const mondayKey = new Date(`${tuesday.dateKey}T00:00:00Z`);
+  mondayKey.setUTCDate(mondayKey.getUTCDate() - 1);
+  const monday = {
+    ...tuesday,
+    occurrence: 2,
+    sessionKey: `${tuesday.weekId}-2`,
+    dateKey: mondayKey.toISOString().slice(0, 10),
+  };
+  const withExtra = [sessions[0], tuesday, monday, ...sessions.slice(2)];
+
+  const beforeBoth = new Date(`${monday.dateKey}T09:00:00Z`);
+  assert.equal(sessionRange(withExtra, beforeBoth).next.sessionKey, monday.sessionKey);
+  // And once the Monday has finished, the Tuesday is next again.
+  const afterMonday = new Date(`${monday.dateKey}T21:00:00Z`);
+  assert.equal(sessionRange(withExtra, afterMonday).next.sessionKey, tuesday.sessionKey);
+  // The range itself still spans the whole term, extra session included.
+  assert.equal(sessionRange(withExtra, beforeBoth).firstDateKey, sessions[0].dateKey);
+});
+
+test("a finished term has a range but no next session", () => {
+  const sessions = resolveSessions(run(), group());
+  const range = sessionRange(sessions, new Date("2027-01-01T00:00:00Z"));
+  assert.equal(range.next, null);
+  assert.equal(range.lastDateKey, sessions[sessions.length - 1].dateKey);
+});
+
+test("an undated run has no range and no next, rather than a guessed one", () => {
+  // A half-authored run is a legitimate state: the register still has its
+  // columns, and the card simply says less.
+  const sessions = resolveSessions(run({ startDate: "" }), group());
+  assert.ok(sessions.length > 0);
+  assert.deepEqual(sessionRange(sessions, new Date("2026-10-01T00:00:00Z")), {
+    firstDateKey: "",
+    lastDateKey: "",
+    next: null,
+  });
+});
+
+test("two groups on different pacing produce two different ranges", () => {
+  // The PR26 verify, at the level the card is built from: same run, two
+  // groups, two date ranges and two next sessions.
+  const monday = group();
+  const later = group({ paceStartDate: "2026-10-19" });
+  const now = new Date("2026-10-01T09:00:00Z");
+
+  const a = sessionRange(resolveSessions(run(), monday), now);
+  const b = sessionRange(resolveSessions(run(), later), now);
+
+  assert.notEqual(a.firstDateKey, b.firstDateKey);
+  assert.notEqual(a.lastDateKey, b.lastDateKey);
+  assert.notEqual(a.next.dateKey, b.next.dateKey);
 });

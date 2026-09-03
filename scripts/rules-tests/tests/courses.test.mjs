@@ -1439,6 +1439,236 @@ describe("tasks — fellowship-reminder mirrors", () => {
 });
 
 // ---------------------------------------------------------------------------
+// V3 W2 PR25: the unmarked-register follow-up id
+// ---------------------------------------------------------------------------
+
+/**
+ * WHAT THE CREATE RULE ACTUALLY ALLOWS AT `course-register__{run}__{group}__
+ * {sessionKey}`, which is NOT what the design assumed.
+ *
+ * The scheduler mints one follow-up task per unmarked register at a
+ * DETERMINISTIC id, and the obvious rules test to write would be "a non-admin
+ * client cannot create a task with source course-register". That test would
+ * pass for the wrong reason on the personal lane and FAIL outright on the
+ * committee one: firestore.rules pins a created task's `sourceRef` to null and
+ * constrains NEITHER `source` NOR the doc id, so
+ *
+ *   - an SU-recognised committee member can create a task at exactly that id
+ *     carrying exactly that source, and
+ *   - any signed-in member can squat the same id on the personal lane.
+ *
+ * This block asserts that, rather than the comfortable opposite, because the
+ * job's ALREADY_EXISTS read-back is built on it: on a collision it reads the
+ * document back and treats it as its own only when the source, the
+ * `sourceRef.cohortId` and an admin completer all agree, and otherwise mints
+ * at a fallback id and logs. The tests that follow are what pin the reason
+ * that read-back exists and the reason its three legs are the three legs they
+ * are.
+ *
+ * The one thing a client CANNOT do is what the second half of this block
+ * asserts: aim a task. `sourceRef` is pinned null at create on both lanes and
+ * pinned equal on the committee update lane, so no client path produces the
+ * shape the read-back looks for. That is what makes the read-back an identity
+ * test rather than a hopeful one, and it is also what makes the run destroy's
+ * `sourceRef.cohortId` sweep safe to point at a new source.
+ */
+describe("tasks: the course-register follow-up id is squattable", () => {
+  const FOLLOW_UP_ID = "course-register__run1__group-a__w03";
+
+  /** The shape the scheduler writes, on the Admin SDK, which bypasses rules. */
+  function followUpTask(overrides = {}) {
+    return {
+      title: "Unmarked register: Tuesday group, week 3",
+      description: "Ask the facilitator to push the register.",
+      source: "course-register",
+      kind: "generic",
+      creatorUid: "admin1",
+      completerUids: ["admin1"],
+      reviewerUids: [],
+      status: "todo",
+      visibility: "committee",
+      subtasks: [],
+      blocks: [],
+      archived: false,
+      sourceRef: {
+        cohortId: "run1",
+        weekNumber: 3,
+        groupId: "group-a",
+        sessionKey: "w03",
+      },
+      createdAt: new Date(),
+      ...overrides,
+    };
+  }
+
+  it("LETS an SU-recognised committee member create a task at the job's own id", async () => {
+    // The uncomfortable one. Nothing in the create rule looks at the doc id,
+    // and the committee arm has no `source` condition at all, so this write
+    // is allowed and the job has to cope with it rather than assume it away.
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+    const db = await asUser("sucom");
+    await assertSucceeds(
+      db
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .set(followUpTask({ creatorUid: "sucom", completerUids: ["sucom"], sourceRef: null })),
+    );
+  });
+
+  it("LETS an ordinary member squat the same id on the personal lane", async () => {
+    // A member cannot claim the source, but they do not need to: the id is
+    // guessable and `.create()` is first-come. The victim here is the JOB,
+    // whose create then fails with ALREADY_EXISTS.
+    await seedCast();
+    const db = await asUser("learner");
+    await assertSucceeds(
+      db
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .set(
+          followUpTask({
+            source: "personal",
+            visibility: "assignees-only",
+            creatorUid: "learner",
+            completerUids: ["learner"],
+            sourceRef: null,
+          }),
+        ),
+    );
+  });
+
+  it("REFUSES a member creating one on the committee lane", async () => {
+    // The personal arm is the only one open to them, and it pins the source,
+    // the visibility and the completer list together. So a member's squat is
+    // always a `personal`, assignees-only, self-assigned task, which is
+    // exactly the shape the read-back's source leg rejects.
+    await seedCast();
+    const db = await asUser("learner");
+    await assertFails(
+      db
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .set(followUpTask({ creatorUid: "learner", completerUids: ["learner"], sourceRef: null })),
+    );
+  });
+
+  it("REFUSES anybody aiming a created task with sourceRef, on either lane", async () => {
+    // THE LEG THAT HOLDS. `sourceRef` is what the read-back and the run
+    // destroy both key on, and no client can set it at create. A squatter can
+    // spell the source; they cannot spell the pointer.
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+
+    const sucom = await asUser("sucom");
+    await assertFails(
+      sucom
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .set(followUpTask({ creatorUid: "sucom", completerUids: ["sucom"] })),
+    );
+
+    const learner = await asUser("learner");
+    await assertFails(
+      learner
+        .collection("tasks")
+        .doc("my-todo")
+        .set(
+          followUpTask({
+            source: "personal",
+            visibility: "assignees-only",
+            creatorUid: "learner",
+            completerUids: ["learner"],
+          }),
+        ),
+    );
+  });
+
+  it("REFUSES a committee member stamping the pointer on afterwards", async () => {
+    // The create pin would be worth nothing if a second write could add it.
+    // Both halves matter: aiming a squatted card at the run makes it look
+    // like the job's own, and aiming an ordinary committee task at a doomed
+    // run volunteers it into that run's destroy cascade.
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+    await seed(async (db) => {
+      await db
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .set(followUpTask({ creatorUid: "sucom", completerUids: ["sucom"], sourceRef: null }));
+    });
+    const db = await asUser("sucom");
+    await assertFails(
+      db
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .update({ sourceRef: { cohortId: "run1", weekNumber: 3 } }),
+    );
+    // The same actor still holds the committee branch on the same document,
+    // so the denial above is the pointer pin and not a lost branch.
+    await assertSucceeds(
+      db.collection("tasks").doc(FOLLOW_UP_ID).update({ status: "in-progress" }),
+    );
+  });
+
+  it("puts a real follow-up in front of the committee and nobody else", async () => {
+    // Visibility `committee` is the point of the card: an unmarked register
+    // is operational, not personal. It is still not readable by a member who
+    // is neither a completer nor a reviewer on it.
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+    await seed(async (db) => {
+      await db.collection("tasks").doc(FOLLOW_UP_ID).set(followUpTask());
+    });
+
+    const sucom = await asUser("sucom");
+    await assertSucceeds(sucom.collection("tasks").doc(FOLLOW_UP_ID).get());
+    const admin = await asUser("admin1");
+    await assertSucceeds(admin.collection("tasks").doc(FOLLOW_UP_ID).get());
+    const learner = await asUser("learner");
+    await assertFails(learner.collection("tasks").doc(FOLLOW_UP_ID).get());
+  });
+
+  it("cannot be archived off the board by a completer who is not an admin", async () => {
+    // `archived` rides the narrow completer band ONLY for the week mirrors
+    // (`source == 'fellowship-reminder'`). Every completer on a real
+    // follow-up is an admin and holds the unconditional branch anyway, so the
+    // scoping costs nothing here; it is asserted because the push archives
+    // this card on the Admin SDK, and a client lane that could do the same
+    // would let a register be un-chased without being pushed.
+    await seedCast();
+    await seed(async (db) => {
+      await db
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .set(followUpTask({ completerUids: ["facil"] }));
+    });
+    const db = await asUser("facil");
+    await assertFails(
+      db.collection("tasks").doc(FOLLOW_UP_ID).update({ archived: true }),
+    );
+    await assertSucceeds(
+      db.collection("tasks").doc(FOLLOW_UP_ID).update({ status: "in-progress" }),
+    );
+  });
+
+  it("cannot be dismissed by a completer the way a week mirror can", async () => {
+    // The delete branch keys the dismissal route off the STORED source, and
+    // `course-register` is not it. A follow-up is the committee's record that
+    // a cohort was chased, not one person's card to tidy away.
+    await seedCast();
+    await seed(async (db) => {
+      await db
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .set(followUpTask({ completerUids: ["facil"] }));
+    });
+    const db = await asUser("facil");
+    await assertFails(db.collection("tasks").doc(FOLLOW_UP_ID).delete());
+  });
+});
+
+// ---------------------------------------------------------------------------
 // V3 W1 PR5: open mode, streams, and the fields that open a write door
 // ---------------------------------------------------------------------------
 

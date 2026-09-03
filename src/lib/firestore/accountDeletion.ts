@@ -14,6 +14,10 @@ import {
   isMembershipTier,
   type MembershipTier,
 } from "./memberships";
+import {
+  MEMBERSHIP_IMPORTS_COLLECTION,
+  MEMBERSHIP_IMPORT_ROWS_SUBCOLLECTION,
+} from "./membershipImports";
 import { REGISTRATIONS_COLLECTION } from "./registrations";
 import { deleteEventsForSubscriptions } from "./subscriptions";
 
@@ -54,6 +58,14 @@ export type AccountDeletionSummary = {
    * describes a year of the society, not a person.
    */
   membershipsDeleted: number;
+  /**
+   * Rows on an SU import batch that named this account. The BATCHES survive:
+   * a batch is the provenance behind every membership it wrote, and an
+   * unmatched row names somebody with no account here, so it is a line from a
+   * file the society received rather than a record about a member. See
+   * `deleteMembershipImportRows`.
+   */
+  membershipImportRowsDeleted: number;
   conductFlagDeleted: boolean;
   authDeleted: boolean;
   /** Set when the teardown was not fully clean (a best-effort step failed, or the
@@ -224,6 +236,94 @@ export async function deleteMembershipsAndAdjustTotals(
   }
 
   return deletedRows.length;
+}
+
+/**
+ * Delete every SU import ROW that names this account, across every batch.
+ *
+ * ## What goes and what stays
+ *
+ * A row carries the name and address the Students' Union had for a person and
+ * the uid the match landed on, so a row whose `matchedUid` is this account is
+ * a record ABOUT them and goes with them, in the same cascade that deletes
+ * the membership it wrote.
+ *
+ * The BATCH documents stay, and so do rows that were never matched to an
+ * account. A batch is the provenance behind every membership row it wrote, and
+ * deleting it would leave those memberships claiming a source with nothing
+ * behind it. An unmatched row names somebody who has no account here at all,
+ * so this deletion is not theirs to trigger: it is a line from a file the
+ * society received, kept with the file. The batch's counters are NOT adjusted
+ * for the same reason the period totals are: they describe what the file did
+ * when it was committed, which is still true.
+ *
+ * ## Why a collection-group query, and the check that comes with it
+ *
+ * The rows live in a subcollection under an unbounded number of batches, so
+ * addressing them would mean reading every batch first. `rows` is a short and
+ * generic collection-group name, so each document is re-checked to be under
+ * `membershipImports` before it is deleted: a `rows` subcollection added
+ * anywhere else in the future must not be swept by this.
+ *
+ * A collection group gets NO automatic single-field index, so this query only
+ * runs at all because `firestore.indexes.json` declares a COLLECTION_GROUP
+ * override on `rows.matchedUid`. That override has to be deployed before the
+ * first import writes a row, or the sweep fails FAILED_PRECONDITION.
+ */
+export async function deleteMembershipImportRows(
+  db: Firestore,
+  uid: string,
+): Promise<number> {
+  let deleted = 0;
+  let cursor: QueryDocumentSnapshot | null = null;
+  let drained = false;
+  // Paged on a cursor, NOT on "delete as you read". Most rows on a page are
+  // deleted, but the foreign-`rows` guard below can leave some behind, and a
+  // re-query from the top would hand back the same survivors forever. A page
+  // that is entirely survivors is the case that used to end the sweep early
+  // and strand every matching row after it.
+  for (let page = 0; page < COURSE_MAX_PAGES; page += 1) {
+    let query = db
+      .collectionGroup(MEMBERSHIP_IMPORT_ROWS_SUBCOLLECTION)
+      .where("matchedUid", "==", uid)
+      // Equality + `__name__` over a collection group: served by the
+      // COLLECTION_GROUP-scoped single-field index on `matchedUid` that
+      // `firestore.indexes.json` declares under `fieldOverrides`. Collection
+      // groups get no automatic single-field index, so without that override
+      // this query fails FAILED_PRECONDITION and no row is ever swept.
+      .orderBy(FieldPath.documentId())
+      .limit(COURSE_PAGE_SIZE);
+    if (cursor) query = query.startAfter(cursor);
+    const snap = await query.get();
+    if (snap.empty) {
+      drained = true;
+      break;
+    }
+    cursor = snap.docs[snap.docs.length - 1];
+    const batch = db.batch();
+    let queued = 0;
+    for (const doc of snap.docs) {
+      if (doc.ref.parent.parent?.parent.id !== MEMBERSHIP_IMPORTS_COLLECTION) continue;
+      batch.delete(doc.ref);
+      queued += 1;
+    }
+    if (queued > 0) {
+      await batch.commit();
+      deleted += queued;
+    }
+    if (snap.size < COURSE_PAGE_SIZE) {
+      drained = true;
+      break;
+    }
+  }
+  // Same reason as the sweeps around it: a quiet stop would report success and
+  // let the caller move on, leaving rows that still name a deleted person.
+  if (!drained) {
+    throw new Error(
+      `${MEMBERSHIP_IMPORT_ROWS_SUBCOLLECTION} did not drain after ${COURSE_MAX_PAGES} pages`,
+    );
+  }
+  return deleted;
 }
 
 /**
@@ -525,6 +625,18 @@ export async function clearAdmissionRoundRoles(
  * of it here would leave the member's other tasks behind while breaking the
  * blocks/comments/activity a task carries, and would put this function in the
  * business of deleting content the retention decision above says to keep.
+ *
+ * THE UNMARKED-REGISTER FOLLOW-UP IS RETAINED TOO, and for a second reason on
+ * top of that one. `tasks` carrying `source: "course-register"` name every
+ * admin as a completer, so an admin closing their account is named on every
+ * card the scheduler has ever raised. They are not that admin's content: the
+ * card is the committee's record that a cohort was chased, its subject is a
+ * group's register rather than a person, and it carries no PII beyond a uid
+ * list. Sweeping them on a completer uid would erase the chase history of
+ * every live cohort because one admin left. The uid itself goes stale on the
+ * card exactly as it does on any other committee task, which is what the
+ * deferred hygiene sweep is for; the run's own destroy takes these rows in
+ * full (courseDeletion.ts, the `registerTasks` stage).
  */
 export async function deleteAccountCascade(
   auth: Auth,
@@ -549,6 +661,7 @@ export async function deleteAccountCascade(
     admissionReviewsAuthoredDeleted: 0,
     admissionRoundRolesCleared: 0,
     membershipsDeleted: 0,
+    membershipImportRowsDeleted: 0,
     conductFlagDeleted: false,
     authDeleted: false,
   };
@@ -878,6 +991,16 @@ export async function deleteAccountCascade(
     summary.membershipsDeleted = await deleteMembershipsAndAdjustTotals(db, uid);
   } catch (err) {
     console.error("[deleteAccount] memberships delete failed:", uid, err);
+    partialFailure = true;
+  }
+
+  // 5f. SU IMPORT ROWS naming this account, across every batch. The batches
+  //     themselves are provenance and survive, along with rows for people who
+  //     never had an account here. See `deleteMembershipImportRows`.
+  try {
+    summary.membershipImportRowsDeleted = await deleteMembershipImportRows(db, uid);
+  } catch (err) {
+    console.error("[deleteAccount] membership import rows delete failed:", uid, err);
     partialFailure = true;
   }
 

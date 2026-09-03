@@ -16,9 +16,14 @@ import {
 } from "./courses";
 import { COURSE_AUDIT_COLLECTION } from "./courseAudit";
 import { COURSE_PAGES_COLLECTION } from "./coursePages";
-// The ONLY `tasks.source` a run's cascade may delete. See drainMirroredTasks
-// for why this is a security filter rather than a tidier query.
-import { MIRRORED_TASK_SOURCE } from "./courseTasks";
+// The ONLY two `tasks.source` values a run's cascade may delete. See
+// drainSourcedTasks for why the filter is a security boundary rather than a
+// tidier query, and for the one respect in which the second value is weaker
+// than the first.
+import {
+  MIRRORED_TASK_SOURCE,
+  REGISTER_FOLLOW_UP_TASK_SOURCE,
+} from "./courseTasks";
 import { COURSE_MATERIAL_NOTES_COLLECTION } from "./courseMaterialNotes";
 import { DATA_EXPORTS_COLLECTION } from "./dataExports";
 import { SCHEDULER_MARKERS_COLLECTION } from "./schedulerMarkers";
@@ -155,6 +160,18 @@ export type RunDestroyCounts = {
    */
   materialNotes: number;
   mirroredTasks: number;
+  /**
+   * `tasks` carrying `source: "course-register"` and pointing at this run: the
+   * unmarked-register follow-ups the scheduler raised on the committee board.
+   *
+   * Counted SEPARATELY from `mirroredTasks` even though both are rows in the
+   * same collection destroyed by the same predicate. They are different things
+   * to the person reading the dialog: a mirror is one member's weekly card,
+   * and a follow-up is the committee's record that a register was chased. An
+   * admin about to destroy a run is entitled to know the chase history goes
+   * with it.
+   */
+  registerTasks: number;
   subscriptionRows: number;
   /**
    * `admissionApplications` whose `outcome.targetRunId` is this run: the
@@ -503,9 +520,22 @@ async function drainSchedulerMarkers(
 }
 
 /**
- * Drain the run's mirrored My Work tasks: `tasks` where `source ==
- * "fellowship-reminder"` AND `sourceRef.cohortId == runId` — both halves of
- * what courseTasks.ts stamps on a mirror, not just the pointer.
+ * Drain the run's machine-minted tasks for ONE source: `tasks` where `source
+ * == <source>` AND `sourceRef.cohortId == runId`, both halves of what the
+ * writer stamps rather than just the pointer.
+ *
+ * TWO SOURCES USE IT, and they are not equally strong:
+ *  - `fellowship-reminder`, the member's weekly My Work mirror. No client can
+ *    create or relabel a task carrying this source (firestore.rules refuses
+ *    both), so the filter is airtight.
+ *  - `course-register`, the unmarked-register follow-up. The create rule
+ *    constrains neither `source` nor the doc id on the committee lane, so an
+ *    SU-recognised committee member CAN mint a task carrying it. What they
+ *    cannot do is aim it: `sourceRef` is pinned null at create and pinned
+ *    equal on the committee update lane, so the second half of this predicate
+ *    is the half that holds, and it holds for exactly the reason the mirror's
+ *    `source` half does. A forged `source` with no pointer names nothing this
+ *    drain will touch.
  *
  * THE `source` HALF IS A SECURITY FILTER, not a tidy-up. `sourceRef` is
  * writable-ish from the client in a way `source` is not: rules pin `source`
@@ -545,9 +575,10 @@ async function drainSchedulerMarkers(
  * Budget is charged one per TASK, not per subcollection row — the manifest
  * counts tasks, and sub-rows on a mirror are typically zero-to-few.
  */
-async function drainMirroredTasks(
+async function drainSourcedTasks(
   db: Firestore,
   storage: Storage | null,
+  source: string,
   runId: string,
   budget: Budget,
 ): Promise<DrainResult> {
@@ -557,7 +588,7 @@ async function drainMirroredTasks(
     const limit = Math.min(TASK_PAGE_SIZE, budget.remaining);
     const snap = await db
       .collection("tasks")
-      .where("source", "==", MIRRORED_TASK_SOURCE)
+      .where("source", "==", source)
       .where("sourceRef.cohortId", "==", runId)
       .limit(limit)
       .get();
@@ -566,7 +597,7 @@ async function drainMirroredTasks(
     const firstId = snap.docs[0].id;
     if (firstId === prevFirstId) {
       throw new Error(
-        "courseDeletion: mirrored-tasks page did not shrink after recursiveDelete — aborting rather than looping",
+        `courseDeletion: ${source} task page did not shrink after recursiveDelete, aborting rather than looping`,
       );
     }
     prevFirstId = firstId;
@@ -876,6 +907,7 @@ export async function countRunDestroyTargets(
     attendanceRegisters,
     materialNotes,
     mirroredTasks,
+    registerTasks,
     subscriptionRows,
     admissionSeatOffers,
     auditRows,
@@ -896,13 +928,21 @@ export async function countRunDestroyTargets(
     countAgg(
       db.collection(COURSE_MATERIAL_NOTES_COLLECTION).where("runId", "==", runId),
     ),
-    // Both halves of the mirror predicate, exactly as drainMirroredTasks
+    // Both halves of the mirror predicate, exactly as drainSourcedTasks
     // deletes them — a manifest that counted forged pointers would promise to
     // destroy rows the cascade (rightly) leaves alone.
     countAgg(
       db
         .collection("tasks")
         .where("source", "==", MIRRORED_TASK_SOURCE)
+        .where("sourceRef.cohortId", "==", runId),
+    ),
+    // The second sweep's rows, counted on the SAME predicate its stage
+    // deletes on, for the reason immediately above.
+    countAgg(
+      db
+        .collection("tasks")
+        .where("source", "==", REGISTER_FOLLOW_UP_TASK_SOURCE)
         .where("sourceRef.cohortId", "==", runId),
     ),
     // The COMPUTED channel, never `run.channel` — see drainSubscriptionRows.
@@ -936,6 +976,7 @@ export async function countRunDestroyTargets(
     attendanceRegisters,
     materialNotes,
     mirroredTasks,
+    registerTasks,
     subscriptionRows,
     admissionSeatOffers,
     auditRows,
@@ -1235,8 +1276,11 @@ function auditIncrements(totals: Record<string, number>): Record<string, unknown
  *  3. Applications (email PII + denormalised names — same reasoning as
  *     accountDeletion's SCOPE note: with the run gone these render as ghost
  *     rows no surface can find).
- *  4. Mirrored My Work tasks (see drainMirroredTasks — the deliberate
- *     inversion of accountDeletion's retain-tasks rule, and the index note).
+ *  4. Machine-minted tasks, in two sweeps on the same collection (see
+ *     drainSourcedTasks): the members' My Work week mirrors, then the
+ *     committee board's unmarked-register follow-ups. This is the deliberate
+ *     inversion of accountDeletion's retain-tasks rule; the index note is
+ *     there too.
  *  5. Nudge markers (courseNudges) — send-dedupe machinery keyed by runId;
  *     hygiene, so counted in `deleted` but not in the manifest. Then the
  *     scheduler's own markers (schedulerMarkers), which ARE on the manifest:
@@ -1373,7 +1417,25 @@ export async function destroyRunCascade(
     },
     {
       key: "mirroredTasks",
-      drain: () => drainMirroredTasks(db, storage, runId, budget),
+      drain: () =>
+        drainSourcedTasks(db, storage, MIRRORED_TASK_SOURCE, runId, budget),
+    },
+    {
+      key: "registerTasks",
+      // The SECOND sweep on the same collection, for the source the
+      // unmarked-register scheduler job mints. A separate stage rather than an
+      // `in` filter on two sources: each stage is budgeted, paged and resumed
+      // on its own, and the manifest reports the two separately because they
+      // are different things to an operator (one is per-member week reminders,
+      // the other is the committee's own chase list).
+      drain: () =>
+        drainSourcedTasks(
+          db,
+          storage,
+          REGISTER_FOLLOW_UP_TASK_SOURCE,
+          runId,
+          budget,
+        ),
     },
     {
       key: "nudgeMarkers",

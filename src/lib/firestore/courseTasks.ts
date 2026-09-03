@@ -37,6 +37,22 @@ import { weekDocId, type ChecklistItem } from "./courses";
  */
 export const MIRRORED_TASK_SOURCE = "fellowship-reminder";
 
+/**
+ * The `tasks.source` the unmarked-register follow-up carries, and the second
+ * value a run's task sweep may filter on.
+ *
+ * It lives here beside `MIRRORED_TASK_SOURCE` because the two are the same
+ * kind of thing: the only sources a cascade, a query or an archive may aim
+ * itself at. It is NOT a security filter on its own, and that is the whole
+ * story of this task family: the create rule constrains neither `source` nor
+ * the doc id on the committee lane, so an SU-recognised committee member can
+ * mint a task carrying this exact value. What makes a follow-up identifiable
+ * is the three-legged read-back in `src/lib/courses/unmarkedRegisters.ts`
+ * (`isOurFollowUpTask`), which pairs this with a `sourceRef.cohortId` no
+ * client can set and an admin among the completers.
+ */
+export const REGISTER_FOLLOW_UP_TASK_SOURCE = "course-register";
+
 export function courseTaskId(runId: string, weekNumber: number, uid: string): string {
   return `course-${weekDocId(weekNumber)}__${runId}__${uid}`;
 }

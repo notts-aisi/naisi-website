@@ -2437,6 +2437,48 @@ service cloud.firestore {
 
     // === end V3 W3 PR27: membership ======================================
 
+    // === V3 W3 PR28: the SU list import ==================================
+    //
+    // The uploaded file, and one row per line of it. Both shut to every
+    // client in both directions, including admins and `manageMembership`
+    // holders, who reach them through the import routes on the Admin SDK.
+    //
+    // WHY NO CLIENT READS. A row carries a name and an email address for
+    // somebody the Students' Union has on its list, which for most rows is
+    // a person with NO account here at all. That is a roster of named
+    // people who never agreed to anything on this site, so it is not
+    // roster data an SU-recognised committee member may browse; it is a
+    // file the society received, readable only through the console that
+    // acts on it.
+    //
+    // WHY NO CLIENT WRITES. The commit route reads its rows FROM HERE and
+    // never from a request body, because the name tier is confirm-only
+    // and a writable row would let a browser assert both the match and
+    // the confirmation. A client that could write a row could grant
+    // itself a membership through the commit route without ever touching
+    // `memberships`.
+    //
+    // THE SUBCOLLECTION NEEDS ITS OWN MATCH BLOCK. Rules do not inherit
+    // downwards, so `membershipImports/{batchId}` says nothing at all
+    // about `membershipImports/{batchId}/rows/{rowId}`. Both are written
+    // out, and the emulator tests assert both at every role.
+    //
+    // No rules DEPLOY is owed for either block: with no `allow`, each
+    // match is identical to Firestore's implicit deny (the
+    // `pushSubscriptions` precedent below). They are written out so the
+    // lockdown is visible rather than inferred, and so a later wildcard
+    // cannot silently open one of them.
+
+    match /membershipImports/{batchId} {
+      allow read, write: if false;
+
+      match /rows/{rowId} {
+        allow read, write: if false;
+      }
+    }
+
+    // === end V3 W3 PR28: the SU list import ==============================
+
     // Web push subscriptions: one row per device endpoint, written ONLY by
     // the Admin SDK routes under /api/push/*. Clients never touch it — the
     // endpoint plus its keys IS the capability to push to that device's

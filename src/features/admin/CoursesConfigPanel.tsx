@@ -165,8 +165,8 @@ export default function CoursesConfigPanel() {
             label="Unmarked register grace period (hours)"
             hint={
               defaults
-                ? `How long after a session ends before the follow-up task is raised against its facilitator. Long enough that an evening session marked the next morning is not chased. Default ${defaults.unmarkedRegisterGraceHours}.`
-                : "How long after a session ends before the follow-up task is raised against its facilitator."
+                ? `How long an unpushed register is left alone before a follow-up card lands on the admins' board. Long enough that an evening session marked the next morning is not chased. Default ${defaults.unmarkedRegisterGraceHours}.`
+                : "How long an unpushed register is left alone before a follow-up card lands on the admins' board."
             }
           >
             <Input

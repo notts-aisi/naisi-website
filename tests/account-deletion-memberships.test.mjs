@@ -340,3 +340,53 @@ test("the cascade actually calls the sweep that maintains the totals", () => {
       "reporting members who no longer exist.",
   );
 });
+
+test("the import-row sweep's collection-group index is declared", () => {
+  // `deleteMembershipImportRows` runs a collectionGroup("rows") query filtered
+  // on `matchedUid`. Firestore builds automatic single-field indexes for
+  // COLLECTION scope only, so a collection group needs the override declared
+  // by hand. Without it the query throws FAILED_PRECONDITION at run time and
+  // every import row naming a deleted person survives the cascade for good.
+  // The unit tests fake Firestore, so nothing else in this suite can notice.
+  const indexes = JSON.parse(
+    readFileSync(join(REPO_ROOT, "firestore.indexes.json"), "utf8"),
+  );
+  const overrides = indexes.fieldOverrides ?? [];
+  const rows = overrides.find(
+    (o) => o.collectionGroup === "rows" && o.fieldPath === "matchedUid",
+  );
+  assert.ok(
+    rows,
+    "firestore.indexes.json declares no fieldOverride for rows.matchedUid, so " +
+      "the account-deletion sweep of membership import rows cannot run.",
+  );
+  assert.ok(
+    (rows.indexes ?? []).some(
+      (i) => i.queryScope === "COLLECTION_GROUP" && i.order === "ASCENDING",
+    ),
+    "the override exists but not at COLLECTION_GROUP scope, which is the only " +
+      "scope the sweep's query can use.",
+  );
+});
+
+test("the sweep pages on a cursor, not by re-querying from the top", () => {
+  const src = readFileSync(
+    join(REPO_ROOT, "src", "lib", "firestore", "accountDeletion.ts"),
+    "utf8",
+  );
+  const fn = src.slice(src.indexOf("export async function deleteMembershipImportRows"));
+  const body = fn.slice(0, fn.indexOf("\n}\n") + 2);
+  assert.match(
+    body,
+    /startAfter\(cursor\)/,
+    "a page whose documents all belong to another `rows` collection group " +
+      "deletes nothing, so re-querying from the top hands back the same page " +
+      "forever and every matching row after it is stranded.",
+  );
+  assert.match(
+    body,
+    /if \(!drained\)/,
+    "running out of pages has to throw: a quiet stop reports the sweep as " +
+      "successful and the caller moves on.",
+  );
+});

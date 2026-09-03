@@ -27,8 +27,9 @@ export const COURSE_CONFIG_PATH = {
 export type CoursesConfig = {
   /**
    * How long after a session's end a register may go unmarked before the
-   * follow-up job raises a task against the group's facilitator. Long enough
-   * that an evening session marked the next morning is not chased.
+   * follow-up job raises a committee task about it, assigned to the admins so
+   * one of them can chase the group's facilitator. Long enough that an evening
+   * session marked the next morning is not chased.
    */
   unmarkedRegisterGraceHours: number;
   /**
@@ -53,15 +54,26 @@ export type CoursesConfig = {
    */
   weeklyFeedbackUrl: string;
   /**
-   * How far ahead the unmarked-register scan looks for a group's next
-   * session. Bounds the work per tick and stops a run whose dates were typed
-   * a year out from being scanned week after week.
+   * How far ahead a scan may look for a group's next session, bounding the
+   * work a run whose dates were typed a year out can generate.
+   *
+   * NOTHING READS IT TODAY. The unmarked-register job it was reserved for
+   * ended up scanning BACKWARDS over a 24-hour band behind the grace rather
+   * than forwards from now, and a band bounds the work on its own: a session
+   * dated a year out is simply not in it. The field is kept because it is
+   * already in the contract and a forward-looking job (the break-return
+   * notice) is the obvious next reader, but it is honest about being unused
+   * rather than quietly implying a limit that is not being applied.
    */
   nextSessionMaxDays: number;
   /**
    * Wall-clock budget for one unmarked-register scan. The scan runs inside a
    * shared scheduler tick with a hard request ceiling above it, so it has to
    * be able to stop early and leave the rest for the next tick.
+   *
+   * The default is well under the 28s the tick gives its whole job list, and
+   * it is meant to SHRINK as jobs are added: one job that can spend most of
+   * the list's budget is one that starves every job registered after it.
    */
   unmarkedScanBudgetMs: number;
   /**
@@ -77,7 +89,7 @@ export const DEFAULT_COURSES_CONFIG: CoursesConfig = Object.freeze({
   dropOutFeedbackUrl: "",
   weeklyFeedbackUrl: "",
   nextSessionMaxDays: 14,
-  unmarkedScanBudgetMs: 20000,
+  unmarkedScanBudgetMs: 12000,
   maxFollowUpTasksPerTick: 25,
 });
 

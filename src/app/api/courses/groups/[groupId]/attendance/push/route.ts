@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp, type Firestore } from "firebase-admin/firestore";
 import { readMirrorPlan, type RegisterOverride } from "@/lib/courses/attendanceMirror";
 import { resolveWeekDoc } from "@/lib/courses/groupResolve";
 import {
@@ -7,7 +7,15 @@ import {
   isAddressableId,
   loadMirrorMembers,
 } from "@/lib/courses/registerAccess";
-import { resolveSessions, type ResolvedSession } from "@/lib/courses/sessions";
+import {
+  resolveSessions,
+  sessionInstants,
+  type ResolvedSession,
+} from "@/lib/courses/sessions";
+import {
+  followUpDueAt,
+  registerFollowUpTaskId,
+} from "@/lib/courses/unmarkedRegisters";
 import {
   dispatchSends,
   reserveSendSlot,
@@ -29,8 +37,13 @@ import { getCurrentUser } from "@/lib/firebase/session";
 import { attendanceDocId } from "@/lib/firestore/courseAttendance";
 import { COURSE_AUDIT_COLLECTION } from "@/lib/firestore/courseAudit";
 import { sessionModeForWeek } from "@/lib/firestore/courseGroups";
+import { REGISTER_FOLLOW_UP_TASK_SOURCE } from "@/lib/firestore/courseTasks";
 import { courseRunChannel, normalizeCourseRun } from "@/lib/firestore/courses";
-import { readCoursesConfig } from "@/lib/firestore/config";
+import {
+  DEFAULT_COURSES_CONFIG,
+  readCoursesConfig,
+  type CoursesConfig,
+} from "@/lib/firestore/config";
 import { signToken } from "@/lib/signedTokens";
 
 /**
@@ -50,6 +63,11 @@ import { signToken } from "@/lib/signedTokens";
  *      that can be rebuilt from its source at any time cannot drift at all.
  *   3. THE NEXT SESSION'S REMINDER GOES OUT, once, to the members of THIS
  *      GROUP, carrying the next week's material and the weekly feedback link.
+ *   4. THE FOLLOW-UP CARD CLOSES. If the register had gone unmarked long
+ *      enough for the scheduler to raise a committee task about it, that task
+ *      is archived here: the push is the one thing the card asked for. Best
+ *      effort, after the commit, and free (no reads at all) on any register
+ *      pushed before the grace has passed. See `archiveRegisterFollowUp`.
  *
  * ── (1) AND (2) ARE ONE TRANSACTION. (3) IS NOT, AND MUST NOT BE. ───────────
  * A `.create()` collision inside a Firestore transaction aborts the WHOLE
@@ -207,6 +225,98 @@ function isEmptyHeldRegister(data: Record<string, unknown>): boolean {
   const records = data.records;
   if (!records || typeof records !== "object") return true;
   return Object.keys(records as Record<string, unknown>).length === 0;
+}
+
+/**
+ * How many follow-up cards the fallback query will close. One is the real
+ * answer; the limit exists so a corrupt pointer cannot turn a push into an
+ * unbounded write.
+ */
+const MAX_FOLLOW_UPS_CLOSED = 5;
+
+/**
+ * CLOSE THE UNMARKED-REGISTER FOLLOW-UP, if the scheduler raised one.
+ *
+ * The push is the exact thing the card asks for, so the card has no business
+ * outliving it. Archived rather than deleted: the committee board hides
+ * archived tasks by default, and the chase stays on the record.
+ *
+ * TWO LOOKUPS, cheapest first, and neither of them runs on the ordinary path.
+ *  0. NO READS AT ALL before the grace has passed. A register pushed the same
+ *     evening cannot have a card, and that is the overwhelming majority of
+ *     pushes, so the whole helper returns on one date comparison.
+ *  1. THE DETERMINISTIC ID, which is where the card is in every normal case.
+ *  2. A QUERY ON THE POINTER, which is where it is when the deterministic id
+ *     was already occupied by somebody else's task and the job fell back to
+ *     its alternative id. `sourceRef` is the right thing to query on: no
+ *     client can set it at create (firestore.rules pins it null) and no
+ *     committee member can move it afterwards (pinned equal), so a row that
+ *     matches really was minted by the tick.
+ *
+ * Two equality filters plus a third, all on auto-indexed fields (map
+ * subfields are indexed like top-level ones and Firestore merges them), so no
+ * composite index is owed and none was added.
+ *
+ * BEST EFFORT, always. The register is locked and the mirrors are rebuilt
+ * before this is called; a failure here leaves a card an admin ticks by hand.
+ */
+async function archiveRegisterFollowUp(
+  db: Firestore,
+  opts: {
+    runId: string;
+    groupId: string;
+    session: ResolvedSession;
+    now: Date;
+    graceHours: number;
+  },
+): Promise<void> {
+  const { runId, groupId, session, now, graceHours } = opts;
+  try {
+    const endsAt = sessionInstants(session).endsAt;
+    if (endsAt === null) return;
+    if (now.getTime() < followUpDueAt(endsAt, graceHours).getTime()) return;
+
+    const patch = { archived: true, updatedAt: FieldValue.serverTimestamp() };
+    /** The card, and only the card: source AND the pointer it was aimed with. */
+    const isOurs = (data: Record<string, unknown> | undefined): boolean => {
+      if (!data || data.source !== REGISTER_FOLLOW_UP_TASK_SOURCE) return false;
+      const ref = data.sourceRef as Record<string, unknown> | null | undefined;
+      return (
+        Boolean(ref) &&
+        ref?.groupId === groupId &&
+        ref?.sessionKey === session.sessionKey
+      );
+    };
+
+    const primary = db
+      .collection("tasks")
+      .doc(registerFollowUpTaskId(runId, groupId, session.sessionKey));
+    const snap = await primary.get();
+    if (snap.exists && isOurs(snap.data())) {
+      await primary.update(patch);
+      return;
+    }
+
+    const found = await db
+      .collection("tasks")
+      .where("source", "==", REGISTER_FOLLOW_UP_TASK_SOURCE)
+      .where("sourceRef.groupId", "==", groupId)
+      .where("sourceRef.sessionKey", "==", session.sessionKey)
+      .limit(MAX_FOLLOW_UPS_CLOSED)
+      .get();
+    await Promise.all(
+      found.docs
+        .filter((doc) => !doc.data().archived)
+        .map((doc) => doc.ref.update(patch)),
+    );
+  } catch (err) {
+    console.error(
+      "[courses push] could not close the unmarked-register follow-up",
+      groupId,
+      session.sessionKey,
+      err,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -423,6 +533,40 @@ export async function POST(
     throw err;
   }
 
+  // ── THE FOLLOW-UP TASK CLOSES ────────────────────────────────────────────
+  // Read AFTER the commit and best effort, like everything below it: the
+  // register is locked and the mirrors are correct whatever happens here, and
+  // a task left open is a card an admin ticks by hand rather than a lost
+  // register. Placed ABOVE the already-pushed early return on purpose, so a
+  // second press also closes a card the first press could not.
+  //
+  // The config is read here rather than further down because the archive
+  // needs the grace to know whether a card can exist at all. It is still read
+  // BEFORE the send marker is claimed, which is the property the reminder
+  // lane below depends on.
+  //
+  // GUARDED, because this read now sits above the already-pushed early return
+  // and therefore on the path of an ordinary second press. An unguarded throw
+  // there would turn a harmless second press into a 500 AFTER the register was
+  // committed, which reads to the facilitator as "the push failed" about a
+  // push that succeeded. A failure leaves `config` null instead; the archive
+  // falls back to the default grace (best effort over a card that may not
+  // exist) and the reminder lane below refuses to send rather than mailing the
+  // cohort with default copy.
+  let config: CoursesConfig | null = null;
+  try {
+    config = await readCoursesConfig(db);
+  } catch (err) {
+    console.error("[courses push] course settings read failed", groupId, err);
+  }
+  await archiveRegisterFollowUp(db, {
+    runId,
+    groupId,
+    session,
+    now,
+    graceHours: (config ?? DEFAULT_COURSES_CONFIG).unmarkedRegisterGraceHours,
+  });
+
   // An ordinary second press. An admin FORCING a resend carries on into the
   // reminder lane instead: that is the whole point of the force, and the
   // register is already locked and mirrored either way.
@@ -501,7 +645,19 @@ export async function POST(
   // never happened, and the only recovery lane left would be the run-wide force
   // that mails every OTHER group a second time. After this point only the
   // transport itself can fail, and the per-group force below is that recovery.
-  const config = await readCoursesConfig(db);
+  // (`config` is read further up, where the follow-up archive needs it. Same
+  // property, one read. A read that FAILED is the one case this lane cannot
+  // ride out: sending with default copy would silently drop the feedback link
+  // and burn the group's one claim on it, so the send is refused instead. The
+  // register is locked either way and the next push retries cleanly, because
+  // nothing has been claimed.)
+  if (!config) {
+    return done(
+      0,
+      skipped,
+      "The course settings couldn't be read, so no reminder was sent. Try the push again in a moment.",
+    );
+  }
   const template = await resolveCourseNudgeTemplate(db);
 
   // ── CLAIM THE MARKER, OUTSIDE THE TRANSACTION ────────────────────────────

@@ -120,10 +120,15 @@ const {
   groupsDiverge,
   memberCurrentWeek,
   resolveCalendar,
+  resolveGroupCalendar,
+  resolveGroupCalendars,
   resolveWeekDoc,
   resolveWeekDocs,
   resolveWeekRef,
 } = await loadTs("lib/courses/groupResolve.ts");
+const { ownAttendanceSessions, sessionsFromJoinWeek } = await loadTs(
+  "lib/courses/ownAttendance.ts",
+);
 const { addDaysToKey, currentWeekFor } = await loadTs("lib/courses/weekPlan.ts");
 const { normalizeCourseWeek, weekDocId } = await loadTs("lib/firestore/courses.ts");
 const {
@@ -141,6 +146,7 @@ const { templateWeekFields } = await loadTs("lib/firestore/courseTemplates.ts");
 const src = (...parts) => readFileSync(join(SRC, ...parts), "utf8");
 const api = (...parts) => src("app", "api", "courses", ...parts);
 
+const OVERVIEW = api("runs", "[runId]", "overview", "route.ts");
 const FORK = api("groups", "[groupId]", "weeks", "[weekId]", "fork", "route.ts");
 const WEEK_PATCH = api("groups", "[groupId]", "weeks", "[weekId]", "route.ts");
 const PACE = api("groups", "[groupId]", "pace", "route.ts");
@@ -684,4 +690,417 @@ test("GUARD — the rules lock group-week forks and pin the pace/mode fields", (
   assert.doesNotMatch(RULES, /ovMode\(/);
   // The birth pins: a group is created with none of the server-owned trio.
   assert.match(RULES, /request\.resource\.data\.get\('sessionModes', \{\}\)\.size\(\) == 0/);
+});
+
+// ---------------------------------------------------------------------------
+// resolveGroupCalendar / resolveGroupCalendars (PR26)
+//
+// THE BUG THESE PIN: the overview route resolved ONE calendar for the caller
+// and drew a card per group off it, so a facilitator holding two groups on
+// different pacing was shown the same week number and the same dates twice.
+// The unit of resolution is a GROUP, not a caller.
+// ---------------------------------------------------------------------------
+
+test("GUARD: two groups on different pacing resolve two different current weeks", () => {
+  const now = dayOf(30); // the run's own cohort is on week 5
+  const monday = pace(); // tracks the run
+  const thursday = pace({ paceStartDate: addDaysToKey(START, 14) }); // 2 weeks behind
+
+  const a = resolveGroupCalendar(run(), monday, now);
+  const b = resolveGroupCalendar(run(), thursday, now);
+
+  assert.equal(a.currentWeek.weekNumber, 5);
+  assert.equal(b.currentWeek.weekNumber, 3);
+  assert.notEqual(a.currentWeek.weekNumber, b.currentWeek.weekNumber);
+  // And two different date ranges: each card's dates are built from its own
+  // resolved start, which is the whole point of resolving per group.
+  assert.equal(a.calendar.startDate, START);
+  assert.equal(b.calendar.startDate, addDaysToKey(START, 14));
+  assert.equal(a.calendar.source, "run");
+  assert.equal(b.calendar.source, "group");
+
+  // An offset that is NOT a whole number of weeks moves the slot boundary too,
+  // so the two groups disagree about when the current week even began. (Two
+  // groups exactly two weeks apart share slot boundaries and differ only in
+  // week number, which is why that is asserted separately above.)
+  const midweek = resolveGroupCalendar(
+    run(),
+    pace({ paceStartDate: addDaysToKey(START, 3) }),
+    now,
+  );
+  assert.notEqual(midweek.currentWeek.slotStartKey, a.currentWeek.slotStartKey);
+});
+
+test("GUARD: a group's own PLAN changes its own totalWeeks, not the run's", () => {
+  const now = dayOf(30);
+  const full = resolveGroupCalendar(run(), pace(), now);
+  const short = resolveGroupCalendar(run(), pace({ paceWeekPlan: plainPlan(6) }), now);
+
+  assert.equal(full.totalWeeks, 8);
+  assert.equal(short.totalWeeks, 6);
+  // Breaks are excluded from the count, exactly as the payload's `totalWeeks`
+  // has always been: a reading week is not a taught week.
+  const withBreak = resolveGroupCalendar(
+    run(),
+    pace({ paceWeekPlan: [week(1), brk("Reading week"), week(2)] }),
+    now,
+  );
+  assert.equal(withBreak.totalWeeks, 2);
+});
+
+test("GUARD: an unusable start date yields a NULL week, never a throw", () => {
+  // `currentWeekFor` throws a RangeError by contract; a summary a page renders
+  // must not. The resolved date is what is guarded, so a group pacing itself
+  // onto nothing is covered as well as a run that has never been dated.
+  const undated = resolveGroupCalendar(run({ startDate: "" }), null, dayOf(30));
+  assert.equal(undated.currentWeek, null);
+  assert.equal(undated.calendar.startDate, "");
+  assert.equal(undated.totalWeeks, 8, "the plan is still readable without dates");
+
+  // A garbled stored pace date normalises to TRACKING upstream, so the run's
+  // date answers and the week is real. Pinned here so the null above cannot be
+  // mistaken for "any group override can blank the calendar".
+  const tracking = resolveGroupCalendar(
+    run(),
+    normalizeCourseGroup("g", { paceStartDate: "2026-02-31" }),
+    dayOf(30),
+  );
+  assert.equal(tracking.currentWeek.weekNumber, 5);
+});
+
+test("GUARD: resolveGroupCalendars keys by id, on ONE clock, and dedupes", () => {
+  const now = dayOf(30);
+  const groups = [
+    { id: "mon__a", ...pace() },
+    { id: "thu__b", ...pace({ paceStartDate: addDaysToKey(START, 14) }) },
+    // A repeat of the first id must not resolve twice, nor overwrite it.
+    { id: "mon__a", ...pace({ paceStartDate: addDaysToKey(START, -7) }) },
+  ];
+  const byId = resolveGroupCalendars(run(), groups, now);
+
+  assert.equal(byId.size, 2);
+  assert.equal(byId.get("mon__a").currentWeek.weekNumber, 5);
+  assert.equal(byId.get("thu__b").currentWeek.weekNumber, 3);
+  // The shared clock is the point: the same `now` reaches every group, so a
+  // request spanning a midnight cannot report its own timing as pacing.
+  assert.deepEqual(byId.get("mon__a"), resolveGroupCalendar(run(), pace(), now));
+});
+
+// ---------------------------------------------------------------------------
+// The overview payload's own ordering and shape (asserted at the source)
+// ---------------------------------------------------------------------------
+
+test("GUARD: the overview resolves ownGroup BEFORE any calendar", () => {
+  // Load-bearing, and stated as such in the route: the group is the first half
+  // of every resolution below it. A calendar resolved first would have nothing
+  // to resolve THROUGH, and the fix for the two-group case would silently
+  // become "pick one".
+  const ownGroupAt = OVERVIEW.indexOf("const ownGroup =");
+  const calendarAt = OVERVIEW.indexOf("const own = calendarFor(ownGroup)");
+  assert.ok(ownGroupAt > 0, "ownGroup is still resolved by that name");
+  assert.ok(calendarAt > 0, "the caller's calendar is resolved through it");
+  assert.ok(ownGroupAt < calendarAt, "ownGroup must be resolved first");
+  // And the ordering is documented where it can be read, not only pinned here.
+  assert.match(OVERVIEW, /RESOLVED BEFORE THE CALENDAR/);
+});
+
+test("GUARD: `group` stays NULL for a multi-group facilitator, never groups[0]", () => {
+  // Two groups facilitated leaves `ownGroup` null by construction...
+  assert.match(OVERVIEW, /\(facilitates\.length === 1 \? facilitates\[0\] : null\)/);
+  // ...and `group` is derived from `ownGroup`, so it inherits that null.
+  assert.match(
+    OVERVIEW,
+    /const group: OverviewGroup \| null =\s*\(ownGroup \? groupCardPayloads\.find/,
+  );
+  // The shim the contract forbids: `group` must never fall back to the first
+  // card just because there is one.
+  assert.doesNotMatch(OVERVIEW, /group\s*=\s*groupCardPayloads\[0\]/);
+  assert.doesNotMatch(OVERVIEW, /groups\[0\]\s*\?\?/);
+  // Deprecated, with the removal PR named (contract: kept for one release).
+  assert.match(OVERVIEW, /@deprecated[\s\S]{0,160}REMOVED IN PR38/);
+});
+
+test("GUARD: every card is dated by ITS OWN group's week, not the caller's", () => {
+  // The whole bug in one line: the slot fields resolve through the card's own
+  // calendar. A single shared `weekId` computed once from the caller's current
+  // week is what put the wrong week's room on a second group's card.
+  assert.match(
+    OVERVIEW,
+    /const groupCalendar = calendarFor\(source\);\s*const session = sessionForWeek\(source, currentWeekId\(groupCalendar\.currentWeek\)\);/,
+  );
+  assert.doesNotMatch(OVERVIEW, /const weekId = currentWeekId\(currentWeek\)/);
+  // Its range comes from the sessions resolved off the SAME calendar object,
+  // never a second resolution of the same thing.
+  assert.match(OVERVIEW, /resolveSessions\(run, source, groupCalendar\.calendar\)/);
+});
+
+test("GUARD: own attendance is a learner's own row, gated and never queried", () => {
+  // Learner only: a facilitator runs the room and an admin reading over the
+  // cohort's shoulder has no row of their own.
+  assert.match(OVERVIEW, /liveEnrolment\?\.role === "learner" &&/);
+  // And their OWN placement, matched by id. `ownGroup` falls back to the single
+  // group the caller facilitates, so a learner whose own group is archived
+  // would otherwise have their attendance read out of the registers of a room
+  // they teach: real marks, belonging to somebody, under the wrong dates.
+  assert.match(OVERVIEW, /ownGroup\?\.id === liveEnrolment\.groupId/);
+  // Addressed by the construct-only id, never a query over the collection.
+  assert.match(OVERVIEW, /attendanceDocId\(\s*runId,\s*ownLearnerGroup\.id,/);
+  assert.doesNotMatch(OVERVIEW, /collection\("courseAttendance"\)\s*\.where/);
+  // Projected through the shared helper rather than spread out of a register.
+  assert.match(OVERVIEW, /ownAttendanceSessions\(actor\.uid, ownSessions, ownRegisters\)/);
+  // The route never names the two fields the projection exists to keep out, so
+  // there is no line here that could start carrying them by a small edit.
+  assert.doesNotMatch(OVERVIEW, /participantNotes/);
+  assert.doesNotMatch(OVERVIEW, /normalizeCourseAttendance/);
+  // Bounded: a corrupt plan cannot turn one page load into an unbounded getAll.
+  // The CAP EXPRESSION itself, not merely the identifier: a constant that is
+  // named but never sliced with would satisfy a name-only assertion while the
+  // read stayed unbounded.
+  assert.match(OVERVIEW, /\.slice\(0, MAX_OWN_ATTENDANCE_SESSIONS\)/);
+  // And bounded from the JOIN WEEK too, before the cap, so a mid-run joiner
+  // neither fetches nor is shown the weeks before their placement.
+  assert.match(
+    OVERVIEW,
+    /sessionsFromJoinWeek\(\s*resolveSessions\(run, ownLearnerGroup, own\.calendar\),\s*liveEnrolment\?\.joinedWeekNumber \?\? 1,\s*\)\.slice\(0, MAX_OWN_ATTENDANCE_SESSIONS\)/,
+  );
+});
+
+test("GUARD: the route resolves every card's calendar through ONE shared pass", () => {
+  // `resolveGroupCalendars` is the one-clock pass, and the route READS its map
+  // rather than resolving per card in a closure: the caller's own group used to
+  // be resolved twice, once for the top-level fields and again for its card.
+  assert.match(OVERVIEW, /const groupCalendars = resolveGroupCalendars\(run, groupCards, now\)/);
+  assert.match(OVERVIEW, /const resolved = groupCalendars\.get\(group\.id\)/);
+  // The cards are built BEFORE the calendars, because they are the list the
+  // pass is run over.
+  assert.ok(
+    OVERVIEW.indexOf("const groupCards: CourseGroupDoc[] = []") <
+      OVERVIEW.indexOf("const groupCalendars = resolveGroupCalendars"),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// ownAttendanceSessions: the projection, and what it must never carry
+// ---------------------------------------------------------------------------
+
+/** One session, shaped exactly as `resolveSessions` yields it. */
+const ownSession = (weekNumber, dateKey, occurrence = 1) => ({
+  weekNumber,
+  weekId: weekDocId(weekNumber),
+  occurrence,
+  sessionKey:
+    occurrence === 1
+      ? weekDocId(weekNumber)
+      : `${weekDocId(weekNumber)}-${occurrence}`,
+  slotStartKey: dateKey,
+  dateKey,
+  session: {
+    weekday: 2,
+    startTimeLocal: "18:00",
+    durationMinutes: 90,
+    location: "Hallward B12",
+    meetingUrl: null,
+    notes: "",
+  },
+});
+
+test("GUARD: an UNPUSHED register is invisible, by construction", () => {
+  const sessions = [ownSession(1, "2026-09-29"), ownSession(2, "2026-10-06")];
+  const registers = new Map([
+    ["w01", { pushedAt: new Date("2026-09-29T20:00:00Z"), records: { ada: "present" } }],
+    // Week 2 is a draft the facilitator is still saving during the session.
+    ["w02", { pushedAt: null, records: { ada: "absent" } }],
+  ]);
+
+  const out = ownAttendanceSessions("ada", sessions, registers);
+  assert.equal(out.length, 1, "only the pushed session travels");
+  assert.equal(out[0].sessionKey, "w01");
+  assert.equal(out[0].status, "present");
+  // Not merely absent from the list: the draft's mark must appear nowhere.
+  assert.ok(!JSON.stringify(out).includes("absent"));
+});
+
+test("GUARD: the projection carries no other uid's mark and no participant notes", () => {
+  // THE SENTINEL. A register is the whole room's record plus the facilitator's
+  // private notes about named students. The projection reads four fields and
+  // copies nothing, so a field added to `courseAttendance` next term travels
+  // nowhere by default.
+  const sessions = [ownSession(1, "2026-09-29")];
+  const registers = new Map([
+    [
+      "w01",
+      {
+        pushedAt: { toDate: () => new Date("2026-09-29T20:00:00Z") },
+        records: { ada: "late", grace: "absent", linus: "excused" },
+        participantNotes: {
+          grace: "SECRET-NOTE-ABOUT-GRACE",
+          ada: "SECRET-NOTE-ABOUT-ADA",
+        },
+        pushedByUid: "facilitator-uid",
+        markedByUid: "facilitator-uid",
+        notes: "SECRET-SESSION-NOTE",
+      },
+    ],
+  ]);
+
+  const out = ownAttendanceSessions("ada", sessions, registers);
+  const wire = JSON.stringify(out);
+
+  assert.equal(out.length, 1);
+  assert.equal(out[0].status, "late", "the caller's own mark is the one fact kept");
+  for (const leak of [
+    "grace",
+    "linus",
+    "SECRET-NOTE-ABOUT-GRACE",
+    "SECRET-NOTE-ABOUT-ADA",
+    "SECRET-SESSION-NOTE",
+    "facilitator-uid",
+    "participantNotes",
+    "records",
+  ]) {
+    assert.ok(!wire.includes(leak), `the payload must not carry ${leak}`);
+  }
+  assert.deepEqual(Object.keys(out[0]).sort(), [
+    "dateKey",
+    "held",
+    "occurrence",
+    "sessionKey",
+    "status",
+    "weekNumber",
+  ]);
+});
+
+test("GUARD: an unmarked cell in a pushed register is null here, not 'absent'", () => {
+  // The rollup counts it as an absence (its rule 4). The per-session list is a
+  // record of what was WRITTEN DOWN, so a page can say "not marked" instead of
+  // accusing someone of missing a session nobody recorded. The disagreement is
+  // deliberate and both halves ship on the same payload.
+  const sessions = [ownSession(1, "2026-09-29"), ownSession(2, "2026-10-06")];
+  const registers = new Map([
+    ["w01", { pushedAt: new Date(), records: { grace: "present" } }],
+    // A cancelled session: held false removes it from every denominator.
+    ["w02", { pushedAt: new Date(), held: false, records: {} }],
+  ]);
+
+  const out = ownAttendanceSessions("ada", sessions, registers);
+  assert.deepEqual(
+    out.map((s) => [s.sessionKey, s.status, s.held]),
+    [
+      ["w01", null, true],
+      ["w02", null, false],
+    ],
+  );
+});
+
+test("GUARD: a mid-run joiner has no row before the week they joined", () => {
+  // THE BUG THIS PINS: the projection was handed every session of the term, so
+  // somebody added in week 4 read three "Not marked" rows for a room they had
+  // not joined, directly beside a rollup whose denominator starts at week 4.
+  const sessions = [1, 2, 3, 4, 5].map((n) =>
+    ownSession(n, `2026-09-${String(21 + (n - 1) * 7).padStart(2, "0")}`),
+  );
+  const kept = sessionsFromJoinWeek(sessions, 4);
+
+  assert.deepEqual(
+    kept.map((s) => s.weekNumber),
+    [4, 5],
+  );
+  // The filter is what the projection then reads, so the pre-join weeks cannot
+  // reappear as rows even when their registers were pushed.
+  const registers = new Map(
+    sessions.map((s) => [s.sessionKey, { pushedAt: new Date(), records: {} }]),
+  );
+  assert.deepEqual(
+    ownAttendanceSessions("ada", kept, registers).map((s) => s.weekNumber),
+    [4, 5],
+  );
+  // Week 1 is the floor and the default: a joiner can only ever be shown MORE
+  // of their own record, never less, on a missing or garbled number.
+  for (const bad of [1, 0, -3, NaN, undefined]) {
+    assert.equal(sessionsFromJoinWeek(sessions, bad).length, 5);
+  }
+  // A fractional week floors rather than rounding a joiner past a session.
+  assert.deepEqual(
+    sessionsFromJoinWeek(sessions, 3.7).map((s) => s.weekNumber),
+    [3, 4, 5],
+  );
+  // A floor past the end of term is empty, not the whole term.
+  assert.deepEqual(sessionsFromJoinWeek(sessions, 99), []);
+});
+
+test("GUARD: a garbled stored mark reads as unmarked, and no uid reads as nothing", () => {
+  const sessions = [ownSession(1, "2026-09-29")];
+  const registers = new Map([
+    ["w01", { pushedAt: new Date(), records: { ada: "attended" } }],
+  ]);
+  assert.equal(ownAttendanceSessions("ada", sessions, registers)[0].status, null);
+  assert.deepEqual(ownAttendanceSessions("", sessions, registers), []);
+});
+
+// ---------------------------------------------------------------------------
+// The run home's own wiring (asserted at the source: React components cannot
+// be imported by this loader any more than route handlers can)
+// ---------------------------------------------------------------------------
+
+const RUN_HOME = src("features", "courses", "RunHome.tsx");
+const GROUP_PANEL = src("features", "courses", "FacilitatorGroupPanel.tsx");
+
+test("GUARD: every card on the run home reads its OWN group's calendar", () => {
+  // The facilitator card is a component precisely because each one needs its
+  // own roster fetch, and it now needs its own calendar for the same reason.
+  assert.match(GROUP_PANEL, /weekLine\(group\.calendar\)/);
+  assert.match(GROUP_PANEL, /rangeLine\(group\.calendar\)/);
+  assert.match(GROUP_PANEL, /nextLine\(group\.calendar\)/);
+  // Including the materials link: a week handed down from the page would be
+  // the caller's, which for a two-group facilitator is the run's and so
+  // neither group's.
+  assert.match(GROUP_PANEL, /materialsWeek\(group\.calendar, publishedWeekNumbers\)/);
+  assert.doesNotMatch(GROUP_PANEL, /targetWeekNumber: number \| null/);
+
+  // The session card is dated by its own group too, not by the page's week.
+  assert.match(RUN_HOME, /slotStartKey=\{group\.calendar\.currentWeek\?\.slotStartKey \?\? null\}/);
+  assert.match(RUN_HOME, /const cardCurrentWeek = group\?\.calendar\.currentWeek \?\? null;/);
+});
+
+test("GUARD: the run home links the progress page and shows own attendance", () => {
+  // /learn/[runId]/progress shipped with no link to it from anywhere. This is
+  // the link, and it sits on the same card as the member's own record.
+  assert.match(RUN_HOME, /\/progress`\}/);
+  assert.match(RUN_HOME, /<ProgressPanel runId=\{runId\} ownAttendance=\{data\.ownAttendance\} \/>/);
+  // Learners only: a facilitator has no attendance of their own.
+  assert.match(RUN_HOME, /\{access\.isEnrolled && \(/);
+  // An unmarked cell reads as unmarked, never as an absence, on the row that
+  // reports what was written down. (The rollup counts it as an absence, which
+  // is what the summary line above the list is built from.)
+  assert.match(RUN_HOME, /: "Not marked"/);
+  // And the copy says why a session might be missing from the list at all.
+  assert.match(RUN_HOME, /once your facilitator finishes each/);
+  // A learner with no group yet gets their own sentence: the standing copy
+  // names a facilitator they have not got one of.
+  assert.match(RUN_HOME, /ownAttendance === null \? \(/);
+  assert.match(RUN_HOME, /placed in a group soon/);
+});
+
+test("GUARD: one spelling of a week URL, shared by both surfaces", () => {
+  // The panel used to re-inline the template literal the run home held
+  // locally, `encodeURIComponent` being the half that goes missing when a link
+  // is retyped two components apart.
+  const LINKS = src("features", "courses", "links.ts");
+  assert.match(LINKS, /export function weekHref\(runId: string, weekNumber: number\)/);
+  assert.match(LINKS, /\/learn\/\$\{encodeURIComponent\(runId\)\}\/weeks\/\$\{weekNumber\}/);
+  for (const file of [RUN_HOME, GROUP_PANEL]) {
+    assert.match(file, /from "\.\/links"/);
+    assert.match(file, /weekHref\(runId, /);
+    assert.doesNotMatch(file, /\/weeks\/\$\{[a-zA-Z]/);
+  }
+});
+
+test("GUARD: the progress page is linked from the run's sub nav too", () => {
+  // The contract resolves this page's orphan status by linking it from the run
+  // sub nav. There is no standing nav component under `/learn/[runId]`, so the
+  // week header's eyebrow row (the one run-scoped nav on every page inside a
+  // run) carries it, and the run home's card link is no longer the only door.
+  const WEEK_VIEW = src("features", "courses", "WeekView.tsx");
+  assert.match(WEEK_VIEW, /href=\{`\$\{runHomeHref\}\/progress`\}/);
+  assert.match(WEEK_VIEW, /THE RUN'S SUB NAV/);
 });

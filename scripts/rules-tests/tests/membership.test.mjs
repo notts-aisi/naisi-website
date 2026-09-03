@@ -32,6 +32,23 @@
  * writing themselves a membership badge with no row behind it now that the
  * badge means something recorded.
  *
+ * ## membershipImports, and its rows subcollection (PR28)
+ *
+ * The uploaded SU list and one row per line of it. Both shut in both
+ * directions at every role. Two reasons worth stating:
+ *
+ *  - a row carries a NAME and an EMAIL for somebody on the Students' Union's
+ *    list, and for most rows that is a person with no account here at all.
+ *    That is not roster data an SU-recognised committee member may browse;
+ *  - the commit route reads its rows from Firestore precisely so a browser
+ *    cannot assert a match and its own confirmation together. A client that
+ *    could WRITE a row could grant itself a membership through the commit
+ *    route without ever touching `memberships`.
+ *
+ * Rules do not inherit downwards, so the subcollection has its own match block
+ * and its own tests. A block covering only the parent would leave every row
+ * readable, which is the failure this file exists to catch.
+ *
  * ## Mutation check (each restored bit-exact afterwards)
  *
  *  1. Change `match /memberships/{membershipId}` to
@@ -42,6 +59,9 @@
  *     `allow read: if isSignedIn()` -> the period read tests go red.
  *  3. Delete either `paidMembershipYears` pin in the users block -> the
  *     cache-forgery tests at the foot go red.
+ *  4. Delete the nested `match /rows/{rowId}` block, keeping the parent ->
+ *     every rows test goes red and the parent tests stay green, which is the
+ *     whole reason the subcollection is tested separately.
  */
 import { after, afterEach, before, describe, it } from "node:test";
 import {
@@ -66,6 +86,7 @@ afterEach(clearData);
 
 const PERIOD_ID = "2026-27";
 const MEMBERSHIP_ID = `member1__${PERIOD_ID}`;
+const BATCH_ID = "import-2026-27-2026-10-09t14-31__k3f9a2b1";
 
 /**
  * Everyone whose access is worth a separate answer: a plain member (who owns
@@ -106,6 +127,38 @@ async function seedCast() {
       updatedAt: new Date(),
       updatedByUid: "admin1",
     });
+    await db.collection("membershipImports").doc(BATCH_ID).set({
+      periodId: PERIOD_ID,
+      filename: "su-list.csv",
+      status: "dry-run",
+      totalRows: 2,
+      counts: { uniEmail: 1, personalEmail: 0, needsConfirm: 1, duplicate: 0, unmatched: 0 },
+      committedRows: 0,
+      skippedRows: 0,
+      awaitingConfirm: 0,
+      nextRowSeq: 1,
+      uploadedAt: new Date(),
+      uploadedByUid: "admin1",
+      uploadedByName: "Sam Admin",
+    });
+    await db
+      .collection("membershipImports")
+      .doc(BATCH_ID)
+      .collection("rows")
+      .doc("0001")
+      .set({
+        seq: 1,
+        line: 2,
+        name: "Ada Lovelace",
+        email: "ada@example.com",
+        uniEmail: "ada@nottingham.ac.uk",
+        tier: "paid",
+        matchKind: "uni-email",
+        matchedUid: "member1",
+        matchNote: "",
+        state: "pending",
+        skipReason: "",
+      });
   });
 }
 
@@ -219,6 +272,88 @@ describe("config/membership, the CURRENT pointer", () => {
       await assertFails(
         db.collection("config").doc("membership").set({ currentPeriodId: "2025-26" }),
       );
+    }
+  });
+});
+
+describe("membershipImports is shut to every client", () => {
+  it("refuses a read of the batch at every role, and to a signed-out visitor", async () => {
+    await seedCast();
+    for (const uid of EVERY_ROLE) {
+      const db = await asUser(uid);
+      await assertFails(db.collection("membershipImports").doc(BATCH_ID).get());
+      await assertFails(db.collection("membershipImports").get());
+    }
+    const anon = await asAnon();
+    await assertFails(anon.collection("membershipImports").doc(BATCH_ID).get());
+  });
+
+  it("refuses create, update and delete of a batch at every role", async () => {
+    await seedCast();
+    for (const uid of EVERY_ROLE) {
+      const db = await asUser(uid);
+      await assertFails(
+        db.collection("membershipImports").doc("mine").set({ periodId: PERIOD_ID }),
+      );
+      await assertFails(
+        db.collection("membershipImports").doc(BATCH_ID).update({ status: "committed" }),
+      );
+      await assertFails(db.collection("membershipImports").doc(BATCH_ID).delete());
+    }
+  });
+});
+
+describe("the rows subcollection has its own block, and is shut too", () => {
+  // Rules do not inherit downwards: a block covering only the parent would
+  // leave every row of the SU list readable by any signed-in account.
+  function rows(db) {
+    return db.collection("membershipImports").doc(BATCH_ID).collection("rows");
+  }
+
+  it("refuses a read of a row at every role, and to a signed-out visitor", async () => {
+    await seedCast();
+    for (const uid of EVERY_ROLE) {
+      const db = await asUser(uid);
+      await assertFails(rows(db).doc("0001").get());
+      await assertFails(rows(db).get());
+    }
+    const anon = await asAnon();
+    await assertFails(rows(anon).doc("0001").get());
+  });
+
+  it("refuses a query for the caller's own matched rows", async () => {
+    // The row that names YOU is still a row of somebody else's file, and it
+    // carries the address the SU holds for you rather than the one you gave us.
+    await seedCast();
+    const db = await asUser("member1");
+    await assertFails(rows(db).where("matchedUid", "==", "member1").get());
+  });
+
+  it("refuses a collection-group read of every import row on the site", async () => {
+    await seedCast();
+    for (const uid of ["member1", "su1", "manager1", "admin1"]) {
+      const db = await asUser(uid);
+      await assertFails(db.collectionGroup("rows").get());
+    }
+  });
+
+  it("refuses create, update and delete of a row at every role", async () => {
+    // The commit route reads rows from Firestore, so a writable row is a
+    // membership anybody can grant themselves without touching `memberships`.
+    await seedCast();
+    for (const uid of EVERY_ROLE) {
+      const db = await asUser(uid);
+      await assertFails(
+        rows(db).doc("0002").set({
+          seq: 2,
+          matchKind: "uni-email",
+          matchedUid: uid,
+          tier: "paid",
+          state: "pending",
+        }),
+      );
+      await assertFails(rows(db).doc("0001").update({ matchedUid: uid }));
+      await assertFails(rows(db).doc("0001").delete());
     }
   });
 });
