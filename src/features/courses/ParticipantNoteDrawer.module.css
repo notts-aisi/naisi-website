@@ -1,0 +1,74 @@
+/* ============================================================
+   ParticipantNoteDrawer: one private note about one person.
+
+   The disclosure line is the only styled block in here, and it
+   is styled to be read rather than to warn: a bordered, quiet
+   panel above the box, not a red alert. It says the same thing
+   every time, so a colour that shouts would be tuned out by
+   week three, and being tuned out is the one failure mode this
+   sentence cannot have.
+   ============================================================ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: 1.3;
+  color: var(--color-text);
+}
+
+.meta {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
+.disclosure {
+  margin: 0;
+  padding: var(--space-3);
+  border-left: 2px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--color-danger);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: flex-end;
+}
+
+/* === Mobile =============================================== */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .actions {
+    flex-direction: column-reverse;
+  }
+
+  .actions > * {
+    width: 100%;
+  }
+}

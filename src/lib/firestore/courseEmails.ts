@@ -324,7 +324,8 @@ export const courseTemplateDefaults: Record<
    *
    *  1. **It has its own token map.** `{firstName}` `{courseTitle}`
    *     `{runLabel}` `{weekNumber}` `{weekTitle}` `{weekSummary}`
-   *     `{sessionWhen}` `{sessionWhere}` `{weekPrep}` `{weekUrl}` resolve here;
+   *     `{sessionWhen}` `{sessionWhere}` `{weekPrep}` `{weekUrl}`
+   *     `{feedbackUrl}` resolve here;
    *     `{preferredName}`, `{startDate}` and the group trio do NOT. The list is
    *     closed — a token outside it stays literal in the inbox.
    *  2. **An unresolved token deletes its sentence, it does not stay literal.**
@@ -358,6 +359,7 @@ export const courseTemplateDefaults: Record<
           "<p>Your group meets {sessionWhen}, {sessionWhere}.</p>" +
           "<p>{weekPrep}</p>" +
           '<p><a href="{weekUrl}" style="color:#2563eb">Open this week on the site</a></p>' +
+          '<p><a href="{feedbackUrl}" style="color:#2563eb">Tell us how the last session went</a></p>' +
           "<p>Read what you can. The week stays open, and nobody is keeping score.</p>",
       ),
     ],

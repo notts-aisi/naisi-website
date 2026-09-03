@@ -7,6 +7,7 @@ import {
   courseNudgeSessionWhere,
   courseWeekPrepLine,
   courseWeekUrl,
+  groupNudgeMarkerId,
   nudgeMarkerId,
   nudgeWeekMarkerIds,
   renderCourseNudge,
@@ -46,11 +47,29 @@ import {
   type CourseRunStatus,
 } from "@/lib/firestore/courses";
 import type { Block } from "@/lib/firestore/newsletterBlocks";
+import { readCoursesConfig } from "@/lib/firestore/config";
 import { signToken } from "@/lib/signedTokens";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
  * THE WEEK NUDGE — "a new week of the course is live, here's what's in it".
+ *
+ * ── V3: THIS IS NOW THE ADMIN CATCH-UP LANE ─────────────────────────────────
+ * The weekly reminder is sent by a facilitator pressing PUSH ATTENDANCE
+ * (`/api/courses/groups/[groupId]/attendance/push`), per group, keyed on that
+ * group's next session. What is left here is the catch-up, and it is
+ * ADMIN-ONLY for real sends:
+ *
+ *   · THE SESSION-1 WELCOME. No push exists before a run's first session, so
+ *     nothing in the group lane can produce it. An admin sends it from here.
+ *   · RECOVERY. A push locks its register and rebuilds the mirrors BEFORE it
+ *     mails anybody, precisely so a send failure leaves the record correct and
+ *     the mail owed. This lane, with `force`, is how that mail is recovered.
+ *
+ * It therefore reads the group lane's `gnudge__` markers before it sends and
+ * treats them as this calendar week's claim: refused without `force`, and
+ * RECORDED into its own marker with it, exactly as a neighbouring `nudge__`
+ * marker is. A run facilitator keeps the GET preview and the test send.
  *
  * ── A PREPARED SEND, NOT A SCHEDULED ONE (the shape of this whole route) ────
  * App Hosting is Cloud Run with a 60s request ceiling and NO SCHEDULER, so a
@@ -842,14 +861,19 @@ export async function GET(_req: Request, ctx: { params: Promise<{ runId: string 
 
   const runWeek = runWeekFacts(resolved);
   const runAddress = runWeekAddress(resolved);
-  const [marker, audience, groups, template, actorSnap, senderGroupId] = await Promise.all([
-    findWeekMarker(db, runId, resolved.slotStartKey),
-    resolveCohortAudience(db, runId, LANE),
-    loadGroups(db, run, runAddress, now),
-    resolveCourseNudgeTemplate(db),
-    db.collection("users").doc(actor.uid).get(),
-    ownGroupId(db, runId, actor.uid),
-  ]);
+  // `config` rides along so the preview carries the SAME feedback paragraph the
+  // send does. A proof that shows six paragraphs where the push mails seven is
+  // worse than no proof: it teaches an admin the wrong shape of the email.
+  const [marker, audience, groups, template, actorSnap, senderGroupId, config] =
+    await Promise.all([
+      findWeekMarker(db, runId, resolved.slotStartKey),
+      resolveCohortAudience(db, runId, LANE),
+      loadGroups(db, run, runAddress, now),
+      resolveCourseNudgeTemplate(db),
+      db.collection("users").doc(actor.uid).get(),
+      ownGroupId(db, runId, actor.uid),
+      readCoursesConfig(db),
+    ]);
 
   // The preview renders with the SENDER's own name and their own group context,
   // so it matches byte for byte what their test send will put in their inbox.
@@ -885,6 +909,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ runId: string 
       sessionWhen: sessionContext.sessionWhen,
       sessionWhere: sessionContext.sessionWhere,
       recipientName: senderName,
+      feedbackUrl: config.weeklyFeedbackUrl,
     }),
   );
 
@@ -958,11 +983,34 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
   const { testOnly, force } = parsed.value;
 
-  // Checked BEFORE the marker is consulted, so the permission does not depend on
-  // state: `force` is an admin-only flag whether or not it would have done
-  // anything. Distinguishable only to a caller who has ALREADY passed the
-  // run-staff gate, so it discloses nothing — and mailing a cohort a second time
-  // is worth refusing out loud rather than silently ignoring the flag.
+  // ── THE ADMIN CATCH-UP LANE (V3) ─────────────────────────────────────────
+  // The weekly reminder is now sent by the facilitator's PUSH ATTENDANCE, per
+  // group, keyed on that group's next session. This run-level send is what is
+  // left of the old lane, and it is a CATCH-UP for the two cases a push cannot
+  // cover: the SESSION-1 WELCOME, which no push can produce because no session
+  // has happened yet, and the recovery when a push locked a register and then
+  // failed to mail its group.
+  //
+  // Both are admin acts on behalf of a whole cohort. A run facilitator keeps
+  // the GET preview (reading what a cohort would receive is part of running
+  // one) and keeps the TEST send, which reaches only their own address and is
+  // how they check the copy before asking an admin to send it.
+  //
+  // Checked BEFORE the marker is consulted, so the permission does not depend
+  // on state.
+  if (!testOnly && !isAdmin) {
+    return NextResponse.json(
+      {
+        error:
+          "The weekly reminder is sent by a facilitator pushing their register. Only an admin can send the run-wide catch-up.",
+      },
+      { status: 403 },
+    );
+  }
+  // `force` is an admin-only flag whether or not it would have done anything.
+  // Distinguishable only to a caller who has ALREADY passed the run-staff
+  // gate, so it discloses nothing, and mailing a cohort a second time is worth
+  // refusing out loud rather than silently ignoring the flag.
   if (force && !isAdmin) {
     return NextResponse.json(
       { error: "Only an admin can force a nudge to re-send." },
@@ -1028,10 +1076,56 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
     : (actor.displayName?.trim() ?? "");
 
   const runWeek = runWeekFacts(resolved);
-  const [groups, template] = await Promise.all([
+  // `config` is read here, beside the template, because the catch-up is the
+  // lane that RECOVERS a failed push: an email missing the feedback paragraph
+  // the push would have carried is a different email, and the recovery has to
+  // put the same one in the inbox.
+  const [groups, template, config] = await Promise.all([
     loadGroups(db, run, runWeekAddress(resolved), now),
     resolveCourseNudgeTemplate(db),
+    readCoursesConfig(db),
   ]);
+
+  // ── HAS A PUSH ALREADY MAILED PART OF THIS COHORT THIS WEEK? (V3) ────────
+  // The facilitator's attendance push claims a `gnudge__` marker keyed on the
+  // slot of the session it is reminding people about, which is the slot this
+  // cohort is in now. So a marker at a group's CURRENT slot means that group
+  // has already had this week's reminder, and a run-wide catch-up would be
+  // their second.
+  //
+  // ONE addressed read per live group, batched, and only on the path that is
+  // about to send: the run-level marker check above already returned for the
+  // repeated-tick case, so this costs nothing in the common one. Refused
+  // without `force` and RECORDED with it, exactly as a neighbouring `nudge__`
+  // marker is, because a cohort mailed twice in one week has to be on the
+  // record either way.
+  let forcedOverGroupMarkerIds: string[] = [];
+  if (!testOnly) {
+    const groupMarkerIds = [...groups.addressByGroupId.entries()]
+      .filter(([, address]) => isValidDateKey(address.slotStartKey))
+      .map(([groupId, address]) =>
+        groupNudgeMarkerId(runId, groupId, address.slotStartKey),
+      );
+    if (groupMarkerIds.length > 0) {
+      const snaps = await db.getAll(
+        ...groupMarkerIds.map((id) => db.collection("courseNudges").doc(id)),
+      );
+      const claimedByGroups = snaps.filter((snap) => snap.exists).map((snap) => snap.id);
+      if (claimedByGroups.length > 0) {
+        if (!force) {
+          const result: NudgeSendResult = {
+            ok: true,
+            weekNumber: resolved.weekNumber,
+            sent: 0,
+            skipped: 0,
+            alreadySent: true,
+          };
+          return NextResponse.json(result);
+        }
+        forcedOverGroupMarkerIds = claimedByGroups;
+      }
+    }
+  }
 
   let skipped = 0;
   let recipients: CohortRecipient[] = [];
@@ -1125,6 +1219,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
     // fact has to be written INTO the new marker or the second blast leaves no
     // trace at all.
     const forcedOverMarkerId = claimed?.isNeighbour ? claimed.snap.id : null;
+    // A force over a group push's marker is the same fact in a different
+    // family: those groups have already had this week's reminder from their
+    // own facilitator, and the ids have to be written into this document
+    // because the `.create()` below cannot collide with them either.
+    const forcedOverGroups = forcedOverGroupMarkerIds.length > 0;
     try {
       await markerRef.create({
         kind: "week-nudge",
@@ -1142,23 +1241,41 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
         // A marker born of a force over a neighbour starts at 1: the cohort has
         // had this calendar week's nudge twice, and this document is the only
         // place that can say so.
-        forceCount: forcedOverMarkerId ? 1 : 0,
-        forces: forcedOverMarkerId
-          ? [
-              {
-                uid: actor.uid,
-                at: stamp,
-                recipientCount: recipients.length,
-                forcedOverMarkerId,
-              },
-            ]
-          : [],
+        forceCount: forcedOverMarkerId || forcedOverGroups ? 1 : 0,
+        forces:
+          forcedOverMarkerId || forcedOverGroups
+            ? [
+                {
+                  uid: actor.uid,
+                  at: stamp,
+                  recipientCount: recipients.length,
+                  // Firestore refuses `undefined` inside an array entry too.
+                  ...(forcedOverMarkerId ? { forcedOverMarkerId } : {}),
+                  ...(forcedOverGroups ? { forcedOverGroupMarkerIds } : {}),
+                },
+              ]
+            : [],
         // Firestore refuses `undefined`, so the neighbour fields are present
         // only when there was one.
         ...(forcedOverMarkerId
           ? { forcedOverMarkerId, lastForcedAt: stamp, lastForcedByUid: actor.uid }
           : {}),
+        ...(forcedOverGroups
+          ? { forcedOverGroupMarkerIds, lastForcedAt: stamp, lastForcedByUid: actor.uid }
+          : {}),
       });
+      if (forcedOverGroups) {
+        // Those groups HAVE had this week's reminder, from their own push.
+        alreadySent = true;
+        console.warn(
+          "[courses nudge] FORCED catch-up over group push markers",
+          runId,
+          resolved.weekNumber,
+          actor.uid,
+          forcedOverGroupMarkerIds.length,
+          recipients.length,
+        );
+      }
       if (forcedOverMarkerId) {
         // The cohort HAS had this week's nudge before, under the other id.
         alreadySent = true;
@@ -1270,6 +1387,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ runId: string 
           weekSummary: week.summary,
           weekPrep: week.prep,
           weekUrl: courseWeekUrl(appUrl, runId, week.weekNumber),
+          // Empty until an admin configures a form, and the renderer then
+          // drops the paragraph whole rather than shipping a dead link. The
+          // push resolves it the same way, so a catch-up recovering a failed
+          // push sends the same email.
+          feedbackUrl: config.weeklyFeedbackUrl,
         },
       });
       sent += 1;

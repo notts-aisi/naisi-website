@@ -198,6 +198,7 @@ const {
   courseNudgeTokensFrom,
   courseWeekPrepLine,
   courseWeekUrl,
+  groupNudgeMarkerId,
   nudgeMarkerId,
   nudgeWeekMarkerIds,
   renderCourseNudge,
@@ -205,6 +206,8 @@ const {
 } = await loadTs("lib/email/courseNudgeEmail.ts");
 const { courseTemplateDefaults } = await loadTs("lib/firestore/courseEmails.ts");
 const { weekDocId } = await loadTs("lib/firestore/courses.ts");
+const { resolveSessions } = await loadTs("lib/courses/sessions.ts");
+const { normalizeCourseGroup } = await loadTs("lib/firestore/courseGroups.ts");
 const { currentWeekFor } = await loadTs("lib/courses/weekPlan.ts");
 const { courseSampleTokens } = await loadTs(
   "features/admin/emailDesigns/courseEmailSamples.ts",
@@ -237,6 +240,7 @@ function fullInput(overrides = {}) {
     weekPrep:
       "There are four things to read or watch and one exercise to write up this week, about 2 hours in total.",
     weekUrl: "https://naisi.uk/learn/asf-autumn-2026/weeks/3",
+    feedbackUrl: "https://forms.gle/naisi-weekly-feedback",
     recipientName: "Alex Taylor",
     ...overrides,
   };
@@ -507,7 +511,15 @@ test("a FORCE over a NEIGHBOURING marker is recorded on the marker it writes", (
 
   const claimBlock = ROUTE_SOURCE.slice(claim, dispatch);
   assert.match(claimBlock, /forcedOverMarkerId/);
-  assert.match(claimBlock, /forceCount:\s*forcedOverMarkerId\s*\?\s*1\s*:\s*0/);
+  // V3 widened the same rule to the GROUP push's `gnudge__` markers, which
+  // cannot collide with this create either: a marker in EITHER family means
+  // the cohort has had this week's reminder, and forcing past one starts the
+  // count at 1 rather than reporting a first send.
+  assert.match(
+    claimBlock,
+    /forceCount:\s*forcedOverMarkerId\s*\|\|\s*forcedOverGroups\s*\?\s*1\s*:\s*0/,
+  );
+  assert.match(claimBlock, /forcedOverGroupMarkerIds/);
   // …and the caller is told the cohort had already been mailed this week.
   assert.match(claimBlock, /alreadySent = true/);
 });
@@ -656,7 +668,7 @@ test("the seed template rendered with the designer's own samples has no gaps", (
   assert.doesNotMatch(rendered.subject, /\{[a-zA-Z]/);
   assert.doesNotMatch(bodyOf(rendered), /\{[a-zA-Z]/);
   // Nothing dropped: the designer shows the longest version anyone receives.
-  assert.equal(paragraphsOf(rendered), 6);
+  assert.equal(paragraphsOf(rendered), 7);
   assert.equal(rendered.blocks.length, SEED.blocks.length);
 });
 
@@ -665,8 +677,8 @@ test("the nudge template's advertised behaviour is the behaviour it has", () => 
   // promise about a module nothing imported; this is the assertion that it is
   // now a promise about the send path.
   assert.match(EDITOR_SOURCE, /the whole sentence around it is removed/);
-  assert.equal(paragraphsOf(renderSeed()), 6);
-  assert.equal(paragraphsOf(renderSeed({ weekSummary: "" })), 5);
+  assert.equal(paragraphsOf(renderSeed()), 7);
+  assert.equal(paragraphsOf(renderSeed({ weekSummary: "" })), 6);
   assert.doesNotMatch(bodyOf(renderSeed({ weekSummary: "" })), /\{weekSummary\}/);
 });
 
@@ -707,7 +719,7 @@ test("the unpushy last line survives verbatim", () => {
 test("a member with no session gets no session sentence", () => {
   const rendered = renderSeed({ sessionWhen: "", sessionWhere: "Hallward Library, B12" });
   const body = bodyOf(rendered);
-  assert.equal(paragraphsOf(rendered), 5);
+  assert.equal(paragraphsOf(rendered), 6);
   assert.doesNotMatch(body, /Your group meets/);
   // The pairing rule: a room with no time is not a fact worth a sentence, and
   // "Your group meets, Hallward B12." is the one shape the tidy cannot repair.
@@ -722,14 +734,14 @@ test("a session with a time but no room keeps the sentence and closes it up", ()
 
 test("a week with no summary written yet loses that paragraph, not its scaffolding", () => {
   const rendered = renderSeed({ weekSummary: "" });
-  assert.equal(paragraphsOf(rendered), 5);
+  assert.equal(paragraphsOf(rendered), 6);
   assert.doesNotMatch(bodyOf(rendered), /\{weekSummary\}/);
   assert.doesNotMatch(bodyOf(rendered), /<p><\/p>/);
 });
 
 test("a week with nothing to prepare loses that paragraph", () => {
   const rendered = renderSeed({ weekPrep: "" });
-  assert.equal(paragraphsOf(rendered), 5);
+  assert.equal(paragraphsOf(rendered), 6);
   assert.doesNotMatch(bodyOf(rendered), /\{weekPrep\}/);
   assert.match(bodyOf(rendered), /Read what you can\./);
 });
@@ -739,10 +751,28 @@ test("no app URL means no dead link — the whole line goes", () => {
   // Shipping `<a href="{weekUrl}">` or `<a href="">` would be a link that looks
   // real and goes nowhere.
   const rendered = renderSeed({ weekUrl: "" });
-  assert.equal(paragraphsOf(rendered), 5);
+  assert.equal(paragraphsOf(rendered), 6);
   assert.doesNotMatch(bodyOf(rendered), /\{weekUrl\}/);
   assert.doesNotMatch(bodyOf(rendered), /href=""/);
   assert.doesNotMatch(bodyOf(rendered), /Open this week on the site/);
+});
+
+test("no weekly feedback form means no feedback line at all", () => {
+  // The form is unset until an admin configures one on the site status page,
+  // so this is the ORDINARY case rather than an edge case. The paragraph
+  // holds one token for exactly that reason: the drop rule takes it whole
+  // instead of shipping "Tell us how the last session went" pointing nowhere.
+  const rendered = renderSeed({ feedbackUrl: "" });
+  assert.equal(paragraphsOf(rendered), 6);
+  assert.doesNotMatch(bodyOf(rendered), /\{feedbackUrl\}/);
+  assert.doesNotMatch(bodyOf(rendered), /href=""/);
+  assert.doesNotMatch(bodyOf(rendered), /Tell us how the last session went/);
+
+  // And with one configured, it is a real link.
+  assert.match(
+    bodyOf(renderSeed()),
+    /href="https:\/\/forms\.gle\/naisi-weekly-feedback"/,
+  );
 });
 
 test("an anchor that resolved SOMETHING but has no href is unwrapped, not shipped dead", () => {
@@ -781,7 +811,7 @@ test("a member with neither preferred name nor display name is not greeted 'Hi N
   // The greeting is a heading block, so the whole block goes.
   assert.equal(rendered.blocks.filter((b) => b.type === "heading").length, 0);
   // The rest of the email is untouched.
-  assert.equal(paragraphsOf(rendered), 6);
+  assert.equal(paragraphsOf(rendered), 7);
   assert.match(body, /Week 3 of AI Safety Fundamentals is open/);
 });
 
@@ -811,8 +841,8 @@ test("an unknown token stays literal so an ADMIN notices the typo", () => {
 // ===========================================================================
 
 test("no combination of missing values can ship a brace, a gap or a dead link", () => {
-  // THE headline property, over all 2^10 on/off combinations of the seed
-  // template's ten tokens. One case at a time is how the three parallel builds
+  // THE headline property, over all 2^11 on/off combinations of the seed
+  // template's eleven tokens. One case at a time is how the three parallel builds
   // each convinced themselves they were fine.
   const keys = [
     "courseTitle",
@@ -823,6 +853,7 @@ test("no combination of missing values can ship a brace, a gap or a dead link", 
     "sessionWhere",
     "weekPrep",
     "weekUrl",
+    "feedbackUrl",
     "recipientName",
   ];
   const blanks = { weekNumber: 0 };
@@ -874,8 +905,12 @@ test("no combination of missing values can ship a brace, a gap or a dead link", 
       // The pairing blanks the room when there is no time, so one test covers it.
       Number(overrides.sessionWhen === "") +
       Number(overrides.weekPrep === "") +
-      Number(overrides.weekUrl === "");
-    assert.equal(paragraphsOf(rendered), 6 - dropped, where);
+      Number(overrides.weekUrl === "") +
+      // The weekly feedback form is unset until an admin configures one, so
+      // this paragraph is dropped on most real sends rather than as an edge
+      // case. It is a whole paragraph precisely so that it can be.
+      Number(overrides.feedbackUrl === "");
+    assert.equal(paragraphsOf(rendered), 7 - dropped, where);
     // The greeting is a heading, and it goes whole rather than reading "Hi ,".
     assert.equal(
       rendered.blocks.filter((b) => b.type === "heading").length,
@@ -885,7 +920,7 @@ test("no combination of missing values can ship a brace, a gap or a dead link", 
 
     cases += 1;
   }
-  assert.equal(cases, 1024);
+  assert.equal(cases, 2048);
 });
 
 // ===========================================================================
@@ -1129,4 +1164,99 @@ test("courseWeekUrl refuses to build a half-formed link", () => {
   assert.equal(courseWeekUrl("", "asf-autumn-2026", 3), "");
   assert.equal(courseWeekUrl("https://naisi.uk", "", 3), "");
   assert.equal(courseWeekUrl("https://naisi.uk", "asf-autumn-2026", 0), "");
+});
+
+// ---------------------------------------------------------------------------
+// The group lane's marker, and the occurrence dimension
+// ---------------------------------------------------------------------------
+
+test("groupNudgeMarkerId is byte-identical for occurrence 1", () => {
+  // The invariant that lets this argument ship mid-term: every marker written
+  // before the occurrence existed keeps its id, so no group is mailed twice by
+  // the deploy that adds it.
+  const base = "gnudge__run1__group-a__2026-10-12";
+  assert.equal(groupNudgeMarkerId("run1", "group-a", "2026-10-12"), base);
+  assert.equal(groupNudgeMarkerId("run1", "group-a", "2026-10-12", 1), base);
+  assert.equal(groupNudgeMarkerId("run1", "group-a", "2026-10-12", 0), base);
+  assert.equal(groupNudgeMarkerId("run1", "group-a", "2026-10-12", 1.5), base);
+});
+
+test("a second session in the same week claims its own marker", () => {
+  // Without this the mid-week session's reminder collides with the first
+  // session's marker and never sends: the group is silently short one email.
+  const first = groupNudgeMarkerId("run1", "group-a", "2026-10-12", 1);
+  const second = groupNudgeMarkerId("run1", "group-a", "2026-10-12", 2);
+  assert.notEqual(first, second);
+  assert.equal(second, "gnudge__run1__group-a__2026-10-12-2");
+  assert.doesNotMatch(second, /[/.#]/, "a marker id is spliced into a doc id");
+});
+
+test("the group markers stay clear of the run markers and the throttle", () => {
+  const group = groupNudgeMarkerId("run1", "group-a", "2026-10-12", 2);
+  assert.ok(group.startsWith("gnudge__"));
+  assert.ok(!group.startsWith("nudge__"));
+  assert.ok(!group.startsWith("emailrate__"));
+});
+
+// ---------------------------------------------------------------------------
+// The feedback paragraph: the preview, the send, and the recovery
+// ---------------------------------------------------------------------------
+
+test("the catch-up lane carries the same feedback link the push does", () => {
+  // A catch-up recovering a failed push must put the SAME email in the inbox.
+  // Dropping `{feedbackUrl}` here means the recovered send is six paragraphs
+  // where the original would have been seven.
+  assert.match(ROUTE_SOURCE, /readCoursesConfig\(db\)/);
+  assert.match(ROUTE_SOURCE, /feedbackUrl:\s*config\.weeklyFeedbackUrl/);
+
+  const get = ROUTE_SOURCE.indexOf("export async function GET");
+  const post = ROUTE_SOURCE.indexOf("export async function POST");
+  assert.ok(get > 0 && post > get);
+  const uses = [...ROUTE_SOURCE.matchAll(/feedbackUrl:\s*config\.weeklyFeedbackUrl/g)].map(
+    (m) => m.index,
+  );
+  assert.ok(
+    uses.some((at) => at > get && at < post),
+    "the GET preview builds its tokens with the feedback link, so an admin " +
+      "proofing the copy reads the email the send will produce",
+  );
+  assert.ok(
+    uses.some((at) => at > post),
+    "and the POST send context carries it too",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// The two session-date computations, which must not drift
+// ---------------------------------------------------------------------------
+
+test("courseNudgeSessionDateKey agrees with the session resolver", () => {
+  // `sessions.ts` has its own private copy of this arithmetic. Moving one into
+  // the other is a structural change a later PR owns; until then this is what
+  // stops the duplicate drifting silently, which would date a reminder
+  // differently from the register it belongs to.
+  const plan = [1, 2, 3, 4, 5, 6].map(week);
+  for (const weekday of [0, 1, 2, 3, 4, 5, 6]) {
+    const group = normalizeCourseGroup("group-a__7d2c", {
+      runId: "run1",
+      name: "A group",
+      session: {
+        weekday,
+        startTimeLocal: "18:00",
+        durationMinutes: 90,
+        location: "Hallward B12",
+        meetingUrl: null,
+        notes: "",
+      },
+    });
+    const sessions = resolveSessions({ id: "run1", startDate: START, weekPlan: plan }, group);
+    assert.equal(sessions.length, plan.length);
+    for (const session of sessions) {
+      assert.equal(
+        session.dateKey,
+        courseNudgeSessionDateKey(session.slotStartKey, weekday),
+        `week ${session.weekNumber}, weekday ${weekday}`,
+      );
+    }
+  }
 });

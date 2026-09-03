@@ -35,6 +35,7 @@ import {
   type SubscriptionCategory,
   type VerifiedEmail,
 } from "@/lib/firestore/notifications";
+import MembershipBadge from "./MembershipBadge";
 import styles from "./ProfileForm.module.css";
 
 const UNI_EMAIL_LOCK_MS = 24 * 60 * 60 * 1000;
@@ -448,6 +449,8 @@ export default function ProfileForm() {
           </Field>
         </div>
       </Card>
+
+      <MembershipBadge />
 
       <Card padding="lg">
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-1)" }}>

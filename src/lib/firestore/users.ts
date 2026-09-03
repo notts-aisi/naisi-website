@@ -178,6 +178,16 @@ export type UserPermissions = {
   approveEvent?: boolean;
   draftCourse?: boolean;
   approveCourse?: boolean;
+  /**
+   * Membership periods, tier grants and revokes, and the `/admin/membership`
+   * console. Deliberately NOT part of the SU-recognised PII tier: membership
+   * is money and provenance rather than roster data, so recognising a
+   * committee member does not hand them the society's payment record.
+   *
+   * Moving the CURRENT period pointer is full-admin only even with this key,
+   * because it silently re-badges every member on the site at once.
+   */
+  manageMembership?: boolean;
 };
 
 export function canDraftNewsletter(user: Pick<UserDoc, "role" | "permissions">): boolean {
@@ -227,6 +237,19 @@ export function canAuthorAdmissionRound(
   user: Pick<UserDoc, "role" | "permissions">,
 ): boolean {
   return user.role === "admin" || Boolean(user.permissions?.approveCourse);
+}
+
+/**
+ * Who may create and edit membership periods, grant and revoke tiers, and
+ * open the membership console. Admins implicitly, like every other key.
+ *
+ * Membership GATES NOTHING anywhere: it is a badge and a record. This key
+ * decides who may write that record, never what anybody may reach.
+ */
+export function canManageMembership(
+  user: Pick<UserDoc, "role" | "permissions">,
+): boolean {
+  return user.role === "admin" || Boolean(user.permissions?.manageMembership);
 }
 
 /**
@@ -371,7 +394,14 @@ function asAcademicYearList(v: unknown): string[] {
   for (const y of v) {
     if (typeof y === "string" && ACADEMIC_YEAR_PATTERN.test(y)) seen.add(y);
   }
-  return Array.from(seen).slice(0, FIELD_LIMITS.maxPaidMembershipYears);
+  // NEWEST FIRST, before the slice. The slice used to keep whichever ten
+  // happened to be stored first, so a document that had grown past the cap
+  // could drop the CURRENT year and blank a member's badge while ten stale
+  // ones stayed. A four-digit start year leads the string, so a plain
+  // descending comparison is the right order and needs no parsing.
+  return Array.from(seen)
+    .sort((a, b) => b.localeCompare(a))
+    .slice(0, FIELD_LIMITS.maxPaidMembershipYears);
 }
 
 export function normalizeUser(id: string, data: Raw): UserDoc {
@@ -389,6 +419,7 @@ export function normalizeUser(id: string, data: Raw): UserDoc {
     approveEvent: Boolean(rawPermissions.approveEvent),
     draftCourse: Boolean(rawPermissions.draftCourse),
     approveCourse: Boolean(rawPermissions.approveCourse),
+    manageMembership: Boolean(rawPermissions.manageMembership),
   };
   return {
     uid: id,

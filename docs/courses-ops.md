@@ -9,6 +9,10 @@ deployed in.
 > now also carries the draft-read narrowing. Later PRs extend it with the
 > membership import and the cutover checklist.
 
+> continues with PUSH ATTENDANCE, which is the one human action the weekly
+> emails hang off. Later PRs extend it with the rules-and-indexes deploy order,
+> the membership import and the cutover checklist.
+
 ---
 
 ## The scheduler tick
@@ -430,3 +434,147 @@ deploy, the symptom is a `permission-denied` on a `courses`, `courseRuns` or
 `coursePages` read, and the first question is whether the caller holds
 `draftCourse` or `approveCourse`, followed by whether the failing read is an
 unfiltered list, and then whether the document exists at all (consequence 3).
+
+## PUSH ATTENDANCE, and the two sends around it
+
+### What the push does, in the order it does it
+
+A facilitator marks their register during the session, saving as often as they
+like. Nothing has left the building at that point: the register is a draft and
+nobody outside the room can see it. Pressing **Push attendance** does three
+things, and the order is the design:
+
+1. **One transaction** stamps `pushedAt` and `pushedByUid` on the register, and
+   recomputes every member's `courseEnrolments.attendance` rollup IN FULL from
+   that group's pushed registers. Never a delta: a mirror that can be rebuilt
+   from its source cannot drift from it.
+2. **The send marker is claimed by a standalone `.create()` OUTSIDE that
+   transaction**, at `courseNudges/gnudge__{runId}__{groupId}__{nextSlotStartKey}`
+   (plus a `-{occurrence}` suffix from a week's second session onwards, so a
+   group meeting twice inside one slot gets two reminders rather than one).
+   A create collision inside a transaction aborts the whole transaction, so
+   claiming it there would unlock a register because an email had already gone.
+3. **The group is emailed** about its next session, one message each, carrying
+   the next week's material and the weekly feedback link.
+
+The consequence worth knowing on the night: **a send failure leaves the
+register locked and the figures correct**. A second press is an idempotent 200
+that sends nothing, and the mail is recovered by an admin (below) rather than by
+pushing again.
+
+### After the push
+
+The register is admin-only. An admin corrects it from the same grid: marks, the
+**Didn't happen** switch and the session note all stay available to them on a
+pushed column, and every change appends its own `courseAudit` row with the
+before and the after. Participant notes stay open to the facilitator,
+deliberately: they are usually written after the session rather than during it.
+
+### Recovering a push whose email failed
+
+The register locks and the figures move BEFORE the first message goes out, so a
+transport failure leaves a locked register and an unmailed group. The marker is
+already claimed, so pressing **Push** again reports "already pushed" and sends
+nothing. That is the correct default, and it is why there is a second lane.
+
+**Resend reminder** sits on a pushed column for admins only. It re-sends this
+group's reminder and **nobody else's**, and it records the re-send on the
+group's marker exactly as the run-level catch-up records its own forces
+(`forceCount`, `lastForcedAt`, `lastForcedByUid`, and an entry in `forces`
+naming the marker it went over). Use it when a facilitator reports "I pushed and
+nobody got the email".
+
+Reach for the run-wide catch-up only when the whole cohort is owed the send. It
+mails **every** group of the run, so using it to fix one group mails every other
+group twice.
+
+What can and cannot fail after the claim, so the failure a report describes can
+be placed: the config read and the email template are resolved BEFORE the marker
+is claimed, so the only thing left that can fail after it is the transport
+itself.
+
+### The two sends, and which is which
+
+| Send | Who presses it | When |
+| --- | --- | --- |
+| The weekly reminder | the group's facilitator, by pushing the register | after every session |
+| The run-wide catch-up | an admin, from the run's nudge page | the session-1 welcome, and recovery |
+
+**The session-1 welcome has to be sent by hand.** No push exists before a run's
+first session, so nothing in the group lane can produce it. Send it from the
+run's nudge page before the first week. This is not a gap waiting to be closed
+with a "first session" branch on the push: that would need its own idempotency
+marker for a send that happens once per run, and the catch-up lane already has
+one.
+
+**The catch-up reads the group markers before it sends.** If any group has
+already had this week's reminder from its own push, the run-wide send is
+refused unless an admin forces it, and a force records the group markers it
+overrode on its own marker. A cohort mailed twice in one week is on the record
+either way.
+
+**Residual risk: a mid-term `startDate` edit.** The run's own marker family is
+checked across a span of six days either side of the slot, so nudging the same
+calendar week twice is caught even after the dates move. The group markers are
+checked at the CURRENT slot key only. So if a run's `startDate` is edited part
+way through the term, the group markers a push wrote sit under neighbouring
+keys, the catch-up finds none, and it can mail those groups a second time with
+no force recorded anywhere. Remedy: after editing a live run's `startDate`,
+treat the run-wide catch-up as unavailable for that week. If a group is owed a
+reminder, use **Resend reminder** on that group's pushed column, which is keyed
+on the group's own next session and is recorded on the group's own marker.
+
+### If a facilitator never presses it
+
+Their group loses its reminder as well as its register, and every member of
+that group carries a session in a denominator reviewers will read as a
+shortfall.
+
+**Nothing tells you yet.** The unmarked-register follow-up task, which lands on
+every admin's board once the grace period has passed
+(`config/courses.unmarkedRegisterGraceHours`, default 36), arrives with PR25.
+The setting exists and the scan's tunables are already on the site status page,
+but no job reads them today: **until PR25 lands, an unpushed register is
+invisible**, and the only way to notice one is to open the group's register.
+Check the boards yourself in the days after a session, and brief facilitators on
+the push **before** their first session, not after.
+
+### The knobs
+
+Both live on the site status page, under Course settings:
+
+- **Weekly feedback form** (`config/courses.weeklyFeedbackUrl`). Rides the
+  reminder as `{feedbackUrl}`. Leave it empty and the paragraph carrying it is
+  dropped from the email whole, which is a complete state rather than a broken
+  one.
+- **Unmarked register grace period**, above.
+
+### A cancelled session
+
+Use the **Didn't happen** switch on the column, then push as normal. A session
+marked not held leaves every denominator rather than counting as a room full of
+absences, and the group still gets its reminder about the next one.
+
+## Cutover: membership periods
+
+Membership is a period-per-year object (`membershipPeriods/{periodId}`), and
+one of them has to be marked CURRENT before any badge on the site can say
+anything. Without that step every membership badge reads "not recorded", which
+is indistinguishable from a broken deploy.
+
+So, on each environment, as part of cutover and before anyone looks at a
+profile:
+
+1. Open **Admin, Membership** and create the period for the year. The year goes
+   in as `2026/27`; the document id is derived (`2026-27`) and the `year` field
+   keeps the slash, which is the same string `users.paidMembershipYears` has
+   always stored.
+2. Set the dates from the SU's membership year, and use the note for anything
+   the next admin should know about that year.
+3. Press **Make current**. That button is admin-only, and the route refuses
+   anyone else: moving the pointer re-badges every member at once.
+
+Then record members from their rows on the Members tab. Nothing needs a rules
+or index deploy: both collections are `allow read, write: if false`, which is
+identical to Firestore's implicit deny, and the `/me` query is a single-field
+equality served by the automatic index.

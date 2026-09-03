@@ -1,0 +1,69 @@
+/* ============================================================
+   PushConfirm: the dialog in front of PUSH ATTENDANCE.
+
+   Confirmation copy, so it is read before it is skimmed: the
+   three consequences as a list, the unmarked-people warning as
+   its own toned paragraph, and the two actions last. Nothing
+   animates: a modal that is already a transition does not need
+   its contents to move as well.
+   ============================================================ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: 1.3;
+  color: var(--color-text);
+}
+
+.points {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
+/* The one thing worth interrupting for. Toned, not shouted: it is a fact
+   about the register, not an error. */
+.warning {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-soft);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: flex-end;
+}
+
+/* === Mobile ===============================================
+   The dialog is already narrow; what gives is the action row,
+   which stacks so both buttons keep a full-width tap target
+   rather than sitting as two small ones on a phone. */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .actions {
+    flex-direction: column-reverse;
+  }
+
+  .actions > * {
+    width: 100%;
+  }
+}

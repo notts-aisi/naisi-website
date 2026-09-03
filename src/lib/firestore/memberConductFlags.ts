@@ -89,3 +89,58 @@ export function normalizeMemberConductFlag(
 export function conductChip(flag: MemberConductFlagDoc | null): { flagged: boolean } {
   return { flagged: flag?.flagged === true };
 }
+
+/**
+ * What the reviewer queue (and the admin Members row) may carry, decided in
+ * ONE place from one boolean rather than at each call site.
+ *
+ * For a non-admin viewer the returned object has NO `reason` key at all. Not
+ * an empty string, not `null`, not `undefined`: absent. A key that is present
+ * and empty is one careless `Object.keys` away from being logged, exported or
+ * rendered as "reason: (blank)", and a payload with the key missing cannot
+ * regain a value by accident downstream.
+ *
+ * `flaggedAt` is an ISO string rather than a `Date` because this projection's
+ * destination is a JSON route payload; a `Date` would arrive at the browser as
+ * a string anyway, and the conversion is better done once here than guessed at
+ * by each reader.
+ *
+ * `byName` is part of the admin view rather than a key a caller bolts on
+ * beside it. One decision, one object: a route that spreads this projection
+ * and adds a sibling key has quietly moved the decision back out to the call
+ * site, and the next payload to copy that shape may be a reviewer's.
+ */
+export type ConductFlagChip = { flagged: boolean };
+
+export type ConductFlagAdminView = ConductFlagChip & {
+  reason: string;
+  flaggedAt: string | null;
+  /** Display name of the admin who set the flag, never an email. */
+  byName: string;
+};
+
+export function conductFlagForQueue(
+  flag: MemberConductFlagDoc | null,
+  viewerIsAdmin: false,
+): ConductFlagChip;
+export function conductFlagForQueue(
+  flag: MemberConductFlagDoc | null,
+  viewerIsAdmin: true,
+): ConductFlagAdminView;
+export function conductFlagForQueue(
+  flag: MemberConductFlagDoc | null,
+  viewerIsAdmin: boolean,
+): ConductFlagChip | ConductFlagAdminView;
+export function conductFlagForQueue(
+  flag: MemberConductFlagDoc | null,
+  viewerIsAdmin: boolean,
+): ConductFlagChip | ConductFlagAdminView {
+  const chip = conductChip(flag);
+  if (!viewerIsAdmin) return chip;
+  return {
+    ...chip,
+    reason: flag?.reason ?? "",
+    flaggedAt: flag?.at ? flag.at.toISOString() : null,
+    byName: flag?.byName ?? "",
+  };
+}

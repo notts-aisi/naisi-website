@@ -109,10 +109,11 @@ type Props = {
    */
   runLabel: string;
   /**
-   * From the server gate, never inferred from the payload. Gates ONE thing:
-   * whether the force path is rendered. The route re-derives it and is the
-   * real boundary — a tampered flag would reveal a button that 403s, not a
-   * second send.
+   * From the server gate, never inferred from the payload. Gates the real send
+   * and the force path: V3 made this lane the ADMIN CATCH-UP, because the
+   * weekly reminder now rides a facilitator's attendance push. The route
+   * re-derives it and is the real boundary: a tampered flag would reveal a
+   * button that 403s, not a second send.
    */
   isAdmin: boolean;
 };
@@ -297,7 +298,12 @@ export default function NudgePanel({ runId, runLabel, isAdmin }: Props) {
   const runHome = `/learn/${encodeURIComponent(runId)}`;
 
   const sendable = week !== null && recipients > 0;
-  const canSend = sendable && !alreadySent && !blocking && !busy;
+  // V3: the weekly reminder is sent by a facilitator pushing their register,
+  // per group. This lane is the ADMIN CATCH-UP (the session-1 welcome, and
+  // recovery when a push failed to mail its group), so the real send is
+  // admin-only and the route re-checks. A run facilitator keeps the preview
+  // and the test send, which reach nobody but themselves.
+  const canSend = isAdmin && sendable && !alreadySent && !blocking && !busy;
   // Only where the ordinary send is closed — otherwise the force path is noise
   // pointed at a loaded gun. Admins only, and the route re-checks.
   const showForce = isAdmin && week !== null && (alreadySent || blocking);
@@ -587,8 +593,10 @@ export default function NudgePanel({ runId, runLabel, isAdmin }: Props) {
             {/* A disabled control with no stated reason is a dead end, so the
                 note always carries the why — in the order you meet them. */}
             <p className={styles.actionNote}>
-              {blockReason ??
-                "You'll get one more chance to confirm. After that it cannot be recalled."}
+              {!isAdmin
+                ? "The weekly reminder goes out when a facilitator pushes their group's register. An admin sends this run-wide catch-up: the welcome before the first session, or a re-send when a push didn't reach a group."
+                : (blockReason ??
+                  "You'll get one more chance to confirm. After that it cannot be recalled.")}
             </p>
           </div>
         </div>
