@@ -1,7 +1,9 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
 import Dropdown from "./Dropdown";
 import { Select } from "./Input";
+import { maxWidth } from "@/theme/breakpoints";
 import styles from "./ResponsiveSelect.module.css";
 
 /**
@@ -23,6 +25,26 @@ export type ResponsiveSelectOption<T extends string = string> = {
   disabled?: boolean;
 };
 
+/**
+ * Which shape the browser is actually showing, mirroring this module's own
+ * CSS switch at `--bp-md`.
+ *
+ * Only `required` has to know. A hidden `<select required>` is still a
+ * candidate for constraint validation, so arming it below the breakpoint
+ * would block the form's submit event with nothing on screen to explain it:
+ * the browser cannot focus a `display: none` control to report on, and the
+ * page's own "fill in every required field" message never runs because the
+ * submit handler never fires.
+ */
+const SHEET_QUERY = maxWidth("md");
+const subscribeSheet = (onChange: () => void) => {
+  const mq = window.matchMedia(SHEET_QUERY);
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
+};
+const sheetSnapshot = () => window.matchMedia(SHEET_QUERY).matches;
+const sheetServerSnapshot = () => false;
+
 type Props<T extends string = string> = {
   value: T;
   onChange: (next: T) => void;
@@ -38,8 +60,24 @@ type Props<T extends string = string> = {
    * wrapping label would swallow those into the control's accessible name.
    * Deliberately NOT applied to the sheet shape as well, because both shapes
    * are in the DOM at once and two elements cannot share an id.
+   *
+   * So below `--bp-md` the id sits on a `display: none` element and the
+   * caller's label click still focuses nothing, and the sheet trigger carries
+   * no `aria-required` either, because `Dropdown` accepts neither prop today.
+   * Both are the same one-component fix: give `Dropdown` an optional `id` and
+   * `required` and put them on its combobox trigger, which is a `button` and
+   * takes `aria-required` legitimately. Until then the sheet is labelled by
+   * its own `ariaLabel` and an empty required field is caught by the form's
+   * submit handler rather than by the browser.
    */
   id?: string;
+  /**
+   * Native `required`, and only ever on the shape that is on screen (see
+   * `SHEET_QUERY` above). The sheet shape is a button rather than a form
+   * control, so below `--bp-md` an empty field is caught by the form's own
+   * submit handler instead of by the browser.
+   */
+  required?: boolean;
   /** Ids of the help / error text describing this control. Reaches both shapes. */
   describedBy?: string;
   /** Optional tooltip + native HTML title. */
@@ -61,8 +99,14 @@ export default function ResponsiveSelect<T extends string = string>({
   name,
   className,
   id,
+  required,
   describedBy,
 }: Props<T>) {
+  const isSheet = useSyncExternalStore(
+    subscribeSheet,
+    sheetSnapshot,
+    sheetServerSnapshot,
+  );
   return (
     <>
       <span className={styles.desktopShape}>
@@ -71,6 +115,7 @@ export default function ResponsiveSelect<T extends string = string>({
           value={value}
           onChange={(e) => onChange(e.target.value as T)}
           disabled={disabled}
+          required={required === true && !isSheet}
           aria-label={ariaLabel}
           aria-describedby={describedBy}
           title={title}

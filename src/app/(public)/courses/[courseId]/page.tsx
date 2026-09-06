@@ -344,12 +344,16 @@ export default async function PublicCoursePage({
 
         <CourseFaq items={page.faq} />
 
+        {/* NO `groups`. The session picker is mounted once, by the hero
+            placement above; this one closes the page with the same dates and
+            a link up to it. Two pickers meant two enrolment states on one
+            page, and the foot never heard about a drop-out driven through the
+            hero. */}
         <CourseCTA
           courseId={course.id}
           courseTitle={course.title}
           run={ctaRun}
           round={ctaRound}
-          groups={pickerGroups}
           placement="foot"
         />
       </div>

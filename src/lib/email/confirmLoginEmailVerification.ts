@@ -3,6 +3,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import { Timestamp } from "firebase-admin/firestore";
 import { getAdminAuth } from "@/lib/firebase/admin";
 import { verifyToken } from "@/lib/signedTokens";
+import { safeFunnelReturn } from "@/lib/authReturn";
 import { markRegistrationEmailVerified } from "@/lib/firestore/registrationWrites";
 
 export type ConfirmLoginEmailResult =
@@ -11,6 +12,10 @@ export type ConfirmLoginEmailResult =
       email: string;
       /** "member" | "collaborator" — which form to resume. */
       audience: "member" | "collaborator";
+      /** The funnel the person came from, or null. Stored on the token by
+       *  POST /api/register so it survives an email opened on another device,
+       *  where the `__auth_next` cookie does not exist. */
+      next: string | null;
       /** Firebase custom token; the client signs in with it (option A: the
        *  magic-link click both verifies the email AND establishes the session). */
       customToken: string;
@@ -58,6 +63,12 @@ export async function confirmLoginEmailVerification(
   const uid = data.uid as string | undefined;
   const email = (data.email as string | undefined) ?? "";
   const audience = data.audience === "collaborator" ? "collaborator" : "member";
+  // Re-validated on the way out as well as on the way in: the redirect happens
+  // here, so this is the last place that can refuse a stored address a widened
+  // writer might one day put on the document. The typeof is part of that: the
+  // allowlist takes a string, so a non-string on the document would throw
+  // inside it and cost the reader the sign-in the link was for.
+  const next = safeFunnelReturn(typeof data.next === "string" ? data.next : undefined);
   if (!uid) {
     return { ok: false, error: "Verification request is malformed", status: 400 };
   }
@@ -69,7 +80,7 @@ export async function confirmLoginEmailVerification(
   // landing page is a server component — so a plain GET yields a full session.
   // Anything that follows links (a mail-scanning proxy, a corporate link
   // rewriter, an inbox preview bot) can therefore redeem it, and previously the
-  // link stayed redeemable for its whole 30-minute window because `verifiedAt`
+  // link stayed redeemable for its whole expiry window because `verifiedAt`
   // was written and then never read.
   //
   // Claimed inside a transaction so the check and the write are atomic: two
@@ -114,5 +125,5 @@ export async function confirmLoginEmailVerification(
     };
   }
 
-  return { ok: true, email, audience, customToken };
+  return { ok: true, email, audience, next, customToken };
 }

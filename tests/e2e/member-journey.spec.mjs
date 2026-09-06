@@ -16,10 +16,11 @@
  * file under `.e2e-state/` (or wherever E2E_STATE_DIR points), and tears
  * everything down afterwards.
  *
- * A DEPLOYED target is refused, by this spec's fixture rather than by a note:
- * approving an applicant fires an email that never consults the suppression
- * list, so the suppression rows seeding writes first cannot stop it reaching a
- * real sender. `seed()` says so and creates nothing. See the "Mail" section of
+ * A DEPLOYED target used to be refused by this spec's fixture, because the
+ * approval email did not consult the suppression list. `sendEmail()` now
+ * checks the list for every send (tests/email-suppression-chokepoint.test.mjs),
+ * so the fixture seeds against a deployed target too and the mail step asserts
+ * that nothing left. See the "Mail" section of
  * scripts/e2e-fixtures/member-journey.mjs.
  *
  * ## It needs the OWNER'S admin account, and can never make one
@@ -72,6 +73,7 @@ import { readFileSync } from "node:fs";
 import { assertTarget, hasAdminCredentials, loadSecrets } from "../../scripts/e2e/lib/env.mjs";
 import { readUserDoc } from "../../scripts/e2e/lib/firestore.mjs";
 import {
+  approvePendingApplicant,
   createStepRecorder,
   newIdentityPage,
   openBrowser,
@@ -109,17 +111,6 @@ const WAIT_MS = 30_000;
 
 /** How often a poll re-asks. Small enough to be quick, big enough to be cheap. */
 const POLL_MS = 500;
-
-/**
- * How long a pin on a KNOWN DEFECT waits for the product to prove it wrong.
- *
- * A pin asserts that something broken is still broken, so it has to give the
- * page every chance to have been fixed before it says otherwise: read too
- * early and it passes against a fixed page and quietly outlives the defect it
- * guards. Short next to WAIT_MS because the thing it waits for is a render
- * this page would already have done, not a cold compile.
- */
-const PIN_SETTLE_MS = 6_000;
 
 /**
  * Why a step may not run in this mode, or null.
@@ -279,19 +270,25 @@ test(
       pg.locator("label").filter({ has: slotInput(pg, groupId) });
 
     /**
-     * Waits until BOTH placements of the course CTA have rendered `testId`,
-     * then leaves `.first()` meaning the hero.
+     * Waits until the course page carries EXACTLY ONE `testId`, which is the
+     * hero picker's, before a step touches it.
      *
-     * The public course page mounts `CourseCTA` twice (hero and foot) and each
-     * mounts its own `GroupPicker` with its own state and its own GET. So
-     * `.first()` only means "the hero" once both have got there: until then
-     * the first match on the page can belong to whichever placement loaded
-     * first, and a step would silently drive the wrong one. Counting to two is
-     * the honest synchronisation, and it needs no fixed sleep.
+     * The page mounts `CourseCTA` twice (hero and foot), and it used to mount
+     * a `GroupPicker` in each, with its own state and its own GET. The count
+     * was two, `.first()` only meant "the hero" once both had got there, and a
+     * drop-out driven through one left the other offering a place. Only the
+     * hero mounts a picker now, so the count is one, and asserting it (rather
+     * than waiting for "at least one") is what fails here rather than in a
+     * confusing half-driven step if a second picker ever comes back.
+     *
+     * The `.first()` at the call sites is left in place: it costs nothing
+     * against a single match and it keeps every step reading the same way.
+     * `tests/e2e-test-ids.test.mjs` names this wrapper in `DYNAMIC_LOCATORS`,
+     * so a rename here is a rename there too.
      */
-    const bothPickersShow = (pg, testId) =>
-      waitFor(`both course pickers to render ${testId}`, async () =>
-        (await pg.getByTestId(testId).count()) === 2 ? true : null,
+    const onePickerShows = (pg, testId) =>
+      waitFor(`the course picker to render ${testId}`, async () =>
+        (await pg.getByTestId(testId).count()) === 1 ? true : null,
       );
 
     /** Every send this run caused to one address, by kind. */
@@ -351,18 +348,18 @@ test(
 
       await step("approving the applicant makes them a member", async () => {
         activePage = adminPage;
-        const card = adminPage
-          .getByTestId("approval-card")
-          .filter({ hasText: member.email })
-          .first();
-        await card.getByTestId("approval-approve").click();
+        // Through the shared helper rather than by hand: it presses Approve and
+        // waits for the queue to drop the row on its own, which is the whole of
+        // what an admin sees, and every other spec that ever needs a member has
+        // to get one the same way.
+        await approvePendingApplicant(adminPage, origin, { email: member.email });
 
         // The approve is a CLIENT-DIRECT Firestore write
-        // (`adminMutations.approveUser`), so there is no response for the page
-        // to show and nothing on screen to wait on. Reading the document is
-        // the only way to know it landed. This is a READ of something the
-        // PRODUCT wrote: the harness never writes a role, which is the whole
-        // reason the approval is driven through this page at all.
+        // (`adminMutations.approveUser`), so the page shows the row leaving and
+        // nothing about what it wrote. Reading the document is the only way to
+        // see that. This is a READ of something the PRODUCT wrote: the harness
+        // never writes a role, which is the whole reason the approval is driven
+        // through this page at all.
         const approved = await waitFor(
           "the applicant's user document to say member",
           async () => {
@@ -379,48 +376,14 @@ test(
           "the approval left no approvedBy stamp, so nothing records who did it",
         );
 
-        // KNOWN DEFECT, pinned so that fixing it fails here and gets this
-        // block deleted. THIS STEP IS DELIBERATELY NOT `approvePendingApplicant`
-        // from scripts/e2e/lib/browser.mjs: that helper now presses Approve and
-        // then Refresh, which is what a spec that wants the approval rather than
-        // the pin should call. This one approves by hand so it can assert what
-        // happens in between, which is the defect below.
-        // The approvals queue is a ONE-SHOT read
+        // The queue dropping the row is asserted inside the helper, and it is
+        // half of what this step is for. The Approvals list is a ONE-SHOT read
         // (`useOneShotList` in src/features/admin/adminList.tsx uses getDocs,
-        // not onSnapshot) and the card does not remove itself, so an approved
-        // applicant stays on screen under a permanently disabled "Approving…"
-        // button with nothing to say the write landed. An admin working
-        // through a queue has to press Refresh to find out whether anything
-        // happened. When the list drops the row it has just approved, the
-        // detach below succeeds: delete this assertion and the Refresh press
-        // under it, and let the detach wait be the whole step.
-        //
-        // The pin GIVES THE PAGE ITS CHANCE FIRST, rather than reading a count
-        // one poll after the click. A live listener would need a moment to
-        // hear the write and re-render, and a pin that reads before that
-        // moment would go on passing against a page that had been fixed,
-        // which is the failure mode a pin exists to avoid: it would outlive
-        // the defect and nobody would learn the code under it is now dead.
-        const droppedItself = await card
-          .waitFor({ state: "detached", timeout: PIN_SETTLE_MS })
-          .then(() => true)
-          .catch(() => false);
-        assert.equal(
-          droppedItself,
-          false,
-          `the approvals queue dropped the approved applicant on its own within ` +
-            `${PIN_SETTLE_MS}ms. The defect this pins (a one-shot list that never ` +
-            "re-reads after a write) appears to be fixed: delete this pin and the " +
-            "Refresh press below it.",
-        );
-
-        await adminPage.getByRole("button", { name: "Refresh" }).click();
-        await card.waitFor({ state: "detached", timeout: WAIT_MS }).catch((err) => {
-          throw new Error(
-            `the approval card for the applicant was still on the queue ${WAIT_MS}ms ` +
-              `after Refresh, so the approval did not land. ${err.message}`,
-          );
-        });
+        // not onSnapshot), so the row only goes when the page asks to read
+        // again; it used to ask for nothing, and an approved applicant sat
+        // there under a permanently disabled "Approving…" button until the
+        // admin pressed Refresh. The card now hands the decision back to the
+        // page, and a detach that stops happening brings that back here.
       });
 
       await step("another sign-up takes the last place in the one-place session", async () => {
@@ -431,7 +394,7 @@ test(
         // instead of writing an enrolment row nobody earned.
         await signIn(otherPage, other);
         await otherPage.goto(courseUrl, { waitUntil: "domcontentloaded" });
-        await bothPickersShow(otherPage, "course-take-place");
+        await onePickerShows(otherPage, "course-take-place");
 
         const card = slotCard(otherPage, state.lastSeatGroupId).first();
         await card.waitFor({ timeout: WAIT_MS });
@@ -558,7 +521,7 @@ test(
       await step("taking a place on the course confirms the session", async () => {
         activePage = memberPage;
         await memberPage.goto(courseUrl, { waitUntil: "domcontentloaded" });
-        await bothPickersShow(memberPage, "course-take-place");
+        await onePickerShows(memberPage, "course-take-place");
 
         const mine = slotCard(memberPage, state.roomyGroupId).first();
         const full = slotCard(memberPage, state.lastSeatGroupId).first();
@@ -585,11 +548,10 @@ test(
 
       await step("the full session cannot be chosen when changing session", async () => {
         activePage = memberPage;
-        // Reloaded on purpose: this is the member coming back later, and it
-        // is also what puts BOTH placements into the same state, so `.first()`
-        // means the hero for the rest of this step.
+        // Reloaded on purpose: this is the member coming back later, and the
+        // reload is what settles the picker's state for the rest of this step.
         await memberPage.reload({ waitUntil: "domcontentloaded" });
-        await bothPickersShow(memberPage, "course-change-session");
+        await onePickerShows(memberPage, "course-change-session");
         await memberPage.getByTestId("course-change-session").first().click();
 
         const list = memberPage.getByTestId("course-slot-list").first();
@@ -635,9 +597,8 @@ test(
         // so waiting for it would be satisfied before the click and this
         // cancel would go unasserted. The timetable closing is the thing that
         // only happens after it: the hero goes back to offering Change
-        // session, which is both pickers offering it again, and no picker on
-        // the page is showing a slot list any more.
-        await bothPickersShow(memberPage, "course-change-session");
+        // session, and no slot list is showing on the page any more.
+        await onePickerShows(memberPage, "course-change-session");
         await waitFor("the session timetable to close again", async () =>
           (await memberPage.getByTestId("course-slot-list").count()) === 0 ? true : null,
         );
@@ -652,7 +613,7 @@ test(
 
       await step("leaving the course needs the typed course title", async () => {
         activePage = memberPage;
-        await bothPickersShow(memberPage, "dropout-reveal");
+        await onePickerShows(memberPage, "dropout-reveal");
         await memberPage.getByTestId("dropout-reveal").first().click();
 
         const leave = memberPage.getByTestId("dropout-leave").first();
@@ -682,23 +643,20 @@ test(
           .getByText(/Signing up again isn'?t something you can do here/)
           .first()
           .waitFor({ timeout: WAIT_MS });
-        // The foot placement is deliberately NOT asserted on. It keeps its own
-        // state, never learns about a drop-out driven through the hero, and
-        // goes on offering a place: that defect is pinned once, in
-        // tests/e2e/applicant-funnel.spec.mjs's last step, and one pin is
-        // enough. A second copy here would mean two places to delete when it
-        // is fixed, and the one that got missed would fail as a mystery.
+        // The foot placement is deliberately NOT asserted on. It mounts no
+        // picker at all now (it links up to the hero one), and that there is
+        // exactly one picker on the page after a drop-out is asserted once, in
+        // tests/e2e/applicant-funnel.spec.mjs's last step. One assertion is
+        // enough: a second copy here would be a second place to edit the next
+        // time the page's call to action moves.
       });
 
       await step("the approval and the drop-out reach the send log", async () => {
         activePage = memberPage;
         if (state.suppress) {
-          // UNREACHABLE TODAY, and kept for the day it is not. The fixture's
-          // `seed()` refuses a target whose mail is not caught, because the
-          // approval email does not consult the suppression list (the refusal
-          // reads the route and says so). So `state.suppress` is false in
-          // every run that gets this far, and this branch is what the mode
-          // means the moment that gap closes and the refusal is deleted.
+          // A deployed target: the fixture wrote suppression rows before
+          // anything ran and `sendEmail()` holds every message addressed to a
+          // suppressed recipient, so no send row may exist for these addresses.
           //
           // Suppressed mode: seeding wrote a `suppressedEmails` row for every
           // fixture address BEFORE anything ran, so a helper that consults the

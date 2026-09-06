@@ -89,6 +89,13 @@ export type CourseCTARound = {
   startsOn: string | null;
 };
 
+/**
+ * The id carried by the HERO placement's picker wrapper, and the target of the
+ * foot placement's link. Unique on the page by construction: only the hero
+ * renders a picker, so only the hero renders this id.
+ */
+const PICKER_ANCHOR_ID = "pick-a-session";
+
 type Props = {
   courseId: string;
   /** Used in the sentence in place of the run label. See the note below. */
@@ -304,16 +311,36 @@ export default function CourseCTA({
           It is rendered on a CLOSED open-mode run too, and renders nothing
           there unless the visitor is on the course: this page is the only
           surface an open-enrolment member has, so the deadline passing must
-          not take away the place they can see or the way out of it. */}
+          not take away the place they can see or the way out of it.
+
+          ONE PICKER PER PAGE, and it is the hero's. The page renders this
+          component twice, and while each placement mounted its own picker each
+          kept its own enrolment state and its own GET: a member who left the
+          course through the hero was still offered "Take this place" by the
+          foot, under a hero saying that signing up again is not possible here.
+          The foot links up to the hero picker instead, so the page carries one
+          control and one account of the visitor's place. */}
       {open && run ? (
-        <GroupPicker
-          runId={run.id}
-          courseTitle={courseTitle}
-          groups={groups}
-          streams={run.streams}
-          enrolOpen={run.state === "open"}
-          nextPath={coursePath}
-        />
+        placement === "hero" ? (
+          <div id={PICKER_ANCHOR_ID} className={styles.pickerAnchor}>
+            <GroupPicker
+              runId={run.id}
+              courseTitle={courseTitle}
+              groups={groups}
+              streams={run.streams}
+              enrolOpen={run.state === "open"}
+              nextPath={coursePath}
+            />
+          </div>
+        ) : run.state === "open" ? (
+          // Only while sign-ups are actually open. Once the window shuts the
+          // dated sentence above is the whole answer for a visitor, and for a
+          // member the hero picker holds their place and their way out, which
+          // is not something a closing page should send them back up to.
+          <a href={`#${PICKER_ANCHOR_ID}`} className={styles.button}>
+            Pick a session
+          </a>
+        ) : null
       ) : loading ? null : state === "open" ? (
         user ? (
           <Link href={applyHref} className={styles.button}>

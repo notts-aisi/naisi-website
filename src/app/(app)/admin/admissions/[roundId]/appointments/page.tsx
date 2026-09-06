@@ -77,6 +77,7 @@ export default async function AppointmentsPage({
       roundLabel={round.label}
       rows={bundle.rows}
       runs={bundle.runs}
+      outcomeRunIds={round.outcomeRunIds}
       rowsTruncated={bundle.rowsTruncated}
       runsTruncated={bundle.runsTruncated}
       canDecide={canDecideAppointments(user, round)}

@@ -282,6 +282,11 @@ jobs:
           E2E_SIGNING_SERVICE_ACCOUNT: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
           E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
           E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+          # The dev backend's harness bypass (src/lib/recaptcha/bypass.ts). With
+          # this set, and the same value on the dev backend, the reCAPTCHA
+          # dependent steps run for real; without it they are skipped and the
+          # runner says so. Empty when the secret is not configured.
+          E2E_RECAPTCHA_BYPASS_SECRET: ${{ secrets.E2E_RECAPTCHA_BYPASS_SECRET }}
         run: node scripts/run-e2e.mjs
 
       - name: Upload the fixture ledgers

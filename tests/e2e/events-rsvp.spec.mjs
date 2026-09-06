@@ -199,11 +199,15 @@ async function waitForSendRows(email, { timeout = WAIT_MS } = {}) {
  * Waits until React has actually hydrated the RSVP form.
  *
  * The page is server-rendered, so the form exists in the markup long before
- * anything is listening to it. Filling and pressing Submit in that window does
- * NOT do nothing, which is the trap: the browser runs the form's own default
- * submission instead, the values React never saw are lost, and the page comes
- * back looking untouched with no error anywhere for a spec to read. Two runs of
- * this file lost to that on a dev server busy compiling for five other specs.
+ * anything is listening to it. That window used to be a trap: pressing Submit
+ * in it ran the browser's own default submission, the values React never saw
+ * were lost, and the page came back looking untouched with no error anywhere
+ * for a spec to read. Two runs of this file lost to that on a dev server busy
+ * compiling for five other specs. The form now disables its submit until it is
+ * live and reads its name and email boxes out of the DOM, so neither loss is
+ * reachable; this stays because it is the difference between naming the page
+ * as never live and reporting it as a click that timed out, and because
+ * FormRenderer's questions below are still React-controlled.
  *
  * The probe is React's own bookkeeping: `precacheFiberNode` puts a
  * `__reactFiber$<key>` property on every host node it hydrates, and server
@@ -233,37 +237,35 @@ async function waitForHydration(page, testId, { timeout = WAIT_MS } = {}) {
 }
 
 /**
- * Types into a React-controlled field and makes sure the value stuck.
+ * How long a filled field is given to be overwritten before it is read back.
  *
- * The RSVP form's inputs are controlled with no `defaultValue`, and the page
- * is server-rendered: until the bundle hydrates, the markup is a form whose
- * fields nothing is listening to. A value typed into that window is discarded
- * by React's first render, the field goes silently blank, and the submit that
- * follows is refused by the browser's own `required` check with no message a
- * spec can read. That is what the second run of this file hit, on a dev server
- * busy compiling for five other specs at once.
- *
- * So the value is read back and re-typed until it holds. A person can lose the
- * same race, which is worth knowing, but this file is not the place to assert
- * about it: what it is here to prove is that a filled form reaches Firestore.
+ * A read-back with no settle proves nothing about a render that is about to
+ * land, and what is being waited for (React deciding to write over the DOM)
+ * leaves no locator behind to wait on.
  */
-async function fillStable(locator, value, { timeout = WAIT_MS } = {}) {
-  const deadline = Date.now() + timeout;
-  for (;;) {
-    await locator.fill(value);
-    // A beat, so a hydration that is about to happen has happened before the
-    // value is read back. Fixed rather than a locator wait because what is
-    // being waited for is React deciding to overwrite the DOM, which leaves no
-    // locator behind.
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    if ((await locator.inputValue()) === value) return;
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `a field would not hold the value typed into it within ${timeout}ms, so the page ` +
-          "never finished hydrating and the form could not be filled.",
-      );
-    }
-  }
+const SETTLE_MS = 200;
+
+/**
+ * Asserts that a field still holds what was typed into it.
+ *
+ * This used to be a retry loop that refilled up to a whole timeout's worth of
+ * attempts, because the RSVP form's boxes were controlled with no
+ * `defaultValue`: a value typed before the bundle hydrated was discarded by
+ * React's first render, the field went silently blank, and the submit that
+ * followed was refused by the browser's own `required` check with no message a
+ * spec could read. The second run of this file hit exactly that. The name and
+ * email boxes are uncontrolled now and read from the DOM at submit, so the
+ * value holds whenever it was typed, and this asserts that rather than working
+ * around the opposite.
+ */
+async function assertKept(locator, value, what) {
+  await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+  assert.equal(
+    await locator.inputValue(),
+    value,
+    `${what} did not keep what was typed into it, so a guest filling this form loses ` +
+      "their answer to a render they cannot see",
+  );
 }
 
 /**
@@ -378,10 +380,25 @@ test("events RSVP: a signed-out guest books a place and the page fits a phone", 
     });
 
     await step("a guest fills the form and lands on the confirmation page", async () => {
+      // The two identity boxes are filled BEFORE the page is known to be live,
+      // deliberately racing hydration: they are uncontrolled, so a guest who
+      // starts typing into the server-rendered markup keeps what they typed,
+      // and losing that race is what this step is here to notice.
+      const nameBox = page.locator("#rsvp-name");
+      const emailBox = page.locator("#rsvp-email");
+      await nameBox.fill(state.guestName);
+      await emailBox.fill(state.guestEmail);
       await waitForHydration(page, "rsvp-form");
-      await fillStable(page.locator("#rsvp-name"), state.guestName);
-      await fillStable(page.locator("#rsvp-email"), state.guestEmail);
-      await fillStable(page.locator(`#${state.questionId}-input`), answer);
+      await assertKept(nameBox, state.guestName, "the name box");
+      await assertKept(emailBox, state.guestEmail, "the email box");
+      // The custom question comes after: FormRenderer's fields are still
+      // React-controlled, because the same renderer paints the admissions
+      // application and the change-request form. The submit button carrying
+      // `disabled` until the form is live is what protects them from an early
+      // press; nothing protects an early keystroke, so this does not try one.
+      const questionBox = page.locator(`#${state.questionId}-input`);
+      await questionBox.fill(answer);
+      await assertKept(questionBox, answer, "the custom question");
       // The mailing-list tick boxes are deliberately left alone. They post to
       // a different route, and a smoke test that opts a throwaway address into
       // two channels is a smoke test with two more collections to drain.

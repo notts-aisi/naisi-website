@@ -38,7 +38,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -133,6 +133,31 @@ const authReturn = await loadTs("lib/authReturn.ts");
 
 function source(relativePath) {
   return readFileSync(join(REPO_ROOT, ...relativePath.split("/")), "utf8");
+}
+
+/** Every `.ts`/`.tsx` file under `src`, path relative to the repo root. */
+function* srcFiles(dir = SRC) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) yield* srcFiles(full);
+    else if (/\.tsx?$/.test(entry.name)) yield full;
+  }
+}
+
+/**
+ * Every file that MINTS the registration magic link, found by the token scope
+ * rather than by a list. The scope string is the one thing a sender cannot
+ * omit, so a route added later is enumerated instead of quietly uncovered.
+ */
+function loginLinkSenders() {
+  const found = [];
+  for (const full of srcFiles()) {
+    const text = readFileSync(full, "utf8");
+    if (/signToken\(\s*\{\s*s:\s*"verify-login-email"/.test(text)) {
+      found.push({ path: full.slice(REPO_ROOT.length + 1), text });
+    }
+  }
+  return found;
 }
 
 /**
@@ -1385,6 +1410,86 @@ describe("the funnel return allowlist", () => {
       authReturn.safeFunnelReturn("/apply/round?from=.."),
       "/apply/round?from=..",
     );
+  });
+
+  test("the return address travels on the verification token, validated at both ends", () => {
+    // The cookie AuthEntry writes lives ten minutes in ONE browser, and a
+    // confirmation email is routinely opened in another. So the address is
+    // stored on the emailVerifications document by the register route and
+    // read back by the confirm, and both ends run it through this allowlist:
+    // a stored value is data somebody could one day write, not a promise.
+    for (const path of [
+      "src/app/api/register/route.ts",
+      "src/lib/email/confirmLoginEmailVerification.ts",
+    ]) {
+      const file = source(path);
+      assert.match(
+        file,
+        /from "@\/lib\/authReturn"/,
+        `${path} does not read the shared funnel allowlist`,
+      );
+      assert.match(
+        file,
+        /safeFunnelReturn\(/,
+        `${path} imports the allowlist without applying it`,
+      );
+    }
+  });
+
+  test("every sender of the sign-in link mints the ten minutes its copy promises", () => {
+    // The email's expiry copy is computed from this constant, and the landing
+    // page is the only thing carrying somebody back to their application, so
+    // a longer window is a sign-in credential sitting in an inbox and a
+    // shorter one is a broken promise. The senders are DERIVED rather than
+    // listed: a third route that mints this scope one day is covered without
+    // anybody remembering to add it here.
+    const senders = loginLinkSenders();
+    assert.ok(
+      senders.length >= 2,
+      "no sender of the verify-login-email token was found; the search is broken, not the code",
+    );
+    for (const { path, text } of senders) {
+      assert.match(
+        text,
+        /TOKEN_TTL_SECONDS = 60 \* 10\b/,
+        `${path} mints the sign-in link with a life other than ten minutes`,
+      );
+      assert.match(
+        text,
+        /signToken\(\s*\{\s*s:\s*"verify-login-email"[\s\S]{0,80}?TOKEN_TTL_SECONDS\s*\)/,
+        `${path} signs the link with a life other than the constant it declares`,
+      );
+    }
+  });
+
+  test("a sender that reuses a pending token refuses only a redeemed one, never a stale one", () => {
+    // At ten minutes an expired link is the ORDINARY case, and the expired-link
+    // page answers it by sending the reader to the Resend button. A sender that
+    // reuses the pending document must therefore revive it: refusing on
+    // `expiresAt` turns that button into a silent no-op behind a uniform OK,
+    // which is the failure this rule exists to keep out. Single use is upheld
+    // by the `verifiedAt == null` filter instead, which no reuse may drop.
+    const reusers = loginLinkSenders().filter(({ text }) =>
+      /\.where\("kind", "==", "login-email"\)/.test(text),
+    );
+    assert.ok(reusers.length >= 2, "no sender reuses a pending login-email token");
+    for (const { path, text } of reusers) {
+      assert.match(
+        text,
+        /\.where\("verifiedAt", "==", null\)/,
+        `${path} reuses a pending token without excluding redeemed ones`,
+      );
+      assert.equal(
+        /expiresAt[^\n]*\.toMillis\(\)\s*<=?/.test(text),
+        false,
+        `${path} gates the resend on the stored expiry, so the Resend button the expired-link page points at sends nothing`,
+      );
+      assert.match(
+        text,
+        /expiresAt[:,]/,
+        `${path} resends without moving the document's own expiry, so the fresh link dies before its copy says it will`,
+      );
+    }
   });
 
   test("both auth surfaces read the shared allowlist rather than their own copy", () => {

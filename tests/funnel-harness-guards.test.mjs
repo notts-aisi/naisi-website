@@ -643,6 +643,15 @@ test("every spec module exports a SPEC the runner can use", async () => {
     );
 
     assert.equal(typeof spec.needs?.admin, "boolean", `${where}: SPEC.needs.admin must be a boolean.`);
+    // Optional, and only a boolean when present. A spec that declares it can
+    // only be driven where the mail is caught, because it reads its own
+    // messages out of the local inbox; the runner skips it everywhere else.
+    // A truthy string would read as "declared" to a `if (spec.x)` and as
+    // nothing to a typed check, which is the failure worth naming.
+    assert.ok(
+      spec.requiresCaughtMail === undefined || typeof spec.requiresCaughtMail === "boolean",
+      `${where}: SPEC.requiresCaughtMail must be a boolean when it is present.`,
+    );
     for (const fn of ["seed", "countRows", "teardown"]) {
       assert.equal(typeof spec[fn], "function", `${where}: SPEC.${fn} must be a function.`);
     }
@@ -791,6 +800,27 @@ test("suppression is decided by a fact about the server, not the shape of the or
     /mailIsCaught\(/,
     "the runner must ask mailIsCaught() rather than deciding suppression itself.",
   );
+  // The other half of that answer: a spec that has to READ its own mail is
+  // skipped where the mail is not caught. Without this the sign-up journey
+  // would drive a registration against the deployed backend, send for real to
+  // a `.invalid` address and a real university domain, and then wait for a
+  // link that lands in nobody's inbox.
+  assert.match(
+    runner,
+    /spec\.requiresCaughtMail/,
+    "the runner must honour SPEC.requiresCaughtMail. A spec that reads its own mail " +
+      "cannot be driven where the mail is not caught, and skipping it is the accepted " +
+      "outcome; running it anyway is a real send.",
+  );
+  const caughtMailSpecs = FIXTURE_MODULES.filter((file) =>
+    /requiresCaughtMail:\s*true/.test(codeOf(file)),
+  );
+  assert.ok(
+    caughtMailSpecs.length > 0,
+    "no fixture declares requiresCaughtMail any more. The sign-up journey reads its " +
+      "confirmation and verification links out of the local inbox, so if it has stopped " +
+      "declaring the field, either it stopped doing that or its protection is gone.",
+  );
   assert.ok(
     !/suppress:\s*(deployed|!isLoopbackOrigin|!?\s*loopback)/.test(runner),
     "the runner is deciding suppression from the shape of the origin again. Loopback " +
@@ -805,9 +835,13 @@ test("suppression is decided by a fact about the server, not the shape of the or
  * Seeding suppresses every fixture address before anything runs against a
  * DEPLOYED target, which only means "this run cannot cause mail" while the
  * send path consults the suppression list. `sendEmail()` in
- * src/lib/email/send.ts does NOT: the per-feature helpers do, individually. So
- * the check is on the helpers these routes actually import, and it arms itself
- * for new ones automatically.
+ * src/lib/email/send.ts now does, for every caller, and
+ * tests/email-suppression-chokepoint.test.mjs is the guard on that door. This
+ * one stays, and stays per-helper: it is the check that keeps a helper's OWN
+ * early return honest, and an early return is what stops a message being
+ * rendered and a template being read for somebody who will never see it. Two
+ * layers, deliberately, and the outer one arms itself for new helpers
+ * automatically.
  *
  * On loopback the suppression is deliberately off, because the SMTP is a
  * catcher on this machine and the `emailSends` rows are what a spec reads.

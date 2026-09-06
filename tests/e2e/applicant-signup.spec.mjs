@@ -8,6 +8,11 @@
  * fill the form in -> land back on the apply page as a role-pending account
  * that is offered the application.
  *
+ * The `__auth_next` cookie is deleted before the emailed link is driven, so
+ * the last step proves the return address survives on the verification token
+ * itself. That is the shape a real journey has: the confirmation email is
+ * routinely opened on a phone, where no cookie of ours has ever existed.
+ *
  * ## Nothing here is seeded except the round
  *
  * The fixture creates ONE admission round. The account is the product's to
@@ -307,6 +312,16 @@ test(
           "Confirm your email to finish joining NAISI",
           "the register route sent something other than the confirmation email",
         );
+        // BURN THE COOKIE FIRST. `__auth_next` is the fallback AuthEntry
+        // writes for the Google redirect leg: one browser, ten minutes. A
+        // confirmation email is routinely opened on a phone, or after a
+        // coffee, so the journey cannot depend on it. The return address now
+        // rides on the verification token itself, and clearing the cookie is
+        // what makes the assertion two steps below a statement about the
+        // token rather than about a cookie that happens to still be there.
+        await page.evaluate(() => {
+          document.cookie = "__auth_next=; path=/; max-age=0; samesite=lax";
+        });
         // Driven from the BODY rather than reconstructed from the token
         // document: the thing worth proving is that the email a person
         // receives carries a working URL for this server.
@@ -322,6 +337,14 @@ test(
         await page.locator("#set-password").fill(state.password);
         await page.getByRole("button", { name: "Set password & continue" }).click();
         await page.waitForURL((url) => url.pathname === "/register", { timeout: WAIT_MS });
+        assert.equal(
+          new URL(page.url()).searchParams.get("next"),
+          `/apply/${state.roundId}`,
+          "the magic-link landing page continued to a bare /register, so the only " +
+            "thing left holding the return address was the `__auth_next` cookie the " +
+            "step above deleted. An email opened on another device, or later than " +
+            "that cookie lives, would strand this applicant on /pending-approval",
+        );
         // Setting a password revokes the session cookie the magic link minted,
         // so the page re-authenticates before it navigates. This line is what
         // says that worked: the profile step only renders for a signed-in
@@ -403,11 +426,11 @@ test(
           .fill(`Signup run ${state.signupRunId}: written by an automated run.`);
         await page.locator("#member-consent").check();
         await page.getByTestId("register-submit").click();
-        // The return address rides through registration in the `__auth_next`
-        // cookie AuthEntry set on /login, because the magic-link landing page
-        // navigates to a bare /register. Landing anywhere else (in practice
-        // /pending-approval) means that hand-off broke and a person who
-        // registered from a form is left to find their way back to it.
+        // The return address rode through registration on the verification
+        // token, which is why the cookie could be deleted mid-journey above.
+        // Landing anywhere else (in practice /pending-approval) means that
+        // hand-off broke and a person who registered from a form is left to
+        // find their way back to it.
         await page.waitForURL((url) => url.pathname === `/apply/${state.roundId}`, {
           timeout: WAIT_MS,
         });

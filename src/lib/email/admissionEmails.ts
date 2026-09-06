@@ -56,9 +56,11 @@ import { sendEmail } from "./send";
  *
  * ## Suppression is checked here, and this function never throws
  *
- * `sendEmail` logs a send; it does not consult the suppression list, and
- * continuing to mail a hard bounce is how a sending domain's reputation goes.
- * A suppressed address is skipped silently.
+ * `sendEmail` now consults the suppression list itself and holds a suppressed
+ * recipient (logging a `suppressed` row), so this check is belt and braces: it
+ * skips the address before a message is even built, and it is what
+ * `tests/funnel-harness-guards.test.mjs` reads. A suppressed address is
+ * skipped silently.
  *
  * Every call site fires this AFTER its transaction has committed, and a
  * confirmation is a courtesy rather than part of the write, so the whole body

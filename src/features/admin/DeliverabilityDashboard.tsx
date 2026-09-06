@@ -6,7 +6,7 @@ import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import DeliverabilityExports from "./DeliverabilityExports";
 
-type SendStatus = "sent" | "bounced" | "complained";
+type SendStatus = "sent" | "bounced" | "complained" | "suppressed";
 
 type Send = {
   id: string;
@@ -56,6 +56,15 @@ function statusBadge(status: SendStatus, reason?: string) {
       return (
         <Badge tone="warning" title={reason ? `Reason: ${reason}` : undefined}>
           Complaint{reason ? ` · ${reason}` : ""}
+        </Badge>
+      );
+    // Neutral, not danger: nothing went wrong with this message. It was never
+    // handed to the provider because the address is on the suppression list,
+    // and the row is here so the withholding is visible rather than a gap.
+    case "suppressed":
+      return (
+        <Badge tone="neutral" title={reason ? `Reason: ${reason}` : undefined}>
+          Held: suppressed
         </Badge>
       );
     default:

@@ -61,7 +61,18 @@ export type EmailSendKind =
   | "subscription-added"
   | "unknown";
 
-export type EmailSendStatus = "sent" | "bounced" | "complained";
+/**
+ * `suppressed` is not a delivery outcome: it is the row for a message that was
+ * never handed to the provider because the address is on `suppressedEmails`.
+ * It exists so the deliverability tab can show what was WITHHELD next to what
+ * was sent. Before the suppression check moved into `sendEmail` (see that
+ * file's header) a withheld message left no trace at all, which made "why did
+ * this member not get it" unanswerable from the log.
+ *
+ * `markSendStatus` only ever patches rows at `sent`, so a late bounce webhook
+ * cannot land on one of these.
+ */
+export type EmailSendStatus = "sent" | "bounced" | "complained" | "suppressed";
 
 export type EmailSend = {
   messageId: string;
@@ -111,6 +122,45 @@ export async function logEmailSend(db: Firestore, entry: LogSendInput): Promise<
   };
   if (entry.sesMessageId) doc.sesMessageId = entry.sesMessageId;
   if (entry.resendEmailId) doc.resendEmailId = entry.resendEmailId;
+  if (entry.actorUid) doc.actorUid = entry.actorUid;
+  if (entry.referenceId) doc.referenceId = entry.referenceId;
+  await db.collection("emailSends").add(doc);
+}
+
+/** What a withheld message can say about itself: everything but a provider id. */
+export type LogSuppressedInput = Pick<
+  EmailSend,
+  "to" | "subject" | "fromEmail" | "fromName" | "kind"
+> & {
+  actorUid?: string;
+  referenceId?: string;
+  /** Why it was withheld, shown on the row. Defaults to the suppression list. */
+  reason?: string;
+  sentAt?: Date;
+};
+
+/**
+ * Log a message that was NOT sent because its recipient is suppressed. Called
+ * from `sendEmail()` once per dropped address, with the same kind, subject,
+ * reference and actor the send would have carried, so a withheld message is as
+ * legible in the deliverability tab as a delivered one.
+ *
+ * No `messageId`: nothing was handed to a provider, and writing a fake one
+ * would give the webhook matcher something to find.
+ */
+export async function logSuppressedSend(db: Firestore, entry: LogSuppressedInput): Promise<void> {
+  const at = entry.sentAt ?? new Date();
+  const doc: Record<string, unknown> = {
+    to: entry.to.trim(),
+    subject: entry.subject,
+    fromEmail: entry.fromEmail,
+    fromName: entry.fromName,
+    kind: entry.kind,
+    status: "suppressed",
+    statusReason: entry.reason ?? "on the suppression list",
+    sentAt: at,
+    statusUpdatedAt: at,
+  };
   if (entry.actorUid) doc.actorUid = entry.actorUid;
   if (entry.referenceId) doc.referenceId = entry.referenceId;
   await db.collection("emailSends").add(doc);

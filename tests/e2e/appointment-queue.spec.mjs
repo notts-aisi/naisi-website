@@ -279,10 +279,24 @@ test(
 
       await step("appointing the first applicant asks for the run and a confirmation", async () => {
         const card = cardFor(appointee);
-        // The select opens on the first run with a start date, which on a
-        // shared project is whichever run sorts first: the fixture's run is
-        // chosen explicitly, the way a decider chooses.
-        await card.getByTestId("appointment-run-select").selectOption(state.runId);
+        // THE PICKER OPENS ON NOTHING, and this is the assertion that keeps it
+        // that way. It used to open on the first appointable run in the whole
+        // project, which on a shared project is another fixture's run and in
+        // production is whichever sorts first, so a decider who never looked at
+        // the select could appoint somebody onto a run nobody chose and the
+        // email would go out on the press.
+        const runSelect = card.getByTestId("appointment-run-select");
+        assert.equal(
+          await runSelect.inputValue(),
+          "",
+          "the run picker pre-selected a run instead of waiting for the decider to choose",
+        );
+        assert.equal(
+          await card.getByTestId("appointment-appoint").isDisabled(),
+          true,
+          "Appoint was live before a run had been chosen",
+        );
+        await runSelect.selectOption(state.runId);
         await card.getByTestId("appointment-appoint").click();
         await waitForWithReason(
           card.getByText("Appoint this person and email them now?", { exact: false }),

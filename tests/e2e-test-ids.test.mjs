@@ -177,14 +177,14 @@ const DYNAMIC_LOCATORS = [
   {
     file: "tests/e2e/member-journey.spec.mjs",
     arg: "testId",
-    wrapper: "bothPickersShow",
+    wrapper: "onePickerShows",
     idArgIndex: 1,
     ids: ["course-take-place", "course-change-session", "dropout-reveal"],
     reason:
-      "`bothPickersShow(pg, testId)` counts an id to two before the spec touches it: the " +
-      "public course page mounts CourseCTA twice, each with its own GroupPicker and its " +
-      "own fetch, so `.first()` only means the hero once both have rendered. All three " +
-      "ids it is called with are asked for literally in the same file.",
+      "`onePickerShows(pg, testId)` waits for an id to count exactly one before the spec " +
+      "touches it: the public course page renders CourseCTA twice but only the hero mounts " +
+      "the GroupPicker, so a count of two would be the old double-picker defect coming " +
+      "back. All three ids it is called with are asked for literally in the same file.",
   },
 ];
 

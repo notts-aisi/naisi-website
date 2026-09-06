@@ -49,14 +49,6 @@ const SIGN_IN_HANDOFF_MS = 120_000;
 /** How long a fill is given to survive before it is read back. */
 const FILL_SETTLE_MS = 500;
 
-/** How many times the login form is refilled before it is declared unusable. */
-const FILL_ATTEMPTS = 10;
-
-/** How many times the approvals queue is re-read before an approval is
- *  declared not to have landed, and how long each re-read is given. */
-const REFRESH_ATTEMPTS = 5;
-const REFRESH_SETTLE_MS = 5_000;
-
 /**
  * The viewport every browser spec gets unless it says otherwise.
  *
@@ -385,45 +377,37 @@ export function createStepRecorder({ t, page, markerPath, artifactsDir, skipReas
  * spec would be testing nothing. Driving the form leaves the browser with real
  * Firebase Auth client state AND the cookie the server wants.
  *
- * ## Why this waits three times before it types anything
+ * ## Why it waits, now that the form no longer loses the race itself
  *
  * An earlier version filled the two boxes and pressed as soon as `#auth-email`
- * was in the DOM. That is right against a deployed build and loses two
+ * was in the DOM. That is right against a deployed build and lost two
  * different races against a dev server, both of which were seen on
  * 6 September 2026 and both of which took whole spec runs down with them.
  * Five specs each wrote their own copy of the wait below before it was moved
  * here; this is that fix, once.
  *
- *  1. HYDRATION. The two boxes are CONTROLLED inputs (`useState("")` in
- *     AuthEntry), so anything typed before React's first client render is
- *     wiped by it: the fields go back to empty under what was typed. Worse,
- *     the Sign in button is a real `type="submit"`, so a press before React
- *     attaches submits the form NATIVELY: the browser reloads /login with both
- *     fields blank and NO message on the form, and the caller then waits out
- *     its whole timeout on a page that is doing nothing.
+ *  1. HYDRATION, which the product now answers rather than this helper. The
+ *     two boxes are UNCONTROLLED (AuthEntry reads them out of the DOM when it
+ *     needs them), so what is typed before React's first client render
+ *     survives it; and the Sign in button carries `disabled` in the server
+ *     markup until the form is live, so neither a press nor an Enter in a
+ *     field can reach the browser's own submission. Both were the other way
+ *     round until the hydration defects this suite found were fixed: the fill
+ *     was wiped by React's first render, and a press reloaded /login with two
+ *     blank fields and NO message on the form. So the fill goes in FIRST, on
+ *     purpose, and the wait is for the button to lose `disabled`, which is the
+ *     product's own public statement that the form is listening.
  *  2. THE ENTRANCE. AuthEntry parks the card at `translateX(112vw)` and slides
  *     it in when it clears `entering` (Google Identity Services reporting
  *     ready, or a 3.2 second fallback). A press while the card is still
  *     flying in does nothing at all: no request to identitytoolkit, no error,
  *     no navigation.
- *  3. THE READ-BACK, which is the real gate. The mount marker is a signal and
- *     the entrance is a signal; the two fields still holding what they were
- *     given a moment later is the fact. So the fill is repeated until it
- *     survives a settle, and only then is anything pressed.
- *
- * The mount marker is the chevron whose label reads "Hide the sign-in
- * animation": `loaderOpen` is false in the server-rendered markup by
- * construction and a layout effect opens the animation at desktop widths, so
- * that label existing IS hydration having run. It is tolerated as absent,
- * because a person can have collapsed the animation and the preference is
- * persisted, and because the read-back below is what actually decides.
- *
- * PRODUCT OBSERVATION, recorded rather than fixed here: a person can lose race
- * 1 as well. Reaching for a field by hand takes longer than hydrating, but a
- * password manager fills on load, so somebody on a slow connection whose
- * manager filled and who pressed Enter gets the same silent native submit and
- * the same blank form with nothing said. The builders who found this listed it
- * as a product observation; this helper only works around it.
+ *  3. THE READ-BACK, which is now an assertion instead of a retry loop. The
+ *     two fields still holding what they were given, after the form has gone
+ *     live, is the fact the other two waits are proxies for. It used to be
+ *     refilled up to ten times because a controlled box could wipe it at any
+ *     moment; a box that needs that today is a regression of the fix above,
+ *     and this says so in one sentence rather than papering over it.
  *
  * Waiting on "the URL stopped being /login" rather than on a destination: a
  * role-pending account lands on /pending-approval and a member on the `next`
@@ -457,13 +441,27 @@ export async function signInWithPassword(
   await emailBox.waitFor({ timeout });
   await submit.waitFor({ timeout });
 
-  // 1. The mount marker. Absent is tolerated: see the note above.
-  await page
-    .getByRole("button", { name: "Hide the sign-in animation" })
-    .waitFor({ timeout })
-    .catch(() => {});
+  // 1. Fill first, deliberately racing hydration: the boxes are uncontrolled,
+  //    so whether this lands before or after React arrives, the values stay.
+  await emailBox.fill(email);
+  await passwordBox.fill(password);
 
-  // 2. The card has landed, stated as cheaply as it can be observed: the
+  // 2. The form is live once its submit button drops `disabled`, which is the
+  //    one thing on this page that says so out loud.
+  const liveDeadline = Date.now() + timeout;
+  for (;;) {
+    if (await submit.isEnabled()) break;
+    if (Date.now() >= liveDeadline) {
+      throw new Error(
+        `the Sign in button on ${origin}/login still carried \`disabled\` after ${timeout}ms. ` +
+          "AuthEntry disables it until React has hydrated the form, so the page never " +
+          "became live and nothing could have been pressed on it anyway.",
+      );
+    }
+    await page.waitForTimeout(100);
+  }
+
+  // 3. The card has landed, stated as cheaply as it can be observed: the
   //    submit button is fully inside the viewport rather than off to the right.
   const entranceDeadline = Date.now() + timeout;
   for (;;) {
@@ -481,24 +479,19 @@ export async function signInWithPassword(
     await page.waitForTimeout(100);
   }
 
-  // 3. The read-back. Fill, let it settle, and check both boxes kept what they
-  //    were given. Retried, because the render that wipes them can land after
-  //    any one attempt.
-  let kept = false;
-  for (let attempt = 0; attempt < FILL_ATTEMPTS && !kept; attempt += 1) {
-    await emailBox.fill(email);
-    await passwordBox.fill(password);
-    await page.waitForTimeout(FILL_SETTLE_MS);
-    kept =
-      (await emailBox.inputValue()) === email &&
-      (await passwordBox.inputValue()).length === password.length;
-  }
-  if (!kept) {
+  // 4. The read-back. One settle, one look: a live form keeps what it was
+  //    given, and a form that does not is a defect rather than a retry.
+  await page.waitForTimeout(FILL_SETTLE_MS);
+  const keptEmail = (await emailBox.inputValue()) === email;
+  const keptPassword = (await passwordBox.inputValue()).length === password.length;
+  if (!keptEmail || !keptPassword) {
     throw new Error(
-      `the login form on ${origin}/login would not keep the credentials it was given ` +
-        `after ${FILL_ATTEMPTS} attempts. The boxes are controlled inputs, so the page ` +
-        "is still being taken over by its own JavaScript, and a press now would submit " +
-        "two empty fields. The password is compared by length only and is not printed.",
+      `the login form on ${origin}/login did not keep the credentials it was given ` +
+        `(email kept: ${keptEmail}, password kept: ${keptPassword}). Its boxes are ` +
+        "meant to be uncontrolled and read from the DOM at submit; a render that empties " +
+        "them is the hydration defect fixed in AuthEntry coming back, and a press now " +
+        "would submit two empty fields. The password is compared by length only and is " +
+        "not printed.",
     );
   }
 
@@ -519,57 +512,70 @@ export async function signInWithPassword(
  * is forbidden from writing a role anyway. So the admin presses Approve, the
  * same as a person.
  *
- * The card is found by its address, which is unique per fixture account.
+ * The card is found by its address, which is unique per fixture account, and
+ * the queue is paged through to reach it: it shows twenty at a time, newest
+ * first, and a shared target can have another run's applicants sitting above
+ * this one.
  *
- * ## Approve, THEN Refresh, and why the Refresh is not optional
+ * ## Press Approve, and let the card leave on its own
  *
- * The Approvals queue is a ONE-SHOT read, not a live listener: `useOneShotList`
- * in src/features/admin/adminList.tsx fetches with `getDocs` on mount and only
- * re-reads when its `reload()` is called, which is what the footer's Refresh
- * button does. Approve is a client-direct Firestore write with no response for
- * the page to show, so the approved card just SITS THERE under a permanently
- * disabled "Approving…" button. Waiting for it to detach on its own therefore
- * times out against a page that is working correctly, which is what an earlier
- * version of this helper did while its comment claimed the list was live.
- *
- * So: press Approve, press Refresh, and let the card detaching off the re-read
- * be the page agreeing the write landed. The Refresh is retried, because the
- * write is in flight when the first press goes in and a re-read that overtakes
- * it comes back with the row still pending.
- *
- * The queue never re-reading itself after an approval is a real product defect,
- * and tests/e2e/member-journey.spec.mjs PINS it deliberately with its own
- * inline approve step. This helper is for the specs that want the approval
- * rather than the pin.
+ * The queue is a ONE-SHOT read rather than a live listener: `useOneShotList`
+ * in src/features/admin/adminList.tsx fetches with `getDocs` on mount and
+ * re-reads when its `reload()` is called. The Approvals page now hands that
+ * `reload` to each card, so a card whose Approve has landed asks for the
+ * re-read itself and the row goes with it. Waiting for the detach is therefore
+ * the page agreeing the write happened, and no Refresh press is needed: an
+ * earlier version of this helper pressed Refresh in a retry loop because the
+ * page left the approved applicant sitting there under a stuck "Approving…"
+ * button, which is the defect that fix closed.
  */
 export async function approvePendingApplicant(page, origin, { email }) {
   await page.goto(`${origin}/admin`, { waitUntil: "domcontentloaded" });
   const card = page.getByTestId("approval-card").filter({ hasText: email }).first();
+  await page
+    .getByTestId("approval-card")
+    .first()
+    .waitFor({ timeout: WAIT_MS })
+    .catch((err) => {
+      throw new Error(
+        `no approval cards appeared on ${origin}/admin within ${WAIT_MS}ms. Either ` +
+          `${email} is not waiting for approval, or the signed-in account is not an ` +
+          `admin and the page redirected. ${err.message}`,
+      );
+    });
+  // Ten presses is two hundred applications, which is more than a queue ever
+  // holds; the loop stops early on the card or on a queue with no more pages.
+  // Load more pages rows the page has already fetched, so the next twenty
+  // render on the click rather than after a round trip.
+  const pageRenderMs = 5_000;
+  const loadMore = page.getByRole("button", { name: "Load more" });
+  for (let press = 0; press < 10; press += 1) {
+    if ((await card.count()) > 0) break;
+    if ((await loadMore.count()) === 0) break;
+    const before = await page.getByTestId("approval-card").count();
+    await loadMore.click();
+    await page
+      .getByTestId("approval-card")
+      .nth(before)
+      .waitFor({ timeout: pageRenderMs })
+      .catch(() => {});
+  }
   await card.waitFor({ timeout: WAIT_MS }).catch((err) => {
     throw new Error(
-      `no approval card for ${email} appeared on ${origin}/admin within ${WAIT_MS}ms. ` +
-        "Either the account is not waiting for approval, or the signed-in account is " +
-        `not an admin and the page redirected. ${err.message}`,
+      `no approval card for ${email} appeared on ${origin}/admin within ${WAIT_MS}ms, ` +
+        "with every page of the queue loaded. Either the account is not waiting for " +
+        `approval, or somebody has already decided it. ${err.message}`,
     );
   });
   await card.getByTestId("approval-approve").click();
 
-  const refresh = page.getByRole("button", { name: "Refresh" }).first();
-  let gone = false;
-  for (let attempt = 0; attempt < REFRESH_ATTEMPTS && !gone; attempt += 1) {
-    await refresh.click();
-    gone = await card
-      .waitFor({ state: "detached", timeout: REFRESH_SETTLE_MS })
-      .then(() => true)
-      .catch(() => false);
-  }
-  if (!gone) {
+  await card.waitFor({ state: "detached", timeout: WAIT_MS }).catch((err) => {
     throw new Error(
-      `the approval card for ${email} was still on the queue after ${REFRESH_ATTEMPTS} ` +
-        "presses of Refresh, so the approval did not land. The queue is a one-shot " +
-        "getDocs list (useOneShotList in src/features/admin/adminList.tsx), so a card " +
-        "that stays put through a re-read means the write itself did not happen, not " +
-        "that the page has yet to hear about it.",
+      `the approval card for ${email} was still on the queue ${WAIT_MS}ms after ` +
+        "Approve, so either the write did not land or the page stopped re-reading " +
+        "after it. The queue is a one-shot getDocs list (useOneShotList in " +
+        "src/features/admin/adminList.tsx) and the card asks it to re-read once the " +
+        `approval has landed, so both failures look the same from here. ${err.message}`,
     );
-  }
+  });
 }
