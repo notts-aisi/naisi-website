@@ -352,7 +352,12 @@ export default function MembershipConsole({ isAdmin }: { isAdmin: boolean }) {
       <Card padding="lg">
         <div className={styles.sectionHead}>
           <h3 className={styles.subheading}>Periods</h3>
-          <Button size="sm" variant="ghost" onClick={() => setCreating((v) => !v)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            data-testid="membership-new-period"
+            onClick={() => setCreating((v) => !v)}
+          >
             {creating ? "Cancel" : "New period"}
           </Button>
         </div>
@@ -386,13 +391,17 @@ export default function MembershipConsole({ isAdmin }: { isAdmin: boolean }) {
         ) : (
           <ul className={styles.list}>
             {periods.map((period) => (
-              <li key={period.id} className={styles.row}>
+              <li key={period.id} className={styles.row} data-testid="membership-period-row">
                 <div className={styles.rowHead}>
                   <div className={styles.rowTitle}>
                     <strong>{period.label || period.year}</strong>
                     <Badge tone="neutral">{period.year}</Badge>
                     {period.id === currentPeriodId && (
-                      <Badge tone="success" title="Every badge on the site is about this period">
+                      <Badge
+                        tone="success"
+                        title="Every badge on the site is about this period"
+                        data-testid="membership-period-current"
+                      >
                         Current
                       </Badge>
                     )}
@@ -403,6 +412,7 @@ export default function MembershipConsole({ isAdmin }: { isAdmin: boolean }) {
                         size="sm"
                         variant="ghost"
                         disabled={busy}
+                        data-testid="membership-make-current"
                         onClick={() =>
                           post("/api/admin/membership/current", { periodId: period.id })
                         }
@@ -506,7 +516,7 @@ export default function MembershipConsole({ isAdmin }: { isAdmin: boolean }) {
             disabled={rowsLoading}
           />
 
-          <div className={styles.facts}>
+          <div className={styles.facts} data-testid="membership-period-totals">
             {ALL_MEMBERSHIP_TIERS.map((tier) => (
               <span key={tier} className={styles.fact}>
                 {MEMBERSHIP_TIER_LABELS[tier]}: {viewing.totals[tier] ?? 0}
@@ -623,6 +633,7 @@ function PeriodForm({
             onChange={(e) => set("year", e.target.value)}
             placeholder="2026/27"
             maxLength={7}
+            data-testid="membership-period-year"
           />
         </label>
       )}
@@ -633,6 +644,7 @@ function PeriodForm({
           onChange={(e) => set("label", e.target.value)}
           placeholder="Membership 2026/27"
           maxLength={MEMBERSHIP_FIELD_LIMITS.label}
+          data-testid="membership-period-label"
         />
       </label>
       <label className={styles.field}>
@@ -665,7 +677,7 @@ function PeriodForm({
         />
       </label>
       <div className={styles.formActions}>
-        <Button type="submit" size="sm" disabled={busy}>
+        <Button type="submit" size="sm" disabled={busy} data-testid="membership-period-submit">
           {submitLabel}
         </Button>
       </div>

@@ -222,7 +222,7 @@ function ApplicantCard({
   }
 
   return (
-    <Card as="article" className={styles.card}>
+    <Card as="article" className={styles.card} data-testid="appointment-card">
       <div className={styles.cardHead}>
         {/* A `div` with an explicit heading role rather than an `h2`, because
             `MemberText` renders a `div` and a `div` inside an `h2` is invalid.
@@ -288,7 +288,7 @@ function ApplicantCard({
 
       {decided ? (
         <div className={styles.outcome}>
-          <p className={styles.hint}>
+          <p className={styles.hint} data-testid="appointment-decided">
             {decided.decision === "appoint"
               ? `Appointed${decided.runId ? ` to ${runName(runs, decided.runId)}` : ""}. The email has gone out.`
               : "Declined. The email has gone out."}
@@ -308,6 +308,7 @@ function ApplicantCard({
               value={runId}
               onChange={(e) => setRunId(e.target.value)}
               disabled={runs.length === 0}
+              data-testid="appointment-run-select"
             >
               {runs.length === 0 ? (
                 <option value="">No run can take a facilitator</option>
@@ -363,6 +364,7 @@ function ApplicantCard({
               <Button
                 type="button"
                 variant="primary"
+                data-testid="appointment-appoint"
                 onClick={() => {
                   setError(null);
                   setConfirm("appoint");
@@ -374,6 +376,7 @@ function ApplicantCard({
               <Button
                 type="button"
                 variant="secondary"
+                data-testid="appointment-decline"
                 onClick={() => {
                   setError(null);
                   setConfirm("decline");
@@ -408,6 +411,7 @@ function ApplicantCard({
                 <Button
                   type="button"
                   variant={confirm === "appoint" ? "primary" : "danger"}
+                  data-testid="appointment-confirm"
                   onClick={() => decide(confirm)}
                   disabled={busy !== null}
                 >

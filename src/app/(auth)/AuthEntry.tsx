@@ -897,7 +897,14 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
               </motion.div>
             )}
           </AnimatePresence>
-          <Button type="submit" form="auth-form" fullWidth size="lg" disabled={busy}>
+          <Button
+            data-testid="auth-submit"
+            type="submit"
+            form="auth-form"
+            fullWidth
+            size="lg"
+            disabled={busy}
+          >
             {mode === "register"
               ? busy
                 ? "Sending…"
@@ -989,6 +996,7 @@ function ModeToggle({ value, onChange }: { value: Mode; onChange: (m: Mode) => v
   return (
     <div style={{ textAlign: "center", marginBottom: "var(--space-5)" }}>
       <div
+        data-testid="auth-mode-toggle"
         role="radiogroup"
         aria-label="Sign in or create an account"
         style={{ display: "inline-flex", position: "relative", padding: "3px", gap: "3px", background: "var(--color-bg-elevated)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)" }}

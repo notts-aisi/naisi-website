@@ -93,6 +93,8 @@ export default function DropOutCard({ runId, courseTitle, onDropped }: Props) {
           type="button"
           className={styles.reveal}
           onClick={() => setOpen(true)}
+          // Addressed by the browser end-to-end suite.
+          data-testid="dropout-reveal"
         >
           Leave this course
         </button>
@@ -140,6 +142,9 @@ export default function DropOutCard({ runId, courseTitle, onDropped }: Props) {
           className={styles.danger}
           disabled={!confirmed || busy}
           onClick={() => void drop()}
+          // Addressed by the browser end-to-end suite, which asserts this is
+          // dead until the course title has been typed.
+          data-testid="dropout-leave"
         >
           {busy ? "Leaving..." : "Leave the course"}
         </button>

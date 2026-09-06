@@ -495,7 +495,13 @@ export default function ProfileForm() {
       <Card padding="lg">
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-1)" }}>
           <h2 style={{ fontSize: "var(--text-xl)" }}>Email preferences</h2>
-          <Badge tone={anyChecked ? "success" : "neutral"}>
+          {/* Addressed by the browser end-to-end suite: the badge is how a
+              member is told, in one word, whether the grid below it holds
+              anything at all. */}
+          <Badge
+            tone={anyChecked ? "success" : "neutral"}
+            data-testid="profile-subscriptions-badge"
+          >
             {anyChecked ? "Subscribed" : "No subscriptions"}
           </Badge>
         </div>
@@ -514,8 +520,15 @@ export default function ProfileForm() {
           </div>
         ) : (
           <div className={styles.matrix}>
+            {/* Addressed by the browser end-to-end suite, which asserts a
+                member sees their OWN subscription rows here (the query-shape
+                regression). The wide grid and the stacked mobile list below
+                give their checkboxes the same accessible label, so a spec
+                scopes to this element and finds each cell by that label
+                rather than adding a test id per channel and per address. */}
             <div
               className={styles.matrixGrid}
+              data-testid="profile-subscriptions-grid"
               style={{
                 gridTemplateColumns: `minmax(10rem, 1fr) repeat(${verifiedEmails.length}, minmax(8rem, auto))`,
               }}

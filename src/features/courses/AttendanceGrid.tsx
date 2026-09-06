@@ -639,7 +639,12 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
           to stick to: a container that cannot scroll vertically has no sticky
           to offer. */}
       <div className={styles.scroll}>
-        <table className={styles.table}>
+        {/* The test ids from here down are addressed by the browser end-to-end
+            suite. They are on the TABLE and on repeated controls rather than on
+            each cell: a cell belongs to a member and a session, and an id per
+            cell would have to be built from both, which the suite's own guard
+            refuses. The spec scopes a row and then counts columns instead. */}
+        <table className={styles.table} data-testid="attendance-grid">
           <caption className={styles.caption}>
             Attendance for {group?.name || "this group"} — {members.length}{" "}
             {members.length === 1 ? "member" : "members"}, {sessions.length}{" "}
@@ -673,6 +678,7 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
                   <th
                     key={session.sessionKey}
                     scope="col"
+                    data-testid="attendance-session"
                     className={`${styles.head} ${styles.weekHead} ${
                       pushed ? styles.headPushed : ""
                     }`}
@@ -702,6 +708,7 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
                       <button
                         type="button"
                         className={styles.bulk}
+                        data-testid="attendance-bulk"
                         onClick={() => onBulk(session)}
                         disabled={remaining === 0 || !session.held}
                         aria-label={
@@ -723,6 +730,7 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
                         <button
                           type="button"
                           className={styles.bulk}
+                          data-testid="attendance-held-toggle"
                           onClick={() => onToggleHeld(session)}
                           aria-label={
                             session.held
@@ -747,6 +755,7 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
                       <button
                         type="button"
                         className={`${styles.bulk} ${styles.pushButton}`}
+                        data-testid="attendance-push"
                         onClick={() => setPushTarget(session.sessionKey)}
                         aria-label={`Push the week ${session.weekNumber} register, which locks it and emails the group`}
                       >
@@ -761,6 +770,7 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
                       <button
                         type="button"
                         className={styles.bulk}
+                        data-testid="attendance-resend"
                         onClick={() => setResendTarget(session.sessionKey)}
                         aria-label={`Send the week ${session.weekNumber} reminder to this group again`}
                       >
@@ -820,6 +830,7 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
                             className={`${styles.cellButton} ${styles.cellLocked} ${
                               status ? STATUS_CLASS[status] : styles.isUnmarked
                             }`}
+                            data-testid="attendance-cell"
                             role="img"
                             aria-label={`${member.displayName}, week ${session.weekNumber}: ${
                               status ? ATTENDANCE_STATUS_LABEL[status] : "not marked"
@@ -833,6 +844,7 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
                             className={`${styles.cellButton} ${
                               status ? STATUS_CLASS[status] : styles.isUnmarked
                             }`}
+                            data-testid="attendance-cell"
                             aria-pressed={status !== null}
                             aria-label={`${member.displayName}, week ${session.weekNumber}: ${
                               status ? ATTENDANCE_STATUS_LABEL[status] : "not marked"
@@ -857,6 +869,7 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
                         <button
                           type="button"
                           className={`${styles.noteDot} ${hasNote ? styles.noteDotSet : ""}`}
+                          data-testid="attendance-note-open"
                           onClick={() =>
                             setNoteTarget({
                               sessionKey: session.sessionKey,
@@ -921,7 +934,11 @@ export default function AttendanceGrid({ groupId }: AttendanceGridProps) {
               >
                 Cancel
               </Button>
-              <Button onClick={() => void onResend()} disabled={resending}>
+              <Button
+                onClick={() => void onResend()}
+                disabled={resending}
+                data-testid="attendance-resend-confirm"
+              >
                 {resending ? "Re-sending..." : "Re-send reminder"}
               </Button>
             </div>

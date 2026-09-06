@@ -88,6 +88,7 @@ export default function MembershipTable({
           <span className={styles.fieldLabel}>Search</span>
           <Input
             id="membership-search"
+            data-testid="membership-search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Name or email"
@@ -172,7 +173,7 @@ function Row({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className={styles.row}>
+    <div className={styles.row} data-testid="membership-row">
       <div className={styles.cell}>
         {/* A display name is member-authored text and is rendered as a text
             node, never as markup. */}
@@ -189,7 +190,7 @@ function Row({
         )}
       </span>
       <span className={styles.cellText}>{row.role}</span>
-      <div className={styles.cell}>
+      <div className={styles.cell} data-testid="membership-row-tier">
         {row.tier ? (
           <Badge tone={row.tier === "alumni" ? "neutral" : "success"}>
             {MEMBERSHIP_TIER_LABELS[row.tier]}
@@ -206,7 +207,12 @@ function Row({
         <span className={styles.cellText} title={provenanceTitle(row)}>
           {provenanceLine(row)}
         </span>
-        <Button size="sm" variant="ghost" onClick={() => setOpen((v) => !v)}>
+        <Button
+          size="sm"
+          variant="ghost"
+          data-testid="membership-row-change"
+          onClick={() => setOpen((v) => !v)}
+        >
           {open ? "Close" : "Change"}
         </Button>
         {open && (

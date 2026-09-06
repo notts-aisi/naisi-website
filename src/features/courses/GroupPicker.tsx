@@ -304,6 +304,8 @@ export default function GroupPicker({
               type="button"
               className={styles.secondary}
               onClick={() => setChanging(true)}
+              // Addressed by the browser end-to-end suite.
+              data-testid="course-change-session"
             >
               Change session
             </button>
@@ -394,6 +396,8 @@ export default function GroupPicker({
           className={styles.button}
           disabled={busy || !chosenGroupId}
           onClick={() => void write("POST", chosenGroupId)}
+          // Addressed by the browser end-to-end suite.
+          data-testid="course-take-place"
         >
           {busy ? "Signing you up..." : "Take this place"}
         </button>
@@ -455,7 +459,10 @@ function SlotList({
   }
   if (!selectable) {
     return (
-      <ul className={styles.slotList}>
+      // Addressed by the browser end-to-end suite. The same id is on the
+      // selectable list below: the two are the read-only and the choosable
+      // rendering of one timetable, and no picker ever shows both.
+      <ul className={styles.slotList} data-testid="course-slot-list">
         {groups.map((g) => (
           <li key={g.id} className={styles.slotStatic}>
             <span className={styles.slotName}>{g.name}</span>
@@ -467,7 +474,7 @@ function SlotList({
     );
   }
   return (
-    <fieldset className={styles.fieldset}>
+    <fieldset className={styles.fieldset} data-testid="course-slot-list">
       <legend className={styles.legend}>Pick a session</legend>
       <div className={styles.slotList}>
         {groups.map((g) => {

@@ -14,12 +14,23 @@
  * Any future loosening of the checks below must read as a security diff.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const ENV_FILE = join(REPO_ROOT, ".env.e2e.local");
+
+/**
+ * The one file in this harness that holds real secrets: the owner's admin
+ * account, for the browser specs that have to drive an admin-only page.
+ *
+ * Separate from `.env.e2e.local` on purpose. That file is copied from an
+ * example, is documented as holding nothing secret, and gets pasted into
+ * issues; a password does not belong in it. Both are covered by the repo's
+ * `.env*` ignore rule, and neither is ever printed.
+ */
+const SECRETS_FILE = join(REPO_ROOT, ".env.e2e.secrets.local");
 
 /** The ONLY Firebase project this harness may ever authenticate against. */
 const REQUIRED_PROJECT_ID = "naisi-website-dev";
@@ -123,13 +134,83 @@ export function assertProject(env) {
   // precisely so no permanent credential sits on disk; accepting one silently
   // would undo that.
   if (env.FIREBASE_ADMIN_PRIVATE_KEY) {
+    throw new Error(refuseServiceAccountKey("FIREBASE_ADMIN_PRIVATE_KEY", ".env.e2e.local"));
+  }
+}
+
+/** One wording for both config files, so neither can quietly grow a key. */
+function refuseServiceAccountKey(key, file) {
+  return (
+    `${key} is set in ${file}.\n` +
+    "This harness uses Application Default Credentials (`gcloud auth " +
+    "application-default login`) so that no permanent key sits in plaintext " +
+    "on disk. Delete that line rather than adding the key back."
+  );
+}
+
+/**
+ * The owner-provided credentials a browser spec needs, from
+ * `.env.e2e.secrets.local` if it exists, with `process.env` winning per key so
+ * a run can be driven from the shell without a file at all.
+ *
+ * Every field may be undefined: the file is optional, and the caller says what
+ * it cannot do without. Nothing here is ever logged.
+ */
+export function loadSecrets() {
+  let file = {};
+  if (existsSync(SECRETS_FILE)) {
+    file = parseEnvFile(SECRETS_FILE);
+    // The same refusal `.env.e2e.local` carries, on the same two keys: a
+    // second config file is exactly where a downloaded service-account key
+    // would come back in, and it would come back in unread by assertProject.
+    for (const key of ["FIREBASE_ADMIN_PRIVATE_KEY", "FIREBASE_ADMIN_CLIENT_EMAIL"]) {
+      if (file[key]) throw new Error(refuseServiceAccountKey(key, ".env.e2e.secrets.local"));
+    }
+  }
+  const pick = (key) => process.env[key] || file[key] || undefined;
+  return {
+    /** The owner's own admin account. This harness can never create one. */
+    adminEmail: pick("E2E_ADMIN_EMAIL"),
+    adminPassword: pick("E2E_ADMIN_PASSWORD"),
+    /** Reserved for a deployed backend that offers a captcha bypass header. */
+    recaptchaBypassSecret: pick("E2E_RECAPTCHA_BYPASS_SECRET"),
+  };
+}
+
+/** True when a spec that signs in as an admin has something to sign in with. */
+export function hasAdminCredentials() {
+  const secrets = loadSecrets();
+  return Boolean(secrets.adminEmail && secrets.adminPassword);
+}
+
+/**
+ * The service account whose identity is borrowed to SIGN custom tokens.
+ *
+ * Signing is the one operation Application Default Credentials cannot do
+ * alone: a user credential has no private key, so firebase-admin asks IAM to
+ * sign on this account's behalf, which needs
+ * `roles/iam.serviceAccountTokenCreator` on the account named here.
+ *
+ * The default is the laptop answer, the dev project's firebase-adminsdk
+ * account. `E2E_SIGNING_SERVICE_ACCOUNT` is the CI answer: a workload running
+ * as its own federated service account can sign as itself without anybody
+ * granting it rights over a shared identity. Either way the account must
+ * belong to the dev project, because this names whose signature every minted
+ * custom token carries.
+ */
+const DEFAULT_SIGNING_SERVICE_ACCOUNT = `firebase-adminsdk-fbsvc@${REQUIRED_PROJECT_ID}.iam.gserviceaccount.com`;
+
+export function signingServiceAccount() {
+  const override = process.env.E2E_SIGNING_SERVICE_ACCOUNT;
+  if (!override) return DEFAULT_SIGNING_SERVICE_ACCOUNT;
+  if (!override.endsWith(`@${REQUIRED_PROJECT_ID}.iam.gserviceaccount.com`)) {
     throw new Error(
-      "FIREBASE_ADMIN_PRIVATE_KEY is set in .env.e2e.local.\n" +
-        "This harness uses Application Default Credentials (`gcloud auth " +
-        "application-default login`) so that no permanent key sits in plaintext " +
-        "on disk. Delete that line rather than adding the key back.",
+      `E2E_SIGNING_SERVICE_ACCOUNT is ${JSON.stringify(override)}, which does not belong ` +
+        `to ${REQUIRED_PROJECT_ID}. Tokens are signed by whichever account this names, so ` +
+        "an id from another project would mint custom tokens valid against that project.",
     );
   }
+  return override;
 }
 
 let cached = null;

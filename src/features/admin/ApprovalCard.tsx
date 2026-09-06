@@ -124,6 +124,9 @@ export default function ApprovalCard({
   return (
     <Card
       padding="lg"
+      // Addressed by the browser end-to-end suite, which approves a seeded
+      // applicant through this page rather than by writing the document.
+      data-testid="approval-card"
       style={
         uniEmailUnverified
           ? {
@@ -269,7 +272,12 @@ export default function ApprovalCard({
           )}
 
           <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-5)", flexWrap: "wrap" }}>
-            <Button onClick={handleApprove} disabled={busy !== null} size="sm">
+            <Button
+              onClick={handleApprove}
+              disabled={busy !== null}
+              size="sm"
+              data-testid="approval-approve"
+            >
               {busy === "approve" ? "Approving…" : "Approve"}
             </Button>
             <Button

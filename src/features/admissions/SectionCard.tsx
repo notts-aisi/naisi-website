@@ -76,12 +76,21 @@ export default function SectionCard({
       {(onSave || footer) && (
         <div className={styles.actions}>
           {onSave && (
-            <Button type="button" onClick={save} disabled={busy || disabled}>
+            <Button
+              type="button"
+              data-testid="section-save"
+              onClick={save}
+              disabled={busy || disabled}
+            >
               {busy ? "Saving…" : saveLabel}
             </Button>
           )}
           {footer}
-          {saved && !error && <span className={styles.saved}>Saved.</span>}
+          {saved && !error && (
+            <span className={styles.saved} data-testid="section-saved">
+              Saved.
+            </span>
+          )}
         </div>
       )}
       {error && <p className={styles.error}>{error}</p>}

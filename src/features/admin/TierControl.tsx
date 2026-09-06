@@ -71,7 +71,7 @@ export default function TierControl({
   }
 
   return (
-    <div className={styles.wrap}>
+    <div className={styles.wrap} data-testid="membership-tier-control">
       <div className={styles.controls}>
         <ResponsiveSelect<MembershipTier>
           value={pending}
@@ -86,6 +86,7 @@ export default function TierControl({
         <Button
           size="sm"
           disabled={busy || disabled}
+          data-testid="membership-tier-grant"
           onClick={() =>
             send(
               {
@@ -106,6 +107,7 @@ export default function TierControl({
             size="sm"
             variant="ghost"
             disabled={busy || disabled}
+            data-testid="membership-tier-revoke"
             onClick={() => send({ uid, periodId, revoke: true }, null)}
           >
             Remove

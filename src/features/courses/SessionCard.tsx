@@ -193,6 +193,9 @@ export default function SessionCard({
     <Card
       as="section"
       padding="md"
+      // Addressed by the browser end-to-end suite, which checks the group page
+      // renders the session beside the roster and the register.
+      data-testid="session-card"
       className={[styles.card, styles[state]].join(" ")}
     >
       <div className={styles.head}>

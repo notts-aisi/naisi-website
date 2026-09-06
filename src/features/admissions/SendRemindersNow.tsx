@@ -91,6 +91,7 @@ export default function SendRemindersNow({
         <Button
           type="button"
           variant="secondary"
+          data-testid="round-send-reminders"
           disabled={disabled || busy}
           onClick={() => {
             setReceipt(null);
