@@ -5,15 +5,17 @@ import { getCurrentUser } from "@/lib/firebase/session";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 import {
   ADMISSION_ROUND_FIELD_LIMITS,
-  REMINDER_OFFSET_IDS,
   normalizeAdmissionRound,
   normalizeAdmissionStage,
   type AdmissionCriterion,
   type ProgrammeOption,
-  type ReminderOffset,
-  type ReminderOffsetId,
   type RoundProgrammePreference,
 } from "@/lib/firestore/admissionRounds";
+import {
+  REMINDER_SLOT_LIMITS,
+  validateSlots,
+  type ReminderSlot,
+} from "@/lib/reminders/slots";
 import { isUsableGrid, normalizeAvailabilityGrid } from "@/lib/admissions/availability";
 import { isValidDateKey } from "@/lib/courses/weekPlan";
 import { ACADEMIC_YEAR_PATTERN } from "@/lib/firestore/users";
@@ -23,7 +25,6 @@ import {
   canAuthorRounds,
   canSeeRound,
   parseInstant,
-  parseWallClock,
   serialiseRound,
   serialiseStage,
 } from "@/lib/admissions/roundRoutes";
@@ -217,29 +218,60 @@ function readCriteria(raw: unknown): AdmissionCriterion[] {
   return out;
 }
 
-function readReminderOffsets(raw: unknown): ReminderOffset[] {
+/**
+ * The reminder schedule: a free list of slots, checked by the SHARED
+ * validator the editor shows its messages from.
+ *
+ * The split is deliberate. This function does only the TYPING a route has to
+ * do to an untrusted body (is it a list, is each entry an object, is
+ * `daysBefore` a number at all), and `validateSlots` owns every rule ABOUT a
+ * schedule: the day range, whole numbers, the wall clock, two slots on the
+ * same day at the same time, more slots than one list may carry. Writing those
+ * again here would be sentences free to disagree with the ones the author was
+ * reading in the editor a moment earlier, which is the whole reason the
+ * validator is shared rather than copied.
+ *
+ * An id is opaque and is only checked for being non-empty text and for being
+ * this list's alone: the three old fixed ids (`t7`, `t3`, `dday`) are valid
+ * ids like any other, so a round saved from a page opened before this change
+ * still saves.
+ */
+function readReminderSlots(raw: unknown): ReminderSlot[] {
   if (!Array.isArray(raw)) bad("The reminder schedule must be a list.");
-  if (raw.length > L.maxReminderOffsets) {
-    bad(`A round takes at most ${L.maxReminderOffsets} reminders.`);
-  }
-  const out: ReminderOffset[] = [];
-  const seen = new Set<string>();
-  for (const item of raw) {
+  const slots: ReminderSlot[] = [];
+  const seenIds = new Set<string>();
+  // One entry past the cap and no further. `validateSlots` owns the sentence
+  // for "too many", and one over the cap is all it needs to say it, so a body
+  // carrying fifty thousand entries is refused after seven rather than typed
+  // in full first. Bounding the loop rather than adding a length check of its
+  // own keeps the refusal an over-long list gets identical to the sentence the
+  // editor was showing under the rows.
+  for (const item of raw.slice(0, REMINDER_SLOT_LIMITS.maxSlots + 1)) {
     if (!item || typeof item !== "object") bad("A reminder is not an object.");
     const o = item as Body;
-    const id = o.id as ReminderOffsetId;
-    if (!REMINDER_OFFSET_IDS.includes(id)) bad("That is not a reminder this site sends.");
-    if (seen.has(id)) bad("The same reminder is listed twice.");
-    seen.add(id);
-    const atLocalTime = parseWallClock(o.atLocalTime);
-    if (!atLocalTime) bad("A reminder time must look like 10:00.");
-    out.push({
+    // A number, not necessarily a whole one in range: NaN and 2.5 are numbers,
+    // and `validateSlots` has the sentence for both.
+    if (typeof o.daysBefore !== "number") bad("A reminder's days-before must be a number.");
+    const id = readString(o.id, "A reminder id", 60, true);
+    if (seenIds.has(id)) {
+      // The editor keys each row on its id, so two rows under one id would
+      // make a single Remove delete both. Firestore's side of this re-mints a
+      // repeated id instead of refusing, which is the right answer to a
+      // document that has already been written and the wrong one to a body
+      // arriving now: this is a bug in whatever composed it, not a stored
+      // state to repair.
+      bad("Two reminders share an id. Each one needs its own.");
+    }
+    seenIds.add(id);
+    slots.push({
       id,
-      daysBefore: readInt(o.daysBefore, "A reminder's days-before", 0, 60),
-      atLocalTime,
+      daysBefore: o.daysBefore,
+      atLocalTime: typeof o.atLocalTime === "string" ? o.atLocalTime : "",
     });
   }
-  return out;
+  const problems = validateSlots(slots);
+  if (problems.length > 0) bad(problems.join(" "));
+  return slots;
 }
 
 /** Stable comparison for the two frozen sections. Field order is ours, not the client's. */
@@ -453,7 +485,7 @@ export async function PATCH(
     }
 
     if ("reminderOffsets" in body) {
-      update.reminderOffsets = readReminderOffsets(body.reminderOffsets);
+      update.reminderOffsets = readReminderSlots(body.reminderOffsets);
     }
 
     let outcomeRunIds = current.outcomeRunIds;

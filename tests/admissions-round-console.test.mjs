@@ -450,6 +450,65 @@ test("a fellowship choice and the outcome runs are checked as one merged pair", 
   );
 });
 
+test("the reminder schedule answers to the shared slot rules, not a second copy", () => {
+  // A round's reminders and a worksheet circulation's due-soon reminders are
+  // the same list of the same slots, so the day range, the wall clock, the
+  // duplicate rule and the cap live once, in `src/lib/reminders/slots.ts`.
+  // Writing them again in the route would be four sentences free to disagree
+  // with the four the author was reading in the editor a moment earlier, and
+  // the disagreement would show up as a save that the page said was fine.
+  const src = source(ROUND_ROUTE);
+  assert.match(
+    src,
+    /validateSlots\(slots\)/,
+    "the round PATCH does not run the shared slot validator.",
+  );
+  assert.ok(
+    !/REMINDER_OFFSET_IDS|"t7"|"dday"/.test(src),
+    "the round PATCH still names the three fixed reminder ids. A slot id is " +
+      "opaque now: a round may carry any six slots it likes, and the old three " +
+      "ids are valid ids rather than the only ones.",
+  );
+
+  assert.match(
+    src,
+    /seenIds\.has\(id\)/,
+    "the round PATCH accepts two reminders sharing an id. The editor keys each " +
+      "row on its id, so one Remove would delete both, and the read path's " +
+      "habit of re-minting a repeated id is the right answer to a document " +
+      "already written rather than to a body arriving now.",
+  );
+  assert.match(
+    src,
+    /raw\.slice\(0, REMINDER_SLOT_LIMITS\.maxSlots \+ 1\)/,
+    "the round PATCH types every entry of an untrusted list before it notices " +
+      "the list is too long. One entry past the cap is all the shared " +
+      "validator needs to say so.",
+  );
+
+  const editor = source("src/features/admissions/RoundEditor.tsx");
+  assert.match(
+    editor,
+    /<SlotListEditor/,
+    "the reminders section does not mount the shared slot editor.",
+  );
+  assert.ok(
+    !/REMINDER_LABEL/.test(editor),
+    "the reminders section still keeps a map of fixed labels. A label written " +
+      "from the numbers cannot be wrong about what it sends; a fixed one read " +
+      '"A week out" over a row somebody had edited to four days.',
+  );
+  assert.match(
+    editor,
+    /disabled=\{slotProblems\.length > 0\}/,
+    "the reminders section lets Save be pressed over a list the shared " +
+      "validator has already objected to, so the author reads the same " +
+      "sentence twice: once as a warning under the rows, then again as a red " +
+      "server error over the button. The circulation panel, the other mount of " +
+      "the same editor, holds its save shut on exactly this check.",
+  );
+});
+
 test("the roles route is admin only and moves the nav flag both ways", () => {
   const src = source(ROLES_ROUTE);
   assert.match(

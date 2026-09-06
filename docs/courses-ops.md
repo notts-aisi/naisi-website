@@ -255,20 +255,42 @@ round, on the dates that round's reminder schedule works out from its deadline.
 | Stale after | 24 hours |
 | Template | `admissions-deadline-reminder`, editable under Admin → Email designs |
 
-**Nothing is scheduled.** Each tick reads every open round's `closesAt` and its
-`reminderOffsets` and derives the due instants again: `closesAt` minus the
-offset's days, in **civil** days, then set to that offset's London wall clock.
-So moving a deadline moves its reminders with it, and there is nothing to
-reschedule.
+**A round carries a free list of reminder slots**, up to six, each one a number
+of days before the deadline and a London wall clock on that day. A new round
+starts with three presets (seven days out at 10:00, three days out at 10:00,
+and deadline day at 12:00) and an author edits, deletes and adds rows from the
+round page's **Deadline reminders** section. An empty list means this round
+sends none: the tick skips it and Send now refuses it. A list that is there but
+unreadable (a hand edit, a partial restore) is read the same way, as empty
+rather than as the presets, so a document in a state nobody intended goes quiet
+instead of mailing everyone holding a draft three times. The list is the same
+shape, and the same editor, as a worksheet circulation's due-soon slots
+([`src/lib/reminders/slots.ts`](../src/lib/reminders/slots.ts)); the field on
+the round document is still called `reminderOffsets`.
 
-**The marker keys on the resolved civil date**, never on the offset id. Two
+**A slot is labelled from its own numbers**: "3 days before the closing date at
+10:00", "On the closing date at 12:00". It used to be three fixed rows with
+fixed names over an editable number of days, so a row edited from seven days to
+four still read "A week out". A label written from the numbers cannot be wrong
+about what it sends.
+
+**Nothing is scheduled.** Each tick reads every open round's `closesAt` and its
+slots and derives the due instants again: `closesAt` minus the slot's days, in
+**civil** days, then set to that slot's London wall clock. So moving a deadline
+moves its reminders with it, and there is nothing to reschedule.
+
+**The marker keys on the resolved civil date**, never on the slot id. Two
 consequences, both deliberate:
 
 - editing the schedule cannot re-send a date that has already gone out (nudging
   "10:00" to "12:00" on the morning it went is the same key, so nobody is
   mailed twice);
-- two offsets that resolve to the same day are **one** email, sent at the
+- two slots that resolve to the same day are **one** email, sent at the
   earlier of the two times.
+
+A slot id is opaque: nothing reads one, and the three ids the fixed rows used
+to carry (`t7`, `t3`, `dday`) are still perfectly good ids, so a round authored
+before the free list existed keeps its rows, its dates and its markers.
 
 **Stale work is dropped whole, not mailed late.** A due date more than 24 hours
 old is recorded with `skippedReason: "stale"` and nobody is emailed: a "closes
@@ -317,9 +339,10 @@ while the site-wide scheduler switch is off, and refuses while the reminders
 job's own switch is off. The receipt it shows is
 `sent / skipped / stale`, plus `failed` when it is not zero, and "There may be more: press again" when the run stopped at its ceiling.
 
-Use it when a tick has slipped on one of the named dates. It is also what makes
-this whole lane safe to cut under time pressure: without the scheduler,
-deadline reminders are a committee member pressing one button on three days.
+Use it when a tick has slipped on one of the dates. It is also what makes this
+whole lane safe to cut under time pressure: without the scheduler, deadline
+reminders are a committee member pressing one button on each of the days the
+round's schedule names.
 
 #### `admissions-stage-release`
 

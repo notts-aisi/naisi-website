@@ -8,6 +8,7 @@ import DateTimePopover from "@/components/ui/DateTimePopover";
 import MemberName from "@/components/ui/MemberName";
 import SavedFlash, { type SaveState } from "@/components/ui/SavedFlash";
 import Switch from "@/components/ui/Switch";
+import SlotListEditor from "@/features/reminders/SlotListEditor";
 import { getClientDb } from "@/lib/firebase/client";
 import {
   CIRCULATIONS_COLLECTION,
@@ -15,8 +16,19 @@ import {
   type NotificationEvent,
   type ReviewConfig,
 } from "@/lib/firestore/circulations";
+import {
+  slotsSignature,
+  validateSlots,
+  type ReminderSlot,
+} from "@/lib/reminders/slots";
 import { REVIEW_TOGGLES, RETURN_OFF_NOTE } from "./circulationView";
-import { CHANNEL_LABELS, DUE_SOON_NOT_LIVE_NOTE, NOTIFICATION_ROWS } from "./notificationCopy";
+import {
+  CHANNEL_LABELS,
+  DUE_SOON_ANCHOR_LABEL,
+  DUE_SOON_NOT_LIVE_NOTE,
+  DUE_SOON_NO_DATE_NOTE,
+  NOTIFICATION_ROWS,
+} from "./notificationCopy";
 import styles from "./SettingsPanel.module.css";
 
 /**
@@ -75,15 +87,17 @@ type Props = {
  *
  * The rule is satisfied either way. `affectedKeys()` reports the TOP-LEVEL key
  * (`notifications`, `reviewConfig`, `dueDate`), all three of which are in the
- * circulations update rule's list, whether the write replaced a map or changed
- * one boolean inside it.
+ * circulations update rule's list, whether the write replaced a map, changed
+ * one boolean inside it, or replaced the reminder schedule's whole array at
+ * `notifications.dueSoon.slots`. That is what let the schedule live inside
+ * `notifications` with no rules change and no deploy.
  *
  * A leaf write on a document whose map is incomplete is safe too:
  * `normalizeNotifications` fills every missing event AND every missing channel
  * from `DEFAULT_NOTIFICATIONS` on the way in, so a sibling this write never
  * mentions is read as its default rather than as `undefined`.
  */
-type SettingsPatch = Record<string, boolean | Date | null>;
+type SettingsPatch = Record<string, boolean | Date | null | ReminderSlot[]>;
 
 /**
  * Local YYYY-MM-DD for today, the earliest day the picker offers.
@@ -105,6 +119,41 @@ export default function SettingsPanel({ circulation, nameOf, isAdmin }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const closed = circulation.status === "closed";
+
+  /**
+   * THE ONE CONTROL HERE THAT IS NOT SAVED ON TOUCH, and the reason is the
+   * control rather than the policy.
+   *
+   * Every switch above writes itself because a switch has two states and each
+   * one is a finished decision. The reminder schedule is TYPED: "14" passes
+   * through "1", and "10:30" passes through four states that are not times at
+   * all. Saving per keystroke would write a document per character, and would
+   * store 1 day on the way to 14; letting the live listener drive the rows
+   * instead would fight the cursor. So this block holds a draft and saves it
+   * on a button, which is also the shape the round editor uses for the same
+   * list.
+   *
+   * The draft re-seeds whenever the STORED schedule changes: after our own
+   * save lands (which is what clears the Save button), and when another
+   * staff member saves theirs while this one is open. The second case
+   * replaces what is being typed, which is last-write-wins made visible, and
+   * is the same answer the rest of this panel gives.
+   *
+   * The signature ignores slot ids, because `sanitizeSlots` may mint one on
+   * the way in and a re-minted id is not somebody's edit.
+   */
+  const storedSlots = circulation.notifications.dueSoon.slots;
+  const storedSignature = slotsSignature(storedSlots);
+  const [slots, setSlots] = useState<ReminderSlot[]>(storedSlots);
+  const [syncedSignature, setSyncedSignature] = useState(storedSignature);
+  if (storedSignature !== syncedSignature) {
+    // Adjusting state during render, per the React docs, rather than from an
+    // effect that would render the stale list once first.
+    setSyncedSignature(storedSignature);
+    setSlots(storedSlots);
+  }
+  const slotProblems = validateSlots(slots);
+  const slotsDirty = slotsSignature(slots) !== storedSignature;
 
   async function save(patch: SettingsPatch) {
     setState("saving");
@@ -253,6 +302,37 @@ export default function SettingsPanel({ circulation, nameOf, isAdmin }: Props) {
                   label={CHANNEL_LABELS.push}
                 />
               </div>
+              {/* The schedule sits under the switch it times, spanning both
+                  columns. With no due date there is nothing to count back
+                  from, and the sentence says which field fixes that. */}
+              {row.event === "dueSoon" &&
+                (circulation.dueDate ? (
+                  <div className={styles.eventExtra}>
+                    <SlotListEditor
+                      slots={slots}
+                      onChange={setSlots}
+                      anchorLabel={DUE_SOON_ANCHOR_LABEL}
+                      anchorAt={circulation.dueDate}
+                    />
+                    <div className={styles.slotSave}>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => save({ "notifications.dueSoon.slots": slots })}
+                        disabled={!slotsDirty || slotProblems.length > 0}
+                      >
+                        Save reminder times
+                      </Button>
+                      {slotsDirty && slotProblems.length === 0 && (
+                        <span className={styles.note}>Not saved yet.</span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <p className={styles.eventExtraNote}>
+                    {DUE_SOON_NO_DATE_NOTE}
+                  </p>
+                ))}
             </li>
           ))}
         </ul>

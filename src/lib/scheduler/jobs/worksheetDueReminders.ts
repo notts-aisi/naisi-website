@@ -9,56 +9,118 @@ import "server-only";
  * shape; what follows is only what is DIFFERENT here, plus the one decision
  * this job makes on its own.
  *
- * ## Nothing is scheduled, and the window is the schedule
+ * ## Nothing is scheduled, and the sender's slots are the schedule
  *
- * A circulation has one due date and no reminder offsets, so there is nothing
- * to derive: the audience is every OPEN circulation whose `dueDate` falls in
- * the next {@link DUE_SOON_WINDOW_HOURS} hours, read fresh on every tick. A
- * sender who moves the deadline moves the reminder with it, and a tick that
+ * A circulation carries its own reminder list at
+ * `notifications.dueSoon.slots` (see `src/lib/reminders/slots.ts`): up to six
+ * entries, each a number of days before `dueDate` and a London wall clock on
+ * that day. Nothing is stored as a due list. Every tick reads the due date and
+ * the slots and resolves them again from scratch through
+ * `resolveReminderSlots`, the SAME resolver the admissions deadline reminders
+ * use, so moving a deadline moves every reminder with it and a tick that
  * never fired costs latency rather than a send.
  *
- * The query is `status == "open"` and `dueDate` inside the window, in that
- * clause order, because that is the order of the ONE composite index this
- * feature declares (`circulations (status ASC, dueDate ASC)` in
- * `firestore.indexes.json`). Equality first, then the range field: writing the
- * chain any other way is the same query to Firestore and a different-looking
- * one to `tests/firestore-indexes.test.mjs`.
+ * A circulation stored before the slots existed reads as the defaults (three
+ * days out and the day before, both at 10:00), because `normalizeNotifications`
+ * fills them in. The two switches remain the on and off: both off and this job
+ * skips the circulation before it reads a single response.
  *
- * ## The marker keys on the London civil date of the deadline
+ * ## THE SCAN, AND WHY IT STILL FITS ONE INDEX
  *
- * `wsremind__{circulationId}__{uid}__{dueKey}`. Two consequences, both wanted
- * and both the same as the admissions job's:
+ * `status == "open"`, then `dueDate` between the start of TODAY in London and
+ * `now + {@link SCAN_HORIZON_DAYS}` days, in that clause order, because that
+ * is the order of the ONE composite index this feature declares
+ * (`circulations (status ASC, dueDate ASC)` in `firestore.indexes.json`).
+ * Equality first, then the range field: writing the chain any other way is the
+ * same query to Firestore and a different-looking one to
+ * `tests/firestore-indexes.test.mjs`.
  *
- *  1. A tick that runs every quarter of an hour for the two days before a
- *     deadline sends ONE reminder, because every tick after the first finds
- *     the marker.
- *  2. MOVING THE DEADLINE mints a new key, so people who still have not
- *     submitted are reminded about the new date rather than silenced by the
- *     old date's marker. Nudging the TIME on the same day is the same key and
- *     cannot re-send, which is the failure people notice.
+ * The two bounds are the two things the arithmetic downstream can prove:
  *
- * ## THERE IS NO STALE RULE HERE, AND THAT IS DELIBERATE
+ *  - A slot NEVER resolves past the due date (the resolver drops one that
+ *    would), so a circulation with any slot due today has a due date that is
+ *    either still ahead or earlier TODAY. Reading from the start of the London
+ *    civil day rather than from `now` is what keeps that second case in: a
+ *    worksheet due at 09:00 with a nudge set for 08:00 is still owed that
+ *    nudge at 08:05, and `dueDate >= now` would have dropped the whole
+ *    circulation at 09:01 while the reminder was five minutes late rather than
+ *    a day late. Yesterday's deadlines are out, which is the boundary this job
+ *    promises: a passed day is a passed deadline.
+ *  - A slot at most `REMINDER_SLOT_LIMITS.maxDaysBefore` days out means a due
+ *    date beyond that horizon cannot have a reminder due yet, so the horizon
+ *    costs nothing and keeps the scan cap (below) spent on the circulations
+ *    that might actually send.
  *
- * Every other job in this directory has a scheduled instant it can be late
- * for (a deadline announcement, a stage release, a session that has finished),
- * so `maxLateHours` answers "how late is worse than silent". This job has no
- * such instant. The reminder is not owed AT a moment, it is owed for as long
- * as the deadline is still ahead of the person.
+ * The filtering that the query cannot do is done in code, on the resolved
+ * slots: `pending` is left for a later tick, `stale` is dropped, `due` sends.
  *
- * An earlier version of this file mapped `maxLateHours` onto the moment the
- * window opened (`dueDate - 48h`) and dropped the whole circulation past it.
- * That arithmetic silenced precisely the reminders that matter most: a
- * deadline less than 24 hours away is, by definition, one whose window opened
- * more than 24 hours ago, so a scheduler that had never missed a tick dropped
- * every same-day worksheet, and dropped everybody added inside the last day
- * with it, while the marker said "stale" about a run that was never late.
+ * ## The marker keys on the resolved moment, date AND wall clock
  *
- * The only lateness question this job can honestly ask is asked in the query:
- * `dueDate >= now`. A deadline that has passed is out of the audience; a
- * deadline still ahead is worth a nudge however long the scheduler was dark,
- * because the person can still do the work. `maxLateHours` stays on the
- * registration (the type asks for a number and the panel shows one) and the
- * handler derives nothing at all from it.
+ * `wsremind__{circulationId}__{uid}__{dueKey}` where `dueKey` is the London
+ * civil date the slot resolved to with its wall clock appended
+ * (`2026-10-04T1000`). Three consequences, all wanted:
+ *
+ *  1. A tick that runs every quarter of an hour sends ONE reminder per slot,
+ *     because every tick after the first finds that slot's marker.
+ *  2. TWO SLOTS ON ONE DAY at different times are two reminders, which is what
+ *     a sender who set 09:00 and 16:00 on the due day asked for. Two slots
+ *     resolving to the same moment are one, because they are one key. (This is
+ *     the `"instant"` grouping; admissions groups by DAY, where the audience is
+ *     an applicant pool rather than a handful of named people.)
+ *  3. MOVING THE DEADLINE re-resolves every slot and mints new keys, so people
+ *     who still have not submitted are reminded about the new date rather than
+ *     silenced by the old date's markers.
+ *
+ * ## LATENESS IS MEASURED FROM THE SLOT, NEVER FROM THE WINDOW
+ *
+ * `maxLateHours` (24) is now honoured, and it is measured from the moment the
+ * slot itself resolved to. Read that twice, because the bug this replaced was
+ * the other reading: an earlier version had a fixed 48-hour window and mapped
+ * `maxLateHours` onto the moment that window OPENED, which silenced precisely
+ * the reminders that matter most. A deadline less than 24 hours away is, by
+ * definition, one whose 48-hour window opened more than 24 hours ago, so a
+ * scheduler that had never missed a tick dropped every same-day worksheet,
+ * and dropped everybody added inside the last day with it, while the marker
+ * said "stale" about a run that was never late.
+ *
+ * Measured from the slot, the same number says something true: a nudge set for
+ * 10:00 on Tuesday is worth sending at 10:05 and not worth sending on
+ * Thursday, whatever the deadline is doing. What that costs, said plainly: a
+ * recipient added AFTER the last slot has passed gets no reminder at all,
+ * where the old window would have found them. The answer to that is a slot on
+ * the due day, which the sender can now add, rather than a job that mails
+ * people about a schedule nobody set.
+ *
+ * A stale slot is dropped in code with NO marker written, and that is a
+ * deliberate difference from `admissionsReminders.ts`, which stamps one per
+ * stale date. A worksheet's slots are days apart, so on the day-before tick
+ * the three-day slot is always stale and always ALREADY SENT: a marker saying
+ * "dropped as stale" would be a record of a reminder that went out on time.
+ * The arithmetic is free to redo every tick, and the per-recipient markers are
+ * the record that matters.
+ *
+ * ## STALE IS THE ORDINARY END OF A DELIVERED REMINDER, SO IT IS REPORTED ONCE
+ *
+ * Read that heading before touching {@link STALE_REPORT_WINDOW_HOURS}. A slot
+ * stays resolvable for as long as its circulation is in the scan, so a
+ * reminder that went out perfectly on Monday is still resolving, still past
+ * its moment and still classified `stale` on every tick until Thursday. The
+ * first version of this job counted and logged each of those, which on a
+ * quarter-hourly tick is the same line about the same non-event roughly a
+ * hundred times a day, and put the count into `processed`, so the panel
+ * showed the job "doing work" on ticks where it did nothing at all. Neither
+ * was a wrong email; both were a health readout that cried wolf.
+ *
+ * So: a stale entry is reported only while it is FRESHLY stale, meaning it
+ * crossed the `maxLateHours` bound within the last
+ * {@link STALE_REPORT_WINDOW_HOURS}, and it is NOT counted as work in
+ * `processed`. What the counter means afterwards is honest and narrow: "a
+ * reminder passed the point of being worth sending during this run's window".
+ * It is not, and never was, proof that the reminder was missed. Nothing here
+ * can know that without reading the audience's markers, which is exactly the
+ * work the stale branch exists to skip. The question "has the scheduler been
+ * dark" is answered by the scheduler panel's own last-run time, which is the
+ * thing that actually knows.
  *
  * ## THIS JOB MAY PUSH
  *
@@ -87,7 +149,7 @@ import "server-only";
  */
 
 import { type Firestore, type QueryDocumentSnapshot } from "firebase-admin/firestore";
-import { londonDateKey } from "@/lib/courses/weekPlan";
+import { londonDateKey, londonWallClockToInstant } from "@/lib/courses/weekPlan";
 import {
   sendWorksheetDueSoonEmail,
   worksheetDueSoonSubject,
@@ -106,6 +168,8 @@ import {
 import { isSuppressed } from "@/lib/firestore/suppression";
 import { isTaskEmailEnabled } from "@/lib/firestore/taskEmailConfig";
 import { mirrorTaskEmailToPush } from "@/lib/push/taskNotifications";
+import { resolveReminderSlots } from "@/lib/reminders/schedule";
+import { REMINDER_SLOT_LIMITS, type ReminderSlot } from "@/lib/reminders/slots";
 import {
   claim,
   errorText,
@@ -119,37 +183,79 @@ import type { JobContext, JobRegistration, JobResult } from "../registry";
 export const WORKSHEET_DUE_REMINDERS_JOB_ID = "worksheet-due-reminders";
 
 /**
- * How far ahead of a deadline the reminder goes out.
+ * How far ahead the scan looks, in days.
  *
- * Two days rather than one because a worksheet is WORK: the thing the reader
- * has to find is an evening, and an evening cannot be found the same afternoon
- * it is needed. It is also the whole schedule, so it is a constant here rather
- * than a per-circulation setting nobody asked for.
+ * Not a schedule: the schedule is each circulation's own slot list. This is
+ * the horizon beyond which no slot CAN be due, which is the furthest a slot
+ * may be set from its due date, so it is that number rather than a second
+ * opinion about it. A due date past this horizon is loaded by nothing and
+ * costs nothing.
  */
-export const DUE_SOON_WINDOW_HOURS = 48;
+export const SCAN_HORIZON_DAYS = REMINDER_SLOT_LIMITS.maxDaysBefore;
 
-const DUE_SOON_WINDOW_MS = DUE_SOON_WINDOW_HOURS * 3_600_000;
+const SCAN_HORIZON_MS = SCAN_HORIZON_DAYS * 86_400_000;
 
 /**
  * How many circulations one tick will look at. A cap rather than a full scan
  * because a runaway read is the one way this job eats a tick that other jobs
  * are waiting behind. A committee runs a handful of worksheets at a time;
- * twenty deadlines inside one 48-hour window is room to be wrong.
+ * twenty deadlines inside one horizon is room to be wrong.
  *
  * WHAT THE CAP COSTS, said out loud: the scan is not paged, so a
- * twenty-first circulation in the same window is invisible until one of the
+ * twenty-first circulation inside the horizon is invisible until one of the
  * twenty leaves it, and by then its deadline may be hours rather than days
- * away. The run
- * deliberately does NOT report `hasMore` for a full page either, because the
- * next tick would run the same unpaged query, find the same twenty stamped,
- * and re-arm on them forever. Raising this number is the fix if a term ever
- * has twenty worksheets due in two days; a cursor would be the fix if it had
- * hundreds.
+ * away. The run deliberately does NOT report `hasMore` for a full page
+ * either, because the next tick would run the same unpaged query, find the
+ * same twenty stamped, and re-arm on them forever.
+ *
+ * The implicit `dueDate ASC` ordering makes the cap survivable rather than
+ * safe, and the difference matters more than it used to. The window this job
+ * scanned before the schedule was configurable was 48 hours, where "the
+ * twenty soonest deadlines" and "the twenty most urgent reminders" were the
+ * same twenty. Over a SIXTY-DAY horizon they can come apart: a worksheet due
+ * in fifty days whose sender set a fifty-day nudge is owed that nudge today
+ * and sits behind twenty nearer deadlines that are owed nothing. The
+ * committee runs a handful of worksheets a term, so twenty open deadlines
+ * inside two months is already generous, and the schedule this cap could
+ * starve is one somebody had to set by hand. Raising the number is the fix if
+ * a term ever has twenty worksheets open at once; a cursor is the fix if it
+ * has hundreds, and ordering by the soonest RESOLVED slot rather than by the
+ * deadline is the fix if long-range nudges ever become normal.
  */
 export const CIRCULATION_SCAN_CAP = 20;
 
 /** Responses fetched per page. Small enough to interleave budget checks. */
 export const RESPONSE_PAGE_SIZE = 100;
+
+/**
+ * How long after a slot passes the `maxLateHours` bound it is still worth
+ * SAYING that it passed. See the header section of the same name.
+ *
+ * Two hours, chosen against the tick rather than against the reminder. The
+ * tick is armed every few minutes, so any cadence up to hourly meets the
+ * crossing at least once inside this window and the fact is recorded; and
+ * because the window closes, the same crossing is recorded a handful of times
+ * rather than every tick for the rest of the circulation's life. Widening it
+ * buys nothing and re-opens the log spam; narrowing it below the tick cadence
+ * would let a crossing go unrecorded entirely.
+ */
+export const STALE_REPORT_WINDOW_HOURS = 2;
+
+const STALE_REPORT_WINDOW_MS = STALE_REPORT_WINDOW_HOURS * 3_600_000;
+
+/**
+ * Did this resolved slot cross the lateness bound recently enough to be worth
+ * a line in the log and a number on the receipt?
+ *
+ * `dueAt + maxLateHours` is the moment the entry stopped being sendable. An
+ * entry inside {@link STALE_REPORT_WINDOW_HOURS} of that moment is news; one
+ * further past it is history, and on this job history is the normal state of
+ * a reminder that was delivered on time.
+ */
+function isFreshlyStale(dueAt: Date, now: Date, maxLateHours: number): boolean {
+  const passedAt = dueAt.getTime() + maxLateHours * 3_600_000;
+  return now.getTime() - passedAt <= STALE_REPORT_WINDOW_MS;
+}
 
 /**
  * The two states that still owe an answer. A submitted or reviewed response is
@@ -198,16 +304,32 @@ export type WorksheetReminderRunSummary = {
    */
   failures: Array<{ uid: string; error: string }>;
   /**
-   * Circulations this run actually EXAMINED: open, inside the window, and with
-   * at least one due-soon channel switched on. Deliberately not the number
-   * loaded, which would count the ones the run skipped without reading a
-   * single response.
+   * Resolved reminders dropped for being further past their slot than
+   * `maxLateHours`, counted ONLY while they are freshly past it (see
+   * {@link STALE_REPORT_WINDOW_HOURS} and the header section it belongs to).
+   *
+   * Read it as "a reminder passed the point of being worth sending during
+   * this run's window", which is all it can honestly mean. It is NOT a count
+   * of nudges that went missing: a reminder delivered on time ages into this
+   * state as a matter of course, and telling the two apart would take a read
+   * of every recipient's marker, which is the work the stale branch exists to
+   * skip. A dark scheduler shows up as a stale LAST RUN on the panel, not
+   * here. Not folded into `processed` either, for the same reason: declining
+   * to send something is not work done.
+   */
+  stale: number;
+  /**
+   * Circulations this run actually EXAMINED: open, inside the horizon, with at
+   * least one due-soon channel switched on, AND with at least one slot past
+   * its moment (sent, or dropped as stale). Deliberately not the number
+   * loaded, which would count the ones whose whole schedule is still ahead
+   * and whose responses the run never read.
    */
   circulations: number;
 };
 
 function emptySummary(): WorksheetReminderRunSummary {
-  return { sent: 0, skipped: 0, pushOnly: [], failures: [], circulations: 0 };
+  return { sent: 0, skipped: 0, pushOnly: [], failures: [], stale: 0, circulations: 0 };
 }
 
 export type WorksheetReminderRun = {
@@ -216,7 +338,20 @@ export type WorksheetReminderRun = {
 };
 
 /**
- * The circulations whose deadline falls inside the window.
+ * The first instant of the London civil day `now` falls in.
+ *
+ * Through the same wall-clock helper the slots use, rather than by truncating
+ * a UTC timestamp: midnight London is 23:00 the previous day in UTC for half
+ * the year, and a lower bound an hour out is a lower bound that drops a real
+ * circulation on the two days a year the clocks move.
+ */
+function londonDayStart(now: Date): Date {
+  return londonWallClockToInstant(londonDateKey(now), "00:00");
+}
+
+/**
+ * The circulations that could have a reminder due: open, and due today or
+ * inside the horizon.
  *
  * ONE equality filter and one range field, in the order the composite index
  * declares them. No `orderBy`: Firestore orders by the range field on its own,
@@ -226,14 +361,14 @@ export type WorksheetReminderRun = {
  * That implicit ordering is also what makes the cap safe. `dueDate ASC` means
  * the twenty the run takes are the twenty SOONEST deadlines, so a tick that
  * cannot see every circulation is one that saw the most urgent ones, and the
- * rest are still inside the window on the next tick.
+ * rest are still inside the horizon on the next tick.
  */
 async function dueCirculations(db: Firestore, ctx: JobContext): Promise<CirculationDoc[]> {
-  const horizon = new Date(ctx.now.getTime() + DUE_SOON_WINDOW_MS);
+  const horizon = new Date(ctx.now.getTime() + SCAN_HORIZON_MS);
   const snap = await db
     .collection(CIRCULATIONS_COLLECTION)
     .where("status", "==", "open")
-    .where("dueDate", ">=", ctx.now)
+    .where("dueDate", ">=", londonDayStart(ctx.now))
     .where("dueDate", "<=", horizon)
     .limit(CIRCULATION_SCAN_CAP)
     .get();
@@ -351,29 +486,86 @@ export async function runWorksheetDueReminders(
     const toggles = circulation.notifications.dueSoon;
     if (!toggles.email && !toggles.push) continue;
 
+    // THE SCHEDULE, RESOLVED FRESH. Grouped by instant rather than by day,
+    // because a sender who set two times on the due day asked for two
+    // reminders; see the header. `maxLateHours` is measured from each slot's
+    // own moment, which is the whole correction this rewrite carries.
+    const resolved = resolveReminderSlots({
+      anchor: dueDate,
+      slots: toggles.slots,
+      now: ctx.now,
+      maxLateHours: ctx.maxLateHours,
+      grouping: "instant",
+    });
+    const due = resolved.filter((entry) => entry.state !== "pending");
+    if (due.length === 0) continue;
+
     // Past every skip: this circulation is one the run genuinely worked on.
     summary.circulations += 1;
 
-    // NO LATENESS CHECK, and the header says why at length: the scan's
-    // `dueDate >= ctx.now` clause is this job's whole answer to "too late",
-    // and anything measured from the window opening drops the deadlines
-    // closest to the wire.
-    const dueKey = londonDateKey(dueDate);
+    // The days-before of each slot, for the email copy and the log. Two slots
+    // that share a key share a moment and therefore share this number, so the
+    // first of the group answers for all of them.
+    const slotById = new Map<string, ReminderSlot>(
+      toggles.slots.map((slot) => [slot.id, slot] as const),
+    );
 
-    const outcome = await remindRecipients(db, ctx, { circulation, dueDate, dueKey, summary });
-    if (outcome.hasMore) hasMore = true;
-    if (outcome.stop) stopped = true;
+    // ONE PASS OVER THE AUDIENCE PER DUE REMINDER. Two entries in one tick
+    // means two scans of the responses, which only happens when a tick caught
+    // up on a slot it had missed: in the ordinary case exactly one slot is due
+    // and the audience is read once. Reading it once and deciding both slots
+    // inside the loop would save nothing, because the claim, the skip reason
+    // and the stamp are all per marker anyway.
+    for (const entry of due) {
+      if (ctx.budget.expired()) {
+        hasMore = true;
+        break;
+      }
+      if (entry.state === "stale") {
+        // Dropped, left unmarked on purpose, and reported only while the
+        // crossing is fresh (see the header). Every tick between now and the
+        // deadline resolves this same entry to this same verdict, and on all
+        // but the first few the reminder it describes went out on time days
+        // ago, so counting and logging it each time would be a hundred lines a
+        // day about nothing happening.
+        if (isFreshlyStale(entry.dueAt, ctx.now, ctx.maxLateHours)) {
+          summary.stale += 1;
+          ctx.log("a due-soon reminder passed the point of being worth sending", {
+            circulationId: circulation.id,
+            dueKey: entry.dueAtKey,
+            dueAt: entry.dueAt.toISOString(),
+          });
+        }
+        continue;
+      }
+      const daysBefore = slotById.get(entry.slotIds[0])?.daysBefore ?? 0;
+      const outcome = await remindRecipients(db, ctx, {
+        circulation,
+        dueDate,
+        dueKey: entry.dueAtKey,
+        daysBefore,
+        summary,
+      });
+      if (outcome.hasMore) hasMore = true;
+      if (outcome.stop) {
+        stopped = true;
+        break;
+      }
+    }
   }
 
   const note =
-    `sent ${summary.sent}, skipped ${summary.skipped}` +
+    `sent ${summary.sent}, skipped ${summary.skipped}, stale ${summary.stale}` +
     (summary.pushOnly.length > 0 ? `, push-only ${summary.pushOnly.length}` : "") +
     (summary.failures.length > 0 ? `, failed ${summary.failures.length}` : "");
   return {
     result: {
       // What this job DID, so a receipt of 0 means nobody was reminded and
       // nothing was stamped, rather than "the job did not run". Push-only
-      // sends are already inside `sent` and are not added again.
+      // sends are already inside `sent` and are not added again. Stale
+      // reminders are NOT here: declining to send a reminder whose moment has
+      // gone writes nothing and reaches nobody, and folding it in showed the
+      // panel a job hard at work on ticks where it touched no document at all.
       processed: summary.sent + summary.skipped,
       hasMore,
       note,
@@ -383,7 +575,7 @@ export async function runWorksheetDueReminders(
 }
 
 /**
- * One circulation's worth of reminding, paged and capped.
+ * One resolved reminder's worth of reminding, paged and capped.
  *
  * `stop` means the caller should start no further circulation: either the
  * per-tick ceiling is reached or the wall clock has run out. `hasMore` is what
@@ -399,11 +591,14 @@ async function remindRecipients(
   args: {
     circulation: CirculationDoc;
     dueDate: Date;
+    /** The resolved slot's marker key: its London date and wall clock. */
     dueKey: string;
+    /** That slot's distance from the due date, for the email copy. */
+    daysBefore: number;
     summary: WorksheetReminderRunSummary;
   },
 ): Promise<{ hasMore: boolean; stop: boolean }> {
-  const { circulation, dueDate, dueKey, summary } = args;
+  const { circulation, dueDate, dueKey, daysBefore, summary } = args;
   let cursor: QueryDocumentSnapshot | null = null;
 
   for (;;) {
@@ -449,7 +644,14 @@ async function remindRecipients(
       const uid = doc.id;
 
       try {
-        await remindRecipient(db, ctx, { circulation, dueDate, dueKey, summary, uid });
+        await remindRecipient(db, ctx, {
+          circulation,
+          dueDate,
+          dueKey,
+          daysBefore,
+          summary,
+          uid,
+        });
       } catch (err) {
         // The claim, the users read or a stamp threw. One person's bad luck is
         // not everybody else's.
@@ -471,7 +673,7 @@ async function remindRecipients(
   }
 }
 
-/** Claim, decide, send, stamp: one recipient on one deadline. */
+/** Claim, decide, send, stamp: one recipient on one scheduled reminder. */
 async function remindRecipient(
   db: Firestore,
   ctx: JobContext,
@@ -479,11 +681,12 @@ async function remindRecipient(
     circulation: CirculationDoc;
     dueDate: Date;
     dueKey: string;
+    daysBefore: number;
     summary: WorksheetReminderRunSummary;
     uid: string;
   },
 ): Promise<void> {
-  const { circulation, dueDate, dueKey, summary, uid } = args;
+  const { circulation, dueDate, dueKey, daysBefore, summary, uid } = args;
 
   const marker = worksheetReminderMarker(circulation.id, uid, dueKey);
   const claimed = await claim(db, marker, {
@@ -522,6 +725,10 @@ async function remindRecipient(
           circulationId: circulation.id,
           worksheetTitle: circulation.title,
           dueDate,
+          // Which of the circulation's reminders this is. A person can get
+          // several for one worksheet, and the copy says which so the second
+          // does not read as the first sent twice.
+          daysBefore,
           uid,
         });
       } catch (err) {
@@ -653,16 +860,18 @@ export const worksheetDueRemindersJob: JobRegistration = {
   id: "worksheet-due-reminders",
   label: "Worksheet due-soon reminders",
   description:
-    "Reminds anyone who has not submitted their answers, two days before a circulation's due date. One reminder per person per deadline, whatever the tick does.",
+    "Reminds anyone who has not submitted their answers, on the schedule the sender set on the circulation. One reminder per person per scheduled time, whatever the tick does.",
   maxPerTick: 200,
   /**
-   * CARRIED, NOT USED. `JobRegistration` asks every job for a lateness bound
-   * and the panel shows it, but this job has no scheduled instant to be late
-   * for: its audience is "the deadline has not passed yet", which the scan's
-   * own `dueDate >= ctx.now` clause decides. Mapping this number onto the
-   * window opening is what the header warns against, so the handler reads the
-   * context's copy of this number nowhere at all (a guard in
-   * `tests/worksheet-due-reminders.test.mjs` holds that down).
+   * MEASURED FROM THE SLOT, never from a window. A nudge set for 10:00 is
+   * worth sending at 10:05 and not worth sending a day later, so this is the
+   * bound `resolveReminderSlots` classifies each resolved slot against.
+   *
+   * The failure this replaced is worth keeping in view: the same number used
+   * to be measured from the moment a fixed 48-hour window opened, which
+   * silenced every deadline less than 24 hours away on a scheduler that had
+   * never missed a tick. `tests/worksheet-due-reminders.test.mjs` pins both
+   * the correct measurement and that behaviour.
    */
   maxLateHours: 24,
   /**

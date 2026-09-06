@@ -50,6 +50,27 @@ export const DUE_SOON_NOT_LIVE_NOTE =
   "Reminders are wired but not yet live: the scheduler is not running on this environment yet.";
 
 /**
+ * The date a worksheet's reminders count back from, as the phrase the slot
+ * editor builds its rows around ("3 days before the due date at 10:00").
+ *
+ * A constant rather than a literal in each of the two surfaces that mount the
+ * editor, because the two must agree: a sender who sets a schedule in the
+ * dialog and reads it back on the circulation page is reading the same rows,
+ * and two spellings of the anchor would make them look like two settings.
+ * The admission rounds pass their own phrase ("the closing date").
+ */
+export const DUE_SOON_ANCHOR_LABEL = "the due date";
+
+/**
+ * Shown in place of the schedule when the circulation has no due date.
+ *
+ * The editor is hidden rather than disabled: every row it could show would
+ * count back from a date that does not exist, so there is nothing honest for
+ * it to say. This sentence names the field that fixes it instead.
+ */
+export const DUE_SOON_NO_DATE_NOTE = "Set a due date to schedule reminders.";
+
+/**
  * A plain-English list of what this circulation will send, for the read-only
  * summary on the circulation page. An event with both channels off is dropped
  * rather than listed as "off", because a summary of eleven lines where six say

@@ -6,6 +6,11 @@ type Props = {
   worksheetTitle: string;
   /** The due date, already formatted in London civil time by the sender. */
   dueLabel: string;
+  /**
+   * Which reminder this is, in words ("3 days before the due date"), built by
+   * `worksheetLeadLabel` in the sending module.
+   */
+  leadLabel: string;
   /** Absolute link to the recipient's own copy, never to the staff view. */
   respondLink: string;
 };
@@ -21,12 +26,15 @@ type Props = {
  * stored state), which is why the copy can say plainly that the answers are
  * not in yet rather than hedging about it.
  *
- * ── ONE PER PERSON PER DUE DATE ─────────────────────────────────────────────
+ * ── ONE PER PERSON PER SCHEDULED REMINDER ───────────────────────────────────
  * The scheduler claims a marker keyed on the circulation, the recipient and
- * the London civil date of the deadline, so a tick that runs every quarter of
- * an hour for two days sends this once. Moving the deadline mints a new key
- * and is therefore a genuinely new reminder, which is the behaviour a sender
- * who moved a deadline expects.
+ * the moment the reminder resolved to, so a tick that runs every quarter of
+ * an hour sends each scheduled nudge once. A circulation carries up to six of
+ * them, so the same person may get this mail more than once for one
+ * worksheet, which is why the copy says WHICH reminder it is: without that,
+ * the second one reads as the first one sent twice. Moving the deadline
+ * re-resolves every slot and therefore mints new keys, which is the behaviour
+ * a sender who moved a deadline expects.
  *
  * ── THE LINK IS THE RECIPIENT'S OWN COPY ────────────────────────────────────
  * Not the task board and not the circulation page. The one action this email
@@ -43,6 +51,7 @@ export default function WorksheetDueSoonEmail({
   recipientName,
   worksheetTitle,
   dueLabel,
+  leadLabel,
   respondLink,
 }: Props) {
   const subject = `Due soon: ${worksheetTitle}`;
@@ -63,7 +72,8 @@ export default function WorksheetDueSoonEmail({
           </a>
         </Text>
         <Text style={subtle}>
-          Once you submit, these reminders stop.
+          This is the reminder set for {leadLabel}. Once you submit, these reminders
+          stop.
         </Text>
       </Section>
     </EmailChrome>

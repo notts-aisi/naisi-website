@@ -7,7 +7,6 @@ import {
   CIRCULATION_LIMITS,
   CIRCULATIONS_COLLECTION,
   circulationStaffUids,
-  DEFAULT_NOTIFICATIONS,
   DEFAULT_REVIEW_CONFIG,
   NOTIFICATION_EVENTS,
   normalizeNotifications,
@@ -17,6 +16,7 @@ import {
   type ReviewConfig,
 } from "@/lib/firestore/circulations";
 import { slugId } from "@/lib/firestore/slugId";
+import { validateSlots, type ReminderSlot } from "@/lib/reminders/slots";
 import {
   normalizeWorksheet,
   sanitizeItems,
@@ -89,12 +89,22 @@ type CreateBody = {
  * one direction this must not fail in: the sender believes they turned a
  * message off. So unknown keys are a 400 and the normaliser only fills in the
  * events the body did not mention.
+ *
+ * `dueSoon` carries a third key, `slots`, which is its reminder SCHEDULE
+ * (`src/lib/reminders/slots.ts`). It is checked the same strict way rather
+ * than sanitised silently: `sanitizeSlots` repairs a list on the way out of
+ * Firestore, which is right for a stored document and wrong for a request,
+ * because a sender who asked for 09:00 and had it quietly dropped would be
+ * told their worksheet went out with reminders it does not have.
  */
 function parseNotifications(
   raw: unknown,
 ): { notifications: NotificationToggles } | { error: string } {
   if (raw === undefined || raw === null) {
-    return { notifications: { ...DEFAULT_NOTIFICATIONS } };
+    // Through the normaliser rather than a spread of the constant: the
+    // schedule is an ARRAY, and a shallow copy would hand this circulation
+    // the process-wide default rows.
+    return { notifications: normalizeNotifications(undefined) };
   }
   if (typeof raw !== "object" || Array.isArray(raw)) {
     return { error: "Send `notifications` as a map of events to switches." };
@@ -109,12 +119,26 @@ function parseNotifications(
     }
     const pair = value as Record<string, unknown>;
     for (const key of Object.keys(pair)) {
+      if (key === "slots" && event === "dueSoon") continue;
       if (key !== "email" && key !== "push") {
         return { error: `"${key}" is not part of a notification switch.` };
       }
     }
     if (typeof pair.email !== "boolean" || typeof pair.push !== "boolean") {
       return { error: `The "${event}" switch has to be { email, push } booleans.` };
+    }
+    if (event === "dueSoon" && pair.slots !== undefined) {
+      if (!Array.isArray(pair.slots)) {
+        return { error: "Send the reminder times as a list." };
+      }
+      if (pair.slots.some((slot) => !slot || typeof slot !== "object")) {
+        return { error: "Every reminder needs a number of days and a time." };
+      }
+      // The editor refuses to send a list `validateSlots` complains about, so
+      // this is the hand-written request rather than the dialog. Its first
+      // sentence is the honest 400: they are written for a person.
+      const problems = validateSlots(pair.slots as ReminderSlot[]);
+      if (problems.length > 0) return { error: problems[0] };
     }
   }
   return { notifications: normalizeNotifications(raw) };

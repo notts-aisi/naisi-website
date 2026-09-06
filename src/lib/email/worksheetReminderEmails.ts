@@ -78,6 +78,26 @@ export function formatWorksheetDue(date: Date): string {
   }).format(date);
 }
 
+/**
+ * How far out this reminder is, as the phrase the email uses.
+ *
+ * A circulation can carry up to six reminders, so a recipient may get more
+ * than one for the same worksheet. Without this line the second one reads as
+ * a duplicate of the first, and a reader who thinks a reminder is a mistake
+ * stops reading reminders. With it, each says which nudge it is and, by
+ * implication, that there is a schedule rather than a loop.
+ *
+ * Deliberately NOT imported by the scheduler job. The job hands over a number
+ * and this module turns it into words, so the two suites that stub this
+ * module (this feature's and the admissions one, which loads the whole job
+ * registry) do not have to grow an export apiece every time the copy changes.
+ */
+export function worksheetLeadLabel(daysBefore: number): string {
+  const days = Math.max(0, Math.round(daysBefore));
+  if (days === 0) return "the due date itself";
+  return `${days} ${days === 1 ? "day" : "days"} before the due date`;
+}
+
 export type WorksheetDueSoonEmailOptions = {
   to: string;
   /** Resolved display name, already falling back before it gets here. */
@@ -85,6 +105,11 @@ export type WorksheetDueSoonEmailOptions = {
   circulationId: string;
   worksheetTitle: string;
   dueDate: Date;
+  /**
+   * Which of the circulation's reminder slots this send is, as its days
+   * before the due date. 0 is the due day itself.
+   */
+  daysBefore: number;
   /** The recipient whose reminder this is, logged as the send's actor. */
   uid: string;
 };
@@ -118,6 +143,7 @@ export async function sendWorksheetDueSoonEmail(
         recipientName: opts.name || "there",
         worksheetTitle: opts.worksheetTitle,
         dueLabel: formatWorksheetDue(opts.dueDate),
+        leadLabel: worksheetLeadLabel(opts.daysBefore),
         respondLink: `${APP_URL}${worksheetRespondPath(opts.circulationId)}`,
       }),
     });

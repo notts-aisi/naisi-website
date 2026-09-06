@@ -22,6 +22,11 @@
  * from `worksheets.ts`, and `worksheets.ts` imports only the `ReviewConfig`
  * TYPE back (erased at compile time). See the comment at the top of that file.
  */
+import {
+  DEFAULT_WORKSHEET_SLOTS,
+  sanitizeSlots,
+  type ReminderSlot,
+} from "@/lib/reminders/slots";
 import { sanitizeItems, type WorksheetAnswer, type WorksheetItem } from "./worksheets";
 import type { TaskStatus } from "./tasks";
 
@@ -138,7 +143,7 @@ export const NOTIFICATION_EVENT_LABELS: Record<NotificationEvent, string> = {
  */
 export const NOTIFICATION_EVENT_DESCRIPTIONS: Record<NotificationEvent, string> = {
   assigned: "Tell people you have sent this to them.",
-  dueSoon: "Remind anyone who has not submitted, shortly before the due date.",
+  dueSoon: "Remind anyone who has not submitted, at the times you set below.",
   submitted: "Tell the reviewers when someone submits their answers.",
   feedbackReturned: "Tell someone when you return their feedback.",
   copyEdited: "Tell people who have started, but not submitted, when you change the questions.",
@@ -146,7 +151,46 @@ export const NOTIFICATION_EVENT_DESCRIPTIONS: Record<NotificationEvent, string> 
 
 export type NotificationToggle = { email: boolean; push: boolean };
 
-export type NotificationToggles = Record<NotificationEvent, NotificationToggle>;
+/**
+ * The due-soon event carries its own SCHEDULE as well as its two switches.
+ *
+ * ── WHY THE SLOTS LIVE INSIDE `notifications` ───────────────────────────────
+ * Two reasons, and the first one is the one with teeth.
+ *
+ *  1. NO RULES CHANGE AND NO DEPLOY. The circulations update rule in
+ *     `firestore.rules` limits a staff write to a fixed key list, one of
+ *     which is `notifications`, and it constrains NOTHING inside that map. A
+ *     new top-level `reminderSlots` field would have been refused by that
+ *     `hasOnly` until somebody deployed a rules change to both projects; a
+ *     leaf write to `notifications.dueSoon.slots` reports `notifications` as
+ *     its affected key, exactly as `notifications.dueSoon.email` already
+ *     does, and is allowed today.
+ *  2. It is the reminder's own timing, so it belongs beside the reminder's
+ *     own switches. The switches stay the on and off: a circulation with
+ *     both channels off sends nothing whatever its schedule says, and the
+ *     scheduler job drops it before it reads a single response.
+ *
+ * The other four events keep the plain two-switch shape, because none of them
+ * is scheduled: each fires from something that just happened.
+ */
+export type DueSoonToggle = NotificationToggle & {
+  /**
+   * When to nudge, counted back from `dueDate`. A circulation stored WITHOUT
+   * one (every circulation written before this field existed) reads as the
+   * defaults; a circulation stored with an EMPTY one reads as empty and
+   * nudges nobody, because that is a sender who deleted every row. See
+   * `readSlots`.
+   */
+  slots: ReminderSlot[];
+};
+
+export type NotificationToggles = {
+  assigned: NotificationToggle;
+  dueSoon: DueSoonToggle;
+  submitted: NotificationToggle;
+  feedbackReturned: NotificationToggle;
+  copyEdited: NotificationToggle;
+};
 
 /**
  * Defaults chosen by how interruptive each message is against how much the
@@ -157,32 +201,67 @@ export type NotificationToggles = Record<NotificationEvent, NotificationToggle>;
  * entirely because a sender fixing a typo should not have to remember to
  * silence a broadcast first; it is the one switch you turn ON, for the edit
  * that actually changes what was asked.
+ *
+ * READ THIS BEFORE SPREADING IT. The `dueSoon.slots` array is shared by every
+ * caller who takes a shallow copy of this constant, so an editor holding one
+ * would be editing the default for the whole process. Take a schedule through
+ * `normalizeNotifications(undefined)` or `sanitizeSlots(...)`, both of which
+ * hand back fresh rows.
  */
 export const DEFAULT_NOTIFICATIONS: NotificationToggles = {
   assigned: { email: true, push: true },
-  dueSoon: { email: true, push: false },
+  dueSoon: { email: true, push: false, slots: DEFAULT_WORKSHEET_SLOTS },
   submitted: { email: true, push: true },
   feedbackReturned: { email: true, push: true },
   copyEdited: { email: false, push: false },
 };
 
+/**
+ * The due-soon schedule, read from whatever is stored.
+ *
+ * A missing, malformed or entirely unusable list resolves to the defaults, so
+ * a circulation written before the schedule existed keeps working AND gains
+ * the two default nudges. An EXPLICITLY EMPTY list stays empty, because that
+ * is a sender who deleted every row: falling back there would restore the
+ * defaults under them and send mail they had just removed. That second rule
+ * is `allowEmpty` and it lives in `sanitizeSlots`, not here: `admissionRounds`
+ * draws the same line for the same reason, and a consent rule written out
+ * twice is a consent rule that gets fixed once. The sanitiser returns fresh
+ * rows, so nothing here aliases the exported constant.
+ */
+function readSlots(raw: unknown): ReminderSlot[] {
+  return sanitizeSlots(raw, DEFAULT_WORKSHEET_SLOTS, { allowEmpty: true });
+}
+
+/** The two switches of one event, read against that event's own defaults. */
+function readChannels(entry: unknown, fallback: NotificationToggle): NotificationToggle {
+  if (!entry || typeof entry !== "object") return { ...fallback };
+  const e = entry as Record<string, unknown>;
+  return {
+    email: typeof e.email === "boolean" ? e.email : fallback.email,
+    push: typeof e.push === "boolean" ? e.push : fallback.push,
+  };
+}
+
 export function normalizeNotifications(raw: unknown): NotificationToggles {
   const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const out = {} as NotificationToggles;
-  for (const event of NOTIFICATION_EVENTS) {
-    const entry = source[event];
-    const fallback = DEFAULT_NOTIFICATIONS[event];
-    if (!entry || typeof entry !== "object") {
-      out[event] = { ...fallback };
-      continue;
-    }
-    const e = entry as Record<string, unknown>;
-    out[event] = {
-      email: typeof e.email === "boolean" ? e.email : fallback.email,
-      push: typeof e.push === "boolean" ? e.push : fallback.push,
-    };
-  }
-  return out;
+  const dueSoonRaw =
+    source.dueSoon && typeof source.dueSoon === "object"
+      ? (source.dueSoon as Record<string, unknown>)
+      : null;
+  return {
+    assigned: readChannels(source.assigned, DEFAULT_NOTIFICATIONS.assigned),
+    dueSoon: {
+      ...readChannels(source.dueSoon, DEFAULT_NOTIFICATIONS.dueSoon),
+      slots: readSlots(dueSoonRaw?.slots),
+    },
+    submitted: readChannels(source.submitted, DEFAULT_NOTIFICATIONS.submitted),
+    feedbackReturned: readChannels(
+      source.feedbackReturned,
+      DEFAULT_NOTIFICATIONS.feedbackReturned,
+    ),
+    copyEdited: readChannels(source.copyEdited, DEFAULT_NOTIFICATIONS.copyEdited),
+  };
 }
 
 // ---------------------------------------------------------------------------
