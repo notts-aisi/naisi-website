@@ -54,6 +54,32 @@ const DEV_PROJECT = "naisi-website-dev";
  */
 const ALWAYS_PASS_RECAPTCHA_SECRET = "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe";
 
+/**
+ * A NON-EMPTY site key for the client bundle, so the reCAPTCHA widget mounts.
+ *
+ * The fetch-based batteries never needed one: they post a junk token string
+ * straight at the route and the always-pass secret accepts it. A browser
+ * cannot. `RecaptchaInvisible` renders nothing and yields no token without a
+ * site key, and once a secret is set `verifyRecaptcha` treats a missing token
+ * as a refusal, so a browser-driven run against a server built without a key
+ * is refused by every reCAPTCHA-gated route with "recaptcha refused". That was
+ * the first thing the applicant funnel found on its first real run.
+ *
+ * Its VALUE is deliberately not a key. Google's published test site key is a
+ * v2 Checkbox key and the widget renders as Invisible, which fails with
+ * "Invalid key type" and still yields nothing (the second run found that).
+ * The browser specs instead serve a stub `api.js` from Playwright on loopback
+ * (`lib/browser.mjs`), which calls back a fixed token the always-pass secret
+ * accepts; the key only has to be present for the widget to mount and ask.
+ * Spelled so a person reading the bundle knows what they are looking at. A
+ * hand-driven browser against this server, without the stub, will see the
+ * refusal: that is the real widget failing on a fake key, and expected.
+ *
+ * Inlined into the client bundle at build time, which is why it is also part
+ * of the build marker below.
+ */
+const LOOPBACK_RECAPTCHA_SITE_KEY = "e2e-loopback-recaptcha-stubbed-in-playwright";
+
 /** Marker recording what the current .next build baked in (NEXT_PUBLIC_* are
  *  inlined at build time, so a build made for another origin is unusable). */
 const BUILD_MARKER = join(REPO_ROOT, ".next", "e2e-local-build.json");
@@ -185,8 +211,11 @@ function assertDevEnvLocal() {
 function buildServerEnv() {
   return {
     ...process.env,
-    // The relaxation. Environment-only — see the header comment.
+    // The relaxation. Environment-only, see the header comment. The secret so
+    // the server accepts any token, and a site key so the widget mounts and a
+    // browser spec can hand it one (see the constant's comment).
     RECAPTCHA_SECRET: ALWAYS_PASS_RECAPTCHA_SECRET,
+    NEXT_PUBLIC_RECAPTCHA_SITE_KEY: LOOPBACK_RECAPTCHA_SITE_KEY,
     // Fresh per run, shared with the test child below. Deliberately random so
     // a stale value in .env.local can never mask a mint/verify mismatch.
     EVENTS_TOKEN_SECRET: randomBytes(32).toString("base64url"),
@@ -227,11 +256,22 @@ function run(cmd, args, opts) {
 }
 
 async function ensureBuild(serverEnv, skipBuild) {
-  const wanted = { appUrl: ORIGIN, project: DEV_PROJECT };
+  // Everything NEXT_PUBLIC_* the build inlines and a run depends on. A build
+  // made before the site key joined this list has no widget in it, so the
+  // marker comparison must fail on that field too rather than reuse it.
+  const wanted = {
+    appUrl: ORIGIN,
+    project: DEV_PROJECT,
+    recaptchaSiteKey: LOOPBACK_RECAPTCHA_SITE_KEY,
+  };
   if (skipBuild) {
     try {
       const marker = JSON.parse(readFileSync(BUILD_MARKER, "utf8"));
-      if (marker.appUrl === wanted.appUrl && marker.project === wanted.project) {
+      if (
+        marker.appUrl === wanted.appUrl &&
+        marker.project === wanted.project &&
+        marker.recaptchaSiteKey === wanted.recaptchaSiteKey
+      ) {
         log("--skip-build: reusing the existing local e2e build.");
         return;
       }

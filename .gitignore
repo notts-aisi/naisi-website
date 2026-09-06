@@ -45,6 +45,8 @@ yarn-error.log*
 # out from under the spec in local mode.
 /.e2e-funnel-state.json
 /.e2e-funnel-steps.json
+# Screenshots and page text a failed e2e step leaves behind (see ARTIFACTS_DIR).
+/.e2e-artifacts/
 
 # firebase
 .firebase/

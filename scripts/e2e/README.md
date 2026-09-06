@@ -16,14 +16,16 @@ so it stops being hand-verified. Two modes:
   apply, withdraw, re-apply, enrol and drop out, then tear the fixture down and
   prove its manifest reads zero. It sits beside these batteries but is a
   different kind of test and needs Playwright, which this repo deliberately
-  does not depend on. See "The applicant funnel" below.
+  does not depend on. Against dev the apply leg is SKIPPED and reported (the
+  real reCAPTCHA widget challenges headless Chromium); `-- --local` drives all
+  thirteen steps. See "The applicant funnel" below.
 
 Plain Node — `node --test`, no new npm dependencies, **zero files under `src/`**
 (one exception: the optional `FIREBASE_ADMIN_SERVICE_ACCOUNT_ID` hook in
 `src/lib/firebase/admin.ts`, inert unless that env var is set, which only
 run.mjs does). Nothing here ships to production, so there is no production
-guard that can be forgotten. It is run by hand from a laptop; there is no CI
-(see below).
+guard that can be forgotten. It is run by hand from a laptop and is not in CI
+(see the last section for why).
 
 ```sh
 gcloud auth application-default login
@@ -143,6 +145,22 @@ its job is mostly refusing to do things:
   into the spawned server's env; no env file is written and nothing deployed
   reads this script. run.mjs also *refuses* a server already listening on the
   port, because it cannot know what environment that process carries.
+- **A browser needs the other half of the relaxation.** The fetch batteries
+  post a junk token string and the always-pass secret accepts it. A browser
+  cannot: the client widget yields no token without a site key, and once a
+  secret is set the server treats a missing token as a refusal, so every
+  reCAPTCHA-gated route answered the funnel's first run with "recaptcha
+  refused". Google's published test *site* key does not help either (it is a
+  Checkbox key and the widget renders as Invisible, which fails with "Invalid
+  key type"). So run.mjs inlines a non-empty, self-describing site key so the
+  widget mounts, and the browser specs serve a stub `api.js` from Playwright
+  (`lib/browser.mjs`, `stubRecaptchaOnLoopback`) that calls back a fixed
+  token. The stub arms only when the target is loopback; against dev the real
+  widget runs against the real secret. A spec waits for the widget to mount
+  (`waitForRecaptchaWidget`) before every gated press, because a person takes
+  seconds to press Start and a spec takes milliseconds, and the third run
+  lost to that race. The site key is part of the build marker, since it is
+  inlined at build time.
 - **Dev project asserted on the EFFECTIVE environment**, not just the file.
   Next resolves `process.env` > `.env.production.local` > `.env.local`, and the
   child inherits this shell — so checking only `.env.local` would let exported
@@ -253,9 +271,23 @@ node scripts/seed-fake-applicants.mjs down     # must end with total: 0
 12. taking a place in a pre-course session;
 13. leaving the course, behind the typed course title.
 
-Step 11 **skips with a message** while `/applications` 404s: the status hub is
-PR14's, and the assertion arms itself the moment that route exists rather than
-being a red suite about a page nobody has written.
+Step 11 used to skip while `/applications` 404ed. The status hub has landed,
+the step ran for real on 6 September 2026, and a 404 there now fails the run:
+the page an applicant is told to come back to is not allowed to be missing.
+
+**Against dev, steps 4 to 11 are skipped and the run says so.** Start, Submit
+and Pick it back up each send a reCAPTCHA token, and Google's real widget
+answers headless Chromium with an image challenge ("Select all images with
+crosswalks", found on the first dev run, 6 September 2026). No spec may solve
+one: the gate being closed to automation is the property the `recaptcha-gate`
+battery asserts. The spec skips exactly the steps in
+`RECAPTCHA_DEPENDENT_STEPS` (the gated presses and the steps that need what
+they create), records each with its reason in the completion marker, and the
+runner accepts that set in dev mode, prints it as "SKIPPED, not run", and
+treats any other skip, or any skip in `--local` mode, as a failure. So the
+dev-mode funnel proves sign-in, the public course page, the signed-out gate
+and the enrol and drop-out leg against the real backend; the apply leg is
+proven in local mode, the same split the register batteries already have.
 
 **CHROMIUM ONLY.** Playwright drives Chromium here and nothing else, so this is
 a regression net and **never** a substitute for the manual Safari pass before
@@ -288,6 +320,24 @@ deliberately **not** under `.next/`: `next build` clears that directory, so in
 `--local` mode the ledger was deleted by the build before the spec ever looked
 for it, and the run skipped its way to a green exit. `tests/funnel-harness-guards.test.mjs`
 pins both paths out of the build output.
+
+**A failed step leaves the page behind.** A selector timeout says what the
+spec wanted and nothing about what the page showed instead, and on the first
+real run that difference was the whole diagnosis (the form never appeared
+because the route had refused the reCAPTCHA token, which only the server log
+said). So a step that throws writes a full-page screenshot and the page's text
+to `.e2e-artifacts/<step-name>.png|txt` (`ARTIFACTS_DIR`, gitignored, pinned
+outside `.next/` by the same guard) before the failure is reported.
+
+**One known defect is pinned rather than papered over.** The public course
+page renders `CourseCTA` twice (hero and foot) and each placement mounts its
+own `GroupPicker` with its own state. The spec drives the hero picker (first
+in document order, `.first()`), and after the drop-out step asserts that the
+foot picker *still* offers "Take this place" (it never learns the hero one
+left; the button cannot succeed, the route refuses a second create, so the
+harm is a contradiction on the page). The assertion is written so that fixing
+the defect fails the step with the instruction to delete the pin, the same
+shape as `KNOWN_MISSING_INDEXES` in the index guard.
 
 ### The fixture, and why teardown is the headline
 
@@ -420,6 +470,12 @@ Read this before trusting a passing run.
 - **`/api/register` is covered in local mode only.** Against dev it stays
   behind the reCAPTCHA gate on purpose (that gate being closed is itself
   asserted by `recaptcha-gate`, on dev *and* production).
+- **Every browser-driven press behind reCAPTCHA is local mode only**, for the
+  same reason from the other side: against dev the real widget challenges
+  headless Chromium with images. Today that is the funnel's apply leg
+  (`RECAPTCHA_DEPENDENT_STEPS`), skipped and reported in dev mode. Any future
+  spec that drives `/register` or the admissions apply routes in a browser
+  inherits the split.
 - **Email coverage is the three auth templates only** — `VerifyLoginEmail`,
   `VerifyUniEmail`, `AlreadyRegisteredEmail`, exercised through their real
   routes. The other `src/emails/` templates (newsletter, RSVP, task,
@@ -429,7 +485,17 @@ Read this before trusting a passing run.
   pause flags are client-side only and no API route consults them. A future
   browser-driven test *would* be blocked whenever a notice is on.
 
-## Why there is no CI
+## Why the harness is not in CI
 
-There is no `.github/` in this repo, and a dev service-account key in GitHub
-Actions on a **public** repo is where this stops being safe. Run it locally.
+`.github/workflows/checks.yml` (since #263) runs typegen, `tsc`, lint,
+`npm test` and a real build on every pull request, with the rules emulator
+suite as a second job. None of those need credentials, and the two offline
+fences on this harness run there under `npm test`.
+
+Neither e2e mode is in it. Local mode boots the app on loopback with Mailpit
+and the test captcha secret, but the app it boots still creates real Auth
+users and real Firestore rows on the dev project, so a CI job for *either*
+mode needs dev credentials stored as GitHub Actions secrets on a **public**
+repo. Whether that is acceptable is the owner's decision, not this file's.
+Until it is made, run the harness by hand from a laptop with Application
+Default Credentials, as above.
