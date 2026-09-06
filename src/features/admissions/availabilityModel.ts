@@ -14,7 +14,7 @@ import {
  *
  * Two reasons, and the second is the load-bearing one:
  *
- *  1. A grid of 252 cells with pointer painting, a roving tabindex and a
+ *  1. A grid of 336 cells with pointer painting, a roving tabindex and a
  *     shift-range is enough behaviour that the state transitions want to be
  *     readable on their own, without a JSX file around them.
  *  2. The round trip THROUGH THE WIRE FORMAT is the thing that must not
