@@ -283,6 +283,12 @@ const USERS = new Map([
     "it loads `admissionEmails.ts` FOR REAL for the token contract, so all six admissions " +
       "templates are compiled here; they were the eight `return null` stubs this change deleted",
   ],
+  [
+    "email-suppression-chokepoint.test.mjs",
+    "it executes `send.ts` in-process to prove a suppressed recipient never reaches the " +
+      "transport and is logged as held; the transport, the renderer and the Admin SDK door are " +
+      "its only stubs, so any template a caller renders compiles for real",
+  ],
 ]);
 
 /**

@@ -38,9 +38,10 @@
  * asserted. Nothing here can reach a Firestore project or an SMTP server.
  */
 import { test } from "node:test";
+import { createLoader } from "./lib/tsLoader.mjs";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -143,8 +144,6 @@ test("nothing in src posts mail except through sendEmail", () => {
  * 3. The decision, executed
  * ---------------------------------------------------------------------- */
 
-const SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"']+)\2/g;
-
 /**
  * The stubs the send path needs to run in-process. `firebase-admin` never
  * appears here because `send.ts` reaches Firestore only through `getAdminDb`,
@@ -168,79 +167,13 @@ const STUBS = new Map([
   ["@/lib/firebase/admin", "export const getAdminDb = () => globalThis.__db ?? null;"],
 ]);
 
-function resolveLocalTs(specifier, fromFile) {
-  const base = specifier.startsWith("@/")
-    ? join(SRC, specifier.slice(2))
-    : resolve(dirname(fromFile), specifier);
-  for (const candidate of [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
-const graph = new Map();
-let tsc = null;
-
-const dataUrl = (source) =>
-  `data:text/javascript;base64,${Buffer.from(source, "utf8").toString("base64")}`;
-
-function stubUrl(key) {
-  const cached = graph.get(key);
-  if (cached) return cached;
-  const url = dataUrl(STUBS.get(key));
-  graph.set(key, url);
-  return url;
-}
-
-async function transpileToDataUrl(file) {
-  if (STUBS.has(file)) return stubUrl(file);
-  const cached = graph.get(file);
-  if (cached) return cached;
-
-  const { outputText } = tsc.transpileModule(readFileSync(file, "utf8"), {
-    fileName: file,
-    compilerOptions: { target: tsc.ScriptTarget.ES2022, module: tsc.ModuleKind.ESNext },
-  });
-
-  const rewrites = new Map();
-  for (const [, , , specifier] of outputText.matchAll(SPECIFIER)) {
-    if (rewrites.has(specifier)) continue;
-    if (STUBS.has(specifier)) {
-      rewrites.set(specifier, stubUrl(specifier));
-    } else if (specifier.startsWith(".") || specifier.startsWith("@/")) {
-      const target = resolveLocalTs(specifier, file);
-      if (!target) throw new Error(`cannot resolve "${specifier}" imported from ${file}`);
-      rewrites.set(specifier, await transpileToDataUrl(target));
-    } else {
-      // The scan is a regex over source text, so a plain string literal can
-      // look like an import. Anything that will not resolve is left alone.
-      try {
-        rewrites.set(specifier, import.meta.resolve(specifier));
-      } catch {
-        /* not a module */
-      }
-    }
-  }
-
-  const rewritten = outputText.replace(SPECIFIER, (whole, prefix, quote, specifier) =>
-    rewrites.has(specifier) ? `${prefix}${quote}${rewrites.get(specifier)}${quote}` : whole,
-  );
-  const url = dataUrl(rewritten);
-  graph.set(file, url);
-  return url;
-}
+// The shared loader (tests/lib/tsLoader.mjs): one compiler, JSX on, per-suite
+// stubs. A hand copy here would be the forty-fourth and the guard in
+// tests/ts-loader.test.mjs refuses it.
+const { loadTs } = createLoader({ stubs: STUBS });
 
 async function loadSend() {
-  if (!tsc) {
-    try {
-      tsc = (await import("typescript")).default;
-    } catch (err) {
-      throw new Error("the `typescript` devDependency is not installed. Run `npm install`.", {
-        cause: err,
-      });
-    }
-  }
-  return import(await transpileToDataUrl(SEND));
+  return loadTs(SEND);
 }
 
 /**
