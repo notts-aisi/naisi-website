@@ -33,7 +33,15 @@ export const POLICIES: Record<
   privacy: {
     label: "Privacy Policy",
     href: "/privacy",
+    // v4's date is a placeholder, one day after v3's, because neither version
+    // has reached production yet. The owner sets the real publish date.
+    // Keep this comment ABOVE `versions:`, never between the `[` and the first
+    // `{`: tests/funnel-harness-guards.test.mjs reads the current version out
+    // of this file with a regex that allows only whitespace across that gap,
+    // so a comment sitting there leaves the guard unable to read the very
+    // number it exists to pin. Anywhere else in the file is fine.
     versions: [
+      { version: 4, lastUpdated: "17 September 2026" },
       { version: 3, lastUpdated: "16 September 2026" },
       { version: 2, lastUpdated: "29 June 2026" },
       { version: 1, lastUpdated: "25 May 2026" },

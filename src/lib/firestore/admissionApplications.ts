@@ -334,7 +334,7 @@ export type AdmissionApplicationDoc = {
  * It lives with the shape it names so that a module needing only "which
  * collection is this" can have it without importing `applyContext.ts`, which
  * can reach `admissionApplicationPrivate` (the access-requirements answer) and
- * which `tests/privacy-policy-v3.test.mjs` therefore treats as reaching it. The
+ * which `tests/privacy-policy.test.mjs` therefore treats as reaching it. The
  * status hub's loader is the module that made the difference matter: it must be
  * provably unable to touch that collection, and an import for a string constant
  * is not a reason to give up the proof.

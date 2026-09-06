@@ -39,7 +39,7 @@
  *
  * Do NOT delete the `server-only` marker. It is what stops a route module
  * reaching the browser, and other guards lean on it (see
- * `tests/privacy-policy-v3.test.mjs`, which treats reaching
+ * `tests/privacy-policy.test.mjs`, which treats reaching
  * `lib/admissions/applyContext.ts` as reaching the access-requirements
  * collection). Move the pure piece the client actually needs into a LEAF
  * module that imports nothing server-only, and have the server module

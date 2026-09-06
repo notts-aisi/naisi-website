@@ -24,29 +24,26 @@
  *
  * ## What is faked, and what is real
  *
- * The handlers, the circulation model, the notifier's dispatch and the mint are
- * the REAL modules. Faked: `next/server`, `firebase-admin/firestore` (sentinels
- * this store interprets), the Admin SDK handles, the session, the impersonation
- * guard, the SMTP transport, the push mirror, the roster resolver and the four
- * email templates (`.tsx` pulling in `@react-email/components`, and only the
- * send path renders them). Nothing here can reach a Firestore project or an
- * inbox.
+ * The handlers, the circulation model, the notifier's dispatch, the mint and
+ * the four email templates are the REAL modules. Faked: `next/server`,
+ * `firebase-admin/firestore` (sentinels this store interprets), the Admin SDK
+ * handles, the session, the impersonation guard, the SMTP transport, the push
+ * mirror and the roster resolver. Nothing here can reach a Firestore project or
+ * an inbox.
  *
- * The loader dance, the fake store and the seed world are the ones from
+ * The loader, the fake store and the seed world are the ones from
  * `tests/worksheet-routes.test.mjs`, deliberately identical: the two files test
  * the two halves of one tree, and a second dialect of the same fake would be a
- * second thing to keep true.
+ * second thing to keep true. The loader is the shared
+ * `tests/lib/tsLoader.mjs`, which compiles JSX, so the "no scores, no feedback
+ * text" promise below is checked against the rendered message rather than
+ * against a stub's props.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SRC = join(REPO_ROOT, "src");
-
-const SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"']+)\2/g;
+import { join } from "node:path";
+import { render } from "@react-email/render";
+import { createLoader } from "./lib/tsLoader.mjs";
 
 /** Every write in this file resolves `serverTimestamp()` to this instant. */
 const STAMP = new Date("2026-09-06T12:00:00Z");
@@ -107,110 +104,9 @@ const STUBS = new Map([
       "    out.set(uid, { email: data.email, displayName: data.displayName || 'there' });\n" +
       "  }\n  return out;\n}",
   ],
-  [
-    "@/emails/TaskMembershipEmail",
-    "export default function TaskMembershipEmail(props) {\n" +
-      "  return { template: 'TaskMembershipEmail', props };\n}",
-  ],
-  [
-    "@/emails/TaskReviewRequestEmail",
-    "export default function TaskReviewRequestEmail(props) {\n" +
-      "  return { template: 'TaskReviewRequestEmail', props };\n}",
-  ],
-  [
-    "@/emails/WorksheetFeedbackEmail",
-    "export default function WorksheetFeedbackEmail(props) {\n" +
-      "  return { template: 'WorksheetFeedbackEmail', props };\n}",
-  ],
-  [
-    "@/emails/WorksheetUpdatedEmail",
-    "export default function WorksheetUpdatedEmail(props) {\n" +
-      "  return { template: 'WorksheetUpdatedEmail', props };\n}",
-  ],
 ]);
 
-function resolveLocalTs(specifier, fromFile) {
-  const base = specifier.startsWith("@/")
-    ? join(SRC, specifier.slice(2))
-    : resolve(dirname(fromFile), specifier);
-  for (const candidate of [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
-const graph = new Map();
-let tsc = null;
-
-function dataUrl(source) {
-  return `data:text/javascript;base64,${Buffer.from(source, "utf8").toString("base64")}`;
-}
-
-function stubUrl(key) {
-  const cached = graph.get(key);
-  if (cached) return cached;
-  const url = dataUrl(STUBS.get(key));
-  graph.set(key, url);
-  return url;
-}
-
-async function transpileToDataUrl(file) {
-  if (STUBS.has(file)) return stubUrl(file);
-  const cached = graph.get(file);
-  if (cached) return cached;
-
-  const { outputText } = tsc.transpileModule(readFileSync(file, "utf8"), {
-    fileName: file,
-    compilerOptions: {
-      target: tsc.ScriptTarget.ES2022,
-      module: tsc.ModuleKind.ESNext,
-    },
-  });
-
-  const rewrites = new Map();
-  for (const [, , , specifier] of outputText.matchAll(SPECIFIER)) {
-    if (rewrites.has(specifier)) continue;
-    if (STUBS.has(specifier)) {
-      rewrites.set(specifier, stubUrl(specifier));
-    } else if (specifier.startsWith(".") || specifier.startsWith("@/")) {
-      const target = resolveLocalTs(specifier, file);
-      if (!target) throw new Error(`cannot resolve "${specifier}" imported from ${file}`);
-      rewrites.set(specifier, await transpileToDataUrl(target));
-    } else {
-      // A string literal can look like an import to a regex. Anything
-      // unresolvable is left exactly as it is.
-      try {
-        rewrites.set(specifier, import.meta.resolve(specifier));
-      } catch {
-        // Not a module.
-      }
-    }
-  }
-
-  const rewritten = outputText.replace(
-    SPECIFIER,
-    (whole, prefix, quote, specifier) =>
-      rewrites.has(specifier)
-        ? `${prefix}${quote}${rewrites.get(specifier)}${quote}`
-        : whole,
-  );
-  const url = dataUrl(rewritten);
-  graph.set(file, url);
-  return url;
-}
-
-async function loadTs(relativePath) {
-  if (!tsc) {
-    try {
-      tsc = (await import("typescript")).default;
-    } catch (err) {
-      throw new Error("the `typescript` devDependency is not installed. Run `npm install`.", {
-        cause: err,
-      });
-    }
-  }
-  return import(await transpileToDataUrl(join(SRC, relativePath)));
-}
+const { loadTs } = createLoader({ stubs: STUBS });
 
 // ---------------------------------------------------------------------------
 // A Firestore small enough to read: addressed documents, one-field queries,
@@ -748,12 +644,27 @@ test("the recipient is emailed about their feedback, pointed at their own copy",
   assert.equal(mail.subject, 'Feedback on "Term plan"');
   assert.equal(mail.kind, "task");
   assert.equal(mail.referenceId, circulationId);
-  assert.equal(mail.react.template, "WorksheetFeedbackEmail");
-  assert.equal(mail.react.props.reviewerName, "Sam Sender");
-  assert.match(mail.react.props.link, new RegExp(`/worksheets/respond/${circulationId}$`));
-  assert.ok(
-    !JSON.stringify(mail.react.props).includes("Clear and to the point."),
+  // The message as the recipient receives it, not as it was assembled. The
+  // template is the real one, so the promise it makes in its own header ("IT
+  // CARRIES NO FEEDBACK") is checked against the HTML: feedback written for one
+  // person lands in a mailbox that is forwarded, previewed on a lock screen and
+  // quoted in a reply, and a props assertion cannot see whether the words made
+  // it into the body.
+  const html = await render(mail.react);
+  assert.match(html, /Sam Sender/, "feedback is somebody's judgement, so it is signed");
+  assert.match(html, /Read the feedback/);
+  // The closing quote is the anchor: the pattern ends where the href does, so a
+  // link that grew a suffix fails instead of matching inside itself.
+  assert.match(html, new RegExp(`/worksheets/respond/${circulationId}"`));
+  assert.doesNotMatch(
+    html,
+    /Clear and to the point\./,
     "the feedback itself stays on the page; the email says it is there",
+  );
+  assert.doesNotMatch(
+    html,
+    /\bscore\b/i,
+    "and no score reaches the recipient: the return route never copies one anywhere they can read",
   );
 
   assert.equal(globalThis.__pushed.length, 1);
@@ -922,9 +833,14 @@ test("only the people part-way through are told the questions changed", async ()
   const mail = globalThis.__sent[0];
   assert.equal(mail.to, "recip1@example.com");
   assert.equal(mail.subject, '"Term plan" has changed');
-  assert.equal(mail.react.template, "WorksheetUpdatedEmail");
-  assert.equal(mail.react.props.editorName, "Sam Sender");
-  assert.match(mail.react.props.link, new RegExp(`/worksheets/respond/${circulationId}$`));
+  const html = await render(mail.react);
+  assert.match(html, /Sam Sender/, "somebody made this change, and the message says who");
+  assert.match(
+    html,
+    /already answered is still there/,
+    "the reassurance is the message: a changed worksheet reads as lost work without it",
+  );
+  assert.match(html, new RegExp(`/worksheets/respond/${circulationId}"`));
   assert.deepEqual(
     globalThis.__pushed.map((push) => push.uid),
     ["recip1"],

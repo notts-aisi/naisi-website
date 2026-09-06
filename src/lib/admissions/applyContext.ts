@@ -51,7 +51,7 @@ export const APPLICATION_PRIVATE_COLLECTION = "admissionApplicationPrivate";
  * every existing call site is unchanged. It moved because THIS module can
  * reach `admissionApplicationPrivate` (see `privateRef` and
  * `loadOwnApplication` below), and the privacy scan in
- * `tests/privacy-policy-v3.test.mjs` treats importing it as being able to
+ * `tests/privacy-policy.test.mjs` treats importing it as being able to
  * reach that collection. A route that only needs to know who is calling should
  * not have to argue about the access-requirements answer.
  */

@@ -128,6 +128,14 @@
       ]
     },
     {
+      "collectionGroup": "activity",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "kind", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "subscriptions",
       "queryScope": "COLLECTION",
       "fields": [
@@ -342,7 +350,7 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "job", "order": "ASCENDING" },
-        { "fieldPath": "claimedAt", "order": "ASCENDING" }
+        { "fieldPath": "claimedAt", "order": "DESCENDING" }
       ]
     },
     {

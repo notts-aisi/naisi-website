@@ -12,6 +12,10 @@
  * exercise Storage together.
  */
 import { after, afterEach, before, describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   assertFails,
   assertSucceeds,
@@ -65,17 +69,32 @@ describe("newsletter-images — public read, permission-gated write", () => {
     );
   });
 
-  it("CHARACTERISATION: image/.* admits SVG onto a world-readable path", async () => {
-    // `image/svg+xml` satisfies `image/.*`, and this path is `allow read: if
-    // true`. Exploiting it needs drafter/approver permission, and whether the
-    // SVG executes depends on the serving headers of the download URL — which
-    // rules cannot express. Recorded so that tightening the allowlist to a
-    // raster-only list is a visible, deliberate change.
+  it("refuses image/svg+xml, on a folder the whole internet can read", async () => {
+    // This was a CHARACTERISATION test asserting the OPPOSITE: `image/svg+xml`
+    // satisfies `image/.*`, so anyone holding a newsletter permission could
+    // park a script-carrying document on a path whose read rule is `if true`.
+    // The tightening it asked for is the change this test now pins. What made
+    // it worth doing rather than merely recording: whether the file executes
+    // depends on the headers the download URL is served with, which rules
+    // cannot express, so the folder itself is the only place to refuse it.
+    //
+    // The other spellings of the same format are covered together, further
+    // down, because the first fix here refused this one string and two
+    // one-character variations went straight through it.
     await seedUser("drafter", { role: "member", permissions: { draftNewsletter: true } });
     const s = await storageAsUser("drafter");
-    await assertSucceeds(
+    await assertFails(
       s.ref("newsletter-images/d1/x.svg").put(PNG, { contentType: "image/svg+xml" }),
     );
+  });
+
+  it("still accepts a PNG from that same drafter (the refusal is not blanket)", async () => {
+    // Paired with the test above on purpose. One content type was removed, not
+    // the newsletter editor's ability to add pictures, and a rule change that
+    // quietly broke every upload would pass the refusal test on its own.
+    await seedUser("drafter", { role: "member", permissions: { draftNewsletter: true } });
+    const s = await storageAsUser("drafter");
+    await assertSucceeds(s.ref("newsletter-images/d1/photo.png").put(PNG, png));
   });
 });
 
@@ -96,6 +115,24 @@ describe("event-images — same shape as newsletter", () => {
     await seedUser("drafter", { role: "member", permissions: { draftEvent: true } });
     const s = await storageAsUser("drafter");
     await assertSucceeds(s.ref("event-images/no-such-event/x.png").put(PNG, png));
+  });
+
+  it("refuses image/svg+xml, on a folder the whole internet can read", async () => {
+    // An event cover is rendered on the public events page and hot-linked out
+    // of already-sent invitation emails, so a file landing here is a file
+    // anybody can open with no session. An SVG is a document that can carry
+    // script and links, which is not what a cover image is for.
+    await seedUser("drafter", { role: "member", permissions: { draftEvent: true } });
+    const s = await storageAsUser("drafter");
+    await assertFails(
+      s.ref("event-images/e1/evil.svg").put(PNG, { contentType: "image/svg+xml" }),
+    );
+  });
+
+  it("still accepts a PNG cover from that same drafter", async () => {
+    await seedUser("drafter", { role: "member", permissions: { draftEvent: true } });
+    const s = await storageAsUser("drafter");
+    await assertSucceeds(s.ref("event-images/e1/cover.png").put(PNG, png));
   });
 });
 
@@ -208,6 +245,24 @@ describe("application-emails — was missing entirely, broke prod", () => {
         throw e;
       }),
     );
+  });
+
+  it("refuses image/svg+xml even from an admin, because the read is public", async () => {
+    // Admin-only WRITE is not the same as a private folder: the read rule is
+    // `if true` so that an application email renders in somebody's inbox, and
+    // an SVG parked here is a script-carrying document on a URL anybody can
+    // open. The narrow write gate limits who can do it, not what it would be.
+    await seedUser("admin1", { role: "admin" });
+    const s = await storageAsUser("admin1");
+    await assertFails(
+      s.ref("application-emails/tpl1/evil.svg").put(PNG, { contentType: "image/svg+xml" }),
+    );
+  });
+
+  it("still accepts a PNG from that same admin", async () => {
+    await seedUser("admin1", { role: "admin" });
+    const s = await storageAsUser("admin1");
+    await assertSucceeds(s.ref("application-emails/tpl1/photo.png").put(PNG, png));
   });
 });
 
@@ -336,6 +391,24 @@ describe("course-images: was missing entirely, so every week-guide image failed"
     );
   });
 
+  it("refuses image/svg+xml, on a folder the whole internet can read", async () => {
+    // The published course page and the curriculum preview are served to
+    // signed-out visitors, so week-guide imagery is world-readable in exactly
+    // the way newsletter and event imagery is. An SVG is a document that can
+    // carry script and links, so it is refused here too.
+    await seedUser("cDrafter", { role: "member", permissions: { draftCourse: true } });
+    const s = await storageAsUser("cDrafter");
+    await assertFails(
+      s.ref("course-images/course-1/evil.svg").put(PNG, { contentType: "image/svg+xml" }),
+    );
+  });
+
+  it("still accepts a PNG from that same course drafter", async () => {
+    await seedUser("cDrafter", { role: "member", permissions: { draftCourse: true } });
+    const s = await storageAsUser("cDrafter");
+    await assertSucceeds(s.ref("course-images/course-1/guide.png").put(PNG, png));
+  });
+
   it("does not require the course or week to exist (the folder is unvalidated)", async () => {
     // Stated rather than assumed: unlike newsletter-images and event-images
     // there is no ownership test here, because `{folder}` is a courseId in one
@@ -351,7 +424,9 @@ describe("worksheet-images: signed-in read, scoped committee write, no SVG", () 
   // and each difference is a decision this suite pins:
   //  - read is SIGNED-IN, not public. A worksheet is never public, and a
   //    question body can carry a screenshot of something internal.
-  //  - `image/svg+xml` is refused explicitly rather than merely characterised.
+  //  - `image/svg+xml` was refused here FIRST, while the four older image
+  //    folders still admitted it. They carry the same clause now, and the
+  //    guard at the foot of this file is what keeps the next one honest.
   //  - the {ownerId} folder IS scoped, unlike course-images, because it names
   //    a document either way: a worksheet (gate: authorUid) in the editor, a
   //    circulation (gate: staffUids) when staff edit the sent copy. Both are
@@ -464,11 +539,11 @@ describe("worksheet-images: signed-in read, scoped committee write, no SVG", () 
     await assertFails(s.ref("worksheet-images/w1/body.png").put(PNG, png));
   });
 
-  it("blocks image/svg+xml, unlike the older world-readable image paths", async () => {
+  it("blocks image/svg+xml, as every image path now does", async () => {
     // `image/svg+xml` satisfies `image/.*`, and an SVG is a document format
-    // that can carry script. newsletter-images has a CHARACTERISATION test
-    // recording that it lets one through; this path was added afterwards, so
-    // there is no reason to inherit the hole.
+    // that can carry script. This path refused it from the day it was added,
+    // while newsletter-images carried a characterisation test recording that
+    // it let one through; the older folders have since been brought into line.
     await seedUser("wsCommittee", { role: "committee", suRecognised: false });
     const s = await storageAsUser("wsCommittee");
     await assertFails(
@@ -611,5 +686,465 @@ describe("worksheet-uploads: no client write at all, scoped read", () => {
     await seedUser("reviewer1", { role: "committee", suRecognised: true });
     const s = await storageAsUser("reviewer1");
     await assertFails(s.ref("worksheet-uploads/no-such-circ/recipA/answer.png").getMetadata());
+  });
+});
+
+describe("every image folder refuses SVG in every spelling, not just one string", () => {
+  // The refusal landed as `contentType != 'image/svg+xml'`, an equality test
+  // against a single spelling, and rules compare strings byte for byte. Run
+  // against the emulator, both rows below were ALLOWED onto a world-readable
+  // folder and stored back verbatim: `image/SVG+xml` because a media type is
+  // case-insensitive, and the `; charset=utf-8` form because parameters are an
+  // ordinary part of one. A browser opens either file as an SVG document, so
+  // the person the rule is written against (somebody with upload rights acting
+  // deliberately, not somebody fumbling the picker) got past it by changing one
+  // character. The clause is a prefix match on the lowercased type now.
+  //
+  // Every folder is exercised rather than one. The structural guard at the foot
+  // of this file proves the five clauses are the same TEXT; these tests are
+  // what prove the text means what the comments beside it claim, on each of the
+  // four world-readable folders and on the signed-in-read worksheet folder that
+  // the clause was originally copied from.
+  //
+  // The plain `image/svg+xml` spelling is covered folder by folder above, with
+  // the reason each folder in particular cannot host one, so only the two
+  // variations are repeated here.
+  const VARIATIONS = ["image/SVG+xml", "image/svg+xml; charset=utf-8"];
+
+  /** Folder, an actor who is allowed to write to it, and a path inside it. */
+  const FOLDERS = [
+    [
+      "newsletter-images",
+      "nDrafter",
+      { role: "member", permissions: { draftNewsletter: true } },
+      "newsletter-images/d1/evil.svg",
+    ],
+    [
+      "event-images",
+      "eDrafter",
+      { role: "member", permissions: { draftEvent: true } },
+      "event-images/e1/evil.svg",
+    ],
+    [
+      "application-emails",
+      "admin1",
+      { role: "admin" },
+      "application-emails/tpl1/evil.svg",
+    ],
+    [
+      "course-images",
+      "cDrafter",
+      { role: "member", permissions: { draftCourse: true } },
+      "course-images/course-1/evil.svg",
+    ],
+    // Committee rather than a permission holder, and an owner id that names
+    // neither a worksheet nor a circulation, which is the branch of that rule
+    // an author uploading their first image legitimately takes.
+    [
+      "worksheet-images",
+      "wsCommittee",
+      { role: "committee", suRecognised: false },
+      "worksheet-images/w-unsettled/evil.svg",
+    ],
+  ];
+
+  for (const [folder, uid, userDoc, path] of FOLDERS) {
+    for (const contentType of VARIATIONS) {
+      it(`${folder} refuses ${contentType}`, async () => {
+        await seedUser(uid, userDoc);
+        const s = await storageAsUser(uid);
+        await assertFails(s.ref(path).put(PNG, { contentType }));
+      });
+    }
+  }
+
+  it("and a WebP and a GIF still get through, so this is a format refusal not a lockout", async () => {
+    // Paired with the loop on purpose. A clause that refused everything would
+    // pass all ten tests above and break every editor on the site, and the
+    // per-folder PNG tests would not catch a pattern that happened to admit
+    // PNG alone.
+    await seedUser("nDrafter", { role: "member", permissions: { draftNewsletter: true } });
+    const s = await storageAsUser("nDrafter");
+    await assertSucceeds(s.ref("newsletter-images/d1/x.webp").put(PNG, { contentType: "image/webp" }));
+    await assertSucceeds(s.ref("newsletter-images/d1/x.gif").put(PNG, { contentType: "image/gif" }));
+  });
+});
+
+/**
+ * ---------------------------------------------------------------------------
+ * The guard, which is the half that outlives the folders listed above.
+ * ---------------------------------------------------------------------------
+ *
+ * Every test above pins a folder that exists today, so together they are a
+ * regression test for one hole, found once. The next image folder somebody
+ * adds is covered by none of them, and the history of this file is that exact
+ * mistake three times over: `event-images`, `application-emails` and
+ * `course-images` each reached production with no match block at all.
+ *
+ * So the refusal is enforced structurally as well as by example: read
+ * `storage.rules`, walk every match block in it, and require the SVG refusal
+ * on each block that grants a write and accepts an image content type. A
+ * folder added tomorrow is covered without anybody remembering that this file
+ * exists.
+ *
+ * The scan reports what it cannot read rather than passing over it. Three
+ * plausible ways of writing a new block were found to slip through an earlier
+ * version of it in silence, and every one of them is now a named failure:
+ * double quotes around the content-type pattern, `allow create, update:`
+ * instead of `allow write:`, and a trailing comment on the match line, which
+ * made the whole block invisible to the line scanner. A guard whose blind spot
+ * is silent is worse than no guard, because the file grows around it.
+ */
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+
+/**
+ * The rules file under test. Overridable so the guard can be pointed at a
+ * doctored COPY to prove it fails when a clause goes missing: delete the SVG
+ * refusal from a copy, run with STORAGE_RULES_PATH pointing at it, and the
+ * folder is named. Same reason `tests/firestore-indexes.test.mjs` takes
+ * FIRESTORE_INDEXES_PATH. Without it the only way to check the guard is to
+ * edit the real ruleset and remember to put it back, which nobody does twice.
+ */
+const STORAGE_RULES_PATH = process.env.STORAGE_RULES_PATH ?? join(REPO_ROOT, "storage.rules");
+
+/** The bucket-wide wrapper. Scaffolding, not a folder rule. */
+const BUCKET_ROOT = "/b/{bucket}/o";
+
+/**
+ * The image folders `storage.rules` holds today, listed so that a scan which
+ * finds nothing (a renamed block, a parser tripped by a later edit) fails
+ * loudly instead of passing over an empty set. That is how a guard like this
+ * dies quietly: it keeps reporting no violations because it stopped reading.
+ */
+const KNOWN_IMAGE_BLOCKS = [
+  "/newsletter-images/{draftId}/{image=**}",
+  "/event-images/{eventId}/{image=**}",
+  "/application-emails/{templateId}/{image=**}",
+  "/course-images/{folder}/{image=**}",
+  "/worksheet-images/{ownerId}/{image=**}",
+];
+
+/**
+ * Blocks allowed to accept SVG, each with the reason it is exempt.
+ * Read in BOTH directions below: an entry naming a block `storage.rules` no
+ * longer has, or one that has since grown the refusal on its own, fails until
+ * somebody deletes it.
+ */
+const SVG_EXEMPT_BLOCKS = new Map([
+  [
+    "/tasks/{taskId}/{attachmentId}/{filename}",
+    "Task attachments are a general file store rather than an image folder: "
+      + "the same rule already accepts PDFs, Word documents, zips and text, and "
+      + "its read is gated to whoever can open the parent task rather than to "
+      + "the whole internet. Refusing one document format out of that set buys "
+      + "nothing and would turn away a diagram somebody exported as an SVG.",
+  ],
+]);
+
+/**
+ * Blocks that grant a write and are deliberately NOT image folders, each with
+ * the reason no content-type refusal belongs on them.
+ *
+ * Empty today, and it is the emptiness that does the work: every block in
+ * `storage.rules` that lets anybody upload anything accepts an image content
+ * type, so the test below can demand that a write-granting block is either
+ * recognised as an image folder or written down here. That is the channel for
+ * the case the earlier guard had no answer to. A block the classifier cannot
+ * read (a content-type check spelled some third way) lands here as an
+ * unexplained write-granting block and fails, rather than being quietly
+ * dropped from the set the refusal is enforced on.
+ */
+const NON_IMAGE_WRITE_BLOCKS = new Map();
+
+/**
+ * Every match block in `storage.rules`, as `{ path, body }`.
+ *
+ * Scanned line by line rather than parsed properly, because the shape is
+ * simple (one match per folder, no nesting below the bucket wrapper) and the
+ * repo has no rules parser to reach for. The one trap is that a match line's
+ * PATH carries braces of its own, as in `{draftId}` and `{image=**}`, so the
+ * brace count has to treat that line as a single opening brace instead of
+ * scanning it.
+ */
+function parseBlocks(source) {
+  const blocks = [];
+  let open = null;
+  let depth = 0;
+
+  for (const line of source.split("\n")) {
+    const opener = /^\s*match\s+(\S+)\s*\{\s*$/.exec(line);
+    if (open === null) {
+      if (opener && opener[1] !== BUCKET_ROOT) {
+        open = { path: opener[1], body: [] };
+        depth = 1;
+      }
+      continue;
+    }
+    depth += opener
+      ? 1
+      : (line.match(/\{/g)?.length ?? 0) - (line.match(/\}/g)?.length ?? 0);
+    if (depth === 0) {
+      blocks.push({ path: open.path, body: open.body.join("\n") });
+      open = null;
+      continue;
+    }
+    open.body.push(line);
+  }
+
+  assert.equal(
+    open,
+    null,
+    `storage.rules did not parse: the block for ${open?.path} never closed. `
+      + "Fix the scan rather than deleting this check. A guard that cannot read "
+      + "the file has to say so, not report nothing left to enforce.",
+  );
+  return blocks;
+}
+
+/**
+ * Match lines the scan did NOT turn into a block, by path.
+ *
+ * The scanner opens a block only on a line shaped exactly `match <path> {`, so
+ * a trailing comment on the match line (`match /poster-images/{id}/{f=**} { //
+ * posters`) made the entire folder invisible: no block, no classification, no
+ * refusal demanded, and the parse recovered so cleanly that nothing was
+ * reported. Anything nested one level deeper than the bucket wrapper lands
+ * here too. Both are the guard failing to read the file, which is the one
+ * outcome it must never turn into silence.
+ */
+function unreadableMatchLines(source, blocks) {
+  const parsed = new Set(blocks.map((block) => block.path));
+  const declared = [];
+  for (const line of source.split("\n")) {
+    const named = /^\s*match\s+(\S+)/.exec(line);
+    if (named && named[1] !== BUCKET_ROOT) declared.push(named[1]);
+  }
+  return declared.filter((path) => !parsed.has(path));
+}
+
+function storageRuleBlocks() {
+  const source = readFileSync(STORAGE_RULES_PATH, "utf8");
+  const blocks = parseBlocks(source);
+  const unreadable = unreadableMatchLines(source, blocks);
+  assert.deepEqual(
+    unreadable,
+    [],
+    `The scan found match lines in storage.rules it could not read as blocks: `
+      + `${unreadable.join(", ")}. Everything below is enforced only on the `
+      + "blocks it DID read, so those folders are currently exempt from the SVG "
+      + "refusal without anybody deciding they should be. Usual causes: a "
+      + "comment after the opening brace on the match line, or a match nested "
+      + "below another one. Fix the scan or the rules file, never this check.",
+  );
+  return blocks;
+}
+
+/**
+ * A block's rule expressions, with whole-line comments dropped. The comments
+ * in `storage.rules` quote rule fragments and path templates at length, so a
+ * match against the raw text would classify a block by what its prose talks
+ * about rather than by what it permits.
+ */
+function rulesOnly(body) {
+  return body
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("//"))
+    .join("\n");
+}
+
+/**
+ * Every `allow …: if …;` statement in a block, as `{ methods, condition }`.
+ *
+ * Parsed rather than grepped because the earlier guard looked for the literal
+ * word `write` and so read `allow create, update: if …` (identical in effect,
+ * and valid) as granting nothing at all, which silently removed that folder
+ * from everything enforced below.
+ */
+function allowStatements(body) {
+  const statements = [];
+  const pattern = /\ballow\s+([a-z,\s]*?)\s*:\s*if\s([^;]*);/g;
+  let hit = pattern.exec(rulesOnly(body));
+  while (hit !== null) {
+    statements.push({
+      methods: hit[1].split(/[,\s]+/).filter(Boolean),
+      condition: hit[2].trim(),
+    });
+    hit = pattern.exec(rulesOnly(body));
+  }
+  return statements;
+}
+
+/**
+ * Grants somebody the right to put bytes in the folder. `delete` is left out
+ * deliberately: it carries no `request.resource`, so a content-type clause is
+ * not something a delete rule could have.
+ */
+function grantsWrite(body) {
+  return allowStatements(body).some(
+    (statement) =>
+      statement.methods.some((method) => ["write", "create", "update"].includes(method))
+      && statement.condition !== "false",
+  );
+}
+
+/**
+ * References an `image/…` content type in its rule expressions. Either quote
+ * style, and no assumption about which string method does the matching: the
+ * rules language accepts both quotes, this file happens to use single ones,
+ * and a block written with double quotes was invisible to the earlier version
+ * of this check.
+ */
+function acceptsImageContentType(body) {
+  return /contentType[^;]*['"]image\//.test(rulesOnly(body));
+}
+
+/** Grants a write to somebody, and accepts an image content type to do it. */
+function isImageWriteBlock(body) {
+  return grantsWrite(body) && acceptsImageContentType(body);
+}
+
+/**
+ * The refusal, pinned to ONE clause: lowercased, and prefix-matched with a
+ * trailing `.*` so a media-type parameter cannot walk round it.
+ *
+ * Deliberately narrow rather than "mentions SVG somewhere". The shape this
+ * replaced read as a refusal in the rules file, in four test names and in this
+ * guard's own failure message, while the emulator allowed two spellings of the
+ * file straight through it, so a guard that accepts any clause containing the
+ * letters svg would re-admit exactly that. `matches()` in the rules language
+ * tests the WHOLE string, so `matches('image/svg\\+xml')` would refuse the bare
+ * type and let `image/svg+xml; charset=utf-8` through: close enough to read
+ * right, wrong where it counts. A folder wanting some other clause has to make
+ * this guard say so on purpose.
+ */
+const SVG_REFUSAL = /!\s*request\.resource\.contentType\.lower\(\)\.matches\(\s*['"]image\/svg\.\*['"]\s*\)/;
+
+/**
+ * The shape that used to be here, kept so the failure below can say what is
+ * wrong with it rather than only that something is missing.
+ */
+const WEAK_SVG_REFUSAL = /contentType\s*(!=|==)\s*['"]image\/svg\+xml['"]/;
+
+function refusesSvg(body) {
+  return SVG_REFUSAL.test(rulesOnly(body));
+}
+
+function mentionsSvgAtAll(body) {
+  const code = rulesOnly(body);
+  return SVG_REFUSAL.test(code) || WEAK_SVG_REFUSAL.test(code);
+}
+
+describe("storage.rules: an image folder added tomorrow cannot forget the SVG refusal", () => {
+  it("reads storage.rules and finds every image folder it is known to hold", () => {
+    const found = storageRuleBlocks()
+      .filter((block) => isImageWriteBlock(block.body))
+      .map((block) => block.path);
+    for (const path of KNOWN_IMAGE_BLOCKS) {
+      assert.ok(
+        found.includes(path),
+        `The scan no longer recognises ${path} as an image folder. Either the `
+          + "block was renamed, and KNOWN_IMAGE_BLOCKS needs updating, or the "
+          + "scan has gone blind, in which case the refusal below is enforced "
+          + `on nothing. Found: ${found.join(", ") || "no blocks at all"}.`,
+      );
+    }
+  });
+
+  it("accounts for every block that lets anybody upload a file", () => {
+    // The half KNOWN_IMAGE_BLOCKS cannot do. That list catches one of today's
+    // five folders falling out of the classifier; it says nothing about a
+    // SIXTH folder that was never in it, which is exactly the case the guard
+    // exists for. So the question is turned round: every block granting a
+    // write has to be recognised as an image folder or written down as
+    // something else, with a reason. A new folder whose content-type check is
+    // spelled in some way this file does not recognise fails here by name
+    // instead of dropping out of the set enforced below.
+    for (const block of storageRuleBlocks()) {
+      if (!grantsWrite(block.body)) continue;
+      assert.ok(
+        isImageWriteBlock(block.body) || NON_IMAGE_WRITE_BLOCKS.has(block.path),
+        `${block.path} grants a write, and this guard cannot tell whether it is `
+          + "an image folder. If it is one, its content-type check is written in "
+          + "a way `acceptsImageContentType` does not recognise, so widen that. "
+          + "If it genuinely is not, add it to NON_IMAGE_WRITE_BLOCKS with the "
+          + "reason. What must not happen is the block quietly sitting outside "
+          + "the SVG refusal because nobody noticed it was never being checked.",
+      );
+    }
+  });
+
+  it("every image folder in storage.rules refuses SVG, in the shape that works", () => {
+    for (const block of storageRuleBlocks()) {
+      if (!isImageWriteBlock(block.body) || SVG_EXEMPT_BLOCKS.has(block.path)) continue;
+      assert.ok(
+        refusesSvg(block.body),
+        `${block.path} accepts an image content type without refusing SVG. An `
+          + "SVG is a document that can carry script and links, and these "
+          + "folders are read with no session at all, so add "
+          + "`&& !request.resource.contentType.lower().matches('image/svg.*')` "
+          + "to the write rule, or add the path to SVG_EXEMPT_BLOCKS with the "
+          + "reason it is safe there."
+          + (WEAK_SVG_REFUSAL.test(rulesOnly(block.body))
+            ? " This block compares the content type to the exact string "
+              + "'image/svg+xml'. That is not enough: rules compare strings byte "
+              + "for byte, and the emulator allowed both `image/SVG+xml` and "
+              + "`image/svg+xml; charset=utf-8` past it, which a browser opens "
+              + "as SVG documents all the same."
+            : ""),
+      );
+    }
+  });
+
+  it("exempts only blocks that still exist, are still image writes, and still need exempting", () => {
+    const blocks = storageRuleBlocks();
+    for (const [path, reason] of SVG_EXEMPT_BLOCKS) {
+      const block = blocks.find((candidate) => candidate.path === path);
+      assert.ok(
+        block,
+        `SVG_EXEMPT_BLOCKS names ${path}, which storage.rules no longer has. `
+          + "Delete the entry: an exemption nobody can check is an exemption "
+          + "the next reader will copy.",
+      );
+      assert.ok(
+        reason.trim().length > 40,
+        `The exemption for ${path} needs a reason a reader can weigh, not a note.`,
+      );
+      assert.ok(
+        isImageWriteBlock(block.body),
+        `${path} is exempted from a rule the scan no longer applies to it: it is `
+          + "not classified as an image write block any more, so the exemption "
+          + "grants nothing and hides the fact that the classifier stopped "
+          + "seeing the block. Work out which changed, the rule or the scan.",
+      );
+      assert.ok(
+        !mentionsSvgAtAll(block.body),
+        `${path} refuses SVG on its own now, so its exemption is stale. `
+          + "Delete the entry.",
+      );
+    }
+  });
+
+  it("lists a reason against every non-image write block, and no stale ones", () => {
+    // Both directions, same as SVG_EXEMPT_BLOCKS: an entry for a block that no
+    // longer exists, or for one that turns out to be an image folder after all,
+    // is a licence nobody is checking.
+    const blocks = storageRuleBlocks();
+    for (const [path, reason] of NON_IMAGE_WRITE_BLOCKS) {
+      const block = blocks.find((candidate) => candidate.path === path);
+      assert.ok(
+        block,
+        `NON_IMAGE_WRITE_BLOCKS names ${path}, which storage.rules no longer has. `
+          + "Delete the entry.",
+      );
+      assert.ok(
+        reason.trim().length > 40,
+        `The entry for ${path} needs a reason a reader can weigh, not a note.`,
+      );
+      assert.ok(
+        !isImageWriteBlock(block.body),
+        `${path} is listed as a non-image write block but accepts an image `
+          + "content type. Delete the entry so the SVG refusal is enforced on it.",
+      );
+    }
   });
 });

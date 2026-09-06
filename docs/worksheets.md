@@ -165,7 +165,7 @@ while the tab is visible and the person has moved or typed in the last
 minute. No keystrokes, no paste events, no per-question timing. Shown to
 staff on the circulation page and to the recipient on their own task and
 respond page ("You first opened this on ..."). The privacy notice carries a
-line for it; see the OWNER TO CONFIRM item in `src/content/legal/privacy/v3.tsx`.
+line for it; see the OWNER TO CONFIRM item in `src/content/legal/privacy/v4.tsx`.
 
 ## Firestore rules
 
@@ -340,3 +340,98 @@ non-committee recipients; anonymous responses; a virus scanner; per-question
 time tracking; an edit lock for two reviewers editing one copy (admins
 coordinate through `useAdminPageLock`, which `adminLocks` rules restrict to
 admins, so for non-admin reviewers the last write wins and the page says so).
+
+## Planned next (scoped, not built)
+
+Two pieces the owner asked for on 7 September 2026, recorded here so the
+build follows a written shape.
+
+### Configurable reminders
+
+Today the due-soon job reminds every unsubmitted recipient once, 48 hours
+before the due date, when the circulation's dueSoon switch is on. The
+admission rounds already do better: a round has a reminders on/off switch
+and three slots (a week out, three days out, deadline day), each with an
+editable number of days and a time of day. The plan is one shape for both:
+
+- A free list of slots, `{ id, daysBefore, atLocalTime }[]`, stored on the
+  circulation as `notifications.dueSoon.slots` beside the dueSoon email and
+  push switches, which remain the on/off. Inside `notifications` on purpose:
+  the staff update band in the rules already allows that key and constrains
+  nothing inside it, so no rules change and no deploy. Defaults are code
+  constants (3 days and 1 day before, at 10:00); editable per circulation in
+  the Circulate dialog and the Settings tab. Slots are a list, not three
+  fixed ids, so a custom slot is one more row, capped at six.
+- The job resolves each offset against `dueDate` the way the admissions job
+  resolves against `closesAt` (London civil day, marker keyed on the resolved
+  date so two offsets on one day are one send and a moved due date is a new
+  reminder). The existing `wsremind` marker shape already carries the date
+  key, so no marker change.
+- Admissions gains the same freedom: the three fixed ids become a list with
+  the three presets as defaults, and the slot labels come from the numbers
+  ("3 days before") rather than fixed names, so an edited slot cannot wear
+  the wrong label.
+- Both remain dark until the scheduler runs; the switches gate what is sent
+  once it does.
+
+### Deletion
+
+Nothing deletes worksheet data today. A worksheet or a circulation cannot be
+removed, and account deletion leaves a member's responses in place, the same
+policy it applies to their tasks. Admission rounds can be cancelled but never
+removed. Courses already have a destroy protocol with a manifest and
+blockers; the plan copies that shape rather than inventing a fourth:
+
+- **Delete a library worksheet**: author or admin; refused while any
+  circulation of it is open (the blocker is named in the confirm); deletes
+  the document and its question images under `worksheet-images/{id}`.
+- **Destroy a circulation**: admin, typed confirm, with a manifest first (how
+  many responses, reviews, tasks, uploaded images, export-log rows). Deletes
+  responses, reviews, the copy's images, every uploaded answer image under
+  `worksheet-uploads/{id}`, and the recipient tasks with their comments,
+  activity and attachments through the existing task cascade. Export-log
+  rows are counted and retained, as every other destroy does. Written to an
+  audit document the way run destroys are, so the fact of the destroy
+  outlives the data.
+- **Account deletion**: keeps responses and reviews, as it keeps tasks, and
+  records the count in the deletion summary, so the owner can change the
+  policy knowingly. Authored worksheets stay in the library with their
+  author shown as a former member.
+- **Destroy an admission round**: admin, typed confirm, manifest first,
+  refused while the round is open or deciding; deletes the round, its
+  stages, its applications and their private parts, and its reviews;
+  releases the `admissionsReviewer` flag on people who review nothing else.
+  Cancelled rounds are the normal way to end one; destroy is for test rounds
+  and mistakes.
+
+Owner decisions, 7 September 2026:
+
+- A circulation destroy is offered to admins only, never to the sender.
+- A deleted account's responses and reviews stay, counted in the deletion
+  summary, matching the tasks policy.
+- A round destroy is offered to admins straight away, with the confirm and
+  the manifest as the safeguard. And one rule above all of it:
+
+**A destroy never deletes what the committee wants to remember about a
+person.** The owner intends a member record: per person, the dates they
+applied, what they applied for, how they scored, plain-text notes on what
+the committee thought, and notes on how they have participated since, so a
+later application can be graded with that history in view. That record hangs
+off the person, not off the round, and a round destroy leaves it untouched.
+Consequences for the build order:
+
+- The deletion work ships the first slice of the member record with it:
+  `memberRecords/{uid}/applications/{roundId}` holding appliedAt, round
+  title, what was applied for, the outcome, the reviewers' score summary and
+  the reviewer notes copied as plain text. Written when a round settles or
+  when a destroy runs, whichever comes first, so a destroy after it loses
+  nothing the committee keeps. Admin and SU-recognised committee read it;
+  only routes write it; account deletion keeps it (the same reasoning as
+  export-log rows: it is the committee's record, not the member's content).
+- The destroy manifest names, per person, whether their record entry exists;
+  a destroy with a missing entry writes it first and refuses if that write
+  fails.
+- Participation notes on the record (how a member has taken part since) are
+  a later slice; the collection shape leaves room for them, and the existing
+  `memberConductFlags` collection is the precedent for admin-authored notes
+  about a member.
