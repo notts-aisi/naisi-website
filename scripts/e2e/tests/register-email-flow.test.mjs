@@ -149,12 +149,16 @@ describe("/api/register email flow (Mailpit)", () => {
       }
     }
     // \s? because the plain-text pipeline renders the JSX expression boundary
-    // in "{expiresInMinutes} minutes" without its space ("30minutes") — a
+    // in "{expiresInMinutes} minutes" without its space ("10minutes"), a
     // cosmetic artefact of @react-email/render's html-to-text pass that only
     // text-mode mail clients ever see. The HTML part renders correctly. Found
     // by this battery on 2026-08-02; tolerated rather than asserted-on so the
     // suite tests substance, not the text pipeline's whitespace habits.
-    assert.match(msg.Text, /30\s?minutes/, "The expiry copy did not render.");
+    //
+    // Ten, not thirty: the copy is computed from TOKEN_TTL_SECONDS, so a
+    // number here that disagrees with the route is a promise the link cannot
+    // keep. See that constant's comment for why it is short.
+    assert.match(msg.Text, /10\s?minutes/, "The expiry copy did not render.");
   });
 
   it("re-registering inside the cooldown answers identically and sends nothing", async (t) => {

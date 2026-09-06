@@ -1,0 +1,133 @@
+/* ============================================================
+   MaterialCheck — the 44px check-off control.
+
+   Stroke maths: r=13 in a 32-unit viewBox → circumference 81.68,
+   the family constant shared with WeekRail and ProgressRing. The
+   sweep's dasharray/dashoffset are that constant; the tick pins
+   its own dash space with pathLength=100 — nothing here is ever
+   measured at runtime.
+
+   All state transitions are class-driven (.check ↔ .isChecked):
+   the TO-state's transition property governs, which is how check
+   gets the 260ms draw and uncheck gets the faster --dur-quick
+   reverse from the same two rules.
+   ============================================================ */
+
+.check {
+  /* 2.75rem = the 44px enforced touch floor (docs/touch-targets.md) — this
+     is the button members hit daily, often on a phone. */
+  width: 2.75rem;
+  height: 2.75rem;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  border-radius: var(--radius-pill);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.check:disabled {
+  /* Read-only presentation (completed run, un-enrolled admin): the state
+     still shows, only the affordance goes. Not dimmed — a completed tick on
+     a finished run is history, not an unavailable control. */
+  cursor: default;
+}
+
+.check:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Press feedback: scale(0.92) over --dur-tap. Kept under reduced motion on
+   purpose (the belt collapses the duration; the response itself stays). */
+.disc {
+  display: block;
+  width: 2rem; /* 32px — 1:1 with the viewBox, so strokes render exact */
+  height: 2rem;
+  transition: transform var(--dur-tap) var(--ease-exit);
+}
+
+.check:active:not(:disabled) .disc {
+  transform: scale(0.92);
+}
+
+.glyph {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.outline {
+  fill: none;
+  stroke: var(--color-border-strong);
+  stroke-width: 1.6;
+  transition: stroke var(--dur-quick) var(--ease-naisi);
+}
+
+.check:hover:not(:disabled) .outline {
+  stroke: var(--color-accent);
+}
+
+/* The draw. Unchecked state hides the sweep at full dashoffset; checking
+   flips the class and the sweep transitions to 0 over --dur-settle (260ms).
+   The base rule's --dur-quick is the UNCHECK speed — "faster reverse, no
+   flourish" — because a transition runs at the TO-state's timing. */
+.sweep {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 81.68;
+  stroke-dashoffset: 81.68;
+  transition: stroke-dashoffset var(--dur-quick) var(--ease-exit);
+}
+
+.isChecked .sweep {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset var(--dur-settle) var(--ease-naisi);
+}
+
+/* Tick draws in 200ms starting at t=60ms — the 200ms overlap with the ring
+   is what makes the two read as one gesture (plan). Literal ms because these
+   are choreography offsets, not reusable durations; the reduced-motion block
+   below owns collapsing them (the token belt can't reach literals). */
+.tick {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  transition: stroke-dashoffset var(--dur-quick) var(--ease-exit);
+}
+
+.isChecked .tick {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 200ms var(--ease-naisi) 60ms;
+}
+
+/* === Reduced motion ===================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  /* 1ms, not 0: a zero-duration transition can paint one from-state frame
+     and never fire transitionend (the tokens.css rationale). Delays go to 0
+     so the tick doesn't lag the state it is reporting. */
+  .sweep,
+  .isChecked .sweep,
+  .tick,
+  .isChecked .tick {
+    transition-duration: 1ms;
+    transition-delay: 0ms;
+  }
+}
+
+/* === Mobile ============================================= */
+
+@media (max-width: 48rem) { /* --bp-md */
+  /* Nothing to adapt: the 44px floor and 32px glyph hold at every width. */
+}

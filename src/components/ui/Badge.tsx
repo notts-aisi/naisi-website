@@ -1,40 +1,24 @@
 import type { HTMLAttributes, ReactNode } from "react";
-
-type Tone = "neutral" | "accent" | "success" | "danger" | "warning";
+import Chip, { type ChipTone } from "./Chip";
 
 type Props = HTMLAttributes<HTMLSpanElement> & {
-  tone?: Tone;
+  tone?: ChipTone;
   children: ReactNode;
 };
 
-const TONE_STYLES: Record<Tone, { bg: string; fg: string }> = {
-  neutral: { bg: "var(--color-surface-hover)", fg: "var(--color-text-muted)" },
-  accent: { bg: "var(--color-accent-soft)", fg: "var(--color-accent)" },
-  success: { bg: "var(--color-success-soft)", fg: "var(--color-success)" },
-  danger: { bg: "var(--color-danger-soft)", fg: "var(--color-danger)" },
-  warning: { bg: "var(--color-warning-soft)", fg: "var(--color-warning)" },
-};
-
-export default function Badge({ tone = "neutral", children, style, ...rest }: Props) {
-  const { bg, fg } = TONE_STYLES[tone];
+/**
+ * Thin alias for `<Chip size="md">`. Chip's `md` rules are Badge's former
+ * inline styles verbatim, so every existing callsite renders identically —
+ * including the ~23 that pass a `style` override, since inline styles still
+ * win over Chip's classes.
+ *
+ * New code should reach for Chip directly (it has the size axis and the
+ * hover/focus states); Badge stays so this refactor costs zero callsite churn.
+ */
+export default function Badge({ tone = "neutral", children, ...rest }: Props) {
   return (
-    <span
-      {...rest}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "var(--space-1)",
-        padding: "0.2rem 0.55rem",
-        borderRadius: "var(--radius-pill)",
-        fontSize: "var(--text-xs)",
-        fontWeight: 500,
-        letterSpacing: "0.02em",
-        background: bg,
-        color: fg,
-        ...style,
-      }}
-    >
+    <Chip tone={tone} size="md" {...rest}>
       {children}
-    </span>
+    </Chip>
   );
 }

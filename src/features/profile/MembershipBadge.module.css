@@ -1,0 +1,33 @@
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.heading {
+  font-size: var(--text-xl);
+}
+
+.body {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  max-width: 44rem;
+}
+
+.history {
+  margin-top: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.link {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+@media (max-width: 48rem) {
+  /* TODO: mobile pass. The card is a heading, a paragraph and one link, all of
+     which already reflow; nothing here needs a stacked layout yet. */
+}

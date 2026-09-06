@@ -31,13 +31,17 @@ src/
 │   ├── (app)/                        # Authed area, server-side role-gated in its layout.tsx
 │   │   ├── dashboard/  profile/  tasks/     # member-facing ("My work")
 │   │   ├── committee/tasks/                 # committee task board
+│   │   ├── worksheets/                      # worksheet library, editor and circulation
+│   │   │                                    #   pages (committee); respond/[id] for recipients
 │   │   ├── credentials/                     # placeholder page — feature not built
 │   │   ├── newsletter/  events/manage/      # drafter / approver tools
-│   │   └── admin/                           # Approvals, Members, Projects, Newsletter,
-│   │                                        #   Subscriptions, Email designs, Deliverability,
-│   │                                        #   Task templates, Danger zone
+│   │   └── admin/                           # gated trees, see "Admin area gating":
+│   │       ├── (admin-only)/                #   full admins: Approvals, Members, Projects,
+│   │       │                                #   Newsletter, Subscriptions, Email designs,
+│   │       │                                #   Deliverability, Task templates, Danger zone
+│   │       └── courses/                     #   admins + draftCourse/approveCourse holders
 │   ├── verify-email/[tokenId]/       # uni-email magic-link landing
-│   └── api/                          # session, admin/*, events/*, tasks/*, newsletter/*,
+│   └── api/                          # session, admin/*, events/*, tasks/*, worksheets/*, newsletter/*,
 │                                     #   subscriptions/*, verify-email/*, webhooks/*, …
 ├── auth/                             # AuthProvider, signInWithGoogle, completeRegistration
 ├── components/                       # BrandMark, SubscribeForm, ReadingListAccordion
@@ -108,13 +112,37 @@ tasks/{id}              Kanban task. Subtasks grouped into ordered blocks with
                         reviewerUids, status, visibility ("committee" |
                         "assignees-only"), blocks[], subtasks[], blockConsents,
                         source ("committee" | "fellowship-reminder" |
-                        "personal"), kind, priority, dueDate, …
+                        "personal" | "course-register" | "worksheet"),
+                        kind, priority, dueDate, artefact (nullable pointer
+                        to a linked artefact; today only
+                        { kind: "worksheet-response", circulationId }), …
   tasks/{id}/comments     threaded comments with @mentions
   tasks/{id}/activity     append-only activity log
   tasks/{id}/attachments  attachment metadata (files in Storage)
 
 taskTemplates/{id}      { name, description, kind, subtasks[],
                           defaultCompleterCount, createdByUid, … }
+
+worksheets/{id}         Library document: { title, description, folderId,
+                          authorUid, private, items[] (questions, sections,
+                          page breaks), defaultReviewConfig, … }. Drafted
+                          by any committee member; private ones are
+                          admin-only plus the author. See docs/worksheets.md.
+worksheetFolders/{id}   { name, createdByUid, createdAt }
+circulations/{id}       One act of sending a worksheet: its own copy of
+                          items, senderUid, authorUid, reviewerUids,
+                          staffUids (the one array every rule keys off),
+                          reviewConfig, notifications, dueDate, status,
+                          counters. No client create or delete; staff edit
+                          the copy client-direct. No roster array: the
+                          recipients ARE the responses subcollection.
+  circulations/{id}/responses/{uid}  one recipient's answers, progress,
+                          activity and state; the recipient autosaves
+                          client-direct while state is not-opened or
+                          started; the submit route freezes it.
+  circulations/{id}/reviews/{uid}    staff-only feedback and scores; scores
+                          never reach the recipient. Returned feedback is
+                          copied onto the response by a route.
 
 newsletterDrafts/{id}   { subject, blocks[], bodyMarkdown (legacy backup),
                           status (draft|pending|approved|sent|rejected),
@@ -208,10 +236,44 @@ committee role clears `suRecognised`.
 ### `permissions` map (orthogonal to role, shipped)
 
 `users/{uid}.permissions` is an admin-granted map, independent of governance
-role: `draftNewsletter`, `approveNewsletter`, `draftEvent`, `approveEvent`.
-Admins implicitly hold all four. These gate the Newsletter and Events drafter
-tools and the matching Firestore rules, so a plain `member` can be granted
-`draftEvent` without being promoted to committee.
+role: `draftNewsletter`, `approveNewsletter`, `draftEvent`, `approveEvent`,
+`draftCourse`, `approveCourse`, `manageMembership`, `circulateWorksheet`.
+Admins implicitly hold all eight. These gate the Newsletter, Events and
+Course drafter tools, the membership console, worksheet circulation, and the
+matching Firestore rules, so a plain `member` can be granted `draftEvent`
+without being promoted to committee. `circulateWorksheet` is granted per
+person and is not implied by SU recognition; it gates sending a worksheet and
+the recipient picker route, never drafting.
+
+### Admin area gating (four trees)
+
+`/admin` is no longer one role check. `(app)/admin/layout.tsx` admits an admin
+OR a holder of `draftCourse` / `approveCourse`, because those grants are
+useless if their holder is bounced off `/admin/courses`. The real per-page
+enforcement therefore sits one level down, in gated route trees whose layouts
+call the helpers in `src/lib/firebase/pageGates.ts`. The two original trees
+are described here; `admissions` (`requireAdmissionsPage()`) and `membership`
+(`requireMembershipPage()`) landed with V3 and follow the same shape:
+
+- `(app)/admin/(admin-only)/**` calls `requireAdminPage()`. Everything that is
+  not course authoring lives here (Approvals, Members, Collaborators,
+  Registrations, Projects, Newsletter, Subscriptions, Email designs,
+  Deliverability, Task templates, Site status, Danger zone). The group name is
+  in brackets, so it contributes nothing to the URLs.
+- `(app)/admin/courses/**` calls `requireCourseAuthorPage()`, the same
+  predicate the front door uses. Deliberately repeated: a subtree whose only
+  protection is a level above it loses that protection silently the next time
+  somebody widens that level.
+
+`AdminTabs` takes `isAdmin` from the layout and renders only the sections the
+caller may use, so a course drafter sees Courses and nothing else. A new admin
+page dropped straight into `src/app/(app)/admin/` has no role gate of its own;
+`tests/no-admin-gating.test.mjs` fails on exactly that.
+
+The whole tree is also closed while an admin is in a view-as session: the
+layout renders a notice instead of its children, because the course editors
+below it save client-direct and would record the writes as the member. See
+Admin "view as" below.
 
 ### `tracks` (admin tags, shipped)
 
@@ -251,13 +313,48 @@ Trust + safety properties:
   `marker.actorUid === user.uid` (admin re-signed in as themselves
   without the marker being cleared) so the banner can't lie.
 
+- High-trust writes are refused outright, and the admin tree is closed.
+  Two mechanisms, covering two different kinds of write:
+  - `assertNotImpersonating()` in `src/lib/firebase/impersonation.ts`
+    returns a 403 with honest copy while a LIVE marker is set, and every
+    mutating route handler under `src/app/api/courses/**` calls it
+    first. `tests/impersonation-guard.test.mjs` lists those routes
+    literally, checks each handler calls the guard at its top (in every
+    export form Next accepts, not just `export async function`), and
+    fails when a new mutating route appears in the tree without the
+    call. The list is the place to add the admissions, membership and
+    export routes as those land.
+  - `(app)/admin/layout.tsx` renders a notice instead of its children
+    while the marker is live. The course editors under `/admin/courses`
+    write to Firestore **client-direct** (`courseMutations.ts` from
+    CourseEditor, RunEditor, WeekEditor, GroupEditor), so no route
+    handler exists there for the guard to sit in, and a `draftCourse`
+    holder can now reach that tree. A notice rather than a redirect: a
+    redirect would tell the admin the member cannot reach `/admin` at
+    all, which is the wrong answer to the question view-as exists to ask.
+  - NOT covered: client-direct writes from any other surface. Those
+    answer to `firestore.rules`, which sees the target. A new surface
+    that writes client-direct needs its page tree closed the same way,
+    or its write routed.
+  - A marker whose `actorUid` equals the current session's uid is stale,
+    not a session (the admin is signed in as themselves again). The
+    banner, the admin gate and the write guard all decide that with the
+    same `markerIsLive()` helper, and the guard clears the cookie the
+    way `POST /api/admin/impersonate` does.
+
 Operational caveats (by design with full impersonation):
 - Writes during a view-as session are recorded by Firestore as the
   target performing them (`createdAt`/`updatedAt`/`actorUid` fields look
   identical to a real target write). The banner copy warns; the
   `impersonations` log records the start/end window for after-the-fact
   correlation, but per-write attribution to "admin acting as X" is not
-  reconstructable.
+  reconstructable. That is why the guard above refuses rather than
+  annotates.
+- The guard and the admin gate both read an httpOnly cookie, so no page
+  script can remove it, but an admin with devtools open can delete it
+  from their own browser and write as the target anyway. They enforce
+  intent against accidents, not against a determined admin, who in any
+  case holds the rights to make those writes under their own name.
 - Exit requires re-authentication: `signInWithCustomToken` on start
   replaced the admin's Firebase Auth client state with the target's,
   and Firebase Auth client SDK has no way to "restore" the previous
@@ -282,6 +379,11 @@ Every task carries one of two visibility levels:
   board. Non-SU committee see it only if they are a completer or reviewer.
 - **`assignees-only`**: only the listed completers, reviewers, and admins see
   it. Flipping a task to `assignees-only` is admin-only.
+
+Worksheet tasks (`source: "worksheet"`, one per recipient, minted by the
+circulation routes) are always `assignees-only`, carry no blocks or subtasks,
+and are pointed at their circulation by `artefact`. Their Done is decided by
+the worksheet lifecycle (docs/worksheets.md), not by the lock-in ritual.
 
 Who sees what:
 - **Member** (approved, non-committee): `/dashboard`, `/tasks` (My Work),
@@ -329,9 +431,21 @@ When making changes:
 
 If asked to "commit and push" a change, default to creating a branch + PR unless the user explicitly says "push straight to main" (which will fail anyway). When in doubt, ask which base branch (main or dev).
 
+## Testing model
+
+Full version: [docs/testing.md](docs/testing.md). The short version:
+
+- **Guards test two layers together.** Until September 2026 every check inspected one layer, and the bugs that reached production lived in the seams: a client query whose shape did not satisfy its rule (live on prod from 6 May to 3 September 2026, #261), a query with no declared index (the emulator does not enforce them), a client module reaching a server-only one (only the build catches it). The worked examples: `scripts/rules-tests/tests/client-queries.test.mjs` runs every client SDK read in `src` against the emulator as every persona, keyed by a registry that names each read's gate and outcome; `tests/firestore-indexes.test.mjs` extracts every query in `src` and `scripts` and fails on one that needs an index `firestore.indexes.json` does not declare (and warns on a declared index no query uses); `tests/client-server-boundary.test.mjs` walks every `"use client"` import graph for `server-only`.
+- **Review detects, guards enforce.** When a review or an incident finds a new class of failure, the fix lands with a guard for the class in the same pull request. Fixing the instance without the guard is the thing not to do.
+- **Guards enumerate the tree.** A test that covers only the bug you found is a regression test. A guard walks every route, query or client file, so new work is covered without anyone remembering. Every registry or allowlist is checked in both directions, carries a written reason per entry, and reports what it cannot resolve rather than skipping it.
+- **Every change runs the whole battery**, locally and in CI: `npx next typegen && npx tsc --noEmit`, `npm run lint` (0 errors; the warning baseline on dev is 9, and a local checkout with skip-worktree overrides shows more: this machine shows 32), `npm test`, `cd scripts/rules-tests && npm test`, and a real `npm run build`, because Next enforces the client and server boundary only when it bundles.
+- **Test as a member, never only as an admin.** Admins take a resource-independent branch of nearly every rule, so admin testing hides member-facing failures by construction.
+- **End-to-end suite**: see the section of the same name in docs/testing.md.
+- **A change to a covered surface updates its spec in the same pull request.** `tests/e2e-coverage-map.test.mjs` says which surfaces those are: a verified spec's `covers`, everything else written down in `NOT_COVERED` with a reason and the trigger that closes it.
+
 ## Deploy
 
-Two separate Firebase projects, each with its own App Hosting backend (both backends happen to be named `naisi-website` — not a bug, disambiguated by project):
+Two separate Firebase projects, each with its own App Hosting backend. The backend IDs DIFFER: prod's is `naisi`, dev's is `naisi-website` (verified via `apphosting:backends:list` 2026-08-29 after the old "both are naisi-website" claim here caused a failed grantaccess):
 
 - **Production** — push to `main` → project `naisi-website` → `https://naisi.uk`
 - **Dev / staging** — push to `dev` → project `naisi-website-dev` → `https://dev.naisi.uk`. Separate Firestore / Auth / Storage / Secret Manager — fully isolated from prod data.
@@ -353,8 +467,8 @@ Two separate Firebase projects, each with its own App Hosting backend (both back
 **CLI cheatsheet:**
 
 - **Firestore rules/indexes**: `npx firebase deploy --only firestore:rules,firestore:indexes --project <default|dev>`
-- **App Hosting secrets**: `firebase apphosting:secrets:set <NAME> --project <default|dev>` creates the secret; `firebase apphosting:secrets:grantaccess <NAME> --backend naisi-website --project <default|dev>` grants the backend access once it exists.
-- **Trigger a rollout from current branch tip**: `firebase apphosting:rollouts:create naisi-website --project <default|dev> --git-branch <branch>` (or just push a commit — deploys happen on push).
+- **App Hosting secrets**: `firebase apphosting:secrets:set <NAME> --project <default|dev>` creates the secret; `firebase apphosting:secrets:grantaccess <NAME> --backend <naisi|naisi-website> --project <default|dev>` grants the backend access once it exists (`naisi` on prod, `naisi-website` on dev).
+- **Trigger a rollout from current branch tip**: `firebase apphosting:rollouts:create <naisi|naisi-website> --project <default|dev> --git-branch <branch>` (or just push a commit — deploys happen on push).
 - **Local dev**: `npm run dev`, needs `.env.local` with `NEXT_PUBLIC_FIREBASE_*` + `FIREBASE_ADMIN_*` + `EVENTS_TOKEN_SECRET` values (see `.env.example`). Point at prod or dev project depending on what you're debugging.
 
 **Dev-env discipline**: dev uses the same email sender as prod (display name tagged `NAISI (dev)`). Any user doc in dev Firestore can receive real mail on the next test send. Only seed dev with email addresses you personally own.
@@ -375,12 +489,15 @@ Two separate Firebase projects, each with its own App Hosting backend (both back
 - **Email infrastructure**: Resend send pipeline, deliverability dashboard, bounce/complaint webhook, application lifecycle emails, transactional emails as JSX templates in `src/emails/`.
 - **Users-collection lockdown**: member PII is readable only by SU-recognised committee + admins (and each user's own doc); `suRecognised` enforced as a trust boundary in Firestore rules.
 - **Brand**: real NAISI emblem integrated across the site, favicon, and email logo.
+- **Worksheets** (`/worksheets`, `/worksheets/respond/[circulationId]`): a library with folders of question documents (short and long text, single and multiple choice, polls, rating scales, image-upload answers, rich bodies with images and YouTube or Loom embeds, section headings, page breaks), circulated to committee members as one `assignees-only` task each with the sender as reviewer; a circulation page with per-recipient progress, state and coarse activity (first open, page opens, active time); a mobile-first respond page with autosave and a Save button; review with per-question feedback and reviewer-only scores, returned feedback, admin unfreeze; aggregate views, logged CSV export, per-circulation notification toggles, and a due-soon reminder job that ships dark. Contract and decisions: [docs/worksheets.md](docs/worksheets.md).
+- **Courses**: the full BlueDot-style programme surface (catalogue, applications, allocation, member `/learn` area, facilitator tooling, weekly nudge emails). Landed as the P/V2 course series through 2026-08.
+- **Installable app (PWA)**: manifest + icons, write-nothing service worker with offline fallback, back-gesture overlay dismissal, standalone safe-area chrome, stale-session repair, Google sign-in via redirect inside installed apps (popup elsewhere), install affordances, relaunch restore, and web push with task-email mirroring (dormant until VAPID secrets are provisioned per environment). Reference: [docs/pwa.md](docs/pwa.md).
 
 ## What's not built yet
 
 1. **Credentials store** — committee-only encrypted credentials (social accounts, API keys). Plan: client-side AES-GCM with a PBKDF2-derived key from a shared master password. The `credentials` / `credentialsMeta` Firestore rules are deployed and the `/credentials` route exists as a placeholder, but there is no feature code.
 2. **1-1 booking calendar + meeting calendar** — `bookings` has a read rule only; all client writes are locked, and there is no UI or server route. The intended model: per-committee-member availability → bookings, group meetings created by track leads / committee (visible to committee as greyed-out slots unless they're on the invite), private admin meetings hidden from committee, ICS export, and a Firestore transaction for conflict prevention.
-3. **Course/homework viewer** (BlueDot-style) — a member-facing view of the courses/homework someone is enrolled in. Nothing built.
+3. ~~Course/homework viewer~~ BUILT (the V2 course series, 2026-08): public `/courses` catalogue + application flow, member-facing `/learn` with per-run weeks, exercises, attendance and progress, admin course/run/group management, per-group curricula and pacing, templates, the retrospective loop, and the archive/destroy protocol. See `src/features/courses/` and the `courses/*` API tree.
 4. **Track-lead sub-role** — admins designating a member or committee member as head of a specific reading group / fellowship track / project, orthogonal to the governance role. No data field, UI, or rules exist. (The existing `users.tracks` field is unrelated: it is an admin `technical` / `governance` tag, not a leadership role.)
 5. **Cohort channels** — the subscriptions junction collection already accepts `cohort:<id>`-style channel strings as data, but no cohort feature creates or sends to them yet.
 
@@ -443,6 +560,10 @@ Two console-tagged probes exist for live debugging, both gated so they only emit
 
 - **`[monitor]` — auth + nav lifecycle** ([src/lib/devMonitor.ts](src/lib/devMonitor.ts)). Logs the sign-in handoff (popup → idToken → `/api/auth/session` → router push), AuthProvider lifecycle (`onAuthStateChanged`, the user-doc snapshot's first fire / metadata), and AppShell mounts + pathname + loading transitions. Includes watchdogs that warn when expected events don't fire — most usefully the "still on /login 6s after a successful signin" alarm. Built to chase the intermittent "sign-in completes but stays on /login" symptom and similar nav hangs. **Enable** by setting `NEXT_PUBLIC_DEBUG_MONITOR=true` on the dev backend's UI env vars in the Firebase console (UI env vars override `apphosting.yaml` per Deploy). Don't set it on prod — even though it's just console noise, it's employer-visible. Filter the devtools console on `[monitor` to read just these lines.
 - **`[rt-debug]` — events realtime listeners** (parked on branch `fix/events-realtime-listener`, commits 522a7cb + 116733f, **unmerged**). Logs attach/detach, per-instance ids, snapshot metadata, timing, and a 10s no-first-snapshot watchdog on `useEventRsvps`, the EventEditor event-doc listener, and `useEvents`. Built for the events listener staleness investigation; can be revived if that bug resurfaces. Different tag from `[monitor]` so the two can coexist.
+
+## Installable app (PWA)
+
+The site installs to the home screen on iOS/Android while remaining a normal website. **[docs/pwa.md](docs/pwa.md) is the reference**: the service worker's write-nothing contract and rollback runbook, standalone detection (attributes for layout, hook for behaviour), the auth story inside installed apps, the deliberately-not-done list, and the device checklist. The worker's contract is enforced by `tests/pwa-offline-assets.test.mjs`, so broadening `public/sw.js` fails `npm test` by design. `public/offline.html` is generated: edit `scripts/offline-template.html` and run `npm run brand`.
 
 ## Mobile
 

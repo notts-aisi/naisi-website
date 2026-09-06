@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import BrandMark from "@/components/BrandMark";
 import Button from "@/components/ui/Button";
@@ -13,6 +12,9 @@ import { signOut } from "@/auth/signInWithGoogle";
 import { usePendingCount } from "@/features/admin/usePendingCount";
 import type { UserPermissions } from "@/lib/firestore/users";
 import { mark, warn } from "@/lib/devMonitor";
+import { hardNavigate } from "@/lib/navigation/hardNavigate";
+import { clearSelfHealAttempt } from "@/lib/navigation/selfHealGuard";
+import { InstallLink } from "@/features/pwa/InstallLink";
 import styles from "./AppShell.module.css";
 
 /** Banner state supplied by (app)/layout.tsx when a view-as session is live.
@@ -28,6 +30,9 @@ type Viewer = {
   role: "member" | "committee" | "admin";
   permissions: UserPermissions;
   suRecognised: boolean;
+  /** Server-owned: this member reviews or decides at least one admission
+   *  round. See `users.admissionsReviewer`. */
+  admissionsReviewer: boolean;
 };
 type NavItem = {
   label: string;
@@ -59,12 +64,36 @@ const EVENTS_ACCESS = (v: Viewer) =>
   v.role === "committee" ||
   Boolean(v.permissions.draftEvent) ||
   Boolean(v.permissions.approveEvent);
+// A non-admin holding draftCourse or approveCourse may use /admin/courses and
+// nothing else in the admin area, so they get a link straight to the course
+// tree rather than the Admin entry. Admins are excluded here on purpose: they
+// already have "Admin", and the two links would land on the same console.
+const COURSE_ADMIN_ACCESS = (v: Viewer) =>
+  v.role !== "admin" &&
+  (Boolean(v.permissions.draftCourse) || Boolean(v.permissions.approveCourse));
+
+// The Admissions group. Admins always; anyone the roles route has marked as a
+// reviewer or final decider on a round. The flag is a denormalisation carried
+// on the user document precisely so this predicate is a field read rather than
+// an `admissionRounds` query on every authed navigation, which is the shape
+// that would either cost every visitor a query or, worse, silently never show
+// the entry to exactly the non-admin SU reviewers it exists for.
+const ADMISSIONS_ACCESS = (v: Viewer) =>
+  v.role === "admin" || v.admissionsReviewer;
+
+// A non-admin holding `manageMembership` may use /admin/membership and nothing
+// else in the admin area, so they get a link straight to it. Admins are
+// excluded on purpose, exactly like the course link above: they already have
+// "Admin", and the console is a tab inside it.
+const MEMBERSHIP_ADMIN_ACCESS = (v: Viewer) =>
+  v.role !== "admin" && Boolean(v.permissions.manageMembership);
 
 const NAV_GROUPS: NavGroup[] = [
   {
     label: null,
     items: [
       { label: "Dashboard", href: "/dashboard", visible: MEMBER_AND_UP },
+      { label: "Courses", href: "/learn", visible: MEMBER_AND_UP },
       { label: "My work", href: "/tasks", visible: MEMBER_AND_UP },
       { label: "Profile", href: "/profile", visible: MEMBER_AND_UP },
     ],
@@ -73,18 +102,52 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Committee",
     items: [
       { label: "Task board", href: "/committee/tasks", visible: SU_COMMITTEE_AND_UP },
+      // Every committee member drafts worksheets: SU recognition gates the board, not this.
+      { label: "Worksheets", href: "/worksheets", visible: COMMITTEE_AND_UP },
       { label: "Credentials", href: "/credentials", visible: COMMITTEE_AND_UP },
       { label: "Newsletter", href: "/newsletter", visible: NEWSLETTER_ACCESS },
       { label: "Events", href: "/events/manage", visible: EVENTS_ACCESS },
     ],
   },
   {
+    label: "Admissions",
+    items: [
+      // The reviewer's own queue is a later PR. Until it lands this points at
+      // the round console, which is where an admin acts and where a reviewer
+      // can at least see the round they have been appointed to.
+      { label: "Rounds", href: "/admin/admissions", visible: ADMISSIONS_ACCESS },
+    ],
+  },
+  {
     label: "Admin",
-    items: [{ label: "Admin", href: "/admin", visible: ADMIN_ONLY }],
+    items: [
+      { label: "Admin", href: "/admin", visible: ADMIN_ONLY },
+      { label: "Course admin", href: "/admin/courses", visible: COURSE_ADMIN_ACCESS },
+      { label: "Membership", href: "/admin/membership", visible: MEMBERSHIP_ADMIN_ACCESS },
+    ],
   },
 ];
 
 const NAV_DRAWER_ID = "app-nav-drawer";
+
+/** Routes whose <main> opts into the wider 100rem cap (`.mainWide`).
+ *  See CLAUDE.md "Main-area width" — the shell cap stays narrow by default and a
+ *  page only joins this list once it owns its own horizontal overflow
+ *  (`overflow-x: auto` + a `min-width: 0` chain down to the wide element).
+ *  Predicates rather than a plain string set because the allocation board is
+ *  per-run: the ids are opaque Firestore doc ids, so those two segments are
+ *  matched as `[^/]+` (ids are URL-encoded, so they never contain a slash) and
+ *  the pattern is anchored at both ends — a deeper sub-route under
+ *  .../allocation would NOT get the wide cap. */
+const WIDE_ROUTES: ((pathname: string) => boolean)[] = [
+  (pathname) => pathname === "/committee/tasks",
+  (pathname) =>
+    /^\/admin\/courses\/[^/]+\/runs\/[^/]+\/allocation$/.test(pathname),
+];
+
+function isWideRoute(pathname: string): boolean {
+  return WIDE_ROUTES.some((matches) => matches(pathname));
+}
 
 export default function AppShell({
   children,
@@ -94,8 +157,7 @@ export default function AppShell({
   impersonation?: Impersonation | null;
 }) {
   const pathname = usePathname();
-  const router = useRouter();
-  const { user, role, permissions, suRecognised, loading } = useAuth();
+  const { user, role, permissions, suRecognised, admissionsReviewer, loading } = useAuth();
   const pendingCount = usePendingCount();
   const [exiting, setExiting] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -110,6 +172,10 @@ export default function AppShell({
   const [enteringFromSignin, setEnteringFromSignin] = useState(false);
   useEffect(() => {
     try {
+      // Reaching the app shell is proof any self-heal worked, so release the
+      // one-shot reload guard — otherwise the next legitimate self-heal within
+      // the window would be suppressed.
+      clearSelfHealAttempt();
       if (sessionStorage.getItem("naisi:from-signin") === "1") {
         sessionStorage.removeItem("naisi:from-signin");
         // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -214,7 +280,7 @@ export default function AppShell({
       ? NAV_GROUPS.map((g) => ({
           ...g,
           items: g.items.filter((item) =>
-            item.visible({ role, permissions, suRecognised }),
+            item.visible({ role, permissions, suRecognised, admissionsReviewer }),
           ),
         })).filter((g) => g.items.length > 0)
       : [];
@@ -248,7 +314,12 @@ export default function AppShell({
     setSignoutExiting(true);
     await new Promise((r) => setTimeout(r, SIGNOUT_SLIDE_MS));
     await signOut();
-    router.push("/");
+    // Hard nav: the session cookie is now cleared, but this document still
+    // holds authed RSC payloads in the segment cache and an authed tree in the
+    // bfcache. A soft push would leave both reachable. The slide-out has
+    // already finished, and "naisi:from-signout" is sessionStorage, so the
+    // public layout's fade still fires. See lib/navigation/hardNavigate.ts.
+    hardNavigate("/");
   }
 
   // Shared nav body — rendered both inside the desktop sidebar and inside
@@ -300,7 +371,8 @@ export default function AppShell({
     </div>
   );
 
-  // Gate the entire authed UI on auth+role+permissions being ready. Otherwise
+  // Gate the entire authed UI on auth+role+permissions being ready.
+  // (StuckLoadingEscape is defined below, outside this component.) Otherwise
   // on a fresh navigation the server-rendered HTML (which has full auth context
   // via getCurrentUser in the layout) hydrates against a client AuthProvider
   // that starts with {loading: true}, causing children to briefly render with
@@ -326,11 +398,12 @@ export default function AppShell({
             </nav>
           </aside>
           <main
-            className={`${styles.main} ${pathname === "/committee/tasks" ? styles.mainWide : ""}`}
+            className={`${styles.main} ${isWideRoute(pathname) ? styles.mainWide : ""}`}
           >
             <div className={styles.loadingPane} role="status" aria-live="polite">
               <span className={styles.spinner} aria-hidden />
               <span className={styles.loadingText}>Loading your workspace…</span>
+              <StuckLoadingEscape />
             </div>
           </main>
         </div>
@@ -344,6 +417,36 @@ export default function AppShell({
         <Link href="/" className={styles.topStripBrand} aria-label="NAISI home">
           <BrandMark size={28} />
         </Link>
+        {/*
+          Reload, shown ONLY in an installed app. A standalone window has no
+          URL bar and no reload button, so when a page half-renders or goes
+          stale the user's only option is force-quitting. Android keeps
+          pull-to-refresh (which is why no overscroll-behavior rule was
+          added), but iOS standalone has no refresh gesture at all.
+
+          Always in the DOM and hidden by CSS keyed on the attribute
+          StandaloneFlag stamps before first paint, rather than rendered
+          behind useIsStandalone: the hook is false on the first client
+          render, so a JS-gated button would pop into the strip after
+          hydration and shove the hamburger sideways.
+        */}
+        <button
+          type="button"
+          className={styles.standaloneReload}
+          aria-label="Reload this page"
+          onClick={() => window.location.reload()}
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden focusable="false">
+            <path
+              d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
         <button
           type="button"
           className={styles.hamburger}
@@ -401,7 +504,7 @@ export default function AppShell({
           {renderUserBlock()}
         </aside>
         <main
-          className={`${styles.main} ${pathname === "/committee/tasks" ? styles.mainWide : ""} ${enteringFromSignin ? styles.entering : ""}`}
+          className={`${styles.main} ${isWideRoute(pathname) ? styles.mainWide : ""} ${enteringFromSignin ? styles.entering : ""}`}
         >
           {impersonation && (
             <div
@@ -474,8 +577,72 @@ export default function AppShell({
           <BrandMark size={32} />
         </div>
         {renderNav(() => setDrawerOpen(false))}
+        {/* Quiet, permanent install route. Renders nothing when installed,
+            on desktop, or on Android before Chrome offers its prompt. */}
+        <InstallLink />
         {renderUserBlock()}
       </Drawer>
+    </div>
+  );
+}
+
+/** How long the shell may sit loading before we offer a way out. */
+const STUCK_LOADING_MS = 10_000;
+
+/**
+ * Visible escape hatch for a wedged shell.
+ *
+ * There is already a `warn("[shell] still loading after 5s")` watchdog, but it
+ * only reaches the console, which nobody stuck on a spinner is reading. The
+ * paths that can wedge here are real and documented elsewhere in the codebase:
+ * AuthProvider's onAuthStateChanged failing to fire against a jammed
+ * IndexedDB, the user-doc snapshot never arriving, or a session cookie whose
+ * Firebase Auth half is missing.
+ *
+ * This matters much more once the site is installed to a home screen. In a
+ * browser tab a wedged page still has a URL bar and a reload button; in a
+ * standalone window it has neither, so without something on screen the only
+ * way out is force-quitting the app.
+ *
+ * Deliberately its own component rather than state on AppShell: it mounts only
+ * while the loading pane is rendered, so the timer state is discarded when
+ * loading resolves and there is no reset to forget. Sign out here skips
+ * AppShell's exit choreography, because the shell it would animate is the
+ * thing that is broken.
+ */
+function StuckLoadingEscape() {
+  const [stuck, setStuck] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setStuck(true), STUCK_LOADING_MS);
+    return () => clearTimeout(t);
+  }, []);
+
+  if (!stuck) return null;
+
+  return (
+    <div className={styles.stuckLoading}>
+      <p className={styles.stuckLoadingText}>
+        This is taking longer than it should. Reloading usually clears it.
+      </p>
+      <div className={styles.stuckLoadingActions}>
+        <Button onClick={() => window.location.reload()}>Reload</Button>
+        <Button
+          variant="ghost"
+          onClick={async () => {
+            // Best effort: if signOut throws (the wedge may be auth itself),
+            // still get the user off this screen.
+            try {
+              await signOut();
+            } catch {
+              // Intentionally ignored.
+            }
+            hardNavigate("/");
+          }}
+        >
+          Sign out
+        </Button>
+      </div>
     </div>
   );
 }

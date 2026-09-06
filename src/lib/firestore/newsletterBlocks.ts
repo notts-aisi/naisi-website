@@ -5,8 +5,24 @@ import { marked } from "marked";
  * has its own editor form in the UI and its own rendered output.
  *
  * Types: heading, richText, image, divider, video.
- * Video blocks render as embedded YouTube on the web and as a thumbnail link
- * in email (iframes are blocked by most clients).
+ * Video blocks render as an embedded player on the web and as a thumbnail link
+ * in email (iframes are blocked by most clients). YouTube and Loom are both
+ * recognised: see `videoEmbedFromUrl` at the foot of this file, which is the
+ * one place that decides which provider a pasted URL belongs to.
+ *
+ * THREE SURFACES RESOLVE A VIDEO BLOCK, and all three now go through
+ * `videoEmbedFromUrl`: `src/features/events/BlockView.tsx` (the web renderer,
+ * used by events and courses), `src/emails/blocks/BlockRenderer.tsx` (email,
+ * where Loom becomes a plain link because iframes are blocked) and the preview
+ * inside `src/components/blocks/BlockEditor.tsx`. A Loom URL pasted into any
+ * block editor therefore renders everywhere a YouTube one does.
+ *
+ * The remaining `youtubeIdFromUrl` callers are DELIBERATE holdouts and belong
+ * to a different model: `CourseMaterial` in `src/lib/firestore/courses.ts` is
+ * not a `Block`, it validates YouTube-only on save (`MaterialListEditor`,
+ * `GroupWeekEditor`) and renders YouTube-only (`WeekCurriculum`). Widening
+ * those means widening the save validation with them, which is a course
+ * decision rather than a block one, so they are left alone.
  */
 
 export type BlockType = "heading" | "richText" | "image" | "divider" | "video";
@@ -184,6 +200,90 @@ export function youtubeIdFromUrl(raw: string): string | null {
     if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
     const match = url.pathname.match(/\/(?:embed|shorts|v)\/([a-zA-Z0-9_-]{11})/);
     if (match) return match[1];
+  }
+  return null;
+}
+
+/**
+ * Extract the 32-hex Loom video id from a share or embed URL.
+ *
+ * Loom joined YouTube as a video provider for worksheets: a question body is
+ * where a reviewer records a two-minute walkthrough of what they are asking
+ * for, and that recording is made in Loom rather than published to YouTube.
+ *
+ * Only the two real URL shapes are accepted, `loom.com/share/<id>` and
+ * `loom.com/embed/<id>`. Unlike `youtubeIdFromUrl` there is deliberately NO
+ * bare-id branch: an 11-character YouTube id is recognisable because it sits
+ * in a `v=` slot, whereas a bare 32-character hex string is just a hex string,
+ * and treating any such blob as a video would turn a pasted hash into a
+ * silent, broken embed.
+ */
+export function loomIdFromUrl(raw: string): string | null {
+  const input = raw.trim();
+  if (!input) return null;
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    return null;
+  }
+  if (url.hostname.replace(/^www\./, "") !== "loom.com") return null;
+  // `\b` after the group so a longer hex run fails rather than being truncated
+  // to its first 32 characters, which would embed a different video.
+  const match = url.pathname.match(/^\/(?:share|embed)\/([0-9a-fA-F]{32})\b/);
+  return match ? match[1].toLowerCase() : null;
+}
+
+/**
+ * One resolved video block: which provider, its id, and the three URLs every
+ * surface needs: the iframe source, the human link, and a thumbnail for the
+ * places an iframe cannot go.
+ *
+ * `thumbnailUrl` is nullable because Loom has no public thumbnail endpoint.
+ * A caller with no iframe (an email, where clients strip them) therefore has
+ * to render a Loom block as a plain link, and the null is what tells it so.
+ */
+export type VideoEmbed = {
+  provider: "youtube" | "loom";
+  id: string;
+  embedUrl: string;
+  watchUrl: string;
+  thumbnailUrl: string | null;
+};
+
+/**
+ * Resolve a pasted video URL to the provider that recognises it.
+ *
+ * YouTube is tried first because its matcher accepts a bare id and would
+ * otherwise never be reached for one. The two matchers cannot both match a
+ * given input in any case: the hostnames are disjoint and the id shapes differ.
+ *
+ * The YouTube URLs are exactly the ones the existing renderers already build
+ * (`youtube-nocookie.com/embed/<id>` for the iframe, so a reader is not
+ * cookied by a block they did not click, and `i.ytimg.com/vi/<id>/hqdefault.jpg`
+ * for the email thumbnail), so adopting this helper cannot change what any of
+ * them renders today.
+ */
+export function videoEmbedFromUrl(raw: string): VideoEmbed | null {
+  const youtubeId = youtubeIdFromUrl(raw);
+  if (youtubeId) {
+    return {
+      provider: "youtube",
+      id: youtubeId,
+      embedUrl: `https://www.youtube-nocookie.com/embed/${youtubeId}`,
+      watchUrl: `https://www.youtube.com/watch?v=${youtubeId}`,
+      thumbnailUrl: `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`,
+    };
+  }
+  const loomId = loomIdFromUrl(raw);
+  if (loomId) {
+    return {
+      provider: "loom",
+      id: loomId,
+      embedUrl: `https://www.loom.com/embed/${loomId}`,
+      watchUrl: `https://www.loom.com/share/${loomId}`,
+      thumbnailUrl: null,
+    };
   }
   return null;
 }

@@ -128,12 +128,58 @@ export function isValidChannel(channel: string): boolean {
   );
 }
 
+/**
+ * SERVER-MANAGED CHANNELS — the ones whose AUDIENCE IS NOT SELF-SELECTED.
+ *
+ * A row on `newsletter` or `events` says "this inbox asked for this list", and
+ * anyone may ask. A row on a SCOPED channel says something else entirely: it
+ * asserts MEMBERSHIP of a cohort or a track, and the only honest author of that
+ * assertion is the route that grants the membership — `cohort:<runId>` is
+ * written by the allocation publish route when it places someone in a group and
+ * dropped by the enrolment-remove route. Nothing a stranger types is evidence of
+ * either.
+ *
+ * `/api/subscriptions` is PUBLIC and unauthenticated, run ids are public (the
+ * apply page renders `runId` into the client), and a signed-in caller
+ * subscribing one of their OWN verified addresses is minted confirmed with no
+ * click. Without this predicate that endpoint would accept `cohort:<runId>`
+ * from anybody: a rejected applicant, or an anonymous stranger after one
+ * confirmation click in their own inbox, lands on a cohort's announcement list
+ * they were never placed on. So the public endpoint refuses this class outright
+ * and only server routes write it.
+ *
+ * Detection is THE SCOPE COLON, not an enumeration of today's prefixes. The
+ * channel-string convention at the top of this file reserves `<scope>:<id>` for
+ * exactly this class (`cohort:`, `track:`), so a scope invented later is refused
+ * the day it exists rather than the day someone remembers to extend a list.
+ * Top-level channels carry no colon and are untouched by this.
+ *
+ * This is one half of a two-part defence, and it is the half that stops the row
+ * existing. The other half is the run email route re-checking every recipient
+ * against an ACTIVE enrolment, so a row that reaches the collection by some
+ * future path is still not authority to receive cohort mail.
+ */
+export function isServerManagedChannel(channel: string): boolean {
+  return typeof channel === "string" && channel.includes(":");
+}
+
 function prettifySlug(slug: string): string {
   return slug
     .split("-")
     .filter((s) => s.length > 0)
     .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
     .join(" ");
+}
+
+/**
+ * Cohort/track channel ids embed a `slugId()` doc id (`cohort:<runId>` where
+ * runId is `aisf-autumn-2026__x8k2m1p0`) — strip the trailing `__<base36>`
+ * uniqueness suffix before prettifying so the label reads "Aisf Autumn 2026",
+ * not "Aisf Autumn 2026 X8k2m1p0". Applied only in the scoped branches below;
+ * top-level channel ids never carry a slugId suffix.
+ */
+function stripSlugIdSuffix(slug: string): string {
+  return slug.replace(/__[a-z0-9]{6,10}$/, "");
 }
 
 /**
@@ -147,10 +193,10 @@ export function channelLabel(channel: string): string {
   if (channel === "newsletter") return "our newsletter";
   if (channel === "events") return "event announcements";
   if (channel.startsWith("cohort:")) {
-    return `the ${prettifySlug(channel.slice("cohort:".length))} cohort updates`;
+    return `the ${prettifySlug(stripSlugIdSuffix(channel.slice("cohort:".length)))} cohort updates`;
   }
   if (channel.startsWith("track:")) {
-    return `the ${prettifySlug(channel.slice("track:".length))} track updates`;
+    return `the ${prettifySlug(stripSlugIdSuffix(channel.slice("track:".length)))} track updates`;
   }
   return prettifySlug(channel);
 }

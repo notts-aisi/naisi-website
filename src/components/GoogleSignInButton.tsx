@@ -2,16 +2,26 @@
 
 import { useEffect, useRef, useState } from "react";
 import { mark, warn } from "@/lib/devMonitor";
+import { isStandaloneNow } from "@/lib/pwa/displayMode";
 import styles from "./GoogleSignInButton.module.css";
 
 type Props = {
   /** Receives the Google-issued ID token. The caller hands it to Firebase
    *  via GoogleAuthProvider.credential(idToken) → signInWithCredential. */
   onCredential: (idToken: string) => void;
-  /** Called when GIS fails to load (almost always: content blocker / VPN
-   *  blocking accounts.google.com/gsi/client). The caller should surface
-   *  an actionable error message — silent failure was the original bug
-   *  that made this whole flow user-hostile. */
+  /** Called when Google sign-in cannot proceed, with a message the caller
+   *  should show the user. Two causes, both of which fail silently otherwise,
+   *  and silent failure was the original bug that made this flow
+   *  user-hostile:
+   *
+   *    1. GIS fails to load (almost always a content blocker or VPN blocking
+   *       accounts.google.com/gsi/client).
+   *    2. GIS loads but its sign-in popup is refused. See the window.open
+   *       watch below for why that cannot be observed any other way.
+   *
+   *  The name is kept for the sake of its two existing call sites; read it
+   *  as "sign-in is unavailable, here is why" rather than strictly "the
+   *  script failed". */
   onScriptError?: (reason: string) => void;
   /** Called once the GIS button has finished rendering and is interactive.
    *  Used by the login page to gate its swipe-in entrance — the card stays
@@ -39,17 +49,70 @@ export default function GoogleSignInButton({
   // updates (state-dependent routing logic in the caller wouldn't see
   // current state).
   const onCredentialRef = useRef(onCredential);
-  onCredentialRef.current = onCredential;
   const onReadyRef = useRef(onReady);
-  onReadyRef.current = onReady;
+  const onScriptErrorRef = useRef(onScriptError);
+  useEffect(() => {
+    onCredentialRef.current = onCredential;
+    onReadyRef.current = onReady;
+    onScriptErrorRef.current = onScriptError;
+  });
 
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  /*
+   * Detect a refused sign-in popup.
+   *
+   * This cannot be done the obvious way. renderButton() draws Google's button
+   * inside a cross-origin iframe, so the tap never reaches our code and there
+   * is no click handler to hang a check on. What IS observable is that the
+   * gsi/client script calls window.open from the TOP document, so wrapping it
+   * catches the refusal.
+   *
+   * The case that matters: inside an installed iOS home-screen app,
+   * window.open returns null and opens nothing (documented by Google on
+   * web.dev). GIS logs a popup failure to the console and its credential
+   * callback never fires, so without this the tap is a completely silent dead
+   * end and the user is left staring at a button that appears to do nothing.
+   * The same wrapper also catches an ordinary desktop popup blocker.
+   *
+   * Scoped to accounts.google.com so an unrelated blocked popup elsewhere on
+   * the page cannot produce a misleading sign-in error, and reported at most
+   * once so repeated taps do not stack messages. The original is restored on
+   * unmount, and only if it is still ours, so a wrapper installed after this
+   * one is not clobbered.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const original = window.open;
+    let reported = false;
+
+    const wrapped: typeof window.open = (url, target, features) => {
+      const opened = original.call(window, url, target, features);
+      const href = typeof url === "string" ? url : (url?.toString() ?? "");
+      if (!opened && !reported && href.includes("accounts.google.com")) {
+        reported = true;
+        warn("[gsi] window.open refused — popup blocked or unavailable", { href });
+        onScriptErrorRef.current?.(
+          "Google sign-in could not open its sign-in window. If you are using NAISI from your home screen, sign in with your email and password instead. In a browser, check whether a pop-up blocker is active.",
+        );
+      }
+      return opened;
+    };
+
+    window.open = wrapped;
+    return () => {
+      if (window.open === wrapped) window.open = original;
+    };
+  }, []);
+
+  // A missing client id is a build-time misconfiguration, so the button
+  // can start in the error state instead of flashing "Loading sign-in…".
+  const [status, setStatus] = useState<"loading" | "ready" | "error">(
+    CLIENT_ID ? "loading" : "error",
+  );
 
   useEffect(() => {
     if (!CLIENT_ID) {
       warn("[gsi] NEXT_PUBLIC_GOOGLE_CLIENT_ID is unset — button cannot render");
       onScriptError?.("Sign-in is misconfigured. Please contact support.");
-      setStatus("error");
       onReadyRef.current?.();
       return;
     }
@@ -77,6 +140,34 @@ export default function GoogleSignInButton({
       }
 
       mark("[gsi] script loaded, initializing");
+      /*
+       * Redirect ONLY when running as an installed app; popup everywhere
+       * else, including phone browser tabs.
+       *
+       * The installed case is forced: window.open returns null inside an
+       * iOS home-screen web app, so popup mode is a silent dead end there.
+       * Redirect navigates the top frame to Google, which then form-POSTs
+       * the credential to /api/auth/google/callback (which must be listed
+       * as an Authorized redirect URI on each project's OAuth Web client).
+       *
+       * Browser tabs keep popup DELIBERATELY, including iOS Safari. A
+       * first cut of this gated redirect on "any mobile", on Google's
+       * guidance that redirect is required for iOS because of ITP; in
+       * practice popup with itp_support has worked in Safari tabs here all
+       * along, and the wider gate surfaced a redirect_uri_mismatch from
+       * Safari on a device where the installed app's redirect worked, on
+       * the same origin and the same registered URI. Empirical beats
+       * documented: the popup path is battle-tested in tabs, so redirect
+       * stays scoped to the one context that cannot popup. If the mismatch
+       * ever reappears, Google's "error details" link on that page prints
+       * the exact redirect URI it received.
+       *
+       * The callback config below is unused in redirect mode (the
+       * credential goes to the server) but is kept unconditional so the
+       * object shape never forks.
+       */
+      const useRedirect = isStandaloneNow();
+      mark("[gsi] ux mode", { mode: useRedirect ? "redirect" : "popup" });
       window.google.accounts.id.initialize({
         client_id: CLIENT_ID!,
         callback: (res) => {
@@ -89,7 +180,10 @@ export default function GoogleSignInButton({
         // so the credential flow doesn't depend on third-party storage
         // access the browser would partition.
         itp_support: true,
-        ux_mode: "popup",
+        ux_mode: useRedirect ? "redirect" : "popup",
+        ...(useRedirect
+          ? { login_uri: `${window.location.origin}/api/auth/google/callback` }
+          : {}),
         context: "signin",
       });
 

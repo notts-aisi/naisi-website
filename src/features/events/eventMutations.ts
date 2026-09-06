@@ -11,6 +11,7 @@ import {
 } from "firebase/firestore";
 import { getClientAuth, getClientDb } from "@/lib/firebase/client";
 import type { Block } from "@/lib/firestore/newsletterBlocks";
+import { sanitizeSignupForm } from "@/lib/firestore/events";
 import type {
   CoverBranding,
   CoverLogoColor,
@@ -112,7 +113,13 @@ export async function updateEvent(id: string, fields: EditableEventFields) {
   if (fields.capacity !== undefined) patch.capacity = fields.capacity;
   if (fields.waitlistEnabled !== undefined) patch.waitlistEnabled = fields.waitlistEnabled;
   if (fields.signupForm !== undefined)
-    patch.signupForm = fields.signupForm.map(cleanQuestion);
+    // Clamp here too, not only in the published-event route. This is the
+    // client-direct path every draft save takes, so without it a per-question
+    // character limit could be stored unbounded simply by never publishing the
+    // event. `cleanQuestion` still runs afterwards: the sanitiser only settles
+    // the two limit keys, and Firestore refuses an undefined anywhere in the
+    // array.
+    patch.signupForm = sanitizeSignupForm(fields.signupForm).map(cleanQuestion);
   if (fields.foodProvenance !== undefined) patch.foodProvenance = fields.foodProvenance;
   if (fields.foodProvenanceNote !== undefined)
     patch.foodProvenanceNote =

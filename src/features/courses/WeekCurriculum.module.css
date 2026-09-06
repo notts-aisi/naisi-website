@@ -1,0 +1,378 @@
+/*
+  Week curriculum spine — shared by the public week page and (later) the
+  member learning space. Desktop-first per docs/mobile-conventions.md; the
+  mobile block at the bottom is where touch-target floors get raised to 44px
+  (docs/touch-targets.md: enforced below --bp-md on public surfaces).
+*/
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+}
+
+.empty {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+/* === Guide ============================================== */
+
+.guide {
+  font-size: var(--text-base);
+  line-height: 1.7;
+}
+
+/* === Section scaffolding ================================ */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-text-subtle);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* === Materials ========================================== */
+
+.materials {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.materialItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  transition: border-color var(--transition-base), background var(--transition-base);
+}
+
+.materialItem:hover {
+  border-color: var(--color-border);
+  background: var(--color-bg-elevated);
+}
+
+.materialRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-3);
+}
+
+/* Leading slot for the member surface's check-off control. Sized so the
+   public page (which passes no action) collapses it entirely. */
+.materialAction {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.kindChip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 4.25rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+}
+
+.kindChip[data-kind="video"] {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.kindChip[data-kind="reading"] {
+  background: var(--color-collaborator-soft);
+  color: var(--color-collaborator-accent);
+}
+
+.kindChip[data-kind="note"] {
+  color: var(--color-text-subtle);
+}
+
+.materialMain {
+  flex: 1;
+  min-width: 0;
+}
+
+.materialTitle,
+.materialTitlePlain {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2rem;
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.materialTitle:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.extIcon {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  transition: transform var(--transition-base), color var(--transition-base);
+}
+
+.materialTitle:hover .extIcon {
+  color: var(--color-accent);
+  transform: translate(2px, -2px);
+}
+
+.materialMeta {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.markerCore,
+.markerOptional {
+  flex-shrink: 0;
+  align-self: center;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.markerCore {
+  color: var(--color-text-subtle);
+}
+
+.markerOptional {
+  color: var(--color-text-muted);
+}
+
+.noteBody {
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-3) var(--space-3);
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  color: var(--color-text-muted);
+}
+
+/* Member-surface slot: the full-width block under a material row (reflection
+   panel + cohort-notes disclosure). Only rendered when `renderMaterialExtra`
+   returns something, so the public page never carries it. */
+.materialExtra {
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+/* Same aspect-ratio wrapper the trusted-block renderer uses (see
+   features/events/BlockView.module.css) so embeds match site-wide. */
+.videoWrap {
+  position: relative;
+  padding-bottom: 56.25%;
+  height: 0;
+  margin: 0 var(--space-3) var(--space-3);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: #000;
+}
+
+.videoFrame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+/* === Exercises ========================================== */
+
+.exercises {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.exercise {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+}
+
+.exerciseHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.exerciseNumber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex-shrink: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.exerciseKind {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-subtle);
+}
+
+.exercisePrompt {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: 1.6;
+  color: var(--color-text);
+  white-space: pre-wrap;
+}
+
+.exerciseHelp {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
+}
+
+/* The member surface's submission slot (`renderExerciseAction`). Never
+   rendered on the public page — the card keeps its own column flow and gap,
+   so this only opens the extra breathing room the form wants. */
+.exerciseAction {
+  margin-top: var(--space-1);
+}
+
+/* === Checklist ========================================== */
+
+.checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.checkItem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.checkBox {
+  flex-shrink: 0;
+  width: 1.05rem;
+  height: 1.05rem;
+  margin-top: 0.15rem;
+  border: 1.5px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* Member-surface slot replacing .checkBox: holds the 44px check-off button.
+   The negative block margin lets the tap box overhang the row's rhythm so a
+   real button doesn't balloon every checklist row to 44px of text spacing. */
+.checkAction {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  margin: -0.55rem 0;
+}
+
+.checkText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.checkTitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.checkDetail {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
+/* === Reduced motion ===================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .materialItem,
+  .extIcon {
+    transition: none;
+  }
+
+  .materialTitle:hover .extIcon {
+    transform: none;
+  }
+}
+
+/* === Mobile ============================================= */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .wrap {
+    gap: var(--space-8);
+  }
+
+  /* Touch-target floor is enforced below --bp-md on public surfaces. */
+  .materialTitle,
+  .materialTitlePlain {
+    min-height: 2.75rem;
+  }
+
+  .materialRow {
+    flex-wrap: wrap;
+    row-gap: var(--space-1);
+  }
+
+  .materialMain {
+    flex-basis: 100%;
+    order: 3;
+  }
+
+  .markerCore,
+  .markerOptional {
+    margin-left: auto;
+  }
+}

@@ -1,0 +1,68 @@
+.card {
+  margin-top: var(--space-8);
+}
+
+.heading {
+  font-size: var(--text-xl);
+  margin-bottom: var(--space-3);
+}
+
+.copy {
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+  margin-bottom: var(--space-4);
+  max-width: var(--prose-max-width);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.note {
+  margin-top: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+/*
+ * The account-level topic switches. Their own card, sitting beside the
+ * per-device one rather than inside it, so they survive every environment
+ * where push itself is unavailable.
+ */
+.topicsEyebrow {
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-4);
+}
+
+.topicsRows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.topicsNote {
+  margin-top: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  max-width: var(--prose-max-width);
+}
+
+.topicsError {
+  margin-top: var(--space-2);
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* Buttons already meet the touch floor; nothing to adapt yet. */
+  .topicsRows {
+    gap: var(--space-5);
+  }
+}

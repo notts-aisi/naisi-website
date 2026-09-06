@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import ActionToast, { useActionToast } from "@/components/ui/ActionToast";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import ResponsiveSelect, {
@@ -20,7 +21,10 @@ import {
   type UserPermissions,
 } from "@/lib/firestore/users";
 import { startImpersonation } from "@/auth/impersonation";
+import ConductFlagControl from "./ConductFlagControl";
+import MemberApplicationHistory from "./MemberApplicationHistory";
 import MemberEditForm from "./MemberEditForm";
+import MembershipChip, { MembershipSummaryBadge } from "./MembershipChip";
 import {
   deleteUser,
   setPermissions,
@@ -139,10 +143,35 @@ function applyTier(
 
 export default function MemberItem({ user, currentAdminUid, expanded, onToggleExpand }: Props) {
   const [busy, setBusy] = useState(false);
+  const { toast, dismiss } = useActionToast();
+  // The members list is a ONE-SHOT fetch, so nothing pushes a fresh document
+  // into this row after a write: `user` keeps saying whatever the list read
+  // when it loaded. `saved` is what THIS row has written since, and every
+  // control below is drawn off the overlay rather than off the prop. Without
+  // it a toggle snapped straight back to its old value the moment the write
+  // returned, and the next click resent the value that was already stored, so
+  // a permission could be granted and never taken off again in that session.
+  //
+  // The overlay remembers WHICH document it was taken against, so a genuine
+  // refresh (a new prop object) drops it and the server's answer wins, with no
+  // effect and no second render to do it.
+  const [saved, setSaved] = useState<{ from: UserDoc; patch: Partial<UserDoc> }>({
+    from: user,
+    patch: {},
+  });
+  const shown = saved.from === user ? { ...user, ...saved.patch } : user;
+
+  /** Record what this row just saved, so the control it belongs to settles. */
+  function remember(fields: Partial<UserDoc>) {
+    setSaved((prev) => ({
+      from: user,
+      patch: prev.from === user ? { ...prev.patch, ...fields } : fields,
+    }));
+  }
 
   const isSelf = user.uid === currentAdminUid;
-  const isRejected = user.role === "rejected";
-  const isAdminRole = user.role === "admin";
+  const isRejected = shown.role === "rejected";
+  const isAdminRole = shown.role === "admin";
   const displayName =
     user.displayName ?? user.profile?.preferredName ?? user.email ?? "Unnamed";
   // Signed up claiming a university email but never clicked the magic link to
@@ -151,7 +180,7 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
     Boolean(user.profile?.universityEmail) && !user.profile?.uniEmailVerifiedAt;
 
   async function onRoleChange(next: Role) {
-    if (next === user.role) return;
+    if (next === shown.role) return;
     if (isSelf && next !== "admin") {
       const ok = window.confirm(
         "Demote yourself from admin? You'll lose admin access on next page load.",
@@ -161,6 +190,7 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
     setBusy(true);
     try {
       await setRole(user.uid, next);
+      remember({ role: next });
     } catch (err) {
       console.error(err);
       alert("Failed to change role");
@@ -170,9 +200,11 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
   }
 
   async function onToggleShow() {
+    const next = !shown.showOnMembers;
     setBusy(true);
     try {
-      await updateMember(user.uid, { showOnMembers: !user.showOnMembers });
+      await updateMember(user.uid, { showOnMembers: next });
+      remember({ showOnMembers: next });
     } catch (err) {
       console.error(err);
       alert("Failed to update visibility");
@@ -182,13 +214,14 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
   }
 
   async function onToggleTrack(track: Track) {
-    const current = new Set(user.tracks ?? []);
+    const current = new Set(shown.tracks ?? []);
     if (current.has(track)) current.delete(track);
     else current.add(track);
     const next = ALL_TRACKS.filter((t) => current.has(t));
     setBusy(true);
     try {
       await setTracks(user.uid, next);
+      remember({ tracks: next });
     } catch (err) {
       console.error(err);
       alert("Failed to update tracks");
@@ -198,12 +231,33 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
   }
 
   async function onToggleSuRecognised() {
+    const next = !shown.suRecognised;
     setBusy(true);
     try {
-      await setSuRecognised(user.uid, !user.suRecognised);
+      await setSuRecognised(user.uid, next);
+      remember({ suRecognised: next });
     } catch (err) {
       console.error(err);
       alert("Failed to update SU recognition");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** One standalone permission key, for the ones that have no draft/approve
+   *  pair. `manageMembership` was the first (there is no "draft a
+   *  membership"); `circulateWorksheet` is the second, because writing a
+   *  worksheet is open to the whole committee and the only act left to gate
+   *  is putting one in front of named people. */
+  async function onChangePermission(key: keyof UserPermissions, value: boolean) {
+    const next = { ...(shown.permissions ?? {}), [key]: value };
+    setBusy(true);
+    try {
+      await setPermissions(user.uid, next);
+      remember({ permissions: next });
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update permissions");
     } finally {
       setBusy(false);
     }
@@ -214,10 +268,11 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
     approveKey: keyof UserPermissions,
     tier: PermissionTier,
   ) {
-    const next = applyTier(user.permissions ?? {}, draftKey, approveKey, tier);
+    const next = applyTier(shown.permissions ?? {}, draftKey, approveKey, tier);
     setBusy(true);
     try {
       await setPermissions(user.uid, next);
+      remember({ permissions: next });
     } catch (err) {
       console.error(err);
       alert("Failed to update permissions");
@@ -281,7 +336,7 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
   }
 
   const status = user.profile?.status;
-  const showCommitteeTitle = user.role === "committee" || user.role === "admin";
+  const showCommitteeTitle = shown.role === "committee" || shown.role === "admin";
 
   const summary = (
     <button
@@ -311,7 +366,7 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
             )}
           </div>
           <div className={styles.subline}>
-            <Badge tone={roleTone(user.role)}>{user.role}</Badge>
+            <Badge tone={roleTone(shown.role)}>{shown.role}</Badge>
             <span className={styles.email}>{user.email ?? "No email on file"}</span>
           </div>
         </div>
@@ -331,15 +386,16 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
             {shortStatusLabel(status)}
           </Badge>
         )}
-        {(user.tracks ?? []).map((t) => (
+        {(shown.tracks ?? []).map((t) => (
           <Badge key={t} tone={trackTone(t)}>
             {TRACK_LABELS[t]}
           </Badge>
         ))}
+        <MembershipSummaryBadge recordedYears={user.paidMembershipYears} />
         {showCommitteeTitle && user.title && (
           <span className={styles.title}>{user.title}</span>
         )}
-        {user.showOnMembers && !isRejected && (
+        {shown.showOnMembers && !isRejected && (
           <Badge tone="neutral" title="Shown on public /members page">
             Public
           </Badge>
@@ -398,7 +454,7 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                 <span className={styles.controlLabel}>Role</span>
                 <ResponsiveSelect<Role>
                   className={styles.rolePicker}
-                  value={user.role}
+                  value={shown.role}
                   onChange={onRoleChange}
                   options={ACTIVE_ROLES.map<ResponsiveSelectOption<Role>>((r) => ({
                     value: r,
@@ -413,7 +469,7 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                 <span className={styles.controlLabel}>Tracks (private)</span>
                 <div className={styles.trackRow}>
                   {ALL_TRACKS.map((t) => {
-                    const checked = (user.tracks ?? []).includes(t);
+                    const checked = (shown.tracks ?? []).includes(t);
                     return (
                       <button
                         key={t}
@@ -429,11 +485,62 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                 </div>
               </div>
 
-              {user.role === "committee" && (
+              <div className={styles.controlBlock}>
+                <span className={styles.controlLabel}>
+                  Membership
+                  <span className={styles.hint}>(badge only, never a gate)</span>
+                </span>
+                <MembershipChip
+                  uid={user.uid}
+                  recordedYears={user.paidMembershipYears}
+                />
+              </div>
+
+              <div className={styles.controlBlock}>
+                <span className={styles.controlLabel}>
+                  Membership admin
+                  {isAdminRole && (
+                    <span className={styles.hint}> (admins always have it)</span>
+                  )}
+                </span>
+                <Switch
+                  checked={Boolean(shown.permissions?.manageMembership)}
+                  onChange={() =>
+                    onChangePermission(
+                      "manageMembership",
+                      !shown.permissions?.manageMembership,
+                    )
+                  }
+                  disabled={busy || isAdminRole}
+                  label="Can create membership periods and record members"
+                />
+              </div>
+
+              <div className={styles.controlBlock}>
+                <span className={styles.controlLabel}>
+                  Worksheet circulation
+                  {isAdminRole && (
+                    <span className={styles.hint}> (admins always have it)</span>
+                  )}
+                </span>
+                <Switch
+                  checked={Boolean(shown.permissions?.circulateWorksheet)}
+                  onChange={() =>
+                    onChangePermission(
+                      "circulateWorksheet",
+                      !shown.permissions?.circulateWorksheet,
+                    )
+                  }
+                  disabled={busy || isAdminRole}
+                  label="Can send worksheets to committee members and watch their progress"
+                />
+              </div>
+
+              {shown.role === "committee" && (
                 <div className={styles.controlBlock}>
                   <span className={styles.controlLabel}>SU recognition</span>
                   <Switch
-                    checked={Boolean(user.suRecognised)}
+                    checked={Boolean(shown.suRecognised)}
                     onChange={onToggleSuRecognised}
                     disabled={busy}
                     label="Recognised by the SU (can see member directory and task board)"
@@ -451,7 +558,7 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                 <SegmentedControl
                   ariaLabel="Newsletter permissions"
                   value={permissionTier(
-                    user.permissions,
+                    shown.permissions,
                     "draftNewsletter",
                     "approveNewsletter",
                   )}
@@ -473,9 +580,28 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                 </span>
                 <SegmentedControl
                   ariaLabel="Event permissions"
-                  value={permissionTier(user.permissions, "draftEvent", "approveEvent")}
+                  value={permissionTier(shown.permissions, "draftEvent", "approveEvent")}
                   onChange={(next) =>
                     onChangePermissionTier("draftEvent", "approveEvent", next)
+                  }
+                  options={PERMISSION_OPTIONS}
+                  size="sm"
+                  disabled={busy || isAdminRole}
+                />
+              </div>
+
+              <div className={styles.controlBlock}>
+                <span className={styles.controlLabel}>
+                  Course permissions
+                  {isAdminRole && (
+                    <span className={styles.hint}> (admins always have both)</span>
+                  )}
+                </span>
+                <SegmentedControl
+                  ariaLabel="Course permissions"
+                  value={permissionTier(shown.permissions, "draftCourse", "approveCourse")}
+                  onChange={(next) =>
+                    onChangePermissionTier("draftCourse", "approveCourse", next)
                   }
                   options={PERMISSION_OPTIONS}
                   size="sm"
@@ -496,12 +622,19 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
               <div className={styles.controlBlock}>
                 <span className={styles.controlLabel}>Public profile</span>
                 <Switch
-                  checked={Boolean(user.showOnMembers)}
+                  checked={Boolean(shown.showOnMembers)}
                   onChange={onToggleShow}
                   disabled={busy}
                   label="Show on public /members page"
                 />
               </div>
+
+              {/* Not on your own row. A conduct flag is a record one admin
+                  keeps about another person, so a self-set one has nobody
+                  outside it who agreed to it; another admin can still flag
+                  this one. The route refuses a self-flag as well, so a
+                  hand-made request meets the same rule. */}
+              {!isSelf && <ConductFlagControl uid={user.uid} displayName={displayName} />}
 
               <div className={styles.controlBlock}>
                 <span className={styles.controlLabel}>Debug</span>
@@ -542,7 +675,22 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
             <MemberEditForm user={user} onDone={onToggleExpand} />
           </>
         )}
+
+        {/* The committee's record of this person: which rounds they applied
+            to, what was decided, and what the reviewers wrote. Mounted inside
+            the expanded panel only, so opening the Members list never listens
+            to anybody's history, and mounted OUTSIDE the rejected branch on
+            purpose: the record of what a rejected applicant was told is
+            exactly what an admin wants in front of them before they press
+            delete. */}
+        <MemberApplicationHistory uid={user.uid} />
       </div>
+
+      {/* Kept mounted with no live toaster of its own: the membership control
+          reports its own errors inline, and the next toasted mutation on this
+          row has its host ready. The backdrop covers the summary button, so a
+          row cannot collapse mid-toast. */}
+      <ActionToast toast={toast} onDismiss={dismiss} />
     </div>
   );
 }

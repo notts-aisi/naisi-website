@@ -1,0 +1,322 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+/* --- Stage strip -------------------------------------------------------- */
+
+.strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stripItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 12rem;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.stripItem[data-state="open"] {
+  border-left-color: var(--color-accent);
+}
+
+.stripItem[data-state="done"] {
+  border-left-color: var(--color-success);
+}
+
+.stripLabel {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  /* `anywhere`, not `break-word`: only `anywhere` lowers the min-content width,
+     and the min-content width is what a stage label typed as one long word sets
+     the strip item to (src/components/ui/MemberText.module.css). */
+  overflow-wrap: anywhere;
+}
+
+.stripState {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+/* --- Cards and sections ------------------------------------------------- */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.cardTitle {
+  margin: 0;
+  /* `.card` aligns to flex-start, so this heading is a flex item sized on its
+     own content rather than stretched to the card: without `min-width: 0` its
+     automatic minimum size is its min-content width. */
+  min-width: 0;
+  font-size: var(--text-2xl);
+  /* Round and stage labels are admin-typed and can be one long word. `anywhere`
+     rather than `break-word`, because only `anywhere` lowers the min-content
+     width; `break-word` wraps the visible line and leaves the box as wide as
+     the longest word. */
+  overflow-wrap: anywhere;
+}
+
+.body {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: 1.7;
+  color: var(--color-text-muted);
+  max-width: var(--prose-max-width);
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  min-width: 0;
+}
+
+.stageTitle {
+  margin: 0;
+  font-size: var(--text-xl);
+  /* `.stage` already carries `min-width: 0` and stretches its children, so all
+     this heading needs is a break opportunity inside a long word. */
+  overflow-wrap: anywhere;
+}
+
+.intro {
+  color: var(--color-text-muted);
+  line-height: 1.7;
+  max-width: var(--prose-max-width);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text-muted);
+  max-width: var(--prose-max-width);
+}
+
+.stageActions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.pending {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text);
+}
+
+/* --- The read-back after submit ----------------------------------------- */
+
+.review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+}
+
+.reviewRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.reviewLabel {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.reviewValue {
+  margin: 0;
+  min-width: 0;
+  color: var(--color-text);
+  line-height: 1.7;
+}
+
+.blank {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-subtle);
+  font-style: italic;
+}
+
+/* --- Actions ------------------------------------------------------------ */
+
+.submitRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.error {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.privacy {
+  max-width: var(--prose-max-width);
+}
+
+.withdraw {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.withdrawBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  max-width: var(--prose-max-width);
+}
+
+.withdrawActions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.withdrawLink {
+  appearance: none;
+  -webkit-appearance: none;
+  align-self: flex-start;
+  min-height: 2.75rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.withdrawLink:hover {
+  color: var(--color-text);
+}
+
+.withdrawLink:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+.refresh {
+  margin: 0;
+}
+
+/* The way back to the applications hub. Deliberately quiet: on the start card
+   it sits under the primary action, and on the sent card it is the only thing
+   left to press, so it reads as a way onward rather than a second decision. */
+.hubLink {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.hubLink:hover {
+  color: var(--color-text);
+}
+
+.hubLink:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+@media (max-width: 48rem) { /* --bp-md */
+  .wrap {
+    gap: var(--space-5);
+  }
+
+  .stage {
+    padding: var(--space-4);
+    gap: var(--space-3);
+  }
+
+  .stripItem {
+    flex-basis: 100%;
+  }
+
+  .submitRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .withdrawActions > * {
+    flex: 1 1 10rem;
+  }
+}
+
+/* Small phones. The section padding is the whole of what stands between the
+   availability grid and the screen edge, so it comes off first: at 320px the
+   card padding was taking 32 of the 288 usable pixels away from a drag
+   surface that needs every one of them. */
+@media (max-width: 36rem) { /* --bp-sm */
+  .cardTitle {
+    font-size: var(--text-xl);
+  }
+
+  .stageTitle {
+    font-size: var(--text-lg);
+  }
+
+  .stage {
+    padding: var(--space-3);
+  }
+
+  .withdrawBox {
+    padding: var(--space-3);
+  }
+
+  /* Withdraw and Keep it stop sharing a row. Two adjacent buttons at 130px, one
+     of them destructive, is the shape a thumb gets wrong. */
+  .withdrawActions > * {
+    flex-basis: 100%;
+  }
+}

@@ -25,6 +25,9 @@ export default function HeroSparkles() {
   const [sparkles, setSparkles] = useState<Spark[]>([]);
 
   useEffect(() => {
+    // Deliberate SSR-hydration pattern (see comment above): positions are
+    // randomised once on the client, after mount, so SSR + client agree.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSparkles(
       Array.from({ length: SPARKLE_COUNT }, (_, i) => {
         const duration = 18 + Math.random() * 14;

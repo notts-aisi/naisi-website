@@ -1,0 +1,2544 @@
+/**
+ * Rules tests for the courses feature — the owner's directive for this build
+ * was STRONG rules provisioning with validated tests, so this suite is a
+ * deliverable of the feature, not decoration.
+ *
+ * The properties that must hold, in rough order of blast radius:
+ *  - `courseProgress` is the ONE client-direct member write, and its doc id
+ *    binds (run, caller, item) structurally — no cross-uid rows, no writes
+ *    without an ACTIVE enrolment, no lying about `hasPublicComment`, no
+ *    fabricating or laundering moderation stamps.
+ *  - `isEnrolledActive()` must never leak into a READ rule: a list query
+ *    evaluates per candidate doc against the ~20-document access budget, so
+ *    the 25-doc regression below fails the moment someone "tightens" the
+ *    progress read rule with an enrolment get(). Do not fix that test —
+ *    fix the rule.
+ *  - Server-owned collections (applications, enrolments, attendance, nudges,
+ *    exercise responses) refuse every client write, admin included.
+ *  - `draftCourse` is authoring power only: no status transitions, no role
+ *    arrays, no counters, no channel. `approveCourse` is the two-person half.
+ *  - `courseGroups` carry meet links — readable only by the authoring tier.
+ *  - `paidMembershipYears` is an admin-set badge; self-service create and
+ *    update must both refuse it (same forgery class as tracks/permissions).
+ */
+import { after, afterEach, before, describe, it } from "node:test";
+import assert from "node:assert/strict";
+import {
+  asAnon,
+  asUser,
+  assertFails,
+  assertSucceeds,
+  cleanup,
+  clearData,
+  getTestEnv,
+  seed,
+  seedUser,
+} from "../lib/harness.mjs";
+
+before(async () => {
+  await getTestEnv("courses");
+});
+after(cleanup);
+afterEach(clearData);
+
+/** A moderation instant used wherever a stamp must round-trip verbatim. */
+const MODERATED_AT = new Date("2026-08-01T12:00:00Z");
+
+const ZERO_COUNTS = {
+  pending: 0,
+  accepted: 0,
+  rejected: 0,
+  waitlisted: 0,
+  withdrawn: 0,
+};
+
+/** Seed the cast: one of each hat the rules distinguish. */
+async function seedCast() {
+  await seedUser("admin1", { role: "admin" });
+  await seedUser("drafter", { role: "member", permissions: { draftCourse: true } });
+  await seedUser("approver", { role: "member", permissions: { approveCourse: true } });
+  await seedUser("learner", { role: "member" });
+  await seedUser("facil", { role: "member" });
+  await seedUser("lead", { role: "member" });
+  await seedUser("pending1", { role: "pending" });
+}
+
+/** A clean course doc as the drafter's client would write it. */
+function courseDoc(overrides = {}) {
+  return {
+    title: "AI Safety Fundamentals",
+    tagline: "An introduction to the field.",
+    summaryBlocks: [],
+    track: "technical",
+    level: "No prior experience needed",
+    estimatedWeeklyHours: null,
+    status: "draft",
+    showcaseRunId: null,
+    authorUid: "drafter",
+    collaboratorUids: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  };
+}
+
+/** A clean run doc for `courseRuns/{id}` — channel must match the id. */
+function runDoc(id, overrides = {}) {
+  return {
+    courseId: "course1",
+    courseTitle: "AI Safety Fundamentals",
+    label: "Autumn 2026",
+    academicYear: "2026/27",
+    status: "draft",
+    startDate: "2026-10-05",
+    weekPlan: [],
+    applicationForm: [],
+    applicationsOpenAt: null,
+    applicationsCloseAt: null,
+    applicationCap: null,
+    authorUid: "drafter",
+    admissionsReviewerUids: [],
+    runFacilitatorUids: [],
+    trackLeadUids: [],
+    applicationCounts: { ...ZERO_COUNTS },
+    groupCount: 0,
+    channel: `cohort:${id}`,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  };
+}
+
+async function seedRun(id, overrides = {}) {
+  await seed(async (db) => {
+    await db.collection("courseRuns").doc(id).set(runDoc(id, overrides));
+  });
+}
+
+function groupDoc(overrides = {}) {
+  return {
+    runId: "run1",
+    courseId: "course1",
+    name: "Group A",
+    facilitatorUids: [],
+    capacity: 12,
+    memberCount: 0,
+    session: {
+      weekday: 2,
+      startTimeLocal: "18:00",
+      durationMinutes: 90,
+      location: "Monica Partridge Building",
+      meetingUrl: null,
+      notes: "",
+    },
+    sessionOverrides: {},
+    archived: false,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  };
+}
+
+/** Enrol `uid` on `runId` (rules disabled — enrolments are routes-only). */
+async function seedEnrolment(runId, uid, overrides = {}) {
+  await seed(async (db) => {
+    await db.collection("courseEnrolments").doc(`${runId}__${uid}`).set({
+      runId,
+      courseId: "course1",
+      uid,
+      groupId: null,
+      status: "active",
+      role: "learner",
+      applicationId: null,
+      joinedWeekNumber: 1,
+      createdAt: new Date(),
+      ...overrides,
+    });
+  });
+}
+
+/** The full progress payload buildProgressWrite() would emit. */
+function progressDoc(overrides = {}) {
+  return {
+    runId: "run1",
+    uid: "learner",
+    weekNumber: 3,
+    itemKind: "material",
+    itemId: "m1",
+    completed: true,
+    completedAt: new Date(),
+    rating: 5,
+    publicComment: "Great intro paper.",
+    hasPublicComment: true,
+    privateNote: "Re-read section 4 before the session.",
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// courseProgress — the one client-direct member write
+// ---------------------------------------------------------------------------
+
+describe("courseProgress — enrolled member happy path", () => {
+  it("lets an active enrolled member create and update their own row with rating + comments", async () => {
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    const db = await asUser("learner");
+    const ref = db.collection("courseProgress").doc("run1__learner__m1");
+    await assertSucceeds(ref.set(progressDoc()));
+    // Re-save (the un-check path): optionals dropped, mirror consistent.
+    await assertSucceeds(
+      ref.set({
+        runId: "run1",
+        uid: "learner",
+        weekNumber: 3,
+        itemKind: "material",
+        itemId: "m1",
+        completed: false,
+        hasPublicComment: false,
+      }),
+    );
+  });
+
+  it("lets a member check off a checklist item (the second itemKind)", async () => {
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    const db = await asUser("learner");
+    await assertSucceeds(
+      db.collection("courseProgress").doc("run1__learner__c1").set({
+        runId: "run1",
+        uid: "learner",
+        weekNumber: 1,
+        itemKind: "checklist",
+        itemId: "c1",
+        completed: true,
+        completedAt: new Date(),
+        hasPublicComment: false,
+      }),
+    );
+  });
+
+  it("lets a member delete their own row", async () => {
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    const db = await asUser("learner");
+    const ref = db.collection("courseProgress").doc("run1__learner__m1");
+    await assertSucceeds(ref.set(progressDoc()));
+    await assertSucceeds(ref.delete());
+  });
+});
+
+describe("courseProgress — enrolment gate", () => {
+  it("refuses a create from a member with NO enrolment on the run", async () => {
+    await seedCast();
+    const db = await asUser("learner");
+    await assertFails(
+      db.collection("courseProgress").doc("run1__learner__m1").set(progressDoc()),
+    );
+  });
+
+  it("refuses a create from a WITHDRAWN enrolment — leaving the run revokes the pen", async () => {
+    await seedCast();
+    await seedEnrolment("run1", "learner", { status: "withdrawn" });
+    const db = await asUser("learner");
+    await assertFails(
+      db.collection("courseProgress").doc("run1__learner__m1").set(progressDoc()),
+    );
+  });
+});
+
+describe("courseProgress — the doc id binds (run, caller, item)", () => {
+  it("refuses a row addressed to another member's id, even with their uid in the data", async () => {
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    await seedEnrolment("run1", "facil");
+    const db = await asUser("learner");
+    await assertFails(
+      db
+        .collection("courseProgress")
+        .doc("run1__facil__m1")
+        .set(progressDoc({ uid: "facil" })),
+    );
+  });
+
+  it("refuses a row whose uid FIELD names someone else under the caller's own id", async () => {
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    const db = await asUser("learner");
+    await assertFails(
+      db
+        .collection("courseProgress")
+        .doc("run1__learner__m1")
+        .set(progressDoc({ uid: "facil" })),
+    );
+  });
+
+  it("refuses an id that disagrees with the runId/itemId fields", async () => {
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    const db = await asUser("learner");
+    await assertFails(
+      db
+        .collection("courseProgress")
+        .doc("run1__learner__m1")
+        .set(progressDoc({ itemId: "m2" })),
+    );
+  });
+});
+
+describe("courseProgress — hasPublicComment cannot lie", () => {
+  it("refuses hasPublicComment: true with no comment (would surface a ghost row to the cohort)", async () => {
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    const db = await asUser("learner");
+    const doc = progressDoc({ hasPublicComment: true });
+    delete doc.publicComment;
+    await assertFails(
+      db.collection("courseProgress").doc("run1__learner__m1").set(doc),
+    );
+  });
+
+  it("refuses hasPublicComment: false with a comment present (would hide it from the lane)", async () => {
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    const db = await asUser("learner");
+    await assertFails(
+      db
+        .collection("courseProgress")
+        .doc("run1__learner__m1")
+        .set(progressDoc({ hasPublicComment: false })),
+    );
+  });
+
+  it("refuses an out-of-range rating and an oversized comment", async () => {
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    const db = await asUser("learner");
+    await assertFails(
+      db
+        .collection("courseProgress")
+        .doc("run1__learner__m1")
+        .set(progressDoc({ rating: 6 })),
+    );
+    await assertFails(
+      db
+        .collection("courseProgress")
+        .doc("run1__learner__m1")
+        .set(progressDoc({ publicComment: "x".repeat(1001) })),
+    );
+  });
+});
+
+describe("courseProgress — moderation stamps are the server's", () => {
+  it("refuses a CREATE carrying moderation fields", async () => {
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    const db = await asUser("learner");
+    await assertFails(
+      db
+        .collection("courseProgress")
+        .doc("run1__learner__m1")
+        .set(
+          progressDoc({ moderatedByUid: "admin1", moderatedAt: MODERATED_AT }),
+        ),
+    );
+  });
+
+  it("refuses an update that CLEARS a moderation stamp (no laundering by re-save)", async () => {
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    await seed(async (db) => {
+      await db
+        .collection("courseProgress")
+        .doc("run1__learner__m1")
+        .set(
+          progressDoc({ moderatedByUid: "admin1", moderatedAt: MODERATED_AT }),
+        );
+    });
+    const db = await asUser("learner");
+    // Full overwrite without the stamps: the pin must refuse it.
+    await assertFails(
+      db.collection("courseProgress").doc("run1__learner__m1").set(progressDoc()),
+    );
+  });
+
+  it("allows an update that carries the stamps through verbatim", async () => {
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    await seed(async (db) => {
+      await db
+        .collection("courseProgress")
+        .doc("run1__learner__m1")
+        .set(
+          progressDoc({ moderatedByUid: "admin1", moderatedAt: MODERATED_AT }),
+        );
+    });
+    const db = await asUser("learner");
+    await assertSucceeds(
+      db
+        .collection("courseProgress")
+        .doc("run1__learner__m1")
+        .set(
+          progressDoc({
+            completed: false,
+            moderatedByUid: "admin1",
+            moderatedAt: MODERATED_AT,
+          }),
+        ),
+    );
+  });
+});
+
+describe("courseProgress — reads and the list budget", () => {
+  it("refuses an unconstrained list (queries must constrain uid == self)", async () => {
+    await seedCast();
+    const db = await asUser("learner");
+    await assertFails(db.collection("courseProgress").get());
+    await assertFails(
+      db.collection("courseProgress").where("runId", "==", "run1").get(),
+    );
+  });
+
+  it("refuses reading another member's row", async () => {
+    await seedCast();
+    await seedEnrolment("run1", "facil");
+    await seed(async (db) => {
+      await db
+        .collection("courseProgress")
+        .doc("run1__facil__m1")
+        .set(progressDoc({ uid: "facil" }));
+    });
+    const db = await asUser("learner");
+    await assertFails(
+      db.collection("courseProgress").doc("run1__facil__m1").get(),
+    );
+  });
+
+  it("REGRESSION: a 25-doc own-progress list succeeds — the read rule must stay get()-free", async () => {
+    // If this fails after a rules edit, an enrolment get() has crept into the
+    // progress READ rule. Each list candidate would then bill a document
+    // access against the ~20-access budget and real members' progress pages
+    // would break the week they pass ~20 rows. Enrolment checks belong on
+    // the WRITE side only. Fix the rule, not this test.
+    await seedCast();
+    await seed(async (db) => {
+      for (let i = 1; i <= 25; i++) {
+        const itemId = `m${String(i).padStart(2, "0")}`;
+        await db
+          .collection("courseProgress")
+          .doc(`run1__learner__${itemId}`)
+          .set(progressDoc({ itemId, weekNumber: 1 + (i % 8) }));
+      }
+    });
+    const db = await asUser("learner");
+    const snap = await assertSucceeds(
+      db.collection("courseProgress").where("uid", "==", "learner").get(),
+    );
+    assert.equal(snap.size, 25);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// courses — authoring, two-person review, pinned ownership
+// ---------------------------------------------------------------------------
+
+describe("courses", () => {
+  it("lets a draftCourse holder create a clean draft course", async () => {
+    await seedCast();
+    const db = await asUser("drafter");
+    await assertSucceeds(db.collection("courses").doc("course1").set(courseDoc()));
+  });
+
+  it("refuses a create that skips 'draft', seeds collaborators, or lacks the permission", async () => {
+    await seedCast();
+    const drafter = await asUser("drafter");
+    await assertFails(
+      drafter.collection("courses").doc("c-pub").set(courseDoc({ status: "published" })),
+    );
+    await assertFails(
+      drafter
+        .collection("courses")
+        .doc("c-collab")
+        .set(courseDoc({ collaboratorUids: ["facil"] })),
+    );
+    const learner = await asUser("learner");
+    await assertFails(learner.collection("courses").doc("c-nope").set(courseDoc()));
+  });
+
+  it("refuses a collaborator rewriting authorUid or the collaborator roster", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db
+        .collection("courses")
+        .doc("course1")
+        .set(courseDoc({ collaboratorUids: ["facil"] }));
+    });
+    const db = await asUser("facil");
+    await assertFails(
+      db.collection("courses").doc("course1").update({ authorUid: "facil" }),
+    );
+    await assertFails(
+      db
+        .collection("courses")
+        .doc("course1")
+        .update({ collaboratorUids: ["facil", "learner"] }),
+    );
+    // The collaborator's legitimate lane — content edits — must survive.
+    await assertSucceeds(
+      db.collection("courses").doc("course1").update({ tagline: "Sharper hook." }),
+    );
+  });
+
+  it("holds the two-person rule: the owner-drafter cannot publish, an approver can", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("courses").doc("course1").set(courseDoc());
+    });
+    const drafter = await asUser("drafter");
+    await assertFails(
+      drafter.collection("courses").doc("course1").update({ status: "published" }),
+    );
+    // Content edits by the owner stay open.
+    await assertSucceeds(
+      drafter.collection("courses").doc("course1").update({ level: "Beginner" }),
+    );
+    const approver = await asUser("approver");
+    await assertSucceeds(
+      approver.collection("courses").doc("course1").update({ status: "published" }),
+    );
+  });
+
+  it("refuses a drafter editing a course they neither own nor collaborate on", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db
+        .collection("courses")
+        .doc("course1")
+        .set(courseDoc({ authorUid: "someone-else" }));
+    });
+    const db = await asUser("drafter");
+    await assertFails(
+      db.collection("courses").doc("course1").update({ tagline: "Mine now." }),
+    );
+  });
+
+  it("refuses client deletes, admin included (cascade lives in the delete route)", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("courses").doc("course1").set(courseDoc());
+    });
+    await assertFails((await asUser("drafter")).collection("courses").doc("course1").delete());
+    await assertFails((await asUser("admin1")).collection("courses").doc("course1").delete());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// courseRuns — server-owned arrays/counters/channel, approve-gated status
+// ---------------------------------------------------------------------------
+
+describe("courseRuns", () => {
+  it("lets a drafter create a clean draft run and edit its content", async () => {
+    await seedCast();
+    const db = await asUser("drafter");
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run-new").set(runDoc("run-new")),
+    );
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run-new").update({ label: "Autumn 2026 (rev)" }),
+    );
+  });
+
+  it("is readable by a PENDING user (applications are open to pending accounts)", async () => {
+    // The run is seeded APPLICATIONS-OPEN, not draft, and that is the point of
+    // the fixture rather than a detail of it: V3 W3 PR20 narrowed the read
+    // rule to `status != 'draft'`, so what a pending applicant is entitled to
+    // read is a run that has actually opened. The draft half is pinned in the
+    // "draft reads" suite below.
+    await seedCast();
+    await seedRun("run1", { status: "applications-open" });
+    const db = await asUser("pending1");
+    await assertSucceeds(db.collection("courseRuns").doc("run1").get());
+  });
+
+  it("refuses a draftCourse holder flipping run status — approve is the second pair of eyes", async () => {
+    await seedCast();
+    await seedRun("run1");
+    const drafter = await asUser("drafter");
+    await assertFails(
+      drafter.collection("courseRuns").doc("run1").update({ status: "applications-open" }),
+    );
+    const approver = await asUser("approver");
+    await assertSucceeds(
+      approver.collection("courseRuns").doc("run1").update({ status: "applications-open" }),
+    );
+  });
+
+  it("refuses a create that seeds reviewer/facilitator/lead arrays or a foreign channel", async () => {
+    await seedCast();
+    const db = await asUser("drafter");
+    await assertFails(
+      db
+        .collection("courseRuns")
+        .doc("run-a")
+        .set(runDoc("run-a", { admissionsReviewerUids: ["drafter"] })),
+    );
+    await assertFails(
+      db
+        .collection("courseRuns")
+        .doc("run-b")
+        .set(runDoc("run-b", { trackLeadUids: ["drafter"] })),
+    );
+    await assertFails(
+      db
+        .collection("courseRuns")
+        .doc("run-c")
+        .set(runDoc("run-c", { channel: "cohort:someone-elses-run" })),
+    );
+    await assertFails(
+      db
+        .collection("courseRuns")
+        .doc("run-d")
+        .set(runDoc("run-d", { applicationCounts: { ...ZERO_COUNTS, accepted: 40 } })),
+    );
+  });
+
+  it("refuses the owner-drafter seeding role arrays or rewriting counters/channel on update", async () => {
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("drafter");
+    await assertFails(
+      db.collection("courseRuns").doc("run1").update({ admissionsReviewerUids: ["drafter"] }),
+    );
+    await assertFails(
+      db.collection("courseRuns").doc("run1").update({ trackLeadUids: ["drafter"] }),
+    );
+    await assertFails(
+      db
+        .collection("courseRuns")
+        .doc("run1")
+        .update({ applicationCounts: { ...ZERO_COUNTS, accepted: 99 } }),
+    );
+    await assertFails(
+      db.collection("courseRuns").doc("run1").update({ channel: "newsletter" }),
+    );
+  });
+
+  it("refuses a malformed startDate (the civil date every week number derives from)", async () => {
+    await seedCast();
+    const db = await asUser("drafter");
+    await assertFails(
+      db
+        .collection("courseRuns")
+        .doc("run-bad")
+        .set(runDoc("run-bad", { startDate: "05/10/2026" })),
+    );
+  });
+
+  it("refuses a drafter editing someone else's run; a run TRACK LEAD may edit content but not status", async () => {
+    await seedCast();
+    await seedRun("run1", { authorUid: "someone-else", trackLeadUids: ["lead"] });
+    const drafter = await asUser("drafter");
+    await assertFails(
+      drafter.collection("courseRuns").doc("run1").update({ label: "Hijacked" }),
+    );
+    const leadDb = await asUser("lead");
+    await assertSucceeds(
+      leadDb.collection("courseRuns").doc("run1").update({ label: "Autumn 2026 — rescheduled" }),
+    );
+    await assertFails(
+      leadDb.collection("courseRuns").doc("run1").update({ status: "running" }),
+    );
+  });
+
+  it("lets an ADMIN do all of it — status, counters, role arrays", async () => {
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("admin1");
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run1").update({
+        status: "running",
+        admissionsReviewerUids: ["learner"],
+        applicationCounts: { ...ZERO_COUNTS, accepted: 12 },
+      }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// courseRuns/{runId}/weeks — curriculum authoring
+// ---------------------------------------------------------------------------
+
+describe("courseRuns weeks", () => {
+  function weekDoc(overrides = {}) {
+    return {
+      weekNumber: 3,
+      title: "Goal misgeneralisation",
+      summary: "Read the two papers and note one disagreement.",
+      guideBlocks: [],
+      materials: [],
+      exercises: [],
+      checklist: [],
+      estimatedMinutes: null,
+      published: false,
+      ...overrides,
+    };
+  }
+
+  it("lets the run's drafter-owner, a track lead, and an approver author weeks; learners read them", async () => {
+    await seedCast();
+    await seedRun("run1", { trackLeadUids: ["lead"] });
+    const drafter = await asUser("drafter");
+    const weeks = (db) => db.collection("courseRuns").doc("run1").collection("weeks");
+    await assertSucceeds(weeks(drafter).doc("w03").set(weekDoc()));
+    await assertSucceeds(weeks(await asUser("lead")).doc("w04").set(weekDoc({ weekNumber: 4 })));
+    await assertSucceeds(weeks(await asUser("approver")).doc("w05").set(weekDoc({ weekNumber: 5 })));
+    await assertSucceeds(weeks(await asUser("pending1")).doc("w03").get());
+  });
+
+  it("refuses a plain member writing weeks, and a malformed weekId or weekNumber", async () => {
+    await seedCast();
+    await seedRun("run1");
+    const weeks = (db) => db.collection("courseRuns").doc("run1").collection("weeks");
+    await assertFails(weeks(await asUser("learner")).doc("w03").set(weekDoc()));
+    const drafter = await asUser("drafter");
+    await assertFails(weeks(drafter).doc("week3").set(weekDoc()));
+    await assertFails(weeks(drafter).doc("w00").set(weekDoc({ weekNumber: 0 })));
+  });
+
+  it("caps the authored arrays (16 checklist items refused)", async () => {
+    await seedCast();
+    await seedRun("run1");
+    const drafter = await asUser("drafter");
+    const items = Array.from({ length: 16 }, (_, i) => ({
+      id: `c${i}`,
+      title: `Item ${i}`,
+      mirrorToMyWork: false,
+    }));
+    await assertFails(
+      drafter
+        .collection("courseRuns")
+        .doc("run1")
+        .collection("weeks")
+        .doc("w03")
+        .set(weekDoc({ checklist: items })),
+    );
+  });
+
+  it("gates week DELETION above authoring: drafter refused, approver allowed", async () => {
+    await seedCast();
+    await seedRun("run1");
+    await seed(async (db) => {
+      await db
+        .collection("courseRuns")
+        .doc("run1")
+        .collection("weeks")
+        .doc("w03")
+        .set(weekDoc());
+    });
+    const ref = (db) =>
+      db.collection("courseRuns").doc("run1").collection("weeks").doc("w03");
+    await assertFails(ref(await asUser("drafter")).delete());
+    await assertSucceeds(ref(await asUser("approver")).delete());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// courseGroups — meet links: restricted reads, facilitator session edits
+// ---------------------------------------------------------------------------
+
+describe("courseGroups", () => {
+  it("hides groups from pending users AND plain members — but a pending user CAN read the run", async () => {
+    await seedCast();
+    // Applications-open, not draft: see the PR20 note on the courseRuns read.
+    await seedRun("run1", { status: "applications-open" });
+    await seed(async (db) => {
+      await db.collection("courseGroups").doc("g1").set(groupDoc());
+    });
+    const pending = await asUser("pending1");
+    await assertSucceeds(pending.collection("courseRuns").doc("run1").get());
+    await assertFails(pending.collection("courseGroups").doc("g1").get());
+    // A plain member is enrolled-adjacent but still gets their session card
+    // via the server route — the meet link never goes out through a list.
+    await assertFails((await asUser("learner")).collection("courseGroups").doc("g1").get());
+    await assertSucceeds((await asUser("drafter")).collection("courseGroups").doc("g1").get());
+  });
+
+  it("lets an approver create a clean group; refuses a seeded roster or head-started counter", async () => {
+    await seedCast();
+    const approver = await asUser("approver");
+    await assertSucceeds(approver.collection("courseGroups").doc("g1").set(groupDoc()));
+    await assertFails(
+      approver
+        .collection("courseGroups")
+        .doc("g2")
+        .set(groupDoc({ facilitatorUids: ["facil"] })),
+    );
+    await assertFails(
+      approver.collection("courseGroups").doc("g3").set(groupDoc({ memberCount: 8 })),
+    );
+    // draftCourse alone does not staff runs.
+    await assertFails(
+      (await asUser("drafter")).collection("courseGroups").doc("g4").set(groupDoc()),
+    );
+  });
+
+  it("lets a NAMED facilitator edit their group's session with the pins intact", async () => {
+    await seedCast();
+    await seedRun("run1", { trackLeadUids: ["lead"] });
+    await seed(async (db) => {
+      await db
+        .collection("courseGroups")
+        .doc("g1")
+        .set(groupDoc({ facilitatorUids: ["facil"] }));
+    });
+    const db = await asUser("facil");
+    await assertSucceeds(
+      db.collection("courseGroups").doc("g1").update({
+        session: {
+          weekday: 4,
+          startTimeLocal: "17:30",
+          durationMinutes: 60,
+          location: "Trent Building A44",
+          meetingUrl: "https://meet.example.com/group-a",
+          notes: "Moved for the careers fair.",
+        },
+        sessionOverrides: { w05: { location: "Online only" } },
+      }),
+    );
+    // The parent run's track lead shares the lane.
+    await assertSucceeds(
+      (await asUser("lead")).collection("courseGroups").doc("g1").update({ name: "Group A (Tue)" }),
+    );
+  });
+
+  it("refuses a facilitator touching the roster, the counter, or the group's identity", async () => {
+    await seedCast();
+    await seedRun("run1");
+    await seed(async (db) => {
+      await db
+        .collection("courseGroups")
+        .doc("g1")
+        .set(groupDoc({ facilitatorUids: ["facil"] }));
+    });
+    const db = await asUser("facil");
+    await assertFails(
+      db.collection("courseGroups").doc("g1").update({ facilitatorUids: ["facil", "learner"] }),
+    );
+    await assertFails(db.collection("courseGroups").doc("g1").update({ memberCount: 5 }));
+    await assertFails(db.collection("courseGroups").doc("g1").update({ runId: "run2" }));
+  });
+
+  it("refuses client deletes even for admins (allocation must re-pool members)", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("courseGroups").doc("g1").set(groupDoc());
+    });
+    await assertFails((await asUser("admin1")).collection("courseGroups").doc("g1").delete());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Server-owned collections — routes only, no client writes at all
+// ---------------------------------------------------------------------------
+
+describe("server-owned course collections", () => {
+  it("refuses EVERY client write — member and admin — on all five collections", async () => {
+    await seedCast();
+    const member = await asUser("learner");
+    const admin = await asUser("admin1");
+    const attempts = [
+      ["courseApplications", "run1__learner", { runId: "run1", uid: "learner", status: "pending" }],
+      ["courseEnrolments", "run1__learner", { runId: "run1", uid: "learner", status: "active" }],
+      ["courseExerciseResponses", "run1__learner__w01__x1", { runId: "run1", uid: "learner", text: "hi" }],
+      ["courseAttendance", "run1__g1__w01", { records: { learner: "present" } }],
+      ["courseNudges", "run1__w01", { sentAt: new Date() }],
+    ];
+    for (const [collection, id, data] of attempts) {
+      await assertFails(member.collection(collection).doc(id).set(data));
+      await assertFails(admin.collection(collection).doc(id).set(data));
+    }
+  });
+
+  it("applications + enrolments + exercise responses: own row readable, others' rows not", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("courseApplications").doc("run1__learner").set({
+        runId: "run1",
+        uid: "learner",
+        email: "learner@example.com",
+        status: "pending",
+      });
+      await db.collection("courseEnrolments").doc("run1__learner").set({
+        runId: "run1",
+        uid: "learner",
+        status: "active",
+      });
+      await db.collection("courseExerciseResponses").doc("run1__learner__w01__x1").set({
+        runId: "run1",
+        uid: "learner",
+        text: "My answer.",
+      });
+    });
+    const own = await asUser("learner");
+    await assertSucceeds(own.collection("courseApplications").doc("run1__learner").get());
+    await assertSucceeds(own.collection("courseEnrolments").doc("run1__learner").get());
+    await assertSucceeds(own.collection("courseExerciseResponses").doc("run1__learner__w01__x1").get());
+    const other = await asUser("facil");
+    await assertFails(other.collection("courseApplications").doc("run1__learner").get());
+    await assertFails(other.collection("courseEnrolments").doc("run1__learner").get());
+    await assertFails(other.collection("courseExerciseResponses").doc("run1__learner__w01__x1").get());
+    const admin = await asUser("admin1");
+    await assertSucceeds(admin.collection("courseApplications").doc("run1__learner").get());
+  });
+
+  it("attendance registers are unreadable by everyone from the client — each row maps ALL uids", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("courseAttendance").doc("run1__g1__w01").set({
+        records: { learner: "present", facil: "present" },
+      });
+    });
+    await assertFails((await asUser("learner")).collection("courseAttendance").doc("run1__g1__w01").get());
+    await assertFails((await asUser("admin1")).collection("courseAttendance").doc("run1__g1__w01").get());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// courseEmailTemplates — admin editor client
+// ---------------------------------------------------------------------------
+
+describe("courseEmailTemplates", () => {
+  it("admin can read and write a valid template; members can do neither", async () => {
+    await seedCast();
+    const admin = await asUser("admin1");
+    await assertSucceeds(
+      admin.collection("courseEmailTemplates").doc("course-allocated").set({
+        templateId: "course-allocated",
+        subject: "You're in — {courseTitle}",
+        blocks: [],
+      }),
+    );
+    await assertSucceeds(admin.collection("courseEmailTemplates").doc("course-allocated").get());
+    const member = await asUser("learner");
+    await assertFails(member.collection("courseEmailTemplates").doc("course-allocated").get());
+    await assertFails(
+      member.collection("courseEmailTemplates").doc("course-allocated").set({
+        templateId: "course-allocated",
+        subject: "hijacked",
+        blocks: [],
+      }),
+    );
+  });
+
+  it("caps the subject at 200 chars even for admins", async () => {
+    await seedCast();
+    const admin = await asUser("admin1");
+    await assertFails(
+      admin.collection("courseEmailTemplates").doc("course-week-nudge").set({
+        templateId: "course-week-nudge",
+        subject: "x".repeat(201),
+        blocks: [],
+      }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// users — the paid-membership badge is admin-set only
+// ---------------------------------------------------------------------------
+
+describe("users.paidMembershipYears", () => {
+  it("refuses self-seeding the badge at CREATE (an otherwise-valid signup passes)", async () => {
+    await seedCast();
+    const db = await asUser("newbie");
+    const base = {
+      uid: "newbie",
+      email: "newbie@example.com",
+      displayName: "New Person",
+      role: "pending",
+      createdAt: new Date(),
+    };
+    await assertFails(
+      db.collection("users").doc("newbie").set({
+        ...base,
+        paidMembershipYears: ["2026/27"],
+      }),
+    );
+    await assertSucceeds(db.collection("users").doc("newbie").set(base));
+  });
+
+  it("refuses a member self-setting the badge on UPDATE; an ordinary profile edit passes", async () => {
+    await seedCast();
+    const db = await asUser("learner");
+    await assertFails(
+      db.collection("users").doc("learner").update({ paidMembershipYears: ["2026/27"] }),
+    );
+    await assertSucceeds(db.collection("users").doc("learner").update({ title: "Member" }));
+  });
+
+  it("lets an ADMIN grant and revoke the badge", async () => {
+    await seedCast();
+    const db = await asUser("admin1");
+    await assertSucceeds(
+      db.collection("users").doc("learner").update({ paidMembershipYears: ["2026/27"] }),
+    );
+    await assertSucceeds(
+      db.collection("users").doc("learner").update({ paidMembershipYears: [] }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tasks — the mirrored course-week task hooks
+// ---------------------------------------------------------------------------
+
+describe("tasks — fellowship-reminder mirrors", () => {
+  function mirrorTask(overrides = {}) {
+    return {
+      title: "AI Safety Fundamentals — Week 3",
+      description: "Read the two papers.",
+      source: "fellowship-reminder",
+      kind: "fellowship-weekly",
+      creatorUid: "learner",
+      completerUids: ["learner"],
+      reviewerUids: [],
+      status: "todo",
+      visibility: "assignees-only",
+      subtasks: [],
+      blocks: [],
+      archived: false,
+      sourceRef: { cohortId: "run1", weekNumber: 3 },
+      createdAt: new Date(),
+      ...overrides,
+    };
+  }
+
+  // The one case `archived` is in the narrow band FOR. Its scope is pinned by
+  // the three negative tests at the bottom of this block — if this one ever has
+  // to change, they are the ones that say what it is allowed to become.
+  it("lets the completer ARCHIVE their mirrored task (narrow update band)", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("course-w03__run1__learner").set(mirrorTask());
+    });
+    const db = await asUser("learner");
+    await assertSucceeds(
+      db.collection("tasks").doc("course-w03__run1__learner").update({ archived: true }),
+    );
+  });
+
+  it("refuses the completer rewriting sourceRef — the mirror stays aimed at its week", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("course-w03__run1__learner").set(mirrorTask());
+    });
+    const db = await asUser("learner");
+    await assertFails(
+      db
+        .collection("tasks")
+        .doc("course-w03__run1__learner")
+        .update({ sourceRef: { cohortId: "run2", weekNumber: 1 } }),
+    );
+  });
+
+  it("lets the completer DELETE (dismiss) a fellowship-reminder task — and only that source", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("course-w03__run1__learner").set(mirrorTask());
+      await db.collection("tasks").doc("committee-task").set(
+        mirrorTask({
+          source: "committee",
+          visibility: "committee",
+          creatorUid: "someone-else",
+        }),
+      );
+    });
+    const db = await asUser("learner");
+    await assertSucceeds(db.collection("tasks").doc("course-w03__run1__learner").delete());
+    // Being a completer on a committee task confers no delete.
+    await assertFails(db.collection("tasks").doc("committee-task").delete());
+  });
+
+  it("refuses a NON-completer deleting someone's mirror", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("course-w03__run1__learner").set(mirrorTask());
+    });
+    const db = await asUser("facil");
+    await assertFails(db.collection("tasks").doc("course-w03__run1__learner").delete());
+  });
+
+  // A REVIEWER shares the narrow UPDATE band with completers, which is exactly
+  // why delete had to be keyed off isCompleter() alone: the two roles are not
+  // interchangeable here. Dismissing someone else's course reminder off their
+  // own board is not a reviewer's call.
+  it("refuses a REVIEWER on the mirror deleting it", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db
+        .collection("tasks")
+        .doc("course-w03__run1__learner")
+        .set(mirrorTask({ reviewerUids: ["facil"] }));
+    });
+    const db = await asUser("facil");
+    await assertFails(db.collection("tasks").doc("course-w03__run1__learner").delete());
+    // …but the narrow update band still works for them, so the denial above is
+    // the delete rule refusing, not the reviewer being locked out of the doc.
+    await assertSucceeds(
+      db.collection("tasks").doc("course-w03__run1__learner").update({ status: "in-progress" }),
+    );
+  });
+
+  // Committee delete power is scoped to committee-VISIBILITY tasks they created.
+  // A mirror is assignees-only and created for the member, so the SU committee
+  // branch must not reach it even though its holder outranks the member.
+  it("refuses an SU-recognised committee member deleting someone's mirror", async () => {
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+    await seed(async (db) => {
+      await db.collection("tasks").doc("course-w03__run1__learner").set(mirrorTask());
+    });
+    const db = await asUser("sucom");
+    await assertFails(db.collection("tasks").doc("course-w03__run1__learner").delete());
+  });
+
+  // The `personal` delete branch is creator-keyed, not completer-keyed. Adding
+  // the fellowship-reminder branch must not have widened it: being listed as a
+  // completer on someone else's personal to-do confers nothing.
+  it("refuses a completer deleting a PERSONAL task they did not create", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("someones-todo").set(
+        mirrorTask({
+          source: "personal",
+          creatorUid: "facil",
+          completerUids: ["learner"],
+        }),
+      );
+    });
+    const db = await asUser("learner");
+    await assertFails(db.collection("tasks").doc("someones-todo").delete());
+  });
+
+  // `archived` rides in the narrow allowlist, so it must not become a carrier
+  // for the fields that allowlist exists to keep out. completerUids is the
+  // sharpest of those: writing it would add strangers to a task (and to the
+  // notify-route recipient list) or hand yourself delete on a mirror.
+  it("refuses smuggling completerUids alongside the archive flag", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("course-w03__run1__learner").set(mirrorTask());
+    });
+    const db = await asUser("learner");
+    await assertFails(
+      db
+        .collection("tasks")
+        .doc("course-w03__run1__learner")
+        .update({ archived: true, completerUids: ["learner", "facil"] }),
+    );
+    // Same for the visibility flip, which is admin-only everywhere else.
+    await assertFails(
+      db
+        .collection("tasks")
+        .doc("course-w03__run1__learner")
+        .update({ archived: true, visibility: "committee" }),
+    );
+    // The lone-field write is what actually ships, and it still passes.
+    await assertSucceeds(
+      db.collection("tasks").doc("course-w03__run1__learner").update({ archived: true }),
+    );
+  });
+
+  // The delete branch reads resource.data.source — the STORED value — so the
+  // only way to reach it is to already own a real mirror. These two assertions
+  // close the forge-your-own-mirror route: a member can neither create a task
+  // claiming the source, nor relabel one they already own.
+  it("refuses a member CREATING a task that claims source fellowship-reminder", async () => {
+    await seedCast();
+    const db = await asUser("learner");
+    await assertFails(
+      db.collection("tasks").doc("forged").set(mirrorTask({ creatorUid: "learner" })),
+    );
+    // The self-serve quick-add a member IS allowed still works, unchanged.
+    await assertSucceeds(
+      db
+        .collection("tasks")
+        .doc("my-todo")
+        .set(mirrorTask({ source: "personal", kind: null, sourceRef: null })),
+    );
+  });
+
+  it("refuses a member relabelling their own personal task as a mirror", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("my-todo").set(
+        mirrorTask({
+          source: "personal",
+          kind: null,
+          sourceRef: null,
+          creatorUid: "learner",
+        }),
+      );
+    });
+    const db = await asUser("learner");
+    await assertFails(
+      db.collection("tasks").doc("my-todo").update({ source: "fellowship-reminder" }),
+    );
+    // Still theirs to delete via the personal branch — the denial above is the
+    // source pin, not a loss of control over their own to-do.
+    await assertSucceeds(db.collection("tasks").doc("my-todo").delete());
+  });
+
+  // ── the SCOPE of `archived` in the narrow update band ──────────────────────
+  //
+  // `archived` was added to the completer/reviewer allowlist for the mirror
+  // above, and these pin that it reaches no further. It matters because the
+  // band also covers REVIEWERS, who need not be completers, and because the
+  // board and My Work queries hide archived tasks by default: an unscoped
+  // `archived` lets any ONE person on a committee task make it disappear for
+  // everybody, which is a delete in everything but name. The three tests below
+  // are the negative direction; "lets the completer ARCHIVE their mirrored
+  // task" above is the positive one, and both must keep passing.
+  //
+  // Each test also writes a plain `status` afterwards, so a failure here reads
+  // as "the archive scope refused" rather than "this actor lost the band".
+
+  it("refuses a COMPLETER archiving a committee-visibility task", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("committee-task").set(
+        mirrorTask({
+          source: "committee",
+          kind: "generic",
+          visibility: "committee",
+          creatorUid: "someone-else",
+          completerUids: ["learner"],
+          sourceRef: null,
+        }),
+      );
+    });
+    const db = await asUser("learner");
+    await assertFails(
+      db.collection("tasks").doc("committee-task").update({ archived: true }),
+    );
+    // The gate reads the STORED source, so claiming the mirror source in the
+    // same write cannot unlock it (`source` is outside the allowlist too).
+    await assertFails(
+      db
+        .collection("tasks")
+        .doc("committee-task")
+        .update({ archived: true, source: "fellowship-reminder" }),
+    );
+    await assertSucceeds(
+      db.collection("tasks").doc("committee-task").update({ status: "in-progress" }),
+    );
+  });
+
+  it("refuses a REVIEWER who is not a completer archiving a committee task", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("committee-task").set(
+        mirrorTask({
+          source: "committee",
+          kind: "generic",
+          visibility: "committee",
+          creatorUid: "someone-else",
+          completerUids: ["learner"],
+          reviewerUids: ["facil"],
+          sourceRef: null,
+        }),
+      );
+    });
+    const db = await asUser("facil");
+    await assertFails(
+      db.collection("tasks").doc("committee-task").update({ archived: true }),
+    );
+    await assertSucceeds(
+      db.collection("tasks").doc("committee-task").update({ status: "in-progress" }),
+    );
+  });
+
+  // Not a visibility test — an assignees-only PERSONAL task is just as
+  // protected. Archiving someone's private to-do belongs to its creator (the
+  // branch below the band), and being listed as a completer on it confers
+  // nothing, exactly as with delete.
+  it("refuses a completer archiving a PERSONAL task they did not create", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("someones-todo").set(
+        mirrorTask({
+          source: "personal",
+          kind: "generic",
+          creatorUid: "facil",
+          completerUids: ["learner"],
+          sourceRef: null,
+        }),
+      );
+    });
+    const db = await asUser("learner");
+    await assertFails(
+      db.collection("tasks").doc("someones-todo").update({ archived: true }),
+    );
+    await assertSucceeds(
+      db.collection("tasks").doc("someones-todo").update({ status: "in-progress" }),
+    );
+  });
+
+  // ── the `source` pin on the committee update branch ────────────────────────
+  //
+  // Both gates above read the STORED `source`: the delete branch keys the
+  // mirror-dismissal route off it, and the narrow band keys `archived` off it.
+  // Reading the stored value is what makes them safe against a relabel *in the
+  // same write* — but it is only worth anything if the stored value cannot be
+  // rewritten by a LATER write. `source` is set once at create and never
+  // rewritten anywhere in the app (every update path in taskMutations.ts is a
+  // partial `updateDoc` patch and none of them carry the field; the one
+  // `setDoc` is createTask), so pinning it costs no legitimate flow.
+  //
+  // Unpinned it was a two-step: an SU-recognised committee member relabels a
+  // committee task 'fellowship-reminder' via the committee branch, and every
+  // completer on that task immediately gains BOTH the unilateral archive the
+  // section above closes AND the delete branch — which the route serves with a
+  // recursiveDelete, taking the task's whole comment and activity history with
+  // it. The relabel is the pivot; this pin removes it.
+  //
+  // Each test pairs its denial with an ordinary committee edit by the SAME
+  // actor on the SAME doc, so a failure reads as "the source pin refused"
+  // rather than "this actor lost the branch entirely".
+
+  it("refuses an SU committee member relabelling a committee task's source", async () => {
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+    await seed(async (db) => {
+      await db.collection("tasks").doc("committee-task").set(
+        mirrorTask({
+          source: "committee",
+          kind: "generic",
+          visibility: "committee",
+          creatorUid: "someone-else",
+          completerUids: ["learner"],
+          sourceRef: null,
+        }),
+      );
+    });
+    const db = await asUser("sucom");
+    await assertFails(
+      db.collection("tasks").doc("committee-task").update({ source: "fellowship-reminder" }),
+    );
+    // Nor smuggled in under an edit that would otherwise pass on its own.
+    await assertFails(
+      db
+        .collection("tasks")
+        .doc("committee-task")
+        .update({ title: "Term-one comms plan", source: "fellowship-reminder" }),
+    );
+    // The same actor still holds the committee branch on the same doc.
+    await assertSucceeds(
+      db.collection("tasks").doc("committee-task").update({ title: "Term-one comms plan" }),
+    );
+  });
+
+  it("leaves an ordinary committee edit alone — title, description, completers", async () => {
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+    await seed(async (db) => {
+      await db.collection("tasks").doc("committee-task").set(
+        mirrorTask({
+          source: "committee",
+          kind: "generic",
+          visibility: "committee",
+          creatorUid: "someone-else",
+          completerUids: ["learner"],
+          sourceRef: null,
+        }),
+      );
+    });
+    const db = await asUser("sucom");
+    await assertSucceeds(
+      db.collection("tasks").doc("committee-task").update({
+        title: "Draft the term-one comms plan",
+        description: "Owner: comms. Wanted before week 1.",
+        completerUids: ["learner", "facil"],
+        status: "in-progress",
+      }),
+    );
+    // The pin compares VALUES, not affectedKeys, so a client that echoes the
+    // field back unchanged is not collateral damage. Nothing in the app does
+    // this today, but it is the difference between pinning a field and
+    // forbidding a key, and it is the half that would bite if a future editor
+    // started saving whole task documents.
+    await assertSucceeds(
+      db
+        .collection("tasks")
+        .doc("committee-task")
+        .update({ source: "committee", title: "Same source, new title" }),
+    );
+  });
+
+  // `.get('source', '')` defaults BOTH sides, so a row predating the field
+  // compares '' to '' and passes. Worth a test because the obvious spelling of
+  // this pin — `request.resource.data.source == taskData().source` — would
+  // instead throw on the missing field and lock every legacy committee task out
+  // of its own branch, with no failing test to say why.
+  it("still lets a committee member edit a task that has NO source field", async () => {
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+    const legacy = mirrorTask({
+      kind: "generic",
+      visibility: "committee",
+      creatorUid: "someone-else",
+      completerUids: ["learner"],
+      sourceRef: null,
+    });
+    delete legacy.source;
+    await seed(async (db) => {
+      await db.collection("tasks").doc("legacy-task").set(legacy);
+    });
+    const db = await asUser("sucom");
+    await assertSucceeds(
+      db.collection("tasks").doc("legacy-task").update({ title: "Still editable" }),
+    );
+    // The default is a comparison floor, not a blank cheque: adding a `source`
+    // to a row that never had one is still a relabel ('' vs the new value), and
+    // it is refused for the same reason. Backfilling one is an admin job.
+    await assertFails(
+      db.collection("tasks").doc("legacy-task").update({ source: "fellowship-reminder" }),
+    );
+  });
+
+  // The admin arm is a separate `||` branch with no field conditions on it at
+  // all, so the pin does not reach admins: an admin CAN change `source`, and
+  // that is intended. It hands them nothing they lack — admins already hold
+  // unconditional update, archive and delete on every task, so relabelling one
+  // is a longer road to powers they have directly. The only thing it does that
+  // is not already theirs is hand the task's completers a dismissal route, and
+  // that is a deliberate admin act (it is also how an admin-triggered mirror
+  // backfill would legitimately mark a task as a mirror in the first place).
+  it("leaves ADMINS unaffected by the source pin", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("tasks").doc("committee-task").set(
+        mirrorTask({
+          source: "committee",
+          kind: "generic",
+          visibility: "committee",
+          creatorUid: "someone-else",
+          completerUids: ["learner"],
+          sourceRef: null,
+        }),
+      );
+    });
+    const db = await asUser("admin1");
+    await assertSucceeds(
+      db.collection("tasks").doc("committee-task").update({ title: "Admin edit" }),
+    );
+    await assertSucceeds(
+      db.collection("tasks").doc("committee-task").update({ source: "fellowship-reminder" }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V3 W2 PR25: the unmarked-register follow-up id
+// ---------------------------------------------------------------------------
+
+/**
+ * WHAT THE CREATE RULE ACTUALLY ALLOWS AT `course-register__{run}__{group}__
+ * {sessionKey}`, which is NOT what the design assumed.
+ *
+ * The scheduler mints one follow-up task per unmarked register at a
+ * DETERMINISTIC id, and the obvious rules test to write would be "a non-admin
+ * client cannot create a task with source course-register". That test would
+ * pass for the wrong reason on the personal lane and FAIL outright on the
+ * committee one: firestore.rules pins a created task's `sourceRef` to null and
+ * constrains NEITHER `source` NOR the doc id, so
+ *
+ *   - an SU-recognised committee member can create a task at exactly that id
+ *     carrying exactly that source, and
+ *   - any signed-in member can squat the same id on the personal lane.
+ *
+ * This block asserts that, rather than the comfortable opposite, because the
+ * job's ALREADY_EXISTS read-back is built on it: on a collision it reads the
+ * document back and treats it as its own only when the source, the
+ * `sourceRef.cohortId` and an admin completer all agree, and otherwise mints
+ * at a fallback id and logs. The tests that follow are what pin the reason
+ * that read-back exists and the reason its three legs are the three legs they
+ * are.
+ *
+ * The one thing a client CANNOT do is what the second half of this block
+ * asserts: aim a task. `sourceRef` is pinned null at create on both lanes and
+ * pinned equal on the committee update lane, so no client path produces the
+ * shape the read-back looks for. That is what makes the read-back an identity
+ * test rather than a hopeful one, and it is also what makes the run destroy's
+ * `sourceRef.cohortId` sweep safe to point at a new source.
+ */
+describe("tasks: the course-register follow-up id is squattable", () => {
+  const FOLLOW_UP_ID = "course-register__run1__group-a__w03";
+
+  /** The shape the scheduler writes, on the Admin SDK, which bypasses rules. */
+  function followUpTask(overrides = {}) {
+    return {
+      title: "Unmarked register: Tuesday group, week 3",
+      description: "Ask the facilitator to push the register.",
+      source: "course-register",
+      kind: "generic",
+      creatorUid: "admin1",
+      completerUids: ["admin1"],
+      reviewerUids: [],
+      status: "todo",
+      visibility: "committee",
+      subtasks: [],
+      blocks: [],
+      archived: false,
+      sourceRef: {
+        cohortId: "run1",
+        weekNumber: 3,
+        groupId: "group-a",
+        sessionKey: "w03",
+      },
+      createdAt: new Date(),
+      ...overrides,
+    };
+  }
+
+  it("LETS an SU-recognised committee member create a task at the job's own id", async () => {
+    // The uncomfortable one. Nothing in the create rule looks at the doc id,
+    // and the committee arm has no `source` condition at all, so this write
+    // is allowed and the job has to cope with it rather than assume it away.
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+    const db = await asUser("sucom");
+    await assertSucceeds(
+      db
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .set(followUpTask({ creatorUid: "sucom", completerUids: ["sucom"], sourceRef: null })),
+    );
+  });
+
+  it("LETS an ordinary member squat the same id on the personal lane", async () => {
+    // A member cannot claim the source, but they do not need to: the id is
+    // guessable and `.create()` is first-come. The victim here is the JOB,
+    // whose create then fails with ALREADY_EXISTS.
+    await seedCast();
+    const db = await asUser("learner");
+    await assertSucceeds(
+      db
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .set(
+          followUpTask({
+            source: "personal",
+            visibility: "assignees-only",
+            creatorUid: "learner",
+            completerUids: ["learner"],
+            sourceRef: null,
+          }),
+        ),
+    );
+  });
+
+  it("REFUSES a member creating one on the committee lane", async () => {
+    // The personal arm is the only one open to them, and it pins the source,
+    // the visibility and the completer list together. So a member's squat is
+    // always a `personal`, assignees-only, self-assigned task, which is
+    // exactly the shape the read-back's source leg rejects.
+    await seedCast();
+    const db = await asUser("learner");
+    await assertFails(
+      db
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .set(followUpTask({ creatorUid: "learner", completerUids: ["learner"], sourceRef: null })),
+    );
+  });
+
+  it("REFUSES anybody aiming a created task with sourceRef, on either lane", async () => {
+    // THE LEG THAT HOLDS. `sourceRef` is what the read-back and the run
+    // destroy both key on, and no client can set it at create. A squatter can
+    // spell the source; they cannot spell the pointer.
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+
+    const sucom = await asUser("sucom");
+    await assertFails(
+      sucom
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .set(followUpTask({ creatorUid: "sucom", completerUids: ["sucom"] })),
+    );
+
+    const learner = await asUser("learner");
+    await assertFails(
+      learner
+        .collection("tasks")
+        .doc("my-todo")
+        .set(
+          followUpTask({
+            source: "personal",
+            visibility: "assignees-only",
+            creatorUid: "learner",
+            completerUids: ["learner"],
+          }),
+        ),
+    );
+  });
+
+  it("REFUSES a committee member stamping the pointer on afterwards", async () => {
+    // The create pin would be worth nothing if a second write could add it.
+    // Both halves matter: aiming a squatted card at the run makes it look
+    // like the job's own, and aiming an ordinary committee task at a doomed
+    // run volunteers it into that run's destroy cascade.
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+    await seed(async (db) => {
+      await db
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .set(followUpTask({ creatorUid: "sucom", completerUids: ["sucom"], sourceRef: null }));
+    });
+    const db = await asUser("sucom");
+    await assertFails(
+      db
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .update({ sourceRef: { cohortId: "run1", weekNumber: 3 } }),
+    );
+    // The same actor still holds the committee branch on the same document,
+    // so the denial above is the pointer pin and not a lost branch.
+    await assertSucceeds(
+      db.collection("tasks").doc(FOLLOW_UP_ID).update({ status: "in-progress" }),
+    );
+  });
+
+  it("puts a real follow-up in front of the committee and nobody else", async () => {
+    // Visibility `committee` is the point of the card: an unmarked register
+    // is operational, not personal. It is still not readable by a member who
+    // is neither a completer nor a reviewer on it.
+    await seedCast();
+    await seedUser("sucom", { role: "committee", suRecognised: true });
+    await seed(async (db) => {
+      await db.collection("tasks").doc(FOLLOW_UP_ID).set(followUpTask());
+    });
+
+    const sucom = await asUser("sucom");
+    await assertSucceeds(sucom.collection("tasks").doc(FOLLOW_UP_ID).get());
+    const admin = await asUser("admin1");
+    await assertSucceeds(admin.collection("tasks").doc(FOLLOW_UP_ID).get());
+    const learner = await asUser("learner");
+    await assertFails(learner.collection("tasks").doc(FOLLOW_UP_ID).get());
+  });
+
+  it("cannot be archived off the board by a completer who is not an admin", async () => {
+    // `archived` rides the narrow completer band ONLY for the week mirrors
+    // (`source == 'fellowship-reminder'`). Every completer on a real
+    // follow-up is an admin and holds the unconditional branch anyway, so the
+    // scoping costs nothing here; it is asserted because the push archives
+    // this card on the Admin SDK, and a client lane that could do the same
+    // would let a register be un-chased without being pushed.
+    await seedCast();
+    await seed(async (db) => {
+      await db
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .set(followUpTask({ completerUids: ["facil"] }));
+    });
+    const db = await asUser("facil");
+    await assertFails(
+      db.collection("tasks").doc(FOLLOW_UP_ID).update({ archived: true }),
+    );
+    await assertSucceeds(
+      db.collection("tasks").doc(FOLLOW_UP_ID).update({ status: "in-progress" }),
+    );
+  });
+
+  it("cannot be dismissed by a completer the way a week mirror can", async () => {
+    // The delete branch keys the dismissal route off the STORED source, and
+    // `course-register` is not it. A follow-up is the committee's record that
+    // a cohort was chased, not one person's card to tidy away.
+    await seedCast();
+    await seed(async (db) => {
+      await db
+        .collection("tasks")
+        .doc(FOLLOW_UP_ID)
+        .set(followUpTask({ completerUids: ["facil"] }));
+    });
+    const db = await asUser("facil");
+    await assertFails(db.collection("tasks").doc(FOLLOW_UP_ID).delete());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V3 W1 PR5: open mode, streams, and the fields that open a write door
+// ---------------------------------------------------------------------------
+
+/**
+ * The four fields `courseRuns` gained are all SERVER-OWNED, and each is
+ * server-owned for a stated reason rather than by analogy:
+ *
+ *  - `enrolMode` opens a WRITE DOOR. An `open` run admits an enrolment with
+ *    no application behind it, which is a capability change, not content.
+ *  - `streams` is an ELIGIBILITY list the enrol route validates against,
+ *    while `courseEnrolments.streamId` is `allow write: if false`. A
+ *    client-direct edit here can strand rows in a collection no client can
+ *    repair.
+ *  - `enrolledCount` is a counter over rows written transactionally.
+ *  - `submissionExerciseRef` is the run's completion bar.
+ *
+ * Each therefore needs BOTH halves: pinned on update AND birth-pinned on
+ * create, because update only pins and a run born dirty stays dirty forever.
+ */
+describe("courseRuns: V3 open-mode fields are server-owned", () => {
+  it("refuses a drafter creating a run already in open mode, or pre-seeded with streams", async () => {
+    await seedCast();
+    const db = await asUser("drafter");
+    await assertFails(
+      db.collection("courseRuns").doc("run-a").set(runDoc("run-a", { enrolMode: "open" })),
+    );
+    await assertFails(
+      db
+        .collection("courseRuns")
+        .doc("run-b")
+        .set(runDoc("run-b", { streams: [{ id: "technical", label: "Technical" }] })),
+    );
+    await assertFails(
+      db.collection("courseRuns").doc("run-c").set(runDoc("run-c", { enrolledCount: 30 })),
+    );
+    // The clean shapes still pass, both spellings: written explicitly (what
+    // `createRun` does) and left absent (a legacy client).
+    await assertSucceeds(
+      db
+        .collection("courseRuns")
+        .doc("run-ok")
+        .set(runDoc("run-ok", { enrolMode: "admissions", streams: [], enrolledCount: 0 })),
+    );
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run-bare").set(runDoc("run-bare")),
+    );
+  });
+
+  it("refuses an APPROVER flipping enrol mode, streams or the counter", async () => {
+    // The approver is the interesting case throughout this block: they are
+    // authorised to move the run's status and are still refused these, so the
+    // change always goes through the route that owns it.
+    await seedCast();
+    await seedRun("run1", { trackLeadUids: ["lead"] });
+    for (const uid of ["approver", "drafter", "lead"]) {
+      const db = await asUser(uid);
+      await assertFails(
+        db.collection("courseRuns").doc("run1").update({ enrolMode: "open" }),
+      );
+      await assertFails(
+        db
+          .collection("courseRuns")
+          .doc("run1")
+          .update({ streams: [{ id: "technical", label: "Technical" }] }),
+      );
+      await assertFails(
+        db.collection("courseRuns").doc("run1").update({ enrolledCount: 99 }),
+      );
+      await assertFails(
+        db
+          .collection("courseRuns")
+          .doc("run1")
+          .update({ submissionExerciseRef: { weekId: "w06", exerciseId: "x1" } }),
+      );
+    }
+  });
+
+  it("lets an ADMIN write them, the route's own lane and the escape hatch", async () => {
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("admin1");
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run1").update({
+        enrolMode: "open",
+        streams: [{ id: "technical", label: "Technical" }],
+        enrolledCount: 4,
+      }),
+    );
+  });
+
+  it("REGRESSION: a stored null submissionExerciseRef WEDGES a whole-document save, absent does not", async () => {
+    // WHY THIS FIELD IS SPECIFIED AS ABSENT-NEVER-NULL, demonstrated rather
+    // than asserted. The pin is `.get('submissionExerciseRef', {})` on BOTH
+    // sides, so the two shapes behave differently and the difference is a
+    // property of the WRITE SHAPE, not of the field:
+    //
+    //  - a MERGE update (`updateDoc`, what `updateRun` issues today) carries
+    //    the stored value through into `request.resource.data`, so null == null
+    //    and the write lands. That is why the bug can sit dormant.
+    //  - a WHOLE-DOCUMENT save (`setDoc`, what every rehydrate-then-save path
+    //    and every fixture here does) OMITS the key, so the request side falls
+    //    back to `{}` while the stored side is null. `{} != null`, and the run
+    //    is refused to every non-admin for the rest of its life, on writes
+    //    that never mention the field.
+    //
+    // This is the `templateId` trap recorded a few dozen lines up in
+    // firestore.rules, which is why that route writes strings and never null.
+    // If this test goes red on the wedged half, do NOT relax the pin: find
+    // whatever started writing null and stop it.
+    await seedCast();
+
+    // ABSENT (what normalizeCourseRun and createRun produce): a whole-document
+    // save keeps working, which is the state every run is in today.
+    await seedRun("run-absent", { trackLeadUids: ["lead"] });
+    for (const uid of ["approver", "drafter", "lead"]) {
+      const db = await asUser(uid);
+      await assertSucceeds(
+        db
+          .collection("courseRuns")
+          .doc("run-absent")
+          .set(runDoc("run-absent", { trackLeadUids: ["lead"], label: `Saved by ${uid}` })),
+      );
+    }
+
+    // A REAL POINTER re-sent verbatim: also fine, because both sides read the
+    // same map.
+    const ref = { weekId: "w06", exerciseId: "x1" };
+    await seedRun("run-set", { submissionExerciseRef: ref });
+    const set = await asUser("approver");
+    await assertSucceeds(
+      set
+        .collection("courseRuns")
+        .doc("run-set")
+        .set(runDoc("run-set", { submissionExerciseRef: ref, label: "Still editable" })),
+    );
+    // ...and CHANGING it is still refused, because it is a pinned field.
+    await assertFails(
+      set
+        .collection("courseRuns")
+        .doc("run-set")
+        .set(runDoc("run-set", { submissionExerciseRef: { weekId: "w01", exerciseId: "x9" } })),
+    );
+
+    // NULL: wedged. The save omits the key, the defaults disagree, and
+    // nothing an approver, a drafter-owner or a track lead sends is accepted.
+    await seedRun("run-null", {
+      submissionExerciseRef: null,
+      trackLeadUids: ["lead"],
+    });
+    for (const uid of ["approver", "drafter", "lead"]) {
+      const db = await asUser(uid);
+      await assertFails(
+        db
+          .collection("courseRuns")
+          .doc("run-null")
+          .set(runDoc("run-null", { trackLeadUids: ["lead"], label: "Wedged" })),
+      );
+    }
+    // Only an admin can still touch it, which is what makes the state
+    // recoverable rather than terminal.
+    const admin = await asUser("admin1");
+    await assertSucceeds(
+      admin.collection("courseRuns").doc("run-null").update({ submissionExerciseRef: ref }),
+    );
+    const repaired = await asUser("approver");
+    await assertSucceeds(
+      repaired
+        .collection("courseRuns")
+        .doc("run-null")
+        .set(runDoc("run-null", { submissionExerciseRef: ref, trackLeadUids: ["lead"] })),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V3 W1 PR5: courseGroups stream tag, appointments, and the register ceiling
+// ---------------------------------------------------------------------------
+
+describe("courseGroups: V3 server-owned fields and the capacity ceiling", () => {
+  it("refuses a group BORN tagged to a stream or carrying appointments", async () => {
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("approver");
+    await assertFails(
+      db
+        .collection("courseGroups")
+        .doc("grp-a")
+        .set(groupDoc({ streamId: "technical" })),
+    );
+    await assertFails(
+      db
+        .collection("courseGroups")
+        .doc("grp-b")
+        .set(
+          groupDoc({
+            facilitatorAppointments: {
+              facil: { at: new Date(), byUid: "approver", byName: "A", agreedAt: null },
+            },
+          }),
+        ),
+    );
+    await assertSucceeds(db.collection("courseGroups").doc("grp-ok").set(groupDoc()));
+  });
+
+  it("refuses a facilitator retagging their own group's stream or its appointments", async () => {
+    await seedCast();
+    await seedRun("run1");
+    await seed(async (db) => {
+      await db
+        .collection("courseGroups")
+        .doc("grp1")
+        .set(groupDoc({ facilitatorUids: ["facil"] }));
+    });
+    const db = await asUser("facil");
+    // They CAN still edit their session, which is the lane the pin must not
+    // close.
+    await assertSucceeds(
+      db
+        .collection("courseGroups")
+        .doc("grp1")
+        .update({ session: { ...groupDoc().session, location: "Portland Building" } }),
+    );
+    await assertFails(
+      db.collection("courseGroups").doc("grp1").update({ streamId: "technical" }),
+    );
+    await assertFails(
+      db
+        .collection("courseGroups")
+        .doc("grp1")
+        .update({
+          facilitatorAppointments: {
+            facil: { at: new Date(), byUid: "facil", byName: "Self", agreedAt: null },
+          },
+        }),
+    );
+  });
+
+  it("refuses a capacity past the register ceiling, on any run", async () => {
+    // 40 is ATTENDANCE_LIMITS.maxRecords, and it is not a taste decision: the
+    // marking route throws RegisterFullError on the MERGED map for the WHOLE
+    // post past that, so a 41-person group makes bulk marking fail for
+    // everybody in it rather than merely leaving one person unmarked.
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("approver");
+    await assertFails(
+      db.collection("courseGroups").doc("grp-big").set(groupDoc({ capacity: 41 })),
+    );
+    await assertSucceeds(
+      db.collection("courseGroups").doc("grp-max").set(groupDoc({ capacity: 40 })),
+    );
+    await assertFails(
+      db.collection("courseGroups").doc("grp-max").update({ capacity: 41 }),
+    );
+    await assertFails(
+      db.collection("courseGroups").doc("grp-zero").set(groupDoc({ capacity: 0 })),
+    );
+  });
+
+  it("requires a capacity on an OPEN-mode run, and leaves admissions runs alone", async () => {
+    await seedCast();
+    await seedRun("run-open", { enrolMode: "open" });
+    await seedRun("run-adm", { enrolMode: "admissions" });
+    const db = await asUser("approver");
+
+    // Open mode: uncapped is refused, capped is fine.
+    await assertFails(
+      db
+        .collection("courseGroups")
+        .doc("open-uncapped")
+        .set(groupDoc({ runId: "run-open", capacity: null })),
+    );
+    await assertSucceeds(
+      db
+        .collection("courseGroups")
+        .doc("open-capped")
+        .set(groupDoc({ runId: "run-open", capacity: 12 })),
+    );
+    // ...and it cannot be un-capped later either.
+    await assertFails(
+      db.collection("courseGroups").doc("open-capped").update({ capacity: null }),
+    );
+
+    // Admissions: an uncapped group is still legal, because allocation is a
+    // deliberate act by a human who can see the size of the group.
+    await assertSucceeds(
+      db
+        .collection("courseGroups")
+        .doc("adm-uncapped")
+        .set(groupDoc({ runId: "run-adm", capacity: null })),
+    );
+  });
+
+  it("THE TRAP: flipping the run to open wedges an already-uncapped group", async () => {
+    // This is the failure the enrol-mode route exists to prevent, pinned here
+    // so it stays visibly real. `groupCapacityOk()` reads the PARENT run, and
+    // it is evaluated against the merged document on every group update, so a
+    // group that was legal all term becomes unwritable the moment somebody
+    // flips its run to open enrolment. Nothing on the group or the run says
+    // so: the facilitator moving the room just gets permission-denied.
+    //
+    // The route's job is to count these groups and refuse the flip with
+    // `groupCapacityError(null, "open")`'s sentence. If this test ever starts
+    // FAILING (the edit succeeds), the rule stopped requiring a capacity and
+    // the route's 409 became theatre, fix the rule, not this test.
+    await seedCast();
+    await seedRun("run-flip", { enrolMode: "admissions" });
+    await seed(async (db) => {
+      await db
+        .collection("courseGroups")
+        .doc("grp-flip")
+        .set(groupDoc({ runId: "run-flip", capacity: null, facilitatorUids: ["facil"] }));
+    });
+
+    // While the run is in admissions mode the facilitator can edit their slot.
+    const before = await asUser("facil");
+    await assertSucceeds(
+      before
+        .collection("courseGroups")
+        .doc("grp-flip")
+        .update({ session: { ...groupDoc().session, location: "Portland A21" } }),
+    );
+
+    // The Admin SDK flips the run, exactly as the enrol-mode route would if it
+    // did not look at the groups first.
+    await seed(async (db) => {
+      await db.collection("courseRuns").doc("run-flip").update({ enrolMode: "open" });
+    });
+
+    // Same facilitator, same edit, now refused. The group is wedged.
+    const after = await asUser("facil");
+    await assertFails(
+      after
+        .collection("courseGroups")
+        .doc("grp-flip")
+        .update({ session: { ...groupDoc().session, location: "Monica Partridge B12" } }),
+    );
+
+    // And an approver setting a capacity is the repair, so the wedge is not
+    // permanent once somebody knows what happened.
+    const approver = await asUser("approver");
+    await assertSucceeds(
+      approver.collection("courseGroups").doc("grp-flip").update({ capacity: 12 }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V3 W1 PR5: a member cannot write their own attendance
+// ---------------------------------------------------------------------------
+
+describe("courseEnrolments: the attendance rollup is not the member's to write", () => {
+  it("refuses a member writing attendance or submissionDone onto their OWN row", async () => {
+    // The rollup lives on a row the member can READ, which is what lets a
+    // learner see their own attendance with no new read rule. That makes the
+    // write side worth an explicit test rather than an inherited one: the
+    // collection is `allow write: if false`, and the completion bar for the
+    // whole pre-course is computed from these two fields.
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    const db = await asUser("learner");
+    const ref = db.collection("courseEnrolments").doc("run1__learner");
+
+    // Reading their own row: yes, and that is the point.
+    await assertSucceeds(ref.get());
+
+    await assertFails(
+      ref.update({
+        attendance: {
+          sessionsHeld: 6,
+          attendedInFull: 6,
+          late: 0,
+          leftEarly: 0,
+          absent: 0,
+          excused: 0,
+          lastPushedSessionKey: "w06",
+          lastComputedAt: new Date(),
+        },
+      }),
+    );
+    await assertFails(ref.update({ submissionDone: true }));
+    await assertFails(ref.update({ status: "completed" }));
+    await assertFails(ref.update({ streamId: "technical" }));
+    await assertFails(ref.update({ droppedOutAt: null }));
+    // Nor by minting a fresh row at their own deterministic id.
+    await assertFails(
+      db.collection("courseEnrolments").doc("run2__learner").set({
+        runId: "run2",
+        courseId: "course1",
+        uid: "learner",
+        groupId: null,
+        status: "active",
+        role: "learner",
+        submissionDone: true,
+      }),
+    );
+  });
+
+  it("refuses an ADMIN client-writing the rollup too; the push transaction owns it", async () => {
+    // The rollup is a FULL RECOMPUTE inside the attendance push, never a
+    // delta. A hand write is exactly the unreconcilable drift that
+    // applicationCounts already demonstrates.
+    await seedCast();
+    await seedEnrolment("run1", "learner");
+    const db = await asUser("admin1");
+    await assertFails(
+      db.collection("courseEnrolments").doc("run1__learner").update({ submissionDone: true }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V3 W1 PR7: coursePages, and the two courseRuns fields that ship with it
+// ---------------------------------------------------------------------------
+
+/** Seed one authored page (rules disabled: the collection is routes-only). */
+async function seedCoursePage(courseId, overrides = {}) {
+  await seed(async (db) => {
+    await db.collection("coursePages").doc(courseId).set({
+      headline: "Learn how AI could go wrong, and what to do about it",
+      pitchBlocks: [],
+      whoItIsFor: "Any student, no prerequisites.",
+      howSelectionWorks: "A short written application, reviewed blind.",
+      membershipExpectation: "Members only. Membership is 5 pounds for the year.",
+      formatText: "In person, small groups",
+      sessionsText: "Six weekly sessions",
+      weeklyHoursText: "Around 5 hours a week",
+      weeklyThemes: [],
+      sampleWeekNumber: 3,
+      faq: [],
+      journey: [],
+      coverImageUrl: null,
+      coverAlt: "",
+      visualSeed: "",
+      themesSourceTemplateId: null,
+      themesSourceLabel: null,
+      updatedAt: new Date(),
+      updatedByUid: "drafter",
+      ...overrides,
+    });
+  });
+}
+
+describe("coursePages: staff read, and NOBODY writes from a client", () => {
+  it("lets a drafter, an approver and an admin read an authored page", async () => {
+    // The three holders of the /admin/courses gate, which is where the only
+    // client-direct reader (useCoursePage, inside CoursePageEditor) lives.
+    await seedCast();
+    await seedCoursePage("course1");
+    for (const uid of ["drafter", "approver", "admin1"]) {
+      const db = await asUser(uid);
+      await assertSucceeds(db.collection("coursePages").doc("course1").get());
+      await assertSucceeds(db.collection("coursePages").limit(1).get());
+    }
+  });
+
+  it("refuses a member and a pending account, doc and list alike", async () => {
+    // V3 W3 PR20. The page is the authored pitch for a course whose own
+    // document is now staff-only while it is a draft, so a signed-in read
+    // here would have handed back the copy the course doc withholds. The
+    // logged-out marketing page is unaffected: it is served by an Admin SDK
+    // fetcher on a server component (fetchCoursePage.ts).
+    await seedCast();
+    await seedCoursePage("course1");
+    for (const uid of ["learner", "pending1", "facil", "lead"]) {
+      const db = await asUser(uid);
+      await assertFails(db.collection("coursePages").doc("course1").get());
+      await assertFails(db.collection("coursePages").limit(1).get());
+    }
+  });
+
+  it("refuses a signed-out read, of one doc and of the collection", async () => {
+    await seedCoursePage("course1");
+    const db = await asAnon();
+    await assertFails(db.collection("coursePages").doc("course1").get());
+    await assertFails(db.collection("coursePages").limit(1).get());
+  });
+
+  it("refuses EVERY client write, including an admin's", async () => {
+    // The whole point of the collection being routes-only: `pitchBlocks`
+    // renders through dangerouslySetInnerHTML on a logged-out page, and
+    // sanitizeBlocks is a shape filter, not an HTML sanitiser. Two write paths
+    // cannot enforce one sanitisation, so there is exactly one, and it is
+    // PUT /api/courses/[courseId]/page.
+    await seedCast();
+    await seedCoursePage("course1");
+    for (const uid of ["admin1", "approver", "drafter", "learner"]) {
+      const db = await asUser(uid);
+      const ref = db.collection("coursePages").doc("course1");
+      await assertFails(ref.update({ headline: "Rewritten" }));
+      await assertFails(
+        ref.update({
+          pitchBlocks: [
+            { id: "b1", type: "richText", html: "<script>alert(1)</script>" },
+          ],
+        }),
+      );
+      await assertFails(ref.delete());
+      // Nor by minting the page for a course that has none yet.
+      await assertFails(
+        db.collection("coursePages").doc("course2").set({ headline: "Mine now" }),
+      );
+    }
+  });
+
+  it("refuses a write even from the course's own author", async () => {
+    // `drafter` authors course1 in `courseDoc()`, and the `courses` update rule
+    // would let them edit the course document itself. The page is deliberately
+    // not on that lane.
+    await seedCast();
+    await seed(async (db) => {
+      await db.collection("courses").doc("course1").set(courseDoc());
+    });
+    await seedCoursePage("course1");
+    const db = await asUser("drafter");
+    await assertFails(
+      db.collection("coursePages").doc("course1").update({ headline: "Mine" }),
+    );
+  });
+});
+
+describe("courseRuns: the V3 cohort and startHereBlocks are capped authoring fields", () => {
+  it("lets the run's drafter set a cohort and a start-here panel", async () => {
+    // Unlike enrolMode and streams, these two are CONTENT: they name a cohort
+    // and write an orientation note. They gate nothing and no route reads them
+    // to decide anything, so they stay on the client-direct authoring lane
+    // with a cap rather than moving into the server-owned tier.
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("drafter");
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run1").update({
+        cohort: { term: "autumn", year: 2026, number: 2 },
+        startHereBlocks: [{ id: "b1", type: "heading", text: "Start here", level: 2 }],
+      }),
+    );
+  });
+
+  it("refuses an unknown key on the cohort map, and a cohort that is null", async () => {
+    // The key-set cap is this layer's whole vocabulary for bounding a map. It
+    // ALSO refuses a stored null, which matters more than it looks: `.keys()`
+    // on null raises, and a null that got in would then fail this same clause
+    // on every later edit, wedging the run for everyone but an admin. Same
+    // class as the submissionExerciseRef pin above.
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("drafter");
+    const ref = db.collection("courseRuns").doc("run1");
+    await assertFails(
+      ref.update({
+        cohort: { term: "autumn", year: 2026, number: 1, secret: "smuggled" },
+      }),
+    );
+    await assertFails(ref.update({ cohort: null }));
+  });
+
+  it("refuses a cohort whose keys are the right NAMES but the wrong types", async () => {
+    // The key-set cap says nothing about what is stored under a permitted key.
+    // Without the type clauses beside it, `{ term: 'winter', year: 'soon',
+    // number: [] }` is a legal write, and then every reader drops it as
+    // malformed: the stored cohort and the rendered cohort disagree, and a
+    // free-text string sits on a field the public page prints.
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("drafter");
+    const ref = db.collection("courseRuns").doc("run1");
+    for (const cohort of [
+      { term: "winter", year: 2026, number: 1 },
+      { term: "autumn", year: "2026", number: 1 },
+      { term: "autumn", year: 2026.5, number: 1 },
+      { term: "autumn", year: 2026, number: "one" },
+      { term: "autumn", year: 2026, number: [1] },
+      { term: 7, year: 2026, number: 1 },
+    ]) {
+      await assertFails(ref.update({ cohort }));
+    }
+    // And the good one still lands, so the clauses refuse a shape rather than
+    // the field.
+    await assertSucceeds(
+      ref.update({ cohort: { term: "spring", year: 2027, number: 3 } }),
+    );
+    // An ABSENT cohort passes the same clauses, which is what the `.get`
+    // defaults are for: every pre-V3 run writes without the field.
+    await assertSucceeds(ref.update({ label: "Autumn 2026" }));
+  });
+
+  it("refuses a start-here panel over the cap", async () => {
+    await seedCast();
+    await seedRun("run1");
+    const db = await asUser("drafter");
+    await assertFails(
+      db.collection("courseRuns").doc("run1").update({
+        startHereBlocks: Array.from({ length: 21 }, (_, i) => ({
+          id: `b${i}`,
+          type: "divider",
+        })),
+      }),
+    );
+  });
+
+  it("applies the same caps at CREATE, not only on update", async () => {
+    // runContentOk() is shared by both branches on purpose: a field capped
+    // only on update is a field a drafter can be born holding too much of.
+    const db = await asUser("drafter");
+    await seedCast();
+    await assertFails(
+      db.collection("courseRuns").doc("run9").set(
+        runDoc("run9", { cohort: { term: "autumn", year: 2026, number: 1, oops: 1 } }),
+      ),
+    );
+    await assertSucceeds(
+      db.collection("courseRuns").doc("run9").set(
+        runDoc("run9", {
+          cohort: { term: "autumn", year: 2026, number: 1 },
+          startHereBlocks: [],
+        }),
+      ),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V3 W3 PR20: draft course and run reads are staff-only
+// ---------------------------------------------------------------------------
+
+/**
+ * The narrowing: `courses` with status 'draft' and `courseRuns` with status
+ * 'draft' left the signed-in tier. Everything else about these two collections
+ * is unchanged, and the weeks subcollection was deliberately NOT narrowed (the
+ * "courseRuns weeks" suite above still reads w03 on a draft run as a pending
+ * user, and that stays green on purpose).
+ *
+ * Two properties are easy to get wrong and are pinned separately here:
+ *
+ *  1. LISTS ARE JUDGED ON THE QUERY, NOT ON THE ROWS. Firestore refuses a list
+ *     whose potential result set could include a document the rule denies, so
+ *     an unfiltered list over `courses` by a caller with no course permission
+ *     is refused EVEN IF every stored course happens to be published. The
+ *     permission clauses are resource-independent, so a drafter, an approver
+ *     and an admin still list the whole collection unfiltered, which is what
+ *     useCourses() and AdminCourseList do.
+ *  2. A COURSE COLLABORATOR CAN READ A DRAFT COURSE BUT NOT A DRAFT RUN.
+ *     `collaboratorUids` lives on the course; the run has only `authorUid`,
+ *     and resolving the parent would put a candidate-derived get() in a read
+ *     rule. The limitation is real and tested rather than papered over.
+ *
+ * ## Mutation check (each restored bit-exact afterwards)
+ *  1. `courses` read reverted to `allow read: if isSignedIn()` → five of the
+ *     eight tests below go red (every draft refusal, the fail-closed case and
+ *     the unfiltered-list refusal). Run.
+ *  2. The `|| isOwnCourse()` clause deleted → exactly ONE test goes red, the
+ *     author one, which is what proves the author clause is load bearing
+ *     rather than shadowed by the permission clauses. Run.
+ *  3. `courseRuns` given a collaborator clause resolved with a get() on the
+ *     parent course → exactly one test goes red, "a course COLLABORATOR ...
+ *     but NOT the draft run", which is the reminder that the honest
+ *     limitation is tested behaviour and not an oversight. Run.
+ */
+describe("V3 W3 PR20: draft courses and runs are staff-only", () => {
+  /** Seed one draft and one published course, plus a draft and a live run. */
+  async function seedDraftAndLive() {
+    await seed(async (db) => {
+      await db.collection("courses").doc("c-draft").set(courseDoc());
+      await db
+        .collection("courses")
+        .doc("c-live")
+        .set(courseDoc({ status: "published" }));
+      await db
+        .collection("courses")
+        .doc("c-archived")
+        .set(courseDoc({ status: "archived" }));
+    });
+    await seedRun("r-draft");
+    await seedRun("r-live", { status: "running" });
+    await seedRun("r-cancelled", { status: "cancelled" });
+  }
+
+  it("refuses a plain member a draft course and a draft run", async () => {
+    await seedCast();
+    await seedDraftAndLive();
+    const db = await asUser("learner");
+    await assertFails(db.collection("courses").doc("c-draft").get());
+    await assertFails(db.collection("courseRuns").doc("r-draft").get());
+  });
+
+  it("refuses a PENDING applicant and a signed-out visitor the same two docs", async () => {
+    await seedCast();
+    await seedDraftAndLive();
+    const pending = await asUser("pending1");
+    await assertFails(pending.collection("courses").doc("c-draft").get());
+    await assertFails(pending.collection("courseRuns").doc("r-draft").get());
+    const anon = await asAnon();
+    await assertFails(anon.collection("courses").doc("c-live").get());
+    await assertFails(anon.collection("courseRuns").doc("r-live").get());
+  });
+
+  it("keeps published, archived and every non-draft run status signed-in readable", async () => {
+    await seedCast();
+    await seedDraftAndLive();
+    const db = await asUser("learner");
+    await assertSucceeds(db.collection("courses").doc("c-live").get());
+    await assertSucceeds(db.collection("courses").doc("c-archived").get());
+    // There is no 'published' run status. `running` and `cancelled` are both
+    // simply not-draft, which is the whole predicate.
+    await assertSucceeds(db.collection("courseRuns").doc("r-live").get());
+    await assertSucceeds(db.collection("courseRuns").doc("r-cancelled").get());
+    const pending = await asUser("pending1");
+    await assertSucceeds(pending.collection("courseRuns").doc("r-live").get());
+  });
+
+  it("lets the author, a draftCourse holder, an approver and an admin read both drafts", async () => {
+    await seedCast();
+    await seedDraftAndLive();
+    // `drafter` is BOTH the seeded authorUid and a draftCourse holder, so the
+    // author clause needs its own actor to be visible: `facil` owns c-mine
+    // and r-mine and holds no permission at all.
+    await seed(async (db) => {
+      await db
+        .collection("courses")
+        .doc("c-mine")
+        .set(courseDoc({ authorUid: "facil" }));
+    });
+    await seedRun("r-mine", { authorUid: "facil" });
+
+    for (const uid of ["drafter", "approver", "admin1"]) {
+      const db = await asUser(uid);
+      await assertSucceeds(db.collection("courses").doc("c-draft").get());
+      await assertSucceeds(db.collection("courseRuns").doc("r-draft").get());
+    }
+
+    const author = await asUser("facil");
+    await assertSucceeds(author.collection("courses").doc("c-mine").get());
+    await assertSucceeds(author.collection("courseRuns").doc("r-mine").get());
+    // ...and only their own: authorship is not a permission.
+    await assertFails(author.collection("courses").doc("c-draft").get());
+    await assertFails(author.collection("courseRuns").doc("r-draft").get());
+  });
+
+  it("lets a course COLLABORATOR read the draft course but NOT the draft run", async () => {
+    // The documented limitation, pinned so it cannot drift into a surprise:
+    // collaboratorUids lives on the course doc, so the run cannot honour it
+    // without a candidate-derived get() in a read rule. No client surface
+    // needs it today (every run reader sits behind the /admin/courses gate,
+    // which a permissionless collaborator cannot pass anyway).
+    await seedCast();
+    await seed(async (db) => {
+      await db
+        .collection("courses")
+        .doc("c-collab")
+        .set(courseDoc({ collaboratorUids: ["learner"] }));
+    });
+    await seedRun("r-collab", { courseId: "c-collab" });
+    const db = await asUser("learner");
+    await assertSucceeds(db.collection("courses").doc("c-collab").get());
+    await assertFails(db.collection("courseRuns").doc("r-collab").get());
+  });
+
+  it("fails CLOSED on a course or run with no status field at all", async () => {
+    await seedCast();
+    await seed(async (db) => {
+      const { status: _cs, ...noStatusCourse } = courseDoc();
+      await db.collection("courses").doc("c-nostatus").set(noStatusCourse);
+      const { status: _rs, ...noStatusRun } = runDoc("r-nostatus");
+      await db.collection("courseRuns").doc("r-nostatus").set(noStatusRun);
+    });
+    const db = await asUser("learner");
+    await assertFails(db.collection("courses").doc("c-nostatus").get());
+    await assertFails(db.collection("courseRuns").doc("r-nostatus").get());
+    await assertSucceeds((await asUser("admin1")).collection("courses").doc("c-nostatus").get());
+  });
+
+  it("REGRESSION: an unfiltered 25-doc list over courses is refused wholesale for a plain member and served for staff", async () => {
+    // Rules are not filters. One draft among twenty-five is enough to sink an
+    // unfiltered list, because Firestore judges the QUERY. This is the
+    // behaviour change the rule's comment describes, and the reason no
+    // client-direct list over `courses` is issued outside /admin/courses.
+    await seedCast();
+    await seed(async (db) => {
+      for (let i = 0; i < 25; i += 1) {
+        const id = `c${String(i).padStart(2, "0")}`;
+        await db
+          .collection("courses")
+          .doc(id)
+          .set(courseDoc({ status: i === 7 ? "draft" : "published" }));
+      }
+    });
+
+    const member = await asUser("learner");
+    await assertFails(member.collection("courses").get());
+    // The migration path for any future member-facing list: constrain on
+    // status and the candidate set becomes one the first clause allows.
+    const filtered = await assertSucceeds(
+      member.collection("courses").where("status", "==", "published").get(),
+    );
+    assert.equal(filtered.size, 24);
+
+    // The three staff hats list the lot, drafts included, because their
+    // clauses do not touch `resource` at all. This is exactly the read
+    // useCourses() issues from AdminCourseList, CourseEditor and
+    // CoursePageEditor.
+    for (const uid of ["drafter", "approver", "admin1"]) {
+      const db = await asUser(uid);
+      const all = await assertSucceeds(db.collection("courses").get());
+      assert.equal(all.size, 25);
+    }
+  });
+
+  it("REGRESSION: AdminCourseList's unfiltered courseRuns read still serves a draftCourse holder", async () => {
+    // AdminCourseList.tsx reads every run in one unfiltered query to label the
+    // course rows, and useCourseRuns() reads them filtered by courseId. Both
+    // are issued by a caller who may hold draftCourse and nothing else, and
+    // both must survive the narrowing.
+    await seedCast();
+    await seed(async (db) => {
+      for (let i = 0; i < 25; i += 1) {
+        const id = `run${String(i).padStart(2, "0")}`;
+        await db
+          .collection("courseRuns")
+          .doc(id)
+          .set(runDoc(id, { status: i % 3 === 0 ? "draft" : "running" }));
+      }
+    });
+    const db = await asUser("drafter");
+    const all = await assertSucceeds(db.collection("courseRuns").get());
+    assert.equal(all.size, 25);
+    const scoped = await assertSucceeds(
+      db.collection("courseRuns").where("courseId", "==", "course1").get(),
+    );
+    assert.equal(scoped.size, 25);
+    // The same two queries from a plain member: the unfiltered one goes, the
+    // courseId-scoped one goes too, because neither constrains status.
+    const member = await asUser("learner");
+    await assertFails(member.collection("courseRuns").get());
+    await assertFails(
+      member.collection("courseRuns").where("courseId", "==", "course1").get(),
+    );
+  });
+
+  it("leaves the weeks subcollection under a DRAFT run signed-in readable, deliberately", async () => {
+    // Not an oversight and not a hole this PR forgot: narrowing the weeks
+    // means re-routing useWeek, ProgressBody and useGroupWeeks (an unfiltered
+    // getDocs) through a server fetcher. Until that lands, draft curriculum is
+    // readable by any signed-in account and the docs say so.
+    await seedCast();
+    await seedRun("r-draft");
+    await seed(async (db) => {
+      await db
+        .collection("courseRuns")
+        .doc("r-draft")
+        .collection("weeks")
+        .doc("w03")
+        .set({
+          weekNumber: 3,
+          title: "Goal misgeneralisation",
+          summary: "Read the two papers.",
+          guideBlocks: [],
+          materials: [],
+          exercises: [],
+          checklist: [],
+          estimatedMinutes: null,
+          published: false,
+        });
+    });
+    const db = await asUser("learner");
+    await assertFails(db.collection("courseRuns").doc("r-draft").get());
+    await assertSucceeds(
+      db.collection("courseRuns").doc("r-draft").collection("weeks").doc("w03").get(),
+    );
+    await assertSucceeds(
+      db.collection("courseRuns").doc("r-draft").collection("weeks").get(),
+    );
+  });
+});

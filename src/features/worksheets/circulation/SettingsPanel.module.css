@@ -1,0 +1,234 @@
+/* ============================================================
+   SettingsPanel: the circulation's own settings, after it has
+   gone out.
+
+   A COLUMN OF CARDS, never a grid. Every card here is a
+   decision the reader makes in order (who reviews, by when,
+   what may be written, who hears about it), and side-by-side
+   cards would invite them to answer the fourth question first.
+   The one that has to be within reach of all of them is the
+   save state, which is why it sits in the panel's header rather
+   than inside whichever card was touched last.
+
+   The event rows deliberately repeat CirculateDialog's shape:
+   this panel and that dialog set the same switches, and a
+   sender who has used one should recognise the other rather
+   than have to re-read it.
+   ============================================================ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.heading {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-tight);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
+}
+
+/* === Reviewers ============================================= */
+
+.people {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.person {
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+/* === Due date ============================================== */
+
+.dueRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* === Review ================================================ */
+
+.switches {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* === Notifications ========================================= */
+
+.events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Description on the left, the two channel switches on the right. `minmax(0,
+   1fr)` on the text track so a long description wraps instead of pushing the
+   switches off the edge. */
+.event {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: start;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.event:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.eventText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.eventLabel {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.eventDescription {
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+
+/* The scheduler note: a caveat about this environment rather than a
+   description of the switch, so it is italic. Muted rather than warning
+   coloured, because a line only admins can see should not be the loudest thing
+   in the section it qualifies. */
+.eventNote {
+  font-size: var(--text-xs);
+  font-style: italic;
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+
+.eventChannels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* A row's own second line: the due-soon schedule, spanning the description
+   and the switches. Inside the row rather than in a card of its own, because
+   what is being edited is that switch's timing. */
+.eventExtra {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding-top: var(--space-2);
+}
+
+.eventExtraNote {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-top: var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+
+/* The one Save button on a panel that otherwise saves itself. Its note sits
+   beside it rather than under it, so the pair reads as one control. */
+.slotSave {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+
+/* === Mobile ================================================
+   The channel switches move UNDER the description and turn
+   into a row: two switches stacked to the right of a wrapped
+   paragraph leaves each of them a column two words wide, and
+   the pair reads better side by side once they have the full
+   width. The date picker's trigger and its Clear button stack
+   for the same reason. */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .panel {
+    gap: var(--space-3);
+  }
+
+  .event {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
+  .eventChannels {
+    flex-direction: row;
+    gap: var(--space-5);
+  }
+
+  .dueRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  /* Save and its note stack, so the button keeps a full row to be tapped in
+     and the note is not squeezed into two words beside it. */
+  .slotSave {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

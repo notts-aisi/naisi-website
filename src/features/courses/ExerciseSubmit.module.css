@@ -1,0 +1,184 @@
+/* ============================================================
+   ExerciseSubmit — the member's answer to one weekly exercise.
+
+   Sits inside WeekCurriculum's exercise card (`.exercise`: bordered,
+   elevated, column flow), so this module owns NO card of its own — it
+   is the lower half of somebody else's card and reads as one block
+   with the prompt above it. Everything here is quiet on purpose: the
+   prompt is the loud thing, the answer field is where the member
+   works, and the only colour is the review verdict.
+
+   Motion budget: transitions only, no entrances. The card is already
+   inside PageEnter, and a field that flies in is a field you can't
+   start typing into.
+   ============================================================ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+/* ---- Status line: verdict chip / required marker / submitted stamp ---- */
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  /* Nothing to say yet on an untouched optional exercise — collapse rather
+     than leave a gap the flex parent still pays for. */
+  min-height: 0;
+}
+
+.status:empty {
+  display: none;
+}
+
+/* State, not definition: WeekCurriculum's kind line already says an exercise
+   IS required; this says it is required AND still outstanding, and it
+   disappears the moment something is submitted. */
+.required {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-warning);
+}
+
+.stamp {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- The field ---- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.label {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-text-subtle);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-danger);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  /* The SavedFlash sits beside the button and changes width as it cycles;
+     a fixed baseline stops the row jumping when "Saving…" becomes "Saved". */
+  min-height: 2.25rem;
+}
+
+/* ---- Locked answer (reviewed, or a finished cohort) ---- */
+
+.answerBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.answer {
+  /* MemberText renders a div of plain text; give it the read-back treatment
+     of a quoted answer rather than an input. */
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  transition: border-color var(--dur-quick) var(--ease-naisi);
+}
+
+.quiet {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.lockNote {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-text-subtle);
+}
+
+/* ---- Facilitator feedback ---- */
+
+.feedback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-left: 2px solid var(--color-accent);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--color-accent-soft);
+  transition: border-color var(--dur-quick) var(--ease-naisi);
+}
+
+.feedbackHead {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.feedbackText {
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* === Reduced motion ===================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  /* Colour-only transitions, but they are still motion-over-time; the
+     tokens.css belt already collapses the durations — this states the
+     intent locally so a future non-token transition here is caught. */
+  .answer,
+  .feedback {
+    transition: none;
+  }
+}
+
+/* === Mobile ============================================= */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .actions {
+    /* Button first, save state under it — side by side the flash gets
+       squeezed to a couple of characters at 320px. */
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+}

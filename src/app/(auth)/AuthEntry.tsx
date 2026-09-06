@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
@@ -11,6 +11,7 @@ import GoogleSignInButton from "@/components/GoogleSignInButton";
 import SigningIn from "@/components/SigningIn";
 import signinStyles from "@/components/SigningIn.module.css";
 import styles from "./register/registerSignIn.module.css";
+import { mark, warn } from "@/lib/devMonitor";
 import RegisterAudienceToggle, {
   type RegisterAudience,
 } from "./register/RegisterAudienceToggle";
@@ -22,6 +23,11 @@ import {
   signInWithEmailPassword,
 } from "@/auth/signInWithEmailPassword";
 import { useAuth } from "@/auth/AuthProvider";
+import { useHydrated } from "@/hooks/useHydrated";
+import { isFunnelReturn } from "@/lib/authReturn";
+import { hardNavigate } from "@/lib/navigation/hardNavigate";
+import { claimSelfHealAttempt } from "@/lib/navigation/selfHealGuard";
+import { minWidth } from "@/theme/breakpoints";
 import {
   RecaptchaInvisible,
   RECAPTCHA_ENABLED,
@@ -29,17 +35,24 @@ import {
 } from "@/components/ui/RecaptchaInvisible";
 
 type Mode = "signin" | "register";
-type SignInPhase = "idle" | "active" | "success" | "exiting" | "exitingBack";
+type SignInPhase = "idle" | "active" | "navigating" | "exitingBack";
 
-const MIN_ACTIVE_MS = 1700;
-// Green left-to-right alignment sweep. ~30% faster than the original 2550 (must
-// match LivingPlasma's successDurationMs default).
-const SUCCESS_DURATION_MS = 1785;
-const SUCCESS_HOLD_TAIL_MS = 1330;
 const EXIT_DURATION_MS = 530;
-const CANCEL_GRACE_MS = 900;
+// How long after a refocus (popup dismissed?) before the surge calms back to
+// idle. Generous because the GIS credential routinely lands well after focus
+// returns on a slow connection — with the loader visible by default, a
+// premature reset reads as a "gave up" flicker mid-sign-in.
+const CANCEL_GRACE_MS = 2500;
 const RESEND_COOLDOWN_SECONDS = 60;
-const sleep = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
+// Resolves after the browser has painted the current frame (double rAF) — lets
+// the handoff pane reach the screen before the document starts unloading.
+const nextPaint = () =>
+  new Promise<void>((res) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => res())),
+  );
+// Mirrors naisi.sidebar.collapsed: localStorage, not cookies, to sidestep PECR
+// preference-cookie ambiguity.
+const LOADER_OPEN_KEY = "naisi.auth.loaderOpen";
 // Shared timing for the in-place layout glides so the fields settle together
 // instead of jerking in stages on a mode switch.
 const LAYOUT_T = { duration: 0.34, ease: [0.22, 0.61, 0.36, 1] } as const;
@@ -53,14 +66,17 @@ const TAGLINE: Record<RegisterAudience, string> = {
  * Unified auth entry — one morphing form for both sign-in and registration.
  * `/login` mounts it in "signin" mode, `/register` (signed-out) in "register"
  * mode; the top toggle flips between them in place. The Google
- * surge/success-sweep choreography is shared (and branched by mode so a register
- * sign-up isn't cut off mid-sweep). Registration submits to the enumeration-safe
+ * surge choreography is shared. Registration submits to the enumeration-safe
  * server route and shows the uniform "check your inbox" screen.
  */
 export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get("next") ?? "/dashboard";
+  // Latched at mount: `switchMode` rewrites the URL in place to /login or
+  // /register, `useSearchParams` follows that rewrite, and the address
+  // somebody arrived with is gone by the time they press anything. Pressing
+  // "Create account" on an apply-funnel /login used to throw the funnel away.
+  const [next] = useState(() => params.get("next") ?? "/dashboard");
   // Guard every post-auth redirect against open-redirect: only ever navigate to a
   // same-origin path, never an absolute URL or a protocol-relative //evil.com.
   const safeNext = next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
@@ -70,26 +86,91 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
   const [audience, setAudience] = useState<RegisterAudience>(
     params.get("type") === "collaborator" ? "collaborator" : "member",
   );
-  // The ambient/sign-in animation is tucked away by default so it doesn't get in
-  // the way; the little chevron above the action button reveals it. When hidden,
-  // submits skip the (now-invisible) green sweep so there's no dead pause.
+  // The ambient/sign-in animation. Open by default on md+ viewports so the
+  // sign-in choreography is always visible; closed by default on phones, where
+  // the bar it lives in is bottom-stuck and the viewport is zoom-locked
+  // (AuthBodyLock), so the extra height would squeeze the fields against the
+  // keyboard. The chevron persists an explicit choice either way. Starts false
+  // on both server and client render, then the pre-paint effect below applies
+  // the stored/derived value — SSR markup can't know the viewport, and this
+  // keeps hydration mismatch-free.
   const [loaderOpen, setLoaderOpen] = useState(false);
+  useLayoutEffect(() => {
+    let stored: string | null = null;
+    try {
+      stored = localStorage.getItem(LOADER_OPEN_KEY);
+    } catch {
+      /* storage unavailable */
+    }
+    if (stored === "1" || stored === "0") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- pre-paint init from storage
+      setLoaderOpen(stored === "1");
+      return;
+    }
+    try {
+      if (window.matchMedia(minWidth("md")).matches) setLoaderOpen(true);
+    } catch {
+      /* matchMedia unavailable */
+    }
+  }, []);
   const [phase, setPhase] = useState<SignInPhase>("idle");
-  const [successAt, setSuccessAt] = useState<number | null>(null);
+  // Destination of an in-flight post-sign-in navigation; non-null renders the
+  // full-viewport handoff pane.
+  const [navDest, setNavDest] = useState<string | null>(null);
   const [entering, setEntering] = useState(true);
-  const activeStartRef = useRef(0);
   const credentialReceivedRef = useRef(false);
   const handledNavRef = useRef(false);
   const mintingRef = useRef(false);
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  // The two credential boxes are UNCONTROLLED and read out of the DOM when
+  // they are needed. Controlled ones lost anything that reached them before
+  // hydration. A password manager fills on load, so somebody on a slow
+  // connection watched React's first render wipe both fields. The drafts
+  // below are what each box was last seen holding, so a remount (the mode
+  // switch collapses the password block; the check-inbox screen replaces the
+  // whole card) restores it the way state used to.
+  const formRef = useRef<HTMLFormElement>(null);
+  const emailDraftRef = useRef("");
+  const passwordDraftRef = useRef("");
+  /**
+   * The box's live value, remembered on the way past. Falls back to the draft
+   * while the box is unmounted, which is the register leg for the password.
+   */
+  const readField = useCallback((id: string, draft: { current: string }) => {
+    const box = formRef.current?.querySelector<HTMLInputElement>(`#${id}`);
+    if (box) draft.current = box.value;
+    return draft.current;
+  }, []);
+  // Disables the submit until React is listening, so a press before then does
+  // nothing rather than running the browser's own submission (which reloaded
+  // /login with both fields blank and no message anywhere).
+  const hydrated = useHydrated();
   const [busy, setBusy] = useState(false);
+  // Google credential exchange in flight — greys the GIS button, blocks a
+  // second click, and shows the ring beside it.
+  const [googleBusy, setGoogleBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [resetNote, setResetNote] = useState<string | null>(null);
   const [sentEmail, setSentEmail] = useState<string | null>(null);
   // reCAPTCHA v2 Invisible — driven imperatively on submit (no visible widget).
   const recaptchaRef = useRef<RecaptchaHandle>(null);
+
+  // Put a draft back when its box comes back. An uncontrolled box has no
+  // memory across an unmount, and both legs that unmount one are round trips a
+  // person makes by hand: register → sign in returns to the password field,
+  // and the check-inbox screen returns to the whole form. Only ever into an
+  // empty box, so a value typed before hydration is never overwritten.
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form) return;
+    for (const [id, draft] of [
+      ["auth-email", emailDraftRef],
+      ["auth-password", passwordDraftRef],
+    ] as const) {
+      const box = form.querySelector<HTMLInputElement>(`#${id}`);
+      if (box && !box.value) box.value = draft.current;
+    }
+  }, [mode, sentEmail]);
 
   // Reveal fallback if GIS never reports ready.
   useEffect(() => {
@@ -116,7 +197,7 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
   // Logo-click back-swipe.
   useEffect(() => {
     const onBack = (e: Event) => {
-      if (phase === "exiting" || phase === "exitingBack" || phase === "success") return;
+      if (phase === "navigating" || phase === "exitingBack") return;
       e.preventDefault();
       setPhase("exitingBack");
       handledNavRef.current = true;
@@ -127,25 +208,8 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
   }, [phase, router]);
 
   const startSurge = useCallback(() => {
-    setPhase((p) => {
-      if (p !== "idle") return p;
-      activeStartRef.current = performance.now();
-      return "active";
-    });
+    setPhase((p) => (p === "idle" ? "active" : p));
   }, []);
-
-  // Plays the green "Model aligned" alignment sweep (shared by Google + the
-  // email/password submit buttons). No-op when the loader is hidden, so a submit
-  // never stalls on an invisible animation.
-  const playSuccessSweep = useCallback(async () => {
-    if (!loaderOpen) return;
-    const elapsed = performance.now() - activeStartRef.current;
-    const remaining = Math.max(0, MIN_ACTIVE_MS - elapsed);
-    if (remaining > 0) await sleep(remaining);
-    setSuccessAt(performance.now());
-    setPhase("success");
-    await sleep(SUCCESS_DURATION_MS + SUCCESS_HOLD_TAIL_MS);
-  }, [loaderOpen]);
 
   // Google popup-cancellation watchdog (+ click-via-blur surge fallback).
   useEffect(() => {
@@ -163,7 +227,11 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
       if (credentialReceivedRef.current) return;
       if (performance.now() - lastBlurAt > 3000) return;
       setTimeout(() => {
-        if (!credentialReceivedRef.current && phase === "active") setPhase("idle");
+        // Functional update — the closure's `phase` is stale by the time the
+        // grace elapses if a submit started in the meantime.
+        if (!credentialReceivedRef.current) {
+          setPhase((p) => (p === "active" ? "idle" : p));
+        }
       }, CANCEL_GRACE_MS);
     };
     document.addEventListener("mousedown", onMouseDown);
@@ -241,15 +309,77 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
             : null);
       if (dest) {
         handledNavRef.current = true;
-        router.replace(dest);
+        // Hard nav, not router.replace. We are sitting on /login precisely
+        // BECAUSE `dest` redirected here — proxy.ts:34-37 on a missing cookie,
+        // or an (app)/layout.tsx gate — so this document's route cache maps
+        // dest -> /login and a soft replace replays that redirect with no
+        // network request at all. See lib/navigation/hardNavigate.ts for the
+        // Next-internals detail; a document load is the only thing that
+        // clears it.
+        //
+        // The guard matters because the reload ALSO resets handledNavRef: if
+        // the mint 200s but the cookie never sticks, an unguarded hard nav
+        // loops the page forever. A second attempt inside the window surfaces
+        // an error instead.
+        if (claimSelfHealAttempt()) {
+          // Leave mintingRef latched — the document is going away. The
+          // `return` is load-bearing: window.location.replace does NOT halt
+          // execution, so without it the line below unlatches mintingRef and
+          // a re-render could start a second mint during teardown.
+          hardNavigate(dest, "replace");
+          return;
+        }
+        setFormError("We couldn't restore your session. Please sign in again.");
       }
       mintingRef.current = false;
     })();
-  }, [authLoading, user, role, safeNext, router, phase]);
+  }, [authLoading, user, role, safeNext, phase]);
+
+  /*
+   * Redirect-mode return leg, part 1: the latch. On phones and installed
+   * apps the Google button navigates to Google, which POSTs the credential
+   * to /api/auth/google/callback; that route verifies it and lands back
+   * here with the token in a short-lived single-use cookie. The consume
+   * effect lives below onCredential (it calls it directly); this ref stops
+   * a Strict Mode double-invoke or an identity-keyed re-run from consuming
+   * twice. Mirrored constants: the cookie names live in the route file.
+   */
+  const redirectConsumedRef = useRef(false);
+
+  /*
+   * Stash ?next= so it survives the redirect round trip through Google (GIS
+   * redirect mode carries no state). The callback route reads this cookie,
+   * re-applies the open-redirect guard server-side, and puts next back on
+   * the /login URL it redirects to.
+   */
+  useEffect(() => {
+    if (!params.get("next")) return;
+    try {
+      document.cookie = `__auth_next=${encodeURIComponent(safeNext)}; path=/; max-age=600; samesite=lax`;
+    } catch {
+      /* fine: the user just lands on /dashboard instead */
+    }
+  }, [params, safeNext]);
+
+  /* Surface a redirect-leg failure. The google_error values are set by the
+     callback route; csrf-cookie-missing is the diagnostic one for installed
+     iOS apps (see the route's docblock). */
+  useEffect(() => {
+    const err = params.get("google_error");
+    if (!err) return;
+    warn("[signin] google redirect leg failed", { err });
+    // Reacting to a URL param the server callback set: same shape as the
+    // close-on-pathname effects elsewhere in the codebase.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFormError(
+      "Google sign-in could not be completed. Try again, or use your email and password.",
+    );
+  }, [params]);
 
   const onCredential = useCallback(
     async (idToken: string) => {
       credentialReceivedRef.current = true;
+      setGoogleBusy(true);
       setFormError(null);
       startSurge();
       try {
@@ -265,37 +395,90 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
           // the router).
           credentialReceivedRef.current = false;
           setPhase("idle");
+          // A funnel return address survives the hop. Without this, someone
+          // who pressed "Create one" on a course apply page or an admission
+          // round's form and signed up with Google landed on /register with
+          // no ?next, finished the form, and was dropped on
+          // /pending-approval with no way back to the application they came
+          // to write. Which prefixes count is `src/lib/authReturn.ts`, shared
+          // with the register page, which re-validates before it redirects
+          // anywhere; the `__auth_next` cookie stays as the fallback for the
+          // redirect leg. Collaborators keep their own branch: their
+          // destination is /collaborator, not a form.
+          const funnelNext = isFunnelReturn(safeNext)
+            ? `/register?next=${encodeURIComponent(safeNext)}`
+            : "/register";
           router.replace(
             mode === "register" && audience === "collaborator"
               ? "/register?type=collaborator"
-              : "/register",
+              : funnelNext,
           );
           return;
         }
-        // Existing account → success sweep + slide out, but only when the loader
-        // is revealed; otherwise navigate straight away.
-        await playSuccessSweep();
+        // Existing account → straight to the handoff pane, which owns the
+        // screen while the document loads. Collaborators have no users doc
+        // (the server resolves them via `kind`), so send them to their own
+        // area — this path used to bounce them to /register as if brand new.
+        const dest = result.kind === "collaborator" ? "/collaborator" : safeNext;
         try {
           sessionStorage.setItem("naisi:from-signin", "1");
         } catch {
           /* sessionStorage may be unavailable */
         }
         handledNavRef.current = true;
-        if (loaderOpen) {
-          setPhase("exiting");
-          await sleep(EXIT_DURATION_MS);
-        }
-        router.push(safeNext);
+        setNavDest(dest);
+        setPhase("navigating");
+        // Let the pane reach the screen before the document starts unloading —
+        // it is what the user watches until the destination paints, so there is
+        // never a bare dark gap (the card no longer slides out to nothing).
+        await nextPaint();
+        // Hard nav: `safeNext` comes from ?next=, which is only ever populated
+        // by proxy.ts:36 — so its presence is direct evidence that a protected
+        // route already redirected in this document and left a poisoned route
+        // cache entry behind. "naisi:from-signin" is sessionStorage, which
+        // survives the document load, so AppShell still plays the entering fade.
+        hardNavigate(dest);
       } catch (err) {
         console.error(err);
         setFormError("Sign-in failed. Please try again.");
         credentialReceivedRef.current = false;
-        setSuccessAt(null);
+        setGoogleBusy(false);
         setPhase("idle");
       }
     },
-    [mode, audience, safeNext, router, startSurge, playSuccessSweep, loaderOpen],
+    [mode, audience, safeNext, router, startSurge],
   );
+
+  /*
+   * Redirect-mode return leg, part 2: consume the credential the callback
+   * route left in a cookie and feed it to the SAME onCredential path popup
+   * mode uses, so everything downstream is one code path.
+   *
+   * Keyed on onCredential's identity, which changes across renders; that is
+   * safe because the cookie is deleted before use and the ref latches, so
+   * re-runs consume nothing. Declared after onCredential because it calls it
+   * directly.
+   */
+  useEffect(() => {
+    if (redirectConsumedRef.current) return;
+    let credential: string | null = null;
+    try {
+      const m = document.cookie.match(/(?:^|; )__google_credential=([^;]*)/);
+      if (!m || !m[1]) return;
+      redirectConsumedRef.current = true;
+      credential = decodeURIComponent(m[1]);
+      document.cookie = "__google_credential=; path=/login; max-age=0";
+    } catch {
+      return; /* cookie access unavailable; nothing to consume */
+    }
+    mark("[signin] consuming redirect-mode credential");
+    // Deferred a tick: onCredential's synchronous prologue sets state, and
+    // kicking it off outside the effect body keeps the effect itself pure
+    // (and satisfies the set-state-in-effect lint honestly rather than
+    // suppressing it).
+    const t = setTimeout(() => void onCredential(credential as string), 0);
+    return () => clearTimeout(t);
+  }, [onCredential]);
 
   // Stable identity so GoogleSignInButton's init effect (keyed on onScriptError)
   // doesn't re-run on every keystroke — that was re-initialising GSI repeatedly.
@@ -306,7 +489,8 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
       e.preventDefault();
       setFormError(null);
       setResetNote(null);
-      const trimmed = email.trim().toLowerCase();
+      const trimmed = readField("auth-email", emailDraftRef).trim().toLowerCase();
+      const password = readField("auth-password", passwordDraftRef);
 
       if (mode === "signin") {
         if (!trimmed || !password) {
@@ -318,21 +502,32 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
         try {
           const result = await signInWithEmailPassword(trimmed, password);
           handledNavRef.current = true;
-          // Play the green alignment sweep + slide-out only if the loader's open;
-          // otherwise navigate straight away (no invisible pause).
-          await playSuccessSweep();
-          if (loaderOpen) {
-            setPhase("exiting");
-            await sleep(EXIT_DURATION_MS);
+          // Parity with the Google path above — this branch never set the flag,
+          // so email/password sign-in has always jump-cut into the shell.
+          try {
+            sessionStorage.setItem("naisi:from-signin", "1");
+          } catch {
+            /* sessionStorage may be unavailable */
           }
-          if (result.kind === "collaborator") router.push("/collaborator");
-          else if (result.kind === "member") router.push(safeNext);
-          else router.push("/register?type=collaborator");
+          // Hard nav for the two protected destinations (both are in
+          // proxy.ts's PROTECTED_PREFIXES, so both can be poisoned), fronted by
+          // the handoff pane. /register is neither protected nor a redirect
+          // target, so nothing can have been recorded against it — it stays a
+          // soft push with no pane.
+          if (result.kind === "collaborator" || result.kind === "member") {
+            const dest =
+              result.kind === "collaborator" ? "/collaborator" : safeNext;
+            setNavDest(dest);
+            setPhase("navigating");
+            await nextPaint();
+            hardNavigate(dest);
+          } else {
+            router.push("/register?type=collaborator");
+          }
         } catch (err) {
           setFormError(
             err instanceof Error ? err.message : "Sign-in failed. Please try again.",
           );
-          setSuccessAt(null);
           setPhase("idle");
           setBusy(false);
         }
@@ -353,7 +548,6 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
         const recaptchaToken = await (recaptchaRef.current?.execute() ?? Promise.resolve(null));
         if (RECAPTCHA_ENABLED && !recaptchaToken) {
           setFormError("Couldn't verify you're human. Please try again.");
-          setSuccessAt(null);
           setPhase("idle");
           setBusy(false);
           return;
@@ -361,52 +555,49 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
         const res = await fetch("/api/register", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email: trimmed, audience, recaptchaToken }),
+          body: JSON.stringify({ email: trimmed, audience, recaptchaToken, next: safeNext }),
         });
         const data = (await res.json().catch(() => null)) as
           | { ok?: boolean; error?: string }
           | null;
         if (!res.ok) {
           setFormError(data?.error ?? "Couldn't create your account.");
-          setSuccessAt(null);
           setPhase("idle");
           setBusy(false);
           return;
         }
-        // Play the green alignment sweep, then reveal the check-inbox screen.
-        await playSuccessSweep();
         setSentEmail(trimmed);
         setBusy(false);
       } catch {
         setFormError("Couldn't reach the server. Try again in a moment.");
-        setSuccessAt(null);
         setPhase("idle");
         setBusy(false);
       }
     },
-    [mode, email, password, audience, safeNext, router, startSurge, playSuccessSweep, loaderOpen],
+    [mode, audience, safeNext, router, startSurge, readField],
   );
 
   const handleReset = useCallback(async () => {
     setFormError(null);
     setResetNote(null);
-    if (!email.trim()) {
+    const typed = readField("auth-email", emailDraftRef).trim();
+    if (!typed) {
       setFormError("Enter your email above first, then tap reset.");
       return;
     }
     try {
-      await resetCollaboratorPassword(email.trim());
+      await resetCollaboratorPassword(typed);
       setResetNote(
         "If an account exists for that email, a password reset link is on its way.",
       );
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Couldn't send a reset email.");
     }
-  }, [email]);
+  }, [readField]);
 
   // The ambient "active inference" surge runs only while a field is focused:
   // focusing a field surges it, blurring calms it back to idle — unless a submit
-  // is in flight or the success sweep is playing.
+  // is in flight.
   const onFieldBlur = useCallback(() => {
     if (busy) return;
     setPhase((p) => (p === "active" ? "idle" : p));
@@ -419,9 +610,6 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
       setFormError(null);
       setResetNote(null);
       setSentEmail(null);
-      // Reset the loader if we're coming back from the post-submit success sweep
-      // (e.g. "Log in here" off the check-inbox screen) so it can't sit frozen.
-      setSuccessAt(null);
       setPhase("idle");
       // Keep the URL honest without a Next navigation (which would remount and
       // kill the morph).
@@ -459,10 +647,11 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
     [audience],
   );
 
+  // No "exiting" class any more: on a hard navigation the card stays put and
+  // the handoff pane covers it, so there is never a bare viewport mid-load.
   const frameClass = [
     signinStyles.exitFrame,
     entering ? signinStyles.entering : "",
-    phase === "exiting" ? signinStyles.exiting : "",
     phase === "exitingBack" ? signinStyles.exitingBack : "",
   ]
     .filter(Boolean)
@@ -519,6 +708,7 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
   };
 
   return (
+    <>
     <div className={`${frameClass} ${styles.frame}`}>
       <Card padding="lg" className={styles.card} style={{ width: "100%" }}>
         <ModeToggle value={mode} onChange={switchMode} />
@@ -565,14 +755,34 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
         {/* Always mounted — for every mode and audience (collaborators included).
             Keeping it stable is what stops GSI re-initialising on each render /
             mode switch. */}
-        <div className={styles.googleWrap} onMouseDown={startSurge}>
+        <div
+          className={
+            googleBusy ? `${styles.googleWrap} ${styles.googleWrapBusy}` : styles.googleWrap
+          }
+          onMouseDown={startSurge}
+          aria-busy={googleBusy}
+        >
           <GoogleSignInButton
             onCredential={onCredential}
             onScriptError={onGoogleScriptError}
             onReady={handleGisReady}
           />
+          {googleBusy && <span className={styles.googleSpinner} aria-hidden="true" />}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", margin: "var(--space-6) 0 var(--space-4)" }}>
+        {/*
+          Always rendered, hidden by CSS unless <html data-standalone-ios>.
+          Doing it in CSS rather than behind useIsStandalone keeps the server
+          HTML identical for everyone and means no flash on the first screen
+          of a freshly launched app. The stylesheet also reorders this card so
+          the email and password form comes FIRST in that case; see the
+          "Installed app on iOS" block in registerSignIn.module.css.
+        */}
+        <p className={styles.standaloneNote}>
+          Google sign-in opens a secure Google page and returns here. If it
+          does not complete, use your email and password above, or open
+          naisi.uk in Safari.
+        </p>
+        <div className={styles.divider} style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", margin: "var(--space-6) 0 var(--space-4)" }}>
           <span style={{ flex: 1, height: 1, background: "var(--color-border)" }} />
           <span style={{ color: "var(--color-text-subtle)", fontSize: "var(--text-xs)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
             or
@@ -580,14 +790,15 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
           <span style={{ flex: 1, height: 1, background: "var(--color-border)" }} />
         </div>
 
-        <form id="auth-form" className={styles.authForm} onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+        <form ref={formRef} id="auth-form" className={styles.authForm} onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
           <div>
             <Field id="auth-email" label="Email">
               <Input
                 id="auth-email"
                 type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  emailDraftRef.current = e.target.value;
+                }}
                 onFocus={startSurge}
                 onMouseDown={startSurge}
                 onBlur={onFieldBlur}
@@ -633,8 +844,9 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
                 <Field id="auth-password" label="Password">
                   <PasswordInput
                     id="auth-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      passwordDraftRef.current = e.target.value;
+                    }}
                     onFocus={startSurge}
                     onMouseDown={startSurge}
                     onBlur={onFieldBlur}
@@ -690,7 +902,15 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
           <button
             type="button"
             className={styles.loaderHandle}
-            onClick={() => setLoaderOpen((o) => !o)}
+            onClick={() => {
+              const next = !loaderOpen;
+              try {
+                localStorage.setItem(LOADER_OPEN_KEY, next ? "1" : "0");
+              } catch {
+                /* storage unavailable */
+              }
+              setLoaderOpen(next);
+            }}
             aria-expanded={loaderOpen}
             aria-label={loaderOpen ? "Hide the sign-in animation" : "Show the sign-in animation"}
           >
@@ -719,15 +939,23 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
                     itself, padding can't shrink — the bar would stall at the
                     padding height then snap. */}
                 <div style={{ paddingBottom: "var(--space-3)" }}>
-                  <SigningIn
-                    active={phase !== "idle"}
-                    successStartAt={phase === "success" || phase === "exiting" ? successAt : null}
-                  />
+                  <SigningIn active={phase !== "idle"} />
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
-          <Button type="submit" form="auth-form" fullWidth size="lg" disabled={busy}>
+          {/* Disabled until React is listening. It is the form's default
+              button, so while it carries `disabled` an Enter press in either
+              field submits nothing either, which is the press a password
+              manager sets up on a slow connection. */}
+          <Button
+            data-testid="auth-submit"
+            type="submit"
+            form="auth-form"
+            fullWidth
+            size="lg"
+            disabled={busy || !hydrated}
+          >
             {mode === "register"
               ? busy
                 ? "Sending…"
@@ -739,6 +967,74 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
         </div>
       </Card>
     </div>
+    {navDest !== null && <NavigatingPane dest={navDest} />}
+    </>
+  );
+}
+
+/**
+ * Full-viewport handoff pane shown from the moment sign-in succeeds until the
+ * destination document paints. Replaces the old card slide-out, which left a
+ * bare #050810 viewport for the whole document load — the pane owns that
+ * window with an explicit "signed in, on our way" surface instead. If the
+ * navigation never lands (hung request, dropped connection), a retry appears
+ * after 8s so nobody is stranded staring at it.
+ *
+ * Rendered OUTSIDE the exit frame: the frame carries transforms in some
+ * phases, and a transformed ancestor would turn `position: fixed` into
+ * ancestor-relative positioning.
+ */
+function NavigatingPane({ dest }: { dest: string }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), 8000);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <motion.div
+      className={styles.navPane}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.26, ease: "easeOut" }}
+    >
+      <div className={styles.navPaneRow}>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <circle
+            cx="12"
+            cy="12"
+            r="10.5"
+            fill="hsla(142, 70%, 50%, 0.18)"
+            stroke="hsla(142, 80%, 62%, 0.9)"
+            strokeWidth="1.4"
+          />
+          <path
+            d="M7 12.5 L10.5 16 L17 9"
+            stroke="hsla(142, 92%, 80%, 1)"
+            strokeWidth="2.2"
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <span className={styles.navPaneTitle}>Signed in</span>
+      </div>
+      <p className={styles.navPaneText} role="status">
+        {dest.startsWith("/collaborator")
+          ? "Taking you to your workspace…"
+          : "Taking you to your dashboard…"}
+      </p>
+      <div className={styles.navPaneBar} aria-hidden="true">
+        <span className={styles.navPaneBarFill} />
+      </div>
+      {slow && (
+        <div className={styles.navPaneSlow}>
+          <p className={styles.navPaneSlowText}>Taking longer than it should?</p>
+          <Button type="button" variant="secondary" onClick={() => hardNavigate(dest)}>
+            Try again
+          </Button>
+        </div>
+      )}
+    </motion.div>
   );
 }
 
@@ -751,6 +1047,7 @@ function ModeToggle({ value, onChange }: { value: Mode; onChange: (m: Mode) => v
   return (
     <div style={{ textAlign: "center", marginBottom: "var(--space-5)" }}>
       <div
+        data-testid="auth-mode-toggle"
         role="radiogroup"
         aria-label="Sign in or create an account"
         style={{ display: "inline-flex", position: "relative", padding: "3px", gap: "3px", background: "var(--color-bg-elevated)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)" }}

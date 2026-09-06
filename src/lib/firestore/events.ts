@@ -159,10 +159,44 @@ export type FormQuestionType =
   | "yesNo"
   | "dietaryAllergies";
 
+/**
+ * Character cap applied to a free-text answer when the question does not carry
+ * its own `maxLength`. Every signup form authored before per-question limits
+ * existed is stored without the key, so this is the number that keeps their
+ * behaviour byte-identical.
+ */
+export const DEFAULT_ANSWER_MAX_LENGTH = 500;
+
+/** Inclusive bounds an authored `maxLength` must sit inside. */
+export const QUESTION_MAX_LENGTH_MIN = 1;
+export const QUESTION_MAX_LENGTH_MAX = 4000;
+
+/** Cap on the guidance sentence rendered under a question's label. */
+export const QUESTION_HELP_TEXT_MAX = 300;
+
 type BaseQuestion = {
   id: string;
   label: string;
   required: boolean;
+  /**
+   * Per-question character cap on the free-text an answer may carry: the
+   * answer itself for short and long text, and the "Other" box for the
+   * question types that have one. Absent means `DEFAULT_ANSWER_MAX_LENGTH`.
+   *
+   * An integer between `QUESTION_MAX_LENGTH_MIN` and `QUESTION_MAX_LENGTH_MAX`.
+   * The range is enforced by the saving route through `validateQuestionLimits`
+   * so the author is told, and clamped by `sanitizeSignupForm` so a write that
+   * never crossed a route still cannot store an unbounded cap. Deliberately
+   * NOT checked in `isValidQuestion`: that predicate is the filter behind
+   * `sanitizeSignupForm`, so a failing check there would delete the whole
+   * question rather than complain about one field.
+   */
+  maxLength?: number;
+  /**
+   * Short guidance rendered under the label, before the input. Plain text,
+   * capped at `QUESTION_HELP_TEXT_MAX`, rendered as a text node.
+   */
+  helpText?: string;
 };
 
 export type ShortTextQuestion = BaseQuestion & {
@@ -281,12 +315,114 @@ export function isValidQuestion(raw: unknown): raw is FormQuestion {
   }
 }
 
-export function sanitizeSignupForm(raw: unknown): FormQuestion[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.filter(isValidQuestion).map((q) => ({
+/**
+ * The character cap in force for one question's free text.
+ *
+ * The single reader of `maxLength`. Everything that renders, counts or
+ * validates an answer goes through here so the browser's `maxLength` attribute
+ * and the server's refusal can never disagree.
+ */
+export function answerMaxLength(q: FormQuestion): number {
+  return q.maxLength ?? DEFAULT_ANSWER_MAX_LENGTH;
+}
+
+/**
+ * Normalise the two authored limit fields on one question.
+ *
+ * Neither key is ever written as `undefined`: an explicit undefined nested in
+ * an array is refused outright by a client-direct Firestore write, which is
+ * exactly how a run's application form is saved.
+ *
+ * `clamp` is what separates the two callers. Read paths and any write that did
+ * not cross a route clamp, so nothing out of range ever reaches an answer
+ * validator. Clamping also rounds down, because a fractional cap is nobody's
+ * intent and the read path has no one left to ask.
+ *
+ * A saving route passes `false`, which keeps the authored number EXACTLY as
+ * typed and hands it to `validateQuestionLimits`, so the author is told their
+ * 5000 is too big, and their 12.5 is not a whole number, instead of silently
+ * getting 4000 and 12. Rounding here as well would have made the not-a-whole-
+ * number branch of `validateQuestionLimits` unreachable from the real pipeline.
+ */
+function normaliseQuestionLimits(q: FormQuestion, clamp: boolean): FormQuestion {
+  const out: Record<string, unknown> = {
     ...q,
     required: Boolean((q as { required?: unknown }).required),
-  }));
+  };
+
+  const rawMax = (q as { maxLength?: unknown }).maxLength;
+  if (typeof rawMax === "number" && Number.isFinite(rawMax)) {
+    out.maxLength = clamp
+      ? Math.min(
+          Math.max(Math.floor(rawMax), QUESTION_MAX_LENGTH_MIN),
+          QUESTION_MAX_LENGTH_MAX,
+        )
+      : rawMax;
+  } else {
+    delete out.maxLength;
+  }
+
+  const rawHelp = (q as { helpText?: unknown }).helpText;
+  const help = typeof rawHelp === "string" ? rawHelp.trim() : "";
+  if (help) {
+    out.helpText = clamp ? help.slice(0, QUESTION_HELP_TEXT_MAX) : help;
+  } else {
+    delete out.helpText;
+  }
+
+  return out as FormQuestion;
+}
+
+export function sanitizeSignupForm(
+  raw: unknown,
+  options: { clampLimits?: boolean } = {},
+): FormQuestion[] {
+  if (!Array.isArray(raw)) return [];
+  const clamp = options.clampLimits !== false;
+  return raw.filter(isValidQuestion).map((q) => normaliseQuestionLimits(q, clamp));
+}
+
+/**
+ * Range-check the authored limits across a whole form, naming the question at
+ * fault so a saving route can answer 400 with a sentence the author can act on.
+ *
+ * Lives here rather than in `isValidQuestion` on purpose: `sanitizeSignupForm`
+ * is `raw.filter(isValidQuestion)`, so a range check inside the predicate would
+ * make a mistyped limit delete the question instead of reporting it. Call this
+ * on the output of `sanitizeSignupForm(raw, { clampLimits: false })`, before
+ * the value is stored.
+ */
+export function validateQuestionLimits(
+  questions: readonly FormQuestion[],
+): { error: string; questionId: string } | null {
+  for (let i = 0; i < questions.length; i += 1) {
+    const q = questions[i];
+    const name = q.label.trim() ? `"${q.label.trim()}"` : `Question ${i + 1}`;
+
+    if (q.maxLength !== undefined) {
+      if (!Number.isInteger(q.maxLength)) {
+        return {
+          error: `${name} has a character limit that is not a whole number.`,
+          questionId: q.id,
+        };
+      }
+      if (q.maxLength < QUESTION_MAX_LENGTH_MIN || q.maxLength > QUESTION_MAX_LENGTH_MAX) {
+        return {
+          error: `${name} has a character limit of ${q.maxLength}. It must be between ${QUESTION_MAX_LENGTH_MIN} and ${QUESTION_MAX_LENGTH_MAX}.`,
+          questionId: q.id,
+        };
+      }
+    }
+
+    if (q.helpText !== undefined && q.helpText.length > QUESTION_HELP_TEXT_MAX) {
+      const over = q.helpText.length - QUESTION_HELP_TEXT_MAX;
+      return {
+        error: `${name} has help text ${over} character${over === 1 ? "" : "s"} over the limit of ${QUESTION_HELP_TEXT_MAX}.`,
+        questionId: q.id,
+      };
+    }
+  }
+  return null;
 }
 
 // ---- Event doc ----

@@ -22,7 +22,23 @@ type AuthState = {
   permissions: UserPermissions;
   /** True only for committee members the SU formally recognises (admin-set). */
   suRecognised: boolean;
+  /** Server-owned: true while this member reviews or decides at least one
+   *  admission round. Written only by the round roles route. It draws the
+   *  Admissions nav entry; the round's own arrays remain the authority on
+   *  what may actually be read. */
+  admissionsReviewer: boolean;
   loading: boolean;
+  /**
+   * True only once Firebase Auth's onAuthStateChanged has ACTUALLY fired.
+   *
+   * `loading` is not a substitute. It also flips false when the 3s failsafe
+   * below gives up on a wedged SDK, and in that case `user` is null because
+   * we could not find out, not because the visitor is signed out. Anything
+   * that would take a destructive action on "signed out" (clearing a session
+   * cookie, redirecting to /login) has to gate on this instead, or it will
+   * act on a slow client as though it were a signed-out one.
+   */
+  authResolved: boolean;
 };
 
 const AuthContext = createContext<AuthState>({
@@ -30,7 +46,9 @@ const AuthContext = createContext<AuthState>({
   role: null,
   permissions: {},
   suRecognised: false,
+  admissionsReviewer: false,
   loading: true,
+  authResolved: false,
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -38,7 +56,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<Role | null>(null);
   const [permissions, setPermissions] = useState<UserPermissions>({});
   const [suRecognised, setSuRecognised] = useState(false);
+  const [admissionsReviewer, setAdmissionsReviewer] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [authResolved, setAuthResolved] = useState(false);
 
   useEffect(() => {
     // [monitor] Per-instance log so a remount (e.g. React strict double-
@@ -58,11 +78,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setRole(snapshot.role);
         setPermissions(snapshot.permissions);
         setSuRecognised(snapshot.suRecognised);
+        // The bypass fixture has no admissions role of its own: a bypass
+        // admin already sees the Admissions entry through `role`, and a
+        // bypass member is not on any round.
+        setAdmissionsReviewer(false);
       } else {
         setUser(null);
         setRole(null);
         setPermissions({});
         setSuRecognised(false);
+        setAdmissionsReviewer(false);
       }
     }
 
@@ -89,6 +114,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       log.mark("onAuthStateChanged", { uid: u?.uid ?? null, email: u?.email ?? null });
       clearTimeout(failsafe);
+      // The listener really ran, so a null `u` from here is a trustworthy
+      // "signed out" rather than the failsafe's "could not tell".
+      setAuthResolved(true);
       if (u) {
         // Real signed-in user; bypass cedes. The user-doc snapshot effect
         // below will fill in role/permissions/suRecognised from Firestore.
@@ -151,8 +179,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           approveNewsletter: Boolean(raw.approveNewsletter),
           draftEvent: Boolean(raw.draftEvent),
           approveEvent: Boolean(raw.approveEvent),
+          draftCourse: Boolean(raw.draftCourse),
+          approveCourse: Boolean(raw.approveCourse),
+          manageMembership: Boolean(raw.manageMembership),
+          circulateWorksheet: Boolean(raw.circulateWorksheet),
         });
         setSuRecognised(Boolean(data?.suRecognised));
+        setAdmissionsReviewer(Boolean(data?.admissionsReviewer));
       },
       (err) => {
         log.warn("snapshot error", err);
@@ -162,6 +195,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setRole(null);
         setPermissions({});
         setSuRecognised(false);
+        setAdmissionsReviewer(false);
       },
     );
     return () => {
@@ -172,8 +206,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const value = useMemo(
-    () => ({ user, role, permissions, suRecognised, loading }),
-    [user, role, permissions, suRecognised, loading],
+    () => ({
+      user,
+      role,
+      permissions,
+      suRecognised,
+      admissionsReviewer,
+      loading,
+      authResolved,
+    }),
+    [user, role, permissions, suRecognised, admissionsReviewer, loading, authResolved],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

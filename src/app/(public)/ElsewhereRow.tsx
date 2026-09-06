@@ -1,3 +1,4 @@
+import { SU_PAGE_URL } from "@/content/socials";
 import Reveal from "./Reveal";
 import ElsewhereCard from "./ElsewhereCard";
 import styles from "./ElsewhereRow.module.css";
@@ -24,7 +25,7 @@ const ITEMS: Item[] = [
   },
   {
     platform: "SU membership",
-    href: "https://su.nottingham.ac.uk/activities/view/NottsAISafety",
+    href: SU_PAGE_URL,
     primary: "Join the society £6/yr",
     description: "Official SU membership. Gets you on the roster and into society-only events.",
   },

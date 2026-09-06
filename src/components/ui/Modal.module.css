@@ -1,0 +1,101 @@
+/* ============================================================
+   Modal — centred dialog over a scrim, portalled to <body>.
+
+   Shape mirrors Drawer.module.css: a full-viewport root that is
+   pointer-transparent while closed (so the always-mounted portal
+   never eats clicks), an absolutely positioned scrim, and the
+   panel on top of it.
+   ============================================================ */
+
+.root {
+  position: fixed;
+  inset: 0;
+  /* Above Drawer's 50 — a Modal opened from a drawer surface must
+     sit over it, never under. */
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  pointer-events: none;
+}
+
+.root[aria-hidden="false"] {
+  pointer-events: auto;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transition: opacity var(--dur-quick) var(--ease-naisi);
+}
+
+.scrimOpen {
+  opacity: 1;
+}
+
+.panel {
+  position: relative;
+  /* Stacks over the scrim without the scrim needing a negative index. */
+  z-index: 1;
+  max-height: min(85vh, 100%);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-5);
+  opacity: 0;
+  /* Arrives from just under full size — enough to read as "this came
+     forward" without the zoom implying a spatial move. */
+  transform: scale(0.98);
+  transition:
+    opacity var(--dur-quick) var(--ease-naisi),
+    transform var(--dur-quick) var(--ease-naisi);
+}
+
+.panelOpen {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* The panel takes focus when it holds no focusable child; that focus is
+   programmatic and should not paint a ring. Keyboard focus still does. */
+.panel:focus {
+  outline: none;
+}
+
+.panel:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.width_sm {
+  width: min(28rem, 100%);
+}
+
+.width_md {
+  width: min(40rem, 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Null the scale from-state. The opacity crossfade survives — it is not a
+     vestibular trigger (see the tokens.css reduced-motion override). */
+  .panel,
+  .panelOpen {
+    transform: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 36rem) { /* --bp-sm */
+  .root {
+    padding: var(--space-3);
+  }
+  .panel {
+    padding: var(--space-4);
+    max-height: min(90vh, 100%);
+  }
+}

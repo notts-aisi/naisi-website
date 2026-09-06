@@ -14,6 +14,7 @@ import {
 // inside those effects so they don't trip set-state-in-effect).
 import { createPortal } from "react-dom";
 import { maxWidth, type BreakpointKey } from "@/theme/breakpoints";
+import { useHistoryDismiss } from "@/hooks/useHistoryDismiss";
 import styles from "./Dropdown.module.css";
 
 /**
@@ -55,6 +56,8 @@ type Props<T extends string = string> = {
   size?: "sm" | "md";
   /** Required: dropdowns must be labelled. */
   ariaLabel: string;
+  /** Ids of any help / error text describing the control, for the trigger. */
+  describedBy?: string;
   /** Optional tooltip + native HTML title. */
   title?: string;
   /** Prefix shown in the trigger label, e.g. "View" → "View: To do (3)". */
@@ -79,6 +82,7 @@ export default function Dropdown<T extends string = string>({
   disabled,
   size = "md",
   ariaLabel,
+  describedBy,
   title,
   triggerPrefix,
   className,
@@ -115,6 +119,31 @@ export default function Dropdown<T extends string = string>({
   );
 
   const [open, setOpen] = useState(false);
+
+  /*
+   * Back gesture closes the bottom sheet, but NOT the desktop popover.
+   * The sheet is screen-occupying and reads as a thing you dismiss; a
+   * popover anchored to its trigger does not, and making the browser Back
+   * button close a dropdown on a laptop would be surprising. The popover
+   * already closes on outside click, scroll and resize.
+   *
+   * No focus restore here, unlike the Escape and select paths: the sheet
+   * only exists on touch, where there is no visible focus ring to return.
+   */
+  const closeSheet = useCallback(() => setOpen(false), []);
+  const dismissSheet = useHistoryDismiss(open && isSheet, closeSheet);
+
+  /*
+   * The close every user-facing path funnels through. Sheet mode unwinds the
+   * history entry (via dismiss, so Back and Escape stay in sync); popover
+   * mode closes directly. The popover-only auto-closes (outside pointerdown,
+   * scroll, resize) bypass this on purpose: they only run when !isSheet.
+   */
+  const closeMenu = useCallback(() => {
+    if (isSheet) dismissSheet();
+    else setOpen(false);
+  }, [isSheet, dismissSheet]);
+
   const [activeValue, setActiveValue] = useState<T>(value);
   const [position, setPosition] = useState({
     top: 0,
@@ -206,10 +235,10 @@ export default function Dropdown<T extends string = string>({
     const target = options.find((o) => o.value === activeValue);
     if (!target || target.disabled) return;
     if (target.value !== value) onChange(target.value);
-    setOpen(false);
+    closeMenu();
     // Restore focus to the trigger after selection.
     triggerRef.current?.focus();
-  }, [activeValue, onChange, options, value]);
+  }, [activeValue, onChange, options, value, closeMenu]);
 
   const handleKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLButtonElement>) => {
@@ -229,7 +258,7 @@ export default function Dropdown<T extends string = string>({
       // Menu open.
       if (e.key === "Escape") {
         e.preventDefault();
-        setOpen(false);
+        closeMenu();
         triggerRef.current?.focus();
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -261,7 +290,7 @@ export default function Dropdown<T extends string = string>({
         if (match) setActiveValue(match.value);
       }
     },
-    [disabled, enabledOptions, moveActive, open, selectActive],
+    [disabled, enabledOptions, moveActive, open, selectActive, closeMenu],
   );
 
   const current = options.find((o) => o.value === value);
@@ -298,7 +327,7 @@ export default function Dropdown<T extends string = string>({
           e.stopPropagation();
           if (opt.disabled) return;
           if (opt.value !== value) onChange(opt.value);
-          setOpen(false);
+          closeMenu();
           triggerRef.current?.focus();
         }}
         onMouseEnter={() => {
@@ -324,6 +353,7 @@ export default function Dropdown<T extends string = string>({
         className={triggerClassName}
         disabled={disabled}
         aria-label={ariaLabel}
+        aria-describedby={describedBy}
         title={title}
         role="combobox"
         aria-haspopup="listbox"
@@ -372,7 +402,7 @@ export default function Dropdown<T extends string = string>({
                   // mounted) and fires THIS handler, instead of
                   // re-targeting to the trigger underneath.
                   e.stopPropagation();
-                  setOpen(false);
+                  dismissSheet();
                 }}
               />
               <div
@@ -390,7 +420,7 @@ export default function Dropdown<T extends string = string>({
                   className={styles.sheetCancel}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setOpen(false);
+                    dismissSheet();
                     triggerRef.current?.focus();
                   }}
                 >

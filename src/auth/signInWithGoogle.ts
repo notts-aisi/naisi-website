@@ -14,6 +14,10 @@ export type SignInResult = {
   uid: string;
   email: string | null;
   isNew: boolean;
+  /** Server-resolved account kind: member = users doc, collaborator =
+   *  collaborators doc (no users doc), new = neither. Mirrors the email
+   *  sign-in path so both flows can route collaborators to their area. */
+  kind: "member" | "collaborator" | "new";
 };
 
 /**
@@ -61,9 +65,17 @@ export async function exchangeGoogleCredential(
     warn("[signin] /api/auth/session failed", { status: res.status });
     throw new Error("Failed to establish session");
   }
-  const body = (await res.json()) as { ok: boolean; exists: boolean };
-  mark("[signin] session cookie established", { exists: body.exists });
-  return { uid: user.uid, email: user.email, isNew: !body.exists };
+  const body = (await res.json()) as {
+    ok: boolean;
+    exists: boolean;
+    kind?: "member" | "collaborator" | "new";
+  };
+  // `kind` distinguishes an existing collaborator (no users doc, so
+  // `exists` is false) from a genuinely new account. Fall back to the
+  // exists-derived answer for an older server that omits it.
+  const kind = body.kind ?? (body.exists ? "member" : "new");
+  mark("[signin] session cookie established", { exists: body.exists, kind });
+  return { uid: user.uid, email: user.email, isNew: kind === "new", kind };
 }
 
 /**

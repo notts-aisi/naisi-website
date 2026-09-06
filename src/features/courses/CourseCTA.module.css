@@ -1,0 +1,170 @@
+/* ============================================================
+   CourseCTA — the apply prompt on a public course page.
+
+   Two placements share one block: `hero` sits tight under the
+   course title, `foot` closes the page inside a bordered panel.
+   Deliberately small — the page's weight lives in the curriculum,
+   not in a banner.
+   ============================================================ */
+
+.cta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.hero {
+  margin-top: var(--space-6);
+}
+
+.foot {
+  margin-top: var(--space-12);
+  padding: var(--space-8);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+}
+
+.line {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text);
+}
+
+.open {
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+/* The run label lives here and nowhere else. It is an internal handle an
+   admin typed, so it gets a chip rather than a slot in a sentence. */
+.chipRow {
+  margin: 0;
+}
+
+.chip {
+  display: inline-block;
+  padding: 0.15rem var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* "Applications close Sun 18 Oct · Starts Mon 26 Oct": the two questions
+   every prospective applicant asks, answered without opening anything. */
+.dates {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+}
+
+.dot {
+  margin: 0 var(--space-2);
+  color: var(--color-text-subtle);
+}
+
+/* Anchor styled as the primary action. <Button> renders a real <button> and
+   takes no href, so navigation targets get the styling rather than the
+   component — the same call the public landing CTAs make. */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 44px floor — public surface, enforced (docs/touch-targets.md). */
+  min-height: 2.75rem;
+  padding: 0.7rem 1.35rem;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: var(--color-accent);
+  color: #fff;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  text-decoration: none;
+  transition:
+    background var(--transition-base),
+    transform var(--transition-fast),
+    box-shadow var(--transition-base);
+}
+
+.button:hover {
+  background: var(--color-accent-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.button:active {
+  transform: translateY(0);
+}
+
+.button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The hero picker's wrapper, which exists only to carry the anchor the foot
+   placement links to. Full width because the picker inside sizes itself at
+   100% and .cta aligns its items to flex-start: without this the timetable
+   cards would shrink to their own content. scroll-margin clears the sticky
+   public header, so the jump lands on the legend rather than under it. */
+.pickerAnchor {
+  width: 100%;
+  scroll-margin-top: calc(var(--header-height) + var(--space-4));
+}
+
+/* The wrapper is rendered whenever the run is open-mode, and GroupPicker
+   renders nothing for a signed-out visitor on a closed run, so an empty
+   wrapper would otherwise add one gap of dead space under the dates. */
+.pickerAnchor:empty {
+  display: none;
+}
+
+.inlineLink {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.inlineLink:hover {
+  color: var(--color-accent-hover);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button {
+    transition: background var(--transition-base);
+  }
+  .button:hover {
+    transform: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .foot {
+    margin-top: var(--space-10);
+    padding: var(--space-6);
+  }
+  .button {
+    /* Full-bleed tap target on phones - the CTA is the page's one action. */
+    width: 100%;
+  }
+}
+
+/* Small phones. The closing panel gives up padding rather than the button
+   inside it giving up width. */
+@media (max-width: 36rem) { /* --bp-sm */
+  .foot {
+    margin-top: var(--space-8);
+    padding: var(--space-4);
+  }
+  .dot {
+    margin: 0 var(--space-1);
+  }
+}

@@ -7,10 +7,13 @@
  * comment saying so is not enforcement:
  *
  *   1. It can never be aimed at production.
- *   2. It never grants a privilege — no role, no permissions map, no
- *      `suRecognised`. Its accounts are bare Auth users with no Firestore
- *      document, so they hold no role at all.
- *   3. It never reaches Firestore at all — not to write, not to read.
+ *   2. It never grants a privilege: no role above `pending`, no permissions
+ *      map, no `suRecognised`, and none of the admin-set tags. Its accounts are
+ *      bare Auth users or (Phase 2 and later) users with a seeded document whose
+ *      role is hard-coded to `pending`, the lowest role there is.
+ *   3. It reaches only three Firestore collections (`ALLOWED_COLLECTIONS`
+ *      below), and one of them delete-only. Phase 1 held "no Firestore at
+ *      all"; Phase 2 narrowed that rather than dropping it.
  *
  * Property 1 is tested BEHAVIOURALLY, by calling the real `assertTarget()`.
  * An earlier version pattern-matched the source of the allowlist and was shown
@@ -45,6 +48,19 @@ const FORBIDDEN_PRIVILEGE = [
   /\bapproveNewsletter\b/,
   /\bdraftEvent\b/,
   /\bapproveEvent\b/,
+  /\bdraftCourse\b/,
+  /\bapproveCourse\b/,
+  // Re-badges every member on the site in one action, which is why it is a
+  // key of its own rather than part of the admin role.
+  /\bmanageMembership\b/,
+  // Sends a worksheet, with a task and an email each, to named committee
+  // members; and unlocks GET /api/worksheets/recipients, the one route that
+  // hands out a committee roster without a users-collection read.
+  /\bcirculateWorksheet\b/,
+  // Not a permission: an admin-set tag marking a paid member for an academic
+  // year. It gates nothing, but it is admin-set data about a real person that
+  // reviewers see on an application, so the harness has no business writing it.
+  /\bpaidMembershipYears\b/,
   /\bsetCustomUserClaims\b/,
 ];
 
@@ -80,7 +96,7 @@ function sourceFiles(dir) {
   return files;
 }
 
-test("the e2e harness never grants a role, permission, or suRecognised", () => {
+test("the e2e harness never grants a role, permission, or admin-set tag", () => {
   const files = sourceFiles(E2E_DIR);
   assert.ok(files.length > 0, `expected harness sources under ${E2E_DIR}`);
   for (const file of files) {
@@ -88,9 +104,9 @@ test("the e2e harness never grants a role, permission, or suRecognised", () => {
     for (const pattern of FORBIDDEN_PRIVILEGE) {
       assert.ok(
         !pattern.test(source),
-        `${relative(REPO_ROOT, file)} matches ${pattern} — the e2e harness must never ` +
-          "construct a privileged identity. Its accounts are bare Auth users with no " +
-          "Firestore doc, so they hold no role at all.",
+        `${relative(REPO_ROOT, file)} matches ${pattern}. The e2e harness must never ` +
+          "construct a privileged identity. Its accounts are bare Auth users or " +
+          "role-pending documents, so they hold no role that grants anything.",
       );
     }
   }

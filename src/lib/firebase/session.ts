@@ -38,11 +38,27 @@ export type SessionUser = {
   /** True only for committee members the SU formally recognises. Admin-set;
    *  gates member-PII access and the committee task board. */
   suRecognised: boolean;
+  /** Server-owned denormalisation of "reviews or decides at least one
+   *  admission round". Written only by the round roles route; it draws the
+   *  Admissions nav entry and never decides what may be read. Optional so the
+   *  dev-bypass stub's SessionUser does not have to carry it. */
+  admissionsReviewer?: boolean;
   permissions: {
     draftNewsletter: boolean;
     approveNewsletter: boolean;
     draftEvent: boolean;
     approveEvent: boolean;
+    draftCourse: boolean;
+    approveCourse: boolean;
+    /** Membership periods, tier grants, and the membership console. Not part
+     *  of the SU-recognised PII tier; moving the CURRENT period pointer stays
+     *  full-admin only. */
+    manageMembership: boolean;
+    /** Sending a worksheet to people, adding recipients to a circulation, and
+     *  the recipient picker route. Granted per person; NOT implied by SU
+     *  recognition. Read it through `canCirculateWorksheet` in
+     *  lib/firestore/users.ts so the admin-implicit half is never dropped. */
+    circulateWorksheet: boolean;
   };
 };
 
@@ -144,11 +160,16 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
       displayName: data.displayName ?? data.profile?.preferredName,
       policyVersion: typeof data.policyVersion === "string" ? data.policyVersion : null,
       suRecognised: Boolean(data.suRecognised),
+      admissionsReviewer: Boolean(data.admissionsReviewer),
       permissions: {
         draftNewsletter: Boolean(perms.draftNewsletter),
         approveNewsletter: Boolean(perms.approveNewsletter),
         draftEvent: Boolean(perms.draftEvent),
         approveEvent: Boolean(perms.approveEvent),
+        draftCourse: Boolean(perms.draftCourse),
+        approveCourse: Boolean(perms.approveCourse),
+        manageMembership: Boolean(perms.manageMembership),
+        circulateWorksheet: Boolean(perms.circulateWorksheet),
       },
     };
   } catch {

@@ -1,0 +1,350 @@
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.backLink {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  text-decoration: none;
+}
+
+.backLink:hover {
+  color: var(--color-text);
+}
+
+.statusBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.statusMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.runTitle {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  max-width: 22rem;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.sectionHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.sectionTitle {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  margin: 0 0 var(--space-3);
+  color: var(--color-text);
+}
+
+.sectionHeader .sectionTitle {
+  margin: 0;
+}
+
+.hint {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.muted {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.warn {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  font-size: var(--text-sm);
+}
+
+/* `.warn` is a standalone child of `.editor` in one place (the wrong-course
+   notice), where the flex gap spaces it. Inside a Card it needs its own
+   bottom margin — kept as a second class rather than folded into `.warn` so
+   the standalone use doesn't gain a stray gap. */
+.blockWarn {
+  margin-bottom: var(--space-4);
+}
+
+/* The question budget, read straight after the builder's last card. The
+   global reset zeroes <p> margins, so the spacing is stated here. */
+.formCount {
+  margin-top: var(--space-3);
+}
+
+/* Opens the public apply page in a new tab. Sits in a section header beside
+   the title, so it reads as a destination rather than a save action. */
+.previewLink {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--color-accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.previewLink:hover {
+  background: var(--color-surface-hover);
+}
+
+.previewLink:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.twoCol {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-4);
+}
+
+/* V3 W1 PR7: the cohort triple (term, year, number) reads as one field made of
+   three, so it sits on its own row rather than pairing off with something
+   unrelated. */
+.threeCol {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-4);
+}
+
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* ---- Weeks ---- */
+
+.weekRows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.weekRow {
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.weekName {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.weekId {
+  font-weight: 400;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.weekTitle {
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.weekTitleEmpty {
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-subtle);
+  font-style: italic;
+}
+
+.weekBadge {
+  justify-self: start;
+}
+
+.weekLink {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--color-accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.weekLink:hover {
+  background: var(--color-surface-hover);
+}
+
+.copyForward {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.subTitle {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.copyRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+/* The select is the row's flexible element; the switch and button size to
+   their content. Wrapped rather than styled through ResponsiveSelect, which
+   renders BOTH shapes (native + sheet) as siblings. */
+.copySelect {
+  /* `display: flex`, not the default inline: ResponsiveSelect's shape wrappers
+     are `display: contents`, so the control itself becomes this element's
+     child and its `width: 100%` needs a block-level box to resolve against. */
+  display: flex;
+  flex: 1 1 16rem;
+  min-width: 0;
+  max-width: 22rem;
+}
+
+.error {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+}
+
+/* TODO: mobile pass — paired fields stack and the status bar wraps; the full
+   touch review of the course admin surfaces rides its own PR. */
+@media (max-width: 48rem) { /* --bp-md */
+  .twoCol {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .threeCol {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .statusBar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .statusRow {
+    max-width: none;
+  }
+
+  /* Week rows go two-up: identity + badge on the first line, title and the
+     edit link on the second. Explicit placement, not auto-flow — a
+     column-spanning child in an auto-placed grid pushes its siblings into
+     surprising cells (same note as WeekPlanBuilder). */
+  .weekRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: var(--space-2);
+  }
+
+  .weekName {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .weekTitle,
+  .weekTitleEmpty {
+    grid-column: 1;
+    grid-row: 2;
+    white-space: normal;
+  }
+
+  .weekBadge {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+  }
+
+  .weekLink {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: end;
+    min-height: 2.75rem;
+  }
+
+  .copySelect {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .previewLink {
+    min-height: 2.75rem;
+  }
+}

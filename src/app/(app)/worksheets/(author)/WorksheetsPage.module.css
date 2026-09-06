@@ -1,0 +1,47 @@
+/* Page chrome for /worksheets. Extracted from the page component so the header
+   and the tab row can carry a mobile block: CSS custom properties do not
+   resolve inside an @media condition, so the breakpoint is written literally
+   and tagged (docs/mobile-conventions.md). */
+
+.headerRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-5);
+}
+
+.headerText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.headerTitle {
+  margin-top: var(--space-2);
+}
+
+.subtitle {
+  color: var(--color-text-muted);
+  margin-top: var(--space-1);
+  max-width: var(--prose-max-width);
+}
+
+.tabs {
+  margin-bottom: var(--space-5);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .headerRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* The segmented control is the one control on this row a thumb has to hit,
+     so it gets the width rather than sitting in a half-line beside nothing. */
+  .tabs {
+    width: 100%;
+  }
+}

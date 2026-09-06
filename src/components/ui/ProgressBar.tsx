@@ -1,3 +1,8 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import styles from "./ProgressBar.module.css";
+
 type Tone = "neutral" | "accent" | "success" | "danger" | "warning";
 
 type Props = {
@@ -7,17 +12,26 @@ type Props = {
   tone?: Tone;
   showLabel?: boolean;
   size?: "sm" | "md";
+  /** When true, the first client paint is scaleX(0) and one rAF later the
+   *  fill transitions to the real value. Off by default so existing
+   *  consumers keep their static first paint. */
+  animateOnMount?: boolean;
 };
 
-const TRACK_COLOR = "var(--color-surface-hover)";
-const TONE_FG: Record<Tone, string> = {
-  neutral: "var(--color-text-muted)",
-  accent: "var(--color-accent)",
-  success: "var(--color-success)",
-  danger: "var(--color-danger)",
-  warning: "var(--color-warning)",
+const toneClass: Record<Tone, string> = {
+  neutral: styles.toneNeutral,
+  accent: styles.toneAccent,
+  success: styles.toneSuccess,
+  danger: styles.toneDanger,
+  warning: styles.toneWarning,
 };
 
+/*
+  Fill is a full-width inner div scaled via transform: scaleX() — never an
+  animated width, which relayouts on every frame. The mount animation reuses
+  the PublicMain rAF handshake: render the from-state (scaleX(0)) first, flip
+  on the next frame so the two paints can't collapse into one.
+*/
 export default function ProgressBar({
   value,
   max,
@@ -25,54 +39,35 @@ export default function ProgressBar({
   tone = "accent",
   showLabel = false,
   size = "md",
+  animateOnMount = false,
 }: Props) {
   const safeMax = Math.max(1, max);
   const clamped = Math.max(0, Math.min(value, safeMax));
-  const pct = Math.round((clamped / safeMax) * 100);
-  const height = size === "sm" ? 4 : 6;
+  const [drawn, setDrawn] = useState(!animateOnMount);
+
+  useEffect(() => {
+    if (drawn) return;
+    const id = requestAnimationFrame(() => setDrawn(true));
+    return () => cancelAnimationFrame(id);
+  }, [drawn]);
 
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "var(--space-2)",
-        width: "100%",
-      }}
-    >
+    <div className={styles.wrap}>
       <div
         role="progressbar"
         aria-label={ariaLabel}
         aria-valuenow={clamped}
         aria-valuemin={0}
         aria-valuemax={safeMax}
-        style={{
-          flex: 1,
-          height,
-          background: TRACK_COLOR,
-          borderRadius: "var(--radius-pill)",
-          overflow: "hidden",
-        }}
+        className={`${styles.track} ${size === "sm" ? styles.sm : styles.md}`}
       >
         <div
-          style={{
-            width: `${pct}%`,
-            height: "100%",
-            background: TONE_FG[tone],
-            transition: "width var(--transition-base)",
-          }}
+          className={`${styles.fill} ${toneClass[tone]}`}
+          style={{ transform: `scaleX(${drawn ? clamped / safeMax : 0})` }}
         />
       </div>
       {showLabel && (
-        <span
-          style={{
-            fontSize: "var(--text-xs)",
-            color: "var(--color-text-muted)",
-            fontVariantNumeric: "tabular-nums",
-            minWidth: "2.5rem",
-            textAlign: "right",
-          }}
-        >
+        <span className={styles.label}>
           {clamped}/{max}
         </span>
       )}

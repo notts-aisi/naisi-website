@@ -1,6 +1,6 @@
 import Link from "next/link";
 import BrandMark from "@/components/BrandMark";
-import socials from "@/content/socials.json";
+import { CONTACT_EMAIL, SOCIAL_LINKS } from "@/content/socials";
 import styles from "./PublicFooter.module.css";
 
 export default function PublicFooter() {
@@ -15,6 +15,7 @@ export default function PublicFooter() {
         </div>
         <nav className={styles.col} aria-label="Site">
           <span className={styles.colTitle}>Site</span>
+          <Link href="/courses">Courses</Link>
           <Link href="/members">Members</Link>
           <Link href="/resources">Resources</Link>
           <Link href="/news">News</Link>
@@ -22,12 +23,12 @@ export default function PublicFooter() {
         </nav>
         <nav className={styles.col} aria-label="Elsewhere">
           <span className={styles.colTitle}>Elsewhere</span>
-          {socials.socials.map((s) => (
+          {SOCIAL_LINKS.map((s) => (
             <a key={s.label} href={s.href} target="_blank" rel="noreferrer noopener">
               {s.label}
             </a>
           ))}
-          <a href={`mailto:${socials.contactEmail}`}>{socials.contactEmail}</a>
+          <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
         </nav>
       </div>
       <div className={`container ${styles.meta}`}>

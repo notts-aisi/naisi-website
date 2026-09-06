@@ -1,0 +1,55 @@
+/* ============================================================
+   CourseDangerZone — only what is peculiar to the course level.
+
+   Everything else (the disclosure, the dialog, the counts
+   table, the receipt, the blockers, the interrupted banner) is
+   imported from RunDangerZone.module.css, because the two
+   surfaces render the same components and a destroy
+   confirmation that changes appearance with its subject is a
+   confirmation people stop reading.
+
+   The one thing that only exists here is the after-the-fact
+   notice: a course editor whose document has just been
+   destroyed is a form over nothing, and that has to be said on
+   the page rather than only in a dialog somebody has closed.
+   ============================================================ */
+
+.destroyed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.destroyedTitle {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.destroyedBody {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  line-height: var(--leading-relaxed);
+  max-width: var(--prose-max-width);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .destroyed {
+    padding: var(--space-3);
+  }
+}
+
+/* === Reduced motion === */
+@media (prefers-reduced-motion: reduce) {
+  /* Nothing in this module animates — the notice appears with the page. The
+     block is kept so the question stays asked here if anything is added. */
+}

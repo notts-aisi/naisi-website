@@ -1,0 +1,6 @@
+/* Fixture only. Nothing renders this: it exists so a fixture module can import
+   a stylesheet, which is what `tests/ts-loader.test.mjs` uses to pin the
+   loader's refusal to compile anything that is not `.ts` or `.tsx`. */
+.panel {
+  color: inherit;
+}

@@ -9,6 +9,21 @@ import ResponsiveSelect, {
  * Two-dropdown month/year picker that emits an ISO "YYYY-MM" string.
  * Holds local state for each select so partial selections are reflected
  * visually (otherwise the selects appear empty until *both* are chosen).
+ *
+ * THE FIELD'S `id` GOES ON THE MONTH, which is the first control in the row.
+ * Callers wrap this in a `<Field id="…">` whose label is an explicit
+ * `htmlFor`, so the id has to land on a real element or the label focuses
+ * nothing; landing it on the second control would make the click jump past the
+ * first. Each control keeps its own aria-label, because the field's label
+ * ("Expected graduation") names the pair rather than either half.
+ *
+ * That aria-label is also what the month control announces, id or no id:
+ * `aria-label` outranks an associated `<label for>` in the accessible-name
+ * computation, so the id restores the label click and native `required` and
+ * changes nothing a screen reader says. Naming the pair properly means
+ * `aria-labelledby` pointing at both the field label and the half, and it is
+ * left for a change that can move `tests/e2e/applicant-signup.spec.mjs` with
+ * it: that spec locates these two by `select[aria-label='Month'|'Year']`.
  */
 
 const MONTHS = [
@@ -41,8 +56,10 @@ function split(value: string): [year: string, month: string] {
 }
 
 export default function GraduationSelect({
+  id,
   value,
   onChange,
+  required,
   fromYear,
   yearsAhead = 8,
 }: Props) {
@@ -89,17 +106,22 @@ export default function GraduationSelect({
     <div style={{ display: "flex", gap: "var(--space-3)" }}>
       <div style={{ flex: 2 }}>
         <ResponsiveSelect
+          id={id}
           value={month}
           onChange={(next) => emit(year, next)}
           options={monthOptions}
+          required={required}
           ariaLabel="Month"
         />
       </div>
       <div style={{ flex: 1 }}>
+        {/* Required on both halves: the field is a month AND a year, and one
+            without the other emits the empty string to the parent. */}
         <ResponsiveSelect
           value={year}
           onChange={(next) => emit(next, month)}
           options={yearOptions}
+          required={required}
           ariaLabel="Year"
         />
       </div>

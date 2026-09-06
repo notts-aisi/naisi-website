@@ -1,7 +1,9 @@
 .shell {
   display: grid;
   grid-template-columns: var(--sidebar-width) 1fr;
-  min-height: 100vh;
+  /* dvh so short pages do not leave a strip of dead space under the fold
+     when the mobile URL bar is expanded. */
+  min-height: 100dvh;
   transition: grid-template-columns var(--transition-base);
 }
 
@@ -33,7 +35,14 @@
   top: var(--site-notice-height, 0px);
   left: 0;
   width: var(--sidebar-width);
-  height: calc(100vh - var(--site-notice-height, 0px));
+  /* dvh, not vh: on mobile browsers vh is the LARGEST viewport height, so a
+     100vh fixed column runs under the collapsed URL bar. Every inset below
+     resolves to 0 off a notched device, so this is a no-op there. */
+  height: calc(100dvh - var(--site-notice-height, 0px));
+  /* Landscape on a notched iPhone puts the notch down one side, and
+     viewport-fit: cover means the sidebar starts underneath it. */
+  padding-left: max(var(--space-6), env(safe-area-inset-left, 0px));
+  padding-bottom: max(var(--space-6), env(safe-area-inset-bottom, 0px));
   transition: transform var(--transition-base);
 }
 
@@ -82,8 +91,8 @@
   position: fixed;
   /* Below the site-notice banner when one is active, like .sidebar above —
      otherwise the pill can cover the banner's Details/dismiss controls. */
-  top: calc(var(--space-4) + var(--site-notice-height, 0px));
-  right: var(--space-4);
+  top: calc(var(--space-4) + var(--site-notice-height, 0px) + env(safe-area-inset-top, 0px));
+  right: max(var(--space-4), env(safe-area-inset-right, 0px));
   z-index: 15;
   display: inline-flex;
   align-items: center;
@@ -239,10 +248,12 @@
   min-width: 0;
 }
 
-/* Per-route opt-in wider cap for the committee task board, where the kanban
-   benefits from the extra horizontal real estate (5 × 17rem columns ≈ 85rem
-   of content). TaskBoard handles its own overflow via `overflow-x: auto` +
-   the `min-width: 0` chain on .scroll / .kanbanOnly, so the original PR #11
+/* Per-route opt-in wider cap for board-shaped pages that benefit from the
+   extra horizontal real estate — the committee kanban (5 × 17rem columns ≈
+   85rem of content) and the run allocation board. Applied by AppShell's
+   WIDE_ROUTES predicate list; the condition for joining it is that the page
+   handles its own overflow via `overflow-x: auto` + a `min-width: 0` chain
+   (TaskBoard does it on .scroll / .kanbanOnly), so the original PR #11
    concern — fixed-width columns leaking past viewport and orphaning the
    sticky-vertical sidebar — is addressed at the page layer. Order matters:
    this sits after `.main` so it overrides at desktop, and before the
@@ -470,6 +481,61 @@
   padding-inline: var(--space-1);
 }
 
+/* Escape hatch shown by StuckLoadingEscape after the shell has sat loading
+   for 10s. Sits inside .loadingPane, which is already centred. Invisible in
+   the normal case, so it costs nothing until something is actually wrong. */
+.stuckLoading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--color-border);
+  max-width: 22rem;
+  text-align: center;
+}
+
+.stuckLoadingText {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.stuckLoadingActions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* Reload control in the mobile top strip. Hidden outright unless the site is
+   running as an installed app, where there is no URL bar to reload from.
+   See the comment on the button in AppShell.tsx for why this is CSS-gated
+   rather than gated on useIsStandalone. */
+.standaloneReload {
+  display: none;
+}
+
+:global(html[data-standalone="true"]) .standaloneReload {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Pushed hard right so it sits beside the hamburger rather than centred
+     between the brand and the menu. */
+  margin-left: auto;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+:global(html[data-standalone="true"]) .standaloneReload:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+
 /* ===== Below --bp-lg: hide sidebar, show top strip, full-bleed main ===== */
 @media (max-width: 60rem) { /* --bp-lg */
   .shell {
@@ -493,9 +559,21 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-4);
-    height: 3.5rem;
-    padding-inline: var(--space-4);
-    padding-top: env(safe-area-inset-top);
+    /* The bar's own height, before any notch inset. Published as a variable
+       because .impersonationBanner has to offset by the SAME total, and the
+       two silently drifting apart is exactly how the banner ends up tucked
+       under the strip. */
+    --top-strip-height: 3.5rem;
+    /* Was `height: 3.5rem` with a bare `padding-top: env(...)`. Under the
+       global `box-sizing: border-box` that made the inset EAT the content
+       box rather than grow it: on a notched iPhone in landscape a 59px inset
+       against a 56px box left nothing for the 44px hamburger, which was
+       crushed or overflowed. Adding the inset to the height fixes it, and
+       resolves to exactly 3.5rem wherever the inset is 0, which is every
+       desktop, every non-notched device and DevTools. */
+    height: calc(var(--top-strip-height) + env(safe-area-inset-top, 0px));
+    padding-inline: max(var(--space-4), env(safe-area-inset-left, 0px));
+    padding-top: env(safe-area-inset-top, 0px);
     background: color-mix(in srgb, var(--color-bg-elevated) 92%, transparent);
     backdrop-filter: saturate(1.4) blur(12px);
     -webkit-backdrop-filter: saturate(1.4) blur(12px);
@@ -506,7 +584,14 @@
   }
   .main {
     max-width: 100%;
-    padding: var(--space-6) var(--space-4);
+    /* Side and bottom insets matter here: viewport-fit: cover means the
+       content box already reaches the physical edges, so in landscape the
+       first character of every line sits under the notch, and in portrait
+       the last row sits under the home indicator. Each resolves to the plain
+       spacing token off a notched device. */
+    padding: var(--space-6) max(var(--space-4), env(safe-area-inset-right, 0px))
+      calc(var(--space-6) + env(safe-area-inset-bottom, 0px))
+      max(var(--space-4), env(safe-area-inset-left, 0px));
     /* Sidebar is display:none here — reset the desktop column-2 pin so main
        takes the single grid track instead of creating a phantom column 2. */
     grid-column: auto;
@@ -519,7 +604,9 @@
   }
   /* Banner offsets to sit below the top strip (which is sticky at top 0). */
   .impersonationBanner {
-    top: 3.5rem;
+    /* Must match .topStrip's total height above, inset included, or the
+       yellow view-as bar tucks under the strip on a notched device. */
+    top: calc(3.5rem + env(safe-area-inset-top, 0px));
     margin: calc(var(--space-6) * -1) calc(var(--space-4) * -1) var(--space-4);
     padding: var(--space-3) var(--space-4);
     flex-wrap: wrap;

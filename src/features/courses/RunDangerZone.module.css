@@ -1,0 +1,534 @@
+/* ============================================================
+   RunDangerZone — the archive toggle, the danger disclosure,
+   and the destroy dialog's whole vocabulary (CourseDangerZone
+   renders the same pieces, so the styles live here with them).
+
+   THE VISUAL ARGUMENT
+   Red is spent, not sprinkled. The archive card is an ordinary
+   card because archiving is an ordinary act; the danger colour
+   starts at the disclosure and stops at the edge of the panel
+   it opens, so "red" on this page means exactly one thing:
+   past this line, things stop existing.
+
+   The counts table is the centre of gravity. Its numbers are
+   right-aligned and tabular so a column of them can be read as
+   a magnitude at a glance — the difference between 41 and 412
+   mirrored tasks is the difference between two decisions.
+
+   The receipt is deliberately the QUIETEST block on the
+   surface: no green, no tick, no lift. It is a record of a
+   destruction, and styling it like a success would be the
+   interface congratulating somebody for deleting other
+   people's work.
+
+   Motion: one transition, the disclosure's grid-rows open
+   (the house 0fr → 1fr idiom). The progress bar's fill is
+   ProgressBar's own. Nothing else moves — a surface whose
+   whole job is a considered decision should not be animating
+   underneath the person making it.
+   ============================================================ */
+
+.sectionTitle {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  margin: 0 0 var(--space-3);
+  color: var(--color-text);
+}
+
+.hint {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-relaxed);
+  max-width: var(--prose-max-width);
+}
+
+.error {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+}
+
+.warn {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+/* === Archive === */
+
+.archiveRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+/* === Danger zone card ===
+   The card itself stays neutral: it also carries the interrupted banner and
+   the receipt, neither of which is an invitation to destroy anything. */
+
+.zoneCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* === Disclosure === */
+
+.disclosure {
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft);
+}
+
+.disclosureButton {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-danger);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.disclosureButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.chevron {
+  display: inline-block;
+  font-size: var(--text-base);
+  line-height: 1;
+  transition: transform var(--dur-quick) var(--ease-naisi);
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-panel) var(--ease-naisi);
+}
+
+.panelOpen {
+  grid-template-rows: 1fr;
+}
+
+.panelInner {
+  /* The grid track does the height; this clips the content while the track is
+     collapsed. `min-height: 0` defeats the grid item's default
+     `min-height: auto`, without which the track never actually shrinks. */
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panelBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-top: 1px solid var(--color-danger);
+}
+
+.dangerTitle {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.dangerBody {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-relaxed);
+  max-width: var(--prose-max-width);
+}
+
+.dangerBody code,
+.auditLine code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.entry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+/* === Blockers === */
+
+.blockers {
+  padding: var(--space-3) var(--space-4);
+  border-left: 2px solid var(--color-warning);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+}
+
+.blockersTitle {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-warning);
+}
+
+.blockerItems {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  line-height: var(--leading-normal);
+}
+
+/* === Interrupted / unfinished === */
+
+.interrupted {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft);
+}
+
+.interruptedTitle {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-danger);
+}
+
+.interruptedBody {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  line-height: var(--leading-relaxed);
+  max-width: var(--prose-max-width);
+}
+
+.auditLine {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* === Dialog === */
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.dialogHead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.dialogTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.dialogSubtitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.loading {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.resumeNote {
+  margin: 0;
+  padding: var(--space-3);
+  border-left: 2px solid var(--color-danger);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  line-height: var(--leading-normal);
+}
+
+/* === Counts === */
+
+.countsBlock,
+.keptBlock,
+.confirmBlock,
+.progressBlock,
+.failure,
+.receipt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.blockTitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.blockHint {
+  margin: -0.25rem 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+}
+
+/* A long counter label can't be allowed to push the numbers off the panel. */
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.table tr + tr .rowLabel,
+.table tr + tr .rowValue {
+  border-top: 1px solid var(--color-border);
+}
+
+.rowLabel {
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+  text-align: left;
+  font-weight: 500;
+  color: var(--color-text);
+  vertical-align: top;
+}
+
+.rowNote {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+}
+
+.rowValue {
+  padding: var(--space-2) 0;
+  text-align: right;
+  white-space: nowrap;
+  /* Tabular figures so a column of counts compares by width as well as by
+     value — the point of showing them as a table at all. */
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--color-text);
+  vertical-align: top;
+}
+
+.totalRow .rowLabel,
+.totalRow .rowValue {
+  border-top: 1px solid var(--color-border-strong);
+  color: var(--color-danger);
+}
+
+/* === What survives === */
+
+.keptBlock {
+  padding: var(--space-3) var(--space-4);
+  border-left: 2px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+}
+
+.keptItems {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+}
+
+.keptItems strong {
+  color: var(--color-text);
+}
+
+/* === Typed confirmation === */
+
+.confirmInput {
+  font-family: var(--font-mono);
+  /* The string being matched is compared byte for byte, so it is shown in a
+     face where a doubled space and an l/1 swap are visible. */
+  letter-spacing: 0.01em;
+}
+
+/* === Progress === */
+
+.progressLine {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.progressHint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+}
+
+/* === Failure === */
+
+.failure {
+  padding: var(--space-4);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft);
+}
+
+.failureTitle {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-danger);
+}
+
+.failureBody {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  line-height: var(--leading-relaxed);
+}
+
+/* === Receipt ===
+   Neutral border, no tone colour: see the header note. */
+
+.receipt {
+  padding: var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.receiptTitle {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.receiptBody {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  line-height: var(--leading-relaxed);
+}
+
+.receiptCaveat {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-warning);
+  line-height: var(--leading-normal);
+}
+
+.receiptActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.receiptLink {
+  font-size: var(--text-sm);
+  color: var(--color-accent);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .panelBody {
+    padding: var(--space-3);
+  }
+
+  .entry > *,
+  .interrupted > button,
+  .dialogActions > * {
+    /* Full-bleed controls: at this width a right-aligned pair of buttons ends
+       up with the destructive one under the thumb's resting position. */
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .dialogActions {
+    flex-direction: column-reverse;
+  }
+
+  .rowNote {
+    /* The notes are the first thing to go when the panel is this narrow —
+       they are elaboration, and the counts are the message. */
+    font-size: var(--text-xs);
+  }
+
+  .receipt,
+  .failure,
+  .interrupted {
+    padding: var(--space-3);
+  }
+}
+
+/* === Reduced motion === */
+@media (prefers-reduced-motion: reduce) {
+  /* The tokens already collapse the durations; the chevron's rotate is a
+     transform, so it is nulled outright rather than run at 1ms. */
+  .chevron {
+    transition: none;
+  }
+
+  .panel {
+    transition: none;
+  }
+}

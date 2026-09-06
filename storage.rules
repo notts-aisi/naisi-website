@@ -39,7 +39,14 @@ service firebase.storage {
           )
         )
         && request.resource.size < 5 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
+        && request.resource.contentType.matches('image/.*')
+        // No SVG: this folder is world-readable, and an SVG is a document that
+        // can carry script and links rather than a picture. Matched on the
+        // LOWERCASED type with a prefix pattern, not compared to the one exact
+        // string: rules compare strings byte for byte, so `image/SVG+xml` and
+        // `image/svg+xml; charset=utf-8` walked straight past an equality test
+        // while a browser opens both as an SVG document.
+        && !request.resource.contentType.lower().matches('image/svg.*');
     }
 
     // Event images: same shape as newsletter — public read so rendered emails
@@ -77,7 +84,14 @@ service firebase.storage {
           )
         )
         && request.resource.size < 5 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
+        && request.resource.contentType.matches('image/.*')
+        // No SVG: this folder is world-readable, and an SVG is a document that
+        // can carry script and links rather than a picture. Matched on the
+        // LOWERCASED type with a prefix pattern, not compared to the one exact
+        // string: rules compare strings byte for byte, so `image/SVG+xml` and
+        // `image/svg+xml; charset=utf-8` walked straight past an equality test
+        // while a browser opens both as an SVG document.
+        && !request.resource.contentType.lower().matches('image/svg.*');
     }
 
     // Application-email images: public read (a sent email renders in an inbox
@@ -97,7 +111,57 @@ service firebase.storage {
       allow write: if request.auth != null
         && userData().role == 'admin'
         && request.resource.size < 5 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
+        && request.resource.contentType.matches('image/.*')
+        // No SVG: this folder is world-readable, and an SVG is a document that
+        // can carry script and links rather than a picture. Matched on the
+        // LOWERCASED type with a prefix pattern, not compared to the one exact
+        // string: rules compare strings byte for byte, so `image/SVG+xml` and
+        // `image/svg+xml; charset=utf-8` walked straight past an equality test
+        // while a browser opens both as an SVG document.
+        && !request.resource.contentType.lower().matches('image/svg.*');
+    }
+
+    // Course images: the guide imagery in a week's editor and the intro on a
+    // course's public page. Public read for the same reason as every block
+    // above (the published course page and the curriculum preview are served
+    // to signed-out visitors), and writes gated to admins plus the two course
+    // permissions, matching `canDraftCourse` / `canApproveCourse` and the
+    // `courses` rules in firestore.rules.
+    //
+    // This block was MISSING, exactly as `event-images` and `application-emails`
+    // were before it, and with the same result: every image upload in the
+    // course and week editors hit deny-by-default and failed with
+    // storage/unauthorized. Both editors' own comments predicted it. Storage
+    // rules deploy separately (`firebase deploy --only storage`) and nothing
+    // verifies the deployed set matches this file, so the pattern keeps
+    // repeating; `scripts/rules-tests/tests/storage.test.mjs` is what stops it.
+    //
+    // NO per-document ownership scoping, unlike newsletter-images and
+    // event-images, and deliberately so: `{folder}` is not one document id. The
+    // course editor uploads under a courseId and the week editor under a
+    // `runId__weekId` pair, so there is no single document to read an authorUid
+    // from, and a rule that guessed would deny one of the two editors. Course
+    // authoring is an admin-granted permission held by a handful of people who
+    // are already trusted to edit each other's runs (courses have no per-course
+    // author gate in firestore.rules either), so the permission IS the scope
+    // here. If courses ever grow a per-course author, mirror event-images.
+    match /course-images/{folder}/{image=**} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && (
+          userData().role == 'admin'
+          || userData().get(['permissions', 'approveCourse'], false) == true
+          || userData().get(['permissions', 'draftCourse'], false) == true
+        )
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*')
+        // No SVG: this folder is world-readable, and an SVG is a document that
+        // can carry script and links rather than a picture. Matched on the
+        // LOWERCASED type with a prefix pattern, not compared to the one exact
+        // string: rules compare strings byte for byte, so `image/SVG+xml` and
+        // `image/svg+xml; charset=utf-8` walked straight past an equality test
+        // while a browser opens both as an SVG document.
+        && !request.resource.contentType.lower().matches('image/svg.*');
     }
 
     // Task attachments: mirror the Firestore task access gate — anyone who
@@ -148,6 +212,124 @@ service firebase.storage {
         );
       allow delete: if canAccessTask()
         && (userData().role == 'admin' || isAttachmentUploader());
+    }
+
+    // Worksheet imagery: the pictures inside a question's body or on one of
+    // its options. Written by whoever is authoring the questions, which is any
+    // committee member in the library and the circulation's staff mid-flight.
+    //
+    // PER-DOCUMENT OWNERSHIP SCOPING, mirroring firestore.rules, because
+    // `{ownerId}` is TWO kinds of id and both can be probed. It is a WORKSHEET
+    // id in the library editor and a CIRCULATION id when staff edit the sent
+    // copy, and an earlier draft of this block took that as licence to gate on
+    // committee membership alone (the course-images reasoning). It is not the
+    // same case: course authoring has no per-document author to mirror, while
+    // a worksheet has `authorUid` and a circulation has `staffUids`, and
+    // firestore.rules enforces both. Left at bare committee membership, a
+    // committee member refused `update` on somebody else's worksheet could
+    // still overwrite that worksheet's body and option images, and overwrite
+    // the imagery inside a live circulation that recipients are reading. That
+    // is the event-images hole forty lines above, repeated on a path added
+    // afterwards, so it is closed here the same way and at the same price:
+    // one exists() plus one get() against whichever collection the id names.
+    //
+    // The neither-exists branch is the newsletter-images null-safety branch
+    // and exists for the same reason: firestore.get() on a missing document
+    // returns null and .get() on null RAISES, denying by error, and an editor
+    // can legitimately upload the first image before its document has settled.
+    // Uploading under an id that names nothing is harmless because nothing
+    // references it; the hole being closed is overwriting SOMEBODY ELSE'S.
+    //
+    // Admins keep blanket write, matching "edit somebody else's worksheet:
+    // admins only" in docs/worksheets.md, so an admin fixing a broken image
+    // never has to go through the author.
+    //
+    // Read is SIGNED-IN rather than public, unlike every image block above.
+    // Those are public because a sent email and the public site render them
+    // with no session; a worksheet is never public, and a question body can
+    // carry a screenshot of something internal.
+    //
+    // SVG is refused EXPLICITLY. It satisfies `image/.*`, it is a document
+    // format that can carry script, and this path is readable by every
+    // signed-in account including a brand-new pending one. This block refused
+    // it first and the four world-readable image blocks above admitted it,
+    // which was the wrong way round; they now carry the same clause.
+    //
+    // The clause used to be `contentType != 'image/svg+xml'`, an equality test
+    // against one spelling, and the emulator showed `image/SVG+xml` and
+    // `image/svg+xml; charset=utf-8` being stored verbatim through it. A media
+    // type is case-insensitive and may carry parameters, so a browser opens
+    // both of those as an SVG document while the rule reads them as two
+    // strings it has never heard of. It is a prefix match on the lowercased
+    // type now, which is the same reasoning as the allowlist in
+    // src/lib/worksheets/imageMagic.ts: refuse the FORMAT rather than the one
+    // shape somebody remembered to ban. The guard in
+    // scripts/rules-tests/tests/storage.test.mjs holds every image folder to
+    // the clause so the next folder added cannot forget it.
+    match /worksheet-images/{ownerId}/{image=**} {
+      function worksheetPath() {
+        return /databases/(default)/documents/worksheets/$(ownerId);
+      }
+      function circulationPath() {
+        return /databases/(default)/documents/circulations/$(ownerId);
+      }
+      // Author of the worksheet this folder belongs to, or staff of the
+      // circulation it belongs to, or neither document exists yet.
+      function ownsFolder() {
+        return (
+          firestore.exists(worksheetPath())
+            && firestore.get(worksheetPath()).data.get('authorUid', '') == request.auth.uid
+        ) || (
+          firestore.exists(circulationPath())
+            && request.auth.uid in firestore.get(circulationPath()).data.get('staffUids', [])
+        ) || (
+          !firestore.exists(worksheetPath()) && !firestore.exists(circulationPath())
+        );
+      }
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && (
+          userData().role == 'admin'
+          || (userData().role == 'committee' && ownsFolder())
+        )
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*')
+        && !request.resource.contentType.lower().matches('image/svg.*');
+    }
+
+    // Worksheet image ANSWERS: what a recipient uploaded in reply to an
+    // imageUpload question. Read by that recipient, the circulation's staff
+    // and admins.
+    //
+    // NO CLIENT WRITE AT ALL, admin and recipient included. The file goes
+    // through POST /api/worksheets/circulations/{id}/upload, which checks the
+    // MAGIC BYTES (PNG, JPEG, GIF, WebP; SVG refused) rather than trusting the
+    // Content-Type the client declares, enforces the size cap after the
+    // client's compression pass, writes with the Admin SDK and returns the
+    // { url, storagePath } pair the answer stores. A storage rule can only see
+    // the declared content type, which is a claim, so there is no version of
+    // this block that would be equivalent to the route.
+    //
+    // The recipient branch is tested FIRST and reads nothing: {uid} is a path
+    // segment, so a recipient reaching their own upload costs no cross-service
+    // lookup and cannot be aimed at anybody else's folder. The staff branch is
+    // guarded with exists() because firestore.get() on a missing document
+    // returns null and .get() on null raises, which would deny by error rather
+    // than by decision.
+    match /worksheet-uploads/{circulationId}/{uid}/{file} {
+      function parentCirculation() {
+        return firestore.get(/databases/(default)/documents/circulations/$(circulationId)).data;
+      }
+      allow read: if request.auth != null
+        && (
+          request.auth.uid == uid
+          || userData().role == 'admin'
+          || (
+            firestore.exists(/databases/(default)/documents/circulations/$(circulationId))
+            && request.auth.uid in parentCirculation().get('staffUids', [])
+          )
+        );
+      allow write: if false;
     }
   }
 }

@@ -1,0 +1,352 @@
+# The browser end-to-end suite, in the two modes it has.
+#
+# `.github/workflows/checks.yml` runs everything that needs no credentials:
+# typegen, tsc, lint, the Node suites (which include the two offline fences on
+# this harness and the coverage map) and a real build. This file is the other
+# half: runs that talk to the DEV Firebase project, create throwaway accounts,
+# drive Chromium and tear the fixtures down again.
+#
+# HOW IT GETS CREDENTIALS. Workload Identity Federation, not a stored key.
+# GitHub mints a short-lived OIDC token for this workflow, Google exchanges it
+# for a token on a dedicated service account bound to THIS repository, and the
+# result is Application Default Credentials in the runner, the same shape the
+# laptop has after `gcloud auth application-default login`. Nothing permanent
+# is stored, and the binding means a fork or another repository cannot exchange
+# a token even if it copies this file.
+#
+# WHY `pull_request` AND NEVER `pull_request_target`. `pull_request_target`
+# runs the workflow definition from the base branch with write-scoped secrets
+# available to a job checking out a fork's code. That is the standard way to
+# hand a stranger's branch your credentials. `pull_request` runs the fork's
+# code with no id-token, which is why the local job below skips fork pull
+# requests outright rather than pretending to cover them.
+#
+# WHAT IT COSTS TO GET THIS WRONG. Both modes write to the dev project: real
+# Auth accounts, real Firestore rows, real mail attempts. The runner tears down
+# in a `finally` and the exit code carries the manifest, so a green run is also
+# a run that left nothing behind. A CANCELLED run is the exception, which is
+# why `cancel-in-progress` is false below.
+name: End to end
+
+on:
+  # The local job only. It boots the app on loopback with a relaxed captcha and
+  # Mailpit, so it can drive the legs a deployed target refuses.
+  pull_request:
+  # The dev job only: the deployed backend, real secrets, real reCAPTCHA.
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC, nightly
+  workflow_dispatch:
+
+permissions:
+  # Required to mint the OIDC token Workload Identity Federation exchanges.
+  id-token: write
+  contents: read
+
+concurrency:
+  # ONE GROUP FOR THE WHOLE WORKFLOW, deliberately not per ref. Every run here,
+  # on any branch and from any trigger, drives the SAME dev Firebase project.
+  # Fixture ids are per run, so ordinary rows never collide, but two things in
+  # that project are singletons that a spec has to borrow and give back: the
+  # `config/membership` pointer the membership console rewrites when it makes a
+  # period current, and the reCAPTCHA-relaxed loopback port a local run binds.
+  # The membership spec snapshots that pointer before it seeds and restores it
+  # in teardown, so an overlapping pair would restore a pointer to a period the
+  # other run has already deleted, and BOTH manifests would still read zero:
+  # the corruption is invisible to the thing that is supposed to catch it.
+  # Queueing every run of this workflow behind the last one is the fix, and it
+  # is why a pull request run and the 03:00 nightly cannot overlap either.
+  group: e2e-${{ github.workflow }}
+  # NOT cancelled. A run killed part way leaves its fixture on the shared dev
+  # project and its ledger in a workspace that is about to be deleted, so
+  # nothing can find the rows again. Queueing is the cheaper failure.
+  cancel-in-progress: false
+
+jobs:
+  local:
+    name: Local mode (loopback server, captcha relaxed, mail into Mailpit)
+    # Two conditions, for two different reasons.
+    #
+    # 1. No `GCP_WORKLOAD_IDENTITY_PROVIDER` variable means federation has not
+    #    been set up on this repository yet. The job skips cleanly rather than
+    #    failing every pull request with an authentication error.
+    # 2. A pull request from a FORK gets no id-token (`pull_request` withholds
+    #    it), so the exchange cannot happen at all. Skipping says so; the
+    #    alternative would be a red check nobody outside the repository can fix.
+    if: >-
+      github.event_name == 'pull_request'
+      && vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Deliberately not a dependency: the root package.json is on the critical
+      # path of every production deploy's `npm ci`, and a browser automation
+      # library plus a downloaded Chromium has no business there. The runner
+      # refuses to run without Playwright and prints this same line.
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      # Mailpit catches every message the loopback server sends, so a spec can
+      # read what a route actually put in an inbox. Pinned to a release and
+      # checked against its published SHA256: this binary handles the mail of a
+      # run that creates accounts, and "latest" is not a thing to trust with
+      # that.
+      - name: Install Mailpit
+        env:
+          MAILPIT_VERSION: v1.31.1
+          MAILPIT_SHA256: 87d2652abd7c17dc99029147ff62ac671afdf7fd76630f7faf5b14125211c709
+        run: |
+          set -euo pipefail
+          curl -fsSL -o mailpit.tar.gz \
+            "https://github.com/axllent/mailpit/releases/download/${MAILPIT_VERSION}/mailpit-linux-amd64.tar.gz"
+          echo "${MAILPIT_SHA256}  mailpit.tar.gz" | sha256sum -c -
+          tar -xzf mailpit.tar.gz mailpit
+          sudo install -m 0755 mailpit /usr/local/bin/mailpit
+          rm -f mailpit.tar.gz mailpit
+          mailpit version
+
+      # Application Default Credentials for the dev project, from the OIDC
+      # token above. `vars` rather than `secrets` on purpose: neither the
+      # provider path nor the service account address is a secret, and having
+      # them visible in the log is how you tell which identity a run used.
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
+
+      # The harness's own config. No secrets: the project id is a name and the
+      # web API key is public by definition (Next inlines it into the client
+      # bundle, so it ships to every browser that opens the dev site). That is
+      # the same argument checks.yml makes for its build placeholders.
+      - name: Write .env.e2e.local
+        run: |
+          cat > .env.e2e.local <<'EOF'
+          E2E_TARGET=http://127.0.0.1:3100
+          FIREBASE_ADMIN_PROJECT_ID=naisi-website-dev
+          NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyD2zW_GcbT3hsYnFS8Zl9vKkvNFRcbfvHs
+          EOF
+
+      # The app the local server builds needs the dev project's PUBLIC Firebase
+      # config to inline. Only these values: everything else in a developer's
+      # .env.local (SMTP credentials, the token secret, the reCAPTCHA secret)
+      # either belongs nowhere near a public repository or is overridden by
+      # scripts/e2e/run.mjs anyway, which forces the SMTP onto Mailpit, mints a
+      # fresh token secret per run and swaps in the always-pass captcha secret.
+      - name: Write .env.local
+        run: |
+          cat > .env.local <<'EOF'
+          NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyD2zW_GcbT3hsYnFS8Zl9vKkvNFRcbfvHs
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=naisi-website-dev.firebaseapp.com
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID=naisi-website-dev
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=naisi-website-dev.firebasestorage.app
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=958148488135
+          NEXT_PUBLIC_FIREBASE_APP_ID=1:958148488135:web:c030db12ef5ee9e6eb47e2
+          FIREBASE_ADMIN_PROJECT_ID=naisi-website-dev
+          EOF
+
+      # The nine fetch batteries under scripts/e2e/tests/ FIRST, because the
+      # coverage map credits them with the registration and magic-link routes
+      # (AUTH_BATTERIES in tests/e2e-coverage-map.test.mjs) and a credit no CI
+      # job collects is a credit that goes stale unnoticed. This boots its own
+      # loopback server with Mailpit and shuts it down again; the browser step
+      # below then reuses the build it just made.
+      - name: Run the fetch batteries against a loopback server
+        env:
+          E2E_SIGNING_SERVICE_ACCOUNT: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
+        run: npm run e2e:local
+
+      # `--skip-build`: the batteries step above built the app from the same
+      # env, and scripts/e2e/run.mjs rebuilds anyway if its marker says the
+      # values baked in differ.
+      - name: Run the browser specs against a loopback server
+        env:
+          # Custom tokens are signed by asking IAM to sign as this account. On
+          # a laptop that is the dev firebase-adminsdk account, which the
+          # developer has been granted rights over; a CI workload signs as
+          # ITSELF, so nobody has to hold rights over a shared identity. That
+          # still needs roles/iam.serviceAccountTokenCreator on the account
+          # granted TO ITSELF: see scripts/e2e/README.md and CLAUDE.md's
+          # "Known gotchas", where the same trap is written up.
+          E2E_SIGNING_SERVICE_ACCOUNT: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
+          # The owner's own admin account, for the specs that drive an
+          # admin-only screen. This harness can never create one: the fence
+          # forbids writing any role above `pending`.
+          E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+          E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+        run: node scripts/run-e2e.mjs --local --skip-build
+
+      # Runs even when the job is CANCELLED, which is the one case the
+      # runner's own `finally` cannot cover: the step above is killed before
+      # its teardown finishes and the machine is discarded with the ledgers.
+      # On 6 September 2026 that left seven fixtures on dev. This reads the
+      # ledgers `.e2e-state/` still holds and tears down exactly what they
+      # name; it needs no admin account and drives no browser. Red when a row
+      # is left behind, so a leak is a failed step rather than a silent one.
+      - name: Tear down whatever the ledgers still name
+        if: always()
+        env:
+          E2E_SIGNING_SERVICE_ACCOUNT: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
+        run: node scripts/run-e2e.mjs --teardown
+
+      # The ledgers, always on a failure. They matter most on a failure that
+      # also failed to tear down: they name the rows still sitting on the dev
+      # project. They carry fixture ids and e2e.invalid addresses only, which
+      # is why this half needs no opt-in.
+      - name: Upload the fixture ledgers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-local-state
+          path: .e2e-state
+          if-no-files-found: ignore
+          # Both directories are dotfolders, which upload-artifact v4.4+ skips
+          # by default: without this line every upload here reported success
+          # and carried nothing (seen 6 September 2026).
+          include-hidden-files: true
+          retention-days: 7
+
+      # THE SCREENSHOTS ARE OPT-IN, and this is why. `.e2e-artifacts` holds a
+      # full-page screenshot and the page text of the step that failed. The
+      # admin-driven specs fail on screens (Approvals, Members, the membership
+      # roster, the appointments queue) that render whatever the DEV project
+      # holds: real names and real addresses. This repository is public, and an
+      # artifact on a public repository can be downloaded by anybody. So the
+      # upload waits for somebody to set E2E_UPLOAD_SCREENSHOTS to "true" as a
+      # repository variable, for as long as they are chasing a failure, and the
+      # retention is one day rather than seven. Without it a failure still
+      # gives the step name, the runner's log and the ledger, which is usually
+      # where the answer is anyway.
+      - name: Upload the failing step's screenshots
+        if: failure() && vars.E2E_UPLOAD_SCREENSHOTS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-local-artifacts
+          path: .e2e-artifacts
+          if-no-files-found: ignore
+          # Both directories are dotfolders, which upload-artifact v4.4+ skips
+          # by default: without this line every upload here reported success
+          # and carried nothing (seen 6 September 2026).
+          include-hidden-files: true
+          retention-days: 1
+
+  dev:
+    name: Dev backend (deployed, real secrets, real reCAPTCHA)
+    # Nightly and on demand only: this drives the deployed dev backend, so it
+    # proves the wiring (secret resolution, real SMTP, real reCAPTCHA keys) that
+    # a loopback server cannot. Same skip when federation is not configured.
+    if: >-
+      github.event_name != 'pull_request'
+      && vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      # No Mailpit here, and no .env.local: nothing is built and nothing is
+      # started. The target is the deployed dev backend, whose mail goes to the
+      # real sender, which is exactly why every fixture address is suppressed
+      # before a deployed-mode run seeds anything.
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
+
+      - name: Write .env.e2e.local
+        run: |
+          cat > .env.e2e.local <<'EOF'
+          E2E_TARGET=https://dev.naisi.uk
+          FIREBASE_ADMIN_PROJECT_ID=naisi-website-dev
+          NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyD2zW_GcbT3hsYnFS8Zl9vKkvNFRcbfvHs
+          EOF
+
+      # The same nine batteries, against the deployed backend. The three that
+      # need a relaxed captcha or a readable inbox skip themselves here and say
+      # so; what remains proves the deployed wiring the loopback server cannot
+      # (real secret resolution, the real reCAPTCHA key, the real gate).
+      - name: Run the fetch batteries against dev.naisi.uk
+        env:
+          E2E_SIGNING_SERVICE_ACCOUNT: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
+        run: npm run e2e
+
+      # The reCAPTCHA-dependent legs SKIP here, by design: against a deployed
+      # target Google's real widget answers headless Chromium with an image
+      # challenge, which no spec may solve. The runner accepts exactly the
+      # steps each spec declares gated, for exactly the shared reason, and
+      # prints what it accepted.
+      - name: Run the browser specs against dev.naisi.uk
+        env:
+          E2E_SIGNING_SERVICE_ACCOUNT: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
+          E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+          E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+          # The dev backend's harness bypass (src/lib/recaptcha/bypass.ts). With
+          # this set, and the same value on the dev backend, the reCAPTCHA
+          # dependent steps run for real; without it they are skipped and the
+          # runner says so. Empty when the secret is not configured.
+          E2E_RECAPTCHA_BYPASS_SECRET: ${{ secrets.E2E_RECAPTCHA_BYPASS_SECRET }}
+        run: node scripts/run-e2e.mjs
+
+      # Runs even when the job is CANCELLED, which is the one case the
+      # runner's own `finally` cannot cover: the step above is killed before
+      # its teardown finishes and the machine is discarded with the ledgers.
+      # On 6 September 2026 that left seven fixtures on dev. This reads the
+      # ledgers `.e2e-state/` still holds and tears down exactly what they
+      # name; it needs no admin account and drives no browser. Red when a row
+      # is left behind, so a leak is a failed step rather than a silent one.
+      - name: Tear down whatever the ledgers still name
+        if: always()
+        env:
+          E2E_SIGNING_SERVICE_ACCOUNT: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
+        run: node scripts/run-e2e.mjs --teardown
+
+      - name: Upload the fixture ledgers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-dev-state
+          path: .e2e-state
+          if-no-files-found: ignore
+          # Both directories are dotfolders, which upload-artifact v4.4+ skips
+          # by default: without this line every upload here reported success
+          # and carried nothing (seen 6 September 2026).
+          include-hidden-files: true
+          retention-days: 7
+
+      # Opt-in for the same reason as the local job: these screenshots are of
+      # the dev project's real screens, and this repository is public.
+      - name: Upload the failing step's screenshots
+        if: failure() && vars.E2E_UPLOAD_SCREENSHOTS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-dev-artifacts
+          path: .e2e-artifacts
+          if-no-files-found: ignore
+          # Both directories are dotfolders, which upload-artifact v4.4+ skips
+          # by default: without this line every upload here reported success
+          # and carried nothing (seen 6 September 2026).
+          include-hidden-files: true
+          retention-days: 1

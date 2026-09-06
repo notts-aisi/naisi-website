@@ -1,0 +1,107 @@
+/* ============================================================
+   CopyEditor: the circulation's own copy of the questions.
+
+   A section on the circulation page, so it owns its heading,
+   its notes and the row of controls under the editor, and
+   nothing about the page's width: WorksheetEditor brings its
+   own stylesheet and its own internal layout.
+   ============================================================ */
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-snug);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  max-width: 60ch;
+}
+
+/* The lease notice. Warning-toned rather than danger: nothing has gone wrong,
+   somebody else is simply in here. */
+.lock {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-soft);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
+}
+
+.problems {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--color-warning);
+}
+
+/* The message and its explanation sit together under the editor, because the
+   sentence is what tells somebody who the button reaches. */
+.tell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.tellNote {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  max-width: 60ch;
+}
+
+/* === Mobile ================================================
+   The column tightens and the send button takes the full
+   width, since it is the one control in this block and the
+   sentence under it is what carries the meaning. */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .editor {
+    gap: var(--space-2);
+  }
+
+  .tell {
+    align-items: stretch;
+  }
+
+  .tell > span {
+    display: block;
+  }
+
+  .tell button {
+    width: 100%;
+    min-height: 2.75rem;
+  }
+}

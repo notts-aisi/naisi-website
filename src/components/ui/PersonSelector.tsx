@@ -9,6 +9,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { maxWidth } from "@/theme/breakpoints";
+import { useHistoryDismiss } from "@/hooks/useHistoryDismiss";
 import type { UserDoc } from "@/lib/firestore/users";
 import styles from "./PersonSelector.module.css";
 
@@ -31,7 +32,7 @@ import styles from "./PersonSelector.module.css";
  *   column and the inline shape is the right fit).
  */
 
-export type PersonRole = "completer" | "reviewer";
+export type PersonRole = "completer" | "reviewer" | "facilitator";
 export type PersonTone = "accent" | "warning" | "neutral";
 
 type RoleFilter = "all" | "admin" | "committee" | "member";
@@ -46,11 +47,13 @@ const ROLE_FILTER_LABELS: Record<RoleFilter, string> = {
 const ROLE_COPY: Record<PersonRole, { verb: string; countLabel: string }> = {
   completer: { verb: "assigned", countLabel: "completer" },
   reviewer: { verb: "reviewing", countLabel: "reviewer" },
+  facilitator: { verb: "facilitating", countLabel: "facilitator" },
 };
 
 const TONE_FROM_ROLE: Record<PersonRole, PersonTone> = {
   completer: "accent",
   reviewer: "warning",
+  facilitator: "accent",
 };
 
 type Props = {
@@ -166,6 +169,15 @@ export default function PersonSelector({
     () => false,
   );
   const [expanded, setExpanded] = useState(false);
+
+  // Back gesture closes the bottom sheet. Gated on isMobile for the same
+  // reason as Dropdown: the desktop render is inline in the form, not an
+  // overlay, so there is nothing for Back to dismiss.
+  const collapseSheet = useCallback(() => setExpanded(false), []);
+  // All three in-sheet close paths (scrim, the X, Done) go through dismiss
+  // so the pushed history entry unwinds with them; the Back gesture arrives
+  // through popstate and closes via collapseSheet.
+  const dismissSheet = useHistoryDismiss(isMobile && expanded, collapseSheet);
 
   // Body scroll-lock while the mobile sheet is open. Same pattern as
   // Drawer.tsx — the cleanup restores the previous overflow value so we
@@ -322,7 +334,7 @@ export default function PersonSelector({
                 // sheet scrim behaviour so iOS doesn't re-target the
                 // synthetic click to the trigger underneath.
                 e.stopPropagation();
-                setExpanded(false);
+                dismissSheet();
               }}
             />
             <div
@@ -338,7 +350,7 @@ export default function PersonSelector({
                 </h3>
                 <button
                   type="button"
-                  onClick={() => setExpanded(false)}
+                  onClick={dismissSheet}
                   aria-label="Close picker"
                   className={styles.sheetCloseIcon}
                 >
@@ -352,7 +364,7 @@ export default function PersonSelector({
               {renderPickerControls()}
               <button
                 type="button"
-                onClick={() => setExpanded(false)}
+                onClick={dismissSheet}
                 className={styles.doneButton}
               >
                 Done

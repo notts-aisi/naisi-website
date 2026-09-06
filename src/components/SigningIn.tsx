@@ -61,6 +61,9 @@ export default function SigningIn({ active, successStartAt = null }: Props) {
   // Random starting phrase each time we enter active mode.
   useEffect(() => {
     if (active) {
+      // Impure (random) pick, so it can't be derived during render; runs
+      // once per activation by design.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPhraseIdx(Math.floor(Math.random() * ACTIVE_PHRASES.length));
     }
   }, [active]);
@@ -69,6 +72,7 @@ export default function SigningIn({ active, successStartAt = null }: Props) {
 
   // Reset the tick whenever we leave success (e.g. cancellation).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- state reset on prop change
     if (!inSuccess) setTickVisible(false);
   }, [inSuccess]);
 
@@ -89,7 +93,10 @@ export default function SigningIn({ active, successStartAt = null }: Props) {
   const text = inSuccess ? SUCCESS_TEXT : active ? ACTIVE_PHRASES[phraseIdx] : IDLE_TEXT;
 
   return (
-    <div className={styles.container} role="status" aria-live="polite">
+    /* No live region here — TypewriterText owns the (single) one. With the
+       loader now visible by default, a polite region wrapping the whole
+       thing would announce every cycling phrase to screen readers. */
+    <div className={styles.container}>
       <div className={styles.networkWrap}>
         <LivingPlasma
           active={active}
@@ -104,6 +111,7 @@ export default function SigningIn({ active, successStartAt = null }: Props) {
           text={text}
           ellipsisStyle={inSuccess ? "blink" : active ? "spinner" : "pulse"}
           tone={inSuccess ? "success" : "default"}
+          live={inSuccess ? "polite" : "off"}
           typingSpeedMs={95}
           eraseSpeedMs={60}
           holdMs={1800}

@@ -18,6 +18,7 @@ import {
 import type { User } from "firebase/auth";
 import { getClientDb } from "@/lib/firebase/client";
 import { useAuth } from "@/auth/AuthProvider";
+import { canApproveCourse, canDraftCourse } from "@/lib/firestore/users";
 
 // A lock is "live" while its heartbeat is younger than the TTL. The holder
 // refreshes the heartbeat well inside that window; a hard browser close stops
@@ -257,8 +258,24 @@ export type PageLockStatus = "off" | "held" | "waiting";
  * auto-acquires the moment the holder leaves or their lock expires.
  */
 export function useAdminPageLock(pageKey: string | null) {
-  const { user, role } = useAuth();
-  const enabled = Boolean(pageKey) && role === "admin" && Boolean(user);
+  const { user, role, permissions } = useAuth();
+  // Everyone the /admin front door admits, not just full admins: /admin/courses
+  // is now open to draftCourse and approveCourse holders, and two of them
+  // editing the same run or week page is exactly the collision this lease
+  // exists to name. Keying it on role alone left them uncoordinated and left
+  // an admin unable to see that a drafter was already on the page.
+  //
+  // HONEST LIMIT: `adminLocks` is still `allow read/create/update/delete: if
+  // isAdmin()` in firestore.rules, so for a non-admin course author every
+  // acquire and every snapshot is denied. The lease FAILS OPEN by design, so
+  // that is today's behaviour rather than a break, but the coordination only
+  // becomes real when that rules block widens to course authors on `page__`
+  // locks. This branch is the client half, landed here because the gate it
+  // mirrors landed here; the rules half belongs to the serial rules lane.
+  const canAuthorCourses =
+    role !== null
+    && (canDraftCourse({ role, permissions }) || canApproveCourse({ role, permissions }));
+  const enabled = Boolean(pageKey) && canAuthorCourses && Boolean(user);
   const lockId = pageKey ? `page__${pageKey}` : null;
 
   const fields = useMemo(

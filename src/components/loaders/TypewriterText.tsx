@@ -26,6 +26,11 @@ type Props = {
   /** Visual tone — "success" renders the text in electric green with a
    *  soft glow, intended for the post-sign-in "Model aligned" moment. */
   tone?: "default" | "success";
+  /** Screen-reader announcement mode for the wrap's live region. Pass
+   *  "off" while cycling decorative phrases (a permanently visible loader
+   *  would otherwise announce every ~2s) and "polite" for text that
+   *  should actually be read out, like the success moment. */
+  live?: "polite" | "off";
 };
 
 export default function TypewriterText({
@@ -37,6 +42,7 @@ export default function TypewriterText({
   onTypingComplete,
   onSettled,
   tone = "default",
+  live = "polite",
 }: Props) {
   const [displayed, setDisplayed] = useState("");
   const [done, setDone] = useState(false);
@@ -47,9 +53,11 @@ export default function TypewriterText({
   const [isTypingNew, setIsTypingNew] = useState(false);
   const displayedRef = useRef("");
   const onSettledRef = useRef(onSettled);
-  onSettledRef.current = onSettled;
   const onTypingCompleteRef = useRef(onTypingComplete);
-  onTypingCompleteRef.current = onTypingComplete;
+  useEffect(() => {
+    onSettledRef.current = onSettled;
+    onTypingCompleteRef.current = onTypingComplete;
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -119,7 +127,7 @@ export default function TypewriterText({
   }, [text, typingSpeedMs, eraseSpeedMs, holdMs]);
 
   return (
-    <div className={`${styles.wrap} ${tone === "success" && isTypingNew ? styles.toneSuccess : ""}`} aria-live="polite">
+    <div className={`${styles.wrap} ${tone === "success" && isTypingNew ? styles.toneSuccess : ""}`} aria-live={live}>
       <span className={styles.text}>{displayed}</span>
       {!done ? (
         <span className={styles.caretBlink} aria-hidden="true">▍</span>

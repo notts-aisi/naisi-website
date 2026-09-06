@@ -39,9 +39,11 @@ export function useOneShotList<T>(load: () => Promise<T[]>, queryKey: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryKey]);
 
+  // Returns the re-read, so a caller that acted on a row can wait for the list
+  // to catch up with its write instead of guessing when it has.
   const reload = useCallback(() => {
     setRefreshing(true);
-    load()
+    return load()
       .then((rows) => {
         setItems(rows);
         setError(null);

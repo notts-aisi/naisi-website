@@ -7,6 +7,7 @@ import { isSuppressed } from "@/lib/firestore/suppression";
 import { sendEmail } from "@/lib/email/send";
 import { emailDocId, normaliseEmail } from "@/lib/firestore/emailDocId";
 import {
+  isServerManagedChannel,
   isValidChannel,
   subscribe,
   subscriptionDocId,
@@ -36,6 +37,11 @@ import SubscriptionAddedEmail from "@/emails/SubscriptionAddedEmail";
  * The multi-channel form sends ONE confirmation email listing every
  * pending channel, so the user does not get N separate emails for one
  * sign-up that happened to tick N boxes.
+ *
+ * CHANNELS THIS ENDPOINT WILL WRITE: top-level lists only. Scoped channels
+ * (`cohort:<runId>`, `track:<id>`) are server-managed membership claims and are
+ * refused here whoever is asking — see `isServerManagedChannel` in
+ * lib/firestore/subscriptions.ts, which carries the reasoning.
  *
  * Anti-enumeration discipline: every non-validation outcome returns
  * `{ ok: true, status: 200 }`. The caller cannot tell the difference
@@ -110,7 +116,12 @@ export async function POST(req: Request): Promise<NextResponse<ApiResult>> {
     );
   }
   for (const c of channels) {
-    if (!isValidChannel(c)) {
+    // A server-managed channel (`cohort:<runId>`, `track:<id>`) is a MEMBERSHIP
+    // CLAIM, and this endpoint is the one place in the estate that takes a
+    // channel string from an unauthenticated stranger. Refused with the same
+    // message a malformed channel gets, so the response says nothing about
+    // which cohorts exist. See `isServerManagedChannel` for the full argument.
+    if (!isValidChannel(c) || isServerManagedChannel(c)) {
       return NextResponse.json(
         { error: `Invalid subscription channel: ${c}` },
         { status: 400 },

@@ -5,7 +5,9 @@ import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
 import { sendEmail } from "@/lib/email/send";
 import { randomOpaqueId, signToken } from "@/lib/signedTokens";
 import { isAcademicEmail, isNottinghamEmail } from "@/lib/firestore/users";
+import { safeFunnelReturn } from "@/lib/authReturn";
 import { verifyRecaptcha } from "@/lib/recaptcha/server";
+import { recaptchaBypassGranted } from "@/lib/recaptcha/bypass";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import VerifyLoginEmail from "@/emails/VerifyLoginEmail";
 import {
@@ -16,7 +18,12 @@ import {
 import type { SignupOutcome } from "@/lib/firestore/registrations";
 
 const COOLDOWN_SECONDS = 60;
-const TOKEN_TTL_SECONDS = 60 * 30; // 30 minutes
+// Ten minutes, not thirty. Redeeming this link mints a session, so it is a
+// sign-in credential sitting in an inbox and a short life is the point; the
+// resend button on the check-inbox screen is the answer to a slow reader.
+// The uni-email link (api/verify-email/send) is a different thing and keeps
+// its thirty: it only marks an attribute on an already-signed-in account.
+const TOKEN_TTL_SECONDS = 60 * 10; // 10 minutes
 
 // Abuse throttle. The per-IP cap is generous because a society's members often
 // share one campus NAT; the per-email cap is tighter. reCAPTCHA is the primary
@@ -31,6 +38,9 @@ type Body = {
   /** Which form to resume after the email is verified. Stored on the token doc
    *  so the post-verify redirect lands on the right flow. */
   audience?: "member" | "collaborator";
+  /** Where the person was when they were asked to make an account, if that was
+   *  one of the application funnels. Validated here, never trusted as sent. */
+  next?: string;
 };
 
 /**
@@ -103,7 +113,16 @@ export async function POST(req: Request) {
     );
   }
 
-  if (!(await verifyRecaptcha(body.recaptchaToken))) {
+  // The harness bypass, for a TOKENLESS request from a harness address on the
+  // dev backend only (see src/lib/recaptcha/bypass.ts). A token that is
+  // present is always verified for real.
+  const recaptchaToken =
+    typeof body.recaptchaToken === "string" && body.recaptchaToken.length > 0
+      ? body.recaptchaToken
+      : undefined;
+  const bypassed =
+    recaptchaToken === undefined && recaptchaBypassGranted(req.headers, email);
+  if (!bypassed && !(await verifyRecaptcha(recaptchaToken))) {
     await recordSignupOutcome("recaptcha-failed");
     return NextResponse.json(
       { error: "Couldn't verify you're human. Please try again." },
@@ -112,6 +131,16 @@ export async function POST(req: Request) {
   }
 
   const audience = body.audience === "collaborator" ? "collaborator" : "member";
+  // The return address travels ON THE TOKEN DOCUMENT rather than only in the
+  // `__auth_next` cookie, because the magic link is routinely opened in
+  // another browser (or another device) from the one that filled the form in,
+  // and a cookie reaches neither. `safeFunnelReturn` is the same allowlist the
+  // register page and AuthEntry apply, so an absolute or protocol-relative URL
+  // is refused here rather than stored and redirected to later. Coerced first
+  // like every other field off this unparsed body: the allowlist takes a
+  // string, and a number or an array would throw inside it and turn the
+  // deliberately uniform 200 into a 500 an enumerator could read.
+  const next = safeFunnelReturn(typeof body.next === "string" ? body.next : undefined);
 
   const auth = getAdminAuth();
   const db = getAdminDb();
@@ -215,6 +244,9 @@ export async function POST(req: Request) {
               lastSentAt: now,
               sendCount: FieldValue.increment(1),
               expiresAt,
+              // Only when this press carried one: a later press from the bare
+              // sign-up page must not wipe the funnel they arrived through.
+              ...(next ? { next } : {}),
             });
             await sendFor(doc.id);
             await recordRegistrationResend(uid);
@@ -235,6 +267,9 @@ export async function POST(req: Request) {
           uid,
           authUid: uid,
           audience,
+          // Firestore refuses `undefined`, so the field is absent rather than
+          // null when the registration came from no funnel.
+          ...(next ? { next } : {}),
           createdAt: now,
           lastSentAt: now,
           sendCount: 1,

@@ -1,20 +1,659 @@
 import "server-only";
 import type { Auth } from "firebase-admin/auth";
-import type { Firestore } from "firebase-admin/firestore";
+import {
+  FieldPath,
+  FieldValue,
+  type Firestore,
+  type QueryDocumentSnapshot,
+  type QuerySnapshot,
+} from "firebase-admin/firestore";
+import { normalizeCourseEnrolment } from "./courseEnrolments";
+import {
+  MEMBER_RECORDS_COLLECTION,
+  MEMBER_RECORD_APPLICATIONS,
+} from "./memberRecords";
+import {
+  MEMBERSHIPS_COLLECTION,
+  MEMBERSHIP_PERIODS_COLLECTION,
+  isMembershipTier,
+  type MembershipTier,
+} from "./memberships";
+import {
+  MEMBERSHIP_IMPORTS_COLLECTION,
+  MEMBERSHIP_IMPORT_ROWS_SUBCOLLECTION,
+} from "./membershipImports";
 import { REGISTRATIONS_COLLECTION } from "./registrations";
 import { deleteEventsForSubscriptions } from "./subscriptions";
 
 export type AccountDeletionSummary = {
   subscriptionsDeleted: number;
+  /**
+   * Web push subscription rows for this account's devices, one per endpoint
+   * (`src/lib/push/store.ts` owns the collection). Deleted rather than
+   * retained: the row is a live channel to a device's lock screen, and the
+   * tasks this cascade keeps still name the uid, so a survivor would go on
+   * buzzing a phone for somebody who no longer has an account here.
+   */
+  pushSubscriptionsDeleted: number;
   registrationDeleted: boolean;
   collaboratorDeleted: boolean;
   userDocDeleted: boolean;
   emailVerificationsDeleted: number;
+  courseApplicationsDeleted: number;
+  courseEnrolmentsDeleted: number;
+  courseProgressDeleted: number;
+  courseExerciseResponsesDeleted: number;
+  /** Scheduler markers naming this uid (deadline reminders, and anything a
+   *  later job keys on a person). Deleted rather than kept: the audience row
+   *  they suppress a send to is gone in the same cascade, so the marker can
+   *  only ever be a dangling reference to a person who no longer exists. */
+  schedulerMarkersDeleted: number;
+  /**
+   * Registers this member was removed FROM, never whole registers deleted.
+   * Counts a document once even when it carried both an attendance mark and a
+   * participant note about them (both keys go, in one batch).
+   */
+  courseAttendanceMarksCleared: number;
+  /** Admission applications (drafts included) written by this account. */
+  admissionApplicationsDeleted: number;
+  /** Their access-requirements rows, deleted in the SAME batch. See below. */
+  admissionApplicationPrivateDeleted: number;
+  /** Review rows written ABOUT this account. */
+  admissionReviewsDeleted: number;
+  /** Review rows written BY this account about other people. */
+  admissionReviewsAuthoredDeleted: number;
+  /** Rounds this account was taken off as a reviewer or as the final decider. */
+  admissionRoundRolesCleared: number;
+  /**
+   * Membership rows keyed on this uid, one per period. The PERIODS themselves
+   * are not per-user and are never touched here: `membershipPeriods/2026-27`
+   * describes a year of the society, not a person.
+   */
+  membershipsDeleted: number;
+  /**
+   * Rows on an SU import batch that named this account. The BATCHES survive:
+   * a batch is the provenance behind every membership it wrote, and an
+   * unmatched row names somebody with no account here, so it is a line from a
+   * file the society received rather than a record about a member. See
+   * `deleteMembershipImportRows`.
+   */
+  membershipImportRowsDeleted: number;
+  /**
+   * Worksheet responses this cascade KEPT, counted through the member's
+   * worksheet tasks (one task per recipient, written beside the response). A
+   * retention, not a deletion: the owner's decision is that the answers a
+   * member gave, and the staff notes on them, stay. See the retention
+   * paragraph below and `countRetainedMemberWork`.
+   *
+   * A FLOOR RATHER THAN A CENSUS, and the name says "responses" while the
+   * count is of tasks for one honest reason: the task is the only handle this
+   * file has on a response, and somebody who deletes a worksheet task off the
+   * board takes it away without touching the answers. So the number can read
+   * low and never high. `countRetainedMemberWork` has the full reasoning.
+   */
+  worksheetResponsesRetained: number;
+  /**
+   * Entries on this person's member record (`memberRecords/{uid}/applications`)
+   * that the cascade KEPT: one per round they applied to. Also a retention.
+   */
+  memberRecordApplicationsRetained: number;
+  conductFlagDeleted: boolean;
   authDeleted: boolean;
   /** Set when the teardown was not fully clean (a best-effort step failed, or the
    *  Auth account could not be deleted). Routes return 207 when this is present. */
   warning?: string;
 };
+
+// ---------------------------------------------------------------------------
+// Course cascade helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Rows per page for the course deletes. A learner accumulates one
+ * `courseProgress` row per check-offable item per run (weeks × materials, so
+ * hundreds across a couple of runs) and one `courseExerciseResponses` row per
+ * exercise — comfortably past what one `.get()` + 500-write batch should carry,
+ * which is why these two are paged rather than read whole.
+ */
+const COURSE_PAGE_SIZE = 300;
+
+/**
+ * Loop ceiling for the paged scans — 60 × 300 rows, far beyond any real
+ * account. In `deleteOwnedCourseRows` it is only reachable if pages stop
+ * shrinking (a write that reports success without deleting), so hitting it
+ * THROWS rather than returning quietly: a silent stop would report a clean
+ * teardown over rows that are still there, and the caller's best-effort catch
+ * turns the throw into the 207 that keeps the tracker row for a retry.
+ */
+const COURSE_MAX_PAGES = 60;
+
+/**
+ * Rows per page for the admissions sweep, and deliberately NOT
+ * `COURSE_PAGE_SIZE`.
+ *
+ * `deleteAdmissionApplications` commits TWO deletes per row in ONE batch (the
+ * application and its `admissionApplicationPrivate` twin), and that single
+ * batch is load-bearing rather than incidental: see that function for why the
+ * two rows cannot be torn down by separate sweeps. A 300-row page would ask
+ * one batch for up to 600 writes, past Firestore's 500-write cap, so the page
+ * is the cap halved and rounded down. 250 × 2 = 500 exactly, and no real
+ * account comes near even one page.
+ */
+const ADMISSION_PAGE_SIZE = 250;
+
+/**
+ * Delete every row a member owns in one `uid`-keyed collection, a page at a
+ * time. (Named for the course collections it was written for; it is generic,
+ * and the scheduler markers and the push subscription rows use it too.)
+ *
+ * No cursor: the rows are deleted as they are read, so the next query's first
+ * page IS the next unprocessed page. That also makes a mid-way failure
+ * resumable — a re-run picks up the smaller remainder — which is the property
+ * the tracker row's keep-on-failure rule depends on.
+ */
+async function deleteOwnedCourseRows(
+  db: Firestore,
+  collection: string,
+  uid: string,
+  /**
+   * The field naming the owner. Defaults to `uid`, which is what every
+   * course collection uses. `admissionReviews` is the exception: it names the
+   * account twice, once as `applicantUid` and once as `reviewerUid`, and both
+   * sweeps are this same function with a different field.
+   */
+  field: string = "uid",
+): Promise<number> {
+  let deleted = 0;
+  for (let page = 0; page < COURSE_MAX_PAGES; page += 1) {
+    const snap = await db
+      .collection(collection)
+      .where(field, "==", uid)
+      .limit(COURSE_PAGE_SIZE)
+      .get();
+    if (snap.empty) return deleted;
+    const batch = db.batch();
+    for (const d of snap.docs) batch.delete(d.ref);
+    await batch.commit();
+    deleted += snap.size;
+    if (snap.size < COURSE_PAGE_SIZE) return deleted;
+  }
+  throw new Error(`${collection} did not drain after ${COURSE_MAX_PAGES} pages`);
+}
+
+/**
+ * How much to give each period back, worked out from the membership rows a
+ * sweep deleted. Pure, so the arithmetic is testable without a Firestore.
+ *
+ * Keyed period id then tier, because a member holds at most one row per period
+ * but a teardown can cross several periods at several tiers. A row with no
+ * readable period id, or a tier the module does not know, is COUNTED NOWHERE:
+ * the period's totals only ever moved for a recognised tier on the way in (see
+ * the grant route), so moving them for an unrecognised one on the way out
+ * would invent a decrement that no increment matches.
+ */
+export function membershipTotalsGivenBack(
+  rows: readonly { periodId?: unknown; tier?: unknown }[],
+): Map<string, Partial<Record<MembershipTier, number>>> {
+  const back = new Map<string, Partial<Record<MembershipTier, number>>>();
+  for (const row of rows) {
+    const periodId = typeof row.periodId === "string" ? row.periodId : "";
+    if (periodId === "" || !isMembershipTier(row.tier)) continue;
+    const tiers = back.get(periodId) ?? {};
+    tiers[row.tier] = (tiers[row.tier] ?? 0) + 1;
+    back.set(periodId, tiers);
+  }
+  return back;
+}
+
+/**
+ * Delete every membership row this account holds, and take each one back off
+ * its period's cached per-tier totals.
+ *
+ * The PERIODS themselves are not swept and must not be:
+ * `membershipPeriods/{periodId}` describes a year of the society and outlives
+ * every account under it. Its `totals` map, though, is a cache the console
+ * renders as a count of people, so leaving it holding rows that no longer
+ * exist would have the membership page reporting a number an admin cannot
+ * reconcile against anything. The grant route maintains those totals with
+ * `increment(+1)` and `increment(-1)`; this is the same arithmetic for a row
+ * that leaves without anybody pressing revoke.
+ *
+ * The deletes go first and the totals follow, one update per period rather
+ * than one per row. A totals update that fails is LOGGED and does not fail the
+ * teardown: the rows are already gone, which is the part that matters for the
+ * person being deleted, and a count that is out by one is not a reason to keep
+ * the account's registration row open for a retry.
+ */
+export async function deleteMembershipsAndAdjustTotals(
+  db: Firestore,
+  uid: string,
+): Promise<number> {
+  const deletedRows: { periodId?: unknown; tier?: unknown }[] = [];
+
+  // Same no-cursor paging as `deleteOwnedCourseRows`: the rows are deleted as
+  // they are read, so the next query's first page is the next unprocessed one.
+  for (let page = 0; page < COURSE_MAX_PAGES; page += 1) {
+    const snap = await db
+      .collection(MEMBERSHIPS_COLLECTION)
+      .where("uid", "==", uid)
+      .limit(COURSE_PAGE_SIZE)
+      .get();
+    if (snap.empty) break;
+    const batch = db.batch();
+    for (const d of snap.docs) {
+      const data = d.data() ?? {};
+      deletedRows.push({ periodId: data.periodId, tier: data.tier });
+      batch.delete(d.ref);
+    }
+    await batch.commit();
+    if (snap.size < COURSE_PAGE_SIZE) break;
+    if (page === COURSE_MAX_PAGES - 1) {
+      throw new Error(
+        `${MEMBERSHIPS_COLLECTION} did not drain after ${COURSE_MAX_PAGES} pages`,
+      );
+    }
+  }
+
+  for (const [periodId, tiers] of membershipTotalsGivenBack(deletedRows)) {
+    const update: Record<string, FirebaseFirestore.FieldValue> = {};
+    for (const [tier, count] of Object.entries(tiers)) {
+      update[`totals.${tier}`] = FieldValue.increment(-count);
+    }
+    try {
+      await db.collection(MEMBERSHIP_PERIODS_COLLECTION).doc(periodId).update(update);
+    } catch (err) {
+      console.error("[deleteAccount] membership totals adjust failed:", periodId, err);
+    }
+  }
+
+  return deletedRows.length;
+}
+
+/**
+ * Delete every SU import ROW that names this account, across every batch.
+ *
+ * ## What goes and what stays
+ *
+ * A row carries the name and address the Students' Union had for a person and
+ * the uid the match landed on, so a row whose `matchedUid` is this account is
+ * a record ABOUT them and goes with them, in the same cascade that deletes
+ * the membership it wrote.
+ *
+ * The BATCH documents stay, and so do rows that were never matched to an
+ * account. A batch is the provenance behind every membership row it wrote, and
+ * deleting it would leave those memberships claiming a source with nothing
+ * behind it. An unmatched row names somebody who has no account here at all,
+ * so this deletion is not theirs to trigger: it is a line from a file the
+ * society received, kept with the file. The batch's counters are NOT adjusted
+ * for the same reason the period totals are: they describe what the file did
+ * when it was committed, which is still true.
+ *
+ * ## Why a collection-group query, and the check that comes with it
+ *
+ * The rows live in a subcollection under an unbounded number of batches, so
+ * addressing them would mean reading every batch first. `rows` is a short and
+ * generic collection-group name, so each document is re-checked to be under
+ * `membershipImports` before it is deleted: a `rows` subcollection added
+ * anywhere else in the future must not be swept by this.
+ *
+ * A collection group gets NO automatic single-field index, so this query only
+ * runs at all because `firestore.indexes.json` declares a COLLECTION_GROUP
+ * override on `rows.matchedUid`. That override has to be deployed before the
+ * first import writes a row, or the sweep fails FAILED_PRECONDITION.
+ */
+export async function deleteMembershipImportRows(
+  db: Firestore,
+  uid: string,
+): Promise<number> {
+  let deleted = 0;
+  let cursor: QueryDocumentSnapshot | null = null;
+  let drained = false;
+  // Paged on a cursor, NOT on "delete as you read". Most rows on a page are
+  // deleted, but the foreign-`rows` guard below can leave some behind, and a
+  // re-query from the top would hand back the same survivors forever. A page
+  // that is entirely survivors is the case that used to end the sweep early
+  // and strand every matching row after it.
+  for (let page = 0; page < COURSE_MAX_PAGES; page += 1) {
+    let query = db
+      .collectionGroup(MEMBERSHIP_IMPORT_ROWS_SUBCOLLECTION)
+      .where("matchedUid", "==", uid)
+      // Equality + `__name__` over a collection group: served by the
+      // COLLECTION_GROUP-scoped single-field index on `matchedUid` that
+      // `firestore.indexes.json` declares under `fieldOverrides`. Collection
+      // groups get no automatic single-field index, so without that override
+      // this query fails FAILED_PRECONDITION and no row is ever swept.
+      .orderBy(FieldPath.documentId())
+      .limit(COURSE_PAGE_SIZE);
+    if (cursor) query = query.startAfter(cursor);
+    const snap = await query.get();
+    if (snap.empty) {
+      drained = true;
+      break;
+    }
+    cursor = snap.docs[snap.docs.length - 1];
+    const batch = db.batch();
+    let queued = 0;
+    for (const doc of snap.docs) {
+      if (doc.ref.parent.parent?.parent.id !== MEMBERSHIP_IMPORTS_COLLECTION) continue;
+      batch.delete(doc.ref);
+      queued += 1;
+    }
+    if (queued > 0) {
+      await batch.commit();
+      deleted += queued;
+    }
+    if (snap.size < COURSE_PAGE_SIZE) {
+      drained = true;
+      break;
+    }
+  }
+  // Same reason as the sweeps around it: a quiet stop would report success and
+  // let the caller move on, leaving rows that still name a deleted person.
+  if (!drained) {
+    throw new Error(
+      `${MEMBERSHIP_IMPORT_ROWS_SUBCOLLECTION} did not drain after ${COURSE_MAX_PAGES} pages`,
+    );
+  }
+  return deleted;
+}
+
+/**
+ * Remove a member from every attendance register on the given runs.
+ *
+ * A register is SHARED — one doc per (group, week), with the uid as a MAP KEY
+ * inside `records` — so this deletes the key with `FieldPath`, never the doc.
+ * Deleting the doc would erase the whole group's marks for that session, and a
+ * dotted `"records.<uid>"` string would be reinterpreted as a nested path.
+ *
+ * `records` is not queryable by key, so the scan is per run (bounded by the
+ * runs the member was actually enrolled on) and pages on doc id — nothing is
+ * deleted here, so unlike `deleteOwnedCourseRows` this one needs a real cursor.
+ *
+ * `updatedAt` is deliberately untouched: it records when a facilitator last
+ * marked the register, and a deletion elsewhere is not a marking.
+ */
+export async function clearCourseAttendanceMarks(
+  db: Firestore,
+  runIds: string[],
+  uid: string,
+): Promise<number> {
+  let cleared = 0;
+  for (const runId of runIds) {
+    let cursor: QueryDocumentSnapshot | null = null;
+    let drained = false;
+    for (let page = 0; page < COURSE_MAX_PAGES; page += 1) {
+      let query = db
+        .collection("courseAttendance")
+        .where("runId", "==", runId)
+        // Equality + `__name__` is served by the automatic single-field index;
+        // no composite index is needed for this scan.
+        .orderBy(FieldPath.documentId())
+        .limit(COURSE_PAGE_SIZE);
+      if (cursor) query = query.startAfter(cursor);
+      const snap = await query.get();
+      if (snap.empty) break;
+      cursor = snap.docs[snap.docs.length - 1];
+
+      // TWO map keys per register, not one. `participantNotes` (V3 W1 PR5)
+      // is post-session prose ABOUT this member, written by their facilitator,
+      // and it is personal data of exactly the kind an account deletion has to
+      // take with it. Both keys are cleared by FieldPath on the SAME document,
+      // in the same batch, for the same reason `records` always was: the
+      // register is shared, so deleting the doc would erase the whole group's
+      // session.
+      //
+      // A register can carry a note without a mark and a mark without a note
+      // (a facilitator writes notes for the people they have something to say
+      // about), so each key is tested separately and a document qualifies if
+      // it holds either.
+      const holds = (d: QueryDocumentSnapshot, field: string): boolean => {
+        const map = (d.data() as Record<string, unknown>)[field];
+        // `in` throws on a non-object, and a hand-edited register could carry
+        // anything: a malformed map simply has no key to clear.
+        return typeof map === "object" && map !== null && uid in map;
+      };
+      const marked = snap.docs.filter(
+        (d) => holds(d, "records") || holds(d, "participantNotes"),
+      );
+      if (marked.length > 0) {
+        const batch = db.batch();
+        for (const d of marked) {
+          if (holds(d, "records")) {
+            batch.update(d.ref, new FieldPath("records", uid), FieldValue.delete());
+          }
+          if (holds(d, "participantNotes")) {
+            batch.update(
+              d.ref,
+              new FieldPath("participantNotes", uid),
+              FieldValue.delete(),
+            );
+          }
+        }
+        await batch.commit();
+        cleared += marked.length;
+      }
+      if (snap.size < COURSE_PAGE_SIZE) {
+        drained = true;
+        break;
+      }
+    }
+    // Throw rather than stop quietly, matching deleteOwnedCourseRows: a silent
+    // stop would report the sweep as successful, and the caller uses that to
+    // decide it may delete the enrolments — the only uid -> runIds index — and
+    // then the tracker row. Marks left in a `if false` collection with nothing
+    // naming the uid are unreachable.
+    if (!drained) {
+      throw new Error(`courseAttendance did not drain after ${COURSE_MAX_PAGES} pages`);
+    }
+  }
+  return cleared;
+}
+
+/**
+ * Delete this account's admission applications AND their access-requirements
+ * rows, a page at a time.
+ *
+ * ## Why these two cannot be separate sweeps
+ *
+ * `admissionApplicationPrivate` holds the answer to "is there anything we
+ * should know about access requirements?", which in practice means disability
+ * and health information. It deliberately carries NOTHING but that answer
+ * (no `uid`, no `roundId`), because the collection's whole design is that no
+ * reader can join it by accident. The price of that is that it has no field
+ * to query on: the ONLY handle back to a private row is the application id it
+ * shares, `${roundId}__${uid}`.
+ *
+ * So a private sweep that ran after the applications were gone would have
+ * nothing left to address, and the rows would sit in an
+ * `allow read, write: if false` collection that nothing on the site could
+ * name: the most sensitive text in the whole intake, permanently
+ * unreachable and undeletable. The `clearCourseAttendanceMarks` ordering
+ * lesson in its sharpest form.
+ *
+ * The answer is not "order them carefully": it is ONE BATCH. Each page
+ * deletes the private rows and the applications that name them together, so
+ * a failure leaves both, and a retry (re-reading the smaller remainder) is
+ * the same operation again.
+ *
+ * That is also why the page size is `ADMISSION_PAGE_SIZE` (250) and not the
+ * 300 the other course sweeps use: two deletes per row against Firestore's
+ * 500-write batch cap.
+ *
+ * ## The counters are deliberately left alone
+ *
+ * Deleting an application does NOT move `admissionRounds.applicationCounts`.
+ * That matches what this function already does for `courseApplications` and
+ * `courseRuns.applicationCounts`, and the reason is the same: the counter is
+ * moved inside the apply / submit / decide transactions, and an out-of-band
+ * decrement here would be a second writer of a number those transactions
+ * treat as theirs. Account deletion during a live intake is rare and
+ * out-of-band by nature, and the round's recount route is the repair.
+ * (Group `memberCount` IS decremented below, because a seat left held blocks
+ * a real person from taking it.)
+ */
+async function deleteAdmissionApplications(
+  db: Firestore,
+  uid: string,
+): Promise<{ applications: number; privateRows: number }> {
+  let applications = 0;
+  let privateRows = 0;
+  for (let page = 0; page < COURSE_MAX_PAGES; page += 1) {
+    const snap = await db
+      .collection("admissionApplications")
+      .where("uid", "==", uid)
+      .limit(ADMISSION_PAGE_SIZE)
+      .get();
+    if (snap.empty) return { applications, privateRows };
+
+    // Read the private rows before the batch only so the count is HONEST: a
+    // `batch.delete` on a missing document succeeds silently, so counting the
+    // refs rather than the documents would report rows that never existed.
+    const privateRefs = snap.docs.map((d) =>
+      db.collection("admissionApplicationPrivate").doc(d.id),
+    );
+    const livePrivate = (await db.getAll(...privateRefs)).filter((d) => d.exists);
+
+    const batch = db.batch();
+    for (const d of livePrivate) batch.delete(d.ref);
+    for (const d of snap.docs) batch.delete(d.ref);
+    await batch.commit();
+
+    applications += snap.size;
+    privateRows += livePrivate.length;
+    if (snap.size < ADMISSION_PAGE_SIZE) return { applications, privateRows };
+  }
+  throw new Error(
+    `admissionApplications did not drain after ${COURSE_MAX_PAGES} pages`,
+  );
+}
+
+/**
+ * Take a deleted account off every admission round that names it: out of
+ * `reviewerUids`, and out of `finalDeciderUid` where it was the decider.
+ *
+ * ## Why this is not "tidying"
+ *
+ * A round outlives the accounts named on it, and until this ran, a deleted
+ * reviewer left a uid on the round that nothing could resolve. The roles route
+ * refuses a list naming an account that no longer exists, so the section
+ * wedged: the admin could not see who the problem was (the picker draws names
+ * from the member list, which no longer has them) and could not save a list
+ * with them taken off either, because the same save has to clear
+ * `users.admissionsReviewer` on everyone it removes and an update to a missing
+ * user document rejects the whole batch. Both halves of that are fixed in the
+ * route; this is the half that stops the state from arising at all.
+ *
+ * Both queries are single-field, so no composite index. Rounds are counted in
+ * tens, so one batch is enough, and a round appearing in both queries takes
+ * one update carrying both fields.
+ */
+export async function clearAdmissionRoundRoles(
+  db: Firestore,
+  uid: string,
+): Promise<number> {
+  const rounds = db.collection("admissionRounds");
+  const [asReviewer, asDecider] = await Promise.all([
+    rounds.where("reviewerUids", "array-contains", uid).get(),
+    rounds.where("finalDeciderUid", "==", uid).get(),
+  ]);
+
+  const updates = new Map<string, Record<string, unknown>>();
+  for (const doc of asReviewer.docs) {
+    updates.set(doc.id, {
+      ...(updates.get(doc.id) ?? {}),
+      reviewerUids: FieldValue.arrayRemove(uid),
+    });
+  }
+  for (const doc of asDecider.docs) {
+    updates.set(doc.id, { ...(updates.get(doc.id) ?? {}), finalDeciderUid: null });
+  }
+  if (updates.size === 0) return 0;
+
+  const batch = db.batch();
+  for (const [roundId, fields] of updates) {
+    batch.update(rounds.doc(roundId), {
+      ...fields,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  }
+  await batch.commit();
+  return updates.size;
+}
+
+/**
+ * Count what this cascade KEEPS: the member's worksheet work, and their member
+ * record. Nothing here deletes anything, and nothing here may be made to.
+ *
+ * ## Why the responses are counted through the tasks
+ *
+ * A response lives at `circulations/{circulationId}/responses/{uid}`, filed
+ * under the act of sending rather than under the person, so there is no
+ * uid-keyed query to run: the only handle back to one is a circulation id.
+ * Reaching them all by hand would mean listing every circulation the society
+ * has ever sent, and reaching them in one query would mean a collection-group
+ * index that nothing else here needs.
+ *
+ * The circulate route writes ONE TASK per recipient beside each response
+ * (`src/lib/worksheets/mint.ts`): `source: "worksheet"`, the recipient as the
+ * sole completer. Those tasks are retained by the same policy that retains
+ * every other task, so the member's worksheet tasks ARE the addressable index
+ * of their responses, they outlive this cascade, and the number stays
+ * re-derivable long after the summary that reported it was read.
+ *
+ * THE ONE WAY THAT INDEX DIVERGES, said out loud because a silent
+ * under-report is worse than a stated limit: `deleteTask`
+ * (`src/features/tasks/taskMutations.ts`) removes a task without touching the
+ * response it was minted beside, so a committee member who tidies a worksheet
+ * task off the board takes a row off this count while the answers themselves
+ * stay exactly where they were. The number is therefore a floor, not a census.
+ * Closing the gap properly means either refusing to delete a task whose
+ * `source` is `"worksheet"` while its response lives, or a collection-group
+ * index over `responses`; both are bigger than this summary line, and the
+ * count being low is the safe direction (it never claims data is held that is
+ * not).
+ *
+ * ## What is NOT counted, said out loud
+ *
+ * Reviews this member wrote as STAFF about other people live at
+ * `circulations/{id}/reviews/{theOtherPersonsUid}`: under somebody else's
+ * document id, in a subcollection nothing indexes across circulations, with
+ * the author recorded only as `updatedByUid` inside it. Counting them needs a
+ * collection-group query and therefore a declared collection-group index,
+ * which is a schema change and a deploy for one number on a summary. So they
+ * are not counted, and this summary does not imply that they were. The reviews
+ * written ABOUT this member ride with the response they assess: retained, and
+ * inside the responses count above.
+ *
+ * Both reads are aggregations, so a member with years of worksheets costs two
+ * counts rather than pages of documents.
+ */
+export async function countRetainedMemberWork(
+  db: Firestore,
+  uid: string,
+): Promise<{ worksheetResponses: number; memberRecordApplications: number }> {
+  const [tasks, records] = await Promise.all([
+    // An equality filter plus an array-contains, with no orderBy. Array
+    // filters take part in Firestore's index merging (confirmed against the
+    // dev project on 6 September 2026 and written down in
+    // `tests/firestore-indexes.test.mjs`), so this needs no composite index.
+    db
+      .collection("tasks")
+      .where("completerUids", "array-contains", uid)
+      .where("source", "==", "worksheet")
+      .count()
+      .get(),
+    db
+      .collection(MEMBER_RECORDS_COLLECTION)
+      .doc(uid)
+      .collection(MEMBER_RECORD_APPLICATIONS)
+      .count()
+      .get(),
+  ]);
+  return {
+    worksheetResponses: tasks.data().count,
+    memberRecordApplications: records.data().count,
+  };
+}
 
 /**
  * Cascade-delete an account by uid — the single source of truth for "delete this
@@ -28,6 +667,22 @@ export type AccountDeletionSummary = {
  *    keep mailing a deleted user. Their append-only event log is best-effort
  *    (the rows are already gone, so a stale audit line is acceptable degradation,
  *    mirroring safeRecordEvent) and must NOT abort the rest of the teardown.
+ *    The PUSH subscription rows follow them, as the account's other delivery
+ *    channel, but best-effort rather than fatal: step 1c argues why a device
+ *    endpoint is not the same kind of survivor as a mailing row.
+ *  - COURSE data goes before Auth for the same reason as everything else in the
+ *    best-effort block: a failure there must not cost the caller the Auth
+ *    deletion. Within it, attendance is cleared BEFORE the enrolments are
+ *    deleted — the enrolments are what name the runs to scan — and the enrolment
+ *    delete is SKIPPED OUTRIGHT when that sweep fails. Ordering alone is not
+ *    enough, because the two steps are separately best-effort: the enrolment
+ *    rows are the ONLY uid→runIds index in the data model, and `courseAttendance`
+ *    is `allow read, write: if false`, so nothing (client or admin surface) can
+ *    scan it for a uid once they are gone. Worse, the retry the 207 asks for
+ *    would then read an EMPTY enrolment snapshot, sweep zero runs, report zero
+ *    marks cleared WITHOUT failing, and clear the tracker row — a clean-looking
+ *    200 over marks that are now unreachable and unnameable. So the dependency
+ *    is enforced in code, not merely implied by the order of the two blocks.
  *  - The Auth user is deleted near-LAST so a late failure leaves at worst a
  *    benign Auth orphan, never a half-account with dangling profile docs. If Auth
  *    deletion fails the account survives, so its refresh tokens are revoked
@@ -41,12 +696,75 @@ export type AccountDeletionSummary = {
  *    the row once the failed step succeeds.
  *
  * SCOPE: deletes registration-stage + identity data — subscriptions (+ their
- * event log), the registrations row, the collaborators doc, the users doc, the
- * account's email-verification token docs, and the Auth user. It deliberately
+ * event log), the push subscription rows for this account's devices, the
+ * registrations row, the collaborators doc, the users doc, the account's
+ * email-verification token docs, and the Auth user. It deliberately
  * does NOT delete a member's substantive content (tasks, comments, attachments,
  * events, RSVPs, bookings). That's the deferred hygiene sweep, and retaining
  * content for a period after deletion is the intended behaviour (a privacy-policy
  * retention clause is backburnered).
+ *
+ * COURSE DATA IS THE ONE EXCEPTION, and deliberately so. Every course row is
+ * keyed to the uid rather than owned by a doc anyone can still administer:
+ * `courseApplications` carries the applicant's EMAIL and a denormalised name,
+ * `courseProgress` carries public comments the whole cohort reads,
+ * `courseExerciseResponses` carries member-authored text a facilitator queue
+ * serves, and `courseAttendance` carries participation marks. With the users
+ * doc gone every one of those renders as an anonymous ghost row ("NAISI
+ * member") that no admin surface can find or clear — so they go with the
+ * account rather than waiting for a sweep that could no longer name them.
+ *
+ * ADMISSIONS DATA GOES FOR THE SAME REASON, and one part of it goes for a
+ * stronger one. `admissionApplications` carries the essays and the email;
+ * `admissionReviews` carries other people's written assessments of this
+ * person, and this person's written assessments of others;
+ * `memberConductFlags` carries a free-text allegation. All are keyed to the
+ * uid alone. And `admissionApplicationPrivate` holds the access-requirements
+ * answer, which will in practice contain disability and health information
+ * and which has NO field to query on by design; see
+ * `deleteAdmissionApplications` for why that makes it the one row that must
+ * die in the same batch as its application rather than in a sweep of its own.
+ * The reviewer-authored retention decision is argued at its call site rather
+ * than left silent.
+ *
+ * MIRRORED MY WORK TASKS ARE RETAINED. The week-mirror writes `tasks/{id}` docs
+ * (courseTasks.ts) which look like course data but are ordinary task rows — the
+ * member is creator and sole completer, `assignees-only`, dismissible like any
+ * quick-add. They belong to the tasks collection, which the deferred hygiene
+ * sweep owns end to end; carving one `source: "fellowship-reminder"` slice out
+ * of it here would leave the member's other tasks behind while breaking the
+ * blocks/comments/activity a task carries, and would put this function in the
+ * business of deleting content the retention decision above says to keep.
+ *
+ * THE UNMARKED-REGISTER FOLLOW-UP IS RETAINED TOO, and for a second reason on
+ * top of that one. `tasks` carrying `source: "course-register"` name every
+ * admin as a completer, so an admin closing their account is named on every
+ * card the scheduler has ever raised. They are not that admin's content: the
+ * card is the committee's record that a cohort was chased, its subject is a
+ * group's register rather than a person, and it carries no PII beyond a uid
+ * list. Sweeping them on a completer uid would erase the chase history of
+ * every live cohort because one admin left. The uid itself goes stale on the
+ * card exactly as it does on any other committee task, which is what the
+ * deferred hygiene sweep is for; the run's own destroy takes these rows in
+ * full (courseDeletion.ts, the `registerTasks` stage).
+ *
+ * WORKSHEET WORK AND THE MEMBER RECORD ARE RETAINED, AND COUNTED. The owner
+ * decided on 7 September 2026 that a deleted account's worksheet responses and
+ * the staff reviews of them STAY, exactly as its tasks do, and that the
+ * deletion summary states how many, so the policy can be changed knowingly
+ * rather than discovered by somebody hunting for data that has gone. The
+ * reasoning is the tasks reasoning with one addition: a response is
+ * substantive content the committee holds (the answers to a document the
+ * committee sent, and the notes it wrote about them), and it hangs off the
+ * circulation rather than off the person, so it is not a ghost row the way an
+ * unowned `courseApplications` row is. The member record
+ * (`memberRecords/{uid}/applications`: when they applied, what for, the
+ * outcome, how they scored, what the reviewers wrote) is kept for the same
+ * reason `dataExports` rows are, and it is the rule the whole deletion wave is
+ * built around: a destroy never deletes what the committee wants to remember
+ * about a person, and neither does an account deletion. Both are COUNTED and
+ * neither is touched; `countRetainedMemberWork` has the how, and names the one
+ * thing it deliberately does not count.
  */
 export async function deleteAccountCascade(
   auth: Auth,
@@ -55,13 +773,30 @@ export async function deleteAccountCascade(
 ): Promise<AccountDeletionSummary> {
   const summary: AccountDeletionSummary = {
     subscriptionsDeleted: 0,
+    pushSubscriptionsDeleted: 0,
     registrationDeleted: false,
     collaboratorDeleted: false,
     userDocDeleted: false,
     emailVerificationsDeleted: 0,
+    courseApplicationsDeleted: 0,
+    courseEnrolmentsDeleted: 0,
+    courseProgressDeleted: 0,
+    courseExerciseResponsesDeleted: 0,
+    schedulerMarkersDeleted: 0,
+    courseAttendanceMarksCleared: 0,
+    admissionApplicationsDeleted: 0,
+    admissionApplicationPrivateDeleted: 0,
+    admissionReviewsDeleted: 0,
+    admissionReviewsAuthoredDeleted: 0,
+    admissionRoundRolesCleared: 0,
+    membershipsDeleted: 0,
+    membershipImportRowsDeleted: 0,
+    worksheetResponsesRetained: 0,
+    memberRecordApplicationsRetained: 0,
+    conductFlagDeleted: false,
     authDeleted: false,
   };
-  // Tracks whether any best-effort step (2-4) failed after attempting, so we can
+  // Tracks whether any best-effort step (2-5) failed after attempting, so we can
   // surface it (207) and keep the tracker row for re-cleanup.
   let partialFailure = false;
 
@@ -95,6 +830,38 @@ export async function deleteAccountCascade(
     } catch (err) {
       console.error("[deleteAccount] subscriptionEvents cleanup failed (best-effort):", uid, err);
     }
+  }
+
+  // 1c. PUSH subscription rows, the account's other delivery channel: one row
+  //     per device endpoint. The collection is owned by `src/lib/push/store.ts`;
+  //     the `uid` on a row is whoever last claimed that device (it is rewritten
+  //     on every subscribe), so this sweeps the devices still recorded as
+  //     theirs and leaves a device that has since changed hands alone.
+  //
+  //     Deleted rather than left to expire, because the tasks this cascade
+  //     RETAINS still name the uid: the task mirror reads the subscriptions for
+  //     a uid at send time, so a stranded row is a lock-screen notification for
+  //     a person who no longer has an account here.
+  //
+  //     BEST-EFFORT, unlike step 1, and the difference is bounded survival. A
+  //     stranded mailing row keeps mailing until somebody notices; a stranded
+  //     push endpoint is pruned by the sender the first time the push service
+  //     answers 404/410 (`pruneSubscription`), and the 207 this failure produces
+  //     keeps the registration row so the sweep is retried. Aborting the whole
+  //     teardown over it would leave the account itself intact, which is worse.
+  //
+  //     Paged by `deleteOwnedCourseRows` on its default `uid` field: one
+  //     equality filter and no orderBy, which Firestore's automatic
+  //     single-field index serves, so no composite index is declared for it.
+  try {
+    summary.pushSubscriptionsDeleted = await deleteOwnedCourseRows(
+      db,
+      "pushSubscriptions",
+      uid,
+    );
+  } catch (err) {
+    console.error("[deleteAccount] pushSubscriptions delete failed:", uid, err);
+    partialFailure = true;
   }
 
   // 2. collaborators doc (id is name-slug__uid, so query the uid field).
@@ -137,7 +904,303 @@ export async function deleteAccountCascade(
     partialFailure = true;
   }
 
-  // 5. Firebase Auth user. Already-gone counts as success.
+  // 5. Course data (see the SCOPE note). Each collection is its own try so one
+  //    failure doesn't cost the others, and all of it is BEST-EFFORT: the rows
+  //    are content, not a mailing source, and a 207 keeps the tracker row so the
+  //    remainder can be re-run.
+  //
+  //    Read once, up front: these rows name the runs the attendance scan needs
+  //    AND the group seats the counter decrement has to release, so 5a and 5b
+  //    work off the same snapshot. 5c does not need it and runs regardless.
+  let enrolSnap: QuerySnapshot | null = null;
+  try {
+    enrolSnap = await db.collection("courseEnrolments").where("uid", "==", uid).get();
+  } catch (err) {
+    console.error("[deleteAccount] courseEnrolments read failed:", uid, err);
+    partialFailure = true;
+  }
+
+  if (enrolSnap) {
+    const enrolments = enrolSnap.docs.map((d) =>
+      normalizeCourseEnrolment(d.id, d.data() ?? {}),
+    );
+
+    // 5a. Attendance marks — BEFORE the enrolments go, since they are what name
+    //     the runs to scan (see the ordering rationale).
+    let attendanceSwept = false;
+    try {
+      const runIds = [...new Set(enrolments.map((e) => e.runId).filter(Boolean))];
+      summary.courseAttendanceMarksCleared = await clearCourseAttendanceMarks(
+        db,
+        runIds,
+        uid,
+      );
+      attendanceSwept = true;
+    } catch (err) {
+      console.error("[deleteAccount] courseAttendance clear failed:", uid, err);
+      partialFailure = true;
+    }
+
+    // 5b. Enrolments — ONLY once 5a has actually succeeded. These rows are the
+    //     uid→runIds index the attendance sweep runs off, so deleting them after
+    //     a failed sweep would strand marks in a collection nothing can scan by
+    //     uid AND make the retry report a clean teardown (see the ordering
+    //     rationale). Keeping them costs a 207 and a re-run; dropping them is
+    //     unrecoverable, so the failed step keeps its own input alive.
+    //
+    //     The group `memberCount` decrement rides in the SAME batch so the
+    //     counter can never drift from the rows it summarises. A seat is held
+    //     only by an enrolment that is both active AND grouped — the
+    //     allocate/remove routes' definition — so a withdrawn row releases
+    //     nothing here; its seat went when it left "active".
+    //
+    //     The run's `enrolledCount` rides along too, and its condition is
+    //     NARROWER: `selfEnrolled` as well as active. That field is moved only
+    //     by the open-enrol route, which increments it when somebody takes a
+    //     seat themselves and decrements it when they leave. Decrementing it
+    //     for an allocated admissions learner, whose row nothing ever counted,
+    //     would drive it negative and then wedge the enrol-mode route, which
+    //     reads it as "is anybody on this run". Rows the counter never counted
+    //     are rows it must not uncount.
+    if (!attendanceSwept) {
+      console.error(
+        "[deleteAccount] courseEnrolments delete SKIPPED — the attendance sweep failed and these rows are the only index back to the runs to re-scan:",
+        uid,
+      );
+    } else {
+      try {
+        const seats = new Map<string, number>();
+        const selfEnrolledByRun = new Map<string, number>();
+        for (const e of enrolments) {
+          if (e.status !== "active") continue;
+          if (e.groupId) {
+            seats.set(e.groupId, (seats.get(e.groupId) ?? 0) + 1);
+          }
+          if (e.selfEnrolled && e.runId) {
+            selfEnrolledByRun.set(
+              e.runId,
+              (selfEnrolledByRun.get(e.runId) ?? 0) + 1,
+            );
+          }
+        }
+        // A group doc that has since been deleted would make `batch.update`
+        // reject the WHOLE batch and strand the enrolments, so absent groups are
+        // skipped rather than assumed. At most one group per run — a trivial read.
+        const groupIds = [...seats.keys()];
+        const groupDocs = groupIds.length
+          ? await db.getAll(...groupIds.map((id) => db.collection("courseGroups").doc(id)))
+          : [];
+        const liveGroupIds = new Set(groupDocs.filter((d) => d.exists).map((d) => d.id));
+
+        // Same absent-doc rule as the groups above: a run deleted since the
+        // enrolment was written must not make `batch.update` reject the whole
+        // batch and strand every row in it.
+        const runIds = [...selfEnrolledByRun.keys()];
+        const runDocs = runIds.length
+          ? await db.getAll(...runIds.map((id) => db.collection("courseRuns").doc(id)))
+          : [];
+        const liveRunIds = new Set(runDocs.filter((d) => d.exists).map((d) => d.id));
+
+        if (enrolSnap.size > 0) {
+          const batch = db.batch();
+          for (const d of enrolSnap.docs) batch.delete(d.ref);
+          for (const [groupId, count] of seats) {
+            if (!liveGroupIds.has(groupId)) continue;
+            batch.update(db.collection("courseGroups").doc(groupId), {
+              memberCount: FieldValue.increment(-count),
+              updatedAt: FieldValue.serverTimestamp(),
+            });
+          }
+          for (const [runId, count] of selfEnrolledByRun) {
+            if (!liveRunIds.has(runId)) continue;
+            batch.update(db.collection("courseRuns").doc(runId), {
+              enrolledCount: FieldValue.increment(-count),
+              updatedAt: FieldValue.serverTimestamp(),
+            });
+          }
+          await batch.commit();
+          summary.courseEnrolmentsDeleted = enrolSnap.size;
+        }
+      } catch (err) {
+        console.error("[deleteAccount] courseEnrolments delete failed:", uid, err);
+        partialFailure = true;
+      }
+    }
+  }
+
+  // 5c. Applications (email + denormalised name), progress rows (public
+  //     comments and private notes), exercise responses (member-authored
+  //     answers). All addressed by their own `uid` field, so these run whether
+  //     or not the enrolment read above succeeded. The last two are paged — a
+  //     learner accrues one row per check-offable item and per exercise, per run.
+  //
+  //     `schedulerMarkers` rides the same loop: markers store every component
+  //     of their id as a field, so the person-keyed families (today the
+  //     admissions deadline reminder, `remind__{roundId}__{uid}__{dueAtKey}`)
+  //     are addressable by `uid` exactly like the rows above. They are
+  //     deleted rather than retained because a marker's only job is to
+  //     suppress a send to an audience row this cascade has already removed.
+  for (const [collection, key] of [
+    ["courseApplications", "courseApplicationsDeleted"],
+    ["courseProgress", "courseProgressDeleted"],
+    ["courseExerciseResponses", "courseExerciseResponsesDeleted"],
+    ["schedulerMarkers", "schedulerMarkersDeleted"],
+  ] as const) {
+    try {
+      summary[key] = await deleteOwnedCourseRows(db, collection, uid);
+    } catch (err) {
+      console.error(`[deleteAccount] ${collection} delete failed:`, uid, err);
+      partialFailure = true;
+    }
+  }
+
+  // 5d. ADMISSIONS. Same tier as the course rows above and for the same
+  //     reason: every one of these is keyed to the uid rather than owned by
+  //     a document somebody can still administer, so with the users doc gone
+  //     they are ghost rows no admin surface could find. Each is its own try
+  //     so one failure does not cost the others.
+  try {
+    const { applications, privateRows } = await deleteAdmissionApplications(db, uid);
+    summary.admissionApplicationsDeleted = applications;
+    summary.admissionApplicationPrivateDeleted = privateRows;
+  } catch (err) {
+    console.error("[deleteAccount] admissionApplications delete failed:", uid, err);
+    partialFailure = true;
+  }
+
+  // Review rows ABOUT this account: scores and free-text notes describing a
+  // person who no longer has an account. They go with the applications they
+  // assess.
+  try {
+    summary.admissionReviewsDeleted = await deleteOwnedCourseRows(
+      db,
+      "admissionReviews",
+      uid,
+      "applicantUid",
+    );
+  } catch (err) {
+    console.error("[deleteAccount] admissionReviews (applicant) failed:", uid, err);
+    partialFailure = true;
+  }
+
+  // Review rows written BY this account about OTHER people.
+  //
+  // RETENTION DECISION, stated rather than left to inference: these are
+  // DELETED too. The argument for keeping them is that they are somebody
+  // else's decision record. The argument that wins is that the row is
+  // personal data about the REVIEWER as well as the applicant (it is their
+  // named judgement, their free text, and the queue attributes it to them by
+  // uid), and that with the reviewer's account gone it attributes itself to
+  // an id nothing can resolve. Keeping it would mean an anonymous score of
+  // unknown provenance sitting in a decision aggregate, which is worse for
+  // the applicant than one fewer review: the coverage filter would count a
+  // reviewer who no longer exists as having covered them.
+  //
+  // Reviews are scored during a round and decided at the end of it, so the
+  // realistic case is an account deleted long after the round settled, where
+  // the decision has already been made and mailed. A reviewer who deletes
+  // their account MID-round leaves an application short of coverage, which
+  // the queue's coverage filter surfaces as work to redo: visible, and the
+  // right answer.
+  try {
+    summary.admissionReviewsAuthoredDeleted = await deleteOwnedCourseRows(
+      db,
+      "admissionReviews",
+      uid,
+      "reviewerUid",
+    );
+  } catch (err) {
+    console.error("[deleteAccount] admissionReviews (reviewer) failed:", uid, err);
+    partialFailure = true;
+  }
+
+  // The rounds that NAME this account: its reviewer lists and its final
+  // decider. Unlike everything else in this block these are not rows the
+  // account owns, they are references to it on documents that outlive it, and
+  // a reference nothing can resolve is what wedged the roles section.
+  try {
+    summary.admissionRoundRolesCleared = await clearAdmissionRoundRoles(db, uid);
+  } catch (err) {
+    console.error("[deleteAccount] admissionRounds role clear failed:", uid, err);
+    partialFailure = true;
+  }
+
+  // The conduct flag. Addressed at the uid, so no query and no index. It
+  // carries a free-text allegation about a named person, which has no reason
+  // to outlive the account it describes.
+  try {
+    const flagRef = db.collection("memberConductFlags").doc(uid);
+    if ((await flagRef.get()).exists) {
+      await flagRef.delete();
+      summary.conductFlagDeleted = true;
+    }
+  } catch (err) {
+    console.error("[deleteAccount] memberConductFlags delete failed:", uid, err);
+    partialFailure = true;
+  }
+
+  // 5e. MEMBERSHIP rows: one per period this account was recorded a member for.
+  //     Paged on the `uid` field like the course sweeps above, because a long
+  //     membership history is several rows rather than one addressed document.
+  //
+  //     Each row also comes back off its period's cached per-tier totals,
+  //     which the console renders as a headcount. The periods themselves are
+  //     left alone: they describe a year of the society and outlive every
+  //     account under them. See `deleteMembershipsAndAdjustTotals`.
+  //
+  //     `users.paidMembershipYears` needs no step of its own: the whole user
+  //     document goes in step 3.
+  try {
+    summary.membershipsDeleted = await deleteMembershipsAndAdjustTotals(db, uid);
+  } catch (err) {
+    console.error("[deleteAccount] memberships delete failed:", uid, err);
+    partialFailure = true;
+  }
+
+  // 5f. SU IMPORT ROWS naming this account, across every batch. The batches
+  //     themselves are provenance and survive, along with rows for people who
+  //     never had an account here. See `deleteMembershipImportRows`.
+  try {
+    summary.membershipImportRowsDeleted = await deleteMembershipImportRows(db, uid);
+  } catch (err) {
+    console.error("[deleteAccount] membership import rows delete failed:", uid, err);
+    partialFailure = true;
+  }
+
+  // 5g. THE TWO RETENTION COUNTS. Reads only, and they are the last thing this
+  //     function does before Auth precisely so nothing after them can be
+  //     mistaken for a sweep of what they counted.
+  //
+  //     A failure here costs the summary two honest numbers and nothing else,
+  //     so it does NOT set `partialFailure`: holding the tracker row open would
+  //     resurface the account as an orphan in the registrations tracker over a
+  //     count of data that nobody lost, which is the ghost row this function
+  //     exists to stop. It DOES earn a sentence in the warning, because the
+  //     alternative is a summary reporting zero retained rows, and zero is
+  //     exactly what somebody revisiting this retention policy would read as
+  //     "there was nothing to keep".
+  //
+  //     A LOCAL FLAG rather than a write straight to `summary.warning`, and
+  //     this is the whole reason the flag exists: a count is a Firestore call
+  //     in the same request as every best-effort step above, so it fails for
+  //     the same transient causes they do (deadline exceeded, unavailable,
+  //     quota) and the two failures arrive together. A warning written here
+  //     would then occupy the field the residue sentence needs, the
+  //     `partialFailure` block at the end would find it already set and stay
+  //     quiet, and the admin would read a note about a missing telemetry number
+  //     while the registration row was deliberately kept for a re-run. Both
+  //     sentences are composed below instead, residue first.
+  let countsUnavailable = false;
+  try {
+    const kept = await countRetainedMemberWork(db, uid);
+    summary.worksheetResponsesRetained = kept.worksheetResponses;
+    summary.memberRecordApplicationsRetained = kept.memberRecordApplications;
+  } catch (err) {
+    console.error("[deleteAccount] retained-work counts failed:", uid, err);
+    countsUnavailable = true;
+  }
+
+  // 6. Firebase Auth user. Already-gone counts as success.
   try {
     await auth.deleteUser(uid);
     summary.authDeleted = true;
@@ -159,7 +1222,7 @@ export async function deleteAccountCascade(
     }
   }
 
-  // 6. registrations/{uid} tracker row — ONLY on a fully clean teardown (Auth gone
+  // 7. registrations/{uid} tracker row — ONLY on a fully clean teardown (Auth gone
   //    AND no best-effort step failed). Otherwise keep the row so the orphan stays
   //    surfaced in the tracker; a re-run (idempotent) retries the failed step and
   //    then clears it.
@@ -173,12 +1236,30 @@ export async function deleteAccountCascade(
     }
   }
 
-  // A swallowed best-effort failure is still a non-clean delete — surface it as a
-  // warning (→ 207) so callers don't report a clean success.
-  if (partialFailure && !summary.warning) {
-    summary.warning =
-      "Some account data couldn't be removed; the registration row was kept so the deletion can be retried.";
+  // The warning, composed rather than assigned. Three different things can want
+  // to say something here (residue left behind, an Auth account that survived,
+  // and a retention count that could not be read), they are not mutually
+  // exclusive, and only the first two mean "retry this". So each contributes a
+  // SENTENCE and the residue one goes first: it is the one that changes what
+  // the admin has to do next, and the one that used to be lost whenever
+  // anything else had already written to the field.
+  const notices: string[] = [];
+  if (partialFailure) {
+    // A swallowed best-effort failure is still a non-clean delete, so it is
+    // surfaced as a warning (which the routes turn into a 207) rather than
+    // letting a caller report a clean success.
+    notices.push(
+      "Some account data couldn't be removed; the registration row was kept so the deletion can be retried.",
+    );
   }
+  // Set in step 6, and phrased there as its own sentence.
+  if (summary.warning) notices.push(summary.warning);
+  if (countsUnavailable) {
+    notices.push(
+      "The counts of the worksheet work and the member record kept with this account could not be read, so both are reported as zero. That is a reporting gap and not a deletion: nothing counted there is ever removed by a deletion.",
+    );
+  }
+  if (notices.length > 0) summary.warning = notices.join(" ");
 
   return summary;
 }

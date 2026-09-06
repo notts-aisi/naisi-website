@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Input";
 import { useAuth } from "@/auth/AuthProvider";
+import { useHydrated } from "@/hooks/useHydrated";
 import { useSiteNotice } from "@/features/maintenance/useSiteNotice";
 import { SurfacePausedNotice } from "@/features/maintenance/SurfacePausedNotice";
 import { isSurfacePaused } from "@/lib/siteNotice";
@@ -34,8 +35,20 @@ type SubmitState =
 export default function RsvpForm({ event, previewMode }: Props) {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
-  const [anonName, setAnonName] = useState("");
-  const [anonEmail, setAnonEmail] = useState("");
+  // The name and email boxes are UNCONTROLLED and read out of the DOM when the
+  // form is submitted. The event page is server-rendered, so a guest can be
+  // typing into this form before its JavaScript has landed, and controlled
+  // boxes lost every one of those characters: React's first render wrote its
+  // own empty state over them.
+  const formRef = useRef<HTMLFormElement>(null);
+  const readField = useCallback((id: string) => {
+    const box = formRef.current?.querySelector<HTMLInputElement>(`#${id}`);
+    return box?.value ?? "";
+  }, []);
+  // Disables the submit until React is listening. Before that a press ran the
+  // browser's own submission instead: the page came back looking untouched,
+  // with the answers gone and nothing said anywhere.
+  const hydrated = useHydrated();
   const [answers, setAnswers] = useState<Record<string, RsvpAnswer>>({});
   const [joinEvents, setJoinEvents] = useState(false);
   const [joinNewsletter, setJoinNewsletter] = useState(false);
@@ -58,11 +71,27 @@ export default function RsvpForm({ event, previewMode }: Props) {
   // form isn't bricked.
   const signedInIdentity =
     user && user.email ? { name: user.displayName ?? "", email: user.email } : null;
-  const name = signedInIdentity ? signedInIdentity.name : anonName;
-  const email = signedInIdentity ? signedInIdentity.email : anonEmail;
+  const sessionName = signedInIdentity ? signedInIdentity.name : null;
+  const sessionEmail = signedInIdentity ? signedInIdentity.email : null;
+
+  // A session resolves after the first paint, so a locked identity is written
+  // into the boxes rather than rendered as their value: the boxes have to
+  // stay uncontrolled for the guest case above.
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form || sessionEmail === null) return;
+    const nameBox = form.querySelector<HTMLInputElement>("#rsvp-name");
+    if (nameBox) nameBox.value = sessionName ?? "";
+    const emailBox = form.querySelector<HTMLInputElement>("#rsvp-email");
+    if (emailBox) emailBox.value = sessionEmail;
+  }, [sessionName, sessionEmail]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // The session wins where there is one, exactly as the locked boxes show;
+    // otherwise whatever the guest typed, however early they typed it.
+    const name = sessionEmail !== null ? (sessionName ?? "") : readField("rsvp-name");
+    const email = sessionEmail !== null ? sessionEmail : readField("rsvp-email");
     if (signupsPaused) {
       // Belt and braces behind the disabled submit — never a silent block.
       setState({ kind: "error", message: siteNotice.bannerMessage });
@@ -167,14 +196,12 @@ export default function RsvpForm({ event, previewMode }: Props) {
         </p>
       )}
 
-      <form onSubmit={onSubmit} className={styles.form}>
+      {/* Addressed by the browser end-to-end suite, which fills this form as a
+          signed-out guest and checks it fits a phone. */}
+      <form ref={formRef} onSubmit={onSubmit} className={styles.form} data-testid="rsvp-form">
         <Field id="rsvp-name" label="Your name">
           <Input
             id="rsvp-name"
-            value={name}
-            onChange={(e) => {
-              if (!signedInIdentity) setAnonName(e.target.value);
-            }}
             maxLength={NAME_MAX}
             disabled={state.kind === "submitting"}
             readOnly={!!signedInIdentity}
@@ -186,10 +213,6 @@ export default function RsvpForm({ event, previewMode }: Props) {
           <Input
             id="rsvp-email"
             type="email"
-            value={email}
-            onChange={(e) => {
-              if (!signedInIdentity) setAnonEmail(e.target.value);
-            }}
             maxLength={EMAIL_MAX}
             disabled={state.kind === "submitting"}
             readOnly={!!signedInIdentity}
@@ -239,13 +262,27 @@ export default function RsvpForm({ event, previewMode }: Props) {
           </label>
         </fieldset>
 
-        {state.kind === "error" && <p className={styles.danger}>{state.message}</p>}
+        {/* data-testid: when the browser end-to-end suite does not reach the
+            confirmation page it reads this, so a refusal is reported as the
+            sentence the guest saw rather than as a navigation timeout. */}
+        {state.kind === "error" && (
+          <p className={styles.danger} data-testid="rsvp-error">
+            {state.message}
+          </p>
+        )}
 
         {signupsPaused && (
           <SurfacePausedNotice notice={siteNotice} surface="eventSignups" />
         )}
         <div className={styles.actions}>
-          <Button type="submit" disabled={state.kind === "submitting" || signupsPaused}>
+          {/* `!hydrated` carries the disabled attribute into the server markup,
+              so an early press or an Enter in a field does nothing at all
+              rather than submitting the form the browser's own way. */}
+          <Button
+            type="submit"
+            disabled={state.kind === "submitting" || signupsPaused || !hydrated}
+            data-testid="rsvp-submit"
+          >
             {state.kind === "submitting" ? "Submitting…" : "Request RSVP"}
           </Button>
         </div>

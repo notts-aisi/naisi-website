@@ -127,6 +127,90 @@
   color: var(--color-text-subtle);
 }
 
+/* === Card deep link (course mirrors, and worksheet tasks) ===
+
+   Quiet by construction. This is one card type among many on a board that
+   routinely shows dozens, so the link sits at subtle weight and only reaches
+   accent on hover/focus — it should read as an aside on the card, never as
+   the card's action. `align-self: flex-start` keeps the hit area to the text
+   itself so it can't collide with the surrounding card click target.
+
+   Two callers now: the mirrored course week and the recipient's link into a
+   worksheet. The class keeps its original name so the course link's own diff
+   stays empty; both are the same thing, a way back to the document the card is
+   a projection of. */
+
+.courseLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  align-self: flex-start;
+  /* Containing block for the clipped .courseNote below, so the hidden text
+     anchors here rather than at the initial containing block. */
+  position: relative;
+  max-width: 100%;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  border-bottom: 1px solid transparent;
+  transition:
+    color var(--dur-quick) var(--ease-naisi),
+    border-color var(--dur-quick) var(--ease-naisi);
+}
+
+.courseLink:hover {
+  color: var(--color-accent);
+  border-bottom-color: currentColor;
+}
+
+.courseLink:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The one-way sentence: carried in the link's accessible name for screen
+   readers (where a `title` alone is unreliable) and hidden from sight, because
+   a standing explanation printed on every mirrored card would cost more
+   attention than the misreading it prevents. Same clip technique as
+   globals.css's `.visually-hidden`. */
+.courseNote {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.courseArrow {
+  display: inline-block;
+  transition: transform var(--dur-quick) var(--ease-naisi);
+}
+
+.courseLink:hover .courseArrow,
+.courseLink:focus-visible .courseArrow {
+  transform: translate(1px, -1px);
+}
+
+/* === Reduced motion === */
+@media (prefers-reduced-motion: reduce) {
+  /* The colour change stays — it is state legibility, not decoration. The
+     arrow's nudge is pure decoration and goes. (The token override in
+     tokens.css already collapses --dur-quick to 1ms; this kills the offset
+     itself, which durations alone can't.) */
+  .courseArrow {
+    transition: none;
+  }
+  .courseLink:hover .courseArrow,
+  .courseLink:focus-visible .courseArrow {
+    transform: none;
+  }
+}
+
 /* === Mobile === */
 @media (max-width: 36rem) { /* --bp-sm */
   /* On TaskBoardPhone (32rem cap) the badge cluster + status pill no
@@ -137,5 +221,24 @@
   }
   .badgeCluster {
     justify-content: flex-start;
+  }
+
+  /* My Work is a member-facing surface, so the 44px floor is ENFORCED here
+     rather than aspirational (docs/touch-targets.md). Padding rather than a
+     bare min-height so the target actually surrounds the text, and a hairline
+     above it so the band reads as its own row inside the card — the doc's
+     "nested links must not have overlapping tap zones" check. */
+  .courseLink {
+    min-height: 2.75rem;
+    align-self: stretch;
+    padding-block: var(--space-2);
+    padding-inline: 0;
+    margin-top: var(--space-1);
+    border-top: 1px solid var(--color-border);
+    /* Drops the desktop underline-on-hover with it: the divider above already
+       separates this band, and a second rule on a touch surface with no hover
+       state would only ever fire on a sticky :hover after a tap. */
+    border-bottom: none;
+    border-radius: 0;
   }
 }

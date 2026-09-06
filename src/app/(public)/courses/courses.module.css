@@ -1,0 +1,212 @@
+/* ============================================================
+   Public course catalogue.
+
+   Follows the /resources idiom — badge, heading, lede, then a
+   responsive card grid — because a visitor arriving here is doing
+   the same thing they do there: scanning a short list to decide
+   where to start. The one addition is the applications-state line
+   at the foot of each card, which is the question this page
+   actually exists to answer.
+   ============================================================ */
+
+.page {
+  padding: var(--space-16) 0;
+}
+
+.intro {
+  max-width: 44rem;
+  margin-bottom: var(--space-12);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.heading {
+  margin: var(--space-1) 0 0;
+}
+
+.lede {
+  color: var(--color-text-muted);
+  line-height: var(--leading-relaxed);
+  margin: 0;
+}
+
+.emptyText {
+  color: var(--color-text-muted);
+  line-height: var(--leading-relaxed);
+  margin: 0;
+  max-width: 40rem;
+}
+
+.grid {
+  display: grid;
+  gap: var(--space-6);
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+}
+
+.cardLink {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+  border-radius: var(--radius-lg);
+}
+
+.cardLink:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  /* Equal-height cards across a row so the state lines align. */
+  height: 100%;
+  /* Clips the accent hairline to the card's rounded corners. */
+  overflow: hidden;
+}
+
+/* Accent hairline wiping in along the bottom edge on hover. Compositor-only
+   (transform on a pseudo-element), so it costs nothing to animate and needs
+   no JS — Card's own :hover already supplies the lift and border change. */
+.card::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 2px;
+  background: var(--color-accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--transition-base);
+}
+
+.cardLink:hover .card::after,
+.cardLink:focus-visible .card::after {
+  transform: scaleX(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card::after {
+    transition: none;
+  }
+}
+
+/* The generated artwork sits flush against the card's padding edges: a tile
+   with a picture inset by the card padding reads as a thumbnail rather than
+   as the card's own face. `Card padding="lg"` is var(--space-8), and
+   var(--space-6) below 48rem, which the mobile block matches. */
+/* `.card .visual`, not `.visual`: CourseVisual's own module gives the same
+   class a border and a radius at the same specificity, and which of two equal
+   selectors wins would then depend on stylesheet order. */
+.card .visual {
+  margin: calc(var(--space-8) * -1) calc(var(--space-8) * -1) 0;
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+}
+
+.cardTop {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.level {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.cardTitle {
+  font-size: var(--text-xl);
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  margin: 0;
+  /* Course titles are authored; a long one wraps rather than widening the card
+     past the grid track. `anywhere` rather than `break-word`, because only
+     `anywhere` lowers the min-content width the track is measured against. */
+  overflow-wrap: anywhere;
+}
+
+.tagline {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  margin: 0;
+}
+
+.cardFoot {
+  /* margin-top:auto pins the state line to the bottom of an equal-height card
+     so the row reads as one line of statuses. */
+  margin: auto 0 0;
+  padding-top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.commitment {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.stateOpen {
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+/* A window that has not opened YET is news, not an epitaph. Rendering
+   "Applications open Mon 21 Sep" in the same muted grey as "Applications
+   closed" is how a card announcing the next cohort reads as a dead one. */
+.stateSoon {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.stateClosed {
+  color: var(--color-text-subtle);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .page {
+    padding: var(--space-10) 0;
+  }
+  .intro {
+    margin-bottom: var(--space-8);
+  }
+  .grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+  .card {
+    /* Single column — equal heights buy nothing and the auto margin would
+       just push the state line away from the tagline. */
+    height: auto;
+  }
+  .cardFoot {
+    margin-top: var(--space-1);
+  }
+  .card .visual {
+    margin: calc(var(--space-6) * -1) calc(var(--space-6) * -1) 0;
+  }
+}
+
+/* Small phones. */
+@media (max-width: 36rem) { /* --bp-sm */
+  .page {
+    padding: var(--space-8) 0;
+  }
+  .cardTitle {
+    font-size: var(--text-lg);
+  }
+  .cardTop {
+    gap: var(--space-2);
+  }
+}

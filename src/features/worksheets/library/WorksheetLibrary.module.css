@@ -1,0 +1,284 @@
+/* ONE STYLESHEET FOR THE WHOLE LIBRARY, imported by WorksheetLibrary,
+   FolderBar, NewWorksheetForm, WorksheetRow, SentList and CirculationRow.
+
+   The rows are the reason. A worksheet row and a circulation row are the same
+   object to the reader (a title, a line of grey facts, a couple of buttons) and
+   they sit under each other on the editor page, so two stylesheets would be two
+   places for the same padding to drift. The danger-zone pair does the same
+   thing for the same reason (see RunDangerZone.module.css).
+
+   Every colour, space and radius is a token: swapping the palette is one file
+   (src/theme/tokens.css) and this must not be the module that pins a hex. */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sectionTitle {
+  font-size: var(--text-lg);
+  font-family: var(--font-display);
+  margin: 0;
+}
+
+.hint {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.error {
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+  margin: 0;
+}
+
+/* === Folder bar === */
+
+.folderBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* The chips scroll INSIDE this box rather than widening the page: the authed
+   shell's sidebar is fixed, and a document that scrolls sideways drags the
+   whole layout with it (CLAUDE.md, Main-area width). `min-width: 0` is what
+   lets a flex child shrink below its content's intrinsic width and is the
+   difference between scrolling here and pushing there. */
+.folderScroll {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: var(--space-1);
+}
+
+.chip {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.chip:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.chip:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.chipActive {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+.folderTools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.inlineForm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.inlineInput {
+  width: 12rem;
+  max-width: 100%;
+}
+
+/* === New worksheet form === */
+
+.newWorksheet {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.newWorksheetTitle {
+  flex: 2 1 16rem;
+  min-width: 0;
+}
+
+.newWorksheetFolder {
+  flex: 1 1 11rem;
+  min-width: 0;
+}
+
+/* === Rows === */
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.row:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-strong);
+}
+
+.rowMain {
+  flex: 1 1 auto;
+  /* Lets the title ellipsis instead of stretching the row past the shell. */
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.rowTitleLine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.rowTitle {
+  color: var(--color-text);
+  font-weight: 600;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowTitle:hover {
+  color: var(--color-accent);
+}
+
+.rowTitle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+.lock {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: 1;
+}
+
+.rowMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.confirmText {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* A row becomes a card: the facts stack under the title and the buttons take
+     a full-width line of their own, so nothing is squeezed to a tap target
+     smaller than a fingertip. */
+  .row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+  }
+
+  .rowActions,
+  .confirm {
+    justify-content: flex-start;
+  }
+
+  /* 44px is the enforced floor for anything a thumb has to hit (see
+     docs/touch-targets.md); the small buttons in a row are below it by
+     default. The link around "Open" is not in the list: it is an inline box, so
+     min-height does not apply to it, and the Button it wraps is the thing the
+     thumb actually lands on. */
+  .rowActions button,
+  .confirm button {
+    min-height: 44px;
+  }
+
+  .chip {
+    /* Same floor for the folder chips, which are the densest control here. */
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .folderBar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .folderScroll {
+    flex: 1 1 auto;
+  }
+
+  .inlineForm,
+  .newWorksheet {
+    align-items: stretch;
+  }
+
+  .inlineInput,
+  .newWorksheetTitle,
+  .newWorksheetFolder {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+}

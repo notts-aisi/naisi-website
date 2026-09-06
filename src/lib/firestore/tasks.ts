@@ -1,4 +1,48 @@
-export type TaskSource = "committee" | "fellowship-reminder" | "personal";
+/**
+ * Where a task came from.
+ *
+ * `course-register` is the follow-up task raised when a group's register goes
+ * unmarked past its grace window: assigned to the admins, about one (run,
+ * group, session). TYPE AND LABEL ONLY at this point: nothing mints one yet,
+ * the job that does lands with the register work.
+ *
+ * A NOTE FOR WHOEVER BUILDS THAT JOB. The task create rule constrains
+ * `sourceRef` to null on the committee lane and constrains neither `source`
+ * nor the doc id at all, so an SU-committee member can create a task at the
+ * job's own deterministic id outright, and any signed-in member can squat it
+ * on the personal lane. Do NOT write a rules test asserting they cannot.
+ * Adopt the `sync-tasks` read-back instead: on ALREADY_EXISTS, read the doc
+ * back and treat it as the tick's own only if `source`, `sourceRef.cohortId`
+ * and the admin completer set all match; otherwise log it and mint at a
+ * fallback id.
+ *
+ * `worksheet` is one recipient's copy of a circulated worksheet: minted by
+ * POST /api/worksheets/circulations, one task per recipient, always
+ * `assignees-only`, never created by a client.
+ *
+ * THE SAME WARNING APPLIES, for the same reason. The create rule pins
+ * `sourceRef` to null and constrains `source` not at all, so an SU-committee
+ * member CAN create a task that calls itself a worksheet. Nothing trusts the
+ * label on its own: the respond page and the worksheet panel key on the
+ * `artefact` pointer below AND on the circulation's own response document,
+ * which only the worksheet routes write. A task with a forged label points at
+ * nothing and opens nothing.
+ */
+export type TaskSource =
+  | "committee"
+  | "fellowship-reminder"
+  | "personal"
+  | "course-register"
+  | "worksheet";
+
+/** Board-facing names for the sources above. */
+export const TASK_SOURCE_LABELS: Record<TaskSource, string> = {
+  committee: "Committee",
+  "fellowship-reminder": "Fellowship",
+  personal: "Personal",
+  "course-register": "Register",
+  worksheet: "Worksheet",
+};
 
 export type TaskKind =
   | "generic"
@@ -7,7 +51,8 @@ export type TaskKind =
   | "project-work"
   | "fellowship-weekly"
   | "social"
-  | "event";
+  | "event"
+  | "worksheet";
 
 export type TaskStatus = "backlog" | "todo" | "in-progress" | "review" | "done";
 export const TASK_STATUSES: TaskStatus[] = [
@@ -36,6 +81,21 @@ export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
 
 export type TaskVisibility = "committee" | "assignees-only";
 
+/**
+ * The kinds a human may PICK in TaskForm, which is deliberately not every
+ * kind the type carries.
+ *
+ * `worksheet` is absent on purpose: a worksheet task is minted by the
+ * circulation route with an `artefact` pointing at the response it is about,
+ * and a hand-made task carrying the same kind would render a worksheet panel
+ * with nothing behind it. Machine-minted kinds are labelled and unpickable:
+ * `TASK_KIND_LABELS` still names every kind, because a card whose badge says
+ * nothing is worse than one nobody can create, but the picker offers only the
+ * kinds a person is allowed to choose. The board's kind filter is built from
+ * this same list, so `worksheet` is not filterable either, which is correct
+ * while the only board that mounts the filters is the committee one and every
+ * worksheet task is `assignees-only`.
+ */
 export const TASK_KINDS: TaskKind[] = [
   "generic",
   "project-work",
@@ -53,6 +113,7 @@ export const TASK_KIND_LABELS: Record<TaskKind, string> = {
   "instagram-post": "Instagram post",
   "instagram-story": "Instagram story",
   "fellowship-weekly": "Fellowship weekly",
+  worksheet: "Worksheet",
 };
 
 export const TASK_FIELD_LIMITS = {
@@ -199,6 +260,14 @@ export type Subtask = {
    *  can style them distinctly (pill / divider). `"completer"` is for
    *  template-level hints; `null` for regular user-added subtasks. */
   roleHint: "completer" | "reviewer" | null;
+  /** RESERVED, and written by nothing today. A subtask that is itself about a
+   *  document (the event to publish, the newsletter section to write) hangs
+   *  its pointer here, in the same shape the task carries. It is read
+   *  defensively and carried only when valid, so the day a writer appears,
+   *  every build already in the wild ignores what it cannot render rather
+   *  than rendering it wrong. Optional, never null: absent is the state
+   *  every other unset map field in this codebase uses. */
+  artefact?: TaskArtefact;
 };
 
 export type SubtaskStats = {
@@ -206,10 +275,61 @@ export type SubtaskStats = {
   total: number;
 };
 
+/**
+ * The pointer that binds a machine-minted task to what it is about.
+ *
+ * `cohortId` + `weekNumber` are the original pair, written by the week mirror
+ * and swept on by the run destroy. `groupId` and `sessionKey` are the
+ * unmarked-register follow-up's two extra components: they let the push
+ * archive its own card, and the destroy sweep find it, by DATA rather than by
+ * parsing a doc id (run and group ids are `slugId()` values carrying their own
+ * `__`, so those ids have no second valid split).
+ *
+ * ABSENT, NOT NULL, on a task that has no group or session. The tasks rules
+ * pin `sourceRef` by equality on the committee update lane, and a field stored
+ * as null is a field a later write has to keep spelling as null; absent is the
+ * state every other pinned map field in this codebase uses.
+ */
 export type SourceRef = {
   cohortId: string;
   weekNumber: number;
+  groupId?: string;
+  sessionKey?: string;
 } | null;
+
+/**
+ * WHAT a task is about: a pointer to the document the work lives in, rather
+ * than a copy of it.
+ *
+ * A discriminated union with one member today. The two the owner has in mind
+ * next are an EVENT (a task about publishing one) and a NEWSLETTER SECTION (a
+ * task about writing one), so this is a union on `kind` from the start: the
+ * second member must be addable without rewriting the first member's readers,
+ * and a bare `circulationId` field would have had to be.
+ *
+ * WRITTEN BY THE SERVER, and by nothing in this app's client code:
+ * `POST /api/worksheets/circulations` mints the task and this pointer in the
+ * same write, and every client path writes it as null and never touches it
+ * again.
+ *
+ * WHAT THE RULES ACTUALLY PIN, which is narrower than that sentence and worth
+ * knowing before anything is built on it. On a WORKSHEET task the field is
+ * unreachable from a browser: the task is `assignees-only`, so the only
+ * client branch that reaches it at all is the completer-or-reviewer narrow
+ * band, whose `affectedKeys().hasOnly([...])` list does not contain
+ * `artefact`. On a COMMITTEE or PERSONAL task it is not pinned the way
+ * `sourceRef` is, so an SU-committee member (or a personal task's creator on
+ * their own task) could stamp a pointer onto one.
+ *
+ * That is tolerable rather than overlooked, because the pointer is not a
+ * permission: a reader who follows it still has to be allowed to read the
+ * response document at the far end, which the circulation rules gate on being
+ * that response's recipient or the circulation's staff. A forged pointer
+ * therefore renders a panel that opens nothing. If a later member of this
+ * union DOES confer anything by existing, pin `artefact` beside `sourceRef`
+ * on both of those branches in the same commit that adds it.
+ */
+export type TaskArtefact = { kind: "worksheet-response"; circulationId: string };
 
 export type TaskDoc = {
   id: string;
@@ -241,6 +361,12 @@ export type TaskDoc = {
   commentCount: number;
   tags: string[];
   sourceRef: SourceRef;
+  /**
+   * What this task is ABOUT, when something minted it about a document.
+   * `null` on every hand-made task and on every machine-minted one that
+   * predates the field. See {@link TaskArtefact}.
+   */
+  artefact: TaskArtefact | null;
   sourceTemplateId: string | null;
   createdAt: Date | null;
   updatedAt: Date | null;
@@ -287,6 +413,7 @@ function normalizeSubtask(raw: unknown): Subtask | null {
   const rawSealState = s.sealState;
   const sealState: Subtask["sealState"] =
     rawSealState === "sealed" ? "sealed" : "open";
+  const subtaskArtefact = normalizeArtefact(s.artefact);
   return {
     id,
     title,
@@ -305,6 +432,10 @@ function normalizeSubtask(raw: unknown): Subtask | null {
     sealState,
     sealedAt: tsToDate(s.sealedAt),
     roleHint,
+    // Spread rather than assigned, because the field is optional: writing
+    // `artefact: undefined` would put an undefined into every serialised
+    // subtask, and Firestore refuses undefined outright.
+    ...(subtaskArtefact ? { artefact: subtaskArtefact } : {}),
   };
 }
 
@@ -369,7 +500,34 @@ function normalizeSourceRef(raw: unknown): SourceRef {
   const cohortId = typeof s.cohortId === "string" ? s.cohortId : null;
   const weekNumber = typeof s.weekNumber === "number" ? s.weekNumber : null;
   if (!cohortId || weekNumber == null) return null;
-  return { cohortId, weekNumber };
+  const ref: SourceRef = { cohortId, weekNumber };
+  // Kept only when they are really there, so a mirror normalises back to the
+  // two-key shape it was written with (see SourceRef: absent, not null).
+  if (typeof s.groupId === "string" && s.groupId) ref.groupId = s.groupId;
+  if (typeof s.sessionKey === "string" && s.sessionKey) {
+    ref.sessionKey = s.sessionKey;
+  }
+  return ref;
+}
+
+/**
+ * Read an artefact pointer defensively.
+ *
+ * An unrecognised `kind` normalises to NULL rather than being carried through
+ * half-understood. That is the rolled-back-deploy case: a build that predates
+ * the next member of the union meeting a task a newer build minted. Every
+ * reader branches on `kind`, so a shape this build cannot name is a shape it
+ * cannot render, and "there is no artefact" is the only honest answer it can
+ * give. An empty `circulationId` is treated the same way: a pointer to
+ * nothing is not a pointer.
+ */
+function normalizeArtefact(raw: unknown): TaskArtefact | null {
+  if (!raw || typeof raw !== "object") return null;
+  const a = raw as Raw;
+  if (a.kind !== "worksheet-response") return null;
+  const circulationId = typeof a.circulationId === "string" ? a.circulationId : "";
+  if (!circulationId) return null;
+  return { kind: "worksheet-response", circulationId };
 }
 
 export function normalizeTask(id: string, data: Raw): TaskDoc {
@@ -409,6 +567,7 @@ export function normalizeTask(id: string, data: Raw): TaskDoc {
     commentCount: typeof data.commentCount === "number" ? data.commentCount : 0,
     tags: stringArray(data.tags),
     sourceRef: normalizeSourceRef(data.sourceRef),
+    artefact: normalizeArtefact(data.artefact),
     sourceTemplateId:
       typeof data.sourceTemplateId === "string" ? data.sourceTemplateId : null,
     createdAt: tsToDate(data.createdAt),

@@ -29,6 +29,9 @@ import {
 import { signUpWithEmailPassword, startOver } from "@/auth/signInWithEmailPassword";
 import DeleteAccountButton from "@/components/DeleteAccountButton";
 import { useAuth } from "@/auth/AuthProvider";
+import { safeFunnelReturn } from "@/lib/authReturn";
+import { hardNavigate } from "@/lib/navigation/hardNavigate";
+import { claimSelfHealAttempt } from "@/lib/navigation/selfHealGuard";
 import { useSiteNotice } from "@/features/maintenance/useSiteNotice";
 import { SurfacePausedNotice } from "@/features/maintenance/SurfacePausedNotice";
 import { isSurfacePaused } from "@/lib/siteNotice";
@@ -44,9 +47,9 @@ import {
   ALL_CATEGORIES,
   CATEGORY_DESCRIPTIONS,
   CATEGORY_LABELS,
-  isSubscribedToAnything,
   setCategory,
   setChannel,
+  SUBSCRIPTION_CATEGORIES,
   type NotificationPrefs,
 } from "@/lib/firestore/notifications";
 
@@ -65,6 +68,38 @@ type VerificationState =
   | { status: "sent"; tokenId: string; nextSendAt: number }
   | { status: "verified"; tokenId: string; verifiedAt: Date }
   | { status: "error"; message: string };
+
+/**
+ * Set by AuthEntry (and re-set by the Google redirect callback) so a `?next=`
+ * destination survives the hop through Google. It matters HERE because the
+ * new-account leg of that hop lands on a bare `/register` with no query
+ * string: AuthEntry sends `result.isNew` to `/register` without carrying the
+ * parameter, so the cookie is the only thing left holding the address.
+ * Mirrored in `AuthEntry.tsx` and `api/auth/google/callback/route.ts`.
+ */
+const AUTH_NEXT_COOKIE = "__auth_next";
+
+/** The `__auth_next` value, or null. Browser-only: reads `document.cookie`. */
+function readAuthNextCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  const found = new RegExp(`(?:^|;\\s*)${AUTH_NEXT_COOKIE}=([^;]*)`).exec(document.cookie);
+  if (!found) return null;
+  try {
+    return decodeURIComponent(found[1]);
+  } catch {
+    return null;
+  }
+}
+
+/** Burn the marker so a stale one can't redirect an unrelated registration. */
+function clearAuthNextCookie(): void {
+  if (typeof document === "undefined") return;
+  try {
+    document.cookie = `${AUTH_NEXT_COOKIE}=; path=/; max-age=0; samesite=lax`;
+  } catch {
+    /* storage unavailable: the marker expires on its own in ten minutes */
+  }
+}
 
 export default function RegisterPage() {
   // Next 16 requires `useSearchParams()` consumers to live under a Suspense
@@ -94,6 +129,34 @@ function RegisterPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const fromSubscriber = searchParams.get("from") === "subscriber";
+  const nextParam = searchParams.get("next");
+
+  /**
+   * Where finishing registration lands you. `/pending-approval` for almost
+   * everyone; the form they came from when they arrived through one of the
+   * application funnels, a course apply page or an admission round.
+   *
+   * Which addresses qualify is `safeFunnelReturn` in `src/lib/authReturn.ts`,
+   * shared with `AuthEntry`, which decides the same question on the sign-in
+   * leg. Two copies of a redirect allowlist is two chances for one of them to
+   * be widened alone.
+   *
+   * Resolved lazily and CACHED in a ref, for two reasons. It reads
+   * `document.cookie` (the fallback for the Google new-account hop, which
+   * drops the query string), so it cannot run during a server render. And it
+   * BURNS that cookie on first read, so a second call must not see a different
+   * answer and re-navigate somewhere else mid-flow.
+   */
+  const returnToRef = useRef<string | null>(null);
+  const returnTo = useCallback((): string => {
+    if (returnToRef.current === null) {
+      const found =
+        safeFunnelReturn(nextParam) ?? safeFunnelReturn(readAuthNextCookie());
+      if (found) clearAuthNextCookie();
+      returnToRef.current = found ?? "/pending-approval";
+    }
+    return returnToRef.current;
+  }, [nextParam]);
   const { user, role, loading: authLoading } = useAuth();
   // Site-wide maintenance notice: while an admin has paused new registrations
   // the final submit is disabled with the notice's copy inline, and a failing
@@ -286,13 +349,23 @@ function RegisterPageInner() {
     if (!user) return;
     if (loading) return;
     if (role === "member" || role === "committee" || role === "admin") {
-      router.replace("/dashboard");
+      // Hard nav, guarded — the twin of AuthEntry's self-heal bounce. A soft
+      // replace would replay any /dashboard -> /login redirect this document
+      // already recorded (see lib/navigation/hardNavigate.ts), and since a
+      // document load re-runs this effect, it needs the same one-shot guard to
+      // avoid a reload loop.
+      if (claimSelfHealAttempt()) hardNavigate("/dashboard", "replace");
     } else if (role === "pending") {
-      router.replace("/pending-approval");
+      // Normally /pending-approval. When they came through the course apply
+      // funnel it is the apply page instead: a `pending` account is welcome
+      // to apply (that page lives in the PUBLIC route group precisely so it
+      // can), so bouncing them to "your membership is with the committee"
+      // would strand them one click from the form they were filling in.
+      router.replace(returnTo());
     } else if (role === "rejected") {
       router.replace("/");
     }
-  }, [authLoading, user, role, router, loading]);
+  }, [authLoading, user, role, router, loading, returnTo]);
 
   // Reverse guard: a signed-in collaborator has a collaborators doc but no
   // users doc, so `role` is null and the bounce above never fires — without
@@ -321,9 +394,22 @@ function RegisterPageInner() {
   const [expectedGraduation, setExpectedGraduation] = useState("");
   const [motivation, setMotivation] = useState("");
   const [interests, setInterests] = useState("");
+  // Form defaults, not storage defaults — every switch below is rendered, so
+  // whatever is submitted is an answer the registrant saw and could change.
+  // `courses` starts ON because it is an OPT-OUT, not an opt-in: cohort mail
+  // is consented to by enrolling, and the category is the switch that stops
+  // it (see the run email route's module comment). Starting it OFF would
+  // stamp every new member with an explicit `courses: false` refusal at
+  // signup — which the run email route reads as "never mail me about my
+  // cohort" long before they have one.
   const [prefs, setPrefs] = useState<NotificationPrefs>({
     channels: { gmail: true, uniEmail: false },
-    categories: { newsletter: true, events: true },
+    categories: { newsletter: true, events: true, courses: true },
+    // No switch on this form, and there should not be one: push is per
+    // device and a registrant has not enabled notifications on anything yet.
+    // The stored defaults are written so the shape is complete from the
+    // first save; both switches live on /profile beside the device opt-in.
+    push: { tasks: true, courseDecisions: true },
   });
 
   // Verification state
@@ -334,7 +420,26 @@ function RegisterPageInner() {
 
   const showGraduation = status !== "" && STATUSES_WITH_GRADUATION.includes(status);
   const showStatusOther = status === "other";
-  const anyCategoryOn = isSubscribedToAnything(prefs);
+  /**
+   * Whether the "Deliver to" channel panel has anything to control — and
+   * therefore whether it renders at all.
+   *
+   * `SUBSCRIPTION_CATEGORIES` (newsletter + events), NOT every category and
+   * NOT `isSubscribedToAnything`, which counts `courses` too. Those two
+   * channel switches decide which verified address newsletter and event mail
+   * goes to, and nothing else: `completeRegistration` mints subscription rows
+   * for those two only, and both course email routes resolve ONE address per
+   * recipient server-side and never read the channels map. So a registrant who
+   * unticks newsletter and events but leaves course announcements on — the
+   * default, since it is an opt-out — would otherwise be shown a delivery
+   * section that routes nothing.
+   *
+   * The submit-time guard below reads the same value on purpose: an error
+   * demanding a channel while the channel switches are hidden is a dead end.
+   */
+  const anySubscriptionCategoryOn = SUBSCRIPTION_CATEGORIES.some(
+    (cat) => prefs.categories[cat],
+  );
   // A typed-out university email that isn't a Nottingham address (e.g. another
   // institution, or the .edu.cn/.edu.my campuses — eligibility is .ac.uk-only)
   // → steer them to the external-collaborator flow. Gated on "@" so it only
@@ -460,7 +565,10 @@ function RegisterPageInner() {
           }
           setSigninPhase("exiting");
           await sleep(EXIT_DURATION_MS);
-          router.push("/dashboard");
+          // Hard nav: /dashboard is protected, so this document may already
+          // hold a poisoned route cache entry for it. The exit animation has
+          // finished and "naisi:from-signin" survives the load.
+          hardNavigate("/dashboard");
         }
       } catch (err) {
         console.error(err);
@@ -472,7 +580,7 @@ function RegisterPageInner() {
         setLoading(false);
       }
     },
-    [router, startSurge],
+    [startSurge],
   );
 
   const onScriptError = useCallback((message: string) => {
@@ -504,7 +612,11 @@ function RegisterPageInner() {
       setError("Please pick your expected graduation month and year.");
       return;
     }
-    if (anyCategoryOn && !prefs.channels.gmail && !prefs.channels.uniEmail) {
+    if (
+      anySubscriptionCategoryOn &&
+      !prefs.channels.gmail &&
+      !prefs.channels.uniEmail
+    ) {
       setError("Pick at least one email to send messages to, or turn off all subscriptions.");
       return;
     }
@@ -537,7 +649,10 @@ function RegisterPageInner() {
         verifiedTokenId: verified ? verification.tokenId : undefined,
         uniEmailVerifiedAt: verified ? verification.verifiedAt : undefined,
       });
-      router.push("/pending-approval");
+      // The return address, when there is one. Same value the role bounce
+      // above will compute a beat later (it is cached in a ref), so the two
+      // cannot race each other to different pages.
+      router.push(returnTo());
     } catch (err) {
       console.error(err);
       // During a declared incident the admin-written notice copy is the error
@@ -983,7 +1098,11 @@ function RegisterPageInner() {
                 description={CATEGORY_DESCRIPTIONS[cat]}
               />
             ))}
-            {anyCategoryOn && (
+            {/* Only the two subscription categories have a delivery choice —
+                see `anySubscriptionCategoryOn`. Cohort mail is addressed to
+                one proven address by the run itself, so these switches would
+                not move it. */}
+            {anySubscriptionCategoryOn && (
               <div
                 style={{
                   padding: "var(--space-3)",
@@ -1002,7 +1121,11 @@ function RegisterPageInner() {
                     color: "var(--color-text-muted)",
                   }}
                 >
-                  Deliver to
+                  {/* Names the two it actually routes. A bare "Deliver to"
+                      under three switches reads as covering all three, and
+                      course announcements go to whichever address the run has
+                      proven, whatever is picked here. */}
+                  Deliver newsletter and event email to
                 </span>
                 <Switch
                   checked={prefs.channels.gmail}
@@ -1038,6 +1161,7 @@ function RegisterPageInner() {
             <SurfacePausedNotice notice={siteNotice} surface="newRegistrations" />
           )}
           <Button
+            data-testid="register-submit"
             type="submit"
             fullWidth
             size="lg"
@@ -1072,6 +1196,7 @@ function VerificationPanel({
   if (state.status === "verified") {
     return (
       <div
+        data-testid="register-uni-verified"
         style={{
           marginTop: "var(--space-3)",
           padding: "var(--space-3)",
@@ -1122,6 +1247,7 @@ function VerificationPanel({
           </button>
         ) : (
           <button
+            data-testid="register-uni-send"
             type="button"
             onClick={onSend}
             disabled={state.status === "sending"}

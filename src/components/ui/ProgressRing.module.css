@@ -1,0 +1,56 @@
+/* ============================================================
+   ProgressRing — circular completion token.
+
+   Family constants shared with features/courses/WeekRail: r=13 in a
+   32-unit viewBox, circumference 81.68. The box scales uniformly via
+   the size prop, so user-unit dash maths hold at any size — no
+   measurement.
+   ============================================================ */
+
+.ring {
+  display: block;
+  flex: none; /* status token: never let a flex parent squash it */
+}
+
+.track {
+  fill: none;
+  stroke: var(--color-surface-hover); /* ProgressBar's track colour — one family */
+  stroke-width: 2.5;
+}
+
+.fill {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-dasharray: 81.68; /* 2π·13 */
+  stroke-dashoffset: var(--ring-offset, 0);
+  /* Mount: the one-shot keyframe sweeps from empty to the computed offset
+     (animation wins over transition while it runs). After it ends, live
+     value changes from onSnapshot glide on the transition instead. */
+  animation: fillIn var(--dur-settle) var(--ease-naisi) both;
+  transition: stroke-dashoffset var(--dur-settle) var(--ease-naisi);
+}
+
+.success .fill {
+  stroke: var(--color-success);
+}
+
+@keyframes fillIn {
+  from {
+    stroke-dashoffset: 81.68;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Final state, immediately — the arc's travel is geometry, not opacity. */
+  .fill {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* Size comes from the `size` prop; nothing viewport-dependent yet. */
+}

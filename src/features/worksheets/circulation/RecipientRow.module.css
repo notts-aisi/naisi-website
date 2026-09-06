@@ -1,0 +1,124 @@
+/* ============================================================
+   RecipientRow: one line per recipient, plus the header that
+   names its columns.
+
+   ONE track list, used by both, because they have to agree.
+   `minmax(0, …)` on every proportional track: a long display
+   name or an activity sentence would otherwise take `auto` to
+   mean its own min-content and push the whole page wider than
+   the shell's cap, which is the horizontal-scroll bug the
+   AppShell width notes in the repo conventions exist to
+   prevent.
+   ============================================================ */
+
+.header,
+.row {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1.2fr)
+    minmax(7rem, 0.9fr)
+    minmax(0, 0.8fr)
+    minmax(0, 1.6fr)
+    auto;
+  gap: var(--space-3);
+  align-items: center;
+  min-width: 0;
+}
+
+.header {
+  padding: 0 var(--space-3) var(--space-2);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.row {
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+}
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+
+.progress {
+  min-width: 0;
+}
+
+.state {
+  min-width: 0;
+}
+
+.activity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.submitted {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+}
+
+.action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* === Mobile ================================================
+   The row becomes a card: one column, the progress bar full
+   width under the name, and the View button stretched across
+   the bottom so it clears the 44px touch floor in both
+   directions rather than only vertically.
+
+   The header disappears entirely. Column labels for a table
+   that is no longer a table would name nothing, and each cell
+   already reads as itself: a name, a bar, a chip, a sentence. */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .header {
+    display: none;
+  }
+
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+    align-items: stretch;
+    padding: var(--space-4);
+  }
+
+  .name {
+    font-size: var(--text-base);
+  }
+
+  .state {
+    /* Chips are inline; without this the span stretches and the chip's
+       background follows it across the card. */
+    justify-self: start;
+  }
+
+  .action {
+    justify-content: stretch;
+  }
+
+  .action > * {
+    width: 100%;
+    min-height: 2.75rem;
+  }
+}

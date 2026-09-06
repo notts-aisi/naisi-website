@@ -1,0 +1,330 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.block {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.blockHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.blockType {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.blockControls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.moveBtn {
+  width: 1.75rem;
+  height: 1.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.moveBtn:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+.moveBtn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.deleteBtn {
+  padding: 0.25rem 0.6rem;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  margin-left: var(--space-1);
+}
+
+.deleteBtn:hover:not(:disabled) {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.blockBody {
+  padding: var(--space-4);
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.fieldLabel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+
+.fieldInput {
+  padding: 0.5rem 0.7rem;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--text-md, 1rem);
+}
+
+.fieldInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.dividerPreview hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: var(--space-2) 0;
+}
+
+.insertRow {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-1) 0;
+}
+
+.insertBtn {
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-elevated);
+  border: 1px dashed var(--color-border);
+  border-radius: 50%;
+  color: var(--color-text-muted);
+  font-size: var(--text-lg);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), border-color var(--transition-fast);
+}
+
+.block:hover + .insertRow .insertBtn,
+.insertRow:hover .insertBtn {
+  opacity: 1;
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.insertBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.3;
+}
+
+.addBigBtn {
+  align-self: flex-start;
+  padding: 0.55rem 1rem;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border: 1px dashed var(--color-accent);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.addBigBtn:hover:not(:disabled) {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+.addBigBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.addMenu {
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  width: 100%;
+}
+
+.addMenuHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.addMenuClose {
+  padding: 0.25rem 0.6rem;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.addMenuGrid {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+}
+
+.addMenuItem {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.addMenuItem strong {
+  font-size: var(--text-md, 1rem);
+  color: var(--color-text);
+}
+
+.addMenuItem span {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.addMenuItem:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+/*
+ * COMPACT: the shape this editor takes when it is a FIELD inside another
+ * editor's row (a worksheet question's body) rather than the page itself.
+ * Every rule below is scoped under `.compact`, so no surface that predates
+ * the prop can be reached by any of them.
+ */
+.compact {
+  gap: var(--space-2);
+}
+
+.compact .block {
+  border-radius: var(--radius-md);
+}
+
+.compact .blockHeader {
+  padding: var(--space-1) var(--space-2);
+}
+
+.compact .blockType {
+  font-size: 0.6875rem;
+}
+
+.compact .blockBody {
+  padding: var(--space-3);
+}
+
+.compact .insertRow {
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.addChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.addChip {
+  padding: 0.3rem 0.6rem;
+  background: var(--color-bg-elevated);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.addChip:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.addChip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /*
+   * Scoped to the compact shape on purpose. The full-page shape of this
+   * editor is shared with the newsletter, events, courses and email-design
+   * editors, and none of those asked for a mobile change here.
+   */
+  .compact .blockControls {
+    gap: var(--space-2);
+  }
+
+  .compact .moveBtn {
+    width: 2.75rem;
+    height: 2.75rem;
+    font-size: var(--text-sm);
+  }
+
+  .compact .deleteBtn {
+    min-height: 2.75rem;
+    padding: 0.25rem var(--space-3);
+  }
+
+  .compact .insertBtn {
+    /* Hover cannot reveal anything on a touch screen, so the insert
+       affordance is always visible below the breakpoint. */
+    opacity: 1;
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  .addChip {
+    min-height: 2.75rem;
+    padding: 0.4rem var(--space-3);
+    font-size: var(--text-sm);
+  }
+}

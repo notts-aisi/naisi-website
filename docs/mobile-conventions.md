@@ -76,17 +76,49 @@ Draft spec, not in any stable browser. Not viable.
 
 44×44 CSS px minimum for interactive elements (Apple HIG / WCAG 2.5.5). See [touch-targets.md](touch-targets.md) for the enforced-vs-aspirational split and the specific files that comply or are exempt.
 
+## The applicant funnel has its own device walk
+
+The courses funnel (catalogue, programme page, apply form, availability grid,
+status hub) is walked on real hardware before an admission round opens. The
+ordered steps, and which module governs each one, are in
+[mobile-funnel-checklist.md](mobile-funnel-checklist.md).
+
 ## Don't regress the events RSVP flow
 
 The events RSVP page is the site's most mobile-mature surface and must not regress. See [mobile-baseline-events.md](mobile-baseline-events.md) for the regression contract.
 
 ## Safe-area insets
 
-`viewport: { viewportFit: "cover" }` in [src/app/layout.tsx](../src/app/layout.tsx) engages iOS safe-area insets. Any `position: fixed` element near a viewport edge should respect:
+`viewport: { viewportFit: "cover" }` in [src/app/layout.tsx](../src/app/layout.tsx) engages iOS safe-area insets, and it is on for **every** route. Next's `mergeViewport` overrides per key and only for keys physically present on a child's viewport export, so `(auth)/layout.tsx` declaring `width` / `initialScale` / `maximumScale` / `userScalable` inherits `viewportFit` rather than clearing it.
+
+The consequence is worth stating plainly: every surface on this site already draws to the physical screen edges. A missing inset is a live bug in an ordinary Safari tab, not something that only appears once the site is installed. Installing just makes it permanent, because there is no browser chrome to absorb it.
+
+### The idiom
+
+Always wrap the inset so it is inert where there is none. `env()` resolves to `0px` on every desktop, every non-notched device and in DevTools, so both of these are byte-identical there:
 
 ```css
-padding-top: env(safe-area-inset-top);
-padding-bottom: env(safe-area-inset-bottom);
+/* Where the element already has padding: take whichever is larger. */
+padding-left: max(var(--space-4), env(safe-area-inset-left, 0px));
+
+/* Where the inset must ADD to a fixed dimension rather than replace it. */
+height: calc(3.5rem + env(safe-area-inset-top, 0px));
 ```
 
-Currently relevant to: the impersonation banner (sticky-top in AppShell) and any future drawer or sheet anchored to the viewport edges.
+Always pass the `0px` fallback. Bare `env(safe-area-inset-top)` is invalid in a `calc()` on older WebKit and drops the whole declaration.
+
+**The trap that actually bit us.** `globals.css` sets `box-sizing: border-box` globally. Pairing a fixed `height` with `padding-top: env(...)` therefore makes the inset *eat* the content box instead of growing it. AppShell's mobile top strip had `height: 3.5rem` with `padding-top: env(safe-area-inset-top)`, so on a notched iPhone in landscape a 59px inset against a 56px box left nothing for the 44px hamburger. If an element has a fixed height, add the inset to the height too.
+
+### Where they are handled
+
+Viewport-pinned and edge-anchored surfaces own their own insets:
+
+- Root chrome: `PublicHeader` (top, sides), `PublicFooter` (bottom), the `(auth)` shell (top, sides), `globals.css` `.container` (sides)
+- `AppShell`: the mobile top strip (top, sides), the fixed sidebar (left, bottom), the floating collapse pill (top, right), the main content area (sides, bottom), the impersonation banner (offset by the strip's full height)
+- Overlays: `Drawer`, `Dropdown`, `PersonSelector`, `TaskDetailModal`, `SubtaskDetailModal`, `AdminTabs`, `SiteNoticeBanner`, the register sticky action bar
+
+### Two deliberate non-decisions
+
+`overscroll-behavior-y: none` is **not** set. It would look like the obvious way to kill rubber-band scrolling in a standalone window, but Android installed apps support pull-to-refresh and in a standalone window that is the *only* reload gesture the user has. AppShell's top strip carries an explicit reload button when `html[data-standalone]` is set instead.
+
+`interactiveWidget: "resizes-content"` on the root viewport is untested and unshipped. It plausibly improves what stays reachable when the soft keyboard opens over the height-pinned `(auth)` shell, but it changes behaviour for browser visitors too and cannot be judged without a real device. Test it during the next device pass before adopting it.

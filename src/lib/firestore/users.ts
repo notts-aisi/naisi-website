@@ -60,6 +60,7 @@ export const FIELD_LIMITS = {
   interests: 1000,
   title: 60,
   bio: 500,
+  maxPaidMembershipYears: 10,
 } as const;
 
 /**
@@ -175,6 +176,36 @@ export type UserPermissions = {
   approveNewsletter?: boolean;
   draftEvent?: boolean;
   approveEvent?: boolean;
+  draftCourse?: boolean;
+  approveCourse?: boolean;
+  /**
+   * Membership periods, tier grants and revokes, and the `/admin/membership`
+   * console. Deliberately NOT part of the SU-recognised PII tier: membership
+   * is money and provenance rather than roster data, so recognising a
+   * committee member does not hand them the society's payment record.
+   *
+   * Moving the CURRENT period pointer is full-admin only even with this key,
+   * because it silently re-badges every member on the site at once.
+   */
+  manageMembership?: boolean;
+  /**
+   * Circulating a worksheet: sending one to people, adding recipients to a
+   * circulation already in flight, and the recipient picker route
+   * (`GET /api/worksheets/recipients`) that both need.
+   *
+   * Granted PER PERSON by an admin, and deliberately NOT automatic for
+   * SU-recognised committee. Building and reading worksheets is open to the
+   * whole committee; putting one in front of named people, with a task and an
+   * email each, is the act worth naming somebody for. Admins hold it
+   * implicitly like every other key.
+   *
+   * It is also what stands in for a users-collection read: the picker never
+   * lists `users` from the browser, it calls the route, which requires this
+   * key and answers with uids, display names and photos only. So a non-SU
+   * committee member can be given the key without being given member PII,
+   * and the users rule is untouched.
+   */
+  circulateWorksheet?: boolean;
 };
 
 export function canDraftNewsletter(user: Pick<UserDoc, "role" | "permissions">): boolean {
@@ -197,6 +228,130 @@ export function canApproveEvent(
   return user.role === "admin" || Boolean(user.permissions?.approveEvent);
 }
 
+export function canDraftCourse(user: Pick<UserDoc, "role" | "permissions">): boolean {
+  return user.role === "admin" || Boolean(user.permissions?.draftCourse);
+}
+
+export function canApproveCourse(
+  user: Pick<UserDoc, "role" | "permissions">,
+): boolean {
+  return user.role === "admin" || Boolean(user.permissions?.approveCourse);
+}
+
+/**
+ * Who may author an admission round: an admin, or a member holding
+ * `approveCourse`.
+ *
+ * Deliberately NOT `canDraftCourse`, and deliberately not a new permission
+ * key. Authoring a round means writing the questions a cohort is judged on,
+ * the criteria they are scored against and the dates the whole intake hangs
+ * off, which sits with whoever may already sign off a course rather than with
+ * everyone who may draft one. A separate `manageAdmissions` key was
+ * considered and dropped: admissions authority is `reviewerUids` and
+ * `finalDeciderUid` on the round itself, plus this gate for authoring, and a
+ * third axis would only be a thing to forget to grant.
+ */
+export function canAuthorAdmissionRound(
+  user: Pick<UserDoc, "role" | "permissions">,
+): boolean {
+  return user.role === "admin" || Boolean(user.permissions?.approveCourse);
+}
+
+/**
+ * Who may create and edit membership periods, grant and revoke tiers, and
+ * open the membership console. Admins implicitly, like every other key.
+ *
+ * Membership GATES NOTHING anywhere: it is a badge and a record. This key
+ * decides who may write that record, never what anybody may reach.
+ */
+export function canManageMembership(
+  user: Pick<UserDoc, "role" | "permissions">,
+): boolean {
+  return user.role === "admin" || Boolean(user.permissions?.manageMembership);
+}
+
+/**
+ * Who may circulate a worksheet and add recipients to one. Admins
+ * implicitly, like every other key.
+ *
+ * The circulation ROUTES are the enforcement point (no Firestore rule keys
+ * off this in v1, because creating a circulation is a route and not a client
+ * write). Anything that gates on it must call this rather than test the raw
+ * key, so the admin-implicit half is never forgotten in one place and
+ * remembered in another.
+ */
+export function canCirculateWorksheet(
+  user: Pick<UserDoc, "role" | "permissions">,
+): boolean {
+  return user.role === "admin" || Boolean(user.permissions?.circulateWorksheet);
+}
+
+/**
+ * Who may be APPOINTED a reviewer or a final decider on a round.
+ *
+ * Admins, and SU-recognised committee. Reviewers read applications, which are
+ * member PII plus free text about the applicant's circumstances, so the bar is
+ * the same trust boundary that already gates the `users` collection and the
+ * committee task board rather than a looser one invented for admissions. A
+ * non-SU committee member or a plain member cannot be appointed however the
+ * request is shaped: the roles route checks this against each candidate's live
+ * user document, never against what the browser sent.
+ */
+export function isEligibleAdmissionsReviewer(
+  user: Pick<UserDoc, "role" | "suRecognised">,
+): boolean {
+  return user.role === "admin" || (user.role === "committee" && Boolean(user.suRecognised));
+}
+
+/**
+ * A UK academic year label: four-digit start year, slash, two-digit end year —
+ * "2026/27". The same shape a course run carries in `academicYear`, and what
+ * Firestore rules check before letting an admin add a paid-membership tag.
+ */
+export const ACADEMIC_YEAR_PATTERN = /^\d{4}\/\d{2}$/;
+
+/** 1-indexed month the UK academic year rolls over on (1 August). */
+const ACADEMIC_YEAR_START_MONTH = 8;
+
+const LONDON_YEAR_MONTH = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  year: "numeric",
+  month: "2-digit",
+});
+
+/**
+ * The academic year containing `now`, e.g. "2026/27". Rolls over on 1 August,
+ * so September 2026 and January 2027 both return "2026/27".
+ *
+ * The month is read in Europe/London rather than off `Date.getMonth()`: App
+ * Hosting runs UTC, and during BST an instant like 23:30 UTC on 31 July is
+ * already 1 August in London. That hour is the whole reason this goes through
+ * Intl. (The courses week-plan helpers carry the fuller civil-date maths for
+ * run pacing; this one stays local so `users.ts` — which auth, admin, and email
+ * code all import — takes on no dependency of its own.)
+ */
+export function currentAcademicYear(now: Date = new Date()): string {
+  const parts = LONDON_YEAR_MONTH.formatToParts(now);
+  const year = Number(parts.find((p) => p.type === "year")?.value);
+  const month = Number(parts.find((p) => p.type === "month")?.value);
+  const startYear = month >= ACADEMIC_YEAR_START_MONTH ? year : year - 1;
+  return `${startYear}/${String((startYear + 1) % 100).padStart(2, "0")}`;
+}
+
+/**
+ * Whether an admin has tagged this user as a paid member for `year`.
+ *
+ * This is a BADGE, never a gate. Course applications are open to every
+ * signed-in user (including `pending` ones) and the tag is surfaced only to
+ * reviewers deciding an application — nothing may branch access on it.
+ */
+export function hasPaidMembership(
+  user: Pick<UserDoc, "paidMembershipYears">,
+  year: string = currentAcademicYear(),
+): boolean {
+  return Boolean(user.paidMembershipYears?.includes(year));
+}
+
 export type UserDoc = {
   uid: string;
   email: string | null;
@@ -208,6 +363,15 @@ export type UserDoc = {
   bio?: string | null;
   showOnMembers?: boolean;
   tracks?: Track[];
+  /**
+   * Academic years ("2026/27") an admin has tagged this user as a paid member
+   * for. Admin-set and pinned against self-edits in Firestore rules, exactly
+   * like `tracks`; array-contains-queryable, capped at
+   * `FIELD_LIMITS.maxPaidMembershipYears`. Absent — not empty — on users who
+   * have never been tagged, so a membership badge never renders off a stray
+   * empty array. Read it through `hasPaidMembership()`.
+   */
+  paidMembershipYears?: string[];
   permissions?: UserPermissions;
   /**
    * True only for committee members the Students' Union formally recognises.
@@ -216,6 +380,27 @@ export type UserDoc = {
    * committee are scoped to the tasks they are on.
    */
   suRecognised?: boolean;
+  /**
+   * SERVER-OWNED. True while this user is a reviewer or the final decider on
+   * at least one admission round. Written only by
+   * `PUT /api/admissions/rounds/[roundId]/roles`, and pinned in
+   * `firestore.rules` absent-at-create and unchanged-on-self-update exactly
+   * like `suRecognised`.
+   *
+   * It is a DENORMALISATION of `admissionRounds.reviewerUids` /
+   * `finalDeciderUid`, and it exists for one reason: the Admissions sidebar
+   * entry. `AppShell` gates every nav item client-side from the `useAuth()`
+   * snapshot, which is a live `onSnapshot` on this document. Gating on "does
+   * this uid appear in some round's reviewerUids" has no field behind it, so
+   * it would cost an `admissionRounds` query on every authed navigation for
+   * every user, or the entry would simply never appear for exactly the
+   * non-admin SU reviewers the reviewer surface exists to serve.
+   *
+   * The round arrays remain the AUTHORITY: every admissions route re-checks
+   * membership of the round it is acting on. This flag decides whether a link
+   * is drawn, never what may be read.
+   */
+  admissionsReviewer?: boolean;
   approvedAt?: Date | null;
   approvedBy?: string | null;
   rejectedAt?: Date | null;
@@ -232,17 +417,44 @@ function tsToDate(v: unknown): Date | null {
   return typeof obj?.toDate === "function" ? obj.toDate() : null;
 }
 
+/**
+ * De-duplicated list of well-formed academic-year tags. Anything that isn't a
+ * string matching ACADEMIC_YEAR_PATTERN is dropped rather than carried through,
+ * so a hand-edited doc can't put junk in front of a reviewer.
+ */
+function asAcademicYearList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set<string>();
+  for (const y of v) {
+    if (typeof y === "string" && ACADEMIC_YEAR_PATTERN.test(y)) seen.add(y);
+  }
+  // NEWEST FIRST, before the slice. The slice used to keep whichever ten
+  // happened to be stored first, so a document that had grown past the cap
+  // could drop the CURRENT year and blank a member's badge while ten stale
+  // ones stayed. A four-digit start year leads the string, so a plain
+  // descending comparison is the right order and needs no parsing.
+  return Array.from(seen)
+    .sort((a, b) => b.localeCompare(a))
+    .slice(0, FIELD_LIMITS.maxPaidMembershipYears);
+}
+
 export function normalizeUser(id: string, data: Raw): UserDoc {
   const rawTracks = Array.isArray(data.tracks) ? (data.tracks as unknown[]) : [];
   const tracks = rawTracks.filter(
     (t): t is Track => t === "technical" || t === "governance",
   );
+  // Absent rather than empty when there is nothing to show — see UserDoc.
+  const paidMembershipYears = asAcademicYearList(data.paidMembershipYears);
   const rawPermissions = (data.permissions ?? {}) as Record<string, unknown>;
   const permissions: UserPermissions = {
     draftNewsletter: Boolean(rawPermissions.draftNewsletter),
     approveNewsletter: Boolean(rawPermissions.approveNewsletter),
     draftEvent: Boolean(rawPermissions.draftEvent),
     approveEvent: Boolean(rawPermissions.approveEvent),
+    draftCourse: Boolean(rawPermissions.draftCourse),
+    approveCourse: Boolean(rawPermissions.approveCourse),
+    manageMembership: Boolean(rawPermissions.manageMembership),
+    circulateWorksheet: Boolean(rawPermissions.circulateWorksheet),
   };
   return {
     uid: id,
@@ -255,8 +467,10 @@ export function normalizeUser(id: string, data: Raw): UserDoc {
     bio: (data.bio as string | null | undefined) ?? null,
     showOnMembers: Boolean(data.showOnMembers),
     tracks,
+    ...(paidMembershipYears.length > 0 ? { paidMembershipYears } : {}),
     permissions,
     suRecognised: Boolean(data.suRecognised),
+    admissionsReviewer: Boolean(data.admissionsReviewer),
     approvedAt: tsToDate(data.approvedAt),
     approvedBy: (data.approvedBy as string) ?? null,
     rejectedAt: tsToDate(data.rejectedAt),

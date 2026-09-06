@@ -1,0 +1,305 @@
+/*
+ * MOBILE-FIRST, unusually for this codebase.
+ *
+ * The house pattern is desktop-first with an adapt block at the bottom
+ * (docs/mobile-conventions.md), and this file deliberately inverts it: the
+ * base rules ARE the phone layout, and the 48rem block widens to seven
+ * columns. A 252-cell drag surface written desktop-first and squeezed later is
+ * how you end up with 12px touch targets on the one screen that matters most,
+ * so the small layout is the one the defaults describe.
+ *
+ * The 48rem block is therefore a min-width query, and it is the only one in
+ * the file.
+ */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* --- The week strip: phones only ---------------------------------------- */
+
+.strip {
+  display: flex;
+  gap: var(--space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.strip::-webkit-scrollbar {
+  display: none;
+}
+
+.stripButton {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 1 1 0;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: var(--space-2) var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.stripButton[data-selected="true"] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+.stripButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.stripDay {
+  font-weight: 600;
+}
+
+.stripCount {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-accent);
+  min-height: 1em;
+}
+
+/* --- The board ---------------------------------------------------------- */
+
+.board {
+  /* Column heads and rail head in lockstep: they are siblings in two different
+     boxes, and the grid only lines up while they agree. 2.75rem rather than the
+     2rem this started at because the head strip is the scroller's handle (see
+     `.columnHead`), and a handle is an interactive surface. */
+  --head-height: 2.75rem;
+  /* The phone cell height, and the reason it is declared here rather than left
+     to the fallback on `.cell`: 2.75rem is the enforced touch floor for a
+     public funnel surface (docs/touch-targets.md), and one number on the
+     container is what the 48rem block reaches for to switch the whole board to
+     desktop density. */
+  --slot-height: 2.75rem;
+  display: flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  overflow: hidden;
+}
+
+.rail {
+  flex: 0 0 3.5rem;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--color-border);
+  /* The scroll handle inside the grid on touch: the cells refuse pans so a
+     drag paints, and this column is what a finger can still scroll with. */
+  touch-action: pan-y;
+}
+
+.railHead {
+  height: var(--head-height, 2rem);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.railCell {
+  height: var(--slot-height, 2.5rem);
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding-right: var(--space-2);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-subtle);
+  line-height: 1;
+  transform: translateY(-0.35em);
+}
+
+/*
+ * If the day columns ever have to scroll, they scroll HERE, never the document.
+ *
+ * The rail is a sibling of this box rather than a column inside it, so the
+ * time labels stay put while the days move under them, and the board's own
+ * right border is the visible edge the columns disappear behind. No fade
+ * overlay: the kanban's mask-image read as a shadow on the last column rather
+ * than as an affordance, and it was removed for that reason (CLAUDE.md).
+ *
+ * NOTHING IN THE FUNNEL REACHES THIS TODAY, and that is worth stating plainly
+ * so nobody goes looking for it on a handset. On the phone layout one column is
+ * on screen. From 48rem the seven columns hold a 3.5rem floor, which is 448px
+ * of columns against a container that is already about 600px at 768px, so they
+ * fit. This is a forward defence for the day the round grid widens (more days,
+ * a wider floor), not a behaviour to verify on a device. The handle that would
+ * make it usable by touch is `.columnHead`; the cells themselves refuse pans so
+ * a drag paints.
+ */
+.cells {
+  flex: 1 1 auto;
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.column {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* One day at a time on a phone. Same DOM as the wide layout; the strip picks
+   which column is on screen. */
+.column[data-active="false"] {
+  display: none;
+}
+
+.columnHead {
+  height: var(--head-height, 2rem);
+  /* The horizontal handle, matching the rail's vertical one. The cells below
+     are `touch-action: none` so a drag paints, which leaves the two head strips
+     as the only places a finger can move the board from. */
+  touch-action: pan-x;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.cell {
+  height: var(--slot-height, 2.5rem);
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+  cursor: pointer;
+  /* A touch drag PAINTS. See the component comment: the time rail is the
+     scroll handle, and the document is pinned only while a drag is live. */
+  touch-action: none;
+  transition: background var(--transition-fast);
+}
+
+/* Every hour boundary reads darker, so the eye can find "eleven o'clock"
+   without counting quarters. The column head is child 1, so slot 0 is child 2
+   and the boundaries land on 4n + 2. */
+.cell:nth-child(4n + 2) {
+  border-top: 1px solid var(--color-border-strong);
+}
+
+.cell[data-on="true"] {
+  background: var(--color-accent);
+}
+
+.cell:focus-visible {
+  outline: none;
+  box-shadow: inset var(--focus-ring);
+}
+
+.cells[aria-readonly="true"] .cell {
+  cursor: default;
+}
+
+/* --- Footer ------------------------------------------------------------- */
+
+.footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.clear {
+  appearance: none;
+  -webkit-appearance: none;
+  align-self: flex-start;
+  min-height: 2.75rem;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.clear:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.clear:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.count {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- From 48rem: the whole week at once --------------------------------- */
+
+@media (min-width: 48rem) {
+  .strip {
+    display: none;
+  }
+
+  .board {
+    --slot-height: 1.25rem;
+  }
+
+  .column[data-active="false"] {
+    display: flex;
+  }
+
+  /* A floor rather than a fixed width: seven columns share whatever is going,
+     and below about 34rem of grid the box scrolls rather than squeezing the
+     cells past the width a finger can land on. */
+  .column {
+    min-width: 3.5rem;
+  }
+
+  .column + .column {
+    border-left: 1px solid var(--color-border);
+  }
+
+  .footer {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+  }
+
+  .clear {
+    align-self: auto;
+    min-height: 2.25rem;
+  }
+}
+
+/* The house rule asks every module for a max-width adapt block. This file is
+   written the other way round, so the small layout is already the default and
+   there is nothing left to undo here. Kept as the record of that decision. */
+@media (max-width: 48rem) {
+  /* Intentionally empty: the base rules ARE the phone layout. */
+}

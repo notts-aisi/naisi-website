@@ -40,6 +40,7 @@ import RichTextRender from "./RichTextRender";
 import TaskCalendar from "./TaskCalendar";
 import SubtaskBreakdown from "./SubtaskBreakdown";
 import SubtaskList from "./SubtaskList";
+import WorksheetTaskPanel from "@/features/worksheets/respond/WorksheetTaskPanel";
 import { useCommentsAndActivity } from "../hooks/useCommentsAndActivity";
 import { useTaskAttachments } from "../hooks/useTaskAttachments";
 import type { ActivityDoc } from "@/lib/firestore/taskActivity";
@@ -64,6 +65,86 @@ function toDateInputValue(d: Date | null): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/**
+ * ── COURSE MIRRORS AND CREATOR-KEYED AFFORDANCES ────────────────────────────
+ *
+ * A mirrored course week (`source: "fellowship-reminder"`) is written with the
+ * MEMBER as `creatorUid`, so every `isCreator` gate in this modal switches on
+ * for them. Firestore's rules do not follow: a member holds only the narrow
+ * completer band (`status`, `subtasks`, `subtaskStats`, `updatedAt`,
+ * `completedAt`, `attachmentCount`, `commentCount`, `blocks`, `blockConsents`,
+ * `archived`) plus the `fellowship-reminder` DELETE branch, and the
+ * full-control creator branch beside it requires `source == 'personal'`.
+ *
+ * Audit of every creator-keyed gate below against those rules:
+ *   • `canEditAll` / `canEditTaskRoster` — already require `source ==
+ *     'personal'`, so a mirror never switches them on. Title, description,
+ *     priority, project and the task rosters stay read-only. ✔
+ *   • `canMarkDone`, `canEditRoster` (subtask rosters), Archive — write only
+ *     `status`/`completedAt`, `subtasks`, `archived`. All inside the band. ✔
+ *   • `canSeeReviewerSection` — display only; a mirror has no reviewers, so it
+ *     renders a read-only "No reviewer set". Nothing to refuse. ✔
+ *   • `canEditDueDates` — `dueDate` is NOT in the band and the personal branch
+ *     does not apply, so the write is permission-denied and `onDueChange`
+ *     swallows it: the picker looks live and the date snaps back on the next
+ *     snapshot. Closed below. ✘→✔
+ *   • Delete — reachable in the rules, but only through
+ *     `/api/tasks/[id]/delete`, which had no mirror branch. Route fixed; the
+ *     copy here now describes a dismissal rather than a destructive delete.
+ *     ✘→✔
+ *
+ * The predicate is `source === "fellowship-reminder"`, which is exactly what
+ * the rules key on — not `sourceRef`, which only TaskCard needs because it
+ * builds a link out of it.
+ */
+const MIRROR_SOURCE = "fellowship-reminder";
+
+/**
+ * The dismissal sentence, kept next to the delete copy that uses it. The
+ * board-side half of the same disclosure lives on TaskCard (`ONE_WAY_NOTE`)
+ * and on the week page's mirrored checklist rows — three surfaces, one claim:
+ * the tick here and the tick in the course are separate rows in separate
+ * collections and neither propagates.
+ */
+const DISMISS_NOTE =
+  "Your course progress is untouched — this card is a one-way copy, so anything you have checked off in the course stays checked off.";
+
+/**
+ * The confirm text for the danger button, per task shape.
+ *
+ * Every non-mirror source keeps the original sentence verbatim. A mirror gets
+ * the truth about ITS delete instead: it is a DISMISSAL of a weekly reminder,
+ * the course is untouched, and the card stays gone until the cohort rolls into
+ * the next week (the sync route's `lastTaskSyncedWeek` high-water mark is
+ * already stamped by the time the member can see the card, so no later mount
+ * resurrects it).
+ *
+ * The comments/attachments warning is CONDITIONAL rather than dropped: a
+ * freshly-mirrored card has neither, and threatening a member with the
+ * permanent loss of a history that does not exist is what made the old copy
+ * read as destructive. If they have since commented or attached something,
+ * that is worth saying — so it is said, with the real counts.
+ */
+function deleteConfirmPrompt(task: TaskDoc): string {
+  if (task.source !== MIRROR_SOURCE) {
+    return "Delete this task?\n\nAll comments, activity history, and attachments will be permanently removed. This cannot be undone.";
+  }
+  const owned: string[] = [];
+  if (task.commentCount > 0) {
+    owned.push(`${task.commentCount} comment${task.commentCount === 1 ? "" : "s"}`);
+  }
+  if (task.attachmentCount > 0) {
+    owned.push(
+      `${task.attachmentCount} attachment${task.attachmentCount === 1 ? "" : "s"}`,
+    );
+  }
+  const historyLine =
+    owned.length > 0
+      ? `\n\nThe ${owned.join(" and ")} you added to this card go with it.`
+      : "";
+  return `Dismiss this week's reminder?\n\nIt comes off your My Work board and stays off until the cohort moves to the next week. ${DISMISS_NOTE}${historyLine}`;
+}
+
 export default function TaskDetailModal({
   taskId,
   viewerUid,
@@ -85,6 +166,10 @@ export default function TaskDetailModal({
     isTaskReviewer ||
     (task?.subtasks.some((s) => s.reviewerUids.includes(viewerUid)) ?? false);
   const isCreator = task ? task.creatorUid === viewerUid : false;
+  // See COURSE MIRRORS AND CREATOR-KEYED AFFORDANCES above. Every use of this
+  // flag NARROWS an affordance for one source; no other source's behaviour
+  // moves by a byte.
+  const isMirror = task ? task.source === MIRROR_SOURCE : false;
   const canEditAll =
     !!task &&
     (isAdmin ||
@@ -110,7 +195,18 @@ export default function TaskDetailModal({
   // at-large completers cannot. Mirrors the `finalizeBlockSetup` gate from
   // PR #71 — same "task-setter" mental model. Tightened 2026-04-25 after
   // user feedback that completers were able to move dates.
-  const canEditDueDates = !!task && (isAdmin || isCreator || isTaskReviewer);
+  //
+  // ON A COURSE MIRROR THERE IS NOTHING TO AMEND. Its due date is the cohort's
+  // slot end, recomputed server-side on every sync, and it is not the member's
+  // to move: `dueDate` sits outside the completer band and the creator branch
+  // needs `source == 'personal'`, so the write is refused and `onDueChange`
+  // swallows the refusal in a bare `console.error`. A picker that looks live,
+  // snaps back on the next snapshot and never says why is worse than no picker
+  // — so the section falls through to `mode="view"` and still SHOWS the date.
+  // Admin is deliberately left alone: the rules do let an admin move it, and
+  // holding this fix to non-admins keeps every other viewer byte-identical.
+  const canEditDueDates =
+    !!task && (isAdmin || (!isMirror && (isCreator || isTaskReviewer)));
   const now = new Date();
 
   // Pending sent_for_review — derive from activity so SubtaskRow can tint
@@ -140,6 +236,13 @@ export default function TaskDetailModal({
   // handleDelete) so the Escape handler useEffect below can read it.
   const [deleting, setDeleting] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
+  // Which STORY the in-flight overlay tells. Latched when the request starts
+  // rather than re-derived from `task`, because the server's delete lands
+  // before the handler resolves: `useTask`'s snapshot fires with `task = null`
+  // mid-overlay, `isMirror` would flip to false underneath it, and the copy
+  // would change from "Dismissing…" to "Deleting task + history…" while the
+  // member watched.
+  const [deletingIsDismissal, setDeletingIsDismissal] = useState(false);
   // Stage 5 (2026-04-26) — initial-notification + per-uid notify in-flight
   // sets. Visual hierarchy: the batch button reads as a prominent CTA
   // (one-time send ceremony); the inline Notify pills read as ghost /
@@ -183,10 +286,16 @@ export default function TaskDetailModal({
       <Overlay onClose={() => {}}>
         <div role="status" className={styles.deletingStatus}>
           <Spinner />
-          <div className={styles.deletingLabel}>Deleting task + history…</div>
+          <div className={styles.deletingLabel}>
+            {deletingIsDismissal ? "Dismissing reminder…" : "Deleting task + history…"}
+          </div>
           <div className={styles.deletingHint}>
-            Clearing comments, activity, and attachments. This can take a few
-            seconds for tasks with a long history - don&apos;t close the tab.
+            {deletingIsDismissal
+              ? // A mirror is a weekly nudge, not a filing cabinet: it carries
+                // no history worth warning about, and the one thing worth
+                // saying is the thing a member is most likely to fear.
+                DISMISS_NOTE
+              : "Clearing comments, activity, and attachments. This can take a few seconds for tasks with a long history - don't close the tab."}
           </div>
           {deleteErr && <div className={styles.deletingError}>{deleteErr}</div>}
         </div>
@@ -298,14 +407,9 @@ export default function TaskDetailModal({
 
   async function handleDelete() {
     if (!task) return;
-    if (
-      !window.confirm(
-        "Delete this task?\n\nAll comments, activity history, and attachments will be permanently removed. This cannot be undone.",
-      )
-    ) {
-      return;
-    }
+    if (!window.confirm(deleteConfirmPrompt(task))) return;
     setDeleting(true);
+    setDeletingIsDismissal(isMirror);
     setDeleteErr(null);
     try {
       const report = await deleteTask(task.id);
@@ -541,28 +645,44 @@ export default function TaskDetailModal({
             )}
           </section>
 
-          <section className={styles.subtaskSection}>
-            <h3 className={styles.sectionLabel}>Subtasks</h3>
-            {task.subtaskStats.total > 0 && (
-              <div className={styles.subtaskBreakdownWrapper}>
-                <SubtaskBreakdown breakdown={getSubtaskBreakdown(task)} variant="verbose" />
-              </div>
-            )}
-            {canSeeReviewerSection && task.reviewerUids.length > 0 && (
-              <ReviewerProgressSummary task={task} users={users} />
-            )}
-            <SubtaskList
+          {/* A WORKSHEET TASK HAS NO SUBTASKS, and that is the whole of
+              this branch. Its Done is decided by the worksheet's own
+              lifecycle (the submit, return and unfreeze routes move the
+              task from the response), so the block ritual and the review
+              matrix would be ceremony with no participants. The panel
+              takes the section's place; Attachments and Discussion below
+              are untouched, because a worksheet task is still a task
+              people talk on. */}
+          {task.artefact?.kind === "worksheet-response" ? (
+            <WorksheetTaskPanel
               task={task}
-              users={users}
               viewerUid={viewerUid}
-              viewerRole={viewerRole}
-              canEdit={canEditProgressFields}
-              canEditStructure={canEditAll}
-              canEditRoster={isAdmin || isCreator}
-              showMatrix={canSeeReviewerSection}
-              pendingReviewSubtaskIds={pendingSubtaskIds}
+              viewerIsStaff={isAdmin || isTaskReviewer}
             />
-          </section>
+          ) : (
+            <section className={styles.subtaskSection}>
+              <h3 className={styles.sectionLabel}>Subtasks</h3>
+              {task.subtaskStats.total > 0 && (
+                <div className={styles.subtaskBreakdownWrapper}>
+                  <SubtaskBreakdown breakdown={getSubtaskBreakdown(task)} variant="verbose" />
+                </div>
+              )}
+              {canSeeReviewerSection && task.reviewerUids.length > 0 && (
+                <ReviewerProgressSummary task={task} users={users} />
+              )}
+              <SubtaskList
+                task={task}
+                users={users}
+                viewerUid={viewerUid}
+                viewerRole={viewerRole}
+                canEdit={canEditProgressFields}
+                canEditStructure={canEditAll}
+                canEditRoster={isAdmin || isCreator}
+                showMatrix={canSeeReviewerSection}
+                pendingReviewSubtaskIds={pendingSubtaskIds}
+              />
+            </section>
+          )}
 
           <section>
             <h3 className={styles.sectionLabel}>Attachments</h3>
@@ -768,8 +888,15 @@ export default function TaskDetailModal({
               archiving a task they're assigned to would feel like it
               disappeared out from under the rest of the team. Matches the
               delete gate for consistency — "big visibility-altering
-              actions require elevated privilege". */}
-          {(isAdmin || isCreator) && (
+              actions require elevated privilege".
+
+              A course mirror adds ONE more way in: its completer. The rules'
+              delete branch is keyed on `isCompleter()`, not on creator, so an
+              admin-backfilled mirror (member is completer but not creator) is
+              dismissible by the member — and the button has to be there for
+              them to dismiss it. Archive rides along safely: `archived` is in
+              the completer write band. No other source is widened. */}
+          {(isAdmin || isCreator || (isMirror && isCompleter)) && (
             <div className={styles.bottomActions}>
               <Button
                 size="sm"
@@ -779,13 +906,24 @@ export default function TaskDetailModal({
               >
                 {task.archived ? "Unarchive" : "Archive"}
               </Button>
+              {/* `ghost` rather than `danger` on a mirror: red is the colour
+                  of "this destroys something", and dismissing a weekly
+                  reminder destroys nothing the member cannot get back next
+                  week. Every other source keeps the danger button. */}
               <Button
                 size="sm"
-                variant="danger"
+                variant={isMirror ? "ghost" : "danger"}
                 onClick={handleDelete}
                 disabled={deleting}
+                title={isMirror ? DISMISS_NOTE : undefined}
               >
-                {deleting ? "Deleting task + history…" : "Delete task"}
+                {isMirror
+                  ? deleting
+                    ? "Dismissing…"
+                    : "Dismiss reminder"
+                  : deleting
+                    ? "Deleting task + history…"
+                    : "Delete task"}
               </Button>
               {deleteErr && (
                 <span role="alert" className={styles.deleteError}>

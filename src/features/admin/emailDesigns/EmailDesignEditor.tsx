@@ -21,7 +21,7 @@ import {
   type TemplateDoc,
   type TemplateId,
 } from "@/lib/firestore/applicationEmails";
-import BlockEditor from "@/features/newsletter/editor/BlockEditor";
+import BlockEditor from "@/components/blocks/BlockEditor";
 import EmailPreview from "@/features/newsletter/editor/EmailPreview";
 import styles from "./EmailDesignEditor.module.css";
 

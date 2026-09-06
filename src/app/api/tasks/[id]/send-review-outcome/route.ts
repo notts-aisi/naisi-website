@@ -7,6 +7,7 @@ import { sendEmail } from "@/lib/email/send";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isTaskEmailEnabled } from "@/lib/firestore/taskEmailConfig";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { mirrorTaskEmailToPush } from "@/lib/push/taskNotifications";
 
 type Payload = { blockId?: unknown };
 
@@ -333,6 +334,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           questionsResolved,
           rejected,
         }),
+      });
+      await mirrorTaskEmailToPush(uid, {
+        title: `Review outcome: ${block.name}`,
+        body: taskTitle,
+        taskId,
       });
       sent += 1;
     } catch (err) {

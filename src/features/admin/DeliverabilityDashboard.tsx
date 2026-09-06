@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import DeliverabilityExports from "./DeliverabilityExports";
 
-type SendStatus = "sent" | "bounced" | "complained";
+type SendStatus = "sent" | "bounced" | "complained" | "suppressed";
 
 type Send = {
   id: string;
@@ -55,6 +56,15 @@ function statusBadge(status: SendStatus, reason?: string) {
       return (
         <Badge tone="warning" title={reason ? `Reason: ${reason}` : undefined}>
           Complaint{reason ? ` · ${reason}` : ""}
+        </Badge>
+      );
+    // Neutral, not danger: nothing went wrong with this message. It was never
+    // handed to the provider because the address is on the suppression list,
+    // and the row is here so the withholding is visible rather than a gap.
+    case "suppressed":
+      return (
+        <Badge tone="neutral" title={reason ? `Reason: ${reason}` : undefined}>
+          Held: suppressed
         </Badge>
       );
     default:
@@ -143,7 +153,8 @@ export default function DeliverabilityDashboard() {
             Deliverability
           </h2>
           <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)", margin: 0 }}>
-            Recent sends and the suppression list fed by email provider bounce + complaint events.
+            Recent sends and the suppression list fed by email provider bounce +
+            complaint events, plus the log of downloads the site has generated.
           </p>
         </div>
         <Button size="sm" variant="secondary" onClick={refresh} disabled={loading}>
@@ -265,6 +276,12 @@ export default function DeliverabilityDashboard() {
           </Card>
         )}
       </section>
+
+      {/* The export log. Its own component with its own fetch: the rows come
+          from a different route, they are read once rather than watched, and
+          the export routes that write them land in later PRs. Sharing this
+          dashboard's Refresh button through `reloadKey` is the only coupling. */}
+      <DeliverabilityExports reloadKey={reloadKey} />
     </div>
   );
 }

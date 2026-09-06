@@ -1,0 +1,185 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* A failed row keeps its position in the list but reads as blocked — the
+   message under it names the fix. */
+.rowCardError {
+  border-color: var(--color-danger);
+}
+
+.rowHeader {
+  display: grid;
+  grid-template-columns: 1.5rem 10rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.rowIndex {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.kind {
+  min-width: 0;
+}
+
+.kindHint {
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  line-height: 1.4;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.iconBtn {
+  width: 1.75rem;
+  height: 1.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.iconBtn:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+.iconBtnDanger:hover:not(:disabled) {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.iconBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.span {
+  grid-column: 1 / -1;
+}
+
+/* The switch is not a Field, so it needs the label's top offset to line up
+   with the number input beside it. */
+.switchCell {
+  padding-top: var(--space-6);
+}
+
+.error {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.spacer {
+  margin-left: auto;
+}
+
+.count {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* TODO: mobile pass — the header collapses to two rows and the paired fields
+   stack; the full touch review of the course admin surfaces rides its own PR. */
+@media (max-width: 48rem) { /* --bp-md */
+  .rowHeader {
+    grid-template-columns: 1.5rem minmax(0, 1fr) auto;
+    row-gap: var(--space-2);
+  }
+
+  /* Explicit placement, not auto-flow: a single column-spanning child in an
+     auto-placed grid pushes its siblings into surprising cells. */
+  .rowIndex {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .kind {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .controls {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .kindHint {
+    grid-column: 2 / -1;
+    grid-row: 2;
+  }
+
+  .fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .switchCell {
+    padding-top: 0;
+  }
+
+  .spacer {
+    margin-left: 0;
+  }
+
+  .iconBtn {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+}

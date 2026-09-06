@@ -1,0 +1,156 @@
+/* ============================================================
+   DropOutCard: leaving a course, behind a typed confirmation.
+
+   Deliberately quiet until it is opened: a destructive action
+   sitting under a place somebody is happy to have should read as
+   a footnote, not as a second call to action competing with the
+   course itself.
+   ============================================================ */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+/* The closed state: a plain text button, not a red one. */
+.reveal {
+  align-self: flex-start;
+  padding: var(--space-2) 0;
+  /* 44px floor, public surface, enforced (docs/touch-targets.md). */
+  min-height: 2.75rem;
+  border: 0;
+  background: none;
+  appearance: none;
+  -webkit-appearance: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.reveal:hover {
+  color: var(--color-danger);
+}
+
+.reveal:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+/* The post-drop confirmation and its feedback link are NOT here: they are
+   rendered by GroupPicker, the component still on screen once the drop has
+   committed. See the note in DropOutCard.tsx. */
+.warning {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+}
+
+.label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* The course title inside the "type this to confirm" instruction. */
+.title {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.input {
+  width: 100%;
+  /* 44px floor, public surface, enforced (docs/touch-targets.md). */
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--text-base);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.input:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--focus-ring);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-danger);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.danger,
+.cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 44px floor, public surface, enforced (docs/touch-targets.md). */
+  min-height: 2.75rem;
+  padding: 0.7rem 1.35rem;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  /* Safari paints its own grey button face over an inline background unless
+     appearance is reset. */
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background var(--transition-base);
+}
+
+.danger {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+.danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.cancel {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.cancel:hover:not(:disabled) {
+  border-color: var(--color-accent);
+}
+
+.danger:disabled,
+.cancel:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.danger:focus-visible,
+.cancel:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .danger,
+  .cancel {
+    width: 100%;
+  }
+}

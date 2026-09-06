@@ -1,0 +1,48 @@
+/* EmptyState — the quiet block that stands where content will be. No card, no
+   border, no icon: an empty surface should read as room to fill, not as an
+   error the member has to decode. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: 28rem;
+  margin: 0 auto;
+  padding: var(--space-12) var(--space-6);
+  text-align: center;
+  /* Opacity-only entrance: it survives reduced motion by design (a crossfade
+     is not a vestibular trigger), which is why there is no reduced-motion
+     override below for it. */
+  animation: emptyStateIn var(--dur-fade) ease-out both;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.body {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
+.action {
+  margin-top: var(--space-1);
+}
+
+@keyframes emptyStateIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .root {
+    padding: var(--space-10) var(--space-4);
+  }
+}

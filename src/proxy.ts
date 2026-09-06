@@ -12,7 +12,20 @@ import { SESSION_COOKIE } from "@/lib/firebase/session";
   the Edge runtime.
 */
 
-const PROTECTED_PREFIXES = ["/dashboard", "/tasks", "/credentials", "/calendar", "/profile", "/newsletter", "/admin", "/collaborator"];
+/*
+  `/applications` (the applicant status hub) is on this list while
+  `/apply/[roundId]` deliberately is not, and the difference is what each page
+  is for. The apply page is discovery: a signed-out visitor should be able to
+  read what a round is and get a sign-in card with a return address. The status
+  hub is nothing but per-account state, so there is nothing on it to read
+  signed out, and the honest answer is the sign-in screen.
+
+  A COOKIE CHECK, not a role check: a `pending` account has a session cookie
+  and must reach the hub, because the people most likely to open it are the
+  ones who made an account at the fair and are still waiting on approval. The
+  page itself lives in `(public)` for that same reason.
+*/
+const PROTECTED_PREFIXES = ["/dashboard", "/tasks", "/credentials", "/calendar", "/profile", "/newsletter", "/admin", "/collaborator", "/learn", "/applications"];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -38,5 +51,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/tasks/:path*", "/credentials/:path*", "/calendar/:path*", "/profile/:path*", "/newsletter/:path*", "/admin/:path*", "/collaborator/:path*"],
+  matcher: ["/dashboard/:path*", "/tasks/:path*", "/credentials/:path*", "/calendar/:path*", "/profile/:path*", "/newsletter/:path*", "/admin/:path*", "/collaborator/:path*", "/learn/:path*", "/applications/:path*"],
 };

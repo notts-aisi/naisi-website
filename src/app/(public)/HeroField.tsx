@@ -237,7 +237,7 @@ export default function HeroField() {
     // Pending input fires queued for the current wave. Each wave fires
     // every input-layer node in sequence (tight stagger ~55ms apart) so
     // the leading edge of the rainbow forms across the input layer.
-    let pendingInputFires: Array<{ fireAt: number; nodeIdx: number }> = [];
+    const pendingInputFires: Array<{ fireAt: number; nodeIdx: number }> = [];
     let frame = 0;
     let visible = true;
 

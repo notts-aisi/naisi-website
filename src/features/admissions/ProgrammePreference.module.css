@@ -1,0 +1,137 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.group {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.legend {
+  padding: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.option {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2.75rem;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  /* Colours on the class, never inline: Safari paints its own button face over
+     an inline background (feedback_safari_button_appearance_reset). */
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.option:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-hover);
+}
+
+.option[data-selected="true"] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.option:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--color-accent);
+}
+
+/* Hidden, not removed. `display: none` took the column away, so a list where
+   only some options are ranked stepped its labels in and out by 1.25rem plus a
+   gap. `visibility: hidden` keeps the reserved width and the labels line up. */
+.rank:empty {
+  visibility: hidden;
+}
+
+.optionLabel {
+  min-width: 0;
+  /* Stream names are admin-typed. A long one wraps to a second line inside the
+     pill (the pill has a min-height, not a height) rather than pushing the row
+     past the screen. `anywhere` rather than `break-word`: only `anywhere`
+     lowers the min-content width the pill is sized against. */
+  overflow-wrap: anywhere;
+}
+
+.fallback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+@media (max-width: 48rem) { /* --bp-md */
+  .options {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .option {
+    justify-content: flex-start;
+    /* Vertical padding so a wrapped two-line label sits in a taller pill
+       instead of pressing against the border. */
+    padding: var(--space-2) var(--space-4);
+    text-align: left;
+  }
+
+  /* The rank keeps its column so the labels of a ranked list line up down the
+     left edge. `auto` rather than a 1.25rem basis: the unconditional
+     `min-width: 1.25rem` above already reserves the column, and a fixed basis
+     would clip a two-digit rank on a programme with ten or more streams. */
+  .rank {
+    flex: 0 0 auto;
+  }
+}

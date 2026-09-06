@@ -1,0 +1,287 @@
+/* ============================================================
+   StaffEmailComposer — both send lanes:
+     /learn/[runId]/group/[groupId]/email   (one group)
+     /learn/[runId]/email                   (the cohort)
+
+   Staff tooling for an irreversible action, so the styling has
+   one job: make the two claims that keep it safe impossible to
+   miss. The recipient callout sits ABOVE the fields — you read
+   who this reaches before you write a word — and the send
+   report sits BELOW them, where the eye lands after the button.
+
+   Both are accent-bordered rather than coloured panels: this is
+   not a warning surface, it is an ordinary tool that happens to
+   be one-way, and painting it red would make the genuine
+   blocked state (which IS red-adjacent) indistinguishable from
+   the normal one. The ONE exception is a send whose outcome is
+   unknown — the state that carries a decision, not just news.
+
+   Motion: one entrance on the report, because it is the only
+   thing on the page that appears in response to an action and
+   the numbers in it are the point. Everything else is still.
+   ============================================================ */
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* === Who this reaches ======================================
+   The first thing on the surface, deliberately. */
+
+.recipients {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-left: 2px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+}
+
+.recipientsLine {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  color: var(--color-text);
+}
+
+/* The count is missing or zero: nothing can be sent, and the copy has to say
+   why rather than leaving a dead button to explain itself. Warning, not
+   danger — nobody has done anything wrong. */
+.recipientsBlocked {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  color: var(--color-warning);
+}
+
+.recipientsNote {
+  margin: 0;
+  max-width: 66ch;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
+.inlineLink {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.inlineLink:hover {
+  color: var(--color-accent-hover);
+}
+
+.inlineLink:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring);
+}
+
+/* === Actions ===============================================
+   Two columns, not a button row: each action carries a sentence underneath it,
+   and side-by-side buttons with stacked notes below them would leave the notes
+   unable to say which button they belong to. */
+
+.actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--space-5);
+  align-items: start;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.testAction,
+.sendAction {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.actionNote {
+  margin: 0;
+  max-width: 40ch;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-text-subtle);
+}
+
+/* === The report ============================================
+   What actually went out. Rises 4px and fades in over --dur-fade: the numbers
+   are the answer to the thing you just did, and a block that simply appears at
+   full opacity in a page you are already looking at is easy to miss. Transform
+   + opacity only, so it stays on the compositor. */
+
+.report {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-left: 2px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  animation: reportIn var(--dur-fade) var(--ease-naisi) both;
+}
+
+@keyframes reportIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.reportHead {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.reportBody {
+  margin: 0;
+  max-width: 66ch;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text);
+}
+
+/* A send whose outcome we can't state. Warning-edged rather than accent-edged
+   because this block is the only one that asks the reader to DO something —
+   go and find out whether the message landed — before touching Send again. */
+.reportUnknown {
+  border-left-color: var(--color-warning);
+}
+
+/* The deliberate-resend escape hatch. Its own row under the explanation, and
+   never beside the Send button: unblocking and sending have to be two
+   separate acts. */
+.reportActions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* === The confirm ===========================================
+   Mirrors the publish confirm in CourseEditor: title asks the question, body
+   restates the consequence, actions are Cancel-then-commit. */
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.confirmTitle {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  color: var(--color-text);
+}
+
+.confirmBody {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+}
+
+/* The author's own subject line, quoted back. Bordered rather than italicised
+   so an empty-looking or whitespace-heavy subject is visible as such. */
+.confirmSubject {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+/* Only rendered on a resend after an unknown outcome. Full text colour on a
+   warning-tinted rule, so it reads ahead of the standing note below it — this
+   sentence is new information about THIS press, not the boilerplate. */
+.confirmWarning {
+  margin: 0;
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--color-warning);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text);
+}
+
+.confirmNote {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-text-subtle);
+}
+
+.confirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* === Reduced motion ========================================
+   The token belt collapses durations but cannot remove an animation's
+   from-state, so the entrance is dropped outright here. The report still
+   appears — it just appears rather than arriving. */
+
+@media (prefers-reduced-motion: reduce) {
+  .report {
+    animation: none;
+  }
+}
+
+/* === Mobile ================================================
+   Below --bp-md the two actions stack and go full width. Order matters more
+   than usual here: "send a test" is first in the DOM and stays first on a
+   phone, so the destructive one is never the thumb's default target. */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .actions {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-5);
+  }
+
+  .testAction,
+  .sendAction {
+    align-items: stretch;
+  }
+
+  .actionNote {
+    max-width: none;
+  }
+
+  .confirmActions {
+    /* Two buttons side by side at 320px squeeze "Send to 12 people" onto two
+       lines, and stacking puts a thumb's width between Cancel and the
+       irreversible one. `column-reverse` lands Cancel at the BOTTOM — the easy
+       reach — leaving Send a deliberate stretch. Tab order is unchanged (it
+       follows the DOM), so keyboard users still meet Cancel first. */
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+}

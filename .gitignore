@@ -40,6 +40,13 @@ yarn-error.log*
 # holds dev credentials and stays ignored by the .env* rule above.
 !.env.e2e.local.example
 
+# Browser e2e scratch: one state file and one completion marker per spec.
+# Deliberately NOT under .next/: next build clears that directory, which
+# deleted the fixture ledger out from under the spec in local mode.
+/.e2e-state/
+# Screenshots and page text a failed e2e step leaves behind (see ARTIFACTS_DIR).
+/.e2e-artifacts/
+
 # firebase
 .firebase/
 firebase-debug.log
@@ -68,3 +75,8 @@ src/app/(public)/HeroField*.tsx
 !src/app/(public)/HeroFieldImpulses.tsx
 !src/app/(public)/HeroFieldParticles.tsx
 !src/app/(public)/HeroFieldTfStyle.tsx
+
+# Claude Code local config. Scoped to the personal file rather than the whole
+# .claude/ directory so a shared .claude/settings.json stays possible later.
+# Claude's memory lives in ~/.claude/, outside this working tree entirely.
+.claude/settings.local.json

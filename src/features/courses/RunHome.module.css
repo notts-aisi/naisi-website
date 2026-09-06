@@ -1,0 +1,345 @@
+/* ============================================================
+   RunHome — /learn/[runId].
+
+   Motion budget: the WeekRail's draw is the page's one moment.
+   Everything here is deliberately quiet — a page entrance
+   (PageEnter owns it), a modest card stagger, and one magnetic
+   CTA. Nothing in this file should ever grow into a second
+   moment competing with the rail.
+   ============================================================ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+}
+
+/* ---- Hero ---- */
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+/* Smaller than the h1 default (--text-5xl) on purpose: the headline states a
+   fact the rail then draws, and at 48px it would outshout the thing it
+   introduces. */
+.title {
+  margin: 0;
+  font-size: var(--text-4xl);
+  letter-spacing: -0.02em;
+}
+
+.sub {
+  margin: 0;
+  /* Week titles run long; a measure keeps the hero from becoming a paragraph. */
+  max-width: 46ch;
+  font-size: var(--text-lg);
+  line-height: var(--leading-snug);
+  color: var(--color-text-muted);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* Anchor styled as the primary action — <Button> renders a real <button> and
+   takes no href, so navigation targets get the styling rather than the
+   component (the SessionCard / CourseCTA call). */
+.cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 44px floor (docs/touch-targets.md) — this is the tap target of the one
+     action the page exists for. */
+  min-height: 2.75rem;
+  padding: 0.8rem 1.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: #fff;
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  text-decoration: none;
+  /* useMagneticPull writes --mag-x / --mag-y. Consumed through `translate:`
+     (a separate property from `transform:`) so the :active press stacks with
+     the pull instead of clobbering it — the landing page's .button3d
+     precedent. No `will-change` here: the plan reserves it for .button3d and
+     the rail mid-draw. */
+  translate: var(--mag-x, 0) var(--mag-y, 0);
+  transition:
+    translate var(--dur-settle) var(--ease-spring),
+    transform var(--dur-tap) ease,
+    background var(--dur-quick) ease;
+}
+
+.cta:hover {
+  background: var(--color-accent-hover);
+}
+
+.cta:active {
+  transform: translateY(1px);
+}
+
+.cta:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.ctaNote {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* ---- Below the fold ---- */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* The stagger is opt-in via a second class so the loading skeleton can reuse
+   .stack's layout without animating in — a skeleton that animates reads as
+   content arriving, which is exactly the wrong signal. */
+.staggered > * {
+  animation: cardIn var(--dur-enter) var(--ease-naisi) both;
+}
+
+.staggered > *:nth-child(2) {
+  animation-delay: var(--stagger-card);
+}
+
+.staggered > *:nth-child(3) {
+  animation-delay: calc(var(--stagger-card) * 2);
+}
+
+@keyframes cardIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes cardFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.panelTitle {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--color-text);
+}
+
+.panelNote {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.roster {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+}
+
+.rosterItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+
+/* ---- Your own attendance ---- */
+
+/* A two-column list rather than a table: it is at most a term's worth of rows,
+   each one a date and a word, and a table would bring a header nobody needs
+   and a horizontal scroll container to keep it inside the shell. */
+.attendance {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.attendanceRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-sm);
+}
+
+.attendanceRow:last-child {
+  border-bottom: none;
+}
+
+.attendanceWhen {
+  color: var(--color-text-muted);
+}
+
+.attendanceMark {
+  color: var(--color-text);
+  font-weight: 600;
+  /* The mark is the answer being looked for, so it never wraps away from its
+     own row's date. */
+  white-space: nowrap;
+}
+
+.panelLink {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* Vertical padding rather than a min-height: this is an inline text link in
+     a card, the aspirational tier of docs/touch-targets.md, and a 44px block
+     would read as a second button competing with the hero CTA. */
+  padding: var(--space-2) 0;
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.panelLink:hover {
+  text-decoration: underline;
+}
+
+.panelLink:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring);
+}
+
+.arrow {
+  transition: transform var(--dur-quick) var(--ease-naisi);
+}
+
+.panelLink:hover .arrow {
+  transform: translateX(3px);
+}
+
+/* ---- Loading ---- */
+
+/* Mirrors WeekRail.module.css's `.full .canvas` padding (2.25rem / 1.75rem)
+   around `--rail-row` (2.75rem), so the rail arriving costs no reflow. Change
+   those and change this. */
+.railSkeleton {
+  padding: 2.25rem 0 1.75rem;
+}
+
+/* === Reduced motion ===
+   The token belt collapses the durations; what it can't do is remove the
+   stagger's literal delays or a transform from-state, so both go here. Opacity
+   crossfades survive by design. */
+@media (prefers-reduced-motion: reduce) {
+  /* The nth-child selectors are repeated because each selector in a list
+     carries its OWN specificity: without them the delays set above would
+     outrank a bare `.staggered > *` reset and survive. */
+  .staggered > *,
+  .staggered > *:nth-child(2),
+  .staggered > *:nth-child(3) {
+    animation-name: cardFade;
+    animation-duration: var(--dur-fade);
+    animation-delay: 0s;
+  }
+
+  .cta {
+    transition: background var(--dur-quick) ease;
+  }
+
+  .cta:active {
+    transform: none;
+  }
+
+  .arrow,
+  .panelLink:hover .arrow {
+    transition: none;
+    transform: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .page {
+    gap: var(--space-8);
+  }
+
+  .title {
+    font-size: var(--text-3xl);
+  }
+
+  .sub {
+    font-size: var(--text-base);
+  }
+
+  .actions {
+    /* The CTA goes full-bleed: it is the reason the page is open, and a
+       thumb-width target beats a centred pill. */
+    align-self: stretch;
+  }
+
+  .cta {
+    width: 100%;
+  }
+
+  .railSkeleton {
+    /* The rail flips to a VERTICAL layout below this breakpoint (~3.5rem per
+       slot), so the horizontal band's padding no longer describes what
+       arrives — the placeholder is short and the rail pushes the cards down.
+       Matching it needs the plan length, which the skeleton doesn't have yet;
+       the mobile follow-up PR owns closing that gap (house convention: mobile
+       adaptations land per surface, separately). */
+    padding: var(--space-4) 0;
+  }
+
+  .attendanceRow {
+    /* Date over mark rather than a squeezed pair: "Week 3, Tue 3 Nov" plus
+       "Left early" does not fit one narrow line, and a wrapped justified row
+       reads as two unrelated fragments. */
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+  }
+}

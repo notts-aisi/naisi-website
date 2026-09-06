@@ -1,0 +1,225 @@
+/* ============================================================
+   RoomNoticeComposer — "we're on Zoom this week", sent fast.
+
+   THE VISUAL ARGUMENT
+   This is the one surface on the group edit page that reaches
+   other people's inboxes, so it is the one surface that states
+   its blast radius before it states anything else. The
+   recipient line sits above the message, not beside the send
+   button, because it is a precondition for writing, not a
+   detail to check at the end.
+
+   The preview is the honest half: what goes out is the text in
+   the box, so the box IS the preview and there is no second
+   rendering to disagree with it. The report underneath is
+   deliberately plain — a send is a fact, not an achievement.
+
+   Danger colour appears in exactly two places: the confirm
+   dialog's send button, and an outcome we could not confirm.
+   ============================================================ */
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sectionTitle {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  margin: 0;
+  color: var(--color-text);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-relaxed);
+  max-width: var(--prose-max-width);
+}
+
+/* === Who this reaches === */
+
+.recipients {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.recipientsLine {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.recipientsBlocked {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-warning);
+  line-height: var(--leading-normal);
+}
+
+.recipientsNote {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-relaxed);
+}
+
+.inlineLink {
+  color: var(--color-accent);
+}
+
+/* === Prefill === */
+
+.prefillRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.prefillNote {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* === Actions === */
+
+.actions {
+  display: flex;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.noteColumn,
+.sendAction {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1 1 18rem;
+}
+
+.actionNote {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-relaxed);
+}
+
+/* === Report === */
+
+.report {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.reportUnknown {
+  border-color: var(--color-danger);
+}
+
+.reportHead {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.reportBody {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-relaxed);
+}
+
+.reportActions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+/* === Confirm === */
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+}
+
+.confirmTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.confirmBody {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-relaxed);
+}
+
+.confirmMessage {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  line-height: var(--leading-relaxed);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.confirmActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 48rem) { /* --bp-md */
+  .actions {
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .noteColumn,
+  .sendAction {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  .prefillRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirmMessage {
+    scroll-behavior: auto;
+  }
+}

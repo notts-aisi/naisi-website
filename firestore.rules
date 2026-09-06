@@ -19,6 +19,35 @@ service cloud.firestore {
              .data.get('suRecognised', false) == true;
     }
 
+    // Shared permission check for the courses feature: admin, or the named
+    // key set true on the caller's own user doc. The newsletterDrafts and
+    // events blocks each carry a LOCAL copy of this same helper — those
+    // predate this one and are left duplicated on purpose (an inner function
+    // shadows an outer one, so touching them buys nothing and risks two
+    // proven blocks for zero behaviour change). New per-permission helpers
+    // start here instead.
+    function hasPerm(key) {
+      return isSignedIn()
+        && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+            || get(/databases/$(database)/documents/users/$(request.auth.uid))
+                 .data.get(['permissions', key], false) == true);
+    }
+    function canDraftCourse()   { return hasPerm('draftCourse');   }
+    function canApproveCourse() { return hasPerm('approveCourse'); }
+    // Worksheets: the permission to CIRCULATE one, granted per person by an
+    // admin (see docs/worksheets.md > Permissions).
+    //
+    // NOTHING IN THIS FILE KEYS OFF IT IN V1, and that is deliberate rather
+    // than an oversight to fix. Circulating is a ROUTE: it copies a
+    // worksheet, writes one response document and one task per recipient, and
+    // sends mail, so the client never writes `circulations` at all and the
+    // rules below refuse client create and delete outright. The helper is
+    // declared here anyway so that the permission reads as one of the set
+    // beside draftEvent and draftCourse, and so the first rule that does need
+    // it (a client-direct write this feature has not asked for yet) is a
+    // one-line change rather than a new helper somebody writes inline.
+    function canCirculateWorksheet() { return hasPerm('circulateWorksheet'); }
+
     // Keep the user doc under a reasonable size cap as a DoS guard;
     // detailed shape validation happens in the React forms.
     function smallEnough() {
@@ -48,6 +77,25 @@ service cloud.firestore {
         && !('tracks' in request.resource.data)
         && !('permissions' in request.resource.data)
         && !('suRecognised' in request.resource.data)
+        // --- V3 W1 PR8: admissionsReviewer ---------------------------------
+        // Server-owned flag saying "this account reviews or decides an
+        // admission round". It is written ONLY by
+        // PUT /api/admissions/rounds/{roundId}/roles, and it draws the
+        // Admissions entry in the sidebar. Seeding it at create would put a
+        // brand-new account in front of the reviewer surface with a link it
+        // was never granted, the same forgery class as tracks / permissions /
+        // suRecognised above and guarded the same way in both create and
+        // self-update. The round's own reviewerUids stay the authority on
+        // what may actually be read; this is the nav flag.
+        && !('admissionsReviewer' in request.resource.data)
+        // --- end V3 W1 PR8 -------------------------------------------------
+        // `paidMembershipYears` is the admin-set paid-member tag ("2026/27"),
+        // shown to admissions reviewers as a BADGE when they weigh a course
+        // application. Self-seeding it at create would let any new account
+        // walk into review wearing a paid-member badge it never earned —
+        // same class of forgery as tracks/permissions above, guarded the
+        // same way in both create and self-update.
+        && !('paidMembershipYears' in request.resource.data)
         // `email` is the address the rest of the system treats as PROVEN: the
         // subscription sync marks rows `confirmed` from it without a click, the
         // newsletter sender resolves recipients from it, and the application
@@ -98,6 +146,23 @@ service cloud.firestore {
             && request.resource.data.get('tracks', []) == resource.data.get('tracks', [])
             && request.resource.data.get('permissions', {}) == resource.data.get('permissions', {})
             && request.resource.data.get('suRecognised', false) == resource.data.get('suRecognised', false)
+            // --- V3 W1 PR8: admissionsReviewer ---------------------------
+            // Pinned against self-edits exactly like suRecognised. A member
+            // who could set it would draw themselves an Admissions nav entry;
+            // one who could CLEAR it would silently drop themselves off the
+            // reviewer surface the flag exists to reach, and the round arrays
+            // that actually grant review access would then disagree with the
+            // only signal the UI has. The false default makes the pin hold on
+            // the common absent-vs-absent case.
+            && request.resource.data.get('admissionsReviewer', false)
+              == resource.data.get('admissionsReviewer', false)
+            // --- end V3 W1 PR8 -------------------------------------------
+            // Admin-set paid-member tag: pinned against self-edits exactly
+            // like `tracks` (see the create rule for why it matters — it is
+            // a badge in front of admissions reviewers). The [] default makes
+            // the pin hold on the common absent-vs-absent case.
+            && request.resource.data.get('paidMembershipYears', [])
+              == resource.data.get('paidMembershipYears', [])
             // `email` is PROVEN-inbox state, not a profile field. Downstream it
             // is trusted as an address the user demonstrably controls:
             // /api/subscriptions/sync marks rows `confirmed` from it with no
@@ -237,6 +302,15 @@ service cloud.firestore {
         && request.resource.data.completerUids.size() <= 10
         && request.resource.data.reviewerUids.size() <= 5
         && request.resource.data.get('blocks', []).size() <= 10
+        // `sourceRef` is the pointer that binds a MIRROR to its (cohort,
+        // week), and no client creates a mirror: courseTasks.ts writes them
+        // on the Admin SDK, and the one client create path (taskMutations
+        // createTask, both the committee board and the My Work quick-add)
+        // writes `sourceRef: null`. So nothing legitimate sets it here, and
+        // leaving it open let ANY signed-in user mint a task stamped
+        // `sourceRef.cohortId = <someone's run>` — which is the id a run
+        // destroy sweeps on. Pinned null on both lanes, committee included.
+        && request.resource.data.get('sourceRef', null) == null
         && (
           isCommittee()
           || (
@@ -265,18 +339,63 @@ service cloud.firestore {
           isCommittee()
           && taskData().visibility == 'committee'
           && request.resource.data.visibility == 'committee'
+          // `source` is set once at create and never legitimately rewritten.
+          // Pinning it here is load-bearing: `source` gates BOTH the mirror
+          // delete branch below and the `archived` entry in the completer
+          // narrow band, so a committee member able to relabel a task
+          // 'fellowship-reminder' could hand any completer on it a
+          // recursiveDelete of that task's whole comment and activity history.
+          && request.resource.data.get('source', '') == taskData().get('source', '')
+          // `sourceRef` rides the same clause, and for a sharper reason. A
+          // run DESTROY sweeps `tasks` by `sourceRef.cohortId` and
+          // recursiveDeletes what it finds — comments, activity log,
+          // attachments and their Storage blobs. Left writable on this
+          // branch, an SU-committee member could stamp a doomed run's id onto
+          // any committee task and have the next admin destroy erase it for
+          // them, with the audit row recording it as one of the run's own
+          // mirrors. (The engine also filters that sweep on `source ==
+          // 'fellowship-reminder'`, which is the half that protects rows
+          // written before this pin; this is the half that stops the field
+          // being aimed in the first place.)
+          && request.resource.data.get('sourceRef', null) == taskData().get('sourceRef', null)
           && request.resource.data.subtasks.size() <= 50
           && request.resource.data.completerUids.size() <= 10
           && request.resource.data.reviewerUids.size() <= 5
           && request.resource.data.get('blocks', []).size() <= 10
         )
+        // `archived` joined the narrow band for the course-week mirrors, and it
+        // is SCOPED to them: an enrolled member is sole completer on their
+        // mirrored task and must be able to tidy it off the board without
+        // asking an admin. Ungated it was a real widening — the band also
+        // covers reviewers, and a reviewer is not necessarily a completer, so
+        // any ONE person on a committee task could archive it while the My Work
+        // and board queries hide archived tasks by default. That is a
+        // unilateral "delete" of shared work in everything but name.
+        //
+        // Everyone with a legitimate reason to archive still has a branch:
+        // admins above, an SU-committee creator via the committee branch, a
+        // personal task's creator below (the task UI only offers Archive to
+        // admin-or-creator anyway). The gate reads the STORED source — never
+        // `request.resource.data` — so relabelling a task on the way in cannot
+        // unlock it, and the affectedKeys test is evaluated FIRST so an
+        // ordinary status/subtask write never depends on `source` at all.
+        //
+        // `sourceRef` stays OUTSIDE this list on purpose — it is the pointer
+        // binding a mirror to its (cohort, week), and letting a completer
+        // rewrite it would re-aim the mirror at a different cohort's week and
+        // confuse the idempotent re-sync (courseTasks.ts) into duplicating
+        // tasks.
         || (
           (isCompleter() || isReviewer())
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'status', 'subtasks', 'subtaskStats', 'updatedAt',
             'completedAt', 'attachmentCount', 'commentCount',
-            'blocks', 'blockConsents'
+            'blocks', 'blockConsents', 'archived'
           ])
+          && (
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['archived'])
+            || taskData().get('source', '') == 'fellowship-reminder'
+          )
           && request.resource.data.subtasks.size() <= 50
           && request.resource.data.get('blocks', []).size() <= 10
         )
@@ -296,11 +415,24 @@ service cloud.firestore {
           && request.resource.data.source == 'personal'
           && request.resource.data.completerUids.hasOnly([request.auth.uid])
           && request.resource.data.reviewerUids.size() == 0
+          // "Freely" stops short of the destroy pointer, same as the committee
+          // branch above: a personal task is created with `sourceRef: null`,
+          // nothing in the UI edits it, and a member who could set it would be
+          // volunteering their own task into someone else's cascade.
+          && request.resource.data.get('sourceRef', null) == taskData().get('sourceRef', null)
         );
 
       allow delete: if isAdmin()
         || (isCommittee() && taskData().visibility == 'committee' && isTaskCreator())
-        || (taskData().source == 'personal' && isTaskCreator());
+        || (taskData().source == 'personal' && isTaskCreator())
+        // A mirrored course-week task ("fellowship-reminder") is dismissible
+        // by the member it mirrors to. Keyed off isCompleter() rather than
+        // isTaskCreator() so it survives however the mirror was materialised
+        // (the sync route makes the member both, but an admin-triggered
+        // backfill might not). Dismissal is safe BECAUSE the mirror is a
+        // one-way projection at a deterministic id: deleting it loses no
+        // course progress, and a later sync simply .create()s it again.
+        || (taskData().source == 'fellowship-reminder' && isCompleter());
 
       // --- comments ---
       match /comments/{commentId} {
@@ -407,6 +539,376 @@ service cloud.firestore {
         && request.resource.data.name.size() <= 80
         && request.resource.data.subtasks.size() <= 50;
       allow delete: if isAdmin();
+    }
+
+    // ======================= WORKSHEETS =======================
+    // A worksheet is a document of questions, sent to people, answered
+    // individually and reviewed. Full contract in docs/worksheets.md. Access
+    // model in brief:
+    //  - the LIBRARY (worksheets, worksheetFolders) is open to the whole
+    //    committee, SU-recognised or not: a worksheet holds questions, not
+    //    member PII, and the trust boundary suRecognised draws is about PII.
+    //    Editing somebody else's worksheet is admin-only (everyone else makes
+    //    a copy), and `private` is an admin-only flag.
+    //  - a CIRCULATION and everything under it is created by ROUTES only. The
+    //    client writes no circulation, no response document and no task, so
+    //    create and delete are closed here and the only client-direct writes
+    //    are the recipient's autosave and the staff's review notes.
+    //  - DELETION is a route in both halves. A worksheet's client delete was
+    //    closed when deletion landed, because the document is not the whole of
+    //    it (question images in Storage, and a blocker on any open circulation
+    //    that rules cannot ask about); destroying a circulation was never a
+    //    client write and is admin-only besides. See the `allow delete` comment
+    //    on `worksheets` below, and docs/worksheets.md > Deletion.
+
+    // === worksheets ===
+    match /worksheets/{worksheetId} {
+      // The library tier: any committee member plus admins. Deliberately
+      // hasRole rather than isSuCommittee (see the block comment above).
+      function isLibraryUser() { return hasRole(['committee', 'admin']); }
+      // AUTHORSHIP IS NOT A STANDING GRANT. The role test is inside this
+      // helper rather than beside its callers because the author branch is
+      // the one branch of read, update and delete that no other clause
+      // re-tests: written as `isSignedIn() && authorUid == uid` it left a
+      // person who had been demoted to `member`, or rejected outright, still
+      // able to read, retitle, rewrite the items of and delete a document the
+      // whole committee browses. The Permissions table in docs/worksheets.md
+      // scopes "create and edit own worksheets" to committee members and
+      // admins, so losing the role has to take the worksheet with it.
+      function isAuthor() {
+        return isLibraryUser() && resource.data.authorUid == request.auth.uid;
+      }
+
+      // THE SHAPE RULE. `resource.data.private == false` is written as a bare
+      // field comparison, not `resource.data.get('private', false)`, because
+      // Firestore judges a list or a listen on the QUERY'S SHAPE rather than on
+      // the rows it would return: it proves this clause from a matching
+      // `where("private", "==", false)` on the query and refuses the whole
+      // listen when the clause is absent. A `.get()` with a default is not a
+      // comparison the analyser can discharge, so the same rule written that
+      // way would refuse EVERY committee list, filtered or not, silently and
+      // with an empty grid, which is the #261 failure exactly. `private` is
+      // required on create below, so the bare read can never raise on a
+      // document that lacks it.
+      //
+      // Admins are resource-independent here, so an admin lists unfiltered
+      // and sees private worksheets too; an author reaches their own private
+      // worksheet by `get`, and needs `where("authorUid", "==", uid)` to list
+      // them, for the same shape reason.
+      allow read: if isAdmin()
+        || (isLibraryUser() && resource.data.private == false)
+        || isAuthor();
+
+      // `authorUid == self` is what makes "edit your own, copy everyone
+      // else's" enforceable at all: without it a committee member could mint a
+      // worksheet already owned by somebody else, which is a way to put words
+      // in their mouth in a library everybody browses.
+      //
+      // `private` is admin-only in BOTH directions and at BOTH create and
+      // update. Pinning it only on update would let a committee member create
+      // the worksheet private and skip the gate entirely.
+      //
+      // `description` is capped with `.get()` and a default rather than a bare
+      // read because, unlike `private`, it is genuinely optional: a worksheet
+      // saved before the field existed, or one whose author cleared the box,
+      // has no key to read and a bare comparison would deny by evaluation
+      // error. This is a create/update rule, so the query-shape analyser that
+      // forces the bare form on `private` above never sees it.
+      allow create: if isLibraryUser()
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.private is bool
+        && (isAdmin() || request.resource.data.private == false)
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.get('description', '') is string
+        && request.resource.data.get('description', '').size() <= 1000
+        && request.resource.data.items.size() <= 100;
+
+      // `items.size()` is capped on the way in as a DoS guard: the editor
+      // saves the whole array client-direct on autosave, and an unbounded
+      // array is unbounded write amplification on a no-billing project. The
+      // per-item budgets (option counts, text limits) live in
+      // src/lib/firestore/worksheets.ts, which rules cannot express.
+      //
+      // WHAT IS NOT GUARDED HERE, stated so the omission reads as a decision:
+      // there is no key allowlist, so an author may hang extra fields on their
+      // own worksheet. `hasOnly()` was left off because the library document
+      // grows (a `defaultReviewConfig`, a `lastCirculatedAt`, whatever wave 2
+      // adds) and an allowlist that has to be edited in lockstep with the
+      // editor fails closed on deploy order: rules ship separately from the
+      // app, so the first save after a feature lands is refused. The three
+      // caps above plus the 1 MiB document ceiling are the size guard; the
+      // per-field budgets live in src/lib/firestore/worksheets.ts.
+      allow update: if (isAdmin() || isAuthor())
+        && request.resource.data.authorUid == resource.data.authorUid
+        && request.resource.data.private is bool
+        && (isAdmin() || request.resource.data.private == resource.data.private)
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.get('description', '') is string
+        && request.resource.data.get('description', '').size() <= 1000
+        && request.resource.data.items.size() <= 100;
+
+      // NO CLIENT DELETE, FOR ANYBODY, THE AUTHOR AND ADMINS INCLUDED.
+      //
+      // This rule used to read `isAdmin() || isAuthor()`, on the argument that
+      // deleting the library document takes nothing away from anybody who has
+      // already been sent the worksheet, because a circulation carries its own
+      // copy of the items. That argument is still true and it is still not
+      // enough, because a document delete is not the whole deletion:
+      //
+      //  - the question bodies and option images live in Storage under
+      //    `worksheet-images/{worksheetId}`, and rules cannot cascade. A
+      //    client delete leaves every one of those files behind, owned by a
+      //    path whose document is gone, so nothing can find them again and
+      //    nothing can name them to clear them.
+      //  - a worksheet with an OPEN circulation is refused, and "is there an
+      //    open circulation of this worksheet" is a cross-collection question
+      //    that rules cannot ask. Left here, the refusal would be a sentence
+      //    in the UI with nothing behind it.
+      //
+      // So the delete goes through DELETE /api/worksheets/{worksheetId} on the
+      // Admin SDK, which checks the blocker, removes the images and then the
+      // document. The `events` collection is the precedent, verbatim: it is
+      // `allow delete: if false` and its deletion is
+      // src/app/api/events/[id]/delete/route.ts for exactly these two reasons.
+      //
+      // THIS DOES NOT MAKE THE IMAGES SAFE, only the delete path. An author can
+      // still strand the same files through the `allow update` above by
+      // emptying `items` or dropping one image question, and nothing sweeps a
+      // file that no item points at any more. That is a known orphan source and
+      // it is unchanged by this rule: the argument here is that a delete must
+      // not be another way to make orphans, not that the update path has been
+      // closed. Per-item Storage cleanup on save is the fix and it is not
+      // built.
+      //
+      // The author is still the person who may delete it. That permission now
+      // lives in the route, which is where it can be enforced together with the
+      // two things above rather than beside them.
+      allow delete: if false;
+    }
+
+    // === worksheetFolders ===
+    // Shelves in the library, nothing more: a name and who made it. No
+    // ownership gate, because a folder is shared furniture and an author who
+    // leaves the committee must not strand a shelf nobody can rename. For the
+    // same reason `createdByUid` is left writable: it records who put the
+    // shelf up, not who owns it, and nothing keys off it.
+    //
+    // A DELETE LEAVES DANGLING `folderId` POINTERS on every worksheet that was
+    // filed here, and that is known rather than missed. Rules cannot cascade,
+    // and doing it in the client would be a fan-out write the deleter may not
+    // be allowed to make (they can delete a shelf holding somebody else's
+    // worksheets, which they cannot update). The library view therefore has to
+    // treat an unresolvable folderId as "unfiled" rather than trusting it, and
+    // the proper fix is the repo-wide cascade-delete sweep already on the
+    // backlog, not a rule here.
+    match /worksheetFolders/{folderId} {
+      allow read: if hasRole(['committee', 'admin']);
+      allow create, update: if hasRole(['committee', 'admin'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 60;
+      allow delete: if hasRole(['committee', 'admin']);
+    }
+
+    // === circulations ===
+    // One act of sending a worksheet to people.
+    match /circulations/{circulationId} {
+      function circulation() { return resource.data; }
+      function isStaff() {
+        return isSignedIn() && request.auth.uid in circulation().staffUids;
+      }
+
+      // THE RECIPIENT'S PROOF OF ACCESS. There is no roster array on the
+      // circulation to test against: recipients are added over time, in
+      // batches, and a growing array on the parent document would be a
+      // contended write on every add and an unbounded field besides. So a
+      // recipient proves themselves with the document that already exists for
+      // exactly one reason: their own response. One exists() on a path built
+      // from their own uid, so it cannot be aimed at anybody else's.
+      function isRecipient() {
+        return isSignedIn()
+          && exists(/databases/$(database)/documents/circulations/$(circulationId)/responses/$(request.auth.uid));
+      }
+
+      // GET AND LIST ARE SPLIT, and the reason is the document-access budget.
+      // exists() costs one document access; a list evaluates the rule per
+      // candidate document against a budget of twenty, so a recipient branch
+      // inside a list rule would make any query over twenty circulations fail
+      // WHOLESALE, an outage that only appears once the collection is big
+      // enough, which is the worst kind. A recipient never lists circulations
+      // anyway: they reach theirs from their task or their respond link.
+      allow get: if isAdmin() || isStaff() || isRecipient();
+
+      // Staff lists must carry `where("staffUids", "array-contains", uid)`.
+      // Firestore proves `request.auth.uid in resource.data.staffUids` from
+      // that clause and refuses the whole listen without it (the same shape
+      // rule as the worksheets block above). Admins are resource-independent
+      // and so list unfiltered.
+      allow list: if isAdmin() || isStaff();
+
+      // NO CLIENT CREATE, EVER. Creating a circulation copies a worksheet,
+      // writes one response document and one task per recipient and sends
+      // mail; the permission that gates it (circulateWorksheet) is checked by
+      // POST /api/worksheets/circulations, which is also the only thing that
+      // can write staffUids honestly. A client create rule would be a way to
+      // mint a circulation naming other people as staff.
+      //
+      // NO CLIENT DELETE either: the responses, the reviews and one task per
+      // recipient hang off this document, and a delete that leaves them is an
+      // orphan set nobody can reach. Closing a circulation is the route.
+      allow create, delete: if false;
+
+      // Staff edit the copy mid-flight and the settings around it. The key
+      // list is what keeps that from becoming everything: staffUids,
+      // reviewerUids, the three counters, status, worksheetId, senderUid and
+      // the source discriminator are all server-owned. Left writable,
+      // `staffUids` alone would let any staff member add themselves to
+      // another circulation's staff, and the counters drive the progress the
+      // sender reads.
+      //
+      // `status` IS NOT A GATE ON THIS RULE, deliberately. Closing a
+      // circulation stops SUBMISSIONS (the contract's words), and submission
+      // is a route: it re-derives progress, moves the task and bumps a
+      // counter, so the close route and the submit route are the pair that
+      // has to agree. Staff fixing a typo on a closed copy, and a recipient's
+      // client flushing an autosave it had already queued when the close
+      // landed, are both allowed here on purpose: refusing them would turn a
+      // race into a permission error on somebody's unsaved work, and neither
+      // write can make a closed circulation accept an answer. Both are pinned
+      // as CHARACTERISATION tests in the rules suite so a later decision to
+      // freeze the whole document is a visible change rather than a surprise.
+      allow update: if (isAdmin() || isStaff())
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'title', 'description', 'items', 'reviewConfig', 'notifications',
+          'dueDate', 'itemsEditedAt', 'updatedAt'
+        ])
+        && request.resource.data.items.size() <= 100;
+
+      // --- responses (one per recipient; the doc id IS their uid) ---
+      match /responses/{responseUid} {
+        function parent() {
+          return get(/databases/$(database)/documents/circulations/$(circulationId)).data;
+        }
+        // One get() of a FIXED path, so a staff list of the whole
+        // subcollection costs one document access however many responses come
+        // back, which is the tasks/comments pattern. Contrast isRecipient() on
+        // parent, whose path varies with the caller and not the row.
+        function isParentStaff() {
+          return isSignedIn() && request.auth.uid in parent().staffUids;
+        }
+        // The doc id binds the response to its recipient structurally, so
+        // "is this mine" needs no lookup and cannot be spoofed by a field.
+        function isOwner() { return isSignedIn() && request.auth.uid == responseUid; }
+
+        // isOwner() is per-document-id, so a recipient's LIST of the
+        // subcollection is refused (the id is not something a query
+        // constrains) while their get of their own response is allowed. That
+        // is the intended shape: one recipient must never enumerate what the
+        // others wrote.
+        allow read: if isAdmin() || isOwner() || isParentStaff();
+
+        // Written by the circulate and add-recipients routes only, alongside
+        // the task each response mirrors. A client create would be a response
+        // with no task and no counter behind it.
+        allow create, delete: if false;
+
+        // THE RECIPIENT'S AUTOSAVE, and the only client-direct write in the
+        // feature's answering path.
+        //
+        // The STORED state gates it: once a response leaves not-opened or
+        // started it is frozen, and unfreeze is an admin route. Reading
+        // `resource.data.state` rather than the incoming one is the whole
+        // point. A recipient who could satisfy the gate with the value they
+        // are writing would simply write 'started' back over 'submitted' and
+        // edit their answers after the reviewers had read them.
+        //
+        // The incoming state is held to the same two values, so the client can
+        // move not-opened to started on first open (which it does, together
+        // with the task) but cannot declare itself submitted: submission is a
+        // route because it re-derives progress, moves the task, bumps a
+        // counter and notifies the reviewers, none of which a client can do
+        // atomically or honestly.
+        //
+        // The key list keeps `taskId`, `returned`, `submittedAt`, `reviewedAt`
+        // and the unfreeze stamps server-owned. `returned` in particular is
+        // the staff feedback copied onto this document: a recipient able to
+        // write it could author their own feedback.
+        //
+        // `answers` is read through `.get()` with a default, unlike the bare
+        // `private` comparison in the worksheets block, and the difference is
+        // that this is an UPDATE and not a list: no query-shape analyser has
+        // to discharge the clause, so nothing is bought by the bare form and
+        // something is lost. Bare, a response document written without an
+        // `answers` key (an Admin SDK write in a wave-1 route, a hand-repaired
+        // document) would make the recipient's very first autosave deny by
+        // EVALUATION ERROR, which surfaces as a permission failure on the one
+        // client-direct write in the answering path with nothing in the rule
+        // to point at.
+        allow update: if isOwner()
+          && resource.data.state in ['not-opened', 'started']
+          && request.resource.data.state in ['not-opened', 'started']
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'answers', 'progress', 'activity', 'state', 'updatedAt'
+          ])
+          && request.resource.data.get('answers', {}).size() <= 100;
+      }
+
+      // --- reviews (staff only; the doc id IS the reviewed recipient's uid) ---
+      // A SEPARATE SUBCOLLECTION rather than a field on the response, and this
+      // is the reason: scores are staff-only and must never reach the person
+      // being scored. As a field, "the recipient reads their own response" and
+      // "the recipient never reads a score" would be two rules that have to
+      // agree forever, and the first one somebody widens takes the second with
+      // it. As a document, they are one rule: the recipient is simply not on
+      // the read list here, and returning feedback is a route that copies the
+      // parts the toggles allow onto the response, leaving scores behind.
+      match /reviews/{reviewUid} {
+        function parent() {
+          return get(/databases/$(database)/documents/circulations/$(circulationId)).data;
+        }
+        function isParentStaff() {
+          return isSignedIn() && request.auth.uid in parent().staffUids;
+        }
+
+        allow read: if isAdmin() || isParentStaff();
+
+        // Staff write feedback and scores client-direct as they read, so this
+        // is a real create/update rather than a route. The key list fixes the
+        // shape and both containers are capped, because hasOnly() bounds WHICH
+        // keys may appear and not how big they are, and a reviewer with an
+        // uncapped map could store megabyte documents, one per recipient.
+        //
+        // WHAT THE TWO CAPS DO AND DO NOT COVER. `overall` is one text box, so
+        // its cap is exact. `perQuestion` is a map keyed by question id, and
+        // the cap is on the NUMBER OF ENTRIES only: it matches the hundred
+        // items a worksheet may hold, so a review cannot carry feedback for
+        // questions that do not exist. The per-entry budgets
+        // (CIRCULATION_LIMITS.feedback, scoreMin, scoreMax in
+        // src/lib/firestore/circulations.ts) are enforced by the editor and by
+        // the return route, NOT here: rules cannot walk a map's values, so
+        // there is no version of this clause that bounds one entry's text.
+        //
+        // `updatedByUid` is pinned to the writer. A review is the record of a
+        // judgement about a person, which is why the delete below is
+        // admin-only; leaving the stamp free would let one staff member file a
+        // judgement under a colleague's name, and the returned feedback quotes
+        // that name back to the recipient.
+        allow create, update: if (isAdmin() || isParentStaff())
+          && request.resource.data.keys().hasOnly([
+            'perQuestion', 'overall', 'updatedAt', 'updatedByUid'
+          ])
+          && request.resource.data.get('overall', '') is string
+          && request.resource.data.get('overall', '').size() <= 4000
+          && request.resource.data.get('perQuestion', {}).size() <= 100
+          && request.resource.data.get('updatedByUid', '') == request.auth.uid;
+
+        // Admin-only, because a review is the record of a judgement about a
+        // person: one reviewer deleting another's notes mid-circulation is not
+        // a correction, it is a disagreement resolved by whoever clicks first.
+        allow delete: if isAdmin();
+      }
     }
 
     // === credentials (committee only, client-side encrypted) ===
@@ -716,6 +1218,93 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ========================================================================
+    // V3 W3 PR6: scheduler
+    // ========================================================================
+    // Two collections behind POST /api/scheduler/tick. Both are shut to EVERY
+    // client, admins included, and both are read back through
+    // GET /api/admin/scheduler on the Admin SDK.
+    //
+    // `schedulerMarkers` is the claim-before-send marker for every tick job:
+    // a deterministic, construct-only doc id per unit of work, created BEFORE
+    // the send and stamped `sentAt` after it. A client able to WRITE here
+    // could pre-create a marker id and permanently suppress a send it does
+    // not want (its own application-deadline reminder, a facilitator's
+    // unmarked-register follow-up task) and nothing downstream would notice,
+    // because "marker exists" is exactly how every job decides the work is
+    // already done. Suppression by forgery is the threat this rule exists
+    // for, and it is why these markers do NOT live in `courseNudges`
+    // (different collection, different threat model). A client able to READ
+    // here would learn which named applicants have unsubmitted drafts and
+    // which groups have unmarked registers, since every id component is also
+    // stored as a field.
+    //
+    // `schedulerRuns` is the tick receipt, `tick__{bucket}__d{depth}`. It is
+    // the DEDUPE for duplicate external deliveries as well as the log, so a
+    // client write is a way to make the next scheduled tick believe it has
+    // already run: a forged receipt for the current 15-minute bucket makes
+    // the real delivery return `deduped: true` and do nothing.
+    //
+    // NOTE ⚠ `config/scheduler` (the kill switch and per-job state) is NOT
+    // covered here. The `config` collection has no match block at all today,
+    // so it is default-deny and safe; PR5 adds an explicit
+    // `match /config/{doc}` deny block so that lockdown is visible in this
+    // file rather than inferred. That is a documentation change, not a
+    // behaviour change, and nothing in this region depends on it landing.
+    //
+    // NOTE ⚠ no rules deploy is strictly owed for this region: with `allow
+    // read, write: if false` both matches are identical to Firestore's
+    // implicit deny. They are written out so the lockdown is stated rather
+    // than assumed, and so a later PR cannot casually relax one by adding a
+    // block that looks like it is filling a gap.
+    match /schedulerMarkers/{markerId} {
+      allow read, write: if false;
+    }
+
+    match /schedulerRuns/{runId} {
+      allow read, write: if false;
+    }
+    // ===================== end V3 W3 PR6: scheduler ==========================
+
+    // ========================================================================
+    // V3 W3 PR12: dataExports
+    // ========================================================================
+    // One append-only row per CSV the site generates: the attendance register,
+    // the cohort roster, an admission round's applications, a membership
+    // period's list. Each export route writes its row through
+    // `logExport()` (src/lib/firestore/dataExports.ts) immediately BEFORE it
+    // streams the file, and refuses the export when that write fails.
+    //
+    // SHUT TO EVERY CLIENT, ADMINS INCLUDED, on both axes.
+    //
+    // WRITE. The actor of a logged export is almost always an admin, so an
+    // admin-writable log is a log its own subject can edit: a row could be
+    // deleted, back-dated, or have its rowCount reduced by the person who
+    // took the file. That is the `courseAudit` / `courseDeletions` posture
+    // stated in this file already, and the reason is the same one: an audit
+    // its own actor can amend is not an audit. A forged row is the other
+    // half of it, since a fabricated export could be attributed to somebody
+    // who never ran one.
+    //
+    // READ. Not `isAdmin()`, deliberately. Admins read the Exports tab
+    // through GET /api/admin/deliverability/exports on the Admin SDK, exactly
+    // as they already read `emailSends`, so a client read rule would buy the
+    // product nothing and would leave the collection one `isAdmin()` typo
+    // away from readable by whatever the next helper edit makes true. Rows
+    // also name applicants' rounds and cohorts' groups alongside the actor,
+    // so the list of who was exported and when is not something to hand to a
+    // browser that has no feature needing it.
+    //
+    // The block is written out EXPLICITLY rather than left to
+    // deny-by-default. `dataExports` is a top-level collection whose name
+    // sorts near nothing else, and an explicit match is the thing that stops
+    // a later PR adding a broad match, or a helper widened one line, from
+    // opening it without anybody noticing this collection existed.
+    match /dataExports/{exportId} {
+      allow read, write: if false;
+    }
+    // ==================== end V3 W3 PR12: dataExports ========================
+
     // === eventRsvps ===
     // RSVPs are attendee PII - never public read. All writes go through the
     // server route `/api/events/[id]/rsvp` (admin SDK), so rules are a safety
@@ -789,6 +1378,1612 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly(['fromUid', 'fromName', 'text', 'createdAt']);
         allow update, delete: if false;
       }
+    }
+
+    // ========================= COURSES =========================
+    // The BlueDot-style programmes feature. Access model in brief:
+    //  - Curriculum (courses / courseRuns / weeks): signed-in READ only. The
+    //    public catalogue is served by Admin-SDK fetchers on server components
+    //    — there is deliberately NO public read rule, because `allow read`
+    //    also grants `list` and drafts must never be world-enumerable.
+    //  - Authoring is client-direct for `draftCourse` / `approveCourse`
+    //    permission holders (the autosave path), with the events-block
+    //    pattern throughout: per-doc ownership, server-owned fields pinned,
+    //    status transitions gated on the approve permission.
+    //  - Everything member-state-shaped EXCEPT courseProgress (applications,
+    //    enrolments, exercise responses, attendance, nudges) is routes-only:
+    //    those docs carry PII, counters that must move transactionally, or
+    //    validation rules can't express (an exercise response's type vs its
+    //    definition). courseProgress is THE one client-direct member write.
+
+    // === courses ===
+    // Evergreen curriculum shells. Field caps mirror COURSE_FIELD_LIMITS in
+    // src/lib/firestore/courses.ts — keep the two in sync.
+    match /courses/{courseId} {
+      // A per-course collaborator: named on the doc by the author/admin via
+      // the collaborators route, so they can edit THIS course without holding
+      // the global draft permission (events collaboratorUids pattern).
+      function isCourseCollaborator() {
+        return isSignedIn()
+          && request.auth.uid in resource.data.get('collaboratorUids', []);
+      }
+      function isOwnCourse() {
+        return isSignedIn()
+          && resource.data.get('authorUid', '') == request.auth.uid;
+      }
+      // Ownership and the collaborator roster are the server's to change —
+      // /api/courses collaborator/publish routes, Admin SDK. Without these
+      // pins a collaborator (possibly a plain member with no permissions at
+      // all) could seize authorUid or add accomplices to the roster; the
+      // exact hole the events block closed after PR #225.
+      function coursePinnedFieldsUnchanged() {
+        return request.resource.data.get('authorUid', '')
+            == resource.data.get('authorUid', '')
+          && request.resource.data.get('collaboratorUids', [])
+            == resource.data.get('collaboratorUids', [])
+          // The destroy MARKER, pinned exactly as it is on courseRuns and for
+          // the same reasons — with one extra edge that makes it sharper here.
+          // The update branch below admits COLLABORATORS, who may be plain
+          // members with no course permission at all. Left unpinned, such an
+          // actor could set `destroying: true` + `destroyAuditId` on a course
+          // and point it at an EXISTING courseDeletions row: the next real
+          // cascade would then read the marker as a resume, skip its blockers,
+          // and accumulate its counts and its completedAt onto an unrelated
+          // audit record — falsifying the only surviving evidence of somebody
+          // else's destroy. They could also wedge the course's own destroy,
+          // since a marked course never re-checks the blockers that protect
+          // its runs.
+          && request.resource.data.get('destroying', false)
+            == resource.data.get('destroying', false)
+          && request.resource.data.get('destroyAuditId', '')
+            == resource.data.get('destroyAuditId', '')
+          // A course has no `archived` BOOLEAN today — it withdraws through
+          // `status: 'archived'`, which the status clause below already gates
+          // on approveCourse. The pin is here so that stays true: if a course
+          // ever grows the run's soft-archive flag, it is born pinned rather
+          // than born client-writable, which is the way round that gets
+          // noticed.
+          && request.resource.data.get('archived', false)
+            == resource.data.get('archived', false);
+      }
+
+      // ---- V3 W3 PR20: draft reads ---------------------------------------
+      // A DRAFT course is staff-only. Every other status (published,
+      // archived) stays readable by any signed-in account, which is what the
+      // authenticated catalogue surfaces and the applicant funnel need.
+      //
+      // Who counts as staff for a draft: the author (authorUid), the course's
+      // own collaboratorUids, any draftCourse or approveCourse holder, and
+      // admins.
+      //
+      // ORDER MATTERS FOR COST, not for correctness. The three resource-only
+      // clauses come first, so the common path (a signed-in member opening a
+      // published course) costs ZERO document accesses. Only a draft
+      // candidate falls through to hasPerm(), which reads the caller's own
+      // user doc. That get() is the courseGroups pattern below
+      // (`allow read: if isAdmin() || canDraftCourse() || canApproveCourse()`),
+      // not the get()-in-a-read-rule trap this file warns about: the trap is a
+      // get() on the CANDIDATE document, billed once per document in a list.
+      // This one is on the CALLER, always the same path.
+      //
+      // THE LIST CONSEQUENCE, stated plainly because it is a behaviour change
+      // and not a bug: rules are not filters. An UNFILTERED list over
+      // `courses` by a caller holding no course permission is now refused
+      // WHOLESALE the moment one draft exists in the collection, rather than
+      // returning the published rows. That is intended, and no such list is
+      // issued anywhere: the only client-direct list over this collection is
+      // `useCourses` in useAdminCourses.ts, mounted by AdminCourseList,
+      // CourseEditor and CoursePageEditor, all three of which sit under
+      // /admin/courses, whose layout gate admits admin, draftCourse and
+      // approveCourse only. All three satisfy a permission clause and so pass
+      // the whole list. Every public surface reads through the Admin SDK
+      // fetchers in src/features/courses, which bypass rules entirely. A
+      // future member-facing list must constrain on `status` (for example
+      // `where('status', '==', 'published')`), which narrows the candidate set
+      // to documents the first clause already allows.
+      //
+      // `status` defaults to 'draft' when absent, so a malformed or
+      // half-written course fails CLOSED rather than open.
+      allow read: if isSignedIn()
+        && (
+          resource.data.get('status', 'draft') != 'draft'
+          || isOwnCourse()
+          || isCourseCollaborator()
+          || isAdmin()
+          || canDraftCourse()
+          || canApproveCourse()
+        );
+      // ---- end V3 W3 PR20 -------------------------------------------------
+
+      allow create: if canDraftCourse()
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.status == 'draft'
+        && request.resource.data.get('collaboratorUids', []).size() == 0
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.get('summaryBlocks', []).size() <= 40
+        // Clean start, the courseRuns rule's twin: update only PINS the
+        // marker, so a course could otherwise be BORN mid-destroy — pointing
+        // at an audit row it does not own, and skipping the blocker check on
+        // its first real destroy.
+        && request.resource.data.get('destroying', false) == false
+        && request.resource.data.get('destroyAuditId', '') == ''
+        && request.resource.data.get('archived', false) == false;
+
+      allow update: if isAdmin()
+        || (
+          (canApproveCourse() || isCourseCollaborator()
+            || (canDraftCourse() && isOwnCourse()))
+          && coursePinnedFieldsUnchanged()
+          // Frozen to non-admins mid-destroy, same as runs: the course destroy
+          // confirms by TITLE on every pass, so a retitle wedges the cascade.
+          && resource.data.get('destroying', false) == false
+          && request.resource.data.title is string
+          && request.resource.data.title.size() > 0
+          && request.resource.data.title.size() <= 120
+          && request.resource.data.get('summaryBlocks', []).size() <= 40
+          // draft -> published is publication, published -> archived is
+          // withdrawal: every status move is the two-person half of review
+          // and needs the approve permission, never the draft one alone.
+          && (
+            request.resource.data.status == resource.data.status
+            || canApproveCourse()
+          )
+        );
+
+      // Deletion cascades runs/weeks/groups/progress — far too much blast
+      // radius for a client write. The destroy routes (Admin SDK) own it:
+      // /api/courses/[courseId]/destroy for the course, with every run
+      // destroyed first through /api/courses/runs/[runId]/destroy, each
+      // paginated, resumable and audited. Soft archive is the primary path.
+      allow delete: if false;
+    }
+
+    // =====================================================================
+    // === V3 W1 PR7: coursePages ==========================================
+    // =====================================================================
+    // The AUTHORED public page for a course, at `coursePages/{courseId}`.
+    // The doc id IS the course id, so a course structurally cannot have two
+    // pages and nothing has to query for uniqueness.
+    //
+    // ROUTES-ONLY, deliberately unlike the `courses` block immediately above,
+    // which is client-direct for the autosave path. The reason is specific and
+    // is not a general preference for routes:
+    //
+    //   `sanitizeBlocks` (src/lib/firestore/newsletterBlocks.ts) is a SHAPE
+    //   filter (`raw.filter(isValidBlock)`), not an HTML sanitiser. A
+    //   `richText` block renders through `dangerouslySetInnerHTML`, and for
+    //   THIS collection that render happens on a LOGGED-OUT marketing page.
+    //   The `courses` update branch above admits `isCourseCollaborator()`,
+    //   which that block's own comment describes as "possibly a plain member
+    //   with no permissions at all".
+    //
+    // Two write paths cannot enforce one sanitisation, so there is one:
+    // `PUT /api/courses/[courseId]/page` (Admin SDK), which sanitises what it
+    // stores, plus `normalizeCoursePage` sanitising again at read time. Making
+    // this collection client-writable would delete both guarantees at once.
+    //
+    // ---- V3 W3 PR20: read is STAFF, no longer the signed-in tier --------
+    // This block used to say read matched `courses` and `courseRuns`. It no
+    // longer does, and the parity is what broke: PR20 closed a DRAFT course
+    // to staff, and the page is that same course's authored pitch. Left at
+    // `isSignedIn()` it would have handed every signed-in account the copy
+    // the course document itself had just stopped showing them, list
+    // included, since `allow read` grants `list` too.
+    //
+    // The predicate is resource-independent on purpose. Resolving the parent
+    // course would need a `get()` billed once per candidate document on a
+    // list, which is the pattern the rest of this file refuses, and it would
+    // buy nothing: the only client-direct reader already sits behind exactly
+    // this gate.
+    //
+    // That reader is `useCoursePage`, mounted only by `CoursePageEditor` at
+    // `/admin/courses/[courseId]/page`, whose tree is gated by
+    // `requireCourseAuthorPage()` (admin, `draftCourse` or `approveCourse`).
+    // `tests/courses-draft-reads.test.mjs` is what keeps that the only one.
+    // Every public and learner surface reads the page through the Admin SDK
+    // fetcher `fetchCoursePage.ts` on a server component, which bypasses
+    // rules, so the logged-out marketing page is unaffected.
+    // ---- end V3 W3 PR20 -------------------------------------------------
+    //
+    // The page holds no uid and no member text. It is destroyed with its
+    // course (`courseDeletion.ts`) and is deliberately not part of the
+    // per-account deletion sweep.
+    match /coursePages/{courseId} {
+      allow read: if isAdmin() || canDraftCourse() || canApproveCourse();
+      allow write: if false;
+    }
+    // === end V3 W1 PR7: coursePages ======================================
+
+    // === courseRuns ===
+    // One delivery of a course ("Autumn 2026"). Role arrays, counters and the
+    // cohort channel are server-owned: admissions reviewers / facilitators /
+    // track leads are assigned by routes, applicationCounts moves inside the
+    // apply/decide transactions, and `channel` is what the cohort email send
+    // resolves recipients from — a client-writable channel would let a
+    // drafter aim a run's email at a different cohort's subscribers.
+    match /courseRuns/{runId} {
+      function isOwnRun() {
+        return isSignedIn()
+          && resource.data.get('authorUid', '') == request.auth.uid;
+      }
+      function isRunTrackLead() {
+        return isSignedIn()
+          && request.auth.uid in resource.data.get('trackLeadUids', []);
+      }
+      function runPinnedFieldsUnchanged() {
+        return request.resource.data.get('courseId', '')
+            == resource.data.get('courseId', '')
+          && request.resource.data.get('authorUid', '')
+            == resource.data.get('authorUid', '')
+          && request.resource.data.get('admissionsReviewerUids', [])
+            == resource.data.get('admissionsReviewerUids', [])
+          && request.resource.data.get('runFacilitatorUids', [])
+            == resource.data.get('runFacilitatorUids', [])
+          && request.resource.data.get('trackLeadUids', [])
+            == resource.data.get('trackLeadUids', [])
+          && request.resource.data.get('applicationCounts', {})
+            == resource.data.get('applicationCounts', {})
+          && request.resource.data.get('groupCount', 0)
+            == resource.data.get('groupCount', 0)
+          && request.resource.data.get('channel', '')
+            == resource.data.get('channel', '')
+          // `archived` is the everyday soft path of the V2-1 deletion protocol
+          // (mirroring courseGroups.archived, orthogonal to `status` — the run
+          // status union has no archived member). An archived run drops out of
+          // the admin default list, the public catalogue, the /me live sections
+          // and the application windows, while member history keeps reading it.
+          // That is a WITHDRAWAL, so it belongs to the same lane as a status
+          // move, not to run content: PATCH /api/courses/runs/[runId]/archive
+          // (Admin SDK, admin or approveCourse) is the only writer. Pinning it
+          // here is what stops a drafter or a track lead — who legitimately edit
+          // weekPlan and label all term — from unpublishing a live cohort with
+          // one field, silently, from the client. Both sides default so a run
+          // predating the field compares false to false and passes.
+          //
+          // NOTE the admin carve-out: like every other pin in this function, it
+          // sits on the non-admin branch only, so an admin CAN still flip the
+          // flag directly. That hands them nothing — admins already hold
+          // unconditional update on runs, including `status: cancelled`, which
+          // withdraws a run harder than archiving it. The approveCourse holder
+          // is the interesting case and is NOT carved out: they may call the
+          // archive route but may not write the field, so their archive always
+          // goes through the route.
+          && request.resource.data.get('archived', false)
+            == resource.data.get('archived', false)
+          // The destroy MARKER, stamped by beginDestroy() in the same
+          // transaction that opens the courseDeletions audit row. It is the
+          // resume cursor: `destroying` says a cascade is in flight and
+          // `destroyAuditId` names the row it accumulates into. Both are
+          // pinned for the same reason `archived` is, only harder —
+          //   * clearing `destroying` makes the NEXT invocation look fresh, so
+          //     it opens a SECOND audit row and the first is left dangling at
+          //     completedAt: null, indistinguishable from a real interruption;
+          //   * repointing `destroyAuditId` aims the accumulating counts (and
+          //     the resumeCount increment) at somebody else's audit row, which
+          //     is how you falsify the only surviving record of a destroy;
+          //   * setting either one on a live run wedges the archive route,
+          //     which refuses to touch a run that says it is being destroyed.
+          // Nothing outside the cascade ever writes these, so pinning them
+          // costs no legitimate flow.
+          && request.resource.data.get('destroying', false)
+            == resource.data.get('destroying', false)
+          && request.resource.data.get('destroyAuditId', '')
+            == resource.data.get('destroyAuditId', '')
+          // TEMPLATE PROVENANCE (V2-2, v2 decision 3). `templateId` names the
+          // frozen `courseTemplates` snapshot this run's weeks were applied
+          // from and `templateLabel` is the point-in-time copy of what that
+          // snapshot was called. Only
+          // POST /api/courses/runs/[runId]/apply-template (Admin SDK) writes
+          // them, and only alongside the weeks it just copied in.
+          //
+          // Pinned because the actors this branch admits — the drafter-owner
+          // and the run's TRACK LEADS — are precisely the people who spend the
+          // term editing that curriculum. Unpinned, one of them could rewrite
+          // every week of a run by hand and then stamp it "Autumn 2026 final",
+          // or strip the stamp off a run that really was built from a snapshot.
+          // Either way the only surviving record of WHAT A COHORT WAS ACTUALLY
+          // TAUGHT would be a field its editors could set to anything, which
+          // is not provenance. The approveCourse holder is the interesting
+          // case and is NOT carved out, exactly as with `archived`: they may
+          // CALL apply-template, but they may not write the fields, so their
+          // stamp always arrives with the copy that earned it.
+          //
+          // Both sides default to '' so a run predating the field compares
+          // equal and passes. That is also why the route writes STRINGS and
+          // never null — a stored null would compare unequal to the ''
+          // default and wedge every later non-admin edit of the run.
+          && request.resource.data.get('templateId', '')
+            == resource.data.get('templateId', '')
+          && request.resource.data.get('templateLabel', '')
+            == resource.data.get('templateLabel', '')
+          // ---- V3 W1 PR5: courses open mode -------------------------------
+          //
+          // `enrolMode` opens a WRITE DOOR rather than describing content: an
+          // `open` run admits an enrolment with no application behind it, so
+          // it belongs in this tier with the role arrays and the counters and
+          // not in the drafter's content band. Its only writer is
+          // PATCH /api/courses/runs/[runId]/enrol-mode (admin only).
+          //
+          // `streams` looks like authored content and is not. The enrol route
+          // validates a member's requested stream against this list, and
+          // `courseEnrolments.streamId` is `allow write: if false`, so a
+          // client-direct edit here could invalidate rows in a collection the
+          // client cannot repair. Same class as `applicationCounts`.
+          //
+          // `enrolledCount` is a counter moved only by the transactions that
+          // write the enrolment rows it summarises, exactly like `groupCount`.
+          //
+          // `submissionExerciseRef` is pinned with a `{}` default on BOTH
+          // sides and is stored ABSENT when unset, NEVER null: this file
+          // already records at the templateId pin above that a stored null
+          // compares unequal to a `.get()` default and wedges every later
+          // non-admin edit of the run. `courses.ts` omits the key rather than
+          // writing null so a doc round-tripped through the normaliser cannot
+          // reintroduce one, and the emulator suite pins both halves.
+          && request.resource.data.get('enrolMode', 'admissions')
+            == resource.data.get('enrolMode', 'admissions')
+          && request.resource.data.get('streams', [])
+            == resource.data.get('streams', [])
+          && request.resource.data.get('enrolledCount', 0)
+            == resource.data.get('enrolledCount', 0)
+          && request.resource.data.get('submissionExerciseRef', {})
+            == resource.data.get('submissionExerciseRef', {});
+      }
+
+      // ---- V3 W1 PR5: courses open mode ---------------------------------
+      // THE STATUS TRANSITION TABLE, mirroring src/lib/courses/runStatus.ts.
+      //
+      // Why the rules now carry a table the route already owns: the week-plan
+      // freeze above is keyed on the status, and `canApproveCourse()` could
+      // write ANY status value. So an approver could walk a live run back to
+      // `draft`, reshape the frozen plan, and walk it forward again: three
+      // writes, no route, and the freeze is defeated. A freeze keyed on a
+      // field its subject can set to anything is not a freeze.
+      //
+      // Read as: from this status, these are the reachable ones.
+      //   draft                -> applications-open | cancelled
+      //   applications-open    -> applications-closed | running | cancelled
+      //   applications-closed  -> running | cancelled
+      //   running              -> completed | cancelled
+      //   completed, cancelled -> nothing (terminal)
+      // `draft` appears on nobody's list on purpose: nothing returns to draft.
+      // `applications-open -> running` is the open-enrolment entry: a
+      // pre-course keeps its sign-ups open into its first teaching weeks and
+      // has no review stage to close.
+      //
+      // Staying put is always legal: an ordinary content save re-sends the
+      // status it already had, and this must not refuse those.
+      //
+      // ADMINS RIDE THEIR OWN BRANCH, as with every other pin in this block.
+      // That costs nothing here: an admin already holds unconditional update
+      // on runs including `weekPlan` itself, so denying them the backwards
+      // move would protect nothing they cannot do directly. The person this
+      // table exists to bound is the approver.
+      //
+      // Both sides default to 'draft' so a run written before the status
+      // union existed is treated as a draft rather than frozen out of reach.
+      function runStatusMoveAllowed() {
+        return request.resource.data.get('status', 'draft')
+            == resource.data.get('status', 'draft')
+          || request.resource.data.get('status', 'draft') in {
+              'draft': ['applications-open', 'cancelled'],
+              'applications-open': ['applications-closed', 'running', 'cancelled'],
+              'applications-closed': ['running', 'cancelled'],
+              'running': ['completed', 'cancelled'],
+              'completed': [],
+              'cancelled': []
+            // `.get(key, [])` rather than `[key]`, so a run carrying a status
+            // outside the union (a hand-edited doc, or one written before a
+            // rename) is simply frozen for non-admins instead of erroring
+            // every update on the branch.
+            }.get(resource.data.get('status', 'draft'), []);
+      }
+      // THE WEEK PLAN LOCK. `weekPlan` is the run's calendar spine: the Nth
+      // taught entry IS week N, and every member-facing surface addresses that
+      // week as `weekDocId(weekNumber)` while the plan carries its own stable
+      // `weekId`. While a run is in DRAFT those two spellings can be
+      // reconciled freely, because no member data exists yet to repoint.
+      // The moment a run leaves draft they are load-bearing: reordering or
+      // removing a slot renumbers every entry after it, so a cohort's
+      // `/learn/{run}/weeks/{n}` silently resolves a different document than
+      // the one the admin arranged, and the registers, mirrored tasks and
+      // exercise responses keyed on the old numbering strand.
+      //
+      // So the plan is editable in draft and PINNED afterwards. Adding and
+      // removing slots mid-term is not forbidden outright, it is moved to the
+      // admin branch below, where the person making the change is the person
+      // accountable for the date shift it causes.
+      //
+      // BOTH sides of the status are checked. Reading only the pre-write one
+      // let a single update set status to 'applications-open' AND reshape the
+      // plan in the same write: the run was a draft when the rule looked, and
+      // was not one by the time the write landed, so the plan the pin then
+      // protects for the rest of the cohort's life is the reshaped one nothing
+      // ever checked. The status route is the intended lane for a status move
+      // and writes nothing else, so no honest client is caught by this.
+      //
+      // The unchanged-plan disjunct stands on its own, which is what still
+      // lets an approver flip the status while re-sending the plan verbatim
+      // (a section save that always includes the field).
+      //
+      // Both sides default to [] so a run predating the field compares equal
+      // and passes, and the status defaults to 'draft' so a run written before
+      // the status union existed is treated as still editable rather than
+      // frozen out of reach.
+      function weekPlanLockRespected() {
+        return (
+            resource.data.get('status', 'draft') == 'draft'
+            && request.resource.data.get('status', 'draft') == 'draft'
+          )
+          || request.resource.data.get('weekPlan', [])
+            == resource.data.get('weekPlan', []);
+      }
+
+      // Content caps shared by create and update. `startDate` must be a
+      // civil "YYYY-MM-DD" — the week maths (weekPlan.ts) runs on civil
+      // dates so DST can't shift week boundaries, and a malformed date here
+      // would poison every derived week number for the whole cohort.
+      function runContentOk() {
+        return request.resource.data.startDate is string
+          && request.resource.data.startDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && request.resource.data.get('label', '').size() <= 80
+          && request.resource.data.get('academicYear', '').size() <= 10
+          && request.resource.data.get('courseTitle', '').size() <= 120
+          && request.resource.data.get('weekPlan', []).size() <= 60
+          && request.resource.data.get('applicationForm', []).size() <= 30
+          // ---- V3 W1 PR7: coursePages (the two courseRuns authoring fields
+          // that PR ships alongside the page object). `startHereBlocks` mirrors
+          // COURSE_FIELD_LIMITS.maxStartHereBlocks; the `cohort` clauses cap
+          // the map's KEY SET and then TYPE each of the three keys.
+          //
+          // The key set alone is not enough. `hasOnly` says nothing about what
+          // is stored under a permitted key, so it would pass
+          // `{ term: 'winter', year: 'soon', number: [] }`, a cohort every
+          // reader then drops as malformed, leaving a run whose stored cohort
+          // and rendered cohort disagree, and leaving free text on a field the
+          // public page prints. The `.get(key, default)` defaults are what let
+          // an ABSENT cohort (every pre-V3 run, and the cleared case) pass
+          // these same clauses: each default is a valid value of its type.
+          //
+          // The key-set clause also refuses a stored null (`.keys()` on null
+          // raises, and a stored null would wedge every later edit against the
+          // `.get(field, {})` default: the submissionExerciseRef lesson).
+          //
+          // Ranges (year 2000-2100, number 1-99) stay in COHORT_LIMITS rather
+          // than here: they are typo catchers, not a trust boundary, and this
+          // layer's job is that the field cannot hold a shape a reader has to
+          // guess at.
+          && request.resource.data.get('startHereBlocks', []).size() <= 20
+          && request.resource.data.get('cohort', {}).keys()
+            .hasOnly(['term', 'year', 'number'])
+          && request.resource.data.get('cohort', {}).get('term', 'autumn')
+            in ['autumn', 'spring', 'summer']
+          && request.resource.data.get('cohort', {}).get('year', 2026) is int
+          && request.resource.data.get('cohort', {}).get('number', 1) is int;
+      }
+
+      // ---- V3 W3 PR20: draft reads ---------------------------------------
+      // A DRAFT run is staff-only. The predicate is `status != 'draft'`, NOT
+      // "published or archived": CourseRunStatus has no 'published' member (it
+      // is draft | applications-open | applications-closed | running |
+      // completed | cancelled), and `archived` is a separate boolean
+      // orthogonal to status. So every non-draft status, a cancelled or an
+      // archived-but-completed run included, stays readable by any signed-in
+      // account. That is what a pending applicant reading an
+      // applications-open run needs, and it is why the test below still
+      // passes for a pending user.
+      //
+      // WHO CAN READ A DRAFT RUN, and the honest limitation: admins,
+      // draftCourse and approveCourse holders, and the run's own authorUid.
+      // That is all.
+      //
+      // A COURSE COLLABORATOR WHO HOLDS NO COURSE PERMISSION CANNOT READ A
+      // DRAFT RUN. `authorUid` lives on the run, but `collaboratorUids` lives
+      // on the parent COURSE, so honouring collaborators here would need a
+      // get() on courses/$(resource.data.courseId): a get() derived from the
+      // CANDIDATE document, billed once per candidate in a list, which is
+      // exactly the trap the rest of this file refuses. The limitation costs
+      // nothing in practice. Every client surface that reads a run document
+      // (RunEditor and WeekEditor through useAdminCourses, and
+      // AdminCourseList's unfiltered read) sits under /admin/courses, whose
+      // layout gate is admin OR draftCourse OR approveCourse, so a
+      // permissionless collaborator cannot reach any of them: the clause would
+      // guard a door nobody can stand in front of. If collaborators ever need
+      // a draft run client-direct, the fix is to denormalise the roster onto
+      // the run as a server-pinned array, the way trackLeadUids already is,
+      // not to add the get().
+      //
+      // trackLeadUids is likewise NOT a read clause. A track lead may author
+      // this run's weeks (canEditRun() in the weeks block), but the only
+      // surface that reads the run doc to do it is WeekEditor, behind that
+      // same admin-tree gate.
+      //
+      // Cost ordering and the list consequence are as in the `courses` block
+      // above: the resource-only clauses come first so a non-draft run costs
+      // zero document accesses, and an unfiltered client list over
+      // `courseRuns` by a caller with no course permission is refused
+      // wholesale once a draft exists. One caller can be such a person:
+      // RoundEditor's unfiltered read, reachable by an appointed admissions
+      // reviewer who is SU committee but holds neither course key. It already
+      // catches its own rejection, and the run pickers it feeds render only
+      // inside the `canAuthor` branch, so that reviewer loses nothing they
+      // were shown.
+      //
+      // `status` defaults to 'draft' when absent, so a malformed run fails
+      // CLOSED.
+      //
+      // DELIBERATELY NOT NARROWED: courseRuns/{runId}/weeks below keeps
+      // `allow read: if isSignedIn()`. Those documents are read CLIENT-DIRECT
+      // by useWeek, ProgressBody and useGroupWeeks, the last of which issues
+      // an unfiltered getDocs over the subcollection that a status-derived
+      // rule would reject wholesale, and a week doc carries no status of its
+      // own to test. Narrowing that half means re-routing three learner
+      // surfaces through a server fetcher, which is a feature PR and not a
+      // rules edit. So, said plainly: draft CURRICULUM is still readable by
+      // any signed-in account. Only the course and run shells are closed here.
+      allow read: if isSignedIn()
+        && (
+          resource.data.get('status', 'draft') != 'draft'
+          || isOwnRun()
+          || isAdmin()
+          || canDraftCourse()
+          || canApproveCourse()
+        );
+      // ---- end V3 W3 PR20 -------------------------------------------------
+
+      // Server-owned state must start CLEAN: empty role arrays, zeroed
+      // counters, and the channel pinned to the deterministic cohort:<runId>
+      // (courseRunChannel() in courses.ts). Requiring emptiness at create
+      // matters because update only PINS these fields — a create that seeded
+      // admissionsReviewerUids would smuggle in reviewers no route assigned.
+      allow create: if canDraftCourse()
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.status == 'draft'
+        && request.resource.data.get('admissionsReviewerUids', []).size() == 0
+        && request.resource.data.get('runFacilitatorUids', []).size() == 0
+        && request.resource.data.get('trackLeadUids', []).size() == 0
+        && request.resource.data.get('applicationCounts', {}).values().hasOnly([0])
+        && request.resource.data.get('groupCount', 0) == 0
+        && request.resource.data.get('channel', 'cohort:' + runId) == 'cohort:' + runId
+        // Same reason the arrays must start empty: update only PINS `archived`,
+        // so without this it is the one pinned field a client could seed dirty —
+        // minting a run that is born withdrawn and that only the archive route
+        // can ever bring back. A run is created to be run.
+        && request.resource.data.get('archived', false) == false
+        // Likewise the destroy marker: a run created already claiming to be
+        // mid-destroy would skip the blocker check on its first real destroy
+        // (beginDestroy treats a marker as a resume) and would point the
+        // accumulating counts at whatever audit id was seeded with it.
+        && request.resource.data.get('destroying', false) == false
+        && request.resource.data.get('destroyAuditId', '') == ''
+        // Template provenance must start CLEAN, the `archived` argument
+        // applied to the pin above: update only PINS these, so without this a
+        // run could be BORN claiming to have been built from a snapshot it
+        // never touched — a lie that no later edit can dislodge, because the
+        // pin then protects it. A run is created empty and gets its
+        // provenance from apply-template or not at all.
+        && request.resource.data.get('templateId', '') == ''
+        && request.resource.data.get('templateLabel', '') == ''
+        // ---- V3 W1 PR5: courses open mode ----------------------------------
+        // The birth pins for the four fields added to
+        // runPinnedFieldsUnchanged() above. Update only PINS them, so without
+        // these a drafter could mint a run BORN in open enrolment, pre-seeded
+        // with streams no route assigned, or claiming a cohort it does not
+        // have, and the pin would then protect the lie for the run's whole
+        // life. This is the admissionsReviewerUids lesson, stated verbatim at
+        // the top of this create rule.
+        //
+        // `submissionExerciseRef` must be ABSENT, not null: `{} == {}` passes
+        // for an absent key and a stored null fails it, which is precisely
+        // the wedge the pin's comment describes. Refusing it at birth is what
+        // stops a run being created into that state.
+        && request.resource.data.get('enrolMode', 'admissions') == 'admissions'
+        && request.resource.data.get('streams', []).size() == 0
+        && request.resource.data.get('enrolledCount', 0) == 0
+        && request.resource.data.get('submissionExerciseRef', {}) == {}
+        && runContentOk();
+
+      // Status moves (applications-open, running, cancelled, ...) change what
+      // the world sees and what the apply route accepts — approve-gated, same
+      // two-person rule as events. A track lead may adjust run content (the
+      // label, the dates, the application form, and the week plan while the
+      // run is still a draft) but is NOT an approver, and once the run is out
+      // of draft the plan itself is pinned by weekPlanLockRespected().
+      allow update: if isAdmin()
+        || (
+          (canApproveCourse() || isRunTrackLead()
+            || (canDraftCourse() && isOwnRun()))
+          && runPinnedFieldsUnchanged()
+          && runContentOk()
+          && weekPlanLockRespected()
+          // A run mid-destroy is frozen to non-admins entirely: every destroy
+          // pass re-checks the typed confirmation against the CURRENT label,
+          // so a rename here would wedge a half-finished cascade — the same
+          // insider class the marker pins close. Admins ride their own branch.
+          && resource.data.get('destroying', false) == false
+          && (
+            request.resource.data.status == resource.data.status
+            || canApproveCourse()
+          )
+          // V3 W1 PR5: and even an approver may only make a move the table
+          // allows. See runStatusMoveAllowed().
+          && runStatusMoveAllowed()
+        );
+
+      allow delete: if false;
+
+      // --- weeks (curriculum content, the autosave path) ---
+      match /weeks/{weekId} {
+        function run() {
+          return get(/databases/$(database)/documents/courseRuns/$(runId)).data;
+        }
+        // Who may author curriculum in THIS run: admin, any approver, the
+        // run's drafter-owner, or one of its track leads. Resolved against
+        // the PARENT run doc — weeks carry no role fields of their own, so
+        // there is nothing on the week for a writer to tamper with first.
+        function canEditRun() {
+          return isAdmin()
+            || canApproveCourse()
+            || (canDraftCourse() && run().get('authorUid', '') == request.auth.uid)
+            || (isSignedIn() && request.auth.uid in run().get('trackLeadUids', []));
+        }
+
+        allow read: if isSignedIn();
+
+        // `weekId` is "w01".."w60" — zero-padded so doc order matches week
+        // order and STABLE across clone-weeks (progress rows reference item
+        // ids inside these docs, so ids surviving a copy-forward is what
+        // keeps a re-run's progress references valid). The id-shape check
+        // plus the weekNumber bounds keep a typo'd editor write from minting
+        // an unaddressable week.
+        allow create, update: if canEditRun()
+          && weekId.matches('^w[0-9][0-9]$')
+          && request.resource.data.weekNumber is int
+          && request.resource.data.weekNumber >= 1
+          && request.resource.data.weekNumber <= 60
+          && request.resource.data.get('title', '').size() <= 120
+          && request.resource.data.get('summary', '').size() <= 1000
+          && request.resource.data.get('guideBlocks', []).size() <= 40
+          && request.resource.data.get('materials', []).size() <= 30
+          && request.resource.data.get('exercises', []).size() <= 15
+          && request.resource.data.get('checklist', []).size() <= 15;
+
+        // Destroying authored content outranks editing it: a drafter or
+        // track lead can blank a week's fields but not remove the doc.
+        allow delete: if isAdmin() || canApproveCourse();
+      }
+    }
+
+    // === courseGroups ===
+    // The small facilitated groups inside a run. Groups carry the MEETING
+    // LINK and weekly slot, so read access is the sharp edge: an enumerable
+    // meet link is an open door for anyone signed-in to gatecrash a cohort
+    // call. Reads are restricted to the authoring tier; members get their own
+    // group's session card via a server route, facilitators via theirs.
+    match /courseGroups/{groupId} {
+      function isGroupFacilitator() {
+        return isSignedIn()
+          && request.auth.uid in resource.data.get('facilitatorUids', []);
+      }
+      // Track leads are named on the PARENT run, one get away.
+      function isParentRunTrackLead() {
+        return isSignedIn()
+          && request.auth.uid in
+            get(/databases/$(database)/documents/courseRuns/$(resource.data.get('runId', '')))
+              .data.get('trackLeadUids', []);
+      }
+      // `facilitatorUids` is assigned by /api/courses/groups/[id]/facilitators
+      // (which also upserts the facilitator enrolment); `memberCount` moves
+      // only inside the allocation transaction so it can never drift from the
+      // enrolment docs it summarises. runId/courseId are the group's identity.
+      //
+      // `paceStartDate`/`paceWeekPlan` (v2 decision 4, the group's calendar
+      // copy-on-write) are server-owned like `memberCount`: only the pace
+      // route writes them, because a plan edit must clear the strand gate (a
+      // taught week with attendance marks cannot vanish from the plan) and a
+      // rule cannot count registers. Pinned with a NULL default — the route
+      // stores a REAL null when the group tracks the run, so absent (legacy
+      // doc) and cleared compare equal and this pin can never wedge a
+      // legitimate session edit (the templateId '' lesson, inverted).
+      function groupPinnedFieldsUnchanged() {
+        return request.resource.data.get('runId', '')
+            == resource.data.get('runId', '')
+          && request.resource.data.get('courseId', '')
+            == resource.data.get('courseId', '')
+          && request.resource.data.get('facilitatorUids', [])
+            == resource.data.get('facilitatorUids', [])
+          && request.resource.data.get('memberCount', 0)
+            == resource.data.get('memberCount', 0)
+          && request.resource.data.get('paceStartDate', null)
+            == resource.data.get('paceStartDate', null)
+          && request.resource.data.get('paceWeekPlan', null)
+            == resource.data.get('paceWeekPlan', null)
+          // ---- V3 W1 PR5: courses open mode -------------------------------
+          //
+          // `streamId` is the same correction as `courseRuns.streams`, one
+          // level down: the enrol route decides who may join THIS group by
+          // comparing their stream against this field, and
+          // `courseEnrolments.streamId` is `allow write: if false`. A
+          // facilitator retagging their own group client-direct would strand
+          // rows in a collection no client can repair. Null default, like the
+          // pace fields, so absent (every legacy group) and cleared compare
+          // equal and this pin can never wedge a legitimate session edit.
+          //
+          // `facilitatorAppointments` records WHO put each uid in
+          // `facilitatorUids`, and when. `facilitatorUids` itself has been
+          // routes-only since it existed; a provenance map the same people
+          // could rewrite would be worth less than no map at all.
+          && request.resource.data.get('streamId', null)
+            == resource.data.get('streamId', null)
+          && request.resource.data.get('facilitatorAppointments', {})
+            == resource.data.get('facilitatorAppointments', {});
+      }
+      // The per-week virtual/in-person mode ("v2 decision 7") is server-owned
+      // too — the session route is the writer, so the room-notice prefill and
+      // its audit ride along with every flip. It is stored as its own flat
+      // map `sessionModes: { w03: "virtual" }` PRECISELY so this pin can be
+      // one comparison: the first cut nested `mode` inside each
+      // sessionOverrides value, and pinning a nested field across an
+      // arbitrary-keyed map forced a 60-key enumeration that blew the rules
+      // engine's 1000-expression evaluation budget and denied every
+      // legitimate group write. A `mode` a client smuggles INTO a
+      // sessionOverrides value instead is dead data: `normalizeCourseGroup`
+      // reads modes exclusively from `sessionModes`.
+      function groupSessionModesUnchanged() {
+        return request.resource.data.get('sessionModes', {})
+          == resource.data.get('sessionModes', {});
+      }
+      // Caps mirror GROUP_FIELD_LIMITS (courseGroups.ts) — the session fields
+      // are client-editable by facilitators, so these ARE the boundary.
+      // `meetingUrl` is null when the group meets in person, hence the
+      // null-or-capped-string branch rather than a bare size() call (which
+      // would error on null and deny every legitimate in-person write).
+      function groupContentOk() {
+        return request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 80
+          && request.resource.data.get(['session', 'location'], '').size() <= 200
+          && (
+            request.resource.data.get(['session', 'meetingUrl'], null) == null
+            || (request.resource.data.session.meetingUrl is string
+                && request.resource.data.session.meetingUrl.size() <= 300)
+          )
+          && request.resource.data.get(['session', 'notes'], '').size() <= 500
+          && request.resource.data.get('sessionOverrides', {}).size() <= 20
+          // V3 W1 PR5: see groupCapacityOk().
+          && groupCapacityOk();
+      }
+
+      // ---- V3 W1 PR5: courses open mode -----------------------------------
+      // CAPACITY, and why 40 is not a taste decision.
+      //
+      // `attendance/route.ts` throws RegisterFullError on the MERGED records
+      // map for the WHOLE POST once a register passes ATTENDANCE_LIMITS
+      // .maxRecords (40) keys. So an uncapped "everyone gets a place" group
+      // does not merely leave its 41st member unmarked: it makes a bulk
+      // "rest present" fail for everybody in the room and zeroes the
+      // completion signal the pre-course bar is computed from.
+      //
+      // Two halves:
+      //  - a capacity, when set, is a whole number in [1, 40] for EVERY run.
+      //    An admissions group has the same register ceiling.
+      //  - a capacity is REQUIRED on a group belonging to an open-mode run,
+      //    which is the only cross-document part and the only reason a get()
+      //    appears here. It is a WRITE rule, so this is not the
+      //    get()-in-a-read-rule trap: `allow read` also grants `list` and
+      //    would bill this per candidate document, whereas a write touches
+      //    exactly one.
+      //
+      // The get() is deliberately the SECOND operand of the `||`, so it is
+      // only evaluated when the capacity is missing. Every honest write on an
+      // open-mode run carries one, so in practice the parent read never
+      // happens. `runId` is read from request.resource.data, which is the
+      // merged document on an update and is pinned unchanged by
+      // groupPinnedFieldsUnchanged() anyway, so it names the same run either
+      // way. `courseGroups.groupCapacityError()` carries the same rule for
+      // the routes and the editor, with the sentence a human reads.
+      function parentRunEnrolMode() {
+        return get(/databases/$(database)/documents/courseRuns/$(request.resource.data.get('runId', '')))
+          .data.get('enrolMode', 'admissions');
+      }
+      function groupCapacityOk() {
+        return (
+            request.resource.data.get('capacity', null) == null
+            || (
+              request.resource.data.capacity is int
+              && request.resource.data.capacity >= 1
+              // THE LITERAL 40 IS TWO CONSTANTS AT ONCE, and rules cannot
+              // import either: `ATTENDANCE_LIMITS.maxRecords` (the register
+              // ceiling the marking route enforces) and
+              // `courseGroups.MAX_OPEN_MODE_CAPACITY` (the group cap, defined
+              // equal to it on purpose). `tests/course-streams.test.mjs` §6.2
+              // asserts those two ARE the same number, so raising one and not
+              // this line fails a suite rather than a Tuesday evening.
+              && request.resource.data.capacity <= 40
+            )
+          )
+          && (
+            request.resource.data.get('capacity', null) != null
+            || parentRunEnrolMode() != 'open'
+          );
+      }
+
+      allow read: if isAdmin() || canDraftCourse() || canApproveCourse();
+
+      // Groups exist once a run is being staffed — approver territory. The
+      // roster starts empty and the counter at zero for the same reason the
+      // run's arrays must: update only pins them — and the server-owned pace
+      // fields and session modes must start unset too, or a group could be
+      // BORN carrying a calendar or a mode flip its pinned writers never
+      // issued (the templateId birth-pin precedent on courseRuns).
+      allow create: if (isAdmin() || canApproveCourse())
+        && request.resource.data.runId is string
+        && request.resource.data.runId.size() > 0
+        && request.resource.data.get('facilitatorUids', []).size() == 0
+        && request.resource.data.get('memberCount', 0) == 0
+        && request.resource.data.get('paceStartDate', null) == null
+        && request.resource.data.get('paceWeekPlan', null) == null
+        && request.resource.data.get('sessionModes', {}).size() == 0
+        // V3 W1 PR5: the birth pins for the two fields added to
+        // groupPinnedFieldsUnchanged(). Update only PINS them, so without
+        // these a group could be BORN tagged to a stream the enrol route
+        // would then honour, or carrying appointment records naming
+        // facilitators nobody appointed, and the pin would protect both for
+        // the life of the group. Same argument as the pace fields above.
+        && request.resource.data.get('streamId', null) == null
+        && request.resource.data.get('facilitatorAppointments', {}).size() == 0
+        && groupContentOk();
+
+      // A named facilitator edits their own group's session (move the slot,
+      // change the room, drop the term's overrides) — per-doc by construction,
+      // same trust shape as an event collaborator. The `sessionModes` map
+      // rides along UNCHANGED (see groupSessionModesUnchanged): flipping a
+      // week virtual/in-person without the route lane's notice-and-audit
+      // step is exactly what the pin exists to stop.
+      allow update: if isAdmin()
+        || (
+          (canApproveCourse() || isParentRunTrackLead() || isGroupFacilitator())
+          && groupPinnedFieldsUnchanged()
+          && groupSessionModesUnchanged()
+          && groupContentOk()
+        );
+
+      // Deleting a group must re-pool its members (allocation transaction) —
+      // routes only.
+      allow delete: if false;
+
+      // --- weeks (the group's copy-on-write forks; v2 decision 4) ---
+      // `courseGroups/{groupId}/weeks/{wNN}` exists the moment a facilitator
+      // forks a week; its existence IS the resolution signal groupResolve.ts
+      // reads. Signed-in read matches the run weeks rule above — a fork
+      // carries curriculum, not the meet link, so the group doc's restricted
+      // read does not extend down here. ALL writes are server-routed (the
+      // fork POST and the week PATCH): the facilitator trust boundary
+      // (text-safe fields yes, guideBlocks no) and the delete-warning counts
+      // are cross-document checks a rule cannot express, so the simplest safe
+      // boundary is no client pen at all — the courseAttendance stance.
+      match /weeks/{weekId} {
+        allow read: if isSignedIn();
+        allow write: if false;
+      }
+    }
+
+    // === courseApplications ===
+    // One application per (run, uid), deterministic doc id. Rows carry email
+    // PII and the paid-membership snapshot; the apply/decide routes own every
+    // write (window/cap checks, counter transactions, lifecycle emails).
+    // Reviewers read applications through the reviewer route, which strips
+    // email — so client read here is OWN ROW ONLY, keyed off the stored uid
+    // field (never parsed out of the doc id), plus admin.
+    match /courseApplications/{docId} {
+      allow read: if isAdmin()
+        || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow write: if false;
+    }
+
+    // === courseEnrolments ===
+    // The no-double-placement invariant lives in this collection's doc id
+    // (one per (run, uid)) and its single scalar groupId — which is exactly
+    // why clients can never write: a client-side "move groups" would bypass
+    // the allocation transaction that keeps memberCount honest. Own-row read
+    // powers the /learn hub's "your runs" view.
+    match /courseEnrolments/{docId} {
+      allow read: if isAdmin()
+        || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow write: if false;
+    }
+
+    // === courseProgress ===
+    // THE one client-direct member write in the courses feature: the
+    // check-off hot path (complete a material, rate it, leave a comment)
+    // commits instantly from the client, because the rules below can express
+    // the entire invariant. Everything hangs off the deterministic doc id —
+    // runId + '__' + auth.uid + '__' + itemId — which makes own-row-only
+    // writes STRUCTURAL: there is no way to address anyone else's row.
+    match /courseProgress/{progressId} {
+      // NEVER use this in a READ rule. `allow read` also covers `list`, and
+      // a list query evaluates its rule per candidate doc — so these lookups
+      // would bill one document access PER ROW against the ~20-access rules
+      // budget and any query over ~20 rows would be REJECTED WHOLESALE, an
+      // outage that only appears once a member has enough progress rows.
+      // Write-side only, where each request touches exactly one doc. The
+      // courses rules test suite pins this with a 25-doc list regression.
+      function isEnrolledActive(runId) {
+        return exists(/databases/$(database)/documents/courseEnrolments/$(runId + '__' + request.auth.uid))
+          && get(/databases/$(database)/documents/courseEnrolments/$(runId + '__' + request.auth.uid))
+               .data.status == 'active';
+      }
+      // The full shape contract, shared by create and update:
+      //  - doc id binds (runId, CALLER's uid, itemId) — the structural bit
+      //  - only enrolled-and-active members write (withdrawn/removed lose
+      //    the pen instantly, whatever the UI still shows)
+      //  - keys are a closed set; optional fields are ABSENT, never null
+      //    (buildProgressWrite in courseProgress.ts omits empties, so a null
+      //    reaching here is a bug surfacing, not a flow to accommodate)
+      //  - `hasPublicComment` is pinned to the actual comment: it is the
+      //    queryable mirror the cohort comments lane filters on (Firestore
+      //    can't query field-existence), and a row allowed to lie about it
+      //    would leak or hide a comment from everyone on the run.
+      function progressShapeOk() {
+        return isSignedIn()
+          && request.resource.data.uid == request.auth.uid
+          && progressId == request.resource.data.runId + '__' + request.auth.uid + '__' + request.resource.data.itemId
+          && request.resource.data.runId is string
+          && request.resource.data.runId.size() > 0
+          && request.resource.data.itemId is string
+          && request.resource.data.itemId.size() > 0
+          && isEnrolledActive(request.resource.data.runId)
+          && request.resource.data.keys().hasOnly([
+            'runId', 'uid', 'weekNumber', 'itemKind', 'itemId', 'completed',
+            'completedAt', 'rating', 'publicComment', 'hasPublicComment',
+            'privateNote', 'moderatedByUid', 'moderatedAt', 'updatedAt'
+          ])
+          && request.resource.data.itemKind in ['material', 'checklist']
+          && request.resource.data.weekNumber is int
+          && request.resource.data.weekNumber >= 1
+          && request.resource.data.weekNumber <= 60
+          && request.resource.data.completed is bool
+          && request.resource.data.hasPublicComment is bool
+          && (
+            !('completedAt' in request.resource.data)
+            || request.resource.data.completedAt is timestamp
+          )
+          && (
+            !('rating' in request.resource.data)
+            || (request.resource.data.rating is int
+                && request.resource.data.rating >= 1
+                && request.resource.data.rating <= 5)
+          )
+          && (
+            !('publicComment' in request.resource.data)
+            || (request.resource.data.publicComment is string
+                && request.resource.data.publicComment.size() <= 1000)
+          )
+          && (
+            !('privateNote' in request.resource.data)
+            || (request.resource.data.privateNote is string
+                && request.resource.data.privateNote.size() <= 2000)
+          )
+          && request.resource.data.hasPublicComment == (
+            'publicComment' in request.resource.data
+            && request.resource.data.get('publicComment', '').size() > 0
+          );
+      }
+
+      // Own-row only, and LIST QUERIES MUST CONSTRAIN uid == self or they
+      // are denied outright. Admins moderate through the server routes
+      // (Admin SDK), so no admin read branch is needed here — keeping the
+      // rule get()-free is what makes big own-progress lists cheap.
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+
+      // Moderation fields are the server's: their absence at create plus the
+      // verbatim carry-through on update means a member can never fabricate,
+      // clear, or launder a moderation stamp by re-saving the row.
+      allow create: if progressShapeOk()
+        && !('moderatedByUid' in request.resource.data)
+        && !('moderatedAt' in request.resource.data);
+
+      // The id pins runId/uid/itemId already (a doc id can't change), but
+      // the field pins are stated anyway so a future id-scheme change can't
+      // silently drop the property. itemKind is pinned because flipping
+      // material <-> checklist would corrupt the completion percentages.
+      allow update: if progressShapeOk()
+        && request.resource.data.runId == resource.data.runId
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.itemId == resource.data.itemId
+        && request.resource.data.itemKind == resource.data.itemKind
+        && request.resource.data.get('moderatedByUid', null)
+          == resource.data.get('moderatedByUid', null)
+        && request.resource.data.get('moderatedAt', null)
+          == resource.data.get('moderatedAt', null);
+
+      // A member may retract their own row (un-check everything, including a
+      // moderated comment — deletion REMOVES content, which is the moderation
+      // outcome, not a way around it). Admin delete backs the moderation route.
+      allow delete: if isAdmin()
+        || (isSignedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    // === courseExerciseResponses ===
+    // Member exercise submissions. Routes-only writes: the response-type gate
+    // (text vs link, per the week's exercise DEFINITION) cannot live in rules
+    // — checking it would mean fetching the week doc and searching an array —
+    // and the URL validation (validateSubmissionUrl) is string-parsing rules
+    // can't do. Own-row read lets the member see their submission state;
+    // facilitators review through the PII-free facilitator routes.
+    match /courseExerciseResponses/{docId} {
+      allow read: if isAdmin()
+        || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow write: if false;
+    }
+
+    // === courseAttendance ===
+    // One register per (group, week), a map of uid -> status. That shape is
+    // why even READS are locked: any row a member could read leaks every
+    // other member's attendance. Facilitators mark and view attendance via
+    // the group routes (Admin SDK), which scope what comes back.
+    match /courseAttendance/{docId} {
+      allow read, write: if false;
+    }
+
+    // === courseNudges ===
+    // Server-side send-dedupe markers for the course reminder emails (the
+    // no-cron lazy-send bookkeeping). Pure machinery, admin SDK both ways.
+    match /courseNudges/{docId} {
+      allow read, write: if false;
+    }
+
+    // === courseEmailTemplates ===
+    // Admin-edited boilerplates for course lifecycle emails, mirroring
+    // applicationEmailTemplates: fixed ids, block bodies, {token}
+    // substitution at send time. Send routes use the Admin SDK; these rules
+    // are for the admin editor client. Caps mirror COURSE_SUBJECT_MAX /
+    // COURSE_TEMPLATE_MAX_BLOCKS in courseEmails.ts.
+    match /courseEmailTemplates/{templateId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin()
+        && request.resource.data.subject is string
+        && request.resource.data.subject.size() > 0
+        && request.resource.data.subject.size() <= 200
+        && request.resource.data.get('blocks', []).size() <= 40;
+    }
+
+    // === courseTemplates ===
+    // FROZEN CURRICULUM SNAPSHOTS (v2 decision 2) — `{ courseId, courseTitle,
+    // label, sourceRunId, sourceGroupId, savedAt, savedByUid, savedByName,
+    // weekCount, retrospective }` with the snapshotted week docs in a `weeks`
+    // subcollection, ids preserved from the source run.
+    //
+    // EVERY CLIENT WRITE IS DENIED, admins included, on the doc AND on the
+    // subcollection. This is the whole value of the collection, not a
+    // tightening that could be relaxed later:
+    //
+    //  - a template is the record of what a cohort was ACTUALLY taught, and
+    //    the thing next year's run is minted from. A snapshot you can edit
+    //    afterwards is just a second, worse copy of the run;
+    //  - the week docs carry the material / exercise / checklist IDS that
+    //    member progress is keyed on (`courseProgress/{runId}__{uid}__
+    //    {itemId}`). A client able to rewrite an id inside a template would
+    //    be aiming the NEXT run's progress keys, silently, a year early;
+    //  - the collection is APPEND-ONLY: saving mints a new id, so there is no
+    //    legitimate client write to admit in the first place. The routes
+    //    (Admin SDK) are POST /api/courses/[courseId]/templates and
+    //    DELETE /api/courses/templates/[templateId], both admin-only, and
+    //    NOTHING anywhere updates a template week.
+    //
+    // READ is the staff tier: admin, either course permission, or a track
+    // lead — drafters and leads have to browse versions to pick one, and a
+    // snapshot carries no PII (no member ids, no addresses, no per-member
+    // anything; the `retrospective` map is three scalars).
+    match /courseTemplates/{templateId} {
+      // The track-lead branch, resolved against the SOURCE RUN — a template
+      // carries no role fields of its own, so there is nothing on it for a
+      // reader to tamper with first.
+      //
+      // ⚠ COST. This is a get() inside a READ rule, and `allow read` covers
+      // `list`: a list query evaluates its rule PER CANDIDATE DOC, so this
+      // bills one document access per row against the ~20-access budget (the
+      // hazard courseProgress documents at length). Three things keep it
+      // safe rather than lucky:
+      //   * it is the LAST branch of a short-circuiting `||`, so it only ever
+      //     runs for a caller who is not an admin, drafter or approver;
+      //   * the admin UI reads versions through
+      //     GET /api/courses/[courseId]/templates (Admin SDK), not by listing
+      //     this collection — the client-read path exists for a single get();
+      //   * a course holds a handful of snapshots, not hundreds.
+      // A track lead listing more than ~20 snapshots straight from a client
+      // will be denied wholesale. That is the documented ceiling. If a
+      // surface ever needs that list, give it a route, don't widen this.
+      //
+      // A template whose `sourceRunId` names a run that no longer exists
+      // (destroyed run, hand-deleted doc) DENIES this branch — get() on a
+      // missing doc yields null and the lookup errors out, which is a deny.
+      // Correct: nobody can be a track lead of a run that isn't there. The
+      // privileged branches short-circuit before it, so a destroyed source
+      // run never locks staff out of their own history.
+      function isSourceRunTrackLead() {
+        return isSignedIn()
+          && resource.data.get('sourceRunId', '') is string
+          && resource.data.get('sourceRunId', '').size() > 0
+          && request.auth.uid in
+            get(/databases/$(database)/documents/courseRuns/$(resource.data.sourceRunId))
+              .data.get('trackLeadUids', []);
+      }
+
+      allow read: if isAdmin() || canDraftCourse() || canApproveCourse()
+        || isSourceRunTrackLead();
+
+      // Admin-only save/relabel/delete, all through routes. `write` covers
+      // create, update AND delete in one clause on purpose: there is no
+      // half-open door to reason about later.
+      allow write: if false;
+
+      // --- weeks (the frozen curriculum, ids preserved) ---
+      match /weeks/{weekId} {
+        // Same tier, one level down: the parent names the source run, so the
+        // track-lead branch costs TWO gets. Same short-circuit, same ceiling,
+        // same reasoning as above — and the same reason not to widen it.
+        function parentTemplate() {
+          return get(/databases/$(database)/documents/courseTemplates/$(templateId)).data;
+        }
+        allow read: if isAdmin() || canDraftCourse() || canApproveCourse()
+          || (
+            isSignedIn()
+            && parentTemplate().get('sourceRunId', '') is string
+            && parentTemplate().get('sourceRunId', '').size() > 0
+            && request.auth.uid in
+              get(/databases/$(database)/documents/courseRuns/$(parentTemplate().sourceRunId))
+                .data.get('trackLeadUids', [])
+          );
+
+        // IMMUTABLE. Not "server-owned like the role arrays" — immutable:
+        // the snapshot batch is the only write these docs ever receive, and
+        // it happens on the Admin SDK before anyone can see them. Pinned in
+        // scripts/rules-tests/tests/course-templates.test.mjs, including for
+        // admins.
+        allow write: if false;
+      }
+    }
+
+    // === courseMaterialNotes ===
+    // `{runId}__{itemId}__{uid}` — one facilitator's "how did this land" note
+    // on one piece of material, the named half of the retrospective loop
+    // (v2 decision 3).
+    //
+    // WRITES ARE ROUTE-ONLY (POST /api/courses/runs/[runId]/material-notes)
+    // for three reasons rules cannot express:
+    //   * authority is a QUERY — "a facilitator of any group in this run"
+    //     means reading `courseGroups`, which a rule cannot do;
+    //   * `weekNumber` is SERVER-DERIVED from the week doc whose materials
+    //     actually contain `itemId`, so a note cannot be filed against a week
+    //     the material is not in (where the retrospective, which builds its
+    //     rows from the current week definitions, would never render it);
+    //   * `byName` is resolved from the author's user doc, so a note can
+    //     never carry a name its author picked.
+    //
+    // READS are the retrospective's own tier — admin, either course
+    // permission, or the run's track leads. Deliberately NOT the note's own
+    // author on the client: facilitators write notes through the route and
+    // read them back through the retrospective (also a route), so admitting a
+    // client read here would widen the surface for nothing. When V2-3 gives
+    // facilitators their own view, it gets a route too.
+    //
+    // Members are excluded outright, including from their own materials'
+    // notes. These are staff assessments of the curriculum ("this reading
+    // confused everyone"), written on the understanding that the cohort is
+    // not the audience.
+    match /courseMaterialNotes/{noteId} {
+      function isNotedRunTrackLead() {
+        return isSignedIn()
+          && resource.data.get('runId', '') is string
+          && resource.data.get('runId', '').size() > 0
+          && request.auth.uid in
+            get(/databases/$(database)/documents/courseRuns/$(resource.data.runId))
+              .data.get('trackLeadUids', []);
+      }
+      // Same get()-in-a-read-rule caveat as courseTemplates: last branch of a
+      // short-circuiting ||, and the retrospective route (Admin SDK) is what
+      // actually renders these. Don't list this collection from a client.
+      allow read: if isAdmin() || canDraftCourse() || canApproveCourse()
+        || isNotedRunTrackLead();
+      allow write: if false;
+    }
+
+    // ==================== V3 W1 PR5: courses open mode ====================
+    //
+    // === courseAudit ===
+    // ONE append-only log for every course operational action that has to
+    // stay answerable after the fact: a register pushed or edited after the
+    // lock, a facilitator appointed or removed, a member dropping out, a run
+    // settled, a run's enrolment mode changed, a week unlocked early, and an
+    // applicant's access-requirements answer being read.
+    //
+    // The posture is `courseDeletions`', verbatim and for its reason: reads
+    // are admin-only and writes are shut to EVERY client, admins included.
+    // An append-only log its own actor can amend is not an audit trail. Every
+    // writer is an Admin SDK route.
+    //
+    // Rows are staff-action METADATA, never member content: `detail` is a
+    // route-written sentence, and nothing here holds an applicant's answers,
+    // their access requirements or a facilitator's notes about them, only the
+    // fact that a named actor touched them. See src/lib/firestore/courseAudit
+    // .ts for the retention decision (audits survive account deletion, as
+    // impersonations and courseDeletions already do) and the kind union.
+    //
+    // ⚠ A `firebase deploy --only firestore:rules` IS OWED when this merges,
+    // the same standing RULES-FIRST order as courseDeletions below: until it
+    // lands the collection is deny-by-default, so the Admin SDK writers keep
+    // working and the admin log renders empty.
+    match /courseAudit/{auditId} {
+      allow read:  if isAdmin();
+      allow write: if false;
+    }
+
+    // === config ===
+    // Server-only runtime config, written by the Admin SDK and read only by
+    // routes: `config/taskEmails` (the task-email kill switch),
+    // `config/courses` (grace windows, the drop-out feedback URL, the
+    // scheduler scan budgets). NOTE, like pushSubscriptions: with no `allow`
+    // this match is identical to Firestore's implicit deny, so no rules
+    // deploy is owed for it. It exists so the lockdown of a collection that
+    // is about to gain several documents is VISIBLE here rather than inferred
+    // from the absence of a block. The failure mode is a later wildcard
+    // opening a collection nobody remembered was closed.
+    match /config/{doc} {
+      allow read, write: if false;
+    }
+
+    // === courseDeletions ===
+    // The DESTROY audit log of the V2-1 deletion protocol: one doc per destroy
+    // attempt, `{ kind: "run" | "course", targetId, targetLabel, startedAt,
+    // startedByUid, startedByName, manifestCounts, deleted, completedAt,
+    // resumeCount }`. Written ONLY by the destroy routes
+    // (/api/courses/runs/[runId]/destroy, /api/courses/[courseId]/destroy) on
+    // the Admin SDK, which open the row BEFORE the first delete and accumulate
+    // into it on every resume — the impersonations `audit-first` pattern, for
+    // the same reason: a cascade that dies mid-page must still leave a record
+    // naming what it was told to destroy and how far it got.
+    //
+    // Reads are admin-only and writes are shut to EVERY client, admins
+    // included. This log is the only surviving evidence of a destroy — the
+    // rows it describes are gone — so a client able to touch it could rewrite
+    // or erase the record of its own cascade, and an append-only log that its
+    // own actor can amend is not an audit trail. Counts are also read back by
+    // the resumable-cascade UI, which is exactly the kind of consumer that
+    // makes a writable log tempting; it reads through the route instead.
+    //
+    // ⚠ A `firebase deploy --only firestore:rules` IS OWED when this merges.
+    // Until it lands, this collection hits deny-by-default: the destroy routes
+    // are Admin SDK and keep working, but the admin Danger-zone client cannot
+    // read a single audit row, so a completed destroy renders as if it never
+    // ran. Deploy rules to the target project BEFORE (or with) the rollout,
+    // dev and prod each — the standing "RULES FIRST" order for this platform.
+    match /courseDeletions/{auditId} {
+      allow read:  if isAdmin();
+      allow write: if false;
+    }
+
+    // =====================================================================
+    // === V3 W1 PR4: admissions ===========================================
+    // =====================================================================
+    //
+    // Six collections, every one of them `allow read, write: if false`.
+    // That is unusually blunt for this file, so each half is argued below.
+    // "Deny everything" is only a good rule when someone has checked that
+    // nothing legitimate needed the door.
+    //
+    // WHY NO CLIENT WRITES ANYWHERE. Every one of these carries something
+    // rules cannot express: counters that must move in the same transaction
+    // as a status (`applicationCounts`), a cross-document membership check
+    // (`round.reviewerUids`), a self-review guard, a server-recomputed
+    // total, or free text about a named person. The routes are Admin SDK and
+    // are the security boundary. That also makes the round's status
+    // transition table safe to keep in one route rather than duplicated
+    // here; if the write rule is ever relaxed, the table has to come with
+    // it, or the machine is three client writes from being walked
+    // backwards, exactly as `canApproveCourse()` can walk a live run back to
+    // draft today.
+    //
+    // WHY NO CLIENT READS EITHER, including own-row ones. This is the half
+    // that looks over-tight, so it is itemised:
+    //
+    //  - `admissionRounds` carries live `applicationCounts`, so a signed-in
+    //    read lets any fresher watch a competitive intake's submitted /
+    //    accepted / rejected counters move through the week their own
+    //    application is being decided; and `finalDeciderUid`, so they learn
+    //    who decides it. Nothing needs the client read: every staff surface
+    //    goes through GET /api/admissions/rounds[/[roundId]] for blinding
+    //    anyway, and the public round page is a server component.
+    //  - `.../stages` is THE release guarantee. `courseRuns` is
+    //    `allow read: if isSignedIn()` (see the block above), so questions
+    //    authored on a run document are readable the moment they are saved
+    //    and a timed release there is cosmetic. Here the only way a
+    //    question reaches a browser is a route that called
+    //    `isStageReleased` first. Subcollections do NOT inherit, so this
+    //    match block is required rather than decorative.
+    //  - `admissionApplications` would be the obvious own-row read, and it
+    //    is the sharpest one to refuse: the row carries
+    //    `evidence.facilitatorNotes` (a facilitator's private assessment of
+    //    the applicant) and `outcome.reason` alongside `outcome.reasonShared`
+    //    (the tick that decides whether they ever see it). An own-row read
+    //    hands the applicant reviewer-only material and an unshared
+    //    rejection reason from the browser console. The status hub is an
+    //    Admin SDK server component, so the rule bought nothing. If an
+    //    own-row read is ever wanted, those fields move to a routes-only
+    //    sibling FIRST.
+    //  - `admissionApplicationPrivate` holds the access-requirements answer
+    //    and nothing else. In practice that is disability and health
+    //    information. One reader, one route, and every read appends a
+    //    `courseAudit` row.
+    //  - `admissionReviews` read:false rather than own-row so no client can
+    //    enumerate who scored whom, which is the correlation a name-blind
+    //    process exists to prevent.
+    //  - `memberConductFlags` is off `users/{uid}` precisely because that
+    //    doc is own-row readable AND `AuthProvider` holds a live
+    //    `onSnapshot` on it, so a free-text misconduct reason there would
+    //    stream into the flagged member's own browser on every authed page
+    //    and could expose the reporter. Reviewers get a boolean chip through
+    //    a route payload; only admins ever see `reason`.
+    //
+    // Read:false also means there is no read rule for a `get()` to enter, so
+    // the "never a get() in a read rule" constraint is satisfied
+    // structurally here rather than by care.
+    //
+    // ⚠ A `firebase deploy --only firestore:rules` is NOT owed for these six
+    // blocks: with no `allow`, each match is identical to Firestore's
+    // implicit deny (the `pushSubscriptions` precedent below). They are
+    // written out so the lockdown is visible here rather than inferred, and
+    // so a later wildcard cannot silently open one of them. The composite
+    // indexes in `firestore.indexes.json` ARE owed a deploy, and they take
+    // minutes to build.
+
+    match /admissionRounds/{roundId} {
+      allow read, write: if false;
+    }
+
+    match /admissionRounds/{roundId}/stages/{stageId} {
+      allow read, write: if false;
+    }
+
+    match /admissionApplications/{applicationId} {
+      allow read, write: if false;
+    }
+
+    match /admissionApplicationPrivate/{applicationId} {
+      allow read, write: if false;
+    }
+
+    match /admissionReviews/{reviewId} {
+      allow read, write: if false;
+    }
+
+    match /memberConductFlags/{uid} {
+      allow read, write: if false;
+    }
+
+    // === end V3 W1 PR4: admissions =======================================
+
+    // =====================================================================
+    // === V3 W4: the member record and the destroy audit ==================
+    // =====================================================================
+    //
+    // Two collections that arrive with the deletion work, and both exist
+    // because of one rule the owner set above every other decision in it:
+    // A DESTROY NEVER DELETES WHAT THE COMMITTEE WANTS TO REMEMBER ABOUT A
+    // PERSON. `memberRecords` is what is remembered; `destroyAudits` is the
+    // record that a destroy happened at all.
+    //
+    // ⚠ A `firebase deploy --only firestore:rules` IS OWED when this merges,
+    // for `memberRecords` and for the `worksheets` delete change above.
+    // `memberRecords` has a real `allow read` that admins and SU-recognised
+    // committee need, so until the deploy lands the collection hits
+    // deny-by-default: the routes are Admin SDK and keep writing, but no
+    // client can read a single entry and a member record renders empty rather
+    // than erroring in a way anybody would notice. `destroyAudits` is the
+    // `courseDeletions` shape and owes a deploy for the same reason, since its
+    // admin read is what the Danger-zone client uses to show a completed
+    // destroy. Deploy rules to the target project BEFORE (or with) the
+    // rollout, dev and prod each: the standing RULES FIRST order.
+
+    // === memberRecords ===
+    // `memberRecords/{uid}` and `memberRecords/{uid}/applications/{roundId}`:
+    // per person, when they applied, what for, the outcome, how they scored
+    // and the reviewers' notes. Written when a round settles, or by a round
+    // destroy that finds an entry missing. Shape and reasoning in
+    // src/lib/firestore/memberRecords.ts.
+    //
+    // WHY SU-RECOGNISED COMMITTEE MAY READ IT. This is the SAME trust boundary
+    // as the `users` collection above, and deliberately not a new one. An
+    // entry is roster-tier knowledge about a member: it names a person, what
+    // they asked the society for and what the society decided. The people who
+    // may already read every member's profile are the people who may read
+    // this, and the split `suRecognised` draws (committee the Students' Union
+    // formally recognises, trusted with member PII, against committee scoped
+    // to what they are explicitly added to) is exactly the split this needs.
+    // Reading it is also the POINT of writing it: a later application is meant
+    // to be graded with this history in view, and the people grading are
+    // committee.
+    //
+    // It is a wider tier than `memberConductFlags`, which is admin-only, and
+    // the difference is what the two documents hold. A conduct flag carries a
+    // free-text ALLEGATION and can expose whoever reported it. An entry here
+    // carries a DECISION the committee itself made, together with the reviewer
+    // notes that the review queue already tells reviewers are disclosable to
+    // the applicant on request.
+    //
+    // WHY NOBODY WRITES IT CLIENT-SIDE, ADMINS INCLUDED. Three reasons, and
+    // the first is the one that would bite hardest:
+    //
+    //  - an entry COPIES OTHER PEOPLE'S WRITING. The reviewer notes and scores
+    //    come out of `admissionReviews`, which is `allow read, write: if false`
+    //    precisely so no client can enumerate who scored whom. A client-
+    //    writable entry would be a way to put words in a named reviewer's
+    //    mouth about a named applicant, and once the round is destroyed the
+    //    entry is the only surviving evidence of either.
+    //  - it is derived data with ONE correct derivation
+    //    (`buildApplicationRecord`), and two entries written months apart are
+    //    only comparable if the same arithmetic wrote both.
+    //  - it outlives its sources, so nothing can check it afterwards.
+    //
+    // NOT AN OWN-ROW READ. A member cannot read their own entry, which is the
+    // one carve-out that looks obviously fair and is not. The entry holds the
+    // reviewers' notes verbatim, including a reviewer's honest reservations,
+    // and the round's own rule is that those are disclosed ON REQUEST rather
+    // than streamed to the subject from a browser console. Disclosure is a
+    // decision somebody makes; a read rule is not.
+    match /memberRecords/{uid} {
+      allow read: if isAdmin() || isSuCommittee();
+      allow write: if false;
+    }
+
+    match /memberRecords/{uid}/applications/{roundId} {
+      // Subcollections do NOT inherit their parent's rules, so this block is
+      // required rather than decorative: without it the entries themselves
+      // fall to deny-by-default and the read granted above reaches only the
+      // near-empty parent document.
+      allow read: if isAdmin() || isSuCommittee();
+      allow write: if false;
+    }
+
+    // === destroyAudits ===
+    // One row per destroy attempt for every cascade that is not a course:
+    // `{ kind, targetId, label, startedAt, startedByUid, startedByName,
+    // deleted, completedAt, resumeCount, passInFlightUntil }`. Two kinds write
+    // rows today, `circulation` and `admission-round`. The union also carries a
+    // reserved `worksheet`, which NOTHING writes: deleting a library worksheet
+    // is a single-pass route that opens no row, so no row here is not evidence
+    // that no worksheet was deleted (src/lib/firestore/destroyAudit.ts says so
+    // at greater length, and owns the day that changes).
+    //
+    // A row is opened BEFORE the first delete and stamped `completedAt` at the
+    // end, so a row with a null `completedAt` is durable evidence of an
+    // interrupted destroy. Written only by the destroy routes on the Admin SDK.
+    // Shape in src/lib/firestore/destroyAudit.ts, including why this is a
+    // second collection rather than a `kind` field on `courseDeletions`.
+    //
+    // The `courseDeletions` posture verbatim, and for its reasons. Reads are
+    // admin-only. Writes are shut to EVERY client, admins included: this log
+    // is the only surviving evidence of a destroy, because the rows it
+    // describes are gone, so a client able to touch it could rewrite or erase
+    // the record of its own cascade, and an append-only log its own actor can
+    // amend is not an audit trail. The resumable-destroy UI reads its running
+    // totals back through the route rather than from here, which is exactly
+    // the kind of consumer that makes a writable log tempting.
+    match /destroyAudits/{auditId} {
+      allow read:  if isAdmin();
+      allow write: if false;
+    }
+
+    // === end V3 W4: the member record and the destroy audit ==============
+
+    // =====================================================================
+    // === V3 W3 PR27: membership ==========================================
+    // =====================================================================
+    //
+    // Two collections, both `allow read, write: if false`, plus the CURRENT
+    // pointer at `config/membership`, which the `match /config/{doc}` block
+    // above already shuts to every client.
+    //
+    // WHY NO CLIENT WRITES. A grant moves three things together: the
+    // membership row, the `users.paidMembershipYears` cache the badges read,
+    // and the period's cached per-tier totals. Rules cannot express "these
+    // three move as one", and they cannot express the cap pre-check that
+    // stops an eleventh year silently pushing another off the end of the
+    // cache. One Admin SDK route owns all three.
+    //
+    // WHY NO CLIENT READS, including the own-row one on `memberships` that
+    // looks obviously safe. A `get` of a MISSING document evaluates
+    // `resource.data.uid` against null and denies, so "this member has no
+    // membership row" and "this member may not look" arrive at the browser
+    // as the SAME permission-denied error. The profile badge could then not
+    // tell a member with no membership from a broken rule, which is the trap
+    // already recorded at useMyApplication.ts:26-33. The member path is
+    // GET /api/membership/me, which answers `null` and means it.
+    //
+    // `membershipPeriods` also carries a 200-character internal note an admin
+    // writes for other admins, and nothing member-facing needs the
+    // collection now that the /me route exists.
+    //
+    // NOT PART OF THE SU-RECOGNISED PII TIER. Membership is money and
+    // provenance rather than roster data, so recognising a committee member
+    // grants nothing here; the `manageMembership` permission does, and only
+    // through the routes.
+    //
+    // The `users.paidMembershipYears` pins in the users block above are the
+    // other half of this design: the cache is admin-set, and a member who
+    // could seed or edit it would wear a membership badge nobody granted.
+    // Those pins are re-asserted by the membership rules tests as the
+    // cache-forgery guard.
+    //
+    // ⚠ A `firebase deploy --only firestore:rules` is NOT owed for these two
+    // blocks: with no `allow`, each match is identical to Firestore's
+    // implicit deny (the `pushSubscriptions` precedent below). They are
+    // written out so the lockdown is visible here rather than inferred, and
+    // so a later wildcard cannot silently open one of them.
+
+    match /membershipPeriods/{periodId} {
+      allow read, write: if false;
+    }
+
+    match /memberships/{membershipId} {
+      allow read, write: if false;
+    }
+
+    // === end V3 W3 PR27: membership ======================================
+
+    // === V3 W3 PR28: the SU list import ==================================
+    //
+    // The uploaded file, and one row per line of it. Both shut to every
+    // client in both directions, including admins and `manageMembership`
+    // holders, who reach them through the import routes on the Admin SDK.
+    //
+    // WHY NO CLIENT READS. A row carries a name and an email address for
+    // somebody the Students' Union has on its list, which for most rows is
+    // a person with NO account here at all. That is a roster of named
+    // people who never agreed to anything on this site, so it is not
+    // roster data an SU-recognised committee member may browse; it is a
+    // file the society received, readable only through the console that
+    // acts on it.
+    //
+    // WHY NO CLIENT WRITES. The commit route reads its rows FROM HERE and
+    // never from a request body, because the name tier is confirm-only
+    // and a writable row would let a browser assert both the match and
+    // the confirmation. A client that could write a row could grant
+    // itself a membership through the commit route without ever touching
+    // `memberships`.
+    //
+    // THE SUBCOLLECTION NEEDS ITS OWN MATCH BLOCK. Rules do not inherit
+    // downwards, so `membershipImports/{batchId}` says nothing at all
+    // about `membershipImports/{batchId}/rows/{rowId}`. Both are written
+    // out, and the emulator tests assert both at every role.
+    //
+    // No rules DEPLOY is owed for either block: with no `allow`, each
+    // match is identical to Firestore's implicit deny (the
+    // `pushSubscriptions` precedent below). They are written out so the
+    // lockdown is visible rather than inferred, and so a later wildcard
+    // cannot silently open one of them.
+
+    match /membershipImports/{batchId} {
+      allow read, write: if false;
+
+      match /rows/{rowId} {
+        allow read, write: if false;
+      }
+    }
+
+    // === end V3 W3 PR28: the SU list import ==============================
+
+    // Web push subscriptions: one row per device endpoint, written ONLY by
+    // the Admin SDK routes under /api/push/*. Clients never touch it — the
+    // endpoint plus its keys IS the capability to push to that device's
+    // lock screen, so a readable row would let any member push at any other.
+    // NOTE unlike the block above, no rules deploy is owed for this: with no
+    // allow, the match is identical to Firestore's implicit deny. It exists
+    // so the collection's lockdown is visible here rather than inferred.
+    match /pushSubscriptions/{subId} {
+      allow read, write: if false;
     }
   }
 }

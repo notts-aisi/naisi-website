@@ -5,6 +5,7 @@ import { sendEmail } from "@/lib/email/send";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isTaskEmailEnabled } from "@/lib/firestore/taskEmailConfig";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { mirrorTaskEmailToPush } from "@/lib/push/taskNotifications";
 
 type Payload = {
   commentId?: unknown;
@@ -191,6 +192,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           commentPreview,
           taskLink,
         }),
+      });
+      await mirrorTaskEmailToPush(uid, {
+        title: subtaskTitle
+          ? `Review requested: ${subtaskTitle}`
+          : `Review requested: ${taskTitle}`,
+        body: `${requesterName} sent this for your sign-off.`,
+        taskId,
       });
       sent += 1;
     } catch (err) {
