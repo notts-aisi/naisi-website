@@ -1032,3 +1032,78 @@ Things worth knowing before you run it:
 which period, how many people were in it, and the filename. If that record
 cannot be written the export is refused, so a file never leaves without a log
 line behind it. Say so if anybody asks why the button failed.
+
+## Destroying an admission round
+
+Cancelling is the normal way to end a round, and it is the one to reach for
+first. It is a status on the round, it stops the form and the reminders, and it
+keeps every application, every review and every decision readable as history.
+Nothing about a cancelled round is lost.
+
+Destroying is the other thing. It removes the round, its stages, every
+application made to it with the access-requirements answer filed beside it, and
+every review written about those applications. It is for a round created by
+mistake, a test round on a dev backend, and data somebody has decided must not
+be retained. It cannot be undone.
+
+**The member record is written first.** Before anything is deleted, each
+applicant gets an entry at `memberRecords/{uid}/applications/{roundId}`: when
+they applied, what for, the outcome, the score summary and the reviewers' notes
+as plain text. That record hangs off the person, so it survives the round, and a
+later application can be read with the history in view. If any one of those
+writes fails the destroy REFUSES and nothing is deleted, naming the applicants
+whose record could not be written.
+
+Settling a round writes the same records, so in the normal case every entry
+already exists and the destroy writes nothing. It fills gaps and it never
+rewrites an entry that is already on file, which matters for one specific
+reason: an entry's reviewer notes are built from the reviews that exist at the
+moment it is written, and deleting an account deletes the reviews that account
+wrote. Rewriting a settled entry could therefore drop a departed reviewer's
+assessment that had been safely kept. So "0 member records written" on a
+destroyed round that had settled is the healthy answer, not a sweep that failed
+to run.
+
+How to run one, on Admin, Admissions, the round's own page:
+
+1. Move the round out of **Open** or **Deciding** first. The destroy refuses
+   both, and the refusal says so: an intake somebody can still apply to would
+   lose an application mid-sentence, and a round mid-decision has decisions that
+   are not on anybody's record yet.
+2. Open the **Danger zone** at the foot of the page. It reads a live manifest:
+   how many applications, private access-requirements rows, reviews and stages
+   will go, how many member records the destroy guarantees are on file first,
+   and how many people lose the Admissions entry in their sidebar.
+3. Type the round's label exactly. The check is byte-for-byte and nothing is
+   trimmed. A round with no label cannot be destroyed until it is given one.
+4. Press it and leave the dialog open. A large round takes more than one pass;
+   the dialog repeats the call itself and shows the running total.
+
+Things worth knowing before you do it:
+
+- **Nobody is emailed.** Not the applicants, not the reviewers. If somebody is
+  owed an explanation it is a conversation to have, not a template.
+- **Admins only.** An `approveCourse` holder authors rounds and can see this
+  page, but the two routes behind the danger zone refuse anybody else.
+- **The runs are untouched.** A round feeds course runs, and the runs outlive
+  it. Somebody sitting on a cohort keeps their place when the intake that put
+  them there is destroyed.
+- **Two logs survive.** `emailSends` (what was sent to whom) and `dataExports`
+  (which spreadsheets were downloaded, and by whom) are append-only records that
+  outlive what they describe. The manifest counts both and marks them kept.
+- **The Admissions sidebar entry disappears for some reviewers.** The flag
+  clears for anybody this round named who is named on no other round. It is a
+  nav hint and nothing else, so a person who is appointed again gets it back.
+- **An interrupted destroy resumes, and the round is frozen until it does.**
+  Every attempt opens a row in `destroyAudits` before anything dies, and a row
+  with no `completedAt` is a destroy that stopped. The round's page shows it on
+  the next visit and offers to carry on; the fact of the destroy, who ran it and
+  what it removed outlive the data either way.
+
+  A round that is part way through a destroy also carries a marker, and while it
+  is there the status control refuses every move with a sentence saying so. That
+  is deliberate and it is the only case where a round will not budge: half of it
+  is already gone, its status still says whatever it said when the destroy
+  started, and reopening it would take applications that finishing the destroy
+  would then delete. The only way forward is to resume, and the marker
+  disappears with the round.

@@ -386,6 +386,31 @@ export default function RespondPage({ circulationId }: { circulationId: string }
     );
   }
 
+  // A DESTROY IS RUNNING on this circulation, and this is tested BEFORE the
+  // missing-document state below rather than after it. The cascade flips
+  // `destroying` in the same write that closes the circulation, before the
+  // first delete, so a recipient with the tab open sees this rather than a form
+  // whose Save button is about to start failing against a document that has
+  // gone. Then their own response row is deleted, at which point their read of
+  // the circulation is refused (the rule proves a recipient by an `exists()` on
+  // that row), and asking "is the document missing" first would replace this
+  // sentence with "this worksheet is not for you" for somebody who was a
+  // recipient of it thirty seconds ago. Reading the last snapshot they were
+  // legitimately given tells them nothing they did not already have.
+  //
+  // Their answers are part of what is being removed, and saying so is the least
+  // this page owes them. Nothing here refuses a write on its own: the rules and
+  // the routes do that.
+  if (circulation?.destroying) {
+    return (
+      <EmptyState
+        title="This worksheet is being removed"
+        body="An admin is deleting this sending, including the answers people gave it. There is nothing left to fill in, and anything you had written here is going with it."
+        action={<Link href="/tasks">Go to your tasks</Link>}
+      />
+    );
+  }
+
   if (!circulation || !response || circulationError || responseError) {
     // One state for "no such circulation", "not a recipient" and "the read was
     // refused". They are the same fact from here, and telling them apart would

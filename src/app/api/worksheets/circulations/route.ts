@@ -353,6 +353,11 @@ export async function POST(req: Request) {
     notifications: notifications.notifications,
     dueDate: due.dueDate,
     status: "open",
+    // A brand new circulation is not being destroyed. The stored payload above
+    // deliberately does not carry the field: the normaliser reads an absent
+    // one as false, and writing it would put a destroy-protocol flag on every
+    // circulation ever sent to say that nothing is happening to it.
+    destroying: false,
     anonymity: "named",
     source: { kind: "worksheet" },
     recipientCount: 0,

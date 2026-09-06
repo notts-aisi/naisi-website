@@ -335,6 +335,22 @@ export type CirculationDoc = {
   dueDate: Date | null;
   status: CirculationStatus;
   /**
+   * A destroy has begun on this circulation and has not finished.
+   *
+   * Written ONLY by `src/lib/worksheets/destroy.ts`, in the same write that
+   * closes the circulation and before anything is deleted, so every live
+   * listen sees it the moment the cascade starts. The pages read it to say
+   * what is happening instead of rendering a recipient list whose rows are
+   * disappearing under the reader, or a respond page offering a Save button
+   * for a document that is going.
+   *
+   * It is a FLAG AND NOT A GATE: the refusals live in `firestore.rules` and in
+   * the routes, which is where they hold whatever a page happens to render.
+   * A cascade that dies mid-way leaves this true, which is correct: the
+   * circulation really is half-destroyed until somebody resumes it.
+   */
+  destroying: boolean;
+  /**
    * Asserted, never branched on, in v1. It exists so an anonymous mode can be
    * added later without a migration: responses would stay keyed by uid for the
    * rules, with a server-only pseudonym map beside them.
@@ -516,6 +532,9 @@ export function normalizeCirculation(id: string, data: Raw): CirculationDoc {
     // written before the field existed, and reading it as closed would silently
     // refuse submissions on a circulation the sender believes is live.
     status: data.status === "closed" ? "closed" : "open",
+    // Absent on every circulation written before the destroy protocol existed,
+    // and false is the honest reading of that: nothing was ever destroying it.
+    destroying: data.destroying === true,
     anonymity: "named",
     source: { kind: "worksheet" },
     recipientCount: num(data.recipientCount),

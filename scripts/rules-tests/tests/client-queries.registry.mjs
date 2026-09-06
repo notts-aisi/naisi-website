@@ -2392,6 +2392,50 @@ export const REGISTRY = [
     },
     run: (db, p) => db.doc(`circulations/${CIRC_ID}/reviews/${p.uid}`).get(),
   },
+
+  // =====================================================================
+  // The member record, on the admin Members row
+  // =====================================================================
+  {
+    id: "member-record-applications",
+    file: "src/features/admin/useMemberApplications.ts",
+    path: "memberRecords/{uid}/applications",
+    clauses: [],
+    reason:
+      "One person's application history, listed under their row on the admin Members page: a copy of what they applied for, what was decided, how they scored and what the reviewers wrote, taken when a round settles or is destroyed so that destroying the round does not destroy the committee's memory of the person. The GATE ON THE PAGE is `requireAdminPage()` (the (admin-only) group), so an admin is the only persona who can reach this hook today. The RULE is wider on purpose, admin OR SU-recognised committee, which is the same audience the users collection already trusts with member PII, and the entry pins that: the day this record is surfaced anywhere an SU-recognised committee member works, the read has to already be allowed rather than discovered to be refused. Everybody else is refused, the person it describes included: it is the committee's record ABOUT them, not their copy of it, and a member who could list their own subtree would be reading their reviewers' private notes. No clauses, because the rule admits the whole subcollection or none of it, and the fixture sits under OTHER so no persona is quietly reading their own.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "allowed",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc(`memberRecords/${OTHER}`).set({ uid: OTHER });
+      await db.doc(`memberRecords/${OTHER}/applications/round-1`).set({
+        roundId: "round-1",
+        roundTitle: "Autumn intake",
+        roundKind: "enrolment",
+        appliedFor: ["Technical track"],
+        outcome: { decision: "accept", status: "accepted", targetRunId: null },
+        scoreSummary: { reviewerCount: 1, total: 8, mean: 8, byCriterion: {} },
+        reviewerNotes: [
+          {
+            reviewerUid: "sucom1",
+            reviewerName: "A reviewer",
+            recommendation: "advance",
+            total: 8,
+            notes: "Clear on why they want to do this.",
+          },
+        ],
+        writtenBy: "settle",
+        writtenByUid: "admin1",
+      });
+    },
+    run: (db) =>
+      db.collection("memberRecords").doc(OTHER).collection("applications").get(),
+  },
 ];
 
 /**

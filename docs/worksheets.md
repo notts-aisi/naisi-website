@@ -30,6 +30,8 @@ extending it. Where the owner's brief was silent the choice made is marked
 | Action | Who |
 | --- | --- |
 | Open the library, create and edit own worksheets, create folders | any `committee` member (SU-recognised or not) and admins |
+| Delete a library worksheet | its author or an admin, through the route; refused while a circulation of it is open |
+| Destroy a circulation, destroy an admission round | admins only, never the sender (see Deletion) |
 | Edit somebody else's worksheet | admins only (**Decision**; others use "Make a copy") |
 | Make a worksheet private | admins only; a private worksheet is listed for admins and its author |
 | Circulate, add recipients | holders of the new `permissions.circulateWorksheet` key, admins implicitly |
@@ -82,6 +84,32 @@ tasks/{taskId}                                    (one per recipient)
   source "worksheet", kind "worksheet", visibility "assignees-only",
   completerUids [uid], reviewerUids = circulation.reviewerUids,
   artefact { kind: "worksheet-response", circulationId }
+```
+
+Two collections arrived with the deletion work. Neither is worksheet-specific:
+they are shared by every destroy this repo has that is not a course. See
+Deletion below, and the two modules named there, which are authoritative.
+
+```
+memberRecords/{uid}                               (routes write, nobody else)
+  uid, updatedAt
+
+memberRecords/{uid}/applications/{roundId}
+  roundId, roundTitle, roundKind, appliedFor[] (human labels),
+  appliedAt, submittedAt,
+  outcome { decision, status, targetRunId },
+  scoreSummary { reviewerCount, total, mean, byCriterion },
+  reviewerNotes[] { reviewerUid, reviewerName, recommendation, total, notes },
+  writtenAt, writtenBy ("settle" | "destroy" | "backfill"), writtenByUid
+  Read: admin + SU-recognised committee. Write: routes only, and account
+  deletion keeps it.
+
+destroyAudits/{id}                                (routes write, admin reads)
+  kind ("circulation" | "admission-round", plus a reserved "worksheet"
+    that nothing writes), targetId, label,
+  startedAt, startedByUid, startedByName, deleted { <stage>: n },
+  completedAt | null, resumeCount, passInFlightUntil | null
+  A null completedAt IS an interrupted destroy.
 ```
 
 ### Items
@@ -175,7 +203,10 @@ New blocks in `firestore.rules`, in this order after `taskTemplates`:
   admin, or author. Create for committee-or-admin with `authorUid == self`,
   `private == false` unless admin, `title.size() <= 120`,
   `items.size() <= 100`. Update by admin or author with `authorUid` pinned
-  and `private` pinned unless admin. Delete by admin or author.
+  and `private` pinned unless admin. NO client delete, for anybody, because a
+  document delete strands the question images in Storage and cannot ask whether
+  a circulation is still open; deletion is `DELETE /api/worksheets/{id}` (see
+  Deletion).
   A committee member's library list must carry `where("private", "==", false)`
   or Firestore refuses the whole listen (shape rule); admins list unfiltered.
 - `worksheetFolders/{id}`: read, create, update, delete for
@@ -220,6 +251,14 @@ There is **no virus scanner** in v1. Uploads are re-encoded on the client,
 type-checked on the server, and never served inline to anyone but staff and
 the uploader.
 
+Both paths are cleared by deletion, and by nothing else. `worksheet-images/{id}`
+goes with the worksheet or the circulation it belongs to, except that a
+worksheet's folder is KEPT while any circulation of it exists, because those
+copies point at the same files (see Delete a library worksheet);
+`worksheet-uploads/{circulationId}` goes with the circulation. Neither can be
+cleared client-side, because Storage rules cannot cascade from a Firestore
+delete, which is the reason both deletions are routes (see Deletion).
+
 ## Indexes
 
 One composite index: `circulations (status ASC, dueDate ASC)`, for the
@@ -249,6 +288,9 @@ All under `src/app/api/worksheets/`, a tree registered in
 | `POST /api/worksheets/circulations/{id}/export` | staff | CSV of every response, logged to `dataExports` as kind `worksheet-responses` with scope `{ circulationId }` |
 | `GET /api/worksheets/circulations/{id}/aggregate` | recipient or staff | counts per option for a poll question, honouring `resultsVisibility` for recipients; never names |
 | `POST /api/worksheets/circulations/{id}/close` | staff | `status: "closed"`, archives every recipient task; no further submissions |
+| `DELETE /api/worksheets/{worksheetId}` | author or admin | deletes the library document, and its question images when the worksheet has never been circulated; refused while a circulation of it is open |
+| `GET /api/worksheets/circulations/{id}/destroy-manifest` | admin | what a destroy would remove, plus blockers and any interrupted pass |
+| `POST /api/worksheets/circulations/{id}/destroy` | admin | the cascade; typed `confirmName`, resumable, audited |
 
 Routes cap recipients per request at 100 and write in batches of 200 documents.
 
@@ -419,69 +461,175 @@ the editor:
   wrote nothing. Whether the scheduler has been dark is answered by its own
   last-run time.
 
-## Planned next (scoped, not built)
+## Deletion (landed)
 
-The other piece the owner asked for on 7 September 2026, recorded here so the
-build follows a written shape.
+Built to the shape the owner asked for on 7 September 2026. Nothing used to
+delete worksheet or admissions data: a worksheet and a circulation could not be
+removed, account deletion left a member's responses in place, and an admission
+round could be cancelled but never removed. The courses destroy protocol
+already had a manifest, blockers, an audit row and a typed confirmation, so
+this copies that shape rather than inventing a fourth.
 
-### Deletion
-
-Nothing deletes worksheet data today. A worksheet or a circulation cannot be
-removed, and account deletion leaves a member's responses in place, the same
-policy it applies to their tasks. Admission rounds can be cancelled but never
-removed. Courses already have a destroy protocol with a manifest and
-blockers; the plan copies that shape rather than inventing a fourth:
-
-- **Delete a library worksheet**: author or admin; refused while any
-  circulation of it is open (the blocker is named in the confirm); deletes
-  the document and its question images under `worksheet-images/{id}`.
-- **Destroy a circulation**: admin, typed confirm, with a manifest first (how
-  many responses, reviews, tasks, uploaded images, export-log rows). Deletes
-  responses, reviews, the copy's images, every uploaded answer image under
-  `worksheet-uploads/{id}`, and the recipient tasks with their comments,
-  activity and attachments through the existing task cascade. Export-log
-  rows are counted and retained, as every other destroy does. Written to an
-  audit document the way run destroys are, so the fact of the destroy
-  outlives the data.
-- **Account deletion**: keeps responses and reviews, as it keeps tasks, and
-  records the count in the deletion summary, so the owner can change the
-  policy knowingly. Authored worksheets stay in the library with their
-  author shown as a former member.
-- **Destroy an admission round**: admin, typed confirm, manifest first,
-  refused while the round is open or deciding; deletes the round, its
-  stages, its applications and their private parts, and its reviews;
-  releases the `admissionsReviewer` flag on people who review nothing else.
-  Cancelled rounds are the normal way to end one; destroy is for test rounds
-  and mistakes.
-
-Owner decisions, 7 September 2026:
-
-- A circulation destroy is offered to admins only, never to the sender.
-- A deleted account's responses and reviews stay, counted in the deletion
-  summary, matching the tasks policy.
-- A round destroy is offered to admins straight away, with the confirm and
-  the manifest as the safeguard. And one rule above all of it:
+### The rule above all of it
 
 **A destroy never deletes what the committee wants to remember about a
-person.** The owner intends a member record: per person, the dates they
-applied, what they applied for, how they scored, plain-text notes on what
-the committee thought, and notes on how they have participated since, so a
-later application can be graded with that history in view. That record hangs
-off the person, not off the round, and a round destroy leaves it untouched.
-Consequences for the build order:
+person.** That is the owner's instruction and it is what the member record
+(below) exists for. A round destroy writes any missing record entry FIRST and
+refuses if that write fails, so the safeguard is a precondition of the cascade
+rather than a step inside it.
 
-- The deletion work ships the first slice of the member record with it:
-  `memberRecords/{uid}/applications/{roundId}` holding appliedAt, round
-  title, what was applied for, the outcome, the reviewers' score summary and
-  the reviewer notes copied as plain text. Written when a round settles or
-  when a destroy runs, whichever comes first, so a destroy after it loses
-  nothing the committee keeps. Admin and SU-recognised committee read it;
-  only routes write it; account deletion keeps it (the same reasoning as
-  export-log rows: it is the committee's record, not the member's content).
-- The destroy manifest names, per person, whether their record entry exists;
-  a destroy with a missing entry writes it first and refuses if that write
-  fails.
-- Participation notes on the record (how a member has taken part since) are
-  a later slice; the collection shape leaves room for them, and the existing
-  `memberConductFlags` collection is the precedent for admin-authored notes
-  about a member.
+**No destroy sends email.** Not to a recipient whose responses are going, not
+to a reviewer, not to an applicant. A destroy is for a test round, a mistake or
+a clean-up, and telling forty people that something they did has been removed
+turns an admin's tidy-up into an incident.
+
+### The member record
+
+`memberRecords/{uid}/applications/{roundId}`: per person, when they applied,
+what for, the outcome, how they scored and the reviewers' notes, copied as
+plain text. Written when a round settles, or by a round destroy that finds an
+entry missing, whichever comes first. Shape and reasoning in
+`src/lib/firestore/memberRecords.ts`, which is authoritative; the summary in
+the data model block above is a summary.
+
+- **Read**: admins and SU-recognised committee, the same trust boundary the
+  `users` collection draws, because an entry is roster-tier knowledge about a
+  member. Reading it is the point of writing it: a later application is meant
+  to be graded with this history in view.
+- **Not an own-row read.** A member cannot read their own entry. It holds the
+  reviewers' notes verbatim, and the round's own rule is that those are
+  disclosed on request rather than streamed to their subject from a browser
+  console.
+- **Write**: routes only, admins included. An entry copies other people's
+  writing out of `admissionReviews`, it has one correct derivation
+  (`buildApplicationRecord`), and it outlives its sources, so nothing can check
+  it after the fact.
+- **Account deletion keeps it**, and the deletion summary counts what it kept.
+  Same reasoning as the export log: it is the committee's record of its own
+  decisions rather than the member's content. It carries no essay answers, no
+  availability grid, no access-requirements answer and no email address.
+- **Participation notes** (how a member has taken part since) are a later
+  slice. They hang as a sibling subcollection under the same parent, because
+  they are not about one round and they accrue on their own schedule.
+  `memberConductFlags` is the precedent for admin-authored notes about a
+  member, and this read tier is deliberately wider than that one: a conduct
+  flag carries an allegation, an entry here carries a decision.
+
+### The destroy audit
+
+`destroyAudits/{id}`: one row per destroy attempt for every cascade that is not
+a course, opened BEFORE the first delete and stamped `completedAt` at the end,
+so a row with a null `completedAt` is durable evidence of an interrupted
+destroy. Admin read, no client write at all, on the `courseDeletions` posture
+and for its reasons: this log is the only surviving evidence of a destroy,
+because the rows it describes are gone.
+
+Two kinds write rows: `circulation` and `admission-round`. A worksheet delete
+writes NOTHING here, so an absent row is not evidence that nobody deleted a
+worksheet. That is the one deletion in this wave with no manifest, no resume and
+no audit, on the grounds that it is a single confirm over a document whose
+circulations each keep their own copy of the items. `worksheet` is reserved in
+the union so that recording it later is a two-line change in the route rather
+than a migration, and the module says as much next to the union.
+
+It is a SECOND collection rather than a `kind` field on `courseDeletions`
+because the course protocol's other half is a marker stamped on the course or
+run document itself, and a circulation, a worksheet and an admission round have
+no such field and no reason to grow one. `src/lib/firestore/destroyAudit.ts`
+carries the full argument, and the resume shape that follows from it: no
+marker, so an interrupted pass is found with an equality-only query and a
+client-side pick rather than with an index.
+
+### Delete a library worksheet
+
+Author or admin, one typed confirm, no manifest. Refused while any circulation
+of it is open, and the blocker is named in the confirm.
+
+`DELETE /api/worksheets/{worksheetId}` does it, and the client delete is now
+`allow delete: if false` for everybody. A document delete is not the whole
+deletion: the question and option images live in Storage under
+`worksheet-images/{worksheetId}` and rules cannot cascade, and "is there an open
+circulation of this worksheet" is a cross-collection question rules cannot ask.
+The `events` collection is the precedent (`src/app/api/events/[id]/delete`).
+The author is still the person who may delete it; that permission moved into
+the route, where it can be enforced together with the other two checks.
+
+The question images are swept ONLY when no circulation of the worksheet exists,
+whatever its status. A circulation copies the items verbatim, and an image in
+that copy points into `worksheet-images/{worksheetId}` until somebody re-uploads
+it on the circulation's own copy, so emptying the folder would blank the pictures
+inside every circulation ever made from this worksheet, archived ones included.
+The delete keeps the folder instead and reports how many files it kept. The cost
+is an orphaned folder once those circulations are themselves destroyed (a scan
+job, and the same one uploads already need); the alternative was an unrecoverable
+hole in the record of what people were asked.
+
+No `destroyAudits` row is written, unlike the two destroys below (see The
+destroy audit). Closing the client delete also does not make the question images
+safe on its own: an author can still strand the same files by editing the items
+list, which nothing sweeps.
+
+### Destroy a circulation
+
+Admins only, never the sender (**owner decision**). Typed confirm, with a
+manifest first. `GET .../destroy-manifest` then `POST .../destroy`.
+
+Deletes: responses, reviews, the recipient tasks with their comments, activity
+and attachments through the existing task cascade, the copy's question images,
+every uploaded answer image under `worksheet-uploads/{circulationId}`, and the
+circulation's scheduler markers. Counted and RETAINED: `dataExports` rows and
+`emailSends` rows, as every other destroy does, because each is evidence about
+something that has already left the platform.
+
+Manifest count keys: `responses`, `reviews`, `tasks`, `uploadedImages`,
+`questionImages`, `schedulerMarkers`, `dataExportRows` (retained),
+`emailSendRows` (retained).
+
+The two image counts are the only ones that can be MISSING from a manifest. A
+bucket listing that fails is not reported as 0, because "no uploaded answers" and
+"the file store did not answer" would then read identically on the last screen
+before an irreversible action: the key is left out and a blocker sentence says
+the folder could not be counted. A fresh destroy re-checks the same thing and is
+refused too, so a request made without reading the manifest cannot get past it.
+
+The audit row carries one key the manifest does not: `circulation: 1`, added
+when the circulation document itself goes, as the round destroy adds `round: 1`.
+Neither is a manifest key, because a manifest is a forecast of what a destroy
+would remove and the target itself is not news. On the audit row they are the
+line that says the cascade got all the way to the end.
+
+### Destroy an admission round
+
+Admins only, offered straight away, with the confirm and the manifest as the
+safeguard (**owner decision**: no "cancel it first" gate). Cancelling is still
+the normal way to end a round; destroy is for test rounds and mistakes.
+
+Deletes: the round, its stages, its applications and their private parts, and
+its reviews. Releases the `admissionsReviewer` flag on people who review
+nothing else. WRITES FIRST: any missing member-record entry, counted on the
+manifest as `memberRecordEntriesWritten`, which is a count of writes made
+rather than of rows destroyed. The destroy refuses if that write fails.
+
+Manifest count keys: `applications`, `applicationPrivateRows`, `reviews`,
+`stages`, `memberRecordEntriesWritten` (written, not deleted),
+`reviewerFlagsCleared`, `emailSendRows` (retained), `dataExportRows`
+(retained).
+
+### Account deletion
+
+Keeps responses and reviews, as it keeps tasks, and counts them in the deletion
+summary so the policy can be reversed knowingly. Authored worksheets stay in
+the library with their author shown as a former member. The member record is
+kept too, and counted, for the reason given above.
+
+### The manifest and the confirm
+
+One JSON shape for every destroy, so one panel renders all of them
+(`src/features/destroy/DestroyPanel.tsx`, the generic half of
+`RunDangerZone`): `{ target: { id, label, context, status }, counts, blockers,
+interrupted }`. Each destroy route takes `{ confirmName }` and returns
+`{ ok, deleted, complete, auditId }`. A blocker is a 409 with the sentences
+intact, a pass already running is a 409, a wrong `confirmName` is a 400.
+`complete: false` means the pass ran out of budget and the SAME call resumes,
+which is why the panel shows a running total taken from the audit row rather
+than from the pass.

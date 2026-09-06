@@ -22,6 +22,7 @@ import {
 } from "@/lib/firestore/users";
 import { startImpersonation } from "@/auth/impersonation";
 import ConductFlagControl from "./ConductFlagControl";
+import MemberApplicationHistory from "./MemberApplicationHistory";
 import MemberEditForm from "./MemberEditForm";
 import MembershipChip, { MembershipSummaryBadge } from "./MembershipChip";
 import {
@@ -674,6 +675,15 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
             <MemberEditForm user={user} onDone={onToggleExpand} />
           </>
         )}
+
+        {/* The committee's record of this person: which rounds they applied
+            to, what was decided, and what the reviewers wrote. Mounted inside
+            the expanded panel only, so opening the Members list never listens
+            to anybody's history, and mounted OUTSIDE the rejected branch on
+            purpose: the record of what a rejected applicant was told is
+            exactly what an admin wants in front of them before they press
+            delete. */}
+        <MemberApplicationHistory uid={user.uid} />
       </div>
 
       {/* Kept mounted with no live toaster of its own: the membership control

@@ -30,6 +30,12 @@
  *  - `private` IS ADMIN-ONLY IN BOTH DIRECTIONS AND AT BOTH CREATE AND UPDATE.
  *    Pinning it at update alone would let a committee member create the
  *    worksheet private and walk past the gate.
+ *  - DELETING A WORKSHEET IS A ROUTE TOO, since the deletion work landed. The
+ *    author is still the person who may do it, but a document delete strands
+ *    the question images in Storage and cannot ask whether a circulation of
+ *    the worksheet is still open, so the client delete closed and the
+ *    permission moved into the route. The refusals for every hat, admins
+ *    included, are in member-records.test.mjs.
  */
 import { after, afterEach, before, describe, it } from "node:test";
 import {
@@ -323,13 +329,25 @@ describe("worksheets: the library document", () => {
     await assertFails(db.collection("worksheets").doc("w1").update({ authorUid: "su1" }));
   });
 
-  it("lets the author delete their own", async () => {
-    // Safe because a circulation carries its OWN copy of the items: deleting
-    // the library document cannot take a sent worksheet away from anybody.
+  it("refuses the author deleting their own, because deletion is a route", async () => {
+    // This assertion used to read the other way, and the argument for it was
+    // sound as far as it went: a circulation carries its OWN copy of the
+    // items, so deleting the library document cannot take a sent worksheet
+    // away from anybody. What it missed is that the document is not the whole
+    // of the deletion. The question and option images live in Storage under
+    // `worksheet-images/{worksheetId}` and rules cannot cascade, and a
+    // worksheet with an open circulation has to be refused, which is a
+    // cross-collection question rules cannot ask. Both are the route's job,
+    // on the `events` precedent, so the client delete closed.
+    //
+    // The author is still the person who may delete it. That permission moved
+    // into DELETE /api/worksheets/{worksheetId}, where it can be enforced
+    // together with the two checks above rather than beside them. The full
+    // refusal set, admins included, is in member-records.test.mjs.
     await seedCast();
     await seedWorksheet("w1");
     const db = await asUser("committee1");
-    await assertSucceeds(db.collection("worksheets").doc("w1").delete());
+    await assertFails(db.collection("worksheets").doc("w1").delete());
   });
 
   it("refuses another committee member deleting it", async () => {

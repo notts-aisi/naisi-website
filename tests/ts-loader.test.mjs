@@ -258,6 +258,12 @@ const USERS = new Map([
       "the no-feedback-in-the-email promise is now checked against the rendered message",
   ],
   [
+    "worksheet-destroy.test.mjs",
+    "the destroy and delete routes over the same worksheet tree, loading the cascade engine and " +
+      "the shared audit module for real; the routes it loads import `access.ts` beside every " +
+      "sibling that reaches `notify.ts` and its four templates",
+  ],
+  [
     "worksheet-aggregate.test.mjs",
     "the third suite over the same tree, sharing the other two's fake store; nothing it loads " +
       "reaches a `.tsx` yet, and every route beside the three it loads imports `notify.ts`",
@@ -294,6 +300,25 @@ const USERS = new Map([
     "the shared reminder-slot model and its resolver: `schedule.ts` reaches `schedulerMarkers.ts` " +
       "and the suite also loads the admissions adapter to prove the two features resolve through " +
       "one piece of arithmetic, so it is a multi-module graph rather than one leaf file",
+  ],
+  [
+    "account-deletion-worksheets.test.mjs",
+    "it executes the whole account cascade to prove what that cascade KEEPS, so its graph is " +
+      "`accountDeletion.ts` plus every collection helper it imports, `memberRecords.ts` among " +
+      "them; the Admin SDK is its only stub, because a retention proved against a copy of the " +
+      "sweep would say nothing about the sweep that ships",
+  ],
+  [
+    "member-records.test.mjs",
+    "`memberRecords.ts` derives an entry from the round, application and review types, so its " +
+      "graph is four admissions modules deep; the Admin SDK is its only stub, because the " +
+      "arithmetic under test has to be the shipping arithmetic and not a copy of it",
+  ],
+  [
+    "admissions-destroy.test.mjs",
+    "it runs the round destroy end to end, so its graph is the cascade, the member-record sweep, " +
+      "`memberRecords.ts`, the audit module and three route handlers at once; the promise under " +
+      "test is an ORDER of writes across those modules, which only the shipping modules can hold",
   ],
 ]);
 

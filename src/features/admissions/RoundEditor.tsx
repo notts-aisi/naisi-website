@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { collection, getDocs } from "firebase/firestore";
 import Badge from "@/components/ui/Badge";
@@ -26,6 +27,7 @@ import { validateSlots, type ReminderSlot } from "@/lib/reminders/slots";
 import { appointmentDecideBlock } from "@/lib/admissions/appointmentRules";
 import { nextStatuses, planStatusChange } from "@/lib/admissions/roundStatus";
 import { normalizeCourseRun, type CourseRunDoc } from "@/lib/firestore/courses";
+import DestroyPanel from "@/features/destroy/DestroyPanel";
 import AppointmentsLink from "./AppointmentsLink";
 import ReadinessPanel from "./ReadinessPanel";
 import SectionCard from "./SectionCard";
@@ -105,6 +107,7 @@ export default function RoundEditor({
   roundId: string;
   isAdmin: boolean;
 }) {
+  const router = useRouter();
   const [round, setRound] = useState<Round | null>(null);
   const [stages, setStages] = useState<Stage[]>([]);
   const [canAuthor, setCanAuthor] = useState(false);
@@ -254,6 +257,41 @@ export default function RoundEditor({
             <RolesSection round={round} isAdmin={isAdmin} onSaved={setRound} />
             <RemindersSection round={round} patch={patch} />
             <StatusSection round={round} onChanged={load} patch={patch} />
+            {/*
+              The danger zone, admin only and last on the page.
+
+              Cancelling is the everyday way to end a round and it lives in
+              the Status section above, where the rest of the lifecycle is:
+              it keeps every application and review readable as history.
+              Destroying is the other thing entirely, so it sits below
+              everything else behind its own disclosure, its own manifest and
+              a typed confirmation.
+
+              `isAdmin` is a rendering decision and nothing more. An
+              `approveCourse` holder authors rounds and reaches this page, but
+              destroying one removes other people's applications, the
+              access-requirements answers beside them and the reviewers'
+              notes, so both routes refuse anybody but an admin whatever this
+              page draws.
+
+              Destroying deletes the round document, so there is nothing left
+              to re-read: the panel hands back to the round list rather than
+              to a page that would 404.
+            */}
+            {isAdmin && (
+              <DestroyPanel
+                kind="admission-round"
+                targetId={round.id}
+                label={round.label}
+                nameLabel="round label"
+                subtitle={
+                  round.academicYear
+                    ? `${ADMISSION_ROUND_KIND_LABEL[round.kind]} · ${round.academicYear}`
+                    : ADMISSION_ROUND_KIND_LABEL[round.kind]
+                }
+                onDestroyed={() => router.push("/admin/admissions")}
+              />
+            )}
           </>
         )}
       </div>

@@ -222,9 +222,31 @@ const MUST_GUARD = [
     "src/app/api/worksheets/circulations/[circulationId]/close/route.ts",
     "stops a circulation taking any more answers and archives a task on every recipient's board",
   ],
+  [
+    "src/app/api/worksheets/[worksheetId]/route.ts",
+    "deletes somebody's library worksheet and the question images that go with it",
+  ],
+  [
+    "src/app/api/worksheets/circulations/[circulationId]/destroy/route.ts",
+    "destroys a circulation: every recipient's answers, the uploads they made, the reviews written about them and the card on each of their boards",
+  ],
   // The aggregate GET is deliberately absent, like the recipients GET above
   // it: it writes nothing, and reading what a member sees is what view-as is
-  // for.
+  // for. The destroy-manifest GET beside the destroy is absent for the same
+  // reason: it counts what a destroy would remove and changes nothing, and it
+  // refuses anybody who is not an admin, which an admin viewing as a member is
+  // not.
+
+  // ── The admission ROUND lane of the deletion work ────────────────────────
+  // Destroying a round is the single most consequential write in the
+  // admissions tree, and it is one an admin can only make under their own
+  // name. The manifest route beside it is a GET and is deliberately absent
+  // from this list: it reads live counts and writes nothing, and reading what
+  // an action would do is exactly what view-as exists for.
+  [
+    "src/app/api/admissions/rounds/[roundId]/destroy/route.ts",
+    "destroys an intake: every application on it, the access-requirements answer filed beside each one, the reviewers' written assessments, and the round itself",
+  ],
 ];
 
 /**

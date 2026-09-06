@@ -554,6 +554,12 @@ service cloud.firestore {
     //    client writes no circulation, no response document and no task, so
     //    create and delete are closed here and the only client-direct writes
     //    are the recipient's autosave and the staff's review notes.
+    //  - DELETION is a route in both halves. A worksheet's client delete was
+    //    closed when deletion landed, because the document is not the whole of
+    //    it (question images in Storage, and a blocker on any open circulation
+    //    that rules cannot ask about); destroying a circulation was never a
+    //    client write and is admin-only besides. See the `allow delete` comment
+    //    on `worksheets` below, and docs/worksheets.md > Deletion.
 
     // === worksheets ===
     match /worksheets/{worksheetId} {
@@ -643,10 +649,43 @@ service cloud.firestore {
         && request.resource.data.get('description', '').size() <= 1000
         && request.resource.data.items.size() <= 100;
 
-      // Deleting the library document does NOT touch anything already sent:
-      // a circulation carries its own copy of the items. That is why an
-      // author may delete their own worksheet without an admin.
-      allow delete: if isAdmin() || isAuthor();
+      // NO CLIENT DELETE, FOR ANYBODY, THE AUTHOR AND ADMINS INCLUDED.
+      //
+      // This rule used to read `isAdmin() || isAuthor()`, on the argument that
+      // deleting the library document takes nothing away from anybody who has
+      // already been sent the worksheet, because a circulation carries its own
+      // copy of the items. That argument is still true and it is still not
+      // enough, because a document delete is not the whole deletion:
+      //
+      //  - the question bodies and option images live in Storage under
+      //    `worksheet-images/{worksheetId}`, and rules cannot cascade. A
+      //    client delete leaves every one of those files behind, owned by a
+      //    path whose document is gone, so nothing can find them again and
+      //    nothing can name them to clear them.
+      //  - a worksheet with an OPEN circulation is refused, and "is there an
+      //    open circulation of this worksheet" is a cross-collection question
+      //    that rules cannot ask. Left here, the refusal would be a sentence
+      //    in the UI with nothing behind it.
+      //
+      // So the delete goes through DELETE /api/worksheets/{worksheetId} on the
+      // Admin SDK, which checks the blocker, removes the images and then the
+      // document. The `events` collection is the precedent, verbatim: it is
+      // `allow delete: if false` and its deletion is
+      // src/app/api/events/[id]/delete/route.ts for exactly these two reasons.
+      //
+      // THIS DOES NOT MAKE THE IMAGES SAFE, only the delete path. An author can
+      // still strand the same files through the `allow update` above by
+      // emptying `items` or dropping one image question, and nothing sweeps a
+      // file that no item points at any more. That is a known orphan source and
+      // it is unchanged by this rule: the argument here is that a delete must
+      // not be another way to make orphans, not that the update path has been
+      // closed. Per-item Storage cleanup on save is the fix and it is not
+      // built.
+      //
+      // The author is still the person who may delete it. That permission now
+      // lives in the route, which is where it can be enforced together with the
+      // two things above rather than beside them.
+      allow delete: if false;
     }
 
     // === worksheetFolders ===
@@ -2725,6 +2764,119 @@ service cloud.firestore {
     }
 
     // === end V3 W1 PR4: admissions =======================================
+
+    // =====================================================================
+    // === V3 W4: the member record and the destroy audit ==================
+    // =====================================================================
+    //
+    // Two collections that arrive with the deletion work, and both exist
+    // because of one rule the owner set above every other decision in it:
+    // A DESTROY NEVER DELETES WHAT THE COMMITTEE WANTS TO REMEMBER ABOUT A
+    // PERSON. `memberRecords` is what is remembered; `destroyAudits` is the
+    // record that a destroy happened at all.
+    //
+    // ⚠ A `firebase deploy --only firestore:rules` IS OWED when this merges,
+    // for `memberRecords` and for the `worksheets` delete change above.
+    // `memberRecords` has a real `allow read` that admins and SU-recognised
+    // committee need, so until the deploy lands the collection hits
+    // deny-by-default: the routes are Admin SDK and keep writing, but no
+    // client can read a single entry and a member record renders empty rather
+    // than erroring in a way anybody would notice. `destroyAudits` is the
+    // `courseDeletions` shape and owes a deploy for the same reason, since its
+    // admin read is what the Danger-zone client uses to show a completed
+    // destroy. Deploy rules to the target project BEFORE (or with) the
+    // rollout, dev and prod each: the standing RULES FIRST order.
+
+    // === memberRecords ===
+    // `memberRecords/{uid}` and `memberRecords/{uid}/applications/{roundId}`:
+    // per person, when they applied, what for, the outcome, how they scored
+    // and the reviewers' notes. Written when a round settles, or by a round
+    // destroy that finds an entry missing. Shape and reasoning in
+    // src/lib/firestore/memberRecords.ts.
+    //
+    // WHY SU-RECOGNISED COMMITTEE MAY READ IT. This is the SAME trust boundary
+    // as the `users` collection above, and deliberately not a new one. An
+    // entry is roster-tier knowledge about a member: it names a person, what
+    // they asked the society for and what the society decided. The people who
+    // may already read every member's profile are the people who may read
+    // this, and the split `suRecognised` draws (committee the Students' Union
+    // formally recognises, trusted with member PII, against committee scoped
+    // to what they are explicitly added to) is exactly the split this needs.
+    // Reading it is also the POINT of writing it: a later application is meant
+    // to be graded with this history in view, and the people grading are
+    // committee.
+    //
+    // It is a wider tier than `memberConductFlags`, which is admin-only, and
+    // the difference is what the two documents hold. A conduct flag carries a
+    // free-text ALLEGATION and can expose whoever reported it. An entry here
+    // carries a DECISION the committee itself made, together with the reviewer
+    // notes that the review queue already tells reviewers are disclosable to
+    // the applicant on request.
+    //
+    // WHY NOBODY WRITES IT CLIENT-SIDE, ADMINS INCLUDED. Three reasons, and
+    // the first is the one that would bite hardest:
+    //
+    //  - an entry COPIES OTHER PEOPLE'S WRITING. The reviewer notes and scores
+    //    come out of `admissionReviews`, which is `allow read, write: if false`
+    //    precisely so no client can enumerate who scored whom. A client-
+    //    writable entry would be a way to put words in a named reviewer's
+    //    mouth about a named applicant, and once the round is destroyed the
+    //    entry is the only surviving evidence of either.
+    //  - it is derived data with ONE correct derivation
+    //    (`buildApplicationRecord`), and two entries written months apart are
+    //    only comparable if the same arithmetic wrote both.
+    //  - it outlives its sources, so nothing can check it afterwards.
+    //
+    // NOT AN OWN-ROW READ. A member cannot read their own entry, which is the
+    // one carve-out that looks obviously fair and is not. The entry holds the
+    // reviewers' notes verbatim, including a reviewer's honest reservations,
+    // and the round's own rule is that those are disclosed ON REQUEST rather
+    // than streamed to the subject from a browser console. Disclosure is a
+    // decision somebody makes; a read rule is not.
+    match /memberRecords/{uid} {
+      allow read: if isAdmin() || isSuCommittee();
+      allow write: if false;
+    }
+
+    match /memberRecords/{uid}/applications/{roundId} {
+      // Subcollections do NOT inherit their parent's rules, so this block is
+      // required rather than decorative: without it the entries themselves
+      // fall to deny-by-default and the read granted above reaches only the
+      // near-empty parent document.
+      allow read: if isAdmin() || isSuCommittee();
+      allow write: if false;
+    }
+
+    // === destroyAudits ===
+    // One row per destroy attempt for every cascade that is not a course:
+    // `{ kind, targetId, label, startedAt, startedByUid, startedByName,
+    // deleted, completedAt, resumeCount, passInFlightUntil }`. Two kinds write
+    // rows today, `circulation` and `admission-round`. The union also carries a
+    // reserved `worksheet`, which NOTHING writes: deleting a library worksheet
+    // is a single-pass route that opens no row, so no row here is not evidence
+    // that no worksheet was deleted (src/lib/firestore/destroyAudit.ts says so
+    // at greater length, and owns the day that changes).
+    //
+    // A row is opened BEFORE the first delete and stamped `completedAt` at the
+    // end, so a row with a null `completedAt` is durable evidence of an
+    // interrupted destroy. Written only by the destroy routes on the Admin SDK.
+    // Shape in src/lib/firestore/destroyAudit.ts, including why this is a
+    // second collection rather than a `kind` field on `courseDeletions`.
+    //
+    // The `courseDeletions` posture verbatim, and for its reasons. Reads are
+    // admin-only. Writes are shut to EVERY client, admins included: this log
+    // is the only surviving evidence of a destroy, because the rows it
+    // describes are gone, so a client able to touch it could rewrite or erase
+    // the record of its own cascade, and an append-only log its own actor can
+    // amend is not an audit trail. The resumable-destroy UI reads its running
+    // totals back through the route rather than from here, which is exactly
+    // the kind of consumer that makes a writable log tempting.
+    match /destroyAudits/{auditId} {
+      allow read:  if isAdmin();
+      allow write: if false;
+    }
+
+    // === end V3 W4: the member record and the destroy audit ==============
 
     // =====================================================================
     // === V3 W3 PR27: membership ==========================================

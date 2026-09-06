@@ -82,11 +82,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
  *  - A server type alias is a claim, not a check. The parse below is the check,
  *    and it has to run whether or not a type was imported.
  *
- * Keep in step with the routes: `{ run | course, counts, blockers }` plus the
- * optional `interrupted`. An unrecognised COUNT key is not a drift failure —
- * see `countMeta()` — so the two can gain counters independently.
+ * Keep in step with the routes: `{ run | course | target, counts, blockers }`
+ * plus the optional `interrupted`. An unrecognised COUNT key is not a drift
+ * failure (see `countMeta()`), so the routes can gain counters independently.
  */
-export type DestroyKind = "run" | "course";
+
+/**
+ * What is being destroyed. The hook started with the two course subjects and
+ * now serves four, because everything after the URL is identical: a manifest
+ * read, a typed confirmation, a paged cascade and an audit row. The two
+ * newcomers name their subject under `target` in the manifest payload, which
+ * `parseManifest` already accepts alongside `run` and `course`.
+ */
+export type DestroyKind = "run" | "course" | "circulation" | "admission-round";
 
 /** Live row counts, keyed by what they count. Values are non-negative ints. */
 export type DestroyCounts = Record<string, number>;
@@ -137,6 +145,11 @@ export type DestroyManifest = {
  *   retained  — deliberately NOT deleted. `emailSends` is the append-only
  *               record of what was sent to whom; it is deliverability and
  *               abuse-handling evidence and outlives the thing it mentions.
+ *               A counter for rows the destroy WRITES rather than removes
+ *               (the member record entries an admission round copies out
+ *               before it deletes anything) takes this fate too: what the
+ *               reader needs from the fate is "this is on the surviving side
+ *               of the line", and the row's note says which way it got there.
  *   orphaned  — survives, but loses the reference that named it. Templates are
  *               frozen snapshots (v2 decision 2, append-only); destroying the
  *               course they were taken from does not destroy them.
@@ -151,19 +164,45 @@ type CountMeta = {
 };
 
 /**
- * Display order and copy for every counter the two manifests are known to
- * report. Order is the order rows are shown in — roughly "structure, then
- * people, then the trail people left" — not alphabetical and not by size, so
+ * Display order and copy for every counter the destroy manifests are known to
+ * report. Order is the order rows are shown in (roughly "structure, then
+ * people, then the trail people left"), not alphabetical and not by size, so
  * the same destroy always reads the same way.
+ *
+ * FOUR SUBJECTS REPORT INTO THIS ONE MAP now, not two: the run, the course, a
+ * worksheet circulation and an admission round. The map is not the courses
+ * feature's private vocabulary any more, and the reason it has to hold every
+ * subject's keys is `fate`. A key this map does not know falls back to
+ * "destroyed" (see `countMeta`), which is the safe direction for something
+ * that dies and a LIE for something that survives, so a counter naming a
+ * survivor MUST have an entry here. `memberRecordEntriesWritten` is the one
+ * that made the rule: it counts records the round destroy writes so the
+ * committee keeps what it remembers about a person, and reporting it under
+ * "what this removes" would contradict the owner's first rule about destroys
+ * on the very screen that exists to state it.
+ *
+ * Per-subject WORDING can still be overridden where a shared sentence would be
+ * about the wrong thing (see `EXTRA_COUNT_COPY` in
+ * `src/features/destroy/DestroyPanel.tsx`); the fate never is.
  */
 const COUNT_META: Record<string, CountMeta> = {
   runs: { label: "Runs", fate: "destroyed" },
   weeks: { label: "Week documents", fate: "destroyed" },
   groups: { label: "Groups", fate: "destroyed" },
+  stages: {
+    label: "Round stages",
+    fate: "destroyed",
+    note: "The round's own structure: each stage and the criteria it scored on.",
+  },
   applications: {
     label: "Applications",
     fate: "destroyed",
     note: "Including every answer given on the application form.",
+  },
+  applicationPrivateRows: {
+    label: "Access-requirements answers",
+    fate: "destroyed",
+    note: "What each applicant told us they need in order to take part. Stored apart from the application because fewer people may read it; it goes with the application it belongs to.",
   },
   enrolments: { label: "Enrolments", fate: "destroyed" },
   progress: {
@@ -215,6 +254,16 @@ const COUNT_META: Record<string, CountMeta> = {
     label: "Scheduler send markers",
     fate: "destroyed",
     note: "The dedupe rows that record which timed sends this run's groups have already had. No member work and no addresses, but they have to go with the run: a marker left behind can suppress a real send later.",
+  },
+  reviewerFlagsCleared: {
+    label: "Admissions reviewer flags",
+    fate: "destroyed",
+    note: "Committee members who lose the Admissions tab because this was the only round naming them as a reviewer. Their accounts, and their reviews on any other round, are untouched.",
+  },
+  memberRecordEntriesWritten: {
+    label: "Member record entries",
+    fate: "retained",
+    note: "WRITTEN, NOT DELETED, and written before anything is removed. One entry per applicant on their own member record: when they applied, what for, the outcome, how they scored and the reviewers' notes. It hangs off the person rather than off the round, so it survives this destroy and every other.",
   },
   emailSendRows: {
     label: "Delivery-log rows",
@@ -480,10 +529,18 @@ export function useDestroy(kind: DestroyKind, targetId: string, fallbackLabel: s
   const [failure, setFailure] = useState<PassFailure | null>(null);
 
   const urls = useMemo(() => {
-    const base =
-      kind === "run"
-        ? `/api/courses/runs/${encodeURIComponent(targetId)}`
-        : `/api/courses/${encodeURIComponent(targetId)}`;
+    // One base per kind, and every kind answers `{base}/destroy-manifest` and
+    // `{base}/destroy` with the same two contracts. A total record rather than
+    // a ternary chain: a fifth subject is one line, and until it has one the
+    // types refuse the build instead of quietly routing it at the courses tree.
+    const id = encodeURIComponent(targetId);
+    const bases: Record<DestroyKind, string> = {
+      run: `/api/courses/runs/${id}`,
+      course: `/api/courses/${id}`,
+      circulation: `/api/worksheets/circulations/${id}`,
+      "admission-round": `/api/admissions/rounds/${id}`,
+    };
+    const base = bases[kind];
     return { manifest: `${base}/destroy-manifest`, destroy: `${base}/destroy` };
   }, [kind, targetId]);
 
