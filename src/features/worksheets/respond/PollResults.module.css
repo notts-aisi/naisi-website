@@ -1,0 +1,152 @@
+/* PollResults: the running count under a poll, for the person answering it.
+
+   A near-twin of the bars in AggregateView.module.css, and deliberately NOT
+   the same file. That one is a staff report inside a card on a wide page; this
+   one sits inside a fieldset on a member-facing form, at member-facing type
+   sizes, and carries a thing the staff chart has no idea about: which bar is
+   YOURS. Sharing one stylesheet would mean every later change to the staff
+   report landing, unreviewed, on a page members fill in.
+
+   No chart library. Every bar is a div with a percentage width, and every
+   colour comes from tokens.css. */
+
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  min-width: 0;
+}
+
+/* The three states before there are bars: waiting to be allowed, waiting on
+   the count, and nobody has answered. One class, because they read as the same
+   quiet aside and only the sentence differs. */
+.pending {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-text-subtle);
+}
+
+.total {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Label, track, count. `minmax(0, …)` on the first two so a long option label
+   cannot push the row wider than the fieldset holding it: this page must never
+   put horizontal scroll on <body>. */
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 10rem) minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.label {
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+/* The recipient's own pick. Weight and colour rather than a background: the
+   row is already inside a shaded panel, and a second fill would read as a
+   selection control they could click. */
+.labelMine {
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--color-accent);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* "your answer", after the label. Small and muted, because the colour above
+   already says it; this is the part that says it to a screen reader and to
+   anybody who cannot tell the two colours apart. */
+.yours {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.track {
+  display: block;
+  height: 0.625rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.fill,
+.fillMine {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  /* The width is set inline from the count. Animating it means the bars grow
+     when the results first arrive and slide when somebody's vote lands,
+     instead of snapping. */
+  transition: width var(--dur-settle) var(--ease-naisi);
+}
+
+.fill {
+  background: var(--color-border-strong);
+}
+
+.fillMine {
+  background: var(--color-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fill,
+  .fillMine {
+    transition: none;
+  }
+}
+
+.count {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* === Mobile ================================================
+   The label column goes: at 360px, 10rem of label beside a
+   track leaves a bar too short to compare against its
+   neighbours. The label takes its own line and the track and
+   the count share the one below it. */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .row {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    gap: var(--space-1) var(--space-2);
+  }
+
+  .label,
+  .labelMine {
+    grid-column: 1 / -1;
+  }
+}

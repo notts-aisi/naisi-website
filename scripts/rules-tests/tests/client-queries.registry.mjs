@@ -251,6 +251,22 @@ function responseDoc(uid, overrides = {}) {
   };
 }
 
+/**
+ * One recipient's review: the staff notes and scores about their answers, at a
+ * document id that is the REVIEWED person's uid rather than the reviewer's.
+ * Nothing in the read rule dereferences this data (the gate is the parent's
+ * `staffUids`), so the fields are here to make the fixture read like the
+ * document the panel writes rather than because a clause needs one.
+ */
+function reviewDoc(overrides = {}) {
+  return {
+    perQuestion: { q1: { feedback: "Clear and to the point.", score: 80 } },
+    overall: "Good work overall.",
+    updatedByUid: OTHER,
+    ...overrides,
+  };
+}
+
 export const REGISTRY = [
   // =====================================================================
   // The learner surfaces under /learn
@@ -2326,6 +2342,55 @@ export const REGISTRY = [
       await db.doc(`circulations/${CIRC_ID}/responses/${OTHER}`).set(responseDoc(OTHER));
     },
     run: (db) => db.doc(`circulations/${CIRC_ID}/responses/${OTHER}`).get(),
+  },
+  {
+    id: "review-doc-staff",
+    sharesKeyWith: "review-doc-recipient",
+    file: "src/features/worksheets/hooks/useReview.ts",
+    path: "circulations/{circulationId}/reviews/{reviewUid}",
+    clauses: [],
+    docShape:
+      "The review of ONE recipient, at a document id that is the reviewed person's uid: the per-question feedback and the per-question scores ReviewPanel writes client-direct while staff read the answers beside it.",
+    reason:
+      "The staff half of the review panel, opened from the response drawer on the circulation page. The gate is `isParentStaff()`, one get() of the parent circulation's staffUids, so the fixture puts the persona on that list and every signed-in hat is admitted by it: being asked to review a circulation is the permission, not a role. Addressed, never listed, so one reviewer cannot page through every judgement filed on a send. Registered as its own entry rather than riding useResponse's because the two subcollections have DIFFERENT read rules and only this one refuses the person it is about, which is the entry below.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "allowed",
+      member: "allowed",
+      committee: "allowed",
+      "su-committee": "allowed",
+      admin: "allowed",
+    },
+    seed: async (db, p) => {
+      await db.doc(`circulations/${CIRC_ID}`).set(circulationDoc({ staffUids: [p.uid] }));
+      await db.doc(`circulations/${CIRC_ID}/reviews/${OTHER}`).set(reviewDoc());
+    },
+    run: (db) => db.doc(`circulations/${CIRC_ID}/reviews/${OTHER}`).get(),
+  },
+  {
+    id: "review-doc-recipient",
+    sharesKeyWith: "review-doc-staff",
+    file: "src/features/worksheets/hooks/useReview.ts",
+    path: "circulations/{circulationId}/reviews/{reviewUid}",
+    clauses: [],
+    docShape:
+      "The persona's OWN review: the notes and the scores somebody else has written about their answers, at the document id that is their uid.",
+    reason:
+      "The same call aimed at the read that must never work, and the reason the review lives in its own subcollection at all. `isOwner()` is deliberately absent from the reviews rule, so the document id being the reader's uid grants nothing: a recipient asking for their own review is refused, which is what makes 'scores are never seen by the person being scored' a fact about the rules rather than a convention about which fields a page renders. Written down as an expected refusal so that adding an owner branch would have to fail this entry first. Admin is allowed because admins take the resource-independent branch of every rule, which is exactly why the members above are the personas that prove anything here.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db, p) => {
+      await db.doc(`circulations/${CIRC_ID}`).set(circulationDoc());
+      await db.doc(`circulations/${CIRC_ID}/responses/${p.uid}`).set(responseDoc(p.uid));
+      await db.doc(`circulations/${CIRC_ID}/reviews/${p.uid}`).set(reviewDoc());
+    },
+    run: (db, p) => db.doc(`circulations/${CIRC_ID}/reviews/${p.uid}`).get(),
   },
 ];
 

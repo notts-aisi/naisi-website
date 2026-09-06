@@ -45,12 +45,14 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(REPO_ROOT, "src");
+/** Every job module, walked by the ships-dark guard at the bottom of the file. */
+const JOBS_DIR = join(SRC, "lib", "scheduler", "jobs");
 
 const SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"']+)\2/g;
 
@@ -60,15 +62,20 @@ const SERVER_TIMESTAMP = "__serverTimestamp__";
 /**
  * The stubs.
  *
- * `server-only` and `firebase-admin/firestore` are the originals. The four
- * `@/…` entries below arrived with the first REAL job in the registry, and
- * they are doors to the outside world rather than logic: the registry imports
- * its job modules by value (that is how a registration is a registration), so
- * loading `registry.ts` here loads every job, and the reminders job reaches
- * the Resend send path, the JSX email components and the Admin SDK. Without
- * these the loader tries to transpile a `.tsx` component it has no JSX
- * setting for, and this suite fails on a syntax error that has nothing to do
- * with markers.
+ * `server-only` and `firebase-admin/firestore` are the originals. The `@/…`
+ * entries below arrived with the REAL jobs in the registry, and they are
+ * doors to the outside world rather than logic: the registry imports its job
+ * modules by value (that is how a registration is a registration), so loading
+ * `registry.ts` here loads every job, and the reminders job reaches the Resend
+ * send path, the JSX email components and the Admin SDK. Without these the
+ * loader tries to transpile a `.tsx` component it has no JSX setting for, and
+ * this suite fails on a syntax error that has nothing to do with markers.
+ *
+ * The last two arrived with the worksheet due-soon reminders, which is the
+ * first tick job that also PUSHES. The push mirror's own graph reaches
+ * `push/store.ts`, which imports `Timestamp` as a value, and a missing named
+ * export is a link error rather than a runtime one, so the mirror is a door
+ * too.
  *
  * Stubbing the DOORS rather than the job module keeps the test honest: `JOBS`
  * still holds each job's real registration, so the caps-and-windows
@@ -98,6 +105,14 @@ const STUBS = new Map([
     "export const hasOptedOutOfCourseAnnouncements = () => false;\n" +
       "export const memberNameOf = () => '';",
   ],
+  [
+    "@/lib/email/worksheetReminderEmails",
+    "export const worksheetRespondPath = () => '';\n" +
+      "export const worksheetDueSoonSubject = () => '';\n" +
+      "export const formatWorksheetDue = () => '';\n" +
+      "export const sendWorksheetDueSoonEmail = async () => 'sent';",
+  ],
+  ["@/lib/push/taskNotifications", "export const mirrorTaskEmailToPush = async () => {};"],
   ["@/lib/firebase/admin", "export const getAdminDb = () => null;"],
   ["@/lib/firestore/suppression", "export const isSuppressed = async () => false;"],
 ]);
@@ -801,15 +816,53 @@ describe("policyFor", () => {
     assert.ok(heartbeatJob.reclaimAfterMinutes > 0);
   });
 
-  test("a job that emails people ships switched off", () => {
+  test("every job that can reach a person ships switched off", () => {
     // `config/scheduler` treats a missing row as the job's own default, so a
-    // job that mails a live audience must declare that default as OFF or it
-    // arms itself the moment it deploys. The owner turns it on from the panel
-    // once the round is open and a run has been proven on dev.
-    const reminders = JOBS.find((job) => job.id === "admissions-deadline-reminders");
-    assert.ok(reminders, "the deadline reminders job is not registered");
-    assert.equal(reminders.enabledByDefault, false);
-    assert.equal(jobDefaultEnabled(reminders), false);
+    // job that mails or pushes to a live audience must declare that default as
+    // OFF or it arms itself the moment it deploys. The owner turns it on from
+    // the panel once a run has been proven on dev.
+    //
+    // THIS WALKS THE DIRECTORY rather than naming the two jobs that mail
+    // today. A test that pins one job by name is a regression test for that
+    // job; the rule belongs to the CLASS, and the third mailing job is the one
+    // nobody remembers to add a line for. "Can reach a person" is read off the
+    // imports, because a send door is a module boundary in this repo: nothing
+    // under `src/lib/scheduler/jobs` puts mail on the wire or a notification
+    // on a phone without importing `@/lib/email/…` or `@/lib/push/…`.
+    const files = readdirSync(JOBS_DIR).filter((name) => name.endsWith(".ts"));
+    assert.ok(files.length > 0, "no job modules were found to walk");
+
+    // Both directions. A job file whose registration id cannot be read, and a
+    // registered job with no file behind it, are both REPORTED rather than
+    // skipped: either one is a hole in the walk, and a guard that quietly
+    // covers four of five jobs is worse than no guard at all.
+    const idOf = new Map();
+    for (const name of files) {
+      const src = readFileSync(join(JOBS_DIR, name), "utf8");
+      const id = /^\s*id: "([^"]+)",$/m.exec(src)?.[1] ?? null;
+      assert.ok(id, `${name} does not declare a job id this guard can read`);
+      idOf.set(id, { name, src });
+    }
+    const unresolved = JOBS.map((job) => job.id).filter((id) => !idOf.has(id));
+    assert.deepEqual(unresolved, [], "a registered job has no module this guard could find");
+
+    for (const job of JOBS) {
+      const { name, src } = idOf.get(job.id);
+      const sends = /from "@\/lib\/(email|push)\//.test(src);
+      if (!sends) continue;
+      assert.equal(
+        job.enabledByDefault,
+        false,
+        `${name} reaches a send door and would arm itself on deploy`,
+      );
+      assert.equal(jobDefaultEnabled(job), false, `${job.id} defaults to armed`);
+    }
+
+    // The guard is only worth having while it has something to guard. If every
+    // job stops importing a send door, this line says so rather than letting
+    // the loop above pass by doing nothing.
+    const mailing = JOBS.filter((job) => /from "@\/lib\/(email|push)\//.test(idOf.get(job.id).src));
+    assert.ok(mailing.length >= 2, "no registered job reaches a send door any more");
   });
 
   test("a job that sends nothing does not have to be switched on", () => {

@@ -3,6 +3,8 @@ import type { ReactElement } from "react";
 import type { Firestore } from "firebase-admin/firestore";
 import TaskMembershipEmail from "@/emails/TaskMembershipEmail";
 import TaskReviewRequestEmail from "@/emails/TaskReviewRequestEmail";
+import WorksheetFeedbackEmail from "@/emails/WorksheetFeedbackEmail";
+import WorksheetUpdatedEmail from "@/emails/WorksheetUpdatedEmail";
 import { sendEmail } from "@/lib/email/send";
 import { resolveTaskUsers, type ResolvedUser } from "@/lib/email/taskMembership";
 import { isTaskEmailEnabled } from "@/lib/firestore/taskEmailConfig";
@@ -38,12 +40,18 @@ import { mirrorTaskEmailToPush } from "@/lib/push/taskNotifications";
  * Callers report the counts; they do not branch on them.
  *
  * ── WHAT IS NOT BUILT YET ───────────────────────────────────────────────────
- * `dueSoon`, `feedbackReturned` and `copyEdited` are wave 2: their templates
- * (`WorksheetDueSoonEmail`, `WorksheetFeedbackEmail`, `WorksheetUpdatedEmail`)
- * and the routes that would fire them do not exist. They are cases in the
- * switch below returning `skipped: "not-built"` rather than a `default`, so
- * adding a sixth event to `NotificationEvent` fails to typecheck here until
+ * `dueSoon` alone: its template (`WorksheetDueSoonEmail`) and the scheduler job
+ * that would fire it do not exist, and the job ships dark besides. It is a case
+ * in the switch below returning `skipped: "not-built"` rather than a `default`,
+ * so adding a sixth event to `NotificationEvent` fails to typecheck here until
  * somebody decides what it says and who reads it.
+ *
+ * ── WHERE EACH MESSAGE POINTS ───────────────────────────────────────────────
+ * Three of the four built events open the RESPOND page and one opens the
+ * circulation, and the split is simply who is being written to: a recipient is
+ * being asked to do something with their own copy, a reviewer is being asked to
+ * look at everybody's. `feedbackReturned` therefore points at the respond page
+ * even though staff caused it, because the person reading it is the recipient.
  */
 
 /** Why nothing was sent. `error` is the only one that means something broke. */
@@ -232,12 +240,62 @@ async function dispatch(
           }),
       });
     }
+    case "feedbackReturned": {
+      const users = await resolveTaskUsers(db, recipients);
+      const path = respondPath(circulationId);
+      // The template computes the same sentence for its heading. A subject that
+      // disagreed with the heading inside the message is how a legitimate email
+      // starts looking like a forgery in a preview pane.
+      const subject = `Feedback on "${title}"`;
+      return sendEach({
+        recipients,
+        users,
+        circulationId,
+        actorUid: actor.uid,
+        push,
+        taskIds,
+        path,
+        subject,
+        // No feedback in the push either, for the reason the template gives:
+        // a judgement about somebody's work is written for them and not for
+        // whoever is looking over their shoulder at a lock screen.
+        pushBody: `${actor.displayName} has written back on your answers.`,
+        react: (user) =>
+          WorksheetFeedbackEmail({
+            recipientName: user.displayName || "there",
+            worksheetTitle: title,
+            reviewerName: actor.displayName,
+            link: `${APP_URL}${path}`,
+          }),
+      });
+    }
+    case "copyEdited": {
+      const users = await resolveTaskUsers(db, recipients);
+      const path = respondPath(circulationId);
+      const subject = `"${title}" has changed`;
+      return sendEach({
+        recipients,
+        users,
+        circulationId,
+        actorUid: actor.uid,
+        push,
+        taskIds,
+        path,
+        subject,
+        pushBody: `${actor.displayName} has changed the questions. Your answers are still there.`,
+        react: (user) =>
+          WorksheetUpdatedEmail({
+            recipientName: user.displayName || "there",
+            worksheetTitle: title,
+            editorName: actor.displayName,
+            link: `${APP_URL}${path}`,
+          }),
+      });
+    }
     case "dueSoon":
-    case "feedbackReturned":
-    case "copyEdited":
-      // Wave 2. See the module comment: the templates and the routes that fire
-      // them do not exist, and a case here is what stops a caller believing a
-      // message went out.
+      // Not built. See the module comment: the template and the scheduler job
+      // that fires it do not exist, and a case here is what stops a caller
+      // believing a message went out.
       return { sent: 0, failed: 0, skipped: "not-built" };
   }
 }

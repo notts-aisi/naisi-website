@@ -1,17 +1,17 @@
 /* ============================================================
    CirculationPage: the sender's view of one circulation.
 
-   Two columns above --bp-lg: the recipient table, and a rail
-   saying how the circulation was set up. The rail is reference
-   material, not a control panel (everything on it is read-only
-   in this wave), so it gives way first and stacks UNDER the
-   table rather than over it.
+   ONE COLUMN, four tabs. Wave 1 had a second column, a rail
+   summarising how the circulation was set up, which the
+   Settings tab replaced: two places saying what the review
+   toggles are is one place too many, and the recipient table
+   is five columns wide and wanted the room.
 
-   `minmax(0, …)` on both tracks. The table's rows are grids of
-   their own, and an `auto` track would take their min-content
-   as its floor and push <body> into horizontal scroll, which
-   is the AppShell failure mode the repo conventions document
-   at length.
+   `min-width: 0` runs the whole way down anyway. The table's
+   rows are grids of their own, and a track that took their
+   min-content as its floor would push <body> into horizontal
+   scroll, which is the AppShell failure mode the repo
+   conventions document at length.
    ============================================================ */
 
 .page {
@@ -57,6 +57,23 @@
   color: var(--color-text);
 }
 
+/* The one link out of this page, to the LIBRARY worksheet rather than to the
+   copy this circulation sent. Padded to a comfortable tap target and pulled
+   back by the same amount, so it lines up with the paragraphs above it rather
+   than sitting indented from them. */
+.headLink {
+  align-self: flex-start;
+  margin: calc(var(--space-2) * -1) calc(var(--space-2) * -1) 0;
+  padding: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.headLink:hover {
+  text-decoration: underline;
+}
+
 /* === Actions =============================================== */
 
 .actions {
@@ -95,13 +112,29 @@
   border-color: var(--color-border-strong);
 }
 
+/* === Tabs ==================================================
+   The segmented control's options are pills and never wrap, so
+   four of them can outrun a narrow phone. The row scrolls
+   INSIDE itself rather than letting <body> scroll sideways,
+   which is the house rule for any wide control on an authed
+   page. The padding is room for the focus ring, which a tight
+   scroll container would otherwise clip. */
+
+.tabs {
+  min-width: 0;
+  overflow-x: auto;
+  padding: var(--space-1);
+}
+
 /* === Body ================================================== */
 
+/* One tab's panel at a time. A flex column rather than a bare
+   div so a panel with several cards in it (Settings) spaces
+   them without every panel having to say so itself. */
 .body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 18rem);
-  gap: var(--space-6);
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
   min-width: 0;
 }
 
@@ -152,55 +185,6 @@
   gap: var(--space-3);
 }
 
-/* === Side rail ============================================= */
-
-.side {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.sideCard {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.sideTitle {
-  margin: 0;
-  font-size: var(--text-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--color-text-muted);
-}
-
-.sideList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.sideItem {
-  font-size: var(--text-sm);
-  line-height: var(--leading-normal);
-  color: var(--color-text);
-  overflow-wrap: anywhere;
-}
-
-.sideEmpty,
-.sideNote {
-  margin: 0;
-  font-size: var(--text-xs);
-  line-height: var(--leading-normal);
-  color: var(--color-text-muted);
-}
-
 /* === Add-recipients dialog ================================= */
 
 .dialog {
@@ -238,25 +222,6 @@
   border-top: 1px solid var(--color-border);
 }
 
-/* === Tablet ================================================
-   The rail loses its column before the table does: 18rem of
-   reference text beside a five-column table is what pushes the
-   two into fighting for width. */
-
-@media (max-width: 60rem) { /* --bp-lg */
-  .body {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-5);
-  }
-
-  .side {
-    /* Three reference cards side by side once they are no longer a column,
-       so the rail costs one screen of scrolling rather than three. */
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-  }
-}
-
 /* === Mobile ================================================
    Everything is one column. The action row's buttons go full
    width so each one is a comfortable target, and the sort
@@ -272,26 +237,15 @@
     font-size: var(--text-2xl);
   }
 
+  /* Export and Close are components with their own wrappers, and each one
+     stretches itself to the width this hands it (CirculationActions.module.css
+     ends in the matching block). */
   .actions > * {
     flex: 1 1 100%;
   }
 
-  /* The disabled buttons sit inside a title-bearing <span> (see the component
-     for why), so stretching the row's children is not enough on its own. */
-  .actions > span {
-    display: flex;
-  }
-
-  .actions > span > * {
-    width: 100%;
-  }
-
   .linkButton {
     width: 100%;
-  }
-
-  .side {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   .tableBar {

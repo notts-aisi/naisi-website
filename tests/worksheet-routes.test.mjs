@@ -118,6 +118,20 @@ const STUBS = new Map([
     "export default function TaskReviewRequestEmail(props) {\n" +
       "  return { template: 'TaskReviewRequestEmail', props };\n}",
   ],
+  // The two wave-2 templates. They are not sent by anything this file exercises,
+  // but `notify.ts` imports all four at the top, and the loader has no JSX
+  // transform: an unstubbed `.tsx` reaches Node as JSX and fails the whole file
+  // before a single test runs.
+  [
+    "@/emails/WorksheetFeedbackEmail",
+    "export default function WorksheetFeedbackEmail(props) {\n" +
+      "  return { template: 'WorksheetFeedbackEmail', props };\n}",
+  ],
+  [
+    "@/emails/WorksheetUpdatedEmail",
+    "export default function WorksheetUpdatedEmail(props) {\n" +
+      "  return { template: 'WorksheetUpdatedEmail', props };\n}",
+  ],
 ]);
 
 function resolveLocalTs(specifier, fromFile) {

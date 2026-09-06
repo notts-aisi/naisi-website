@@ -135,14 +135,9 @@
   color: var(--color-text-muted);
 }
 
-.pollResults {
-  margin: 0;
-  padding: var(--space-3);
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-  color: var(--color-text-subtle);
-}
+/* The results panel itself lives in PollResults.module.css: it is a bar chart
+   with its own states, and it is mounted from the poll branch of this field.
+   Nothing is left here for it. */
 
 /* === Image answers === */
 

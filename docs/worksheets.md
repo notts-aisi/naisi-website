@@ -264,6 +264,16 @@ Every send goes through `sendEmail` with `kind: "task"`, honours the
 `mirrorTaskEmailToPush` under the existing `tasks` preference, with the push
 deep-linking to the respond page rather than the board.
 
+`dueSoon` is the one exception to "push mirrors email, and never leads it".
+Its two switches are independent, so a circulation with the email switch off
+and the push switch on sends a push and no email. That is the owner's ask (a
+switch per channel per event) and it is safe there because the scheduler job's
+unit of work is one person's reminder rather than a broadcast, and its marker
+records what happened to that person on either channel. Everything sent from
+`src/lib/worksheets/notify.ts` still mirrors and never leads; the divergence
+lives in `src/lib/scheduler/jobs/worksheetDueReminders.ts` alone, and the
+site-wide `config/taskEmails` kill switch still covers the push.
+
 Due-soon reminders are the scheduler job `worksheet-due-reminders`, registered
 with `enabledByDefault: false`, so it ships dark until an admin turns it on
 from the scheduler panel (and until `SCHEDULER_SECRET` exists, the tick
