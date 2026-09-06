@@ -34,7 +34,17 @@ jobs:
       - run: npx next typegen
       - run: npx tsc --noEmit
       - run: npm run lint
-      - run: npm test
+      # The suite prints a handful of stack traces whose frames are the
+      # loader's data: URLs, each carrying a whole module source, so one line
+      # can run to 440 KB. The runner handles output a line at a time and
+      # stalls for minutes on each such line: 30 of this job's 33 minutes on
+      # 2026-09-06, against 10 seconds for the same command on a laptop.
+      # Chopping every line before the runner reads it loses nothing anyone
+      # reads. pipefail keeps the tests' exit status rather than cut's.
+      - name: Tests
+        run: |
+          set -o pipefail
+          npm test 2>&1 | cut -c 1-4000
       # A build needs the public Firebase values to inline. They are public by
       # definition (they ship in the browser bundle), and a build does not
       # contact the project, so placeholders are enough to prove it compiles.
