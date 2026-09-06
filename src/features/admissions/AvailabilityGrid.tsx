@@ -26,7 +26,7 @@ import styles from "./AvailabilityGrid.module.css";
  * ## Built mobile-first, and that is not a slogan here
  *
  * The two days that decide the intake are the freshers' fairs, where every
- * application is started on a phone in a queue. A 252-cell grid laid out for a
+ * application is started on a phone in a queue. A 336-cell grid laid out for a
  * desktop and then "adapted" is a grid nobody can use standing up. So the
  * phone layout is the one this component is designed around: ONE DAY at a
  * time, chosen from a week strip, with cells at a real touch size. The seven
@@ -40,7 +40,7 @@ import styles from "./AvailabilityGrid.module.css";
  *
  * ## One delegated pointer handler
  *
- * `pointerdown` is caught on the cell container, not on 252 listeners. The
+ * `pointerdown` is caught on the cell container, not on 336 listeners. The
  * container captures the pointer, so a drag that leaves the grid keeps
  * painting, and `elementFromPoint` resolves which cell the pointer is over.
  * A fast drag that skips cells is filled in with `setRange` along the column,

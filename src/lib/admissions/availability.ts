@@ -7,12 +7,12 @@
  * Nottingham?" as a LettuceMeet-style grid: seven day columns (Sunday through
  * Saturday, so Saturday and Sunday are first-class rather than an
  * afterthought) cut into fixed slots between two wall-clock bounds. The
- * default grid is 09:00 to 18:00 in 15-minute slots, which is 36 slots a day
- * and 252 cells in total.
+ * default grid is 09:00 to 21:00 in 15-minute slots, which is 48 slots a day
+ * and 336 cells in total.
  *
  * A drawn grid is stored as SEVEN HEX STRINGS, one per weekday, four slots to
  * a character. At the default geometry that is nine characters a day and 63
- * characters for the whole answer, against 252 booleans or 252 array entries.
+ * characters for the whole answer, against 336 booleans or 336 array entries.
  * It fits in a document field nobody has to think about, and it survives a
  * JSON round trip unchanged.
  *
@@ -57,7 +57,7 @@ export const AVAILABILITY_DAYS = 7;
  *
  * `startMinute` is INCLUSIVE and `endMinute` is EXCLUSIVE, both measured in
  * minutes past London midnight, so 09:00-18:00 is `{ startMinute: 540,
- * endMinute: 1080 }` and the last slot of the day starts at 17:45 and ends at
+ * endMinute: 1260 }` and the last slot of the day starts at 20:45 and ends at
  * the bound itself.
  */
 export type AvailabilityGrid = {
@@ -67,11 +67,18 @@ export type AvailabilityGrid = {
   slotMinutes: number;
 };
 
-/** 09:00 to 18:00 in quarter hours: 36 slots a day, 252 cells, 63 hex chars. */
+/**
+ * 09:00 to 21:00 in quarter hours: 48 slots a day, 336 cells, 84 hex chars.
+ *
+ * 21:00 rather than 18:00 (the owner's call, 7 September 2026): facilitator
+ * training and pre-course sessions run into the evening, and a grid that
+ * stops at 18:00 cannot overlap an 18:00 session at all. The cost is a
+ * taller grid on a phone, which the round editor can narrow per round.
+ */
 export const DEFAULT_AVAILABILITY_GRID: AvailabilityGrid = {
   version: AVAILABILITY_VERSION,
   startMinute: 9 * 60,
-  endMinute: 18 * 60,
+  endMinute: 21 * 60,
   slotMinutes: 15,
 };
 

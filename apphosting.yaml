@@ -67,6 +67,15 @@ env:
   - variable: RESEND_WEBHOOK_SECRET
     secret: RESEND_WEBHOOK_SECRET
     availability: [RUNTIME]
+  # Bearer token Cloud Scheduler presents to POST /api/scheduler/tick, read in
+  # src/app/api/scheduler/tick/route.ts. RUNTIME only and never NEXT_PUBLIC_:
+  # a build-time value would be inlined into the client bundle. The secret is
+  # minted per project (docs/courses-ops.md, "The scheduler tick"); a backend
+  # whose Secret Manager lacks it fails its rollout on this line, which is the
+  # intended failure: a tick with no secret would 404 forever and silently.
+  - variable: SCHEDULER_SECRET
+    secret: SCHEDULER_SECRET
+    availability: [RUNTIME]
   # reCAPTCHA PRIVATE key, used only by lib/recaptcha/server.ts to validate the
   # browser's token via Google siteverify. RUNTIME only — it must never be
   # bundled. Resolved by NAME from each project's own Secret Manager, so prod

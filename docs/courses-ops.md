@@ -173,9 +173,14 @@ a later PR is never silently off on an environment nobody has touched the panel
 on.
 
 The exception is declared in the registry as `enabledByDefault: false` and is
-currently set on `admissions-deadline-reminders` alone. A job that emails a live
-audience must not arm itself the moment it deploys, so it ships dark and the
-owner switches it on from the panel. The panel says so on the job's row.
+set on three jobs: `admissions-deadline-reminders`, `admissions-stage-release`
+and `worksheet-due-reminders`. A job that emails a live audience must not arm
+itself the moment it deploys, so each ships dark and the owner switches it on
+from the panel, per environment. The panel says so on the job's row.
+`courses-unmarked-registers` is NOT on that list (it raises tasks rather than
+mail), so it must be switched off on the panel before a deploy reaches an
+environment with real facilitators and re-armed only once dev has shown it
+working.
 
 A stored row only counts as somebody having touched the switch when it actually
 carries an `enabled` boolean: **Run now** writes `lastRunAt` onto a job's row

@@ -266,26 +266,27 @@ function maskOn(weekday, ...slots) {
 // §1 AVAILABILITY: the codec
 // ===========================================================================
 
-test("the default grid is the 252 cells the apply page is built around", () => {
-  // 09:00 to 18:00 in quarter hours. If this number moves, the grid component
-  // and every seat label move with it, so it is worth stating once.
-  assert.equal(slotCountFor(GRID), 36);
-  assert.equal(hexCharsPerDay(GRID), 9);
-  assert.equal(slotCountFor(GRID) * AVAILABILITY_DAYS, 252);
+test("the default grid is the 336 cells the apply page is built around", () => {
+  // 09:00 to 21:00 in quarter hours (21:00 since 7 September 2026, so an
+  // evening session can be overlapped). If this number moves, the grid
+  // component and every seat label move with it, so it is worth stating once.
+  assert.equal(slotCountFor(GRID), 48);
+  assert.equal(hexCharsPerDay(GRID), 12);
+  assert.equal(slotCountFor(GRID) * AVAILABILITY_DAYS, 336);
   assert.equal(GRID.startMinute, 540);
-  assert.equal(GRID.endMinute, 1080);
+  assert.equal(GRID.endMinute, 1260);
 });
 
 test("slot labels are London wall clocks, in time order, starting at the bound", () => {
   const labels = slotLabels(GRID);
-  assert.equal(labels.length, 36);
+  assert.equal(labels.length, 48);
   assert.equal(labels[0], "09:00");
   assert.equal(labels[1], "09:15");
   assert.equal(labels[4], "10:00");
-  // The LAST slot starts at 17:45 and ends on the exclusive 18:00 bound. A
-  // labels array ending at "18:00" would mean the grid offers a slot running
-  // to 18:15, which is outside the window the round advertised.
-  assert.equal(labels[35], "17:45");
+  // The LAST slot starts at 20:45 and ends on the exclusive 21:00 bound. A
+  // labels array ending at "21:00" would mean the grid offers a slot running
+  // to 21:15, which is outside the window the round advertised.
+  assert.equal(labels[47], "20:45");
 });
 
 test("a mask round-trips, and the earliest slot is the leftmost bit", () => {
@@ -295,16 +296,16 @@ test("a mask round-trips, and the earliest slot is the leftmost bit", () => {
   // survives that.
   const days = new Array(7).fill(null).map(() => []);
   days[2] = column(0);
-  assert.equal(encodeMask(days, GRID)[2], "800000000");
+  assert.equal(encodeMask(days, GRID)[2], "800000000000");
 
   days[2] = column(3);
-  assert.equal(encodeMask(days, GRID)[2], "100000000");
+  assert.equal(encodeMask(days, GRID)[2], "100000000000");
 
   days[2] = column(4);
-  assert.equal(encodeMask(days, GRID)[2], "080000000");
+  assert.equal(encodeMask(days, GRID)[2], "080000000000");
 
   days[2] = column(0, 1, 2, 3);
-  assert.equal(encodeMask(days, GRID)[2], "f00000000");
+  assert.equal(encodeMask(days, GRID)[2], "f00000000000");
 
   const drawn = column(0, 5, 17, 35);
   const all = new Array(7).fill(null).map(() => []);
@@ -313,7 +314,7 @@ test("a mask round-trips, and the earliest slot is the leftmost bit", () => {
 });
 
 test("padding bits past the last real slot never decode as availability", () => {
-  // 36 slots need 9 hex characters, which hold 36 bits exactly, so the
+  // 48 slots need 12 hex characters, which hold 48 bits exactly, so the
   // default grid has no padding. A grid that does not divide by four is the
   // case that matters: 10 slots need 3 characters holding 12 bits.
   const odd = { ...GRID, endMinute: GRID.startMinute + 10 * 15 };
@@ -337,10 +338,12 @@ test("a malformed day column decodes EMPTY, never to its readable prefix", () =>
   // The two failure directions are not symmetrical. Reading junk as
   // "available" puts somebody in a session they never offered; reading it as
   // "not available" costs a conflict warning nobody wanted.
-  for (const bad of ["nonsense", "F00000000", "8000000000", 42, null, undefined, {}]) {
+  // Twelve hex characters hold a day; a thirteenth is junk, and so is a
+  // capital letter, since the codec writes lowercase and reads nothing else.
+  for (const bad of ["nonsense", "F00000000000", "8000000000000", 42, null, undefined, {}]) {
     assert.deepEqual(
       decodeMask([bad], GRID)[0],
-      new Array(36).fill(false),
+      new Array(48).fill(false),
       `"${String(bad)}" decoded to something`,
     );
   }
@@ -371,7 +374,7 @@ test("an answer is decoded against the grid it was DRAWN on, not the round's cur
   const drawnAtNine = { ...oldGrid, days: maskOn(2, 0).days };
 
   const widened = { ...GRID, startMinute: 8 * 60 };
-  assert.equal(slotCountFor(widened), 40);
+  assert.equal(slotCountFor(widened), 52);
 
   // Tuesday 09:00 for 15 minutes: covered, because the answer still means
   // 09:00. Read against the widened grid it would mean 08:00 and this would

@@ -39,12 +39,16 @@ import { mirrorTaskEmailToPush } from "@/lib/push/taskNotifications";
  * one more, so the worst outcome is a counted failure and a line in the logs.
  * Callers report the counts; they do not branch on them.
  *
- * ── WHAT IS NOT BUILT YET ───────────────────────────────────────────────────
- * `dueSoon` alone: its template (`WorksheetDueSoonEmail`) and the scheduler job
- * that would fire it do not exist, and the job ships dark besides. It is a case
- * in the switch below returning `skipped: "not-built"` rather than a `default`,
- * so adding a sixth event to `NotificationEvent` fails to typecheck here until
- * somebody decides what it says and who reads it.
+ * ── WHAT THIS MODULE DOES NOT SEND ──────────────────────────────────────────
+ * `dueSoon` alone. The due-soon reminder exists, but it is sent by the
+ * scheduler job (`src/lib/scheduler/jobs/worksheetDueReminders.ts`, which ships dark
+ * until an admin arms it from Site status) on its own lane, with its own
+ * template (`src/emails/WorksheetDueSoonEmail.tsx`) and its own once-per-recipient
+ * stamp. A caller here must never send it too, or a recipient gets the
+ * reminder twice, so the case in the switch below refuses with
+ * `skipped: "not-built"` rather than falling to a `default`; adding a sixth
+ * event to `NotificationEvent` still fails to typecheck here until somebody
+ * decides what it says and who reads it.
  *
  * ── WHERE EACH MESSAGE POINTS ───────────────────────────────────────────────
  * Three of the four built events open the RESPOND page and one opens the
@@ -293,9 +297,9 @@ async function dispatch(
       });
     }
     case "dueSoon":
-      // Not built. See the module comment: the template and the scheduler job
-      // that fires it do not exist, and a case here is what stops a caller
-      // believing a message went out.
+      // Not sent from here. See the module comment: the scheduler job owns
+      // this reminder and its once-per-recipient stamp, and a case here is
+      // what stops a caller sending a second copy.
       return { sent: 0, failed: 0, skipped: "not-built" };
   }
 }
