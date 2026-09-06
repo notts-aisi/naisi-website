@@ -303,21 +303,38 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       );
       // A real pointer drag rather than eight clicks: the drag is the gesture
       // the component is built around (pointer capture, run filling), and
-      // clicking each cell would leave that path untested. Three moves per
-      // row, so a slow machine coalescing events still visits every cell.
+      // clicking each cell would leave that path untested. PACED, one row at
+      // a time with a pause between rows, because the grid paints on every
+      // move it receives and hands each paint to the parent, and a synthetic
+      // drag that fires its moves back to back gives the page no time to
+      // commit between them: on the Linux runner a single 24-step sweep
+      // painted the first two cells and dropped the rest (screenshot from
+      // 6 September 2026), while a hand moving across eight rows takes the
+      // best part of a second. Each row's centre is measured as the pointer
+      // gets there, so a layout that shifts under the drag cannot fool it.
       await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
       await page.mouse.down();
-      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 24 });
+      for (let slot = 1; slot <= 7; slot += 1) {
+        const cell = await page.locator(`[data-day="1"][data-slot="${slot}"]`).boundingBox();
+        assert.ok(cell, `slot ${slot} of the availability grid did not lay out`);
+        await page.mouse.move(cell.x + cell.width / 2, cell.y + cell.height / 2, { steps: 3 });
+        await page.waitForTimeout(60);
+      }
       await page.mouse.up();
-      assert.equal(
-        await from.getAttribute("data-on"),
-        "true",
-        "the first cell of the drag did not paint",
+      const painted = await page.evaluate(() =>
+        Array.from({ length: 8 }, (_, slot) =>
+          document
+            .querySelector(`[data-day="1"][data-slot="${slot}"]`)
+            ?.getAttribute("data-on") === "true",
+        ),
       );
-      assert.equal(
-        await to.getAttribute("data-on"),
-        "true",
-        "the drag did not fill through to the last cell",
+      assert.deepEqual(
+        painted,
+        new Array(8).fill(true),
+        `the drag was meant to paint Monday slots 0 to 7 and painted ${painted
+          .map((on, slot) => (on ? slot : null))
+          .filter((slot) => slot !== null)
+          .join(", ") || "nothing"}`,
       );
 
       await page.getByRole("button", { name: "Save draft" }).click();
