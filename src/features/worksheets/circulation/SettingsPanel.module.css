@@ -167,6 +167,36 @@
   gap: var(--space-2);
 }
 
+/* A row's own second line: the due-soon schedule, spanning the description
+   and the switches. Inside the row rather than in a card of its own, because
+   what is being edited is that switch's timing. */
+.eventExtra {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding-top: var(--space-2);
+}
+
+.eventExtraNote {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-top: var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+
+/* The one Save button on a panel that otherwise saves itself. Its note sits
+   beside it rather than under it, so the pair reads as one control. */
+.slotSave {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+
 /* === Mobile ================================================
    The channel switches move UNDER the description and turn
    into a row: two switches stacked to the right of a wrapped
@@ -191,6 +221,13 @@
   }
 
   .dueRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  /* Save and its note stack, so the button keeps a full row to be tapped in
+     and the note is not squeezed into two words beside it. */
+  .slotSave {
     align-items: stretch;
     flex-direction: column;
   }

@@ -8,6 +8,7 @@ import DateTimePopover from "@/components/ui/DateTimePopover";
 import { MEMBER_NAME_FALLBACK } from "@/components/ui/MemberName";
 import Modal from "@/components/ui/Modal";
 import Switch from "@/components/ui/Switch";
+import SlotListEditor from "@/features/reminders/SlotListEditor";
 import {
   CIRCULATION_LIMITS,
   DEFAULT_REVIEW_CONFIG,
@@ -17,9 +18,16 @@ import {
   type ReviewConfig,
 } from "@/lib/firestore/circulations";
 import { questionsOf, type WorksheetDoc } from "@/lib/firestore/worksheets";
+import { validateSlots, type ReminderSlot } from "@/lib/reminders/slots";
 import RecipientPicker from "./RecipientPicker";
 import { REVIEW_TOGGLES, RETURN_OFF_NOTE } from "./circulationView";
-import { CHANNEL_LABELS, DUE_SOON_NOT_LIVE_NOTE, NOTIFICATION_ROWS } from "./notificationCopy";
+import {
+  CHANNEL_LABELS,
+  DUE_SOON_ANCHOR_LABEL,
+  DUE_SOON_NOT_LIVE_NOTE,
+  DUE_SOON_NO_DATE_NOTE,
+  NOTIFICATION_ROWS,
+} from "./notificationCopy";
 import { useRecipientCandidates } from "./useRecipientCandidates";
 import styles from "./CirculateDialog.module.css";
 
@@ -126,11 +134,32 @@ export default function CirculateDialog({ worksheet, onClose, onCreated }: Props
   }
 
   function setChannel(event: NotificationEvent, channel: "email" | "push", value: boolean) {
-    setNotifications((prev) => ({ ...prev, [event]: { ...prev[event], [channel]: value } }));
+    // `dueSoon` is spelled out rather than reached through the computed key,
+    // because it is the one event carrying a third field (its schedule) and
+    // the widened key would let a rebuild of the map drop it.
+    setNotifications((prev) =>
+      event === "dueSoon"
+        ? { ...prev, dueSoon: { ...prev.dueSoon, [channel]: value } }
+        : { ...prev, [event]: { ...prev[event], [channel]: value } },
+    );
   }
 
+  function setSlots(slots: ReminderSlot[]) {
+    setNotifications((prev) => ({ ...prev, dueSoon: { ...prev.dueSoon, slots } }));
+  }
+
+  /**
+   * A schedule the create route would refuse, held here so the refusal is a
+   * sentence under the row that caused it rather than a 400 after the send
+   * has been attempted. Send is off while there is one.
+   */
+  const slotProblems = validateSlots(notifications.dueSoon.slots);
+
   async function send() {
-    if (recipientUids.length === 0 || sending) return;
+    // The button is already off for each of these. Repeated here because a
+    // schedule with a half-typed row in it carries `NaN`, and a `NaN` that
+    // reaches the route is a 400 at best and a stored non-number at worst.
+    if (recipientUids.length === 0 || sending || slotProblems.length > 0) return;
     setSending(true);
     setSendError(null);
     try {
@@ -301,6 +330,27 @@ export default function CirculateDialog({ worksheet, onClose, onCreated }: Props
                     disabled={sending}
                   />
                 </div>
+                {/* The schedule belongs to the reminder, so it sits under the
+                    reminder's own row and spans both columns rather than
+                    becoming a section of its own. With no due date there is
+                    nothing to count back from, and saying so here is more use
+                    than an editor whose rows could never resolve. */}
+                {row.event === "dueSoon" &&
+                  (dueDate ? (
+                    <div className={styles.eventExtra}>
+                      <SlotListEditor
+                        slots={notifications.dueSoon.slots}
+                        onChange={setSlots}
+                        anchorLabel={DUE_SOON_ANCHOR_LABEL}
+                        anchorAt={dueDate}
+                        disabled={sending}
+                      />
+                    </div>
+                  ) : (
+                    <p className={styles.eventExtraNote}>
+                      {DUE_SOON_NO_DATE_NOTE}
+                    </p>
+                  ))}
               </li>
             ))}
           </ul>
@@ -327,7 +377,12 @@ export default function CirculateDialog({ worksheet, onClose, onCreated }: Props
           <Button
             type="button"
             onClick={send}
-            disabled={sending || recipientUids.length === 0 || strandedId !== null}
+            disabled={
+              sending ||
+              recipientUids.length === 0 ||
+              strandedId !== null ||
+              slotProblems.length > 0
+            }
           >
             {sendLabel}
           </Button>

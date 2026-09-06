@@ -20,6 +20,10 @@
  *     appearing earlier in the file.
  *  4. **The ceiling and the stale rule**, because both are policies about
  *     what NOT to do, and a policy nobody executes is a comment.
+ *  5. **The stored schedule.** A round carries a free list of reminder slots,
+ *     not three fixed ids, so the normaliser has to keep a slot nobody has
+ *     seen before, keep an empty list empty, and read a round written before
+ *     the free list existed exactly as it read it then.
  *
  * ## The fake Firestore
  *
@@ -131,6 +135,12 @@ const {
 } = await loadTs("lib/scheduler/jobs/admissionsReminders.ts");
 
 const { policyFor } = await loadTs("lib/scheduler/registry.ts");
+
+// The normaliser is what turns a stored round into the object the job reads,
+// so the schedule's read half is executed here beside the job that consumes
+// it rather than in a suite that never runs one.
+const { normalizeAdmissionRound } = await loadTs("lib/firestore/admissionRounds.ts");
+const { DEFAULT_ROUND_SLOTS } = await loadTs("lib/reminders/slots.ts");
 
 // ---------------------------------------------------------------------------
 // 1. The due-date maths
@@ -298,7 +308,105 @@ describe("the stale rule", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2. The fake Firestore
+// 2. The stored schedule
+// ---------------------------------------------------------------------------
+
+/**
+ * A round carries a FREE LIST of reminder slots rather than the three fixed
+ * ids (`t7`, `t3`, `dday`) it used to. The read half of that change is the
+ * normaliser, and it is the half that can quietly change what a round already
+ * on the shelf does, so each of its decisions is executed here.
+ */
+describe("a round's stored schedule", () => {
+  const OLD_THREE = [
+    { id: "t7", daysBefore: 7, atLocalTime: "10:00" },
+    { id: "t3", daysBefore: 3, atLocalTime: "10:00" },
+    { id: "dday", daysBefore: 0, atLocalTime: "12:00" },
+  ];
+
+  test("a round stored with the old three ids is read back unchanged", () => {
+    // The migration, and it is deliberately not one: an id is opaque, so the
+    // three ids the fixed rows used to carry are simply valid ids. A round
+    // authored before the free list existed keeps its rows and its numbers.
+    const round = normalizeAdmissionRound("r1", { reminderOffsets: OLD_THREE });
+    assert.deepEqual(round.reminderOffsets, OLD_THREE);
+  });
+
+  test("a slot id the site has never seen before is kept", () => {
+    // The failure the old normaliser had: it dropped every id outside its
+    // list of three, so a fourth reminder could be saved by a route and then
+    // vanish on the way back out.
+    const slots = [
+      { id: "rs_9f2a", daysBefore: 4, atLocalTime: "18:30" },
+      { id: "rs_b14c", daysBefore: 2, atLocalTime: "08:15" },
+    ];
+    const round = normalizeAdmissionRound("r1", { reminderOffsets: slots });
+    assert.deepEqual(round.reminderOffsets, slots);
+  });
+
+  test("an empty schedule stays empty, because empty is a decision", () => {
+    // An author who deletes every row is saying "this round sends none", and
+    // the rest of the system already honours that: the job skips the round and
+    // Send now refuses it. Handing back the presets here would start mailing a
+    // round that had been told not to.
+    assert.deepEqual(
+      normalizeAdmissionRound("r1", { reminderOffsets: [] }).reminderOffsets,
+      [],
+    );
+  });
+
+  test("a round with no schedule field at all falls back to the presets", () => {
+    // The other side of the same coin: a document restored by hand, or written
+    // before the field existed, has said nothing rather than said no.
+    assert.deepEqual(
+      normalizeAdmissionRound("r1", {}).reminderOffsets,
+      DEFAULT_ROUND_SLOTS,
+    );
+    assert.ok(DEFAULT_ROUND_SLOTS.length > 0, "the presets are empty");
+  });
+
+  test("a stored list nobody can read reads back as empty, not as three sends", () => {
+    // The dangerous middle case, and the reason the fallback is keyed on "was
+    // there a list at all" rather than "did anything survive". The sanitiser
+    // is stricter than the normaliser it replaced: that one turned a missing
+    // `daysBefore` into 0 (deadline day), this one drops the row. So a
+    // hand-edited or restored round holding `[{ id: "dday", atLocalTime:
+    // "12:00" }]` used to be ONE deadline-day reminder, and falling back to
+    // the presets here would silently turn it into THREE emails to everyone
+    // holding a draft. A list we cannot parse is read as silence.
+    assert.deepEqual(
+      normalizeAdmissionRound("r1", {
+        reminderOffsets: [{ id: "dday", atLocalTime: "12:00" }],
+      }).reminderOffsets,
+      [],
+    );
+    assert.deepEqual(
+      normalizeAdmissionRound("r1", {
+        reminderOffsets: ["not a slot", null, { daysBefore: 3, atLocalTime: "25:99" }],
+      }).reminderOffsets,
+      [],
+    );
+  });
+
+  test("one readable row among the rubbish is kept, and it is the only one", () => {
+    // The flip side of reading an unreadable list as silence: dropping the
+    // rows that cannot be parsed must not drop the ones that can, or an author
+    // whose document picked up one bad entry would lose the schedule they
+    // wrote.
+    const round = normalizeAdmissionRound("r1", {
+      reminderOffsets: [
+        { id: "junk", atLocalTime: "12:00" },
+        { id: "rs_keep", daysBefore: 2, atLocalTime: "09:30" },
+      ],
+    });
+    assert.deepEqual(round.reminderOffsets, [
+      { id: "rs_keep", daysBefore: 2, atLocalTime: "09:30" },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. The fake Firestore
 // ---------------------------------------------------------------------------
 
 function alreadyExists(id) {
@@ -431,7 +539,7 @@ function makeDb(seed = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. The job
+// 4. The job
 // ---------------------------------------------------------------------------
 
 const ROUND_ID = "facilitators-autumn-2026__k3f9a2b1";
@@ -794,6 +902,109 @@ describe("the reminders job", () => {
     }
   });
 
+  test("a round with four slots derives four dates, and the fourth one sends", async () => {
+    // The old model had three fixed ids and no room for a fourth, so this is
+    // the whole point of the free list, executed end to end rather than
+    // asserted on the type. The slot that sends here carries an id the site
+    // has never seen, which is what the old normaliser dropped.
+    const db = makeDb({
+      admissionRounds: {
+        [ROUND_ID]: round({
+          reminderOffsets: [
+            { id: "t7", daysBefore: 7, atLocalTime: "10:00" },
+            { id: "rs_5day", daysBefore: 5, atLocalTime: "10:00" },
+            { id: "t3", daysBefore: 3, atLocalTime: "10:00" },
+            { id: "rs_last", daysBefore: 1, atLocalTime: "10:00" },
+          ],
+        }),
+      },
+      admissionApplications: applications(1),
+      users: users(1),
+    });
+    reset(db);
+
+    // An hour after the 1-day slot, which is 3 Oct. The three earlier dates
+    // are all more than 24 hours old by now, so each is dropped as stale.
+    const { summary } = await runAdmissionsReminders(
+      context({ now: new Date("2026-10-03T10:00:00.000Z") }).ctx,
+    );
+
+    assert.equal(summary.sent, 1, "the fourth slot did not send");
+    assert.equal(globalThis.__sends[0].uid, "uid001");
+    assert.deepEqual(
+      db.ids("schedulerMarkers"),
+      [
+        `remind__${ROUND_ID}__${STALE_MARKER_UID}__2026-09-27`,
+        `remind__${ROUND_ID}__${STALE_MARKER_UID}__2026-09-29`,
+        `remind__${ROUND_ID}__${STALE_MARKER_UID}__2026-10-01`,
+        `remind__${ROUND_ID}__uid001__2026-10-03`,
+      ].sort(),
+      "four slots did not resolve to four separate dates",
+    );
+  });
+
+  test("two slots landing on one day are one email, whatever they are called", async () => {
+    // Pinned at the job now that a round can carry any two slots it likes,
+    // rather than only at the resolver. The marker keys on the resolved date,
+    // so the second slot's claim finds the first slot's marker and the
+    // applicant is mailed once.
+    const db = makeDb({
+      admissionRounds: {
+        [ROUND_ID]: round({
+          reminderOffsets: [
+            { id: "rs_early", daysBefore: 7, atLocalTime: "09:00" },
+            { id: "rs_late", daysBefore: 7, atLocalTime: "14:00" },
+          ],
+        }),
+      },
+      admissionApplications: applications(1),
+      users: users(1),
+    });
+    reset(db);
+
+    const { summary } = await runAdmissionsReminders(context({ now: JUST_AFTER_DUE }).ctx);
+
+    assert.equal(summary.sent, 1, "one applicant was mailed twice on one day");
+    assert.deepEqual(
+      db.ids("schedulerMarkers"),
+      [markerId("uid001")],
+      "two slots on one day left two markers, so they were two sends",
+    );
+  });
+
+  test("a round still carrying the old three ids behaves exactly as it did", async () => {
+    // The migration read, proven at the job rather than at the normaliser: a
+    // round authored before the free list existed resolves the same dates and
+    // claims the same marker, so nothing already on the shelf changes.
+    const db = makeDb({
+      admissionRounds: {
+        [ROUND_ID]: round({
+          reminderOffsets: [
+            { id: "t7", daysBefore: 7, atLocalTime: "10:00" },
+            { id: "t3", daysBefore: 3, atLocalTime: "10:00" },
+            { id: "dday", daysBefore: 0, atLocalTime: "12:00" },
+          ],
+        }),
+      },
+      admissionApplications: applications(2),
+      users: users(2),
+    });
+    reset(db);
+
+    const { summary } = await runAdmissionsReminders(context({ now: JUST_AFTER_DUE }).ctx);
+
+    assert.equal(summary.sent, 2, "the week-out reminder did not go out");
+    assert.deepEqual(
+      db.ids("schedulerMarkers"),
+      [markerId("uid001"), markerId("uid002")].sort(),
+      "the marker is no longer the resolved date it was before",
+    );
+    // The two later dates are still ahead, so nothing has been claimed for
+    // them: an edit to either one is still free.
+    assert.equal(summary.stale, 0);
+    assert.equal(summary.skipped, 0);
+  });
+
   test("a stamp that will not stick still cannot become a second email", async () => {
     // The nastiest of the failure orders: the mail is on the wire and the
     // marker cannot record it. An unstamped marker is RECLAIMABLE, so a later
@@ -986,7 +1197,7 @@ describe("the reminders job", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Source pins on the Send now route
+// 5. Source pins on the Send now route
 // ---------------------------------------------------------------------------
 
 const SEND_NOW = "src/app/api/admissions/rounds/[roundId]/reminders/send-now/route.ts";

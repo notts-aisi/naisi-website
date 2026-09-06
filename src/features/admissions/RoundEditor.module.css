@@ -146,13 +146,6 @@
   align-items: end;
 }
 
-.reminderRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
-  gap: var(--space-3);
-  align-items: end;
-}
-
 .checkList {
   display: flex;
   flex-direction: column;
@@ -254,8 +247,7 @@
 
   .grid2,
   .grid3,
-  .row,
-  .reminderRow {
+  .row {
     grid-template-columns: minmax(0, 1fr);
   }
 

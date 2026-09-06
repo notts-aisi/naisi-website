@@ -2,6 +2,11 @@ import {
   normalizeAvailabilityGrid,
   type AvailabilityGrid,
 } from "@/lib/admissions/availability";
+import {
+  DEFAULT_ROUND_SLOTS,
+  sanitizeSlots,
+  type ReminderSlot,
+} from "@/lib/reminders/slots";
 import { sanitizeSignupForm, type FormQuestion } from "./events";
 import {
   ADMISSION_APPLICATION_STATUSES,
@@ -130,32 +135,6 @@ export const ADMISSION_ROUND_TRANSITIONS: Record<
   cancelled: [],
 };
 
-/** The reminder schedule ids a round may carry. */
-export type ReminderOffsetId = "t7" | "t3" | "dday";
-
-export const REMINDER_OFFSET_IDS: ReminderOffsetId[] = ["t7", "t3", "dday"];
-
-/**
- * One scheduled nudge to everyone still holding an unsubmitted draft.
- *
- * The scheduler marker keys on the RESOLVED civil due date, never on `id`
- * (`remind__{roundId}__{uid}__{dueAtKey}`), so editing a round's schedule
- * cannot re-send an offset that has already gone out.
- */
-export type ReminderOffset = {
-  id: ReminderOffsetId;
-  /** Days before `closesAt`. 0 is deadline day. */
-  daysBefore: number;
-  /** London wall clock on that day, 24-hour "HH:MM". */
-  atLocalTime: string;
-};
-
-export const DEFAULT_REMINDER_OFFSETS: ReminderOffset[] = [
-  { id: "t7", daysBefore: 7, atLocalTime: "10:00" },
-  { id: "t3", daysBefore: 3, atLocalTime: "10:00" },
-  { id: "dday", daysBefore: 0, atLocalTime: "12:00" },
-];
-
 // ---------------------------------------------------------------------------
 // Field budgets
 // ---------------------------------------------------------------------------
@@ -179,7 +158,11 @@ export const ADMISSION_ROUND_FIELD_LIMITS = {
   maxReviewers: 40,
   maxEvidenceRuns: 6,
   maxOutcomeRuns: 8,
-  maxReminderOffsets: 5,
+  // No `maxReminderOffsets` here on purpose. The reminder schedule is the one
+  // section of a round that is not a round-shaped thing: worksheet
+  // circulations carry the same list, so its cap lives once, beside the type,
+  // in `REMINDER_SLOT_LIMITS`. A copy here would be a second cap the moment
+  // one of the two was raised.
   maxProgrammeOptions: 8,
   programmeOptionLabel: 80,
   stageLabel: 80,
@@ -329,7 +312,27 @@ export type AdmissionRoundDoc = {
   blind: AdmissionBlindSettings;
   /** Runs whose attendance and submission rollups feed the evidence snapshot. */
   evidenceRunIds: string[];
-  reminderOffsets: ReminderOffset[];
+  /**
+   * The deadline-reminder schedule: a FREE LIST of slots, each one a number of
+   * days before `closesAt` and a London wall clock on that day. Empty means
+   * this round sends none.
+   *
+   * `ReminderSlot` is shared with the worksheet circulations
+   * (`src/lib/reminders/slots.ts`) so one editor, one label and one sanitiser
+   * serve both. It replaced three fixed ids (`t7`, `t3`, `dday`) that wore
+   * three fixed labels, which had a failure and a limitation: an admin who
+   * edited "A week out" to four days was left with a row saying one thing and
+   * sending another, and a round wanting a fourth nudge could not have one.
+   * Labels now come from the numbers, so an edited slot cannot wear the wrong
+   * name.
+   *
+   * The FIELD NAME stays `reminderOffsets`. Renaming it would rewrite every
+   * stored round for nothing, and the old ids are still valid ids: an id is
+   * opaque to everything that reads one, and the scheduler marker keys on the
+   * resolved civil date rather than on the id, so a round stored before the
+   * free list existed keeps its rows, its dates and its markers.
+   */
+  reminderOffsets: ReminderSlot[];
   /** Runs this round may place people onto. Empty for an appointment round. */
   outcomeRunIds: string[];
   applicationCounts: AdmissionApplicationCounts;
@@ -532,22 +535,37 @@ function asScoreScale(v: unknown): AdmissionScoreScale {
   return max > min ? { min, max } : { ...DEFAULT_SCORE_SCALE };
 }
 
-function asReminderOffsets(v: unknown): ReminderOffset[] {
-  if (!Array.isArray(v)) return [];
-  const out: ReminderOffset[] = [];
-  const seen = new Set<string>();
-  for (const raw of v) {
-    if (!raw || typeof raw !== "object") continue;
-    const o = raw as Raw;
-    const id = o.id as ReminderOffsetId;
-    if (!REMINDER_OFFSET_IDS.includes(id) || seen.has(id)) continue;
-    const atLocalTime = str(o.atLocalTime, 5);
-    if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(atLocalTime)) continue;
-    seen.add(id);
-    out.push({ id, daysBefore: Math.max(0, int(o.daysBefore, 0)), atLocalTime });
-    if (out.length >= ADMISSION_ROUND_FIELD_LIMITS.maxReminderOffsets) break;
-  }
-  return out;
+/**
+ * The reminder schedule, read through the SHARED slot sanitiser.
+ *
+ * Two things this does that `sanitizeSlots` alone would not, both worth
+ * stating because both are about what a round MEANS rather than what parses:
+ *
+ *  - **A stored LIST is taken at its word, presets and all.** `sanitizeSlots`
+ *    falls back to the presets when nothing usable survives, which is the
+ *    right answer for a document that never carried the field at all
+ *    (restored by hand, written by an older build) and the wrong one for a
+ *    document that carried a list. An author who deletes every row is saying
+ *    "this round sends none", and the rest of the system already honours
+ *    that: the scheduler job skips a round with no slots and Send now refuses
+ *    one, so handing back three presets here would start mailing a round that
+ *    had been told not to.
+ *
+ *    The fallback is `[]` for the WHOLE array case rather than only for the
+ *    empty one, because a list nobody can read must fail the same way a list
+ *    that is empty does. `sanitizeSlots` is stricter than the normaliser it
+ *    replaced (that one turned a missing `daysBefore` into 0, this one drops
+ *    the row), so `[{ id: "dday", atLocalTime: "12:00" }]` sanitises to
+ *    nothing, and falling back there would turn one deadline-day reminder
+ *    into three emails on a round only a restore or a hand edit could have
+ *    left in that state. Silence is the safe reading of a list we cannot
+ *    parse; three sends is not.
+ *  - **The old ids survive.** `t7`, `t3` and `dday` are simply valid slot ids
+ *    now, kept verbatim rather than migrated, so a round authored before the
+ *    free list existed resolves to the same dates and claims the same markers.
+ */
+function asReminderSlots(v: unknown): ReminderSlot[] {
+  return Array.isArray(v) ? sanitizeSlots(v, []) : sanitizeSlots(v, DEFAULT_ROUND_SLOTS);
 }
 
 function asApplicationCounts(v: unknown): AdmissionApplicationCounts {
@@ -602,7 +620,7 @@ export function normalizeAdmissionRound(id: string, data: Raw): AdmissionRoundDo
       ),
     },
     evidenceRunIds: asIdList(data.evidenceRunIds, L.maxEvidenceRuns),
-    reminderOffsets: asReminderOffsets(data.reminderOffsets),
+    reminderOffsets: asReminderSlots(data.reminderOffsets),
     outcomeRunIds: asIdList(data.outcomeRunIds, L.maxOutcomeRuns),
     applicationCounts: asApplicationCounts(data.applicationCounts),
     archived: bool(data.archived),

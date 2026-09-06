@@ -21,10 +21,14 @@
  *  4. **Both channels, independently.** The owner asked for an email switch
  *     and a push switch per event, so email-off-push-on is a real setting and
  *     is executed here rather than reasoned about.
- *  5. **The window and the ceiling.** The window is the schedule, so the
- *     tests that matter are the ones at its edges: the deadline hours away
- *     (which an earlier lateness rule silenced), the deadline still days
- *     away, and the deadline already gone.
+ *  5. **The schedule and the ceiling.** The sender's own slot list is the
+ *     schedule now, so the tests that matter are the ones at its edges: two
+ *     slots on different days are two reminders, two resolving to one moment
+ *     are one, a slot on the due day fires ON the due day, a slot further
+ *     past its moment than `maxLateHours` is dropped, and a deadline already
+ *     gone is out of the scan. The deadline hours away, which an earlier
+ *     lateness rule silenced, is still executed here because that bug is the
+ *     reason the lateness bound is now measured from the slot.
  *
  * ## The fake Firestore
  *
@@ -83,6 +87,9 @@ const STUBS = new Map([
       "};",
   ],
   [
+    // The whole send door, recording every option it was handed. `daysBefore`
+    // comes through here rather than through an export of its own, so the
+    // copy the reminder carries is asserted on the opts below.
     "@/lib/email/worksheetReminderEmails",
     "export const worksheetRespondPath = (id) => `/worksheets/respond/${id}`;\n" +
       "export const worksheetDueSoonSubject = (title) => `Due soon: ${title}`;\n" +
@@ -121,9 +128,10 @@ function source(relativePath) {
 // ---------------------------------------------------------------------------
 
 const {
-  DUE_SOON_WINDOW_HOURS,
+  SCAN_HORIZON_DAYS,
   RESPONSE_PAGE_SIZE,
   SENT_UNSTAMPED_REASON,
+  STALE_REPORT_WINDOW_HOURS,
   SUPPRESSION_UNREADABLE_REASON,
   WORKSHEET_DUE_REMINDERS_JOB_ID,
   runWorksheetDueReminders,
@@ -131,6 +139,10 @@ const {
 } = await loadTs("lib/scheduler/jobs/worksheetDueReminders.ts");
 
 const { JOBS, jobDefaultEnabled, policyFor } = await loadTs("lib/scheduler/registry.ts");
+
+const { DEFAULT_WORKSHEET_SLOTS, REMINDER_SLOT_LIMITS } = await loadTs(
+  "lib/reminders/slots.ts",
+);
 
 // ---------------------------------------------------------------------------
 // 1. The fake Firestore
@@ -300,12 +312,35 @@ const RESPONSES = `circulations/${CIRCULATION_ID}/responses`;
 
 /** 23:59 London on Sunday 4 October 2026, which is BST, so 22:59 UTC. */
 const DUE_AT = new Date("2026-10-04T22:59:00.000Z");
-/** The London civil date of that deadline, and the marker's `dueKey`. */
-const DUE_KEY = "2026-10-04";
-/** Inside the 48-hour window (it opens at 22:59 on 2 Oct) and not yet stale. */
-const IN_WINDOW = new Date("2026-10-03T09:00:00.000Z");
 
-const markerId = (uid) => `wsremind__${CIRCULATION_ID}__${uid}__${DUE_KEY}`;
+/**
+ * The schedule most of these tests run on: ONE nudge, the day before at
+ * 10:00.
+ *
+ * One rather than the two defaults so that each test says what it means. A
+ * default-scheduled circulation is exercised on its own further down, where
+ * the point being made is that a stored document without a schedule gains the
+ * defaults.
+ */
+const ONE_SLOT = [{ id: "rs_test1d", daysBefore: 1, atLocalTime: "10:00" }];
+
+/**
+ * That slot resolved: 10:00 London on Saturday 3 October, still BST, so 09:00
+ * UTC. The marker's `dueKey` is the London civil date with the wall clock
+ * appended, which is what makes two times on one day two reminders.
+ */
+const DUE_KEY = "2026-10-03T1000";
+
+/** Half an hour after the slot: due, and nowhere near the lateness bound. */
+const IN_WINDOW = new Date("2026-10-03T09:30:00.000Z");
+
+const markerId = (uid, dueKey = DUE_KEY) =>
+  `wsremind__${CIRCULATION_ID}__${uid}__${dueKey}`;
+
+/** The due-soon switches and schedule, written the way a document holds them. */
+function dueSoon({ email = true, push = false, slots = ONE_SLOT } = {}) {
+  return { dueSoon: { email, push, slots } };
+}
 
 function circulation(overrides = {}) {
   return {
@@ -319,7 +354,7 @@ function circulation(overrides = {}) {
     staffUids: ["sender01"],
     dueDate: DUE_AT,
     status: "open",
-    notifications: { dueSoon: { email: true, push: false } },
+    notifications: dueSoon(),
     recipientCount: 3,
     submittedCount: 0,
     reviewedCount: 0,
@@ -396,6 +431,18 @@ function reset(db) {
   globalThis.__queryHook = null;
 }
 
+/**
+ * One run, with the lines it logged.
+ *
+ * `context()` hands the log back beside the context, and a test that cares
+ * about both had to unpack them separately. What a run SAID is part of what it
+ * did, so the two travel together here.
+ */
+async function run({ ctx, logged }) {
+  const outcome = await runWorksheetDueReminders(ctx);
+  return { ...outcome, logged };
+}
+
 // ---------------------------------------------------------------------------
 // 3. The registration
 // ---------------------------------------------------------------------------
@@ -409,13 +456,17 @@ describe("the registration", () => {
     assert.equal(jobDefaultEnabled(worksheetDueRemindersJob), false);
   });
 
-  test("carries the caps and windows the contract names", () => {
+  test("carries the caps and horizons the contract names", () => {
     assert.equal(worksheetDueRemindersJob.id, WORKSHEET_DUE_REMINDERS_JOB_ID);
     assert.equal(worksheetDueRemindersJob.id, "worksheet-due-reminders");
     assert.equal(worksheetDueRemindersJob.maxPerTick, 200);
     assert.equal(worksheetDueRemindersJob.maxLateHours, 24);
     assert.equal(worksheetDueRemindersJob.reclaimAfterMinutes, 10);
-    assert.equal(DUE_SOON_WINDOW_HOURS, 48);
+    // The scan horizon is not a schedule: it is the furthest a slot may be
+    // set from its due date, so it is that number rather than a second
+    // opinion about it. A copy would be a horizon that stopped matching the
+    // cap the editors enforce.
+    assert.equal(SCAN_HORIZON_DAYS, REMINDER_SLOT_LIMITS.maxDaysBefore);
     // The audience is paged, so the ceiling is not the page size: 200 sends
     // has to be reachable across more than one page of recipients.
     assert.ok(RESPONSE_PAGE_SIZE <= worksheetDueRemindersJob.maxPerTick);
@@ -441,6 +492,7 @@ describe("the reminders job", () => {
 
     assert.equal(summary.sent, 3);
     assert.equal(summary.skipped, 0);
+    assert.equal(summary.stale, 0);
     assert.deepEqual(summary.pushOnly, []);
     assert.equal(summary.circulations, 1);
     assert.equal(summary.failures.length, 0);
@@ -452,6 +504,9 @@ describe("the reminders job", () => {
     assert.equal(first.worksheetTitle, "Week 3 check-in");
     assert.equal(first.circulationId, CIRCULATION_ID);
     assert.equal(first.dueDate.toISOString(), DUE_AT.toISOString());
+    // WHICH reminder this is, which is what stops the second one reading as
+    // the first sent twice.
+    assert.equal(first.daysBefore, 1);
 
     for (const uid of ["uid001", "uid002", "uid003"]) {
       const marker = db.read("schedulerMarkers", markerId(uid));
@@ -462,16 +517,18 @@ describe("the reminders job", () => {
     }
   });
 
-  test("the marker id is the family, the circulation, the person and the deadline", async () => {
+  test("the marker id is the family, the circulation, the person and the moment", async () => {
     // Every component is ALSO stored as a field, so a sweep or the admin panel
-    // never has to parse an id back into its parts.
+    // never has to parse an id back into its parts. The last component is the
+    // resolved slot's London date AND wall clock, which is what makes two
+    // times on one day two reminders rather than one.
     const db = world({ count: 1 });
     reset(db);
 
     await runWorksheetDueReminders(context().ctx);
 
     assert.deepEqual(db.ids("schedulerMarkers"), [
-      `wsremind__${CIRCULATION_ID}__uid001__2026-10-04`,
+      `wsremind__${CIRCULATION_ID}__uid001__2026-10-03T1000`,
     ]);
     const marker = db.read("schedulerMarkers", markerId("uid001"));
     assert.equal(marker.family, "wsremind");
@@ -495,10 +552,10 @@ describe("the reminders job", () => {
   });
 
   test("moving the deadline is a new reminder, not a silenced one", async () => {
-    // The marker keys on the London civil date, so a sender who pushes a
-    // deadline back reminds the people who have still not submitted about the
-    // new date. Nudging the TIME on the same day is the same key and cannot
-    // re-send, which is the failure people notice.
+    // Every slot is resolved against the due date on every tick, so a sender
+    // who pushes a deadline back moves the whole schedule with it and reminds
+    // the people who have still not submitted about the new date. Nothing is
+    // stored to be rescheduled.
     const db = world({ count: 1 });
     reset(db);
     await runWorksheetDueReminders(context().ctx);
@@ -512,7 +569,7 @@ describe("the reminders job", () => {
 
     assert.equal(globalThis.__sends.length, 1, "the moved deadline sent nothing");
     assert.ok(
-      db.read("schedulerMarkers", `wsremind__${CIRCULATION_ID}__uid001__2026-10-05`),
+      db.read("schedulerMarkers", `wsremind__${CIRCULATION_ID}__uid001__2026-10-04T1000`),
       "the new deadline left no marker of its own",
     );
   });
@@ -585,7 +642,7 @@ describe("the email and push switches", () => {
     // owner asked for a switch per channel, so this one is a real setting.
     const db = world({
       count: 1,
-      circulationOverrides: { notifications: { dueSoon: { email: false, push: true } } },
+      circulationOverrides: { notifications: dueSoon({ email: false, push: true }) },
     });
     reset(db);
 
@@ -607,7 +664,7 @@ describe("the email and push switches", () => {
   test("both on: one of each, and the push follows the email", async () => {
     const db = world({
       count: 1,
-      circulationOverrides: { notifications: { dueSoon: { email: true, push: true } } },
+      circulationOverrides: { notifications: dueSoon({ email: true, push: true }) },
     });
     reset(db);
     let pushesAtSendTime = 0;
@@ -626,7 +683,7 @@ describe("the email and push switches", () => {
   test("both off: the circulation is not examined at all", async () => {
     const db = world({
       count: 3,
-      circulationOverrides: { notifications: { dueSoon: { email: false, push: false } } },
+      circulationOverrides: { notifications: dueSoon({ email: false, push: false }) },
     });
     reset(db);
 
@@ -643,7 +700,7 @@ describe("the email and push switches", () => {
     // read something they have not been sent.
     const db = world({
       count: 1,
-      circulationOverrides: { notifications: { dueSoon: { email: true, push: true } } },
+      circulationOverrides: { notifications: dueSoon({ email: true, push: true }) },
     });
     reset(db);
     globalThis.__sendHook = () => "failed";
@@ -717,7 +774,7 @@ describe("the skips", () => {
     // platform has been told to stop mailing would read as a delivered email.
     const db = world({
       count: 1,
-      circulationOverrides: { notifications: { dueSoon: { email: true, push: true } } },
+      circulationOverrides: { notifications: dueSoon({ email: true, push: true }) },
     });
     reset(db);
     globalThis.__suppressed = new Set(["uid001@example.com"]);
@@ -738,7 +795,7 @@ describe("the skips", () => {
     // silencing another.
     const db = world({
       count: 1,
-      circulationOverrides: { notifications: { dueSoon: { email: false, push: true } } },
+      circulationOverrides: { notifications: dueSoon({ email: false, push: true }) },
     });
     reset(db);
     globalThis.__suppressed = new Set(["uid001@example.com"]);
@@ -787,19 +844,20 @@ describe("the skips", () => {
 // 7. The clock, the ceiling and the failures
 // ---------------------------------------------------------------------------
 
-describe("the window", () => {
+describe("the schedule", () => {
   test("a deadline hours away is the most urgent reminder there is, and it goes", async () => {
     // THE REGRESSION THIS SUITE EXISTS TO HOLD DOWN. An earlier version of the
-    // handler derived staleness from the moment the 48-hour window OPENED, so
-    // `maxLateHours` (24) silenced every circulation with under a day left: a
-    // worksheet set at 09:00 to be in by the evening was dropped on sight by a
-    // scheduler that had never missed a tick. This run is 14 hours before the
-    // deadline and every recipient hears about it.
+    // handler had a fixed 48-hour window and derived staleness from the moment
+    // that window OPENED, so `maxLateHours` (24) silenced every circulation
+    // with under a day left: a worksheet set at 09:00 to be in by the evening
+    // was dropped on sight by a scheduler that had never missed a tick.
+    // Lateness is measured from the SLOT now, so this run, 21 hours after the
+    // slot and 17 hours before the deadline, reminds everybody.
     const db = world({ count: 3 });
     reset(db);
 
     const { summary } = await runWorksheetDueReminders(
-      context({ now: new Date("2026-10-04T09:00:00.000Z") }).ctx,
+      context({ now: new Date("2026-10-04T06:00:00.000Z") }).ctx,
     );
 
     assert.equal(globalThis.__sends.length, 3, "the reminders closest to the wire were dropped");
@@ -808,11 +866,25 @@ describe("the window", () => {
     assert.equal(summary.failures.length, 0);
   });
 
-  test("somebody added inside the last day is reminded like everybody else", async () => {
+  test("somebody added between two slots is reminded on the next one", async () => {
     // The second half of the same bug: the drop was per CIRCULATION, so once a
     // deadline was less than a day away, a recipient added after that point
-    // could never be reminded at all, however many ticks ran.
-    const db = world({ count: 1 });
+    // could never be reminded at all, however many ticks ran. The decision is
+    // per person and per slot, so a late addition is caught by the next slot
+    // exactly as everybody else is, and the person already reminded on the
+    // earlier slot is reminded again on this one because it is a different
+    // scheduled nudge.
+    const db = world({
+      count: 1,
+      circulationOverrides: {
+        notifications: dueSoon({
+          slots: [
+            { id: "rs_a", daysBefore: 1, atLocalTime: "10:00" },
+            { id: "rs_b", daysBefore: 0, atLocalTime: "09:00" },
+          ],
+        }),
+      },
+    });
     reset(db);
     await runWorksheetDueReminders(context().ctx);
     assert.equal(globalThis.__sends.length, 1);
@@ -836,20 +908,30 @@ describe("the window", () => {
       .set({ email: "uid009@example.com", displayName: "Member uid009" });
     globalThis.__sends = [];
 
-    // Five hours to go: well past the point the old lateness rule gave up.
+    // 11:00 London on the due day: the day-of slot fired two hours ago, and
+    // the day-before slot is 25 hours past its own moment, so it is dropped
+    // rather than sent late. Both people hear about the day-of one, including
+    // the one who already had the day-before reminder: it is a different
+    // scheduled nudge, not a repeat of that one.
     const { summary } = await runWorksheetDueReminders(
-      context({ now: new Date("2026-10-04T18:00:00.000Z") }).ctx,
+      context({ now: new Date("2026-10-04T10:00:00.000Z") }).ctx,
     );
 
     assert.deepEqual(
       globalThis.__sends.map((send) => send.uid),
-      ["uid009"],
+      ["uid001", "uid009"],
       "the late addition was never reminded",
     );
-    assert.equal(summary.sent, 1);
+    assert.equal(summary.sent, 2);
+    assert.equal(summary.stale, 1, "the day-before slot was not dropped as stale");
+    assert.equal(
+      globalThis.__sends[0].daysBefore,
+      0,
+      "the day-of reminder did not say it was the day-of one",
+    );
   });
 
-  test("a deadline further out than the window is not looked at yet", async () => {
+  test("a deadline whose slots are all still ahead is not worked on yet", async () => {
     const db = world({ count: 2 });
     reset(db);
 
@@ -857,8 +939,27 @@ describe("the window", () => {
       context({ now: new Date("2026-09-28T09:00:00.000Z") }).ctx,
     );
 
-    assert.equal(summary.circulations, 0, "a circulation outside the window was examined");
+    assert.equal(summary.circulations, 0, "a circulation with nothing due was examined");
     assert.equal(globalThis.__sends.length, 0);
+    assert.deepEqual(db.ids("schedulerMarkers"), []);
+  });
+
+  test("an empty schedule reminds nobody, switch on or not", async () => {
+    // Deleting every row is the second way to say "no reminders", and the
+    // model keeps an empty list empty rather than restoring the defaults
+    // under the sender who emptied it. The job has to honour that: an empty
+    // schedule is not an unset one.
+    const db = world({
+      count: 2,
+      circulationOverrides: { notifications: dueSoon({ slots: [] }) },
+    });
+    reset(db);
+
+    const { summary } = await runWorksheetDueReminders(context().ctx);
+
+    assert.equal(globalThis.__sends.length, 0, "a circulation with no schedule sent mail");
+    assert.equal(summary.circulations, 0);
+    assert.deepEqual(db.ids("schedulerMarkers"), []);
   });
 
   test("a deadline that has passed is out of the query, whatever the status says", async () => {
@@ -890,6 +991,269 @@ describe("the window", () => {
 
     assert.equal(summary.circulations, 0);
     assert.equal(globalThis.__sends.length, 0);
+  });
+});
+
+describe("more than one slot", () => {
+  test("two slots on different days are two reminders", async () => {
+    // The whole point of a list. Each slot is its own marker, so the person
+    // hears from the schedule twice and the second reminder says which one it
+    // is rather than reading as the first sent again.
+    const db = world({
+      count: 1,
+      circulationOverrides: {
+        notifications: dueSoon({
+          slots: [
+            { id: "rs_a", daysBefore: 3, atLocalTime: "10:00" },
+            { id: "rs_b", daysBefore: 1, atLocalTime: "10:00" },
+          ],
+        }),
+      },
+    });
+    reset(db);
+
+    // 10:30 London on 1 October: the three-day slot went half an hour ago.
+    const first = await runWorksheetDueReminders(
+      context({ now: new Date("2026-10-01T09:30:00.000Z") }).ctx,
+    );
+    assert.equal(first.summary.sent, 1);
+    assert.equal(globalThis.__sends[0].daysBefore, 3);
+
+    globalThis.__sends = [];
+    // 10:30 London on 3 October: the day-before slot, a different marker.
+    const second = await runWorksheetDueReminders(context().ctx);
+
+    assert.equal(second.summary.sent, 1, "the second slot never fired");
+    assert.equal(globalThis.__sends[0].daysBefore, 1);
+    assert.deepEqual(db.ids("schedulerMarkers"), [
+      markerId("uid001", "2026-10-01T1000"),
+      markerId("uid001", "2026-10-03T1000"),
+    ]);
+  });
+
+  test("two slots at the same moment are one reminder", async () => {
+    // Two layers agree on this and both are load bearing: the sanitiser drops
+    // the duplicate on the way out of Firestore, and the resolver would merge
+    // them into one key even if it did not. A person cannot be mailed twice
+    // for one moment.
+    const db = world({
+      count: 1,
+      circulationOverrides: {
+        notifications: dueSoon({
+          slots: [
+            { id: "rs_a", daysBefore: 1, atLocalTime: "10:00" },
+            { id: "rs_b", daysBefore: 1, atLocalTime: "10:00" },
+          ],
+        }),
+      },
+    });
+    reset(db);
+
+    const { summary } = await runWorksheetDueReminders(context().ctx);
+
+    assert.equal(globalThis.__sends.length, 1, "one moment sent two reminders");
+    assert.equal(summary.sent, 1);
+    assert.deepEqual(db.ids("schedulerMarkers"), [markerId("uid001")]);
+  });
+
+  test("two times on ONE day are two reminders, because the key carries the clock", async () => {
+    // The difference from the admissions job, which groups by day and
+    // deliberately collapses these. A worksheet's audience is a handful of
+    // named people and a sender who sets 09:00 and 16:00 asked for both.
+    const db = world({
+      count: 1,
+      circulationOverrides: {
+        notifications: dueSoon({
+          slots: [
+            { id: "rs_a", daysBefore: 1, atLocalTime: "09:00" },
+            { id: "rs_b", daysBefore: 1, atLocalTime: "16:00" },
+          ],
+        }),
+      },
+    });
+    reset(db);
+
+    // 21:00 London on 3 October: both of that day's slots have passed, and
+    // neither is more than `maxLateHours` old.
+    const { summary } = await runWorksheetDueReminders(
+      context({ now: new Date("2026-10-03T20:00:00.000Z") }).ctx,
+    );
+
+    assert.equal(summary.sent, 2);
+    assert.deepEqual(db.ids("schedulerMarkers"), [
+      markerId("uid001", "2026-10-03T0900"),
+      markerId("uid001", "2026-10-03T1600"),
+    ]);
+  });
+
+  test("a slot on the due day fires on the due day", async () => {
+    const db = world({
+      count: 2,
+      circulationOverrides: {
+        notifications: dueSoon({
+          slots: [{ id: "rs_day", daysBefore: 0, atLocalTime: "09:00" }],
+        }),
+      },
+    });
+    reset(db);
+
+    // 10:00 London on 4 October, an hour after the slot and thirteen hours
+    // before the 23:59 deadline.
+    const { summary } = await runWorksheetDueReminders(
+      context({ now: new Date("2026-10-04T09:00:00.000Z") }).ctx,
+    );
+
+    assert.equal(summary.sent, 2);
+    assert.equal(globalThis.__sends[0].daysBefore, 0);
+    assert.deepEqual(db.ids("schedulerMarkers"), [
+      markerId("uid001", "2026-10-04T0900"),
+      markerId("uid002", "2026-10-04T0900"),
+    ]);
+  });
+
+  test("a deadline EARLIER TODAY still has its day-of reminder sent", async () => {
+    // THE CASE THE SCAN'S LOWER BOUND EXISTS FOR. A worksheet due at 09:00
+    // with a nudge set for 08:00 is still owed that nudge at 10:00, an hour
+    // late rather than a day. `dueDate >= now` would have dropped the whole
+    // circulation at 09:01 and the reminder with it; the bound is the start of
+    // the London civil day instead, and the slot's own lateness decides.
+    const db = world({
+      count: 1,
+      circulationOverrides: {
+        // 09:00 London on 4 October, which is BST, so 08:00 UTC.
+        dueDate: new Date("2026-10-04T08:00:00.000Z"),
+        notifications: dueSoon({
+          slots: [{ id: "rs_day", daysBefore: 0, atLocalTime: "08:00" }],
+        }),
+      },
+    });
+    reset(db);
+
+    const { summary } = await runWorksheetDueReminders(
+      context({ now: new Date("2026-10-04T09:00:00.000Z") }).ctx,
+    );
+
+    assert.equal(summary.sent, 1, "a same-day reminder was lost with its deadline");
+    assert.deepEqual(db.ids("schedulerMarkers"), [markerId("uid001", "2026-10-04T0800")]);
+  });
+
+  test("a slot further past its moment than maxLateHours is dropped, and unmarked", async () => {
+    // Reported on the run and logged, with NO marker: on a later tick a passed
+    // slot is normally one that went out on time, so a marker saying "dropped
+    // as stale" would be a record of a reminder that was delivered.
+    const db = world({ count: 2 });
+    reset(db);
+
+    // 11:00 London on the due day. The day-before slot resolved at 10:00 the
+    // previous day, so it passed the 24-hour bound an hour ago: freshly stale,
+    // which is the one window in which the run says anything about it.
+    const { result, summary, logged } = await run(
+      context({ now: new Date("2026-10-04T10:00:00.000Z") }),
+    );
+
+    assert.equal(globalThis.__sends.length, 0, "a reminder went out a day late");
+    assert.equal(summary.sent, 0);
+    assert.equal(summary.stale, 1);
+    assert.equal(summary.circulations, 1, "the run did work on it and did not say so");
+    assert.deepEqual(db.ids("schedulerMarkers"), [], "a dropped date left a marker");
+    assert.match(result.note, /stale 1/);
+    assert.equal(
+      logged.filter(([message]) => /worth sending/.test(message)).length,
+      1,
+      "the crossing went unlogged",
+    );
+    // Declining to send is not work: nothing was written and nobody was
+    // reached, so the receipt must not show the job busy.
+    assert.equal(result.processed, 0, "a run that sent nothing reported work anyway");
+  });
+
+  test("a slot long past its moment is dropped in silence, tick after tick", async () => {
+    // THE REGRESSION THIS PAIR EXISTS FOR. A resolved slot stays resolvable
+    // for as long as its circulation is in the scan, so a reminder delivered
+    // on time on Monday is still classified stale on every tick until the
+    // deadline. Counting and logging each of those is a hundred identical
+    // lines a day about a reminder that went out perfectly, and it put the
+    // scheduler panel's own health readout into permanent alarm.
+    const db = world({
+      count: 2,
+      circulationOverrides: {
+        notifications: dueSoon({
+          slots: [{ id: "rs_far", daysBefore: 3, atLocalTime: "10:00" }],
+        }),
+      },
+    });
+    reset(db);
+
+    // Two days after that slot, so a full day past the point at which the
+    // crossing stopped being news.
+    const { result, summary, logged } = await run(context());
+
+    assert.equal(globalThis.__sends.length, 0, "a reminder went out two days late");
+    assert.equal(summary.sent, 0);
+    assert.equal(summary.stale, 0, "an old drop was reported as if it had just happened");
+    assert.deepEqual(db.ids("schedulerMarkers"), [], "a dropped date left a marker");
+    assert.match(result.note, /stale 0/);
+    assert.deepEqual(
+      logged.filter(([message]) => /worth sending/.test(message)),
+      [],
+      "the same non-event was logged again",
+    );
+    assert.equal(result.processed, 0);
+  });
+
+  test("the reporting window is set against the tick, not against the reminder", () => {
+    // Two hours: long enough that any tick cadence up to hourly meets the
+    // crossing, short enough that the same crossing is not still being
+    // reported the following day. A window at or above `maxLateHours` would
+    // put the spam straight back.
+    assert.equal(STALE_REPORT_WINDOW_HOURS, 2);
+    assert.ok(
+      STALE_REPORT_WINDOW_HOURS < worksheetDueRemindersJob.maxLateHours,
+      "the reporting window swallowed the lateness bound",
+    );
+  });
+});
+
+describe("a circulation stored without a schedule", () => {
+  test("gets the defaults, so nothing written before this feature falls silent", async () => {
+    // Every circulation that existed before the slot list did. The normaliser
+    // resolves a missing list to `DEFAULT_WORKSHEET_SLOTS`, so this document
+    // is reminded on three days out and the day before without anybody
+    // editing it.
+    assert.deepEqual(
+      DEFAULT_WORKSHEET_SLOTS.map((slot) => [slot.daysBefore, slot.atLocalTime]),
+      [
+        [3, "10:00"],
+        [1, "10:00"],
+      ],
+      "the defaults moved, so the rest of this test is testing something else",
+    );
+    const db = world({
+      count: 1,
+      circulationOverrides: { notifications: { dueSoon: { email: true, push: false } } },
+    });
+    reset(db);
+
+    const { summary } = await runWorksheetDueReminders(context().ctx);
+
+    assert.equal(summary.sent, 1);
+    assert.equal(globalThis.__sends[0].daysBefore, 1);
+    // The three-day slot resolved two days before this tick, so it is dropped
+    // rather than sent: the defaults are a schedule, not a backlog. Dropped in
+    // SILENCE, because it passed the lateness bound a day ago and a drop that
+    // old is the ordinary state of a reminder that went out on time.
+    assert.equal(summary.stale, 0);
+    assert.deepEqual(db.ids("schedulerMarkers"), [markerId("uid001")]);
+  });
+
+  test("gets them even with no notifications map at all", async () => {
+    const db = world({ count: 1, circulationOverrides: { notifications: {} } });
+    reset(db);
+
+    const { summary } = await runWorksheetDueReminders(context().ctx);
+
+    assert.equal(summary.sent, 1, "a document with no switches was read as silent");
+    assert.equal(globalThis.__pushes.length, 0, "push defaults to on");
   });
 });
 
@@ -1040,9 +1404,12 @@ describe("the handler's own shape", () => {
   test("scans in the order the one composite index declares", () => {
     // `circulations (status ASC, dueDate ASC)` in firestore.indexes.json.
     // Equality first, then the range field: any other order is the same query
-    // to Firestore and a different-looking one to the index guard.
+    // to Firestore and a different-looking one to the index guard. The slot
+    // schedule widened WHAT is filtered in code, never the query: it is still
+    // one equality and one range field on the same two columns, so no index
+    // changed and nothing had to be deployed.
     const statusAt = src.indexOf('.where("status", "==", "open")');
-    const fromAt = src.indexOf('.where("dueDate", ">=", ctx.now)');
+    const fromAt = src.indexOf('.where("dueDate", ">=", londonDayStart(ctx.now))');
     const toAt = src.indexOf('.where("dueDate", "<=", horizon)');
     assert.ok(statusAt !== -1 && fromAt !== -1 && toAt !== -1, "the scan query changed shape");
     assert.ok(statusAt < fromAt && fromAt < toAt, "the clauses are not in index order");
@@ -1085,17 +1452,69 @@ describe("the handler's own shape", () => {
     assert.equal(SENT_UNSTAMPED_REASON, "sent-unstamped");
   });
 
-  test("nothing in the handler derives a drop from maxLateHours", () => {
-    // The mapping this file used to carry measured lateness from the moment
-    // the 48-hour window OPENED, which silenced every deadline less than
-    // `maxLateHours` away on a scheduler that had never missed a tick. There
-    // is no instant here to be late for, and the scan's own `dueDate >= now`
-    // clause is the whole lateness rule. See the header.
-    assert.ok(!/isStaleWork/.test(src), "the handler derives staleness again");
-    assert.ok(!/ctx\.maxLateHours/.test(src), "the handler reads a bound it cannot honour");
+  test("measures lateness from the slot, never from the deadline", () => {
+    // The mapping this file used to carry measured lateness from the moment a
+    // fixed 48-hour window OPENED, which silenced every deadline less than
+    // `maxLateHours` away on a scheduler that had never missed a tick.
+    // `maxLateHours` is honoured now, and it may only ever be applied to a
+    // RESOLVED SLOT'S OWN MOMENT. Any arithmetic putting it near the due date
+    // would be that bug coming back wearing a different name, so the guard is
+    // on the operand rather than on the count: it walks every line reading the
+    // bound and refuses one that mentions the deadline.
+    assert.ok(!/isStaleWork/.test(src), "the handler classifies staleness itself");
+    const resolverCall = src.indexOf("resolveReminderSlots({");
+    const boundUse = src.indexOf("maxLateHours: ctx.maxLateHours");
+    assert.ok(resolverCall !== -1, "the handler no longer resolves the slots");
+    assert.ok(boundUse > resolverCall, "the lateness bound is read somewhere else");
+
+    const boundLines = src.split("\n").filter((line) => line.includes("ctx.maxLateHours"));
+    assert.deepEqual(
+      boundLines.map((line) => line.trim()),
+      [
+        "maxLateHours: ctx.maxLateHours,",
+        "if (isFreshlyStale(entry.dueAt, ctx.now, ctx.maxLateHours)) {",
+      ],
+      "the lateness bound is read somewhere this test has not thought about",
+    );
+    for (const line of boundLines) {
+      assert.ok(
+        !/dueDate/.test(line),
+        "the lateness bound was measured against the deadline again",
+      );
+    }
     assert.ok(
-      /\.where\("dueDate", ">=", ctx\.now\)/.test(src),
-      "the one clause that keeps a passed deadline out of the audience is gone",
+      /grouping: "instant"/.test(src),
+      "two times on one day would collapse into one reminder",
+    );
+  });
+
+  test("a stale drop is neither work on the receipt nor a line on every tick", () => {
+    // Both halves of the same correction, pinned in the source because both
+    // are one character away from coming back. `processed` is what the panel
+    // shows as work done, and folding a decision-not-to-send into it showed a
+    // busy job on ticks that wrote nothing; the log line is gated on the
+    // crossing being fresh, and ungating it is a hundred lines a day about a
+    // reminder that was delivered.
+    assert.ok(
+      /processed: summary\.sent \+ summary\.skipped,/.test(src),
+      "a stale drop is being counted as work the run did",
+    );
+    assert.ok(
+      /if \(isFreshlyStale\(/.test(src),
+      "every resolved-and-passed slot is being reported again, on every tick",
+    );
+  });
+
+  test("scans from the start of the London day, so a same-day slot survives", () => {
+    // `dueDate >= ctx.now` would drop a worksheet due at 09:00 the moment it
+    // was 09:01, taking an 08:00 nudge that is five minutes late with it.
+    assert.ok(
+      /function londonDayStart/.test(src),
+      "the lower bound is no longer a London civil day",
+    );
+    assert.ok(
+      !/\.where\("dueDate", ">=", ctx\.now\)/.test(src),
+      "the scan is back to dropping a deadline that passed an hour ago",
     );
   });
 });

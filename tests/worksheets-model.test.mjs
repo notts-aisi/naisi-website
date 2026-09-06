@@ -56,6 +56,7 @@ const SRC = join(REPO_ROOT, "src");
 const WORKSHEETS_MODULE = join(SRC, "lib", "firestore", "worksheets.ts");
 const CIRCULATIONS_MODULE = join(SRC, "lib", "firestore", "circulations.ts");
 const BLOCKS_MODULE = join(SRC, "lib", "firestore", "newsletterBlocks.ts");
+const SLOTS_MODULE = join(SRC, "lib", "reminders", "slots.ts");
 
 /** Every module specifier in transpiled output, in either quote style. */
 const SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"']+)\2/g;
@@ -199,6 +200,13 @@ const {
 } = await loadTs(CIRCULATIONS_MODULE);
 
 const { loomIdFromUrl, videoEmbedFromUrl, youtubeIdFromUrl } = await loadTs(BLOCKS_MODULE);
+
+const { DEFAULT_WORKSHEET_SLOTS } = await loadTs(SLOTS_MODULE);
+
+/** A slot list as day-and-time pairs, so an id nobody chose is not compared. */
+function pairsOf(slots) {
+  return slots.map((slot) => [slot.daysBefore, slot.atLocalTime]);
+}
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -1178,6 +1186,75 @@ describe("review config and notification defaults", () => {
     assert.deepEqual(Object.keys(filled).sort(), [...NOTIFICATION_EVENTS].sort());
   });
 
+  it("gives dueSoon a schedule, and every other event only its two switches", () => {
+    // The shape the reminder slots landed in: the timing sits beside the
+    // switches it times, and nothing else grew a third field.
+    const filled = normalizeNotifications(undefined);
+    assert.deepEqual(pairsOf(filled.dueSoon.slots), pairsOf(DEFAULT_WORKSHEET_SLOTS));
+    for (const event of NOTIFICATION_EVENTS) {
+      if (event === "dueSoon") continue;
+      assert.deepEqual(
+        Object.keys(filled[event]).sort(),
+        ["email", "push"],
+        `${event} carries something other than its two switches`,
+      );
+    }
+  });
+
+  it("resolves a missing or unusable schedule to the defaults", () => {
+    // EVERY CIRCULATION WRITTEN BEFORE THE SLOTS EXISTED takes this path, and
+    // it is why none of them fell silent: a document with no list, and one
+    // whose list is junk, both read as the two default nudges.
+    for (const stored of [undefined, null, "10:00", [{ daysBefore: 1 }]]) {
+      const filled = normalizeNotifications({
+        dueSoon: { email: true, push: false, slots: stored },
+      });
+      assert.deepEqual(
+        pairsOf(filled.dueSoon.slots),
+        pairsOf(DEFAULT_WORKSHEET_SLOTS),
+        `a stored ${JSON.stringify(stored)} did not fall back`,
+      );
+    }
+  });
+
+  it("leaves an EMPTY schedule empty, because somebody deleted every row", () => {
+    // The one list that is not repaired. Falling back here would restore the
+    // defaults under a sender who had just removed them, and send mail they
+    // had deliberately stopped.
+    const filled = normalizeNotifications({
+      dueSoon: { email: true, push: false, slots: [] },
+    });
+    assert.deepEqual(filled.dueSoon.slots, []);
+  });
+
+  it("keeps a stored schedule, repaired rather than replaced", () => {
+    const filled = normalizeNotifications({
+      dueSoon: {
+        email: true,
+        push: true,
+        slots: [
+          { id: "a", daysBefore: 900, atLocalTime: "09:00" },
+          { id: "b", daysBefore: 2, atLocalTime: "nonsense" },
+          { id: "c", daysBefore: 0, atLocalTime: "12:00" },
+        ],
+      },
+    });
+    assert.deepEqual(pairsOf(filled.dueSoon.slots), [
+      [60, "09:00"],
+      [0, "12:00"],
+    ]);
+  });
+
+  it("hands back a FRESH schedule, so one circulation cannot edit another's", () => {
+    // `DEFAULT_NOTIFICATIONS` is one object shared by the whole process, and
+    // the circulate dialog holds what this function returns as editable state.
+    const first = normalizeNotifications(undefined);
+    const second = normalizeNotifications(undefined);
+    first.dueSoon.slots[0].daysBefore = 99;
+    assert.equal(second.dueSoon.slots[0].daysBefore, 3);
+    assert.equal(DEFAULT_NOTIFICATIONS.dueSoon.slots[0].daysBefore, 3);
+  });
+
   it("caps recipients per request and reviewers where the routes expect", () => {
     assert.equal(CIRCULATION_LIMITS.maxRecipientsPerRequest, 100);
     assert.equal(CIRCULATION_LIMITS.maxReviewers, 5);
@@ -1481,6 +1558,28 @@ describe("firestore.rules and the limit constants agree", () => {
     // library listen would be refused, filtered or not. That is #261 exactly.
     assert.match(WORKSHEET_RULES, /resource\.data\.private == false/);
     assert.doesNotMatch(WORKSHEET_RULES, /get\('private',/);
+  });
+
+  it("allows the key the reminder schedule lives inside, and no new one", () => {
+    // WHY THE SLOTS ARE INSIDE `notifications`. The staff update band is a
+    // fixed key list, and `notifications` is on it while nothing about
+    // reminders is: a top-level `reminderSlots` field would have been refused
+    // by that `hasOnly` until somebody deployed a rules change to both
+    // projects. A leaf write to `notifications.dueSoon.slots` reports
+    // `notifications` as its affected key, exactly as the switches beside it
+    // do, so the schedule shipped with no rules change at all.
+    //
+    // Both directions: the key must still be allowed, and a reminder field
+    // must not have appeared at the top level where the model does not put
+    // one.
+    const band = WORKSHEET_RULES.match(/affectedKeys\(\)\.hasOnly\(\[([^\]]*)\]/);
+    assert.ok(band, "the circulations update rule no longer has a key list");
+    const keys = band[1].split(",").map((key) => key.trim().replace(/'/g, ""));
+    assert.ok(keys.includes("notifications"), `the key list is now ${keys.join(", ")}`);
+    assert.ok(
+      !keys.some((key) => /reminder|slots/i.test(key)),
+      "a top-level reminder key appeared in the rules that the model does not write",
+    );
   });
 
   it("pins the review author to the writer", () => {

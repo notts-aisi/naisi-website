@@ -223,8 +223,13 @@ the uploader.
 ## Indexes
 
 One composite index: `circulations (status ASC, dueDate ASC)`, for the
-due-soon reminder job's `status == "open" and dueDate in [now, now + 48h]`
-scan. Every other query is equality-only or sorted client-side.
+due-soon reminder job's scan: `status == "open"` and `dueDate` between the
+start of today in London and sixty days out (the furthest a reminder slot may
+be set from its due date, so nothing beyond it can have a reminder owed). The
+lower bound is the start of the London civil day rather than `now`, so a
+worksheet due at 09:00 with a nudge set for 08:00 is still reminded at 08:05.
+Which slots are actually due is decided in code, from each circulation's own
+list. Every other query is equality-only or sorted client-side.
 
 ## Routes
 
@@ -264,6 +269,17 @@ Every send goes through `sendEmail` with `kind: "task"`, honours the
 `mirrorTaskEmailToPush` under the existing `tasks` preference, with the push
 deep-linking to the respond page rather than the board.
 
+`dueSoon` carries a SCHEDULE beside its two switches:
+`notifications.dueSoon.slots`, a list of up to six
+`{ id, daysBefore, atLocalTime }` entries counted back from `dueDate` in
+London civil days (`src/lib/reminders/slots.ts`, shared with the admission
+rounds). Defaults are three days out and the day before, both at 10:00, and a
+circulation stored without a list reads as those defaults, so nothing written
+before the list existed fell silent. The list lives inside `notifications`
+because the staff update band in the rules already allows that key and
+constrains nothing inside it: the schedule shipped with no rules change and no
+deploy. The switches remain the on and off.
+
 `dueSoon` is the one exception to "push mirrors email, and never leads it".
 Its two switches are independent, so a circulation with the email switch off
 and the push switch on sends a push and no email. That is the owner's ask (a
@@ -277,9 +293,15 @@ site-wide `config/taskEmails` kill switch still covers the push.
 Due-soon reminders are the scheduler job `worksheet-due-reminders`, registered
 with `enabledByDefault: false`, so it ships dark until an admin turns it on
 from the scheduler panel (and until `SCHEDULER_SECRET` exists, the tick
-cannot run at all). Markers are `wsremind__{circulationId}__{uid}__{dueKey}`.
-The circulation page shows admins a one-line notice beside the due-soon
-switch saying reminders are not yet live.
+cannot run at all). Markers are `wsremind__{circulationId}__{uid}__{dueKey}`,
+where `dueKey` is the London civil date a slot resolved to WITH its wall clock
+(`2026-10-04T1000`): two slots on one day at different times are two
+reminders, two resolving to one moment are one, and moving the due date
+re-resolves every slot and mints new keys. A slot further past its moment than
+the job's `maxLateHours` is dropped and counted on the run, with no marker
+written, because on a later tick a passed slot is normally one that went out
+on time. The circulation page shows admins a one-line notice beside the
+due-soon switch saying reminders are not yet live.
 
 ## Review and feedback
 
@@ -341,38 +363,66 @@ time tracking; an edit lock for two reviewers editing one copy (admins
 coordinate through `useAdminPageLock`, which `adminLocks` rules restrict to
 admins, so for non-admin reviewers the last write wins and the page says so).
 
-## Planned next (scoped, not built)
+## Configurable reminders (landed)
 
-Two pieces the owner asked for on 7 September 2026, recorded here so the
-build follows a written shape.
+Asked for by the owner on 7 September 2026 and built to the shape recorded
+here. The due-soon job used to remind every unsubmitted recipient once, 48
+hours before the due date, and an admission round had three fixed reminder
+ids whose names said seven, three and zero days while their numbers were
+editable. Both now share one shape:
 
-### Configurable reminders
-
-Today the due-soon job reminds every unsubmitted recipient once, 48 hours
-before the due date, when the circulation's dueSoon switch is on. The
-admission rounds already do better: a round has a reminders on/off switch
-and three slots (a week out, three days out, deadline day), each with an
-editable number of days and a time of day. The plan is one shape for both:
-
-- A free list of slots, `{ id, daysBefore, atLocalTime }[]`, stored on the
-  circulation as `notifications.dueSoon.slots` beside the dueSoon email and
-  push switches, which remain the on/off. Inside `notifications` on purpose:
-  the staff update band in the rules already allows that key and constrains
-  nothing inside it, so no rules change and no deploy. Defaults are code
-  constants (3 days and 1 day before, at 10:00); editable per circulation in
-  the Circulate dialog and the Settings tab. Slots are a list, not three
-  fixed ids, so a custom slot is one more row, capped at six.
-- The job resolves each offset against `dueDate` the way the admissions job
-  resolves against `closesAt` (London civil day, marker keyed on the resolved
-  date so two offsets on one day are one send and a moved due date is a new
-  reminder). The existing `wsremind` marker shape already carries the date
-  key, so no marker change.
-- Admissions gains the same freedom: the three fixed ids become a list with
-  the three presets as defaults, and the slot labels come from the numbers
-  ("3 days before") rather than fixed names, so an edited slot cannot wear
-  the wrong label.
+- A free list of slots, `{ id, daysBefore, atLocalTime }[]`, capped at six and
+  at sixty days out, defined once in `src/lib/reminders/slots.ts` with one
+  sanitiser, one validator and one derived label, so an edited slot cannot
+  wear the wrong name. A circulation stores its list at
+  `notifications.dueSoon.slots` (inside `notifications` on purpose: the staff
+  update band in the rules already allows that key and constrains nothing
+  inside it, so no rules change and no deploy); a round keeps its list in
+  `reminderOffsets`, the field name it already had. Defaults are code
+  constants: three days and one day out at 10:00 for a worksheet, and the
+  round's three old presets. Both are editable in place, the circulation's in
+  the Circulate dialog and the Settings tab, through one editor
+  (`src/features/reminders/SlotListEditor.tsx`).
+- One resolver, `src/lib/reminders/schedule.ts`, lifted out of the admissions
+  module so both jobs derive their due instants from the same arithmetic:
+  London civil days, the slot's own wall clock, a slot resolving past its
+  anchor dropped, and lateness measured from the slot rather than from any
+  window. The admissions module keeps its exported names over the top of it.
+  Admissions groups slots by DAY (two on one date are one email to an
+  applicant pool); worksheets group by INSTANT, so a sender who sets 09:00 and
+  16:00 on the due day gets both.
 - Both remain dark until the scheduler runs; the switches gate what is sent
   once it does.
+
+Two consequences a sender can see, named here because neither is obvious from
+the editor:
+
+- **Lateness is per slot, so a very late addition can miss out.** The old
+  worksheet rule reminded anybody unsubmitted at any point in a 48-hour window,
+  which is why it also silenced every deadline under a day away. The rule now
+  is that each slot is worth sending for 24 hours after its own moment and not
+  after, so somebody added to a circulation after the last slot has passed gets
+  no reminder at all. With the defaults that gap is roughly the final 14 hours
+  before the deadline. The answer is a slot on the due day, which a sender can
+  now add; recipients are added over time on this feature, so it is the change
+  most likely to surprise.
+- **A slot cannot land after the date it counts back from.** A worksheet due at
+  09:00 with "on the due date at 12:00" would resolve three hours after the
+  deadline, and the resolver drops it rather than sending a reminder about a
+  deadline that has gone. Only a 0-day slot can manage it, and the editor says
+  so on the offending row rather than letting the sentence look scheduled.
+- **A reminder whose moment has passed is dropped quietly.** The run counts and
+  logs one only while it has just passed the 24-hour bound. A slot stays
+  resolvable until its circulation leaves the scan, so a reminder delivered on
+  time reads as "past" on every tick for days afterwards, and reporting each of
+  those filled the log and showed the scheduler panel a busy job on ticks that
+  wrote nothing. Whether the scheduler has been dark is answered by its own
+  last-run time.
+
+## Planned next (scoped, not built)
+
+The other piece the owner asked for on 7 September 2026, recorded here so the
+build follows a written shape.
 
 ### Deletion
 

@@ -7,7 +7,6 @@ import {
   ADMISSION_ROUND_FIELD_LIMITS,
   ADMISSION_ROUND_KINDS,
   DEFAULT_BLIND_SETTINGS,
-  DEFAULT_REMINDER_OFFSETS,
   DEFAULT_SCORE_SCALE,
   EMPTY_PROGRAMME_PREFERENCE,
   admissionRoundId,
@@ -17,6 +16,7 @@ import {
   type AdmissionRoundKind,
 } from "@/lib/firestore/admissionRounds";
 import { DEFAULT_AVAILABILITY_GRID } from "@/lib/admissions/availability";
+import { DEFAULT_ROUND_SLOTS } from "@/lib/reminders/slots";
 import { slugify } from "@/lib/firestore/slugId";
 import { ACADEMIC_YEAR_PATTERN } from "@/lib/firestore/users";
 import {
@@ -173,7 +173,9 @@ export async function POST(req: Request) {
     finalDeciderUid: null,
     blind: { ...DEFAULT_BLIND_SETTINGS },
     evidenceRunIds: [],
-    reminderOffsets: DEFAULT_REMINDER_OFFSETS.map((o) => ({ ...o })),
+    // The three presets a round used to have as fixed rows, now simply the
+    // list it starts with. An author can edit, add or delete any of them.
+    reminderOffsets: DEFAULT_ROUND_SLOTS.map((slot) => ({ ...slot })),
     outcomeRunIds: [],
     applicationCounts: zeroApplicationCounts(),
     archived: false,

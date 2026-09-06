@@ -289,6 +289,12 @@ const USERS = new Map([
       "transport and is logged as held; the transport, the renderer and the Admin SDK door are " +
       "its only stubs, so any template a caller renders compiles for real",
   ],
+  [
+    "reminder-slots.test.mjs",
+    "the shared reminder-slot model and its resolver: `schedule.ts` reaches `schedulerMarkers.ts` " +
+      "and the suite also loads the admissions adapter to prove the two features resolve through " +
+      "one piece of arithmetic, so it is a multi-module graph rather than one leaf file",
+  ],
 ]);
 
 /**

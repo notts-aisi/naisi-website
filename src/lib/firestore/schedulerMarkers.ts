@@ -198,13 +198,26 @@ export function stageRecipientMarker(
  * `wsremind__{circulationId}__{uid}__{dueKey}`, one recipient's due-soon
  * reminder for one worksheet circulation.
  *
- * Per recipient and per due instant, exactly like {@link reminderMarker}: the
- * unit of work that can fail on its own is one person's email, so one person's
- * email is what gets its own attempt budget, its own skip reason and its own
- * stamp. `dueKey` is derived from the circulation's `dueDate`, so moving the
- * date mints a NEW marker and the people who have still not submitted are
- * reminded about the new deadline rather than silenced by the old one's
- * marker.
+ * Per recipient and per resolved reminder, exactly like {@link reminderMarker}:
+ * the unit of work that can fail on its own is one person's email, so one
+ * person's email is what gets its own attempt budget, its own skip reason and
+ * its own stamp.
+ *
+ * `dueKey` is the London civil date one of the circulation's reminder slots
+ * resolved to WITH ITS WALL CLOCK APPENDED, `2026-10-04T1000`. Two things
+ * follow, and the second is why the clock is in there at all:
+ *
+ *  - moving the due date re-resolves every slot and mints NEW keys, so people
+ *    who have still not submitted are reminded about the new deadline rather
+ *    than silenced by the old one's markers;
+ *  - two slots on ONE DAY at different times are two keys and therefore two
+ *    reminders, which is what a sender who set 09:00 and 16:00 on the due day
+ *    asked for. A date-only key would have collapsed them into one send.
+ *    (The admissions reminder keys on the date alone and collapses them on
+ *    purpose: see `src/lib/reminders/schedule.ts`.)
+ *
+ * The `T` and the four digits keep the rule below satisfied: the component
+ * carries no `__`, so the id still has exactly one valid reading.
  */
 export function worksheetReminderMarker(
   circulationId: string,

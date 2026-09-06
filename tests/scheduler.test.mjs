@@ -332,7 +332,8 @@ const FAMILY_SAMPLES = {
   unmarked: () => unmarkedRegisterMarker("tuesdays-1800__aa11bb22", "w03-1"),
   breakret: () =>
     breakReturnMarker("incubator-autumn__ff00ee11", "tuesdays-1800__aa11bb22", "20270201"),
-  wsremind: () => worksheetReminderMarker("week-3-reading__c7d2e9f0", "uid1", "20261011"),
+  wsremind: () =>
+    worksheetReminderMarker("week-3-reading__c7d2e9f0", "uid1", "2026-10-11T1000"),
 };
 
 describe("marker ids", () => {
@@ -386,18 +387,27 @@ describe("marker ids", () => {
     // `__`, so a family whose prefix merely STARTS with another family's
     // would be read back as the wrong family and swept with it. The pair is
     // asserted together here so a later rename that collapses them goes red.
+    //
+    // Its `dueKey` carries a WALL CLOCK as well as a date
+    // (`2026-10-11T1000`), because two of a circulation's reminder slots may
+    // land on one day at different times and each is its own send. The
+    // separator is a `T` and the clock loses its colon precisely so the
+    // component still contains no `__`.
     const wsremind = worksheetReminderMarker(
       "week-3-reading__c7d2e9f0",
       "uid1",
-      "20261011",
+      "2026-10-11T1000",
     );
-    assert.equal(wsremind.id, "wsremind__week-3-reading__c7d2e9f0__uid1__20261011");
+    assert.equal(
+      wsremind.id,
+      "wsremind__week-3-reading__c7d2e9f0__uid1__2026-10-11T1000",
+    );
     assert.equal(wsremind.family, "wsremind");
     assert.notEqual(wsremind.family, remind.family);
     assert.deepEqual(wsremind.fields, {
       circulationId: "week-3-reading__c7d2e9f0",
       uid: "uid1",
-      dueKey: "20261011",
+      dueKey: "2026-10-11T1000",
     });
 
     const stagerel = stageReleaseMarker("autumn-2026-intake__k3f9a2b1", "s2");
@@ -470,9 +480,12 @@ describe("marker ids", () => {
       () => worksheetReminderMarker("c1", "uid1", "2026__10__11"),
       /dueKey/,
     );
-    assert.throws(() => worksheetReminderMarker("c/1", "uid1", "20261011"), /circulationId/);
+    assert.throws(
+      () => worksheetReminderMarker("c/1", "uid1", "2026-10-11T1000"),
+      /circulationId/,
+    );
     assert.doesNotThrow(() =>
-      worksheetReminderMarker("week-3-reading__c7d2e9f0", "uid1", "20261011"),
+      worksheetReminderMarker("week-3-reading__c7d2e9f0", "uid1", "2026-10-11T1000"),
     );
   });
 

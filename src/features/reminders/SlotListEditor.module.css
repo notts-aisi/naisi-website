@@ -1,0 +1,192 @@
+/* ============================================================
+   SlotListEditor: the reminder schedule, one row per nudge.
+
+   A ROW IS A SENTENCE. The two controls sit on the left and
+   the sentence they build ("3 days before the due date at
+   10:00") sits beside them, so the reader checks their edit by
+   reading it rather than by doing the arithmetic themselves.
+   That is also why Remove is last: the destructive control is
+   the furthest thing from the number somebody is typing.
+
+   The day box is deliberately narrow. It holds at most two
+   digits, and a full-width number field beside a time field
+   reads as two equal decisions when one of them is "3".
+   ============================================================ */
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Controls, then the derived sentence taking the slack, then Remove. */
+.row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.row:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.controls {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+/* The caption sits above its control, so a row reads top to bottom on the
+   left and left to right across. */
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* Only the <label> form is a tap target: it wraps the day box, so its caption
+   reaches the box under it. The time caption sits beside a component that
+   labels its own input and is a caption rather than a control. */
+label.control {
+  cursor: pointer;
+}
+
+.controlLabel {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.days {
+  /* Two digits and the native spinner, and no wider: the cap is 60. */
+  width: 5.5rem;
+}
+
+/* TimeField sizes itself from its own contents and comes out shorter than the
+   44px floor form controls carry. Stretching it inside a box with that floor
+   raises the whole control (input, stepper and caret are all stretch items)
+   without reaching into a shared component every other feature uses. */
+.time {
+  display: flex;
+  min-height: 2.75rem;
+}
+
+/* The sentence, and under it the one warning it can carry. Grouped so the
+   pair moves as a block when the row stacks on a phone. */
+.rowText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  /* Lifts the sentence off the row's baseline so it reads as centred against
+     the boxes beside it, which `align-items: end` alone would not do. */
+  padding-bottom: var(--space-3);
+}
+
+.rowLabel {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+/* A slot the scheduler would drop for landing past the date it counts back
+   from. Warning rather than danger, and beside the sentence it contradicts:
+   the fix might be the deadline's own time rather than this row, so this
+   points at the problem without deciding which end of it is wrong. */
+.rowWarning {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-warning);
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+
+/* What is wrong with the list, in sentences. Warning rather than danger: the
+   list is being typed, so this is "not yet" rather than "broken". */
+.problems {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-warning);
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+
+.count {
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+
+/* === Mobile ================================================
+   The row stops being three columns. A day box, a time field
+   and a sentence cannot share a phone's width without the
+   sentence becoming one word per line, so the controls keep
+   their row, the sentence moves under them, and Remove goes
+   full width beneath both: it is the one control here that
+   must not be hit by accident, and a full-width button at the
+   bottom of a row is unmistakably that row's.
+   ============================================================ */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+    padding-bottom: var(--space-3);
+  }
+
+  .controls {
+    gap: var(--space-3);
+  }
+
+  .days {
+    width: 6rem;
+  }
+
+  .rowText {
+    padding-bottom: 0;
+  }
+
+  .rowLabel {
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
+
+  .foot {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

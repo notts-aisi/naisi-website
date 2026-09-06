@@ -18,12 +18,11 @@ import {
   ADMISSION_ROUND_FIELD_LIMITS,
   ADMISSION_ROUND_KIND_LABEL,
   ADMISSION_ROUND_STATUS_LABEL,
-  REMINDER_OFFSET_IDS,
   type AdmissionCriterion,
   type AdmissionRoundStatus,
-  type ReminderOffset,
-  type ReminderOffsetId,
 } from "@/lib/firestore/admissionRounds";
+import SlotListEditor from "@/features/reminders/SlotListEditor";
+import { validateSlots, type ReminderSlot } from "@/lib/reminders/slots";
 import { appointmentDecideBlock } from "@/lib/admissions/appointmentRules";
 import { nextStatuses, planStatusChange } from "@/lib/admissions/roundStatus";
 import { normalizeCourseRun, type CourseRunDoc } from "@/lib/firestore/courses";
@@ -55,12 +54,6 @@ const STATUS_TONE: Record<
   deciding: "accent",
   settled: "neutral",
   cancelled: "danger",
-};
-
-const REMINDER_LABEL: Record<ReminderOffsetId, string> = {
-  t7: "A week out",
-  t3: "Three days out",
-  dday: "Deadline day",
 };
 
 function newId(prefix: string): string {
@@ -1167,72 +1160,44 @@ function RolesEditor({
   );
 }
 
+/**
+ * The reminder schedule: a free list of slots, edited by the SHARED editor the
+ * worksheet circulations use.
+ *
+ * It used to be three fixed rows wearing three fixed names ("A week out",
+ * "Three days out", "Deadline day") over an editable number of days, which
+ * made a row that said one thing and sent another as soon as anybody edited
+ * it, and gave a round wanting a fourth nudge nowhere to put it. Every label
+ * is now written from the numbers, so a row cannot be wrong about itself.
+ *
+ * The save is unchanged: the whole list goes up as `reminderOffsets`, which is
+ * still the field name on the document.
+ *
+ * Save is held shut while the list has anything wrong with it, from the SAME
+ * validator the editor prints its sentences from and the SAME validator the
+ * PATCH route refuses on. Without that, a half-typed time reads as a warning
+ * under the rows and then again as a red server error over the button, which
+ * tells the author twice and helps them once. It is also the contract the
+ * shared editor is written to, and the worksheet circulation panel, the other
+ * mount of the same component, already keeps it.
+ */
 function RemindersSection({ round, patch }: { round: Round; patch: PatchFn }) {
-  const [offsets, setOffsets] = useState<ReminderOffset[]>(round.reminderOffsets);
-
-  function update(index: number, fields: Partial<ReminderOffset>) {
-    const next = offsets.slice();
-    next[index] = { ...next[index], ...fields };
-    setOffsets(next);
-  }
-
-  const unused = REMINDER_OFFSET_IDS.filter((id) => !offsets.some((o) => o.id === id));
+  const [slots, setSlots] = useState<ReminderSlot[]>(round.reminderOffsets);
+  const slotProblems = validateSlots(slots);
 
   return (
     <SectionCard
       id="reminders"
       title="Deadline reminders"
-      note="Sent to anyone holding an unsubmitted draft. The scheduler keys each send on the resolved date, so editing this schedule cannot re-send a reminder that already went."
-      onSave={() => patch({ reminderOffsets: offsets })}
+      note="Sent to anyone holding an unsubmitted draft. The scheduler keys each send on the resolved date, so editing this schedule cannot re-send a reminder that already went. An empty list means this round sends none."
+      onSave={() => patch({ reminderOffsets: slots })}
+      disabled={slotProblems.length > 0}
     >
-      <ul className={styles.rowList}>
-        {offsets.map((offset, index) => (
-          <li key={offset.id} className={styles.reminderRow}>
-            <Field id={`reminder-${offset.id}`} label="Reminder">
-              <Input id={`reminder-${offset.id}`} value={REMINDER_LABEL[offset.id]} readOnly />
-            </Field>
-            <Field id={`reminder-${offset.id}-days`} label="Days before">
-              <Input
-                id={`reminder-${offset.id}-days`}
-                type="number"
-                min={0}
-                max={60}
-                value={offset.daysBefore}
-                onChange={(e) => update(index, { daysBefore: Number(e.target.value) })}
-              />
-            </Field>
-            <Field id={`reminder-${offset.id}-time`} label="At">
-              <Input
-                id={`reminder-${offset.id}-time`}
-                type="time"
-                value={offset.atLocalTime}
-                onChange={(e) => update(index, { atLocalTime: e.target.value })}
-              />
-            </Field>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setOffsets(offsets.filter((o) => o.id !== offset.id))}
-            >
-              Remove
-            </Button>
-          </li>
-        ))}
-      </ul>
-      {unused.length > 0 && (
-        <Button
-          type="button"
-          variant="secondary"
-          onClick={() =>
-            setOffsets([
-              ...offsets,
-              { id: unused[0], daysBefore: 1, atLocalTime: "10:00" },
-            ])
-          }
-        >
-          Add {REMINDER_LABEL[unused[0]].toLowerCase()}
-        </Button>
-      )}
+      <SlotListEditor
+        slots={slots}
+        onChange={setSlots}
+        anchorLabel="the closing date"
+      />
       <SendRemindersNow roundId={round.id} disabled={round.status !== "open"} />
     </SectionCard>
   );

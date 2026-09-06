@@ -137,6 +137,25 @@
   gap: var(--space-2);
 }
 
+/* A row's own second line: the due-soon schedule, spanning the description
+   and the switches. `1 / -1` rather than a section of its own because the
+   thing being edited is that switch's timing, and a Reminders heading three
+   rows further down would be read as a different decision. */
+.eventExtra {
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding-top: var(--space-2);
+}
+
+.eventExtraNote {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-top: var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+
 /* The one warning in this dialog that is about a consequence rather than a
    failure: somebody chosen as both a recipient and a reviewer. Warning
    coloured because it is easy to do by accident and it widens who reads the

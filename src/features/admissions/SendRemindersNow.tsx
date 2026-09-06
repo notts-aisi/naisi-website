@@ -7,11 +7,16 @@ import styles from "./SendRemindersNow.module.css";
 /**
  * The manual lane for the deadline reminders, on the round page.
  *
- * The scheduler tick sends these on its own. This is here because the dates
- * that matter are few and named, and a slipped tick on one of them is a
- * missed deadline rather than a late email. It calls the SAME handler the
+ * The scheduler tick sends these on its own. This is here because a round's
+ * schedule is a handful of dates chosen on purpose (a free list, capped at
+ * six, counted back from the closing date), and a slipped tick on one of them
+ * is a missed deadline rather than a late email. It calls the SAME handler the
  * tick calls, scoped to this round, so it cannot double-send: anybody the
  * tick already mailed holds a stamped marker and is skipped.
+ *
+ * It names no slot of its own. The button sends whatever the round's schedule
+ * says is due right now, so a round that has been given a fourth reminder, or
+ * had its rows rewritten, needs no change here.
  *
  * ## Two presses, deliberately
  *
