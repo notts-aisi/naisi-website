@@ -58,13 +58,24 @@ function formatDate(iso: string | null): string {
   }
 }
 
-/** The scope map as one readable line, in the order a reader scans it. */
+/**
+ * The scope map as one readable line, in the order a reader scans it.
+ *
+ * EVERY key of `DataExportScope` must have a line here, and a new scope key
+ * that does not get one is a bug rather than a cosmetic gap: the fallback is
+ * "Whole site", so an export of a single circulation's answers would be
+ * displayed as an export of everything. A row that overstates what a file
+ * covered is worse than a blank cell, because this log is the only control
+ * that survives the file leaving the platform. tests/data-exports.test.mjs
+ * pins the two lists against each other so the next key cannot be forgotten.
+ */
 function formatScope(scope: Record<string, string>): string {
   const parts: string[] = [];
   if (scope.roundId) parts.push(`Round ${scope.roundId}`);
   if (scope.runId) parts.push(`Run ${scope.runId}`);
   if (scope.groupId) parts.push(`Group ${scope.groupId}`);
   if (scope.periodId) parts.push(`Membership ${scope.periodId}`);
+  if (scope.circulationId) parts.push(`Circulation ${scope.circulationId}`);
   return parts.length > 0 ? parts.join(" · ") : "Whole site";
 }
 

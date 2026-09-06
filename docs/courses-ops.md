@@ -226,6 +226,7 @@ Marker families and where they live:
 | `stagerel__` | `{roundId}__{stageId}__{uid}` | application stage release notices (one per recipient; the `{roundId}__{stageId}` form, with no uid, is the stale verdict for a whole stage) |
 | `unmarked__` | `{groupId}__{sessionKey}` | unmarked-register follow-ups |
 | `breakret__` | `{runId}__{groupId}__{slotStartKey}` | back-after-the-break notices |
+| `wsremind__` | `{circulationId}__{uid}__{dueKey}` | worksheet due-soon reminders (not a courses job, but it shares this collection, so an operator sweeping markers meets it here) |
 
 House rule: **scheduler-tick markers live in `schedulerMarkers`; human-triggered
 course send markers stay in `courseNudges`.** The facilitator's attendance push

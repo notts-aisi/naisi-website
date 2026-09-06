@@ -40,11 +40,12 @@ function declaredPermissionKeys() {
   return [...block[1].matchAll(/^\s*(\w+)\??:\s*boolean/gm)].map((m) => m[1]);
 }
 
-test("GUARD: UserPermissions still declares the seven known permissions", () => {
+test("GUARD: UserPermissions still declares the eight known permissions", () => {
   assert.deepEqual(declaredPermissionKeys().sort(), [
     "approveCourse",
     "approveEvent",
     "approveNewsletter",
+    "circulateWorksheet",
     "draftCourse",
     "draftEvent",
     "draftNewsletter",
@@ -84,11 +85,34 @@ test("GUARD: setPermissions writes every declared key, as a real boolean", () =>
   assert.match(MUTATIONS, /permissions: clean/);
 });
 
+/**
+ * The keys MemberItem actually WIRES TO A CONTROL, rather than the keys it
+ * merely contains somewhere.
+ *
+ * The first draft of this guard asked whether `"someKey"` appeared anywhere in
+ * the file, which a comment naming the key satisfies just as well as a Switch
+ * does. The failure message promises "it can only be set by hand in Firestore"
+ * otherwise, so the guard has to look at the wiring: every grant on this row
+ * goes through `onChangePermission` (a single Switch) or
+ * `onChangePermissionTier` (a draft/approve SegmentedControl), so a key that
+ * is an argument to neither has no control, whatever else the file says about
+ * it. Comments are stripped first for the same reason.
+ */
+function grantableKeys() {
+  const code = MEMBER_ITEM.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const wired = new Set();
+  for (const [, args] of code.matchAll(/onChangePermission(?:Tier)?\(([\s\S]*?)\)/g)) {
+    for (const [, key] of args.matchAll(/"(\w+)"/g)) wired.add(key);
+  }
+  return wired;
+}
+
 test("GUARD: every permission is grantable in the UI and readable on the client", () => {
   const keys = declaredPermissionKeys();
+  const wired = grantableKeys();
   for (const key of keys) {
     assert.ok(
-      MEMBER_ITEM.includes(`"${key}"`),
+      wired.has(key),
       `${key} has no control on the admin Members row, so it can only be set by hand in Firestore`,
     );
     assert.ok(

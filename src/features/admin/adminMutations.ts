@@ -98,12 +98,14 @@ export const PERMISSION_KEYS = [
   "draftCourse",
   "approveCourse",
   "manageMembership",
+  "circulateWorksheet",
 ] as const satisfies readonly (keyof UserPermissions)[];
 
 /**
- * Admin-only: grant/revoke orthogonal permissions (draft/approve newsletter,
- * event and course). Writes every known key as a real boolean, never
- * `undefined`, so an edit to one toggle cannot drop another permission.
+ * Admin-only: grant/revoke the orthogonal permissions (draft and approve for
+ * newsletter, event and course; membership admin; worksheet circulation).
+ * Writes every known key as a real boolean, never `undefined`, so an edit to
+ * one toggle cannot drop another permission.
  */
 export async function setPermissions(uid: string, permissions: UserPermissions) {
   const db = getClientDb();

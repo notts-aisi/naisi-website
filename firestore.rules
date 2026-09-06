@@ -34,6 +34,19 @@ service cloud.firestore {
     }
     function canDraftCourse()   { return hasPerm('draftCourse');   }
     function canApproveCourse() { return hasPerm('approveCourse'); }
+    // Worksheets: the permission to CIRCULATE one, granted per person by an
+    // admin (see docs/worksheets.md > Permissions).
+    //
+    // NOTHING IN THIS FILE KEYS OFF IT IN V1, and that is deliberate rather
+    // than an oversight to fix. Circulating is a ROUTE: it copies a
+    // worksheet, writes one response document and one task per recipient, and
+    // sends mail, so the client never writes `circulations` at all and the
+    // rules below refuse client create and delete outright. The helper is
+    // declared here anyway so that the permission reads as one of the set
+    // beside draftEvent and draftCourse, and so the first rule that does need
+    // it (a client-direct write this feature has not asked for yet) is a
+    // one-line change rather than a new helper somebody writes inline.
+    function canCirculateWorksheet() { return hasPerm('circulateWorksheet'); }
 
     // Keep the user doc under a reasonable size cap as a DoS guard;
     // detailed shape validation happens in the React forms.
@@ -526,6 +539,337 @@ service cloud.firestore {
         && request.resource.data.name.size() <= 80
         && request.resource.data.subtasks.size() <= 50;
       allow delete: if isAdmin();
+    }
+
+    // ======================= WORKSHEETS =======================
+    // A worksheet is a document of questions, sent to people, answered
+    // individually and reviewed. Full contract in docs/worksheets.md. Access
+    // model in brief:
+    //  - the LIBRARY (worksheets, worksheetFolders) is open to the whole
+    //    committee, SU-recognised or not: a worksheet holds questions, not
+    //    member PII, and the trust boundary suRecognised draws is about PII.
+    //    Editing somebody else's worksheet is admin-only (everyone else makes
+    //    a copy), and `private` is an admin-only flag.
+    //  - a CIRCULATION and everything under it is created by ROUTES only. The
+    //    client writes no circulation, no response document and no task, so
+    //    create and delete are closed here and the only client-direct writes
+    //    are the recipient's autosave and the staff's review notes.
+
+    // === worksheets ===
+    match /worksheets/{worksheetId} {
+      // The library tier: any committee member plus admins. Deliberately
+      // hasRole rather than isSuCommittee (see the block comment above).
+      function isLibraryUser() { return hasRole(['committee', 'admin']); }
+      // AUTHORSHIP IS NOT A STANDING GRANT. The role test is inside this
+      // helper rather than beside its callers because the author branch is
+      // the one branch of read, update and delete that no other clause
+      // re-tests: written as `isSignedIn() && authorUid == uid` it left a
+      // person who had been demoted to `member`, or rejected outright, still
+      // able to read, retitle, rewrite the items of and delete a document the
+      // whole committee browses. The Permissions table in docs/worksheets.md
+      // scopes "create and edit own worksheets" to committee members and
+      // admins, so losing the role has to take the worksheet with it.
+      function isAuthor() {
+        return isLibraryUser() && resource.data.authorUid == request.auth.uid;
+      }
+
+      // THE SHAPE RULE. `resource.data.private == false` is written as a bare
+      // field comparison, not `resource.data.get('private', false)`, because
+      // Firestore judges a list or a listen on the QUERY'S SHAPE rather than on
+      // the rows it would return: it proves this clause from a matching
+      // `where("private", "==", false)` on the query and refuses the whole
+      // listen when the clause is absent. A `.get()` with a default is not a
+      // comparison the analyser can discharge, so the same rule written that
+      // way would refuse EVERY committee list, filtered or not, silently and
+      // with an empty grid, which is the #261 failure exactly. `private` is
+      // required on create below, so the bare read can never raise on a
+      // document that lacks it.
+      //
+      // Admins are resource-independent here, so an admin lists unfiltered
+      // and sees private worksheets too; an author reaches their own private
+      // worksheet by `get`, and needs `where("authorUid", "==", uid)` to list
+      // them, for the same shape reason.
+      allow read: if isAdmin()
+        || (isLibraryUser() && resource.data.private == false)
+        || isAuthor();
+
+      // `authorUid == self` is what makes "edit your own, copy everyone
+      // else's" enforceable at all: without it a committee member could mint a
+      // worksheet already owned by somebody else, which is a way to put words
+      // in their mouth in a library everybody browses.
+      //
+      // `private` is admin-only in BOTH directions and at BOTH create and
+      // update. Pinning it only on update would let a committee member create
+      // the worksheet private and skip the gate entirely.
+      //
+      // `description` is capped with `.get()` and a default rather than a bare
+      // read because, unlike `private`, it is genuinely optional: a worksheet
+      // saved before the field existed, or one whose author cleared the box,
+      // has no key to read and a bare comparison would deny by evaluation
+      // error. This is a create/update rule, so the query-shape analyser that
+      // forces the bare form on `private` above never sees it.
+      allow create: if isLibraryUser()
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.private is bool
+        && (isAdmin() || request.resource.data.private == false)
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.get('description', '') is string
+        && request.resource.data.get('description', '').size() <= 1000
+        && request.resource.data.items.size() <= 100;
+
+      // `items.size()` is capped on the way in as a DoS guard: the editor
+      // saves the whole array client-direct on autosave, and an unbounded
+      // array is unbounded write amplification on a no-billing project. The
+      // per-item budgets (option counts, text limits) live in
+      // src/lib/firestore/worksheets.ts, which rules cannot express.
+      //
+      // WHAT IS NOT GUARDED HERE, stated so the omission reads as a decision:
+      // there is no key allowlist, so an author may hang extra fields on their
+      // own worksheet. `hasOnly()` was left off because the library document
+      // grows (a `defaultReviewConfig`, a `lastCirculatedAt`, whatever wave 2
+      // adds) and an allowlist that has to be edited in lockstep with the
+      // editor fails closed on deploy order: rules ship separately from the
+      // app, so the first save after a feature lands is refused. The three
+      // caps above plus the 1 MiB document ceiling are the size guard; the
+      // per-field budgets live in src/lib/firestore/worksheets.ts.
+      allow update: if (isAdmin() || isAuthor())
+        && request.resource.data.authorUid == resource.data.authorUid
+        && request.resource.data.private is bool
+        && (isAdmin() || request.resource.data.private == resource.data.private)
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.get('description', '') is string
+        && request.resource.data.get('description', '').size() <= 1000
+        && request.resource.data.items.size() <= 100;
+
+      // Deleting the library document does NOT touch anything already sent:
+      // a circulation carries its own copy of the items. That is why an
+      // author may delete their own worksheet without an admin.
+      allow delete: if isAdmin() || isAuthor();
+    }
+
+    // === worksheetFolders ===
+    // Shelves in the library, nothing more: a name and who made it. No
+    // ownership gate, because a folder is shared furniture and an author who
+    // leaves the committee must not strand a shelf nobody can rename. For the
+    // same reason `createdByUid` is left writable: it records who put the
+    // shelf up, not who owns it, and nothing keys off it.
+    //
+    // A DELETE LEAVES DANGLING `folderId` POINTERS on every worksheet that was
+    // filed here, and that is known rather than missed. Rules cannot cascade,
+    // and doing it in the client would be a fan-out write the deleter may not
+    // be allowed to make (they can delete a shelf holding somebody else's
+    // worksheets, which they cannot update). The library view therefore has to
+    // treat an unresolvable folderId as "unfiled" rather than trusting it, and
+    // the proper fix is the repo-wide cascade-delete sweep already on the
+    // backlog, not a rule here.
+    match /worksheetFolders/{folderId} {
+      allow read: if hasRole(['committee', 'admin']);
+      allow create, update: if hasRole(['committee', 'admin'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 60;
+      allow delete: if hasRole(['committee', 'admin']);
+    }
+
+    // === circulations ===
+    // One act of sending a worksheet to people.
+    match /circulations/{circulationId} {
+      function circulation() { return resource.data; }
+      function isStaff() {
+        return isSignedIn() && request.auth.uid in circulation().staffUids;
+      }
+
+      // THE RECIPIENT'S PROOF OF ACCESS. There is no roster array on the
+      // circulation to test against: recipients are added over time, in
+      // batches, and a growing array on the parent document would be a
+      // contended write on every add and an unbounded field besides. So a
+      // recipient proves themselves with the document that already exists for
+      // exactly one reason: their own response. One exists() on a path built
+      // from their own uid, so it cannot be aimed at anybody else's.
+      function isRecipient() {
+        return isSignedIn()
+          && exists(/databases/$(database)/documents/circulations/$(circulationId)/responses/$(request.auth.uid));
+      }
+
+      // GET AND LIST ARE SPLIT, and the reason is the document-access budget.
+      // exists() costs one document access; a list evaluates the rule per
+      // candidate document against a budget of twenty, so a recipient branch
+      // inside a list rule would make any query over twenty circulations fail
+      // WHOLESALE, an outage that only appears once the collection is big
+      // enough, which is the worst kind. A recipient never lists circulations
+      // anyway: they reach theirs from their task or their respond link.
+      allow get: if isAdmin() || isStaff() || isRecipient();
+
+      // Staff lists must carry `where("staffUids", "array-contains", uid)`.
+      // Firestore proves `request.auth.uid in resource.data.staffUids` from
+      // that clause and refuses the whole listen without it (the same shape
+      // rule as the worksheets block above). Admins are resource-independent
+      // and so list unfiltered.
+      allow list: if isAdmin() || isStaff();
+
+      // NO CLIENT CREATE, EVER. Creating a circulation copies a worksheet,
+      // writes one response document and one task per recipient and sends
+      // mail; the permission that gates it (circulateWorksheet) is checked by
+      // POST /api/worksheets/circulations, which is also the only thing that
+      // can write staffUids honestly. A client create rule would be a way to
+      // mint a circulation naming other people as staff.
+      //
+      // NO CLIENT DELETE either: the responses, the reviews and one task per
+      // recipient hang off this document, and a delete that leaves them is an
+      // orphan set nobody can reach. Closing a circulation is the route.
+      allow create, delete: if false;
+
+      // Staff edit the copy mid-flight and the settings around it. The key
+      // list is what keeps that from becoming everything: staffUids,
+      // reviewerUids, the three counters, status, worksheetId, senderUid and
+      // the source discriminator are all server-owned. Left writable,
+      // `staffUids` alone would let any staff member add themselves to
+      // another circulation's staff, and the counters drive the progress the
+      // sender reads.
+      //
+      // `status` IS NOT A GATE ON THIS RULE, deliberately. Closing a
+      // circulation stops SUBMISSIONS (the contract's words), and submission
+      // is a route: it re-derives progress, moves the task and bumps a
+      // counter, so the close route and the submit route are the pair that
+      // has to agree. Staff fixing a typo on a closed copy, and a recipient's
+      // client flushing an autosave it had already queued when the close
+      // landed, are both allowed here on purpose: refusing them would turn a
+      // race into a permission error on somebody's unsaved work, and neither
+      // write can make a closed circulation accept an answer. Both are pinned
+      // as CHARACTERISATION tests in the rules suite so a later decision to
+      // freeze the whole document is a visible change rather than a surprise.
+      allow update: if (isAdmin() || isStaff())
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'title', 'description', 'items', 'reviewConfig', 'notifications',
+          'dueDate', 'itemsEditedAt', 'updatedAt'
+        ])
+        && request.resource.data.items.size() <= 100;
+
+      // --- responses (one per recipient; the doc id IS their uid) ---
+      match /responses/{responseUid} {
+        function parent() {
+          return get(/databases/$(database)/documents/circulations/$(circulationId)).data;
+        }
+        // One get() of a FIXED path, so a staff list of the whole
+        // subcollection costs one document access however many responses come
+        // back, which is the tasks/comments pattern. Contrast isRecipient() on
+        // parent, whose path varies with the caller and not the row.
+        function isParentStaff() {
+          return isSignedIn() && request.auth.uid in parent().staffUids;
+        }
+        // The doc id binds the response to its recipient structurally, so
+        // "is this mine" needs no lookup and cannot be spoofed by a field.
+        function isOwner() { return isSignedIn() && request.auth.uid == responseUid; }
+
+        // isOwner() is per-document-id, so a recipient's LIST of the
+        // subcollection is refused (the id is not something a query
+        // constrains) while their get of their own response is allowed. That
+        // is the intended shape: one recipient must never enumerate what the
+        // others wrote.
+        allow read: if isAdmin() || isOwner() || isParentStaff();
+
+        // Written by the circulate and add-recipients routes only, alongside
+        // the task each response mirrors. A client create would be a response
+        // with no task and no counter behind it.
+        allow create, delete: if false;
+
+        // THE RECIPIENT'S AUTOSAVE, and the only client-direct write in the
+        // feature's answering path.
+        //
+        // The STORED state gates it: once a response leaves not-opened or
+        // started it is frozen, and unfreeze is an admin route. Reading
+        // `resource.data.state` rather than the incoming one is the whole
+        // point. A recipient who could satisfy the gate with the value they
+        // are writing would simply write 'started' back over 'submitted' and
+        // edit their answers after the reviewers had read them.
+        //
+        // The incoming state is held to the same two values, so the client can
+        // move not-opened to started on first open (which it does, together
+        // with the task) but cannot declare itself submitted: submission is a
+        // route because it re-derives progress, moves the task, bumps a
+        // counter and notifies the reviewers, none of which a client can do
+        // atomically or honestly.
+        //
+        // The key list keeps `taskId`, `returned`, `submittedAt`, `reviewedAt`
+        // and the unfreeze stamps server-owned. `returned` in particular is
+        // the staff feedback copied onto this document: a recipient able to
+        // write it could author their own feedback.
+        //
+        // `answers` is read through `.get()` with a default, unlike the bare
+        // `private` comparison in the worksheets block, and the difference is
+        // that this is an UPDATE and not a list: no query-shape analyser has
+        // to discharge the clause, so nothing is bought by the bare form and
+        // something is lost. Bare, a response document written without an
+        // `answers` key (an Admin SDK write in a wave-1 route, a hand-repaired
+        // document) would make the recipient's very first autosave deny by
+        // EVALUATION ERROR, which surfaces as a permission failure on the one
+        // client-direct write in the answering path with nothing in the rule
+        // to point at.
+        allow update: if isOwner()
+          && resource.data.state in ['not-opened', 'started']
+          && request.resource.data.state in ['not-opened', 'started']
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'answers', 'progress', 'activity', 'state', 'updatedAt'
+          ])
+          && request.resource.data.get('answers', {}).size() <= 100;
+      }
+
+      // --- reviews (staff only; the doc id IS the reviewed recipient's uid) ---
+      // A SEPARATE SUBCOLLECTION rather than a field on the response, and this
+      // is the reason: scores are staff-only and must never reach the person
+      // being scored. As a field, "the recipient reads their own response" and
+      // "the recipient never reads a score" would be two rules that have to
+      // agree forever, and the first one somebody widens takes the second with
+      // it. As a document, they are one rule: the recipient is simply not on
+      // the read list here, and returning feedback is a route that copies the
+      // parts the toggles allow onto the response, leaving scores behind.
+      match /reviews/{reviewUid} {
+        function parent() {
+          return get(/databases/$(database)/documents/circulations/$(circulationId)).data;
+        }
+        function isParentStaff() {
+          return isSignedIn() && request.auth.uid in parent().staffUids;
+        }
+
+        allow read: if isAdmin() || isParentStaff();
+
+        // Staff write feedback and scores client-direct as they read, so this
+        // is a real create/update rather than a route. The key list fixes the
+        // shape and both containers are capped, because hasOnly() bounds WHICH
+        // keys may appear and not how big they are, and a reviewer with an
+        // uncapped map could store megabyte documents, one per recipient.
+        //
+        // WHAT THE TWO CAPS DO AND DO NOT COVER. `overall` is one text box, so
+        // its cap is exact. `perQuestion` is a map keyed by question id, and
+        // the cap is on the NUMBER OF ENTRIES only: it matches the hundred
+        // items a worksheet may hold, so a review cannot carry feedback for
+        // questions that do not exist. The per-entry budgets
+        // (CIRCULATION_LIMITS.feedback, scoreMin, scoreMax in
+        // src/lib/firestore/circulations.ts) are enforced by the editor and by
+        // the return route, NOT here: rules cannot walk a map's values, so
+        // there is no version of this clause that bounds one entry's text.
+        //
+        // `updatedByUid` is pinned to the writer. A review is the record of a
+        // judgement about a person, which is why the delete below is
+        // admin-only; leaving the stamp free would let one staff member file a
+        // judgement under a colleague's name, and the returned feedback quotes
+        // that name back to the recipient.
+        allow create, update: if (isAdmin() || isParentStaff())
+          && request.resource.data.keys().hasOnly([
+            'perQuestion', 'overall', 'updatedAt', 'updatedByUid'
+          ])
+          && request.resource.data.get('overall', '') is string
+          && request.resource.data.get('overall', '').size() <= 4000
+          && request.resource.data.get('perQuestion', {}).size() <= 100
+          && request.resource.data.get('updatedByUid', '') == request.auth.uid;
+
+        // Admin-only, because a review is the record of a judgement about a
+        // person: one reviewer deleting another's notes mid-circulation is not
+        // a correction, it is a disagreement resolved by whoever clicks first.
+        allow delete: if isAdmin();
+      }
     }
 
     // === credentials (committee only, client-side encrypted) ===

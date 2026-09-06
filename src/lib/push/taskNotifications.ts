@@ -39,9 +39,40 @@ import { sendPushToUid } from "./send";
  * service's lag) is dropped rather than holding a task route open. The
  * email still goes, so nothing is lost.
  */
+
+/**
+ * A caller-supplied destination, or `null` if it is not one this module will
+ * hand to a notification.
+ *
+ * The service worker resolves a push payload's destination against the app
+ * origin, but only because every value it has ever been given was a rooted
+ * path: `notificationclick` in public/sw.js passes the string straight to
+ * `clients.openWindow`, which will just as happily open `https://elsewhere/`.
+ * A notification carrying this site's name and icon that opens somebody
+ * else's page is the worst thing this file could do, so the shape is checked
+ * here rather than promised in a comment.
+ *
+ * `//elsewhere.example` is refused alongside the obvious absolute forms: it
+ * starts with "/" and is still an off-origin URL, which is exactly the case a
+ * `startsWith("/")` check on its own waves through. Every caller today is
+ * server-side and passes a literal, so this costs nothing and is here for the
+ * caller that is not. A refused override falls back to the board rather than
+ * dropping the push: the member still hears about their task.
+ */
+function taskPushPath(url: string | undefined): string | null {
+  if (typeof url !== "string" || url === "") return null;
+  if (!url.startsWith("/") || url.startsWith("//")) return null;
+  return url;
+}
+
 export async function mirrorTaskEmailToPush(
   uid: string,
-  { title, body, taskId }: { title: string; body: string; taskId: string },
+  {
+    title,
+    body,
+    taskId,
+    url,
+  }: { title: string; body: string; taskId: string; url?: string },
 ): Promise<void> {
   try {
     // Cheapest gate first: with no VAPID keys the whole feature is dormant
@@ -53,7 +84,17 @@ export async function mirrorTaskEmailToPush(
       body,
       // Path only; the service worker resolves it against the app origin.
       // Same destination the email's button uses.
-      url: `/committee/tasks?task=${encodeURIComponent(taskId)}`,
+      //
+      // `url` OVERRIDES the board, and the caller passes it when the board is
+      // not where the person acts. A worksheet recipient tapping their push
+      // wants the respond page: the task card is a pointer to a document they
+      // then have to find, and a notification that lands one hop short of the
+      // thing it is about is a notification people learn to ignore. `taskId`
+      // is still required, so a caller cannot pass a destination without
+      // saying which task it belongs to, and every existing caller keeps the
+      // board by simply not passing this. An override that is not a rooted,
+      // same-origin path is dropped by `taskPushPath` and the board is used.
+      url: taskPushPath(url) ?? `/committee/tasks?task=${encodeURIComponent(taskId)}`,
     });
   } catch (err) {
     console.warn("[push] task mirror failed", { uid, err });

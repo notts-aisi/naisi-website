@@ -368,6 +368,14 @@
         { "fieldPath": "state", "order": "ASCENDING" },
         { "fieldPath": "matchKind", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "circulations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "dueDate", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

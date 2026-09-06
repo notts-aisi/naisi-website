@@ -188,6 +188,24 @@ export type UserPermissions = {
    * because it silently re-badges every member on the site at once.
    */
   manageMembership?: boolean;
+  /**
+   * Circulating a worksheet: sending one to people, adding recipients to a
+   * circulation already in flight, and the recipient picker route
+   * (`GET /api/worksheets/recipients`) that both need.
+   *
+   * Granted PER PERSON by an admin, and deliberately NOT automatic for
+   * SU-recognised committee. Building and reading worksheets is open to the
+   * whole committee; putting one in front of named people, with a task and an
+   * email each, is the act worth naming somebody for. Admins hold it
+   * implicitly like every other key.
+   *
+   * It is also what stands in for a users-collection read: the picker never
+   * lists `users` from the browser, it calls the route, which requires this
+   * key and answers with uids, display names and photos only. So a non-SU
+   * committee member can be given the key without being given member PII,
+   * and the users rule is untouched.
+   */
+  circulateWorksheet?: boolean;
 };
 
 export function canDraftNewsletter(user: Pick<UserDoc, "role" | "permissions">): boolean {
@@ -250,6 +268,22 @@ export function canManageMembership(
   user: Pick<UserDoc, "role" | "permissions">,
 ): boolean {
   return user.role === "admin" || Boolean(user.permissions?.manageMembership);
+}
+
+/**
+ * Who may circulate a worksheet and add recipients to one. Admins
+ * implicitly, like every other key.
+ *
+ * The circulation ROUTES are the enforcement point (no Firestore rule keys
+ * off this in v1, because creating a circulation is a route and not a client
+ * write). Anything that gates on it must call this rather than test the raw
+ * key, so the admin-implicit half is never forgotten in one place and
+ * remembered in another.
+ */
+export function canCirculateWorksheet(
+  user: Pick<UserDoc, "role" | "permissions">,
+): boolean {
+  return user.role === "admin" || Boolean(user.permissions?.circulateWorksheet);
 }
 
 /**
@@ -420,6 +454,7 @@ export function normalizeUser(id: string, data: Raw): UserDoc {
     draftCourse: Boolean(rawPermissions.draftCourse),
     approveCourse: Boolean(rawPermissions.approveCourse),
     manageMembership: Boolean(rawPermissions.manageMembership),
+    circulateWorksheet: Boolean(rawPermissions.circulateWorksheet),
   };
   return {
     uid: id,

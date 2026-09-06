@@ -4,9 +4,10 @@
  * Every export route writes a row here IMMEDIATELY BEFORE it streams the file
  * back, and refuses the export if that write fails (see {@link logExport},
  * which throws rather than swallowing). The register, the roster, the
- * applications table and the membership list are all lists of named people;
- * once a file leaves the platform nothing can follow it, so the one control
- * left is a durable record of who asked for it, what it covered and how many
+ * applications table and the membership list are all lists of named people,
+ * and a worksheet export carries what each named person actually wrote; once
+ * a file leaves the platform nothing can follow it, so the one control left
+ * is a durable record of who asked for it, what it covered and how many
  * people were in it.
  *
  * WHAT THIS LOG DOES NOT CLAIM. It records DOWNLOADS THE SITE GENERATED, not
@@ -75,7 +76,9 @@ export type DataExportKind =
   /** A membership period's people and tiers. */
   | "membership"
   /** Attendance rolled up per person rather than per session. */
-  | "attendance-summary";
+  | "attendance-summary"
+  /** Every response to one worksheet circulation, answers included. */
+  | "worksheet-responses";
 
 export const DATA_EXPORT_KINDS: DataExportKind[] = [
   "register",
@@ -83,6 +86,7 @@ export const DATA_EXPORT_KINDS: DataExportKind[] = [
   "applications",
   "membership",
   "attendance-summary",
+  "worksheet-responses",
 ];
 
 /** The label for a kind this build has never heard of. */
@@ -94,6 +98,7 @@ export const DATA_EXPORT_KIND_LABEL: Record<DataExportKind, string> = {
   applications: "Applications",
   membership: "Membership list",
   "attendance-summary": "Attendance summary",
+  "worksheet-responses": "Worksheet responses",
 };
 
 export function isDataExportKind(kind: unknown): kind is DataExportKind {
@@ -129,13 +134,32 @@ export type DataExportScope = {
   groupId?: string;
   roundId?: string;
   periodId?: string;
+  /**
+   * The circulation a worksheet export covered. The CIRCULATION, never the
+   * worksheet: a worksheet is a library document that has been sent any
+   * number of times, and the file that left the platform held one sending's
+   * answers.
+   */
+  circulationId?: string;
 };
 
-const SCOPE_KEYS: (keyof DataExportScope)[] = [
+/**
+ * Every key {@link compactScope} will carry through to Firestore.
+ *
+ * EXPORTED because it is a list two places have to agree on. The admin
+ * Exports tab renders a scope map with one `if` per key and falls back to
+ * "Whole site" when it recognises none of them, so a key added here and not
+ * there turns a one-circulation export into a row claiming the whole site was
+ * exported. tests/data-exports.test.mjs reads this array and greps
+ * DeliverabilityExports.tsx for each entry, so the next key cannot be added in
+ * one place only.
+ */
+export const DATA_EXPORT_SCOPE_KEYS: (keyof DataExportScope)[] = [
   "runId",
   "groupId",
   "roundId",
   "periodId",
+  "circulationId",
 ];
 
 /** What a route hands {@link logExport}. `at` is stamped server-side. */
@@ -202,7 +226,7 @@ function count(v: unknown): number {
 export function compactScope(scope: DataExportScope | undefined): DataExportScope {
   const out: DataExportScope = {};
   if (!scope) return out;
-  for (const key of SCOPE_KEYS) {
+  for (const key of DATA_EXPORT_SCOPE_KEYS) {
     const value = scope[key];
     if (typeof value === "string" && value !== "") out[key] = value;
   }

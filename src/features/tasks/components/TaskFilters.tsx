@@ -12,7 +12,17 @@ export type TaskFilterState = {
   projectId: string | "all";
   /** Matches tasks where this uid is a completer OR a reviewer. */
   personUid: string | "all";
-  source: "all" | "committee" | "fellowship-reminder" | "personal";
+  /**
+   * `worksheet` is a member of this union with NO option in the dropdown
+   * below, on purpose. The only page that mounts these filters is the
+   * committee board, which loads `useTasks({ visibility: "committee" })`, and
+   * every worksheet task is `assignees-only` (docs/worksheets.md), so
+   * selecting it could only ever empty the board with no explanation. The
+   * union member stays so the day a board that CAN show worksheet tasks
+   * mounts this component, the filter state does not have to be widened at
+   * the same time as the option is added.
+   */
+  source: "all" | "committee" | "fellowship-reminder" | "personal" | "worksheet";
   kind: "all" | TaskKind;
 };
 
@@ -40,6 +50,10 @@ export default function TaskFilters({ value, onChange, projects, users }: Props)
     { value: "committee", label: "Committee" },
     { value: "fellowship-reminder", label: "Fellowship" },
     { value: "personal", label: "Personal" },
+    // No "Worksheet" entry. See the note on TaskFilterState["source"]: an
+    // option that is guaranteed to empty the board is worse than a missing
+    // one, because the reader has no way to tell it apart from a board that
+    // really has nothing on it.
   ];
   const kindOptions: ResponsiveSelectOption<TaskFilterState["kind"]>[] = [
     { value: "all", label: "All kinds" },

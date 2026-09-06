@@ -103,6 +103,7 @@ const {
 
 const {
   DEFAULT_MARKER_POLICY,
+  MARKER_FAMILIES,
   breakReturnMarker,
   decideMarkerClaim,
   isStaleWork,
@@ -112,6 +113,7 @@ const {
   stageRecipientMarker,
   stageReleaseMarker,
   unmarkedRegisterMarker,
+  worksheetReminderMarker,
 } = await loadModule(MARKERS_URL, "schedulerMarkers");
 
 const { jobStateFor, normalizeSchedulerConfig } = await loadModule(
@@ -313,8 +315,60 @@ describe("normalizeSchedulerRun", () => {
 // Marker ids
 // ---------------------------------------------------------------------------
 
+/**
+ * One builder call per declared family, so the enumeration below is a GUARD
+ * rather than a list somebody has to remember to extend.
+ *
+ * The three tests after it are hand-written, which is right for the exact id
+ * strings and the exact refusals, but hand-written enumeration is how a fifth
+ * family lands with no coverage at all: nothing goes red, and the next wave
+ * builds a job on an id shape no test has ever seen. This map is checked
+ * against `MARKER_FAMILIES` in both directions, so adding a family without a
+ * sample here, or leaving a sample behind after a family is removed, fails.
+ */
+const FAMILY_SAMPLES = {
+  remind: () => reminderMarker("autumn-2026-intake__k3f9a2b1", "uid1", "20261011"),
+  stagerel: () => stageReleaseMarker("autumn-2026-intake__k3f9a2b1", "s2"),
+  unmarked: () => unmarkedRegisterMarker("tuesdays-1800__aa11bb22", "w03-1"),
+  breakret: () =>
+    breakReturnMarker("incubator-autumn__ff00ee11", "tuesdays-1800__aa11bb22", "20270201"),
+  wsremind: () => worksheetReminderMarker("week-3-reading__c7d2e9f0", "uid1", "20261011"),
+};
+
 describe("marker ids", () => {
-  test("build the four families and store every component as a field", () => {
+  test("every declared family has a builder, and every builder a family", () => {
+    assert.deepEqual(
+      [...MARKER_FAMILIES].sort(),
+      Object.keys(FAMILY_SAMPLES).sort(),
+      "MARKER_FAMILIES and the samples in this suite have drifted apart. Add " +
+        "a sample for the new family (and its own id-string and refusal " +
+        "assertions below), or drop the sample for the family that went.",
+    );
+    for (const [family, build] of Object.entries(FAMILY_SAMPLES)) {
+      const ref = build();
+      assert.equal(ref.family, family, `${family}: the builder reports its own family`);
+      assert.equal(
+        markerFamilyOf(ref.id),
+        family,
+        `${family}: the family must be recoverable from the stored id, or the ` +
+          "admin panel and any future sweep cannot tell what a marker suppresses",
+      );
+      const componentNames = Object.keys(ref.fields);
+      assert.ok(componentNames.length > 0, `${family}: an id with no fields`);
+      for (const [name, value] of Object.entries(ref.fields)) {
+        // The module header's promise: "every component of a marker id is
+        // ALSO stored as a field". A component that is in the id and not in
+        // the bag forces a reader to parse ids, which is the thing the header
+        // forbids.
+        assert.ok(
+          ref.id.includes(value),
+          `${family}: field \`${name}\` is not part of the id it claims to describe`,
+        );
+      }
+    }
+  });
+
+  test("build every family and store every component as a field", () => {
     // The round id is a real slugId, `__` suffix and all: rejecting that
     // separator would reject every id this platform mints.
     const remind = reminderMarker("autumn-2026-intake__k3f9a2b1", "uid1", "20261011");
@@ -324,6 +378,26 @@ describe("marker ids", () => {
       roundId: "autumn-2026-intake__k3f9a2b1",
       uid: "uid1",
       dueAtKey: "20261011",
+    });
+
+    // The worksheet due-soon reminder is the same shape one collection along,
+    // and the prefix is what keeps the two apart. `wsremind` is NOT a
+    // `remind` with a longer tail: `markerFamilyOf` splits on the first
+    // `__`, so a family whose prefix merely STARTS with another family's
+    // would be read back as the wrong family and swept with it. The pair is
+    // asserted together here so a later rename that collapses them goes red.
+    const wsremind = worksheetReminderMarker(
+      "week-3-reading__c7d2e9f0",
+      "uid1",
+      "20261011",
+    );
+    assert.equal(wsremind.id, "wsremind__week-3-reading__c7d2e9f0__uid1__20261011");
+    assert.equal(wsremind.family, "wsremind");
+    assert.notEqual(wsremind.family, remind.family);
+    assert.deepEqual(wsremind.fields, {
+      circulationId: "week-3-reading__c7d2e9f0",
+      uid: "uid1",
+      dueKey: "20261011",
     });
 
     const stagerel = stageReleaseMarker("autumn-2026-intake__k3f9a2b1", "s2");
@@ -384,6 +458,22 @@ describe("marker ids", () => {
     assert.throws(() => unmarkedRegisterMarker("g1", "w03.1"), /sessionKey/);
     assert.throws(() => breakReturnMarker("", "g1", "20270201"), /runId/);
     assert.throws(() => unmarkedRegisterMarker("g/1", "w03"), /groupId/);
+    // The worksheet reminder splits its three components the same way the
+    // admissions one does: the circulation id is a slugId and keeps its
+    // `__`, while the uid and the date key are ours to compose and must not
+    // carry one.
+    assert.throws(
+      () => worksheetReminderMarker("c1", "uid__1", "20261011"),
+      /uid/,
+    );
+    assert.throws(
+      () => worksheetReminderMarker("c1", "uid1", "2026__10__11"),
+      /dueKey/,
+    );
+    assert.throws(() => worksheetReminderMarker("c/1", "uid1", "20261011"), /circulationId/);
+    assert.doesNotThrow(() =>
+      worksheetReminderMarker("week-3-reading__c7d2e9f0", "uid1", "20261011"),
+    );
   });
 
   test("family is recoverable from a stored id", () => {
@@ -397,6 +487,10 @@ describe("marker ids", () => {
     assert.equal(
       markerFamilyOf(breakReturnMarker("run1", "g1", "20270201").id),
       "breakret",
+    );
+    assert.equal(
+      markerFamilyOf(worksheetReminderMarker("c1", "uid1", "20261011").id),
+      "wsremind",
     );
     assert.equal(markerFamilyOf("gnudge__run1__g1__x"), null);
     assert.equal(markerFamilyOf("anything-else"), null);
