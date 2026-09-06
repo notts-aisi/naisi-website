@@ -38,10 +38,11 @@ all, which is what makes this safe. Firestore emulator only.
 ## What the suites cover
 
 **`candidate-findings.test.mjs`** — three rule gaps raised by an earlier
-security pass, now proven rather than suspected. **These tests assert that the
-exploits currently SUCCEED**, so they are written to fail the day a rule is
-tightened. That is deliberate: when you fix one, invert the assertion in the
-same commit.
+security pass, now proven rather than suspected. They started life as
+characterisations asserting that each exploit succeeded; **all three are now
+fixed**, and each test asserts the refusal alongside a control proving the
+legitimate flow still works. When a future finding lands the same way,
+characterise it first and invert the assertion in the commit that fixes it.
 
 | # | Gap | Proven consequence |
 | --- | --- | --- |
