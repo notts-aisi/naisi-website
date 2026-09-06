@@ -43,6 +43,7 @@ import {
   DEFAULT_APPLICANTS,
   FUNNEL_STEPS,
   MARKER_PATH,
+  RECAPTCHA_DEPENDENT_STEPS,
   STATE_PATH,
   assertFixtureTarget,
   countFunnelRows,
@@ -117,13 +118,21 @@ function runLocal() {
 
 /**
  * Reads the marker the spec writes and says, in one sentence, why this run
- * cannot be called a pass. Null when every step was completed.
+ * cannot be called a pass. Null when every step this mode can run was
+ * completed.
  *
  * The marker is the answer to "did a browser actually do anything": without
  * it, a spec that skipped and a spec that drove all thirteen steps are the
  * same exit code and the same silence.
+ *
+ * Against a DEPLOYED target the spec skips the reCAPTCHA-dependent leg (the
+ * real widget challenges headless Chromium; see `RECAPTCHA_DEPENDENT_STEPS`)
+ * and says so in the marker. That exact set, skipped for that stated reason,
+ * is accepted here in dev mode and printed so nobody reads the run as
+ * covering what it did not. Any other skip, and any skip at all in local
+ * mode, is a shortfall.
  */
-function markerShortfall() {
+function markerShortfall({ local }) {
   let marker;
   try {
     marker = JSON.parse(readFileSync(MARKER_PATH, "utf8"));
@@ -134,7 +143,32 @@ function markerShortfall() {
     );
   }
   const done = new Set(Array.isArray(marker.steps) ? marker.steps : []);
-  const missing = FUNNEL_STEPS.filter((name) => !done.has(name));
+  const skipped = new Map(
+    (Array.isArray(marker.skipped) ? marker.skipped : [])
+      .filter((s) => s && typeof s.name === "string")
+      .map((s) => [s.name, String(s.reason ?? "")]),
+  );
+  const acceptedSkips = new Set(local ? [] : RECAPTCHA_DEPENDENT_STEPS);
+  const missing = FUNNEL_STEPS.filter(
+    (name) => !done.has(name) && !(acceptedSkips.has(name) && skipped.has(name)),
+  );
+  if (skipped.size > 0) {
+    log(
+      `${skipped.size} of ${FUNNEL_STEPS.length} steps were SKIPPED, not run. This run ` +
+        "proves nothing about them:",
+    );
+    // Grouped by reason: eight steps skipped for one reason is one paragraph
+    // and eight names, not the same sentence eight times.
+    const byReason = new Map();
+    for (const [name, reason] of skipped) {
+      if (!byReason.has(reason)) byReason.set(reason, []);
+      byReason.get(reason).push(name);
+    }
+    for (const [reason, names] of byReason) {
+      console.log(`  ${reason}`);
+      for (const name of names) console.log(`    - ${name}`);
+    }
+  }
   return missing.length === 0
     ? null
     : `the spec completed ${done.size} of ${FUNNEL_STEPS.length} steps and stopped at ` +
@@ -225,7 +259,7 @@ async function main() {
     testCode = argv.local
       ? await runLocal()
       : await runAgainstTarget(process.env.E2E_TARGET ?? "https://dev.naisi.uk");
-    const shortfall = markerShortfall();
+    const shortfall = markerShortfall({ local: argv.local });
     if (shortfall) {
       console.error(`[e2e:funnel] NOT A PASS: ${shortfall}`);
       testCode = 1;

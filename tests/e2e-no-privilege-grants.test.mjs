@@ -7,10 +7,13 @@
  * comment saying so is not enforcement:
  *
  *   1. It can never be aimed at production.
- *   2. It never grants a privilege — no role, no permissions map, no
- *      `suRecognised`, and none of the admin-set tags. Its accounts are bare
- *      Auth users with no Firestore document, so they hold no role at all.
- *   3. It never reaches Firestore at all — not to write, not to read.
+ *   2. It never grants a privilege: no role above `pending`, no permissions
+ *      map, no `suRecognised`, and none of the admin-set tags. Its accounts are
+ *      bare Auth users or (Phase 2 and later) users with a seeded document whose
+ *      role is hard-coded to `pending`, the lowest role there is.
+ *   3. It reaches only three Firestore collections (`ALLOWED_COLLECTIONS`
+ *      below), and one of them delete-only. Phase 1 held "no Firestore at
+ *      all"; Phase 2 narrowed that rather than dropping it.
  *
  * Property 1 is tested BEHAVIOURALLY, by calling the real `assertTarget()`.
  * An earlier version pattern-matched the source of the allowlist and was shown
@@ -94,9 +97,9 @@ test("the e2e harness never grants a role, permission, or admin-set tag", () => 
     for (const pattern of FORBIDDEN_PRIVILEGE) {
       assert.ok(
         !pattern.test(source),
-        `${relative(REPO_ROOT, file)} matches ${pattern} — the e2e harness must never ` +
-          "construct a privileged identity. Its accounts are bare Auth users with no " +
-          "Firestore doc, so they hold no role at all.",
+        `${relative(REPO_ROOT, file)} matches ${pattern}. The e2e harness must never ` +
+          "construct a privileged identity. Its accounts are bare Auth users or " +
+          "role-pending documents, so they hold no role that grants anything.",
       );
     }
   }

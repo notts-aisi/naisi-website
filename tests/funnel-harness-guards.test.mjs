@@ -31,9 +31,11 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertTarget } from "../scripts/e2e/lib/env.mjs";
 import {
+  ARTIFACTS_DIR,
   FIXTURE_COLLECTIONS,
   FUNNEL_STEPS,
   MARKER_PATH,
+  RECAPTCHA_DEPENDENT_STEPS,
   STATE_PATH,
   WITHDRAW_WORD,
   applicationId,
@@ -301,6 +303,7 @@ test("the funnel's scratch files live outside the build output", () => {
   for (const [name, path] of [
     ["STATE_PATH", STATE_PATH],
     ["MARKER_PATH", MARKER_PATH],
+    ["ARTIFACTS_DIR", ARTIFACTS_DIR],
   ]) {
     assert.ok(
       !path.split(/[\\/]/).includes(".next"),
@@ -336,6 +339,34 @@ test("the runner and the spec agree on every step of the funnel", () => {
     "the runner must check the completion marker: without it a skipped spec and " +
       "a passing one are the same exit code.",
   );
+});
+
+test("the steps the dev-mode run may skip are real steps, and only those", () => {
+  // Against a deployed target the spec skips the reCAPTCHA-dependent leg and
+  // the runner accepts exactly that set. A name here that is not a step would
+  // let the runner accept a skip nothing can record; a step that is gated but
+  // missing here would fail every dev-mode run. Both sides read one constant.
+  for (const name of RECAPTCHA_DEPENDENT_STEPS) {
+    assert.ok(
+      FUNNEL_STEPS.includes(name),
+      `RECAPTCHA_DEPENDENT_STEPS names ${JSON.stringify(name)}, which is not in FUNNEL_STEPS.`,
+    );
+  }
+  assert.ok(
+    RECAPTCHA_DEPENDENT_STEPS.length < FUNNEL_STEPS.length,
+    "every step is marked reCAPTCHA-dependent, so a dev-mode run would prove nothing " +
+      "and still pass. Sign-in, the public course page and the enrol leg are not gated.",
+  );
+  for (const [file, label] of [
+    [FUNNEL_FILES[1], "the runner"],
+    [FUNNEL_FILES[2], "the spec"],
+  ]) {
+    assert.match(
+      codeOf(file),
+      /RECAPTCHA_DEPENDENT_STEPS/,
+      `${label} must decide skips from RECAPTCHA_DEPENDENT_STEPS, not a private list.`,
+    );
+  }
 });
 
 /**

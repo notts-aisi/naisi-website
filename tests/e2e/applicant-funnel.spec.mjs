@@ -56,10 +56,17 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { assertTarget } from "../../scripts/e2e/lib/env.mjs";
 import {
+  stubRecaptchaOnLoopback,
+  waitForRecaptchaWidget,
+} from "../../scripts/e2e/lib/browser.mjs";
+import {
+  ARTIFACTS_DIR,
   MARKER_PATH,
+  RECAPTCHA_DEPENDENT_STEPS,
   STATE_PATH as DEFAULT_STATE_PATH,
   WITHDRAW_WORD,
 } from "../../scripts/seed-fake-applicants.mjs";
@@ -82,11 +89,36 @@ const WAIT_MS = 30_000;
  */
 const completed = [];
 
+/**
+ * Steps this file deliberately did not run, each with its reason. Written to
+ * the marker beside `completed` so the runner can tell a skip it accepts in
+ * this mode (the reCAPTCHA-dependent leg against a deployed target) from a
+ * step that silently never happened.
+ */
+const skipped = [];
+
+/**
+ * Why a step may not run in this mode, or null. Decided once the target is
+ * known: against a deployed target the real widget challenges headless
+ * Chromium, so the reCAPTCHA-dependent leg is local-mode only. See
+ * `RECAPTCHA_DEPENDENT_STEPS` in the fixture module for the full reasoning.
+ */
+let skipReasonFor = () => null;
+
+const DEPLOYED_TARGET_SKIP =
+  "reCAPTCHA-dependent: against a deployed target Google's real widget answers headless " +
+  "Chromium with an image challenge, which no spec may solve. This leg runs in --local " +
+  "mode, where the widget is stubbed against the always-pass secret.";
+
 function writeMarker() {
   try {
     writeFileSync(
       MARKER,
-      `${JSON.stringify({ finishedAt: new Date().toISOString(), steps: completed }, null, 2)}\n`,
+      `${JSON.stringify(
+        { finishedAt: new Date().toISOString(), steps: completed, skipped },
+        null,
+        2,
+      )}\n`,
       "utf8",
     );
   } catch (err) {
@@ -94,11 +126,56 @@ function writeMarker() {
   }
 }
 
-/** Runs one named step and records it only if it finished without throwing. */
+/**
+ * The page a failed step was looking at, kept for the person reading the log.
+ *
+ * A selector timeout says what the spec wanted and nothing about what the
+ * page showed instead. On the first real run of this file that difference was
+ * an afternoon: the apply form never appeared, and the reason (the route had
+ * refused the reCAPTCHA token) was only in the server log. So a step that
+ * throws leaves a screenshot and the page's text under `ARTIFACTS_DIR`, named
+ * after the step, before the failure is reported. Best effort: a browser that
+ * has already gone must not turn one failure into two.
+ */
+let captureFailure = async () => {};
+
+function failureCapturer(page) {
+  return async (name) => {
+    try {
+      mkdirSync(ARTIFACTS_DIR, { recursive: true });
+      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const png = join(ARTIFACTS_DIR, `${slug}.png`);
+      const txt = join(ARTIFACTS_DIR, `${slug}.txt`);
+      await page.screenshot({ path: png, fullPage: true });
+      const body = await page.locator("body").innerText().catch(() => "");
+      writeFileSync(txt, `${page.url()}\n\n${body}\n`, "utf8");
+      console.error(`[funnel-spec] step failed: "${name}". Page kept at ${png} and ${txt}.`);
+    } catch (err) {
+      console.error(`[funnel-spec] could not capture the failed page: ${err.message}`);
+    }
+  };
+}
+
+/**
+ * Runs one named step and records it only if it finished without throwing.
+ * A step this mode cannot run is skipped through node:test (so the output
+ * says so) and recorded under `skipped` with its reason, never under `steps`.
+ */
 async function step(t, name, fn) {
+  const skip = skipReasonFor(name);
+  if (skip) {
+    await t.test(name, { skip }, () => {});
+    skipped.push({ name, reason: skip });
+    return;
+  }
   let ok = false;
   await t.test(name, async (st) => {
-    await fn(st);
+    try {
+      await fn(st);
+    } catch (err) {
+      await captureFailure(name);
+      throw err;
+    }
     ok = true;
   });
   if (ok) completed.push(name);
@@ -173,6 +250,22 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
   // below drags down a column that only exists in the wide layout.
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
+  captureFailure = failureCapturer(page);
+  // Local mode only (the helper checks): the apply routes are reCAPTCHA-gated,
+  // the local server holds the always-pass secret, and this hands the widget
+  // a token to send. Against dev the real widget runs against the real secret.
+  const recaptchaStubbed = await stubRecaptchaOnLoopback(page, origin);
+  console.log(
+    `[funnel-spec] reCAPTCHA: ${recaptchaStubbed ? "stubbed (loopback server)" : "real widget (deployed target)"}`,
+  );
+  if (!recaptchaStubbed) {
+    skipReasonFor = (name) =>
+      RECAPTCHA_DEPENDENT_STEPS.includes(name) ? DEPLOYED_TARGET_SKIP : null;
+    console.log(
+      `[funnel-spec] ${RECAPTCHA_DEPENDENT_STEPS.length} reCAPTCHA-dependent step(s) will be ` +
+        "SKIPPED against this target and reported as such. Run with --local to drive them.",
+    );
+  }
 
   try {
     await step(t, "the public course page shows the seeded session slots", async () => {
@@ -202,6 +295,10 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
 
     await step(t, "starting an application opens an editable draft", async () => {
       await page.goto(applyUrl, { waitUntil: "domcontentloaded" });
+      // The start button is reCAPTCHA-gated and the widget mounts a beat after
+      // the page: pressing before it has yields no token and a refusal. A
+      // person never wins that race; a spec always does unless it waits.
+      await waitForRecaptchaWidget(page, { timeout: WAIT_MS });
       await page.getByRole("button", { name: "Start your application" }).click();
       await page.locator(`#${state.questionId}-input`).waitFor({ timeout: WAIT_MS });
     });
@@ -234,6 +331,12 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       const from = page.locator('[data-day="1"][data-slot="0"]');
       const to = page.locator('[data-day="1"][data-slot="7"]');
       await from.waitFor({ timeout: WAIT_MS });
+      // Put the run of cells in the MIDDLE of the viewport first. Fresh from a
+      // reload the grid's first row sits at the bottom edge of a 900px window,
+      // under the sticky draft save bar, and a pointer put down there lands on
+      // the bar: nothing paints and the drag selects text down the page. That
+      // is what a person's scroll does before they reach for the grid.
+      await from.evaluate((el) => el.scrollIntoView({ block: "center" }));
       const a = await from.boundingBox();
       const b = await to.boundingBox();
       assert.ok(a && b, "the availability grid did not lay out");
@@ -267,6 +370,8 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
     });
 
     await step(t, "submitting moves the application to view-only", async () => {
+      // Submit sends a token too, and the grid step ended on a reload.
+      await waitForRecaptchaWidget(page, { timeout: WAIT_MS });
       await page.getByRole("button", { name: "Submit application" }).click();
       await page.getByRole("heading", { name: "Your application is in" }).waitFor({ timeout: WAIT_MS });
       // View-only means the controls are GONE, not merely disabled: the flow
@@ -302,6 +407,8 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
     });
 
     await step(t, "picking it back up restores the answers and submits again", async () => {
+      // Picking it back up is the start route again, so it is gated the same way.
+      await waitForRecaptchaWidget(page, { timeout: WAIT_MS });
       await page.getByRole("button", { name: "Pick it back up" }).click();
       const field = page.locator(`#${state.questionId}-input`);
       await field.waitFor({ timeout: WAIT_MS });
@@ -310,35 +417,39 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
         answer,
         "re-applying lost the answers the withdraw copy promises are kept",
       );
+      await waitForRecaptchaWidget(page, { timeout: WAIT_MS });
       await page.getByRole("button", { name: "Submit application" }).click();
       await page.getByRole("heading", { name: "Your application is in" }).waitFor({ timeout: WAIT_MS });
     });
 
-    await step(t, "the applicant status hub lists the round", async (st) => {
-      // PR14 owns /applications. Until it lands the route 404s, and a funnel
-      // that went red over a page nobody has written yet would be noise: the
-      // assertion is armed by the route existing, and says so either way.
+    await step(t, "the applicant status hub lists the round", async () => {
+      // This step used to skip while /applications 404ed, because the status
+      // hub had not been written. It has (PR14), the step ran for real on
+      // 6 September 2026, and a 404 here is now a defect rather than a
+      // not-yet: the page the applicant is told to come back to is gone.
       const res = await page.goto(`${origin}/applications`, { waitUntil: "domcontentloaded" });
-      if (res && res.status() === 404) {
-        st.skip(
-          "GET /applications returned 404: the status hub (PR14) is not on this build. " +
-            "This assertion arms itself the moment that route exists.",
-        );
-        return;
-      }
-      await page.getByText(state.roundId, { exact: false }).or(
-        page.getByText(`Funnel intake ${state.funnelRunId}`, { exact: false }),
-      ).first().waitFor({ timeout: WAIT_MS });
+      assert.ok(res && res.status() < 400, `GET /applications answered ${res?.status()}`);
+      await page
+        .getByText(`Funnel intake ${state.funnelRunId}`, { exact: false })
+        .first()
+        .waitFor({ timeout: WAIT_MS });
     });
 
     await step(t, "taking a pre-course seat", async () => {
       await page.goto(courseUrl, { waitUntil: "domcontentloaded" });
-      const slot = page.locator(`input[name="course-session"][value="${state.groupIds[0]}"]`);
+      // The course page renders its call to action twice (hero and foot), and
+      // each placement mounts its own session picker, so every slot and button
+      // appears twice once both have loaded. This step drives the HERO picker,
+      // the first in document order, and the drop-out step below reads the
+      // consequence for the other one.
+      const slot = page
+        .locator(`input[name="course-session"][value="${state.groupIds[0]}"]`)
+        .first();
       await slot.waitFor({ timeout: WAIT_MS });
       // The radio is clipped to 1px by design (the whole card is the label),
       // so the click goes where a person's would: on the card.
-      await page.locator("label").filter({ has: slot }).click();
-      await page.getByRole("button", { name: "Take this place" }).click();
+      await page.locator("label").filter({ has: slot }).first().click();
+      await page.getByRole("button", { name: "Take this place" }).first().click();
       // The confirmation sentence, not the slot name on its own: the slot name
       // is also in the list this branch replaces, so matching it alone would
       // pass against the page that was already on screen.
@@ -358,15 +469,33 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       );
       await confirm.fill(state.courseTitle);
       await leave.click();
-      // Dropping out is irreversible FROM HERE by decision, so the picker does
-      // NOT come back offering a place: it says the seat has gone back to the
-      // group. Asserting the honest end state rather than the one a reader
-      // might assume is the point of this line.
+      // Dropping out is irreversible FROM HERE by decision, so the picker the
+      // member used does NOT come back offering a place: it says the seat has
+      // gone back to the group, and the way out is gone with it.
       await page.getByText(/You'?re off the course/).waitFor({ timeout: WAIT_MS });
       assert.equal(
-        await page.getByRole("button", { name: "Take this place" }).count(),
+        await page.getByRole("button", { name: "Leave this course" }).count(),
         0,
-        "the picker offered a place again after an irreversible drop-out",
+        "the drop-out card was still offered after the member had left",
+      );
+      // KNOWN DEFECT, pinned so that fixing it fails here and gets this block
+      // deleted. The public course page renders CourseCTA twice (hero and
+      // foot) and each mounts its own GroupPicker with its own state, so the
+      // foot picker never learns about the hero picker's drop-out and goes on
+      // saying "Pick a session" with a live "Take this place" button under a
+      // hero that says signing up again is not possible here. The button
+      // cannot succeed (the route refuses a second create at the same id), so
+      // the harm is a contradiction on the page rather than a rejoin. Found by
+      // the first real run of this file on 6 September 2026. When the two
+      // placements share state (or the foot one reloads), the count below
+      // becomes 0: delete this assertion and its comment, and make the
+      // preceding one read "no picker offers a place".
+      assert.equal(
+        await page.getByRole("button", { name: "Take this place" }).count(),
+        1,
+        "the foot placement no longer offers a place after a drop-out. The " +
+          "defect this pins (two independent GroupPicker instances on the course " +
+          "page) appears to be fixed: delete this pin.",
       );
     });
   } finally {

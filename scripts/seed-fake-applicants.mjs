@@ -102,6 +102,13 @@ export const STATE_PATH = join(REPO_ROOT, ".e2e-funnel-state.json");
 export const MARKER_PATH = join(REPO_ROOT, ".e2e-funnel-steps.json");
 
 /**
+ * Where a spec leaves the page it was looking at when a step failed: a
+ * screenshot and the page text, named after the step. Beside the two scratch
+ * files above, outside `.next/` for the same reason, and gitignored.
+ */
+export const ARTIFACTS_DIR = join(REPO_ROOT, ".e2e-artifacts");
+
+/**
  * Every step the spec must complete, in order.
  *
  * Shared rather than restated on both sides: the spec records what it
@@ -123,6 +130,34 @@ export const FUNNEL_STEPS = [
   "the applicant status hub lists the round",
   "taking a pre-course seat",
   "leaving the course needs the typed course title",
+];
+
+/**
+ * The steps that cannot run against a DEPLOYED target, and why.
+ *
+ * Start, Submit and Pick it back up each send a reCAPTCHA token, and against
+ * dev.naisi.uk the real widget answers headless Chromium with an image
+ * challenge ("Select all images with crosswalks", 6 September 2026). No spec
+ * may solve one: the gate being closed to automation is the property the
+ * `recaptcha-gate` battery exists to assert. The other steps here are not
+ * gated themselves but need the draft or the submission a gated press
+ * creates. In `--local` mode the widget is stubbed against the always-pass
+ * secret (`scripts/e2e/lib/browser.mjs`) and every one of these runs.
+ *
+ * So the spec SKIPS these against a deployed target, records each skip with
+ * this reason in the completion marker, and the runner accepts exactly this
+ * set as skipped in dev mode and nothing else. The same shape as the register
+ * batteries, which are local-mode only for the same gate.
+ */
+export const RECAPTCHA_DEPENDENT_STEPS = [
+  "starting an application opens an editable draft",
+  "the draft saves",
+  "the draft survives a reload",
+  "the availability grid paints and the marks persist",
+  "submitting moves the application to view-only",
+  "withdrawing needs the typed word and then takes it back",
+  "picking it back up restores the answers and submits again",
+  "the applicant status hub lists the round",
 ];
 
 /**
