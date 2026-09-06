@@ -292,6 +292,19 @@ node scripts/seed-fake-applicants.mjs status   # the manifest, right now
 node scripts/seed-fake-applicants.mjs down     # must end with total: 0
 ```
 
+**Two modes that touch nothing but leftovers.** `--teardown` reads the ledgers
+in `.e2e-state/` and tears down exactly what they name (no build, no browser,
+no admin account), exit 1 if any row is left behind; the CI jobs run it as a
+step with `if: always()` after the specs, because a CANCELLED runner is killed
+before the runner's own `finally` finishes and the machine goes with the
+ledgers (that left seven fixtures on dev on 6 September 2026). `--sweep
+<runId,...>` is for when the ledgers are gone too: every fixture row embeds its
+run id in the document id, a derived field or a harness address, so
+`scripts/e2e/lib/sweep.mjs` scans the fixture collections for the ids and
+removes the matches and the matching harness accounts, through the same doors
+as a fixture. The run ids are in the cancelled job's log, on the `Seeding
+fixture <id>` lines.
+
 **A spec module is one file.** Everything under `scripts/e2e-fixtures/` except
 `core.mjs` exports a single object named `SPEC`, and the runner discovers it by
 walking the directory, so a new spec is added by adding a file:

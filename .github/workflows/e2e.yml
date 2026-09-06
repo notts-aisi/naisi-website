@@ -187,6 +187,19 @@ jobs:
           E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
         run: node scripts/run-e2e.mjs --local --skip-build
 
+      # Runs even when the job is CANCELLED, which is the one case the
+      # runner's own `finally` cannot cover: the step above is killed before
+      # its teardown finishes and the machine is discarded with the ledgers.
+      # On 6 September 2026 that left seven fixtures on dev. This reads the
+      # ledgers `.e2e-state/` still holds and tears down exactly what they
+      # name; it needs no admin account and drives no browser. Red when a row
+      # is left behind, so a leak is a failed step rather than a silent one.
+      - name: Tear down whatever the ledgers still name
+        if: always()
+        env:
+          E2E_SIGNING_SERVICE_ACCOUNT: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
+        run: node scripts/run-e2e.mjs --teardown
+
       # The ledgers, always on a failure. They matter most on a failure that
       # also failed to tear down: they name the rows still sitting on the dev
       # project. They carry fixture ids and e2e.invalid addresses only, which
@@ -288,6 +301,19 @@ jobs:
           # runner says so. Empty when the secret is not configured.
           E2E_RECAPTCHA_BYPASS_SECRET: ${{ secrets.E2E_RECAPTCHA_BYPASS_SECRET }}
         run: node scripts/run-e2e.mjs
+
+      # Runs even when the job is CANCELLED, which is the one case the
+      # runner's own `finally` cannot cover: the step above is killed before
+      # its teardown finishes and the machine is discarded with the ledgers.
+      # On 6 September 2026 that left seven fixtures on dev. This reads the
+      # ledgers `.e2e-state/` still holds and tears down exactly what they
+      # name; it needs no admin account and drives no browser. Red when a row
+      # is left behind, so a leak is a failed step rather than a silent one.
+      - name: Tear down whatever the ledgers still name
+        if: always()
+        env:
+          E2E_SIGNING_SERVICE_ACCOUNT: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
+        run: node scripts/run-e2e.mjs --teardown
 
       - name: Upload the fixture ledgers
         if: failure()

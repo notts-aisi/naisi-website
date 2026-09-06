@@ -299,6 +299,12 @@ around what it may touch and the hand-driven fixture CLI are in
   driven on every production run, not only the first after a bump; and
   `tests/funnel-harness-guards.test.mjs` fails on a `policyVersion` key
   written anywhere in the harness but the seed of a harness-created account.
+- **A cancelled run cleans up after itself.** Both CI jobs end with a step
+  that runs `if: always()` and tears down whatever the fixture ledgers still
+  name (`node scripts/run-e2e.mjs --teardown`), because a cancelled runner is
+  killed before the runner's own `finally` finishes. When the ledgers are gone
+  too, `--sweep <runId,...>` removes a run's rows and accounts by the run id
+  every fixture row embeds. Never cancel a dev-mode run without one of the two.
 - **A spec that reads its own mail runs only where the mail is caught.** The
   suite's no-real-mail promise is that every fixture address is suppressed
   before anything is seeded, which is a promise because `sendEmail()` consults
