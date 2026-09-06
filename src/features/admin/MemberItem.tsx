@@ -244,7 +244,10 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
   }
 
   /** One standalone permission key, for the ones that have no draft/approve
-   *  pair. `manageMembership` is the first: there is no "draft a membership". */
+   *  pair. `manageMembership` was the first (there is no "draft a
+   *  membership"); `circulateWorksheet` is the second, because writing a
+   *  worksheet is open to the whole committee and the only act left to gate
+   *  is putting one in front of named people. */
   async function onChangePermission(key: keyof UserPermissions, value: boolean) {
     const next = { ...(shown.permissions ?? {}), [key]: value };
     setBusy(true);
@@ -509,6 +512,26 @@ export default function MemberItem({ user, currentAdminUid, expanded, onToggleEx
                   }
                   disabled={busy || isAdminRole}
                   label="Can create membership periods and record members"
+                />
+              </div>
+
+              <div className={styles.controlBlock}>
+                <span className={styles.controlLabel}>
+                  Worksheet circulation
+                  {isAdminRole && (
+                    <span className={styles.hint}> (admins always have it)</span>
+                  )}
+                </span>
+                <Switch
+                  checked={Boolean(shown.permissions?.circulateWorksheet)}
+                  onChange={() =>
+                    onChangePermission(
+                      "circulateWorksheet",
+                      !shown.permissions?.circulateWorksheet,
+                    )
+                  }
+                  disabled={busy || isAdminRole}
+                  label="Can send worksheets to committee members and watch their progress"
                 />
               </div>
 

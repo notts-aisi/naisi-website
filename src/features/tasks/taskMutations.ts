@@ -78,6 +78,13 @@ function serializeSubtask(s: Subtask) {
     sealState: s.sealState,
     sealedAt: s.sealedAt ? Timestamp.fromDate(s.sealedAt) : null,
     roleHint: s.roleHint,
+    // `artefact` is OPTIONAL on Subtask and nothing writes one today, so it
+    // is spread rather than assigned: `artefact: undefined` would be an
+    // undefined in every subtask this function returns, and Firestore refuses
+    // undefined outright. Spreading also means a pointer a future writer does
+    // store survives the next edit to any other subtask, instead of being
+    // dropped by the round trip through here.
+    ...(s.artefact ? { artefact: s.artefact } : {}),
   };
 }
 
@@ -233,6 +240,13 @@ export async function createTask(input: CreateTaskInput): Promise<string> {
     commentCount: 0,
     tags,
     sourceRef: null,
+    // NULL, WRITTEN, on every client-made task. `artefact` says what a task
+    // is about, and only the worksheet circulation route ever sets it; a
+    // task created here is about nothing but itself. Written rather than
+    // omitted for the same reason `sourceRef` is: the update rules pin these
+    // fields by equality, and a field a document does not carry is a field
+    // the first update has to invent.
+    artefact: null,
     sourceTemplateId: input.sourceTemplateId ?? null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),

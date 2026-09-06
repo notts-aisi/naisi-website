@@ -263,6 +263,30 @@ describe("the courses section", () => {
 });
 
 // ---------------------------------------------------------------------------
+// §2b The committee tooling passage
+// ---------------------------------------------------------------------------
+
+/**
+ * The courses section above is about what the platform holds on an APPLICANT
+ * or a participant. What it holds on a committee member (tasks, comments,
+ * attachments, and now worksheet activity) is a different passage under "Data
+ * we collect", and the tests for it belong here rather than filed under
+ * courses.
+ */
+describe("the committee tooling passage", () => {
+  test("worksheet activity tracking is named, with the limit it promises", () => {
+    // WORKSHEETS (docs/worksheets.md). A circulated worksheet stamps when the
+    // recipient first opened it, counts page opens and accumulates rough
+    // active time, and shows all three to staff. Measuring how long somebody
+    // spent on a page is the item on this page a member is least likely to
+    // guess at, so the sentence has to survive: both the half that says what
+    // is recorded and the half that says what never is.
+    assert.match(V3_FLAT, /how many times you opened each page/i);
+    assert.match(V3_FLAT, /we never record keystrokes or pasting/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // §3 The re-consent gate
 // ---------------------------------------------------------------------------
 

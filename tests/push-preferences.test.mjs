@@ -440,6 +440,45 @@ describe("mirrorTaskEmailToPush", () => {
     assert.equal(payload.notification.navigate, "/committee/tasks?task=task-1");
   });
 
+  test("a rooted url override wins over the board", async () => {
+    // Worksheets (docs/worksheets.md): the recipient acts on the respond
+    // page, not on the card. A push that lands one hop short of the thing it
+    // is about is a push people learn to ignore, so the caller may say where
+    // it goes.
+    reset({ users: { u1: { profile: {} } }, subscriptions: [DEVICE] });
+    await mirrorTaskEmailToPush("u1", {
+      title: "T",
+      body: "B",
+      taskId: "task-1",
+      url: "/worksheets/respond/circ-1",
+    });
+    const payload = JSON.parse(globalThis.__pushes[0].payload);
+    assert.equal(payload.notification.navigate, "/worksheets/respond/circ-1");
+  });
+
+  for (const [what, url] of [
+    ["an absolute URL", "https://elsewhere.example/phish"],
+    ["a protocol-relative URL", "//elsewhere.example/phish"],
+    ["a relative path with no root", "worksheets/respond/circ-1"],
+    ["an empty string", ""],
+  ]) {
+    test(`${what} is refused and the board is used instead`, async () => {
+      // The service worker hands this value to `clients.openWindow`, so an
+      // off-origin override would open somebody else's page from a
+      // notification carrying this site's name and icon. Refused rather than
+      // dropped: the member still hears about their task.
+      reset({ users: { u1: { profile: {} } }, subscriptions: [DEVICE] });
+      await mirrorTaskEmailToPush("u1", {
+        title: "T",
+        body: "B",
+        taskId: "task-1",
+        url,
+      });
+      const payload = JSON.parse(globalThis.__pushes[0].payload);
+      assert.equal(payload.notification.navigate, "/committee/tasks?task=task-1");
+    });
+  }
+
   test("sends NOTHING when push.tasks is false", async () => {
     reset({
       users: { u1: { profile: { notifications: { push: { tasks: false } } } } },

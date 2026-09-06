@@ -50,6 +50,7 @@ export const MARKER_FAMILIES = [
   "stagerel",
   "unmarked",
   "breakret",
+  "wsremind",
 ] as const;
 
 export type SchedulerMarkerFamily = (typeof MARKER_FAMILIES)[number];
@@ -193,6 +194,37 @@ export function stageRecipientMarker(
   };
 }
 
+/**
+ * `wsremind__{circulationId}__{uid}__{dueKey}`, one recipient's due-soon
+ * reminder for one worksheet circulation.
+ *
+ * Per recipient and per due instant, exactly like {@link reminderMarker}: the
+ * unit of work that can fail on its own is one person's email, so one person's
+ * email is what gets its own attempt budget, its own skip reason and its own
+ * stamp. `dueKey` is derived from the circulation's `dueDate`, so moving the
+ * date mints a NEW marker and the people who have still not submitted are
+ * reminded about the new deadline rather than silenced by the old one's
+ * marker.
+ */
+export function worksheetReminderMarker(
+  circulationId: string,
+  uid: string,
+  dueKey: string,
+): SchedulerMarkerRef {
+  const fields = {
+    circulationId: assertDocIdComponent("circulationId", circulationId),
+    // A Firebase uid is 28 alphanumeric characters, so it belongs in the
+    // stricter bucket even though it is an id rather than a key.
+    uid: assertKeyComponent("uid", uid),
+    dueKey: assertKeyComponent("dueKey", dueKey),
+  };
+  return {
+    id: `wsremind__${fields.circulationId}__${fields.uid}__${fields.dueKey}`,
+    family: "wsremind",
+    fields,
+  };
+}
+
 /** `unmarked__{groupId}__{sessionKey}`, an unmarked-register follow-up. */
 export function unmarkedRegisterMarker(
   groupId: string,
@@ -293,6 +325,12 @@ const COMPONENT_KEYS = [
   "sessionKey",
   "runId",
   "slotStartKey",
+  // The worksheet due-soon reminder's own two. A component missing from this
+  // list is stored on the document but dropped by the normaliser, so the
+  // panel and any cleanup pass would have to parse it back out of the id,
+  // which is the exact thing the header forbids.
+  "circulationId",
+  "dueKey",
 ] as const;
 
 export function normalizeSchedulerMarker(

@@ -50,6 +50,13 @@ const FORBIDDEN_PRIVILEGE = [
   /\bapproveEvent\b/,
   /\bdraftCourse\b/,
   /\bapproveCourse\b/,
+  // Re-badges every member on the site in one action, which is why it is a
+  // key of its own rather than part of the admin role.
+  /\bmanageMembership\b/,
+  // Sends a worksheet, with a task and an email each, to named committee
+  // members; and unlocks GET /api/worksheets/recipients, the one route that
+  // hands out a committee roster without a users-collection read.
+  /\bcirculateWorksheet\b/,
   // Not a permission: an admin-set tag marking a paid member for an academic
   // year. It gates nothing, but it is admin-set data about a real person that
   // reviewers see on an application, so the harness has no business writing it.

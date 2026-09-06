@@ -161,6 +161,9 @@ export function buildMirroredTask(args: MirroredTaskArgs): MirroredTaskPayload {
     commentCount: 0,
     tags: [],
     sourceRef: { cohortId: args.runId, weekNumber: args.weekNumber },
+    // Not about a worksheet response, and about nothing else the artefact
+    // union names. Written rather than omitted, like `sourceRef` above.
+    artefact: null,
     sourceTemplateId: null,
     createdAt: args.now,
     updatedAt: args.now,

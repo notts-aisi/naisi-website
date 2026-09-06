@@ -10,7 +10,7 @@
  *    file of named people, so a swallowed failure is an unlogged export. The
  *    rejecting-write test is the whole contract: if somebody later wraps the
  *    write in a try/catch "so an export never fails", this goes red.
- *  - **No `undefined` reaches Firestore.** `scope` has four optional keys and
+ *  - **No `undefined` reaches Firestore.** `scope` has five optional keys and
  *    a route will pass `{ runId, groupId: undefined }` sooner or later.
  *    Firestore refuses undefined outright, which would turn a missing group
  *    id into a failed write and, through the rule above, a refused export.
@@ -138,6 +138,7 @@ const {
   DATA_EXPORT_KINDS,
   DATA_EXPORT_KIND_LABEL,
   DATA_EXPORT_LIMITS,
+  DATA_EXPORT_SCOPE_KEYS,
   UNKNOWN_DATA_EXPORT_LABEL,
   compactScope,
   dataExportKindLabel,
@@ -185,13 +186,16 @@ const ENTRY = {
 // ---------------------------------------------------------------------------
 
 describe("DataExportKind", () => {
-  test("is exactly the five kinds the contract names", () => {
+  test("is exactly the six kinds the contract names", () => {
     assert.deepEqual(DATA_EXPORT_KINDS, [
       "register",
       "roster",
       "applications",
       "membership",
       "attendance-summary",
+      // Worksheets (docs/worksheets.md): the circulation export, scoped by
+      // `circulationId` rather than by the worksheet it was sent from.
+      "worksheet-responses",
     ]);
   });
 
@@ -348,6 +352,46 @@ describe("normalizeDataExport", () => {
       compactScope({ runId: "r", groupId: "", roundId: undefined, periodId: "2026-27" }),
       { runId: "r", periodId: "2026-27" },
     );
+  });
+
+  test("compactScope carries every declared scope key", () => {
+    // The list is the contract, so exercise it rather than a hand-written
+    // sample: a key declared on DataExportScope and left out of
+    // DATA_EXPORT_SCOPE_KEYS would be silently dropped on the way to
+    // Firestore, and the row would understate what the file covered.
+    const every = Object.fromEntries(
+      DATA_EXPORT_SCOPE_KEYS.map((key) => [key, `${key}-value`]),
+    );
+    assert.deepEqual(compactScope(every), every);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §3b Every scope key is RENDERED, or a row lies about what it covered
+// ---------------------------------------------------------------------------
+
+describe("the Exports tab renders every scope key", () => {
+  test("formatScope has a branch for each entry of DATA_EXPORT_SCOPE_KEYS", () => {
+    // `formatScope` falls back to "Whole site" when it recognises none of the
+    // keys on a row. That fallback is right for a genuinely unscoped export
+    // and actively WRONG for a scoped one it has never heard of: a CSV of one
+    // circulation's answers would be displayed as an export of everything, on
+    // the one control that survives the file leaving the platform. An
+    // overstated audit row is worse than a blank cell, so the two lists are
+    // pinned to each other here rather than left to review.
+    const tab = readFileSync(
+      join(REPO_ROOT, "src/features/admin/DeliverabilityExports.tsx"),
+      "utf8",
+    );
+    for (const key of DATA_EXPORT_SCOPE_KEYS) {
+      assert.match(
+        tab,
+        new RegExp(`scope\\.${key}\\b`),
+        `DeliverabilityExports.tsx does not render the "${key}" scope key, so a ` +
+          'row scoped by it renders as "Whole site". Add a line to formatScope ' +
+          "in the same commit as the key.",
+      );
+    }
   });
 });
 

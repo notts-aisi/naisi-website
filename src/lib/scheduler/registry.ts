@@ -54,6 +54,12 @@ export const SCHEDULER_JOB_IDS = [
   "courses-unmarked-registers",
   "courses-break-return",
   "newsletter-drain",
+  // Worksheet due-soon reminders (docs/worksheets.md). The id is reserved
+  // here ahead of its handler for the reason the header gives: the panel and
+  // `config/scheduler` key on these strings, so the id has to be the one the
+  // job will ship with. It registers with `enabledByDefault: false` when it
+  // lands, because it emails people.
+  "worksheet-due-reminders",
 ] as const;
 
 export type SchedulerJobId = (typeof SCHEDULER_JOB_IDS)[number];

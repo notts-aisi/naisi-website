@@ -185,5 +185,112 @@ service firebase.storage {
       allow delete: if canAccessTask()
         && (userData().role == 'admin' || isAttachmentUploader());
     }
+
+    // Worksheet imagery: the pictures inside a question's body or on one of
+    // its options. Written by whoever is authoring the questions, which is any
+    // committee member in the library and the circulation's staff mid-flight.
+    //
+    // PER-DOCUMENT OWNERSHIP SCOPING, mirroring firestore.rules, because
+    // `{ownerId}` is TWO kinds of id and both can be probed. It is a WORKSHEET
+    // id in the library editor and a CIRCULATION id when staff edit the sent
+    // copy, and an earlier draft of this block took that as licence to gate on
+    // committee membership alone (the course-images reasoning). It is not the
+    // same case: course authoring has no per-document author to mirror, while
+    // a worksheet has `authorUid` and a circulation has `staffUids`, and
+    // firestore.rules enforces both. Left at bare committee membership, a
+    // committee member refused `update` on somebody else's worksheet could
+    // still overwrite that worksheet's body and option images, and overwrite
+    // the imagery inside a live circulation that recipients are reading. That
+    // is the event-images hole forty lines above, repeated on a path added
+    // afterwards, so it is closed here the same way and at the same price:
+    // one exists() plus one get() against whichever collection the id names.
+    //
+    // The neither-exists branch is the newsletter-images null-safety branch
+    // and exists for the same reason: firestore.get() on a missing document
+    // returns null and .get() on null RAISES, denying by error, and an editor
+    // can legitimately upload the first image before its document has settled.
+    // Uploading under an id that names nothing is harmless because nothing
+    // references it; the hole being closed is overwriting SOMEBODY ELSE'S.
+    //
+    // Admins keep blanket write, matching "edit somebody else's worksheet:
+    // admins only" in docs/worksheets.md, so an admin fixing a broken image
+    // never has to go through the author.
+    //
+    // Read is SIGNED-IN rather than public, unlike every image block above.
+    // Those are public because a sent email and the public site render them
+    // with no session; a worksheet is never public, and a question body can
+    // carry a screenshot of something internal.
+    //
+    // `image/svg+xml` is refused EXPLICITLY. It satisfies `image/.*`, it is a
+    // document format that can carry script, and this path is readable by
+    // every signed-in account including a brand-new pending one, so the
+    // characterisation recorded against newsletter-images (an SVG on a
+    // world-readable path) is not a thing to repeat on a path being added
+    // today.
+    match /worksheet-images/{ownerId}/{image=**} {
+      function worksheetPath() {
+        return /databases/(default)/documents/worksheets/$(ownerId);
+      }
+      function circulationPath() {
+        return /databases/(default)/documents/circulations/$(ownerId);
+      }
+      // Author of the worksheet this folder belongs to, or staff of the
+      // circulation it belongs to, or neither document exists yet.
+      function ownsFolder() {
+        return (
+          firestore.exists(worksheetPath())
+            && firestore.get(worksheetPath()).data.get('authorUid', '') == request.auth.uid
+        ) || (
+          firestore.exists(circulationPath())
+            && request.auth.uid in firestore.get(circulationPath()).data.get('staffUids', [])
+        ) || (
+          !firestore.exists(worksheetPath()) && !firestore.exists(circulationPath())
+        );
+      }
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && (
+          userData().role == 'admin'
+          || (userData().role == 'committee' && ownsFolder())
+        )
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*')
+        && request.resource.contentType != 'image/svg+xml';
+    }
+
+    // Worksheet image ANSWERS: what a recipient uploaded in reply to an
+    // imageUpload question. Read by that recipient, the circulation's staff
+    // and admins.
+    //
+    // NO CLIENT WRITE AT ALL, admin and recipient included. The file goes
+    // through POST /api/worksheets/circulations/{id}/upload, which checks the
+    // MAGIC BYTES (PNG, JPEG, GIF, WebP; SVG refused) rather than trusting the
+    // Content-Type the client declares, enforces the size cap after the
+    // client's compression pass, writes with the Admin SDK and returns the
+    // { url, storagePath } pair the answer stores. A storage rule can only see
+    // the declared content type, which is a claim, so there is no version of
+    // this block that would be equivalent to the route.
+    //
+    // The recipient branch is tested FIRST and reads nothing: {uid} is a path
+    // segment, so a recipient reaching their own upload costs no cross-service
+    // lookup and cannot be aimed at anybody else's folder. The staff branch is
+    // guarded with exists() because firestore.get() on a missing document
+    // returns null and .get() on null raises, which would deny by error rather
+    // than by decision.
+    match /worksheet-uploads/{circulationId}/{uid}/{file} {
+      function parentCirculation() {
+        return firestore.get(/databases/(default)/documents/circulations/$(circulationId)).data;
+      }
+      allow read: if request.auth != null
+        && (
+          request.auth.uid == uid
+          || userData().role == 'admin'
+          || (
+            firestore.exists(/databases/(default)/documents/circulations/$(circulationId))
+            && request.auth.uid in parentCirculation().get('staffUids', [])
+          )
+        );
+      allow write: if false;
+    }
   }
 }

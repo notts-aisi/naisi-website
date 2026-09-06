@@ -47,7 +47,19 @@
  *     least likely to guess. Confirm it is the level of frankness wanted.
  *  9. "We do not publish anything you write to the rest of your group unless
  *     you choose to share it." (Courses.)
- * 10. The date on this version (see POLICIES in src/lib/legal/policies.ts) is
+ * 10. "When a worksheet is sent to you, we record when you first opened it,
+ *     how many times you opened each page and roughly how long you were
+ *     active on it, and show that to you and to the people reviewing it; we
+ *     never record keystrokes or pasting." (Data we collect.) This one is
+ *     BOTH: the first half describes what the code does and can be checked
+ *     against `activity` on a worksheet response, but the second half is the
+ *     policy, and it is a promise about every future version of the feature
+ *     rather than about this one. Monitoring how long somebody spent on a
+ *     page is the sort of thing people expect to be told about, so the
+ *     sentence also names the audience: the recipient sees their own figures,
+ *     not only the reviewers. If the committee would rather not measure
+ *     active time at all, this sentence and the tracking come out together.
+ * 11. The date on this version (see POLICIES in src/lib/legal/policies.ts) is
  *     the planned live date, 16 September 2026. If the merge slips, move it.
  *
  * =========================================================================
@@ -221,6 +233,13 @@ export default function PrivacyContentV3({
                   to inside the committee tooling area of the site. These are
                   visible to other committee members under the access rules
                   described in our role model.
+                </li>
+                <li>
+                  When a worksheet is sent to you, we record when you first
+                  opened it, how many times you opened each page and roughly
+                  how long you were active on it, and show that to you and to
+                  the people reviewing it; we never record keystrokes or
+                  pasting.
                 </li>
               </ul>
 

@@ -182,6 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           draftCourse: Boolean(raw.draftCourse),
           approveCourse: Boolean(raw.approveCourse),
           manageMembership: Boolean(raw.manageMembership),
+          circulateWorksheet: Boolean(raw.circulateWorksheet),
         });
         setSuRecognised(Boolean(data?.suRecognised));
         setAdmissionsReviewer(Boolean(data?.admissionsReviewer));
