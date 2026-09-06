@@ -33,7 +33,7 @@ src/
 │   │   ├── committee/tasks/                 # committee task board
 │   │   ├── credentials/                     # placeholder page — feature not built
 │   │   ├── newsletter/  events/manage/      # drafter / approver tools
-│   │   └── admin/                           # two gated trees, see "Admin area gating":
+│   │   └── admin/                           # gated trees, see "Admin area gating":
 │   │       ├── (admin-only)/                #   full admins: Approvals, Members, Projects,
 │   │       │                                #   Newsletter, Subscriptions, Email designs,
 │   │       │                                #   Deliverability, Task templates, Danger zone
@@ -216,13 +216,15 @@ Newsletter, Events and Course drafter tools and the matching Firestore rules,
 so a plain `member` can be granted `draftEvent` without being promoted to
 committee.
 
-### Admin area gating (two trees)
+### Admin area gating (four trees)
 
 `/admin` is no longer one role check. `(app)/admin/layout.tsx` admits an admin
 OR a holder of `draftCourse` / `approveCourse`, because those grants are
 useless if their holder is bounced off `/admin/courses`. The real per-page
-enforcement therefore sits one level down, in two route groups whose layouts
-call the helpers in `src/lib/firebase/pageGates.ts`:
+enforcement therefore sits one level down, in gated route trees whose layouts
+call the helpers in `src/lib/firebase/pageGates.ts`. The two original trees
+are described here; `admissions` (`requireAdmissionsPage()`) and `membership`
+(`requireMembershipPage()`) landed with V3 and follow the same shape:
 
 - `(app)/admin/(admin-only)/**` calls `requireAdminPage()`. Everything that is
   not course authoring lives here (Approvals, Members, Collaborators,
@@ -394,6 +396,17 @@ When making changes:
 6. **The `dev` branch** auto-deploys to the `naisi-website-dev` App Hosting backend on every push — see Deploy. When a hotfix lands on `main`, merge `main` → `dev` so dev doesn't drift behind on fixes.
 
 If asked to "commit and push" a change, default to creating a branch + PR unless the user explicitly says "push straight to main" (which will fail anyway). When in doubt, ask which base branch (main or dev).
+
+## Testing model
+
+Full version: [docs/testing.md](docs/testing.md). The short version:
+
+- **Guards test two layers together.** Until September 2026 every check inspected one layer, and the bugs that reached production lived in the seams: a client query whose shape did not satisfy its rule (live on prod from 6 May to 3 September 2026, #261), a query with no declared index (the emulator does not enforce them), a client module reaching a server-only one (only the build catches it). The worked examples: `scripts/rules-tests/tests/client-queries.test.mjs` runs every client SDK read in `src` against the emulator as every persona, keyed by a registry that names each read's gate and outcome; `tests/firestore-indexes.test.mjs` extracts every query in `src` and `scripts` and fails on one that needs an index `firestore.indexes.json` does not declare (and warns on a declared index no query uses); `tests/client-server-boundary.test.mjs` walks every `"use client"` import graph for `server-only`.
+- **Review detects, guards enforce.** When a review or an incident finds a new class of failure, the fix lands with a guard for the class in the same pull request. Fixing the instance without the guard is the thing not to do.
+- **Guards enumerate the tree.** A test that covers only the bug you found is a regression test. A guard walks every route, query or client file, so new work is covered without anyone remembering. Every registry or allowlist is checked in both directions, carries a written reason per entry, and reports what it cannot resolve rather than skipping it.
+- **Every change runs the whole battery**, locally and in CI: `npx next typegen && npx tsc --noEmit`, `npm run lint` (0 errors; the warning baseline on dev is 32), `npm test`, `cd scripts/rules-tests && npm test`, and a real `npm run build`, because Next enforces the client and server boundary only when it bundles.
+- **Test as a member, never only as an admin.** Admins take a resource-independent branch of nearly every rule, so admin testing hides member-facing failures by construction.
+- **End-to-end suite**: see the section of the same name in docs/testing.md.
 
 ## Deploy
 
