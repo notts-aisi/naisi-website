@@ -1,0 +1,98 @@
+/* ============================================================
+   AnswerSummary: one answer, read-only.
+
+   Every variant is width-constrained by its parent and wraps
+   rather than scrolling: a reviewer reading down a column of
+   answers should never meet a horizontal scrollbar per answer.
+   ============================================================ */
+
+.empty {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-style: italic;
+  color: var(--color-text-subtle);
+}
+
+/* MemberText brings its own block styling; this only adds the wrap rule that
+   a pasted URL with no spaces in it needs. */
+.text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.choice {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.choices {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.choiceItem {
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.rating {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.ratingValue {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.images {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  /* Auto-fill rather than a fixed count: a question allows one to four images
+     (WORKSHEET_LIMITS), and the grid should not leave three empty columns for
+     the common case of one. */
+  grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  gap: var(--space-2);
+}
+
+.imageItem {
+  min-width: 0;
+}
+
+.image {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+/* === Mobile ================================================
+   Two columns of thumbnails on a phone are smaller than the
+   thing being looked at, so images go full width and stack. */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .images {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .choices {
+    padding-left: var(--space-4);
+  }
+}

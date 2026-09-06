@@ -12,7 +12,7 @@ import ResponsiveSelect, {
 } from "@/components/ui/ResponsiveSelect";
 import Switch from "@/components/ui/Switch";
 import { AdminLoadingBar, AdminPage } from "@/features/admin/adminList";
-import BlockEditor from "@/features/newsletter/editor/BlockEditor";
+import BlockEditor from "@/components/blocks/BlockEditor";
 import type { Block } from "@/lib/firestore/newsletterBlocks";
 import {
   COURSE_PAGE_LIMITS,

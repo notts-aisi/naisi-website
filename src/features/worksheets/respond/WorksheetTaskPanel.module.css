@@ -1,0 +1,77 @@
+/* The worksheet panel inside the task detail modal, in place of the subtask
+   section. A worksheet task has no subtasks by design (docs/worksheets.md:
+   the per-block reviewer signoff would be ceremony with no participants), so
+   this is what the modal shows instead: where the response has got to, and the
+   way through to it. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+}
+
+.headRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.name {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+}
+
+/* A link that acts as the panel's one action. Styled here rather than reaching
+   for the Button primitive, which renders a <button> and would need an
+   onClick-plus-router dance to navigate. Colours in classes, and no reliance
+   on a button element, so Safari has nothing of its own to paint. */
+.action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  min-height: 2.75rem;
+  padding: 0 var(--space-4);
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  /* No token for "text on the accent fill"; Button does the same. */
+  color: white;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-decoration: none;
+  transition: background var(--dur-quick) var(--ease-naisi);
+}
+
+.action:hover {
+  background: var(--color-accent-hover);
+}
+
+.action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* The modal is full-bleed on a phone, so the action takes the width rather
+     than sitting as a small target in a large empty row. */
+  .action {
+    align-self: stretch;
+  }
+}

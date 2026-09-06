@@ -127,13 +127,18 @@
   color: var(--color-text-subtle);
 }
 
-/* === Course deep link (P10 — mirrored fellowship-weekly tasks only) ===
+/* === Card deep link (course mirrors, and worksheet tasks) ===
 
    Quiet by construction. This is one card type among many on a board that
    routinely shows dozens, so the link sits at subtle weight and only reaches
    accent on hover/focus — it should read as an aside on the card, never as
    the card's action. `align-self: flex-start` keeps the hit area to the text
-   itself so it can't collide with the surrounding card click target. */
+   itself so it can't collide with the surrounding card click target.
+
+   Two callers now: the mirrored course week and the recipient's link into a
+   worksheet. The class keeps its original name so the course link's own diff
+   stays empty; both are the same thing, a way back to the document the card is
+   a projection of. */
 
 .courseLink {
   display: inline-flex;

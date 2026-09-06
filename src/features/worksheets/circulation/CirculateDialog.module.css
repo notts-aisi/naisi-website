@@ -1,0 +1,225 @@
+/* ============================================================
+   CirculateDialog: the send form, inside a Modal.
+
+   Modal already owns the panel's padding, its scroll and its
+   85vh ceiling, so nothing here sets a height: this file lays
+   out a column of sections and lets the panel scroll them.
+
+   The footer is deliberately NOT sticky. Making it stick would
+   mean fighting the panel's own padding with negative offsets,
+   and the thing that actually keeps Send reachable on a phone
+   is the panel scrolling at all, which it already does.
+   ============================================================ */
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-xl);
+  line-height: var(--leading-snug);
+  /* Long worksheet titles wrap rather than widening the dialog. */
+  overflow-wrap: anywhere;
+}
+
+.subtitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+
+.dueRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.switches {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Description on the left, the two channel switches on the right. `minmax(0,
+   1fr)` on the text track so a long description wraps instead of pushing the
+   switches off the edge. */
+.event {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: start;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.event:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.eventText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.eventLabel {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.eventDescription {
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+
+/* The scheduler note: a caveat about this environment rather than a
+   description of the switch, so it is italic. Muted rather than warning
+   coloured, because a line that only admins can see should not be the loudest
+   thing in the section it qualifies. */
+.eventNote {
+  font-size: var(--text-xs);
+  font-style: italic;
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+
+.eventChannels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* The one warning in this dialog that is about a consequence rather than a
+   failure: somebody chosen as both a recipient and a reviewer. Warning
+   coloured because it is easy to do by accident and it widens who reads the
+   answers. */
+.warnNote {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-warning);
+}
+
+.errorBox {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-danger);
+}
+
+/* The way out of a half-created circulation. A link rather than a button
+   because it navigates, and underlined because it sits under a sentence that
+   is already red and must not read as more of the same. */
+.errorLink {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.errorLink:hover {
+  color: var(--color-accent-hover);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+/* === Mobile ================================================
+   The notification rows stop being two columns: a switch pair
+   squeezed beside a wrapping sentence leaves neither readable.
+   Stacked, the channels sit under the description they belong
+   to and each switch keeps a full row to be tapped in.
+
+   The footer stacks, which puts Send last and therefore lowest:
+   the closest thing to a thumb, and the one button whose label
+   ("Send to 14 people") is too long to share a row with
+   Cancel. */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .dialog {
+    gap: var(--space-4);
+  }
+
+  .event {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
+  .eventChannels {
+    flex-direction: row;
+    gap: var(--space-5);
+  }
+
+  .dueRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .footer {
+    /* Both buttons carry Button's own 44px `md` touch floor. */
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

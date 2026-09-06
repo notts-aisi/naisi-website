@@ -12,7 +12,7 @@ import { Field, Input } from "@/components/ui/Input";
 import Switch from "@/components/ui/Switch";
 import { getClientDb } from "@/lib/firebase/client";
 import { AdminLoadingBar } from "@/features/admin/adminList";
-import BlockEditor from "@/features/newsletter/editor/BlockEditor";
+import BlockEditor from "@/components/blocks/BlockEditor";
 import type { Block } from "@/lib/firestore/newsletterBlocks";
 import {
   COURSE_FIELD_LIMITS,

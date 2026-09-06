@@ -39,8 +39,8 @@ import {
 import type { Block } from "@/lib/firestore/newsletterBlocks";
 import type { EventChange } from "@/lib/events/changeSummary";
 import { canApproveEvent, canDraftEvent } from "@/lib/firestore/users";
-import BlockEditor from "@/features/newsletter/editor/BlockEditor";
-import ImageUpload from "@/features/newsletter/editor/ImageUpload";
+import BlockEditor from "@/components/blocks/BlockEditor";
+import ImageUpload from "@/components/blocks/ImageUpload";
 import {
   approveEvent,
   deleteEvent,

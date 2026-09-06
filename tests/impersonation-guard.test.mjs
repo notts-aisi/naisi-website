@@ -70,6 +70,14 @@ const GUARDED_TREES = [
   // the period's totals in one write, all recorded as whoever the session says
   // is acting, so a view-as session must not reach any of it.
   "src/app/api/admin/membership",
+
+  // Worksheets. EVERY write in this tree is recorded as the member: a
+  // circulation sent under their name, a task minted on somebody else's board
+  // in it, an answer submitted as their own word, an image filed in their
+  // folder. None of it is reconstructable afterwards as "an admin did this
+  // while viewing as them", and a submitted response is frozen against its own
+  // author, so an accident here is one only an admin can undo.
+  "src/app/api/worksheets",
 ];
 
 /**
@@ -174,6 +182,26 @@ const MUST_GUARD = [
     "closes an import, which is a judgement about a file recorded under a name",
   ],
   ["src/app/api/admin/membership/export/route.ts", "takes a list of named people off the platform"],
+
+  // Worksheets. One entry per mutating handler in the tree above; the
+  // recipients GET is deliberately absent, because reading the picker roster
+  // is exactly the kind of thing view-as exists to reproduce.
+  [
+    "src/app/api/worksheets/circulations/route.ts",
+    "sends a worksheet under the member's name, mints a task on every recipient's board and emails them",
+  ],
+  [
+    "src/app/api/worksheets/circulations/[circulationId]/recipients/route.ts",
+    "puts more people on a live circulation, each with a task and an email they cannot decline",
+  ],
+  [
+    "src/app/api/worksheets/circulations/[circulationId]/submit/route.ts",
+    "submits somebody's answers as their own word and freezes them against further edits",
+  ],
+  [
+    "src/app/api/worksheets/circulations/[circulationId]/upload/route.ts",
+    "files an image in a member's own answer folder, where their name is the only attribution",
+  ],
 ];
 
 /**

@@ -19,6 +19,16 @@ type Props = {
   disabled?: boolean;
   /** When true, the organiser frames the image in a crop modal before upload. */
   enableCrop?: boolean;
+  /**
+   * Drop the alt-text and caption inputs, for a caller whose model has nowhere
+   * to put either. A worksheet OPTION image is the case: it stores a URL and a
+   * storage path only, and it is rendered beside the option's own label, which
+   * is the accessible name a screen reader wants. Without this the author
+   * types alt text into a box and the save silently discards it.
+   *
+   * Default false, so every caller that predates the prop keeps both fields.
+   */
+  hideTextFields?: boolean;
 };
 
 type UploadState =
@@ -29,6 +39,23 @@ type UploadState =
 
 const MAX_DIMENSION = 1600;
 const MAX_SIZE_MB = 3;
+
+/**
+ * Storage prefixes whose `storage.rules` block refuses `image/svg+xml`
+ * outright, mirrored here so the author is told in a sentence.
+ *
+ * `accept="image/*"` includes SVG and the picker offers it, so without this
+ * the file is compressed, uploaded, refused at the network, and the raw
+ * Firebase permission string is what lands in the error line. The rule is
+ * still the enforcement; this is only the part that makes the refusal legible.
+ *
+ * SCOPED, not universal. Only `worksheet-images` carries the rule, because a
+ * worksheet image is readable by every signed-in account and SVG is a document
+ * format that can carry script. The other prefixes accept SVG today, and
+ * refusing it for all of them would be a behaviour change on the newsletter,
+ * events, courses and email-design editors that nobody asked for.
+ */
+const SVG_REFUSING_PREFIXES = new Set(["worksheet-images"]);
 
 function safeFileName(name: string): string {
   return name
@@ -47,6 +74,7 @@ export default function ImageUpload({
   onChange,
   disabled,
   enableCrop,
+  hideTextFields,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<UploadState>({ kind: "idle" });
@@ -93,6 +121,14 @@ export default function ImageUpload({
 
     if (!file.type.startsWith("image/")) {
       setState({ kind: "error", message: "Please pick an image file." });
+      return;
+    }
+
+    if (file.type === "image/svg+xml" && SVG_REFUSING_PREFIXES.has(storagePrefix)) {
+      setState({
+        kind: "error",
+        message: "SVG files cannot be used here. Please pick a JPG, PNG, GIF or WebP.",
+      });
       return;
     }
 
@@ -153,7 +189,7 @@ export default function ImageUpload({
     <div className={styles.wrap}>
       {currentUrl ? (
         <div className={styles.preview}>
-          {/* Admin-only preview of a user-uploaded Firebase Storage image —
+          {/* Admin-only preview of a user-uploaded Firebase Storage image:
               next/image optimization isn't worth the domain config cost here. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={currentUrl} alt={alt || "preview"} className={styles.previewImg} />
@@ -209,7 +245,7 @@ export default function ImageUpload({
 
       {state.kind === "error" && <p className={styles.error}>{state.message}</p>}
 
-      {currentUrl && (
+      {currentUrl && !hideTextFields && (
         <div className={styles.fields}>
           <label className={styles.fieldLabel}>
             <span>

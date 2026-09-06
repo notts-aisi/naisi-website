@@ -31,6 +31,8 @@ src/
 │   ├── (app)/                        # Authed area, server-side role-gated in its layout.tsx
 │   │   ├── dashboard/  profile/  tasks/     # member-facing ("My work")
 │   │   ├── committee/tasks/                 # committee task board
+│   │   ├── worksheets/                      # worksheet library, editor and circulation
+│   │   │                                    #   pages (committee); respond/[id] for recipients
 │   │   ├── credentials/                     # placeholder page — feature not built
 │   │   ├── newsletter/  events/manage/      # drafter / approver tools
 │   │   └── admin/                           # gated trees, see "Admin area gating":
@@ -39,7 +41,7 @@ src/
 │   │       │                                #   Deliverability, Task templates, Danger zone
 │   │       └── courses/                     #   admins + draftCourse/approveCourse holders
 │   ├── verify-email/[tokenId]/       # uni-email magic-link landing
-│   └── api/                          # session, admin/*, events/*, tasks/*, newsletter/*,
+│   └── api/                          # session, admin/*, events/*, tasks/*, worksheets/*, newsletter/*,
 │                                     #   subscriptions/*, verify-email/*, webhooks/*, …
 ├── auth/                             # AuthProvider, signInWithGoogle, completeRegistration
 ├── components/                       # BrandMark, SubscribeForm, ReadingListAccordion
@@ -110,13 +112,37 @@ tasks/{id}              Kanban task. Subtasks grouped into ordered blocks with
                         reviewerUids, status, visibility ("committee" |
                         "assignees-only"), blocks[], subtasks[], blockConsents,
                         source ("committee" | "fellowship-reminder" |
-                        "personal"), kind, priority, dueDate, …
+                        "personal" | "course-register" | "worksheet"),
+                        kind, priority, dueDate, artefact (nullable pointer
+                        to a linked artefact; today only
+                        { kind: "worksheet-response", circulationId }), …
   tasks/{id}/comments     threaded comments with @mentions
   tasks/{id}/activity     append-only activity log
   tasks/{id}/attachments  attachment metadata (files in Storage)
 
 taskTemplates/{id}      { name, description, kind, subtasks[],
                           defaultCompleterCount, createdByUid, … }
+
+worksheets/{id}         Library document: { title, description, folderId,
+                          authorUid, private, items[] (questions, sections,
+                          page breaks), defaultReviewConfig, … }. Drafted
+                          by any committee member; private ones are
+                          admin-only plus the author. See docs/worksheets.md.
+worksheetFolders/{id}   { name, createdByUid, createdAt }
+circulations/{id}       One act of sending a worksheet: its own copy of
+                          items, senderUid, authorUid, reviewerUids,
+                          staffUids (the one array every rule keys off),
+                          reviewConfig, notifications, dueDate, status,
+                          counters. No client create or delete; staff edit
+                          the copy client-direct. No roster array: the
+                          recipients ARE the responses subcollection.
+  circulations/{id}/responses/{uid}  one recipient's answers, progress,
+                          activity and state; the recipient autosaves
+                          client-direct while state is not-opened or
+                          started; the submit route freezes it.
+  circulations/{id}/reviews/{uid}    staff-only feedback and scores; scores
+                          never reach the recipient. Returned feedback is
+                          copied onto the response by a route.
 
 newsletterDrafts/{id}   { subject, blocks[], bodyMarkdown (legacy backup),
                           status (draft|pending|approved|sent|rejected),
@@ -211,10 +237,13 @@ committee role clears `suRecognised`.
 
 `users/{uid}.permissions` is an admin-granted map, independent of governance
 role: `draftNewsletter`, `approveNewsletter`, `draftEvent`, `approveEvent`,
-`draftCourse`, `approveCourse`. Admins implicitly hold all six. These gate the
-Newsletter, Events and Course drafter tools and the matching Firestore rules,
-so a plain `member` can be granted `draftEvent` without being promoted to
-committee.
+`draftCourse`, `approveCourse`, `manageMembership`, `circulateWorksheet`.
+Admins implicitly hold all eight. These gate the Newsletter, Events and
+Course drafter tools, the membership console, worksheet circulation, and the
+matching Firestore rules, so a plain `member` can be granted `draftEvent`
+without being promoted to committee. `circulateWorksheet` is granted per
+person and is not implied by SU recognition; it gates sending a worksheet and
+the recipient picker route, never drafting.
 
 ### Admin area gating (four trees)
 
@@ -351,6 +380,11 @@ Every task carries one of two visibility levels:
 - **`assignees-only`**: only the listed completers, reviewers, and admins see
   it. Flipping a task to `assignees-only` is admin-only.
 
+Worksheet tasks (`source: "worksheet"`, one per recipient, minted by the
+circulation routes) are always `assignees-only`, carry no blocks or subtasks,
+and are pointed at their circulation by `artefact`. Their Done is decided by
+the worksheet lifecycle (docs/worksheets.md), not by the lock-in ritual.
+
 Who sees what:
 - **Member** (approved, non-committee): `/dashboard`, `/tasks` (My Work),
   `/profile`. On tasks, only those they are a completer or reviewer on. They can
@@ -454,6 +488,7 @@ Two separate Firebase projects, each with its own App Hosting backend. The backe
 - **Email infrastructure**: Resend send pipeline, deliverability dashboard, bounce/complaint webhook, application lifecycle emails, transactional emails as JSX templates in `src/emails/`.
 - **Users-collection lockdown**: member PII is readable only by SU-recognised committee + admins (and each user's own doc); `suRecognised` enforced as a trust boundary in Firestore rules.
 - **Brand**: real NAISI emblem integrated across the site, favicon, and email logo.
+- **Worksheets** (`/worksheets`, `/worksheets/respond/[circulationId]`): a library with folders of question documents (short and long text, single and multiple choice, polls, rating scales, image-upload answers, rich bodies with images and YouTube or Loom embeds, section headings, page breaks), circulated to committee members as one `assignees-only` task each with the sender as reviewer; a circulation page with per-recipient progress, state and coarse activity (first open, page opens, active time); a mobile-first respond page with autosave and a Save button; review with per-question feedback and reviewer-only scores, returned feedback, admin unfreeze; aggregate views, logged CSV export, per-circulation notification toggles, and a due-soon reminder job that ships dark. Contract and decisions: [docs/worksheets.md](docs/worksheets.md).
 - **Courses**: the full BlueDot-style programme surface (catalogue, applications, allocation, member `/learn` area, facilitator tooling, weekly nudge emails). Landed as the P/V2 course series through 2026-08.
 - **Installable app (PWA)**: manifest + icons, write-nothing service worker with offline fallback, back-gesture overlay dismissal, standalone safe-area chrome, stale-session repair, Google sign-in via redirect inside installed apps (popup elsewhere), install affordances, relaunch restore, and web push with task-email mirroring (dormant until VAPID secrets are provisioned per environment). Reference: [docs/pwa.md](docs/pwa.md).
 

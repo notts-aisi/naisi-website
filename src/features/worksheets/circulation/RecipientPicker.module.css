@@ -1,0 +1,166 @@
+/* ============================================================
+   RecipientPicker: a search box over a scrolling checkbox list.
+
+   The list OWNS ITS OWN SCROLL (`max-height` + `overflow-y`).
+   It sits inside a Modal, which is itself a scroller, and a
+   list that grew with its contents would push the dialog's
+   Send button off the bottom of a phone: the one control the
+   whole dialog exists to reach.
+   ============================================================ */
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* The grid/flex min-content floor. A long display name would otherwise
+     widen the whole dialog rather than ellipsing inside its row. */
+  min-width: 0;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.count {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.barActions {
+  display: flex;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-1);
+  max-height: 16rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-1);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* The reviewers picker: one column, because five names read as a list and two
+   columns of two-and-a-half read as a grid with a hole in it. */
+.compact {
+  grid-template-columns: minmax(0, 1fr);
+  max-height: 12rem;
+}
+
+.empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  background: transparent;
+  transition: background var(--transition-fast);
+}
+
+.row:hover {
+  background: var(--color-surface-hover);
+}
+
+.rowChosen {
+  background: var(--color-accent-soft);
+}
+
+.rowDisabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.check {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--color-accent);
+}
+
+.avatar {
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: var(--radius-pill);
+  object-fit: cover;
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+
+.role {
+  flex: none;
+  margin-left: auto;
+  text-transform: capitalize;
+}
+
+.pinned {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-danger);
+}
+
+/* === Mobile ================================================
+   One column (two columns of names ellipsed to six characters
+   identify nobody), and the row grows to the 44px touch floor
+   from docs/touch-targets.md, since the row IS the tap target.
+   The list keeps a little more height because the dialog around
+   it has stopped competing for width. */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .list {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: 18rem;
+  }
+
+  .compact {
+    max-height: 14rem;
+  }
+
+  .row {
+    min-height: 2.75rem;
+  }
+
+  .barActions {
+    margin-left: 0;
+    width: 100%;
+  }
+}

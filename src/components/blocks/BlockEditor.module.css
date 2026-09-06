@@ -229,3 +229,102 @@
   border-color: var(--color-accent);
   background: var(--color-accent-soft);
 }
+
+/*
+ * COMPACT: the shape this editor takes when it is a FIELD inside another
+ * editor's row (a worksheet question's body) rather than the page itself.
+ * Every rule below is scoped under `.compact`, so no surface that predates
+ * the prop can be reached by any of them.
+ */
+.compact {
+  gap: var(--space-2);
+}
+
+.compact .block {
+  border-radius: var(--radius-md);
+}
+
+.compact .blockHeader {
+  padding: var(--space-1) var(--space-2);
+}
+
+.compact .blockType {
+  font-size: 0.6875rem;
+}
+
+.compact .blockBody {
+  padding: var(--space-3);
+}
+
+.compact .insertRow {
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.addChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.addChip {
+  padding: 0.3rem 0.6rem;
+  background: var(--color-bg-elevated);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.addChip:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.addChip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /*
+   * Scoped to the compact shape on purpose. The full-page shape of this
+   * editor is shared with the newsletter, events, courses and email-design
+   * editors, and none of those asked for a mobile change here.
+   */
+  .compact .blockControls {
+    gap: var(--space-2);
+  }
+
+  .compact .moveBtn {
+    width: 2.75rem;
+    height: 2.75rem;
+    font-size: var(--text-sm);
+  }
+
+  .compact .deleteBtn {
+    min-height: 2.75rem;
+    padding: 0.25rem var(--space-3);
+  }
+
+  .compact .insertBtn {
+    /* Hover cannot reveal anything on a touch screen, so the insert
+       affordance is always visible below the breakpoint. */
+    opacity: 1;
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  .addChip {
+    min-height: 2.75rem;
+    padding: 0.4rem var(--space-3);
+    font-size: var(--text-sm);
+  }
+}

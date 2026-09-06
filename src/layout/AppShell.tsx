@@ -102,6 +102,8 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Committee",
     items: [
       { label: "Task board", href: "/committee/tasks", visible: SU_COMMITTEE_AND_UP },
+      // Every committee member drafts worksheets: SU recognition gates the board, not this.
+      { label: "Worksheets", href: "/worksheets", visible: COMMITTEE_AND_UP },
       { label: "Credentials", href: "/credentials", visible: COMMITTEE_AND_UP },
       { label: "Newsletter", href: "/newsletter", visible: NEWSLETTER_ACCESS },
       { label: "Events", href: "/events/manage", visible: EVENTS_ACCESS },
