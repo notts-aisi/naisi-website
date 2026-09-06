@@ -263,21 +263,51 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       // why: the run reads back `data-on="false"` on a cell it just dragged
       // across. Same race the sign-in helper waits out, one component along.
       await waitForHydration(page, '[data-day="1"][data-slot="0"]', { timeout: WAIT_MS });
-      // Put the run of cells in the MIDDLE of the viewport first. Fresh from a
-      // reload the grid's first row sits at the bottom edge of a 900px window,
-      // under the sticky draft save bar, and a pointer put down there lands on
-      // the bar: nothing paints and the drag selects text down the page. That
-      // is what a person's scroll does before they reach for the grid.
-      await from.evaluate((el) => el.scrollIntoView({ block: "center" }));
+      // Put the MIDDLE of the run in the middle of the viewport first, so both
+      // ends of the drag sit well inside it. Fresh from a reload the grid's
+      // first row is at the bottom edge of a 900px window, under the sticky
+      // draft save bar, and a pointer put down there lands on the bar: nothing
+      // paints and the drag selects text down the page. Centring the FIRST
+      // cell was enough on a Mac and not on the Linux runner, whose taller
+      // rows put the eighth cell back under the bar (6 September 2026: "the
+      // drag did not fill through to the last cell", every run). The grid
+      // resolves cells with `elementFromPoint`, so whatever is painted on top
+      // of a cell wins, and the check below says WHAT is on top rather than
+      // leaving a bare false to be reproduced on another machine.
+      await page
+        .locator('[data-day="1"][data-slot="4"]')
+        .evaluate((el) => el.scrollIntoView({ block: "center" }));
       const a = await from.boundingBox();
       const b = await to.boundingBox();
       assert.ok(a && b, "the availability grid did not lay out");
+      const under = await page.evaluate(
+        ([points]) =>
+          points.map(([x, y]) => {
+            const el = document.elementFromPoint(x, y);
+            const cell = el instanceof Element ? el.closest("[data-day][data-slot]") : null;
+            return cell ? `slot ${cell.getAttribute("data-slot")}` : `<${el?.tagName?.toLowerCase() ?? "nothing"}>`;
+          }),
+        [
+          [
+            [a.x + a.width / 2, a.y + a.height / 2],
+            [b.x + b.width / 2, b.y + b.height / 2],
+          ],
+        ],
+      );
+      assert.deepEqual(
+        under,
+        ["slot 0", "slot 7"],
+        `the two ends of the drag are not the cells the pointer will land on: ${under.join(", ")}. ` +
+          "Something is painted over the grid there (the sticky save bar, a header), so a " +
+          "drag would paint up to the covered cell and stop.",
+      );
       // A real pointer drag rather than eight clicks: the drag is the gesture
       // the component is built around (pointer capture, run filling), and
-      // clicking each cell would leave that path untested.
+      // clicking each cell would leave that path untested. Three moves per
+      // row, so a slow machine coalescing events still visits every cell.
       await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
       await page.mouse.down();
-      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 });
+      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 24 });
       await page.mouse.up();
       assert.equal(
         await from.getAttribute("data-on"),

@@ -211,6 +211,10 @@ jobs:
           name: e2e-local-state
           path: .e2e-state
           if-no-files-found: ignore
+          # Both directories are dotfolders, which upload-artifact v4.4+ skips
+          # by default: without this line every upload here reported success
+          # and carried nothing (seen 6 September 2026).
+          include-hidden-files: true
           retention-days: 7
 
       # THE SCREENSHOTS ARE OPT-IN, and this is why. `.e2e-artifacts` holds a
@@ -231,6 +235,10 @@ jobs:
           name: e2e-local-artifacts
           path: .e2e-artifacts
           if-no-files-found: ignore
+          # Both directories are dotfolders, which upload-artifact v4.4+ skips
+          # by default: without this line every upload here reported success
+          # and carried nothing (seen 6 September 2026).
+          include-hidden-files: true
           retention-days: 1
 
   dev:
@@ -322,6 +330,10 @@ jobs:
           name: e2e-dev-state
           path: .e2e-state
           if-no-files-found: ignore
+          # Both directories are dotfolders, which upload-artifact v4.4+ skips
+          # by default: without this line every upload here reported success
+          # and carried nothing (seen 6 September 2026).
+          include-hidden-files: true
           retention-days: 7
 
       # Opt-in for the same reason as the local job: these screenshots are of
@@ -333,4 +345,8 @@ jobs:
           name: e2e-dev-artifacts
           path: .e2e-artifacts
           if-no-files-found: ignore
+          # Both directories are dotfolders, which upload-artifact v4.4+ skips
+          # by default: without this line every upload here reported success
+          # and carried nothing (seen 6 September 2026).
+          include-hidden-files: true
           retention-days: 1
