@@ -214,7 +214,7 @@ export default function RoundEditor({
           </Link>
           <div className={styles.headRow}>
             <h1 className={styles.title}>{round.label}</h1>
-            <Badge tone={STATUS_TONE[round.status]}>
+            <Badge tone={STATUS_TONE[round.status]} data-testid="round-status-badge">
               {ADMISSION_ROUND_STATUS_LABEL[round.status]}
             </Badge>
             {round.archived && <Badge tone="neutral">Archived</Badge>}
@@ -1306,7 +1306,7 @@ function StatusSection({
       title="Status"
       note="Draft is invisible to applicants. Opening it makes the form reachable, which is the one step that cannot be taken back quietly."
     >
-      <div className={styles.statusRow}>
+      <div className={styles.statusRow} data-testid="round-status-controls">
         {nextStatuses(round.status).map((status) => {
           const plan = planStatusChange(round.status, status);
           return (

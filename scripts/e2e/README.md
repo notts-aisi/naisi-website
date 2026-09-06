@@ -11,21 +11,22 @@ so it stops being hand-verified. Two modes:
   test secret and SMTP pointed at a loopback **Mailpit**, runs every battery
   against it, and tears it all down. `-- --skip-build` reuses the previous
   local build. See "The local server" below before trusting or changing it.
-- **`npm run e2e:funnel`**: the APPLICANT FUNNEL in a real browser (Chromium
-  only): seed a throwaway intake and pre-course, drive a fake applicant through
-  apply, withdraw, re-apply, enrol and drop out, then tear the fixture down and
-  prove its manifest reads zero. It sits beside these batteries but is a
-  different kind of test and needs Playwright, which this repo deliberately
-  does not depend on. Against dev the apply leg is SKIPPED and reported (the
-  real reCAPTCHA widget challenges headless Chromium); `-- --local` drives all
-  thirteen steps. See "The applicant funnel" below.
+- **`npm run e2e:browser`**: the BROWSER suite (Chromium only), every spec
+  module under `scripts/e2e-fixtures/`: seed each throwaway world, drive it in
+  a real browser, tear it down, and prove each manifest reads zero.
+  **`npm run e2e:funnel`** is the same runner with `--spec applicant-funnel`,
+  the applicant journey (apply, withdraw, re-apply, enrol, drop out). These sit
+  beside the batteries above but are a different kind of test and need
+  Playwright, which this repo deliberately does not depend on. Against dev the
+  reCAPTCHA-dependent legs are SKIPPED and reported (the real widget challenges
+  headless Chromium); `-- --local` drives them. See "The browser suite" below.
 
 Plain Node — `node --test`, no new npm dependencies, **zero files under `src/`**
 (one exception: the optional `FIREBASE_ADMIN_SERVICE_ACCOUNT_ID` hook in
 `src/lib/firebase/admin.ts`, inert unless that env var is set, which only
 run.mjs does). Nothing here ships to production, so there is no production
-guard that can be forgotten. It is run by hand from a laptop and is not in CI
-(see the last section for why).
+guard that can be forgotten. It runs by hand from a laptop, and in CI on every
+pull request and nightly (see "In CI" at the end).
 
 ```sh
 gcloud auth application-default login
@@ -34,6 +35,7 @@ cp .env.e2e.local.example .env.e2e.local   # no secrets go in it
 brew install mailpit                        # only needed for e2e:local
 npm run e2e         # against dev.naisi.uk
 npm run e2e:local   # everything, against a local server it starts itself
+npm run e2e:browser # every browser spec, seeded and torn down per spec
 ```
 
 When you are done, `gcloud auth application-default revoke` removes the
@@ -51,6 +53,23 @@ laptop's access to the project entirely.
 | `register-enumeration` | Account-enumeration uniformity on `/api/register`. **Local mode only** — see below. |
 | `register-email-flow` | **Local mode only.** What `/api/register` puts in the inbox: the emailed magic link is extracted from the captured body and *driven*; the cooldown and the verified-account branch send nothing; the link → session → password chain ends in a working credential; links are absolute; no render artefacts. |
 | `uni-email-inbox` | **Local mode only.** Enumeration uniformity extends to the inbox on the uni-email leg: the caller-visible responses stay indistinguishable, the duplicate case sends the already-registered notice with **no verify link** and a masked (never full) account address, the fresh case's emailed token matches the response's, nothing leaks uids or other recipients. |
+
+And the browser specs (`npm run e2e:browser`), which drive whole journeys in
+Chromium rather than posting to a route. `SPEC.status` in each fixture module
+is the authority on the last column, and `tests/e2e-coverage-map.test.mjs`
+prints every unverified spec on each `npm test`, so this table is a summary
+rather than the record.
+
+| Spec | What it protects | Verified | Modes |
+| --- | --- | --- | --- |
+| `applicant-funnel` | The applicant's whole path: the public course page, the sign-in gate on an apply link, a draft that saves and survives a reload, the availability grid under a real drag, submit, withdraw, pick it back up, the status hub, taking a pre-course seat and leaving it again. | Yes | Both, but 8 of its 13 steps are reCAPTCHA-dependent and run in local mode only |
+| `applicant-signup` | Registration end to end: the reCAPTCHA-gated `/api/register`, the emailed magic link driven out of Mailpit, the password set, the university-email verification and the profile completion. | Yes | Local mode only in practice: 8 of its 9 steps are behind the captcha |
+| `round-authoring` | An admission round built through the console as the owner: create, stages, roles, status, and the applicant-facing apply page that results. | Yes | Both |
+| `appointment-queue` | The decision queue: an application decided by the owner and what the applicant is told afterwards. | Yes | Both |
+| `membership-console` | The membership year: periods, the current-period pointer, the roster and a grant. | Yes | Both |
+| `member-journey` | What an approved member actually does: approval on the Approvals page, the profile and its notification preferences, the membership read, and enrolling on a course. | Yes | Both |
+| `register-push` | The facilitator's register: the roster, marking attendance and pushing it, with the participant notes beside it. | Yes | Both |
+| `events-rsvp` | A guest RSVP against a real event, through the public event page to the submitted confirmation. | Yes | Both |
 
 ## Safety properties
 
@@ -218,16 +237,26 @@ rows (both admin-dashboard surfaces; the rows are self-identifying —
 harness's Firestore allowlist deliberately excludes those collections. The
 Auth users, `registrations` rows and `emailVerifications` docs it causes ARE
 cleaned up. This is the same residue a human testing registration against dev
-leaves, minus the accounts.
+leaves, minus the accounts. The browser sign-up spec (`applicant-signup`) drives
+the same route and therefore leaves the same `signupMetrics` counters a fraction
+higher, for the same reason and with the same excuse: a shared daily counter
+cannot be drained without corrupting a real number. It does sweep its
+`emailSends` rows, along with its `emailVerifications` tokens, its
+`registrations` row, its subscription rows and the account itself, so the
+counters are the only thing a run of it leaves behind.
 
-## The applicant funnel (`npm run e2e:funnel`)
+## The browser suite (`npm run e2e:browser`)
 
-A browser-driven run over the whole applicant journey, so a dress rehearsal is
-one command rather than an afternoon of clicking. Different in kind from the
-batteries above: those are `fetch()` against routes, this one is Chromium
-driving the actual pages.
+Browser-driven runs over whole journeys, so a dress rehearsal is one command
+rather than an afternoon of clicking. Different in kind from the batteries
+above: those are `fetch()` against routes, these are Chromium driving the
+actual pages.
 
-**The exact sequence, both modes:**
+`scripts/run-e2e.mjs` is the runner for all of them. It walks
+`scripts/e2e-fixtures/`, seeds each selected spec's world, drives the spec
+files, tears every fixture down and proves each manifest reads zero.
+
+**The exact sequence:**
 
 ```sh
 # one-time, per machine (see "Credentials" above for the gcloud half)
@@ -235,21 +264,92 @@ cp .env.e2e.local.example .env.e2e.local
 npm install --no-save playwright     # NOT a dependency: see below
 npx playwright install chromium
 
-# against the deployed dev backend
-npm run e2e:funnel
+# what it can run
+node scripts/run-e2e.mjs --list
+
+# every spec, against the deployed dev backend
+npm run e2e:browser
+
+# one spec (or several, comma-separated)
+npm run e2e:browser -- --spec applicant-funnel
+npm run e2e:funnel                           # the same thing, named
 
 # against a server the run starts itself (captcha relaxed, SMTP on loopback)
-npm run e2e:funnel -- --local
-npm run e2e:funnel -- --local --skip-build   # reuse the previous local build
+npm run e2e:browser -- --local
+npm run e2e:browser -- --local --skip-build  # reuse the previous local build
+
+# against a loopback server that is ALREADY RUNNING (somebody else's --local,
+# or one started by hand). Nothing is built or started; the reCAPTCHA stub
+# still arms, because the origin is loopback.
+E2E_TARGET=http://127.0.0.1:3100 node scripts/run-e2e.mjs --spec applicant-funnel
 
 # fewer or more fake applicants (1 to 10, default 5)
 npm run e2e:funnel -- --applicants 2
 
-# the fixture on its own, when you want to click around it by hand
+# the applicant-funnel fixture on its own, to click around it by hand
 node scripts/seed-fake-applicants.mjs up
 node scripts/seed-fake-applicants.mjs status   # the manifest, right now
 node scripts/seed-fake-applicants.mjs down     # must end with total: 0
 ```
+
+**A spec module is one file.** Everything under `scripts/e2e-fixtures/` except
+`core.mjs` exports a single object named `SPEC`, and the runner discovers it by
+walking the directory, so a new spec is added by adding a file:
+
+```js
+export const SPEC = {
+  name: "applicant-funnel",                 // unique; state + marker file stem
+  specFile: "tests/e2e/applicant-funnel.spec.mjs",
+  steps: [...],                             // the spec's step() calls, in order
+  recaptchaDependentSteps: [...],           // skipped against a deployed target
+  needs: { admin: false },                  // true when it signs in as the owner
+  covers: { routes: [...], pages: [...] },  // src/app keys, minus /route.ts or /page.tsx
+  status: "verified",                       // "unverified" until it has passed once
+  seed: async ({ runId, suppress, options, onState }) => state,
+  countRows: async (state) => counts,       // every row and account, plus counts.total
+  teardown: async (state) => counts,        // remove everything, then countRows again
+};
+```
+
+`seed` must call `onState(state)` **before its first write**, and then fill that
+same object as it goes. A seed that throws half way is the expensive failure:
+an account created, a document refused, no returned state, and a runner that
+reports there was nothing to tear down while the rows sit on a shared project.
+The published object is the ledger the runner writes and tears down instead.
+The guard test fails a fixture module that never mentions `onState`.
+
+A step a spec cannot run in this mode is skipped with `RECAPTCHA_SKIP_REASON`
+from `core.mjs`, never with wording of its own: the runner accepts a skip only
+when the step is on that spec's `recaptchaDependentSteps` **and** the marker
+carries that exact reason, so a gated step that timed out is a shortfall rather
+than an accepted gap.
+
+`core.mjs` holds what they share: the collection allowlist and its chokepoint,
+`fixtureDoc` / `fixtureQuery` / `fixtureSubcollection` / `membershipConfigDoc`
+(the only ways to Firestore), the id restatements, `createFixtureUser`, and the
+scratch paths. It does no work at import time, so the guard test can import
+every spec module offline to read its `SPEC`.
+
+**Scratch files** live in `.e2e-state/` at the repo root, one
+`<spec>.state.json` ledger and one `<spec>.steps.json` completion marker per
+spec, with failed-step screenshots in `.e2e-artifacts/`. Both directories are
+gitignored, and both are deliberately outside `.next/` (see below).
+
+**A spec that signs in as an admin needs the owner's own account.** This
+harness can never create one, by design: the fence forbids writing any role
+above `pending`. So `E2E_ADMIN_EMAIL` and `E2E_ADMIN_PASSWORD` go in
+`.env.e2e.secrets.local` at the repo root (git-ignored by the `.env*` rule,
+never printed, and refused if it carries a service-account key), or in the
+shell. The runner checks for them BEFORE it seeds anything and names the file
+and the missing variables if they are not there.
+
+**`E2E_SIGNING_SERVICE_ACCOUNT`** overrides the identity custom tokens are
+signed as. It defaults to `firebase-adminsdk-fbsvc@naisi-website-dev…`, which
+needs `roles/iam.serviceAccountTokenCreator` granted to whoever is running;
+a CI workload sets this to its OWN federated service account instead and signs
+as itself. It must belong to the dev project, or `env.mjs` throws.
+
+### The applicant funnel (`npm run e2e:funnel`)
 
 **What it drives**, in order, as one ordered test with named steps
 (`tests/e2e/applicant-funnel.spec.mjs`):
@@ -306,16 +406,17 @@ anything, because a run that cannot open a browser has nothing to say about the
 funnel and is not worth the rows on a shared project. (Running the spec file
 directly still skips, which is what a bare `node --test tests/` needs.)
 
-**A run that drove no browser fails.** Every way the spec can decline to run
+**A run that drove no browser fails.** Every way a spec can decline to run
 (no Playwright, no fixture, a skip) exits `node --test` at 0, which is
-indistinguishable from a pass. So each step records its name as it finishes,
-the list is written to `.e2e-funnel-steps.json`, and the runner deletes that
-file before the run and refuses to report success unless it comes back naming
-every step in `FUNNEL_STEPS`. When it does not, the run exits non-zero with the
-step it stopped at.
+indistinguishable from a pass. So the shared recorder in `lib/browser.mjs`
+records each step as it finishes, writes the list to
+`.e2e-state/<spec>.steps.json`, and the runner deletes that file before the run
+and refuses to report success unless it comes back naming every step in
+`SPEC.steps`. When it does not, the run exits non-zero with the step it stopped
+at.
 
-Both scratch files (`.e2e-funnel-state.json`, the fixture ledger, and
-`.e2e-funnel-steps.json`) sit at the repo root and are gitignored. They are
+Both scratch paths (`.e2e-state/`, holding one ledger and one marker per spec,
+and `.e2e-artifacts/`) sit at the repo root and are gitignored. They are
 deliberately **not** under `.next/`: `next build` clears that directory, so in
 `--local` mode the ledger was deleted by the build before the spec ever looked
 for it, and the run skipped its way to a green exit. `tests/funnel-harness-guards.test.mjs`
@@ -327,7 +428,9 @@ real run that difference was the whole diagnosis (the form never appeared
 because the route had refused the reCAPTCHA token, which only the server log
 said). So a step that throws writes a full-page screenshot and the page's text
 to `.e2e-artifacts/<step-name>.png|txt` (`ARTIFACTS_DIR`, gitignored, pinned
-outside `.next/` by the same guard) before the failure is reported.
+outside `.next/` by the same guard) before the failure is reported. That, the
+step recording and the marker all live in `createStepRecorder`, so every spec
+gets them without reimplementing any of it.
 
 **One known defect is pinned rather than papered over.** The public course
 page renders `CourseCTA` twice (hero and foot) and each placement mounts its
@@ -341,7 +444,9 @@ shape as `KNOWN_MISSING_INDEXES` in the index guard.
 
 ### The fixture, and why teardown is the headline
 
-`scripts/seed-fake-applicants.mjs` creates, in the dev project:
+`scripts/e2e-fixtures/applicant-funnel.mjs` creates, in the dev project (and
+`node scripts/seed-fake-applicants.mjs up` is the hand-driven way to ask for
+the same thing):
 
 - N throwaway accounts (`e2e-<id>@e2e.invalid`, the auth harness's own
   namespace) each with a `users` document at role `pending`;
@@ -359,21 +464,38 @@ subscription rows and their event lines, mirrored tasks, progress), and then
 but whose teardown left rows behind still exits non-zero: the fixture lives on
 a shared dev project, so a stray open round on the catalogue is as much a
 defect as a failed assertion. The manifest counts the `users` document and the
-Auth account each fixture applicant owns alongside the thirteen collections, so
-a teardown that stranded either is a non-zero total rather than a clean one,
+Auth account each fixture applicant owns alongside the collections it declares,
+so a teardown that stranded either is a non-zero total rather than a clean one,
 and a delete it refused (an account whose address is outside the harness
 namespace) is recorded in the manifest instead of logged and forgotten.
 Teardown runs in a `finally`, leaves the state file in place when anything is
 still standing, and an interrupted run says exactly which command clears up
-(`node scripts/seed-fake-applicants.mjs down`).
+(re-running the same spec, or `node scripts/seed-fake-applicants.mjs down` for
+the funnel).
+
+The send log is now part of that. `emailSends` used to be left behind on
+purpose; that stance is withdrawn. When the run's mail is caught by Mailpit the
+fixture addresses are NOT suppressed, because a spec wants the row a real send
+leaves, so the rows are evidence, and evidence a fixture creates is evidence it
+counts back to zero. Everywhere else the suppression stays on and there are no
+rows to count. Note what that count is keyed on: the funnel counts and sweeps
+`emailSends` by the RECIPIENT, which is run-scoped because a fixture address is
+`e2e-f<runId><index>@e2e.invalid`. A send this harness causes to somebody else
+(a facilitator, an admin, a group notice) is not covered by that key, and a
+spec that drives such a route must count it by whatever key it is addressed
+with.
 
 ### Its own fence, and why it is not inside this directory
 
 `tests/e2e-no-privilege-grants.test.mjs` holds the AUTH harness to three
-Firestore collections. The funnel fixture needs thirteen, so it cannot live
-inside that fence without tearing it down, and it sits at `scripts/` with a
-fence of its own shape, enforced by `tests/funnel-harness-guards.test.mjs`
-under `npm test`:
+Firestore collections. The browser fixtures need everything in
+`FIXTURE_COLLECTIONS`, far more than three, so they cannot live
+inside that fence without tearing it down, and they sit at
+`scripts/e2e-fixtures/` with a fence of their own shape, enforced by
+`tests/funnel-harness-guards.test.mjs` under `npm test`. That guard WALKS the
+harness (`scripts/e2e-fixtures/`, `scripts/run-e2e.mjs`,
+`scripts/seed-fake-applicants.mjs`, `tests/e2e/`) rather than listing its
+files, and asserts the walk found the four that must always be in it:
 
 - **It can never be aimed at production.** The spec resolves its origin through
   the auth harness's own `assertTarget()`, and the guard asserts the production
@@ -387,15 +509,24 @@ under `npm test`:
 - **It reaches only its declared collections.** One checked chokepoint,
   `assertFixtureCollection()`, which throws before any credential is obtained,
   tested behaviourally against both the list and a battery of collections it
-  must refuse. The grep half then insists every `.collection(...)` in the
-  harness is a literal on the list, the checked `collection` parameter of
-  `fixtureDoc` / `fixtureQuery`, or one of exactly two named exceptions: the
-  literal `users` (the document each fixture account owns, written by the auth
-  harness's guarded seeder and deleted under a namespace re-check on the
-  account it belongs to, and counted by the manifest so a stranded one shows
-  up), and the identifier `STAGES_SUBCOLLECTION`, which names a subcollection
-  reached off a document reference the chokepoint already produced. The guard
-  pins that constant's value so the name cannot quietly become something else.
+  must refuse. The grep half then insists Firestore is reachable from
+  `core.mjs` and nowhere else: only that file may call `.collection(...)`, and
+  only with the checked `collection` parameter of `fixtureDoc` / `fixtureQuery`
+  / `fixtureSubcollection`, or the literal `users` (the document each fixture
+  account owns, written by the auth harness's guarded seeder and deleted under
+  a namespace re-check on the account it belongs to, and counted by the
+  manifest so a stranded one shows up). Subcollections have a list of their
+  own, `FIXTURE_SUBCOLLECTIONS`, whose value the guard pins so the name cannot
+  quietly become something else. `config` is narrower still: only
+  `config/membership` is addressable, only through `membershipConfigDoc()`, so
+  a membership spec can move the current-period pointer and put it back
+  without any fixture going near the scheduler cursors or the task email copy.
+- **Every spec module declares what it covers.** The guard imports every
+  module in `scripts/e2e-fixtures/`, checks the `SPEC` shape, checks the names
+  are unique, checks the step names in the spec file equal `SPEC.steps` in
+  order, and resolves every `covers` entry against a walk of `src/app`. A key
+  that names no route or page fails with the key printed, rather than being
+  skipped.
 
 ### It cannot cause real email
 
@@ -403,8 +534,23 @@ The drop-out route emails the member. Fixture addresses are `.invalid`
 (RFC 2606, no DNS and no inbox), but against the deployed dev backend that
 would still be a real hand-off to Resend and a hard bounce logged against the
 sending domain. So seeding writes a `suppressedEmails` row for every fixture
-address FIRST. The rows are ledgered and removed by teardown like everything
-else.
+address FIRST unless this run's mail is caught. The rows are ledgered and
+removed by teardown like everything else.
+
+The runner passes `suppress: false` only when `mailIsCaught()` in `core.mjs`
+says so: a server this run started itself through `run.mjs`, which has forced
+the SMTP onto the Mailpit catcher on this machine, or the port reserved for
+one (`http://127.0.0.1:3100`). There a send cannot leave the laptop, and the
+`emailSends` row it leaves is what a spec reads to prove a route really sent.
+Those rows are counted and drained by the manifest.
+
+That decision is a fact about the server, **not** the shape of the origin, and
+the difference matters: `http://127.0.0.1:3000` and `http://localhost:3000` are
+on the target allowlist too, and they are the ordinary `npm run dev` ports,
+whose server reads the real Resend credentials out of `.env.local`. Suppressing
+on those is the safe answer, so `mailIsCaught()` is a small exported function
+with the guard test pinning both answers rather than an inline `isLoopback`
+test that reads right and is wrong.
 
 Be precise about what that buys, because the suppression check is **not**
 universal. `sendEmail()` in `src/lib/email/send.ts` does not consult the list
@@ -438,6 +584,41 @@ effective-environment dev assertion, the build marker. The only hook it needed
 was `E2E_TEST_PATHS`, which defaults to `scripts/e2e/tests/`, so `npm run
 e2e:local` is unchanged. Two places that must agree about which environment is
 safe to relax is exactly what that file exists to prevent.
+
+The third way in is `E2E_TARGET=http://127.0.0.1:3100`, with no `--local`:
+the runner then starts nothing and drives a loopback server that is already
+up. That is how several people (or several agents) share one built server
+without each rebuilding `.next`, and the reCAPTCHA stub still arms, because it
+keys off the origin rather than off the flag.
+
+## The coverage map
+
+Two guards, both under `npm test`, both offline:
+
+- **`tests/e2e-coverage-map.test.mjs`** walks every `route.ts` and `page.tsx`
+  under `src/app` and requires each to be exercised (by a verified `SPEC.covers`
+  or by one of the batteries above, named in `AUTH_BATTERIES`) or written down
+  in `NOT_COVERED` with a reason and a `coverWhen` trigger. It fails on a
+  surface that is neither, on an entry whose key has moved, and on an entry a
+  verified spec now covers. A spec whose `status` is `"unverified"` counts for
+  nothing and is printed, because a spec that has never passed proves nothing
+  about the routes it names. A `coverWhen` has to name an event outside the
+  file (a rebuild landing, a cohort starting, a real export arriving), so the
+  guard refuses one that recites its own key back: "when a spec drives this
+  route" is the gap restating itself, not a trigger.
+- **`tests/e2e-test-ids.test.mjs`** matches every `getByTestId("...")` in
+  `tests/e2e/` and `scripts/e2e/lib/` against every `data-testid="..."` in
+  `src/`, both directions, literals only. A wrapper that takes an id as a
+  parameter is declared in `DYNAMIC_LOCATORS`, with the wrapper's name, the
+  literal ids it is called with, and the requirement that each of them is still
+  asked for literally in the same spec file. The guard reads the wrapper's own
+  call sites as well, so handing it an id the entry does not declare fails
+  here rather than as a locator timeout in a browser run.
+
+**The burn-down rule**: when a spec starts covering a surface, its keys move
+out of `NOT_COVERED` and into that spec's `covers` in the SAME pull request.
+The stale-entry check is what makes that compulsory rather than tidy, and it is
+the whole reason the map is worth keeping.
 
 ## Known holes — green here does NOT mean covered
 
@@ -485,17 +666,101 @@ Read this before trusting a passing run.
   pause flags are client-side only and no API route consults them. A future
   browser-driven test *would* be blocked whenever a notice is on.
 
-## Why the harness is not in CI
+## In CI
 
-`.github/workflows/checks.yml` (since #263) runs typegen, `tsc`, lint,
-`npm test` and a real build on every pull request, with the rules emulator
-suite as a second job. None of those need credentials, and the two offline
-fences on this harness run there under `npm test`.
+`.github/workflows/checks.yml` runs everything that needs no credentials on
+every pull request: typegen, `tsc`, lint, `npm test` (which includes the two
+offline fences on this harness, the coverage map and the test-id guard) and a
+real build.
 
-Neither e2e mode is in it. Local mode boots the app on loopback with Mailpit
-and the test captcha secret, but the app it boots still creates real Auth
-users and real Firestore rows on the dev project, so a CI job for *either*
-mode needs dev credentials stored as GitHub Actions secrets on a **public**
-repo. Whether that is acceptable is the owner's decision, not this file's.
-Until it is made, run the harness by hand from a laptop with Application
-Default Credentials, as above.
+`.github/workflows/e2e.yml` is this harness. The owner's decision, September
+2026, was yes:
+
+| Job | Trigger | Mode |
+| --- | --- | --- |
+| `local` | every `pull_request` from a branch in this repository | `npm run e2e:local` (the nine fetch batteries) then `node scripts/run-e2e.mjs --local --skip-build` (the browser specs): builds the app once, boots it on loopback with the always-pass captcha secret and Mailpit, so the reCAPTCHA-dependent legs really run |
+| `dev` | nightly at 03:00 UTC, and `workflow_dispatch` | `npm run e2e` then `node scripts/run-e2e.mjs`, both against `https://dev.naisi.uk`: the deployed backend, real secret resolution, real SMTP, real reCAPTCHA, with the gated legs skipped and reported |
+
+**Both halves run, and that is deliberate.** The coverage map credits the fetch
+batteries with the registration and magic-link routes (`AUTH_BATTERIES` in
+`tests/e2e-coverage-map.test.mjs`), so a CI job that ran only the browser specs
+would leave that credit collected by nobody. The batteries go first in the
+local job because they build the app; the browser step then reuses that build
+with `--skip-build`, and `run.mjs` rebuilds anyway if the values baked in
+differ from what it wants.
+
+**Every run of this workflow queues behind the last one.** The concurrency
+group is the workflow, not the ref, because every job here drives the SAME dev
+Firebase project. Ordinary rows never collide (fixture ids carry the run id),
+but `config/membership` is a singleton: the membership spec snapshots that
+pointer, borrows it, and restores it in teardown. Two overlapping runs would
+restore a pointer to a period the other has already deleted, and both manifests
+would still read zero, so the corruption would be invisible to the thing meant
+to catch it. That is also why a pull request run and the 03:00 nightly cannot
+overlap.
+
+**Credentials are federated, never stored.** GitHub mints an OIDC token for the
+workflow, Google exchanges it for one on a dedicated service account bound to
+this repository, and the runner ends up with Application Default Credentials in
+the same shape a laptop has after `gcloud auth application-default login`. No
+key file exists to leak. The workflow signs custom tokens as that same account
+(`E2E_SIGNING_SERVICE_ACCOUNT`), so nobody has to grant a CI identity rights
+over the shared `firebase-adminsdk` account.
+
+One grant is still needed, and it is the trap written up under "Known gotchas"
+in CLAUDE.md: `createCustomToken` signs by asking IAM to `signBlob` as that
+account, so the account needs `roles/iam.serviceAccountTokenCreator` **on
+itself**. Without it the first spec that mints a session dies with
+`Permission 'iam.serviceAccounts.signBlob' denied`, which reads like an
+authentication failure and is not one:
+
+```sh
+SA=<the GCP_E2E_SERVICE_ACCOUNT address>
+gcloud iam service-accounts add-iam-policy-binding "$SA" \
+  --member="serviceAccount:$SA" \
+  --role="roles/iam.serviceAccountTokenCreator" \
+  --project=naisi-website-dev
+```
+
+**It is `pull_request`, never `pull_request_target`.** `pull_request_target`
+would run the base branch's workflow with secrets available while a fork's code
+is checked out, which is the standard way to hand a stranger's branch your
+credentials. Under `pull_request` a fork gets no id-token at all, so the `local`
+job skips fork pull requests explicitly rather than failing them with an
+authentication error nobody outside the repository can fix.
+
+**What it expects, and what it does until then.** Both jobs are gated on
+`vars.GCP_WORKLOAD_IDENTITY_PROVIDER` being set, so until the federation exists
+they skip cleanly rather than going red:
+
+| Setting | Kind | What it is |
+| --- | --- | --- |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | repository variable | The full provider resource name, `projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>` |
+| `GCP_E2E_SERVICE_ACCOUNT` | repository variable | The dedicated dev-project service account the workflow impersonates and signs tokens as |
+| `E2E_ADMIN_EMAIL` | repository secret | The owner's admin account, for the specs that drive an admin-only screen |
+| `E2E_ADMIN_PASSWORD` | repository secret | Its password |
+| `E2E_UPLOAD_SCREENSHOTS` | repository variable, optional | Set it to `true` while chasing a failure to have the failing step's screenshots uploaded. Off by default, for the reason below |
+
+Neither address is a secret, which is why they are variables: seeing in the log
+which identity a run used is worth more than hiding a service account's name.
+
+**The screenshots are opt-in because this repository is public.**
+`.e2e-artifacts` holds a full-page screenshot and the page text of the step
+that failed, and the admin-driven specs fail on screens (Approvals, Members,
+the membership roster, the appointments queue) that render whatever the dev
+project holds: real names, real addresses. An artifact on a public repository
+can be downloaded by anybody, so the upload waits for
+`E2E_UPLOAD_SCREENSHOTS`, and keeps them for a day rather than a week. The
+ledgers upload unconditionally: they carry fixture ids and `e2e.invalid`
+addresses only.
+
+**A cancelled run is the one bad case.** Teardown runs in a `finally`, so a
+failed run still clears up, but a run killed part way leaves its fixture on the
+dev project and its ledger in a workspace that is about to be deleted. Hence
+`cancel-in-progress: false`, and hence the failure path always uploads
+`.e2e-state`: the ledger is what a person needs to tear a stranded fixture down
+by hand.
+
+**A green CI run still does not replace the manual dev smoke pass**, for every
+reason in "Known holes" above: Chromium only, no Google sign-in, no rules, and
+no infrastructure beyond what the specs happen to touch.

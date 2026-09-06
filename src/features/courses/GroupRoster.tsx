@@ -92,7 +92,14 @@ export default function GroupRoster({ groupId, groupName }: Props) {
   const { group, facilitators, members, loading, error, reload } = useGroupRoster(groupId);
 
   return (
-    <Card as="section" padding="md" className={styles.card}>
+    <Card
+      as="section"
+      padding="md"
+      // Addressed by the browser end-to-end suite, which counts the people in
+      // the group here before it marks them present in the register below.
+      data-testid="group-roster"
+      className={styles.card}
+    >
       {/* h3, not h2, to match SessionCard's own heading on the same page — one
           consistent card tier under the page's h1, rather than a mix the page
           would have to invent an h2 to justify (the RunHome precedent). The

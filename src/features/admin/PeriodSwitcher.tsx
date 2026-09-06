@@ -38,7 +38,7 @@ export default function PeriodSwitcher({
   if (periods.length === 0) return null;
   const viewingCurrent = value !== "" && value === currentPeriodId;
   return (
-    <div className={styles.wrap}>
+    <div className={styles.wrap} data-testid="membership-period-switcher">
       <label className={styles.field} htmlFor="membership-period">
         <span className={styles.fieldLabel}>Membership period</span>
         <ResponsiveSelect
@@ -57,7 +57,11 @@ export default function PeriodSwitcher({
         />
       </label>
       {viewingCurrent ? (
-        <Badge tone="success" title="Every membership badge on the site is about this period">
+        <Badge
+          tone="success"
+          title="Every membership badge on the site is about this period"
+          data-testid="membership-viewing-current"
+        >
           Current period
         </Badge>
       ) : (

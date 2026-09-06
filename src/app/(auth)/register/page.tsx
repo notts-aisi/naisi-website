@@ -1161,6 +1161,7 @@ function RegisterPageInner() {
             <SurfacePausedNotice notice={siteNotice} surface="newRegistrations" />
           )}
           <Button
+            data-testid="register-submit"
             type="submit"
             fullWidth
             size="lg"
@@ -1195,6 +1196,7 @@ function VerificationPanel({
   if (state.status === "verified") {
     return (
       <div
+        data-testid="register-uni-verified"
         style={{
           marginTop: "var(--space-3)",
           padding: "var(--space-3)",
@@ -1245,6 +1247,7 @@ function VerificationPanel({
           </button>
         ) : (
           <button
+            data-testid="register-uni-send"
             type="button"
             onClick={onSend}
             disabled={state.status === "sending"}

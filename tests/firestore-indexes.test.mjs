@@ -420,9 +420,10 @@ const KNOWN_MISSING_INDEXES = new Map([
 const COLLECTION_WRAPPERS = new Map([
   [
     "fixtureQuery",
-    "scripts/seed-fake-applicants.mjs: `fixtureQuery(name)` is `db().collection(name)` behind an " +
-      "allow-list assertion. The fixture targets the real dev project (loadEnv() refuses anything " +
-      "but naisi-website-dev and there is no emulator escape hatch), so its queries owe indexes.",
+    "scripts/e2e-fixtures/core.mjs: `fixtureQuery(name)` is `db().collection(name)` behind an " +
+      "allow-list assertion, called from the spec modules beside it. The fixtures target the " +
+      "real dev project (loadEnv() refuses anything but naisi-website-dev and there is no " +
+      "emulator escape hatch), so their queries owe indexes.",
   ],
 ]);
 
@@ -1592,7 +1593,7 @@ test("the scan actually saw the tree", () => {
 
   assert.ok(
     MODEL.resolved.some((q) => q.file.startsWith("scripts/")),
-    "no query under scripts/ was found, but seed-fake-applicants.mjs and the e2e harness both " +
+    "no query under scripts/ was found, but the e2e fixtures and the auth harness both " +
       "query a real project",
   );
 

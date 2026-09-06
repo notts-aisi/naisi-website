@@ -69,7 +69,10 @@ export default function PushConfirm({
 
   return (
     <Modal open={open} onClose={onClose} ariaLabel="Push this register" width="sm">
-      <div className={styles.root}>
+      {/* Addressed by the browser end-to-end suite, which reads this dialog's
+          copy back: naming who is emailed and that the register locks is the
+          reason the confirm exists. */}
+      <div className={styles.root} data-testid="push-confirm">
         <h2 className={styles.title}>
           Push week {session.weekNumber}
           {session.occurrence > 1 ? `, session ${session.occurrence}` : ""}?
@@ -104,7 +107,7 @@ export default function PushConfirm({
           <Button variant="secondary" onClick={onClose} disabled={busy}>
             Not yet
           </Button>
-          <Button onClick={onConfirm} disabled={busy}>
+          <Button onClick={onConfirm} disabled={busy} data-testid="push-confirm-submit">
             {busy ? "Pushing..." : "Push attendance"}
           </Button>
         </div>

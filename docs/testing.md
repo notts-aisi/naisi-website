@@ -188,11 +188,16 @@ Locally before a pull request, and in CI on every pull request
 
 ```sh
 npx next typegen && npx tsc --noEmit
-npm run lint            # 0 errors; the warning baseline on dev is 32
+npm run lint            # 0 errors; the warning baseline on dev is 9
 npm test                # the Node suites under tests/
 cd scripts/rules-tests && npm test   # the emulator suite; Java required
 npm run build           # a real production build
 ```
+
+The warning count is 9 on a clean checkout of `dev`. A working copy with
+skip-worktree overrides in it (`src/lib/devBypass/local.ts`, and anything else
+a developer keeps modified locally) reports more: this machine shows 32. Count
+the warnings on a fresh clone before treating a number as a regression.
 
 The build is not optional and is not a formality. Next enforces the client
 and server boundary only when it bundles, so a tree that is green on
@@ -227,3 +232,145 @@ until then `scripts/e2e/README.md` lists the known holes with reasons but no
 triggers) lists every uncovered surface with a reason and a trigger for when
 it gets covered, and the intent is full coverage over time, in risk order. A
 change to a covered surface updates its spec in the same pull request.
+
+### Running it
+
+```sh
+npm install --no-save playwright && npx playwright install chromium   # once
+
+npm run e2e:browser                     # every spec, against the deployed dev backend
+npm run e2e:browser -- --local          # against a server the run builds and starts
+npm run e2e:browser -- --local --skip-build      # reuse the previous local build
+npm run e2e:browser -- --spec applicant-funnel   # one spec, or several, comma-separated
+node scripts/run-e2e.mjs --list         # what it can run
+
+# against a loopback server that is ALREADY running (somebody else's --local
+# run, or one started by hand). Nothing is built or started, and the reCAPTCHA
+# stub still arms, because it keys off the origin rather than off the flag.
+E2E_TARGET=http://127.0.0.1:3100 node scripts/run-e2e.mjs --spec applicant-funnel
+```
+
+`scripts/run-e2e.mjs` walks `scripts/e2e-fixtures/`, seeds each selected spec's
+throwaway world on the dev project, drives the spec files in Chromium, tears
+every fixture down in a `finally`, and exits non-zero unless the tests passed
+AND every teardown manifest reads zero. Both facts, because a green suite that
+left rows behind has polluted a shared environment. Prerequisites, the fence
+around what it may touch and the hand-driven fixture CLI are in
+`scripts/e2e/README.md`.
+
+### What a run proves, and what it does not
+
+- **Chromium only.** This repo has already shipped a Safari-only defect (a
+  `<button>` whose inline background WebKit painted over), so a green run is a
+  regression net and never a substitute for the manual Safari pass before `dev`
+  goes to `main`. Google sign-in is not automatable at all, by design.
+- **The reCAPTCHA-dependent legs are local mode only.** Against a deployed
+  target Google's real widget answers headless Chromium with an image
+  challenge, which no spec may solve. Each spec declares those steps in
+  `recaptchaDependentSteps`; the runner accepts exactly that set as skipped,
+  only against a deployed target, and only when the marker carries the shared
+  `RECAPTCHA_SKIP_REASON`. Any other skip is a shortfall and fails the run.
+  This stops being a hole when the dev backend gets a captcha bypass header.
+- **A pinned defect is a defect, not a passing feature.** The funnel asserts
+  that the public course page's second `CourseCTA` still offers "Take this
+  place" after a member has left the course: the hero and foot placements each
+  mount their own `GroupPicker` with their own state, so the foot one never
+  learns about the drop-out. The assertion says to delete itself when the two
+  share state. The rule generalises: a real defect a spec finds is pinned with
+  the fix's own instructions, never silently fixed or silently worked around.
+- **Nothing here proves infrastructure or `firestore.rules`.** The harness
+  seeds through the Admin SDK, which bypasses rules entirely; rules belong to
+  the emulator suite in `scripts/rules-tests/`.
+
+### Adding a spec
+
+One file under `scripts/e2e-fixtures/` exporting one `SPEC`, and one spec file
+under `tests/e2e/`. The runner discovers it by walking the directory, so
+nothing else has to be edited.
+
+```js
+export const SPEC = {
+  name, specFile, steps, recaptchaDependentSteps,
+  needs: { admin },                        // true when it signs in as the owner
+  covers: { routes: [...], pages: [...] }, // src/app keys, minus /route.ts or /page.tsx
+  status: "verified" | "unverified",       // see below
+  seed: async ({ runId, suppress, options, onState }) => state,
+  countRows: async (state) => counts,      // every row and account, plus counts.total
+  teardown: async (state) => counts,       // remove everything, then countRows again
+};
+```
+
+The rules the guards enforce, each because of a way a run can lie:
+
+- **Fixtures reach Firestore through `core.mjs` and nowhere else.**
+  `fixtureDoc`, `fixtureQuery`, `fixtureSubcollection` and
+  `membershipConfigDoc` check the collection against `FIXTURE_COLLECTIONS`
+  before any credential is obtained. Accounts come from `createFixtureUser`,
+  which writes role `pending` and nothing above it.
+- **The drain list is the manifest's honesty.** Every collection a seed writes
+  or a driven route creates is on `FIXTURE_COLLECTIONS` and is counted by
+  `countRows`. A collection nobody counted is a manifest that reads zero
+  because it looked in the wrong place, so enumerate what a route writes by
+  reading the route and every helper it imports.
+- **`seed` calls `onState(state)` before its first write**, then fills that
+  same object. A seed that throws half way otherwise leaves accounts and rows
+  with no ledger naming them.
+- **`teardown` asserts `isHarnessAccount` on every address in the state file
+  before it deletes anything**, then removes route-created leaves, then the
+  fixture objects, then the accounts.
+- **Test ids are literal on both sides.** A spec asks by
+  `page.getByTestId("area-thing")` and a component carries
+  `data-testid="area-thing"`, kebab-case, no template literals.
+  `tests/e2e-test-ids.test.mjs` fails an id asked for and not carried, an id
+  carried and not asked for, and a computed id on either side. The one
+  exception is a wrapper that takes an id as a parameter (counting a picker to
+  two, measuring one control): declare it in `DYNAMIC_LOCATORS` with the
+  wrapper's name and the literal ids it is called with, each of which must
+  still appear literally somewhere in the same spec file. The guard reads the
+  wrapper's own call sites too, so an id handed to it that the entry does not
+  declare fails here rather than as a locator timeout in a browser run.
+- **The two guards run under `npm test`**, with no browser and no credentials:
+  `tests/funnel-harness-guards.test.mjs` (the fence and the SPEC contract) and
+  `tests/e2e-coverage-map.test.mjs` (the map below).
+
+### The status field, and burning down the allowlist
+
+`SPEC.status` is `"unverified"` until the spec has passed end to end at least
+once with a teardown manifest of zero, and `"verified"` afterwards. The
+coverage map counts the covers of verified specs ONLY. An unverified spec
+contributes nothing and is printed on every run as "spec written, never run",
+because a spec that has never passed proves nothing about the routes it names,
+and a map that counted intentions would be wrong in the direction nobody
+checks.
+
+`tests/e2e-coverage-map.test.mjs` walks every `route.ts` and `page.tsx` under
+`src/app` and requires each one to be either exercised (by a verified spec's
+`covers`, or by one of the fetch batteries in `AUTH_BATTERIES`) or written down
+in `NOT_COVERED` with a reason and a `coverWhen` trigger. It fails on a surface
+that is neither, on an entry whose key no longer exists, and on an entry a
+verified spec now covers.
+
+So the burn-down is one move: when a spec starts covering a surface, its keys
+move out of `NOT_COVERED` and into that spec's `covers` **in the same pull
+request**. The stale-entry check is what makes the move compulsory rather than
+tidy.
+
+A `coverWhen` names an event outside the file: a rebuild landing, a cohort
+starting, a real export arriving, the risk-ordered list reaching that group.
+"When a spec drives this route" is not a trigger, it is the gap restating
+itself, so the guard refuses a trigger that recites its own key back.
+
+### In CI
+
+`.github/workflows/e2e.yml` runs the suite in both modes: a `local` job on
+every pull request from a branch in this repository (the fetch batteries, then
+the browser specs, against a server the job builds and boots with the captcha
+relaxed and mail caught by Mailpit), and a `dev` job nightly at 03:00 UTC and
+on demand (both halves against the deployed dev backend, with the
+reCAPTCHA-dependent legs skipped and reported). Credentials come from Workload
+Identity Federation rather than a stored key, the trigger is `pull_request` and
+never `pull_request_target`, both jobs skip cleanly until the federation
+variables exist, and every run of the workflow queues behind the last because
+they share one dev Firebase project. The settings it expects, the IAM grant
+custom tokens need, and why the failure screenshots are opt-in are in
+`scripts/e2e/README.md`.

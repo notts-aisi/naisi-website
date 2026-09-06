@@ -141,6 +141,22 @@ export async function readEmailVerification(tokenId) {
 }
 
 /**
+ * The policy version a fixture account has already accepted.
+ *
+ * A RESTATEMENT of `CURRENT_POLICY_VERSION` in src/lib/legal/policies.ts,
+ * which is TypeScript and cannot be imported from plain Node. It has to be
+ * here: `(app)/layout.tsx` redirects any signed-in account whose stored
+ * version is not the current one to `/re-consent`, on every deployed build, so
+ * a seeded account without it reaches a consent page instead of the member
+ * area and every browser spec that signs one in stops at the first step.
+ *
+ * `tests/funnel-harness-guards.test.mjs` pins the literal by reading the
+ * policy file and computing the same string, so a policy bump fails offline
+ * with the line to update rather than at 2am in a browser.
+ */
+const ACCEPTED_POLICY_VERSION = "terms.1+privacy.3";
+
+/**
  * Creates the minimal `users` document the register flow would create, for a
  * harness-created account only.
  *
@@ -164,6 +180,8 @@ export async function seedPendingUserDoc(ledger, { uid, email, universityEmail }
       displayName: "E2E Harness",
       role: ONLY_ALLOWED_ROLE,
       showOnMembers: false,
+      policyVersion: ACCEPTED_POLICY_VERSION,
+      policyAgreedAt: new Date(),
       createdAt: new Date(),
       profile: {
         preferredName: "E2E",

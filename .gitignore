@@ -40,11 +40,10 @@ yarn-error.log*
 # holds dev credentials and stays ignored by the .env* rule above.
 !.env.e2e.local.example
 
-# Applicant-funnel e2e scratch (npm run e2e:funnel). Deliberately NOT under
-# .next/: next build clears that directory, which deleted the fixture ledger
-# out from under the spec in local mode.
-/.e2e-funnel-state.json
-/.e2e-funnel-steps.json
+# Browser e2e scratch: one state file and one completion marker per spec.
+# Deliberately NOT under .next/: next build clears that directory, which
+# deleted the fixture ledger out from under the spec in local mode.
+/.e2e-state/
 # Screenshots and page text a failed e2e step leaves behind (see ARTIFACTS_DIR).
 /.e2e-artifacts/
 

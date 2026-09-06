@@ -11,11 +11,11 @@
  *   npm run e2e:funnel            # against the deployed dev backend
  *   npm run e2e:funnel -- --local # against a server the run starts itself
  *
- * `scripts/run-applicant-funnel.mjs` seeds the throwaway world, hands this
- * file its ids through E2E_FUNNEL_STATE, and tears everything down afterwards.
- * Running this file on its own is supported (`node --test
- * tests/e2e/applicant-funnel.spec.mjs`) but only once a seed exists: it reads
- * the state file and skips loudly when there is none.
+ * `scripts/run-e2e.mjs` seeds the throwaway world, leaves its ids in a state
+ * file under `.e2e-state/` (or wherever E2E_STATE_DIR points), and tears
+ * everything down afterwards. Running this file on its own is supported
+ * (`node --test tests/e2e/applicant-funnel.spec.mjs`) but only once a seed
+ * exists: it reads the state file and skips loudly when there is none.
  *
  * ## CHROMIUM ONLY, and that is a limitation rather than a choice
  *
@@ -40,11 +40,11 @@
  *
  * Every way this file can decline to run (no Playwright, no fixture, a skip)
  * still exits `node --test` at 0, which is indistinguishable from a pass. So
- * each step records its name as it finishes and the list is written to
- * `MARKER_PATH` in the `finally`; `scripts/run-applicant-funnel.mjs` deletes
+ * the shared recorder in `scripts/e2e/lib/browser.mjs` records each step as it
+ * finishes and writes the list in the `finally`; `scripts/run-e2e.mjs` deletes
  * that file before the run and refuses to report success unless it comes back
- * naming every step in `FUNNEL_STEPS` (the list lives in the fixture module,
- * and a guard test pins it against the step names below). A run that opened no
+ * naming every step in `SPEC.steps` (the list lives in the fixture module, and
+ * a guard test pins it against the step names below). A run that opened no
  * browser is a failure, loudly.
  *
  * ## It is one test with ordered steps, not thirteen tests
@@ -56,46 +56,41 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { assertTarget } from "../../scripts/e2e/lib/env.mjs";
 import {
+  createStepRecorder,
+  openBrowser,
+  signInWithPassword,
   stubRecaptchaOnLoopback,
+  waitForHydration,
   waitForRecaptchaWidget,
 } from "../../scripts/e2e/lib/browser.mjs";
 import {
   ARTIFACTS_DIR,
-  MARKER_PATH,
+  RECAPTCHA_SKIP_REASON,
+  markerPath,
+  statePath,
+  stateDir,
+} from "../../scripts/e2e-fixtures/core.mjs";
+import {
   RECAPTCHA_DEPENDENT_STEPS,
-  STATE_PATH as DEFAULT_STATE_PATH,
+  SPEC,
   WITHDRAW_WORD,
-} from "../../scripts/seed-fake-applicants.mjs";
+} from "../../scripts/e2e-fixtures/applicant-funnel.mjs";
 
-const STATE_PATH = process.env.E2E_FUNNEL_STATE ?? DEFAULT_STATE_PATH;
-const MARKER = process.env.E2E_FUNNEL_MARKER ?? MARKER_PATH;
+/**
+ * Where this run's ledger and marker live. The runner hands every child an
+ * `E2E_STATE_DIR`, and `stateDir()` is the one place that reads it; a
+ * hand-driven `node --test` on this file alone falls back to the directory the
+ * fixture writes to by default.
+ */
+const RUN_STATE_DIR = stateDir();
+const STATE_PATH = statePath(SPEC.name, RUN_STATE_DIR);
+const MARKER = markerPath(SPEC.name, RUN_STATE_DIR);
 
 /** Every locator waits at most this long. Generous: dev is a cold Cloud Run. */
 const WAIT_MS = 30_000;
-
-/**
- * The steps this file actually completed, written out at the end whether the
- * run passed or failed.
- *
- * A skipped spec and a passing spec are the same exit code, so the runner
- * cannot tell them apart from `node --test` alone: it reads this instead, and
- * refuses to call a run green unless every step in `FUNNEL_STEPS` is named
- * here. Written in the `finally` rather than after the last step so a failed
- * run still says which step it got to.
- */
-const completed = [];
-
-/**
- * Steps this file deliberately did not run, each with its reason. Written to
- * the marker beside `completed` so the runner can tell a skip it accepts in
- * this mode (the reCAPTCHA-dependent leg against a deployed target) from a
- * step that silently never happened.
- */
-const skipped = [];
 
 /**
  * Why a step may not run in this mode, or null. Decided once the target is
@@ -105,81 +100,13 @@ const skipped = [];
  */
 let skipReasonFor = () => null;
 
-const DEPLOYED_TARGET_SKIP =
-  "reCAPTCHA-dependent: against a deployed target Google's real widget answers headless " +
-  "Chromium with an image challenge, which no spec may solve. This leg runs in --local " +
-  "mode, where the widget is stubbed against the always-pass secret.";
-
-function writeMarker() {
-  try {
-    writeFileSync(
-      MARKER,
-      `${JSON.stringify(
-        { finishedAt: new Date().toISOString(), steps: completed, skipped },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
-  } catch (err) {
-    console.error(`[funnel-spec] could not write the completion marker: ${err.message}`);
-  }
-}
-
 /**
- * The page a failed step was looking at, kept for the person reading the log.
- *
- * A selector timeout says what the spec wanted and nothing about what the
- * page showed instead. On the first real run of this file that difference was
- * an afternoon: the apply form never appeared, and the reason (the route had
- * refused the reCAPTCHA token) was only in the server log. So a step that
- * throws leaves a screenshot and the page's text under `ARTIFACTS_DIR`, named
- * after the step, before the failure is reported. Best effort: a browser that
- * has already gone must not turn one failure into two.
+ * The one reason this file may record for a step it did not run, shared with
+ * the runner through `core.mjs`. The runner accepts a skip only when the step
+ * is reCAPTCHA-dependent AND the marker carries this exact reason, so a step
+ * skipped for anything else is a shortfall rather than an accepted gap.
  */
-let captureFailure = async () => {};
-
-function failureCapturer(page) {
-  return async (name) => {
-    try {
-      mkdirSync(ARTIFACTS_DIR, { recursive: true });
-      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-      const png = join(ARTIFACTS_DIR, `${slug}.png`);
-      const txt = join(ARTIFACTS_DIR, `${slug}.txt`);
-      await page.screenshot({ path: png, fullPage: true });
-      const body = await page.locator("body").innerText().catch(() => "");
-      writeFileSync(txt, `${page.url()}\n\n${body}\n`, "utf8");
-      console.error(`[funnel-spec] step failed: "${name}". Page kept at ${png} and ${txt}.`);
-    } catch (err) {
-      console.error(`[funnel-spec] could not capture the failed page: ${err.message}`);
-    }
-  };
-}
-
-/**
- * Runs one named step and records it only if it finished without throwing.
- * A step this mode cannot run is skipped through node:test (so the output
- * says so) and recorded under `skipped` with its reason, never under `steps`.
- */
-async function step(t, name, fn) {
-  const skip = skipReasonFor(name);
-  if (skip) {
-    await t.test(name, { skip }, () => {});
-    skipped.push({ name, reason: skip });
-    return;
-  }
-  let ok = false;
-  await t.test(name, async (st) => {
-    try {
-      await fn(st);
-    } catch (err) {
-      await captureFailure(name);
-      throw err;
-    }
-    ok = true;
-  });
-  if (ok) completed.push(name);
-}
+const DEPLOYED_TARGET_SKIP = RECAPTCHA_SKIP_REASON;
 
 function loadState() {
   try {
@@ -207,6 +134,8 @@ async function loadPlaywright() {
 }
 
 const state = loadState();
+// Resolved here only to decide the skip: the browser itself is opened through
+// `openBrowser()`, which does its own dynamic import.
 const playwright = await loadPlaywright();
 
 const skipReason = !playwright
@@ -224,33 +153,30 @@ function baseUrl() {
   return assertTarget(process.env.E2E_TARGET ?? "https://dev.naisi.uk");
 }
 
-/** Sign in through the real form and wait for the app to take the browser off /login. */
-async function signIn(page, origin, applicant) {
-  await page.goto(`${origin}/login`, { waitUntil: "domcontentloaded" });
-  await page.locator("#auth-email").waitFor({ timeout: WAIT_MS });
-  await page.locator("#auth-email").fill(applicant.email);
-  await page.locator("#auth-password").fill(applicant.password);
-  await page.locator('button[type="submit"][form="auth-form"]').click();
-  // A seeded applicant is role `pending`, so the post-auth destination is
-  // /pending-approval rather than the `next` parameter. Waiting on "the URL
-  // stopped being /login" asserts the handoff without hard-coding which
-  // landing page a role gets, which is a decision this spec has no stake in.
-  await page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: WAIT_MS });
-}
-
-test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: skipReason }, async (t) => {
+// `skipReason ?? false`, never `skipReason`: node:test reads the PRESENCE of a
+// `skip` key, so a null there labels a fully successful run `# SKIP` and counts
+// it as skipped, which reads as a run that never happened.
+test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: skipReason ?? false }, async (t) => {
   const origin = baseUrl();
   const applicant = state.applicants[0];
   const applyUrl = `${origin}/apply/${encodeURIComponent(state.roundId)}`;
   const courseUrl = `${origin}/courses/${encodeURIComponent(state.courseId)}`;
 
-  const browser = await playwright.chromium.launch();
-  // A desktop viewport on purpose: the availability grid renders one day at a
-  // time below 48rem and all seven columns above it, and the painting step
-  // below drags down a column that only exists in the wide layout.
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-  const page = await context.newPage();
-  captureFailure = failureCapturer(page);
+  // The shared opener: Chromium at the desktop viewport, because the
+  // availability grid renders one day at a time below 48rem and all seven
+  // columns above it, and the painting step below drags down a column that
+  // only exists in the wide layout.
+  const { browser, context, page } = await openBrowser();
+  const recorder = createStepRecorder({
+    t,
+    page,
+    markerPath: MARKER,
+    artifactsDir: ARTIFACTS_DIR,
+    // Read through a closure rather than passed by value: the mode is only
+    // known once the stub has had its say, a few lines below this.
+    skipReasonFor: (name) => skipReasonFor(name),
+  });
+  const step = (name, fn) => recorder.step(name, fn);
   // Local mode only (the helper checks): the apply routes are reCAPTCHA-gated,
   // the local server holds the always-pass secret, and this hands the widget
   // a token to send. Against dev the real widget runs against the real secret.
@@ -268,7 +194,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
   }
 
   try {
-    await step(t, "the public course page shows the seeded session slots", async () => {
+    await step("the public course page shows the seeded session slots", async () => {
       await page.goto(courseUrl, { waitUntil: "domcontentloaded" });
       await page.getByText(state.courseTitle, { exact: false }).first().waitFor({ timeout: WAIT_MS });
       for (const name of ["Funnel session A", "Funnel session B"]) {
@@ -276,7 +202,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       }
     });
 
-    await step(t, "a signed-out visitor gets the sign-in gate on the apply page", async () => {
+    await step("a signed-out visitor gets the sign-in gate on the apply page", async () => {
       await page.goto(applyUrl, { waitUntil: "domcontentloaded" });
       await page.getByRole("heading", { name: "Sign in to apply" }).waitFor({ timeout: WAIT_MS });
       // The gate must not render the form behind it. A "Start your
@@ -289,11 +215,11 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       );
     });
 
-    await step(t, "applicant 1 signs in", async () => {
-      await signIn(page, origin, applicant);
+    await step("applicant 1 signs in", async () => {
+      await signInWithPassword(page, origin, applicant);
     });
 
-    await step(t, "starting an application opens an editable draft", async () => {
+    await step("starting an application opens an editable draft", async () => {
       await page.goto(applyUrl, { waitUntil: "domcontentloaded" });
       // The start button is reCAPTCHA-gated and the widget mounts a beat after
       // the page: pressing before it has yields no token and a refusal. A
@@ -305,7 +231,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
 
     const answer = `Funnel run ${state.funnelRunId}: this answer is written by an automated run.`;
 
-    await step(t, "the draft saves", async () => {
+    await step("the draft saves", async () => {
       await page.locator(`#${state.questionId}-input`).fill(answer);
       await page.getByRole("button", { name: "Save draft" }).click();
       // The bar's status line is what tells an applicant their work is on the
@@ -315,7 +241,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       await page.getByText(/Saved at /).waitFor({ timeout: WAIT_MS });
     });
 
-    await step(t, "the draft survives a reload", async () => {
+    await step("the draft survives a reload", async () => {
       await page.reload({ waitUntil: "domcontentloaded" });
       const field = page.locator(`#${state.questionId}-input`);
       await field.waitFor({ timeout: WAIT_MS });
@@ -326,11 +252,17 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       );
     });
 
-    await step(t, "the availability grid paints and the marks persist", async () => {
+    await step("the availability grid paints and the marks persist", async () => {
       // Monday (weekday 1), the first eight quarter hours: 09:00 to 11:00.
       const from = page.locator('[data-day="1"][data-slot="0"]');
       const to = page.locator('[data-day="1"][data-slot="7"]');
       await from.waitFor({ timeout: WAIT_MS });
+      // The step before this one reloaded the page, and the grid is in the
+      // server markup a good while before React attaches to it on a dev
+      // server. A drag in that window paints NOTHING and says nothing about
+      // why: the run reads back `data-on="false"` on a cell it just dragged
+      // across. Same race the sign-in helper waits out, one component along.
+      await waitForHydration(page, '[data-day="1"][data-slot="0"]', { timeout: WAIT_MS });
       // Put the run of cells in the MIDDLE of the viewport first. Fresh from a
       // reload the grid's first row sits at the bottom edge of a 900px window,
       // under the sticky draft save bar, and a pointer put down there lands on
@@ -369,7 +301,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       );
     });
 
-    await step(t, "submitting moves the application to view-only", async () => {
+    await step("submitting moves the application to view-only", async () => {
       // Submit sends a token too, and the grid step ended on a reload.
       await waitForRecaptchaWidget(page, { timeout: WAIT_MS });
       await page.getByRole("button", { name: "Submit application" }).click();
@@ -389,7 +321,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       await page.getByText(answer, { exact: false }).first().waitFor({ timeout: WAIT_MS });
     });
 
-    await step(t, "withdrawing needs the typed word and then takes it back", async () => {
+    await step("withdrawing needs the typed word and then takes it back", async () => {
       await page.getByRole("button", { name: "Withdraw this application" }).click();
       const confirm = page.getByLabel(`Type ${WITHDRAW_WORD} to confirm`);
       await confirm.waitFor({ timeout: WAIT_MS });
@@ -406,7 +338,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
         .waitFor({ timeout: WAIT_MS });
     });
 
-    await step(t, "picking it back up restores the answers and submits again", async () => {
+    await step("picking it back up restores the answers and submits again", async () => {
       // Picking it back up is the start route again, so it is gated the same way.
       await waitForRecaptchaWidget(page, { timeout: WAIT_MS });
       await page.getByRole("button", { name: "Pick it back up" }).click();
@@ -422,7 +354,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       await page.getByRole("heading", { name: "Your application is in" }).waitFor({ timeout: WAIT_MS });
     });
 
-    await step(t, "the applicant status hub lists the round", async () => {
+    await step("the applicant status hub lists the round", async () => {
       // This step used to skip while /applications 404ed, because the status
       // hub had not been written. It has (PR14), the step ran for real on
       // 6 September 2026, and a 404 here is now a defect rather than a
@@ -435,7 +367,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
         .waitFor({ timeout: WAIT_MS });
     });
 
-    await step(t, "taking a pre-course seat", async () => {
+    await step("taking a pre-course seat", async () => {
       await page.goto(courseUrl, { waitUntil: "domcontentloaded" });
       // The course page renders its call to action twice (hero and foot), and
       // each placement mounts its own session picker, so every slot and button
@@ -457,7 +389,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       await page.getByRole("button", { name: "Leave this course" }).waitFor({ timeout: WAIT_MS });
     });
 
-    await step(t, "leaving the course needs the typed course title", async () => {
+    await step("leaving the course needs the typed course title", async () => {
       await page.getByRole("button", { name: "Leave this course" }).click();
       const confirm = page.locator("#dropout-confirm");
       await confirm.waitFor({ timeout: WAIT_MS });
@@ -501,6 +433,6 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
   } finally {
     await context.close();
     await browser.close();
-    writeMarker();
+    recorder.writeMarker();
   }
 });

@@ -35,13 +35,18 @@ export default function ReadinessPanel({
   const readiness = roundReadiness(round, now ?? new Date());
 
   return (
-    <section className={styles.panel} aria-labelledby="readiness-title">
+    <section
+      className={styles.panel}
+      aria-labelledby="readiness-title"
+      data-testid="readiness-panel"
+    >
       <div className={styles.head}>
         <h2 id="readiness-title" className={styles.title}>
           Ready to open?
         </h2>
         <p
           className={`${styles.verdict} ${readiness.ready ? styles.verdictReady : ""}`}
+          data-testid="readiness-verdict"
         >
           {readiness.ready
             ? "Everything this round needs is in place."
@@ -52,7 +57,7 @@ export default function ReadinessPanel({
 
       <ul className={styles.list}>
         {readiness.checks.map((check) => (
-          <li key={check.id} className={styles.item}>
+          <li key={check.id} className={styles.item} data-testid="readiness-item">
             <span
               className={`${styles.mark} ${check.ok ? styles.markOk : styles.markMissing}`}
               aria-hidden="true"

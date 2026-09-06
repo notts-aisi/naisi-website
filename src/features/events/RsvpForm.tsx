@@ -167,7 +167,9 @@ export default function RsvpForm({ event, previewMode }: Props) {
         </p>
       )}
 
-      <form onSubmit={onSubmit} className={styles.form}>
+      {/* Addressed by the browser end-to-end suite, which fills this form as a
+          signed-out guest and checks it fits a phone. */}
+      <form onSubmit={onSubmit} className={styles.form} data-testid="rsvp-form">
         <Field id="rsvp-name" label="Your name">
           <Input
             id="rsvp-name"
@@ -239,13 +241,24 @@ export default function RsvpForm({ event, previewMode }: Props) {
           </label>
         </fieldset>
 
-        {state.kind === "error" && <p className={styles.danger}>{state.message}</p>}
+        {/* data-testid: when the browser end-to-end suite does not reach the
+            confirmation page it reads this, so a refusal is reported as the
+            sentence the guest saw rather than as a navigation timeout. */}
+        {state.kind === "error" && (
+          <p className={styles.danger} data-testid="rsvp-error">
+            {state.message}
+          </p>
+        )}
 
         {signupsPaused && (
           <SurfacePausedNotice notice={siteNotice} surface="eventSignups" />
         )}
         <div className={styles.actions}>
-          <Button type="submit" disabled={state.kind === "submitting" || signupsPaused}>
+          <Button
+            type="submit"
+            disabled={state.kind === "submitting" || signupsPaused}
+            data-testid="rsvp-submit"
+          >
             {state.kind === "submitting" ? "Submitting…" : "Request RSVP"}
           </Button>
         </div>

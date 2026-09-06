@@ -18,17 +18,15 @@
 import { applicationDefault, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
-import { loadEnv } from "./env.mjs";
+import { loadEnv, signingServiceAccount } from "./env.mjs";
 
 /**
- * The service account whose identity is borrowed to SIGN custom tokens.
- * Signing is the one operation Application Default Credentials cannot do
- * alone: a user credential has no private key, so firebase-admin asks IAM to
- * sign on this account's behalf. Hard-coded to dev, like every other
- * identifier here.
+ * The service account whose identity is borrowed to SIGN custom tokens lives
+ * in `env.mjs` as `signingServiceAccount()`: the dev firebase-adminsdk account
+ * on a laptop, or `E2E_SIGNING_SERVICE_ACCOUNT` when a CI workload signs as
+ * its own federated identity. Pinned to the dev project either way, like every
+ * other identifier here.
  */
-const SIGNING_SERVICE_ACCOUNT =
-  "firebase-adminsdk-fbsvc@naisi-website-dev.iam.gserviceaccount.com";
 
 /**
  * Namespace for every account this harness creates. `.invalid` is reserved by
@@ -75,7 +73,7 @@ export function adminApp() {
         // ADC file's own quota_project may point elsewhere; the project a
         // resource lands in is decided HERE.
         projectId: env.projectId,
-        serviceAccountId: SIGNING_SERVICE_ACCOUNT,
+        serviceAccountId: signingServiceAccount(),
       },
       "e2e",
     );

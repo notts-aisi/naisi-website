@@ -122,6 +122,7 @@ export default function RoundList() {
             <Field id="round-label" label="Name">
               <Input
                 id="round-label"
+                data-testid="rounds-new-label"
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
                 placeholder="Autumn 2026 intake"
@@ -151,7 +152,11 @@ export default function RoundList() {
                 maxLength={9}
               />
             </Field>
-            <Button type="submit" disabled={creating || !label.trim()}>
+            <Button
+              type="submit"
+              data-testid="rounds-new-create"
+              disabled={creating || !label.trim()}
+            >
               {creating ? "Creating…" : "Create"}
             </Button>
           </form>
@@ -179,7 +184,11 @@ export default function RoundList() {
       <ul className={styles.list}>
         {rounds.map((round) => (
           <li key={round.id}>
-            <Link href={`/admin/admissions/${round.id}`} className={styles.row}>
+            <Link
+              href={`/admin/admissions/${round.id}`}
+              className={styles.row}
+              data-testid="rounds-row"
+            >
               <span className={styles.rowMain}>
                 <span className={styles.rowTitle}>
                   <span className={styles.name}>{round.label}</span>

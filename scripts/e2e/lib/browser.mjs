@@ -30,7 +30,42 @@
  * checks the target origin and does nothing unless it is loopback, the same
  * test `lib/env.mjs` applies to the per-run token secret.
  */
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { isLoopbackOrigin } from "./env.mjs";
+
+/** Every locator in these helpers waits at most this long. Generous: a
+ *  deployed dev backend is a cold Cloud Run. */
+const WAIT_MS = 30_000;
+
+/**
+ * How long the sign-in HANDOFF gets, which is longer than a locator's patience
+ * because it is four things rather than one: Firebase mints an id token,
+ * /api/auth/session turns it into a cookie, the app pushes at a route, and a
+ * dev server may still be compiling that route while other specs keep it busy.
+ */
+const SIGN_IN_HANDOFF_MS = 120_000;
+
+/** How long a fill is given to survive before it is read back. */
+const FILL_SETTLE_MS = 500;
+
+/** How many times the login form is refilled before it is declared unusable. */
+const FILL_ATTEMPTS = 10;
+
+/** How many times the approvals queue is re-read before an approval is
+ *  declared not to have landed, and how long each re-read is given. */
+const REFRESH_ATTEMPTS = 5;
+const REFRESH_SETTLE_MS = 5_000;
+
+/**
+ * The viewport every browser spec gets unless it says otherwise.
+ *
+ * A desktop size on purpose: the admissions availability grid renders one day
+ * at a time below 48rem and all seven columns above it, and the funnel drags
+ * down a column that only exists in the wide layout. Specs that want the
+ * mobile layout ask for it explicitly, so the default never drifts.
+ */
+export const DEFAULT_VIEWPORT = { width: 1280, height: 900 };
 
 /** The URL the widget loads. Pinned to what `RecaptchaInvisible` appends. */
 export const RECAPTCHA_SCRIPT_URL = "https://www.google.com/recaptcha/api.js";
@@ -117,4 +152,383 @@ export async function waitForRecaptchaWidget(page, { timeout = 30_000 } = {}) {
           `a deployed target it means Google's api.js did not load. ${err.message}`,
       );
     });
+}
+
+/**
+ * Waits until React has actually hydrated the element `selector` matches.
+ *
+ * Every page this harness drives is server-rendered, so its markup is on
+ * screen and its controls are in the DOM long before anything is listening to
+ * them. A gesture in that window does not fail loudly: a press runs the
+ * browser's own default form submission, and a pointer drag over a grid does
+ * nothing whatsoever. Both were seen on the shared dev server on 6 September
+ * 2026, and a dev server is where this bites, because it compiles a route on
+ * first request while the bundle is still on its way.
+ *
+ * The probe is React's own bookkeeping: `precacheFiberNode` puts a
+ * `__reactFiber$<key>` property on every host node it hydrates, and server
+ * markup carries none. A React internal on purpose, because every public
+ * signal (a load event, a network idle) answers a different question than "is
+ * this control live yet", and a fixed sleep is a guess. If React ever renames
+ * it, this times out saying the node never hydrated, which points at this
+ * comment rather than at the product.
+ *
+ * `tests/e2e/events-rsvp.spec.mjs` carries its own testId-shaped copy of this,
+ * written before there was a shared one. Fold it in the next time that spec is
+ * run.
+ */
+export async function waitForHydration(page, selector, { timeout = WAIT_MS } = {}) {
+  await page
+    .waitForFunction(
+      (css) => {
+        const el = document.querySelector(css);
+        return Boolean(el) && Object.keys(el).some((k) => k.startsWith("__reactFiber$"));
+      },
+      selector,
+      { timeout, polling: 100 },
+    )
+    .catch((err) => {
+      throw new Error(
+        `${selector} was still un-hydrated ${timeout}ms after the page loaded, so a ` +
+          "press or a drag on it would reach the browser's default behaviour rather " +
+          `than the app's. ${err.message}`,
+      );
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Opening a browser
+// ---------------------------------------------------------------------------
+
+/**
+ * Chromium, one context, one page. Shared so every spec opens the same
+ * browser the same way.
+ *
+ * Playwright is imported dynamically because it is NOT a dependency of this
+ * repo: the root package.json is what App Hosting runs `npm ci` against on the
+ * critical path of every production deploy, and a browser automation library
+ * plus a downloaded Chromium has no business there. A static import here would
+ * break `npm test`, which imports this module through the spec files.
+ */
+export async function openBrowser({ viewport = DEFAULT_VIEWPORT } = {}) {
+  const playwright = await import("playwright");
+  const browser = await playwright.chromium.launch();
+  const context = await browser.newContext({ viewport });
+  const page = await context.newPage();
+  return { browser, context, page };
+}
+
+/**
+ * A second identity in the same browser: a fresh context, so its cookies and
+ * its Firebase Auth client state are its own.
+ *
+ * This is how a spec signs in as an admin and as a member at the same time
+ * without signing either out. Signing out and back in would work but proves
+ * something weaker, because the interesting assertions are about one identity
+ * seeing what the other just did.
+ */
+export async function newIdentityPage(browser, { viewport = DEFAULT_VIEWPORT } = {}) {
+  const context = await browser.newContext({ viewport });
+  const page = await context.newPage();
+  return { context, page };
+}
+
+// ---------------------------------------------------------------------------
+// Named steps, and the completion marker that proves they ran
+// ---------------------------------------------------------------------------
+
+/**
+ * The step recorder every browser spec runs its work through.
+ *
+ * Three jobs, all of which were learned the hard way on the applicant funnel
+ * and none of which any spec should reimplement:
+ *
+ * 1. IT RECORDS WHAT RAN. Every way a spec can decline to run (no Playwright,
+ *    no fixture, a skip) still exits `node --test` at 0, which is
+ *    indistinguishable from a pass. So each step records its name as it
+ *    finishes and `writeMarker()` writes the list; `scripts/run-e2e.mjs`
+ *    deletes the marker before the run and refuses to report success unless it
+ *    comes back naming every step in `SPEC.steps`.
+ * 2. IT RECORDS WHAT DID NOT. A step this mode cannot run is skipped through
+ *    node:test, so the output says so, and recorded under `skipped` with its
+ *    reason, never under `steps`. The runner accepts exactly the reCAPTCHA
+ *    set against a deployed target and nothing else.
+ * 3. IT KEEPS THE PAGE. A selector timeout says what the spec wanted and
+ *    nothing about what the page showed instead. On the funnel's first real
+ *    run that difference was an afternoon: the apply form never appeared, and
+ *    the reason (the route had refused the reCAPTCHA token) was only in the
+ *    server log. So a step that throws leaves a screenshot and the page's text
+ *    under `artifactsDir`, named after the step, before the failure is
+ *    reported. Best effort: a browser that has already gone must not turn one
+ *    failure into two.
+ */
+export function createStepRecorder({ t, page, markerPath, artifactsDir, skipReasonFor }) {
+  const completed = [];
+  const skipped = [];
+  const reasonFor = typeof skipReasonFor === "function" ? skipReasonFor : () => null;
+
+  async function captureFailure(name) {
+    try {
+      mkdirSync(artifactsDir, { recursive: true });
+      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const png = join(artifactsDir, `${slug}.png`);
+      const txt = join(artifactsDir, `${slug}.txt`);
+      await page.screenshot({ path: png, fullPage: true });
+      const body = await page.locator("body").innerText().catch(() => "");
+      writeFileSync(txt, `${page.url()}\n\n${body}\n`, "utf8");
+      console.error(`[e2e-spec] step failed: "${name}". Page kept at ${png} and ${txt}.`);
+    } catch (err) {
+      console.error(`[e2e-spec] could not capture the failed page: ${err.message}`);
+    }
+  }
+
+  return {
+    /**
+     * Runs one named step and records it only if it finished without throwing.
+     */
+    async step(name, fn) {
+      const skip = reasonFor(name);
+      if (skip) {
+        await t.test(name, { skip }, () => {});
+        skipped.push({ name, reason: skip });
+        return;
+      }
+      let ok = false;
+      await t.test(name, async (st) => {
+        try {
+          await fn(st);
+        } catch (err) {
+          await captureFailure(name);
+          throw err;
+        }
+        ok = true;
+      });
+      if (ok) completed.push(name);
+    },
+
+    /**
+     * Writes the marker. Call it in a `finally`, not after the last step, so a
+     * failed run still says which step it got to.
+     */
+    writeMarker() {
+      try {
+        mkdirSync(dirname(markerPath), { recursive: true });
+        writeFileSync(
+          markerPath,
+          `${JSON.stringify(
+            { finishedAt: new Date().toISOString(), steps: completed, skipped },
+            null,
+            2,
+          )}\n`,
+          "utf8",
+        );
+      } catch (err) {
+        console.error(`[e2e-spec] could not write the completion marker: ${err.message}`);
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Signing in, and the one admin action several specs need
+// ---------------------------------------------------------------------------
+
+/**
+ * Signs in through the REAL /login form and waits for the app to take the
+ * browser off it.
+ *
+ * Not a minted session cookie, which the auth harness can produce without a
+ * browser and which is enough for a server component. It is NOT enough here:
+ * the session picker, the drop-out card and every other client island read
+ * `useAuth()`, so a cookie alone leaves them in their signed-out branch and a
+ * spec would be testing nothing. Driving the form leaves the browser with real
+ * Firebase Auth client state AND the cookie the server wants.
+ *
+ * ## Why this waits three times before it types anything
+ *
+ * An earlier version filled the two boxes and pressed as soon as `#auth-email`
+ * was in the DOM. That is right against a deployed build and loses two
+ * different races against a dev server, both of which were seen on
+ * 6 September 2026 and both of which took whole spec runs down with them.
+ * Five specs each wrote their own copy of the wait below before it was moved
+ * here; this is that fix, once.
+ *
+ *  1. HYDRATION. The two boxes are CONTROLLED inputs (`useState("")` in
+ *     AuthEntry), so anything typed before React's first client render is
+ *     wiped by it: the fields go back to empty under what was typed. Worse,
+ *     the Sign in button is a real `type="submit"`, so a press before React
+ *     attaches submits the form NATIVELY: the browser reloads /login with both
+ *     fields blank and NO message on the form, and the caller then waits out
+ *     its whole timeout on a page that is doing nothing.
+ *  2. THE ENTRANCE. AuthEntry parks the card at `translateX(112vw)` and slides
+ *     it in when it clears `entering` (Google Identity Services reporting
+ *     ready, or a 3.2 second fallback). A press while the card is still
+ *     flying in does nothing at all: no request to identitytoolkit, no error,
+ *     no navigation.
+ *  3. THE READ-BACK, which is the real gate. The mount marker is a signal and
+ *     the entrance is a signal; the two fields still holding what they were
+ *     given a moment later is the fact. So the fill is repeated until it
+ *     survives a settle, and only then is anything pressed.
+ *
+ * The mount marker is the chevron whose label reads "Hide the sign-in
+ * animation": `loaderOpen` is false in the server-rendered markup by
+ * construction and a layout effect opens the animation at desktop widths, so
+ * that label existing IS hydration having run. It is tolerated as absent,
+ * because a person can have collapsed the animation and the preference is
+ * persisted, and because the read-back below is what actually decides.
+ *
+ * PRODUCT OBSERVATION, recorded rather than fixed here: a person can lose race
+ * 1 as well. Reaching for a field by hand takes longer than hydrating, but a
+ * password manager fills on load, so somebody on a slow connection whose
+ * manager filled and who pressed Enter gets the same silent native submit and
+ * the same blank form with nothing said. The builders who found this listed it
+ * as a product observation; this helper only works around it.
+ *
+ * Waiting on "the URL stopped being /login" rather than on a destination: a
+ * role-pending account lands on /pending-approval and a member on the `next`
+ * parameter, and which landing page a role gets is a decision no spec here has
+ * a stake in. The handoff gets its own, more generous patience: it is four
+ * things rather than one (Firebase mints an id token, /api/auth/session turns
+ * it into a cookie, the app pushes at a route, and a dev server may still be
+ * compiling that route while other specs keep it busy).
+ *
+ * The password is never logged, and never compared by value: the read-back
+ * compares its LENGTH, so no failure message can carry it.
+ *
+ * @param {object} page              Playwright page.
+ * @param {string} origin            The target origin.
+ * @param {{email: string, password: string}} credentials
+ * @param {{timeout?: number, handoffTimeout?: number}} [options]
+ *   `timeout` is the patience for the first load and for every locator here.
+ *   Pass a longer one on a DEV server, whose first request to a route compiles
+ *   it. `handoffTimeout` is the patience for the URL leaving /login.
+ */
+export async function signInWithPassword(
+  page,
+  origin,
+  { email, password },
+  { timeout = WAIT_MS, handoffTimeout = SIGN_IN_HANDOFF_MS } = {},
+) {
+  await page.goto(`${origin}/login`, { waitUntil: "domcontentloaded", timeout });
+  const emailBox = page.locator("#auth-email");
+  const passwordBox = page.locator("#auth-password");
+  const submit = page.locator('button[type="submit"][form="auth-form"]');
+  await emailBox.waitFor({ timeout });
+  await submit.waitFor({ timeout });
+
+  // 1. The mount marker. Absent is tolerated: see the note above.
+  await page
+    .getByRole("button", { name: "Hide the sign-in animation" })
+    .waitFor({ timeout })
+    .catch(() => {});
+
+  // 2. The card has landed, stated as cheaply as it can be observed: the
+  //    submit button is fully inside the viewport rather than off to the right.
+  const entranceDeadline = Date.now() + timeout;
+  for (;;) {
+    const width = page.viewportSize()?.width ?? 0;
+    const box = await submit.boundingBox();
+    if (box && width > 0 && box.x >= 0 && box.x + box.width <= width) break;
+    if (Date.now() >= entranceDeadline) {
+      throw new Error(
+        `the sign-in card on ${origin}/login had not finished arriving after ${timeout}ms ` +
+          "(the Sign in button was still outside the viewport). AuthEntry parks the card " +
+          "off screen and slides it in when it clears `entering`; a press before it lands " +
+          "does nothing at all, so this refuses rather than pressing into the void.",
+      );
+    }
+    await page.waitForTimeout(100);
+  }
+
+  // 3. The read-back. Fill, let it settle, and check both boxes kept what they
+  //    were given. Retried, because the render that wipes them can land after
+  //    any one attempt.
+  let kept = false;
+  for (let attempt = 0; attempt < FILL_ATTEMPTS && !kept; attempt += 1) {
+    await emailBox.fill(email);
+    await passwordBox.fill(password);
+    await page.waitForTimeout(FILL_SETTLE_MS);
+    kept =
+      (await emailBox.inputValue()) === email &&
+      (await passwordBox.inputValue()).length === password.length;
+  }
+  if (!kept) {
+    throw new Error(
+      `the login form on ${origin}/login would not keep the credentials it was given ` +
+        `after ${FILL_ATTEMPTS} attempts. The boxes are controlled inputs, so the page ` +
+        "is still being taken over by its own JavaScript, and a press now would submit " +
+        "two empty fields. The password is compared by length only and is not printed.",
+    );
+  }
+
+  await submit.click();
+  await page.waitForURL((url) => !url.pathname.startsWith("/login"), {
+    timeout: handoffTimeout,
+    waitUntil: "domcontentloaded",
+  });
+}
+
+/**
+ * Approves one waiting applicant through the real Approvals page, as whichever
+ * admin is already signed in on this page.
+ *
+ * Through the page rather than through the Admin SDK on purpose: a fixture
+ * that flipped the document itself would prove the rest of a journey while
+ * leaving the one screen a committee actually uses untested, and the harness
+ * is forbidden from writing a role anyway. So the admin presses Approve, the
+ * same as a person.
+ *
+ * The card is found by its address, which is unique per fixture account.
+ *
+ * ## Approve, THEN Refresh, and why the Refresh is not optional
+ *
+ * The Approvals queue is a ONE-SHOT read, not a live listener: `useOneShotList`
+ * in src/features/admin/adminList.tsx fetches with `getDocs` on mount and only
+ * re-reads when its `reload()` is called, which is what the footer's Refresh
+ * button does. Approve is a client-direct Firestore write with no response for
+ * the page to show, so the approved card just SITS THERE under a permanently
+ * disabled "Approving…" button. Waiting for it to detach on its own therefore
+ * times out against a page that is working correctly, which is what an earlier
+ * version of this helper did while its comment claimed the list was live.
+ *
+ * So: press Approve, press Refresh, and let the card detaching off the re-read
+ * be the page agreeing the write landed. The Refresh is retried, because the
+ * write is in flight when the first press goes in and a re-read that overtakes
+ * it comes back with the row still pending.
+ *
+ * The queue never re-reading itself after an approval is a real product defect,
+ * and tests/e2e/member-journey.spec.mjs PINS it deliberately with its own
+ * inline approve step. This helper is for the specs that want the approval
+ * rather than the pin.
+ */
+export async function approvePendingApplicant(page, origin, { email }) {
+  await page.goto(`${origin}/admin`, { waitUntil: "domcontentloaded" });
+  const card = page.getByTestId("approval-card").filter({ hasText: email }).first();
+  await card.waitFor({ timeout: WAIT_MS }).catch((err) => {
+    throw new Error(
+      `no approval card for ${email} appeared on ${origin}/admin within ${WAIT_MS}ms. ` +
+        "Either the account is not waiting for approval, or the signed-in account is " +
+        `not an admin and the page redirected. ${err.message}`,
+    );
+  });
+  await card.getByTestId("approval-approve").click();
+
+  const refresh = page.getByRole("button", { name: "Refresh" }).first();
+  let gone = false;
+  for (let attempt = 0; attempt < REFRESH_ATTEMPTS && !gone; attempt += 1) {
+    await refresh.click();
+    gone = await card
+      .waitFor({ state: "detached", timeout: REFRESH_SETTLE_MS })
+      .then(() => true)
+      .catch(() => false);
+  }
+  if (!gone) {
+    throw new Error(
+      `the approval card for ${email} was still on the queue after ${REFRESH_ATTEMPTS} ` +
+        "presses of Refresh, so the approval did not land. The queue is a one-shot " +
+        "getDocs list (useOneShotList in src/features/admin/adminList.tsx), so a card " +
+        "that stays put through a re-read means the write itself did not happen, not " +
+        "that the page has yet to hear about it.",
+    );
+  }
 }

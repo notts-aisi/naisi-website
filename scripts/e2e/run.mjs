@@ -33,7 +33,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { REPO_ROOT, parseEnvFile } from "./lib/env.mjs";
+import { REPO_ROOT, parseEnvFile, signingServiceAccount } from "./lib/env.mjs";
 import { clearMailbox, mailpitAvailable } from "./lib/mailpit.mjs";
 
 const HOST = "127.0.0.1";
@@ -239,7 +239,7 @@ function buildServerEnv() {
     // Lets the app's createCustomToken (login magic-link confirm) sign via IAM
     // under user ADC — see src/lib/firebase/admin.ts. Needs the same
     // serviceAccountTokenCreator grant the harness itself already uses.
-    FIREBASE_ADMIN_SERVICE_ACCOUNT_ID: `firebase-adminsdk-fbsvc@${DEV_PROJECT}.iam.gserviceaccount.com`,
+    FIREBASE_ADMIN_SERVICE_ACCOUNT_ID: signingServiceAccount(),
     // This machine keeps a real dev-bypass impl behind skip-worktree; the
     // batteries assert 401s, so the bypass must be provably inert.
     NEXT_PUBLIC_DEV_BYPASS_AUTH: "false",
@@ -473,8 +473,8 @@ async function sweepStaleHarnessAccounts() {
  * Which test files this run drives. Defaults to the auth batteries, so
  * `npm run e2e:local` is byte-identical to what it has always been.
  *
- * The override exists for the applicant-funnel run
- * (`scripts/run-applicant-funnel.mjs`), which needs the SAME captcha-relaxed,
+ * The override exists for the browser end-to-end runner
+ * (`scripts/run-e2e.mjs`), which needs the SAME captcha-relaxed,
  * loopback-SMTP local server this script builds and no part of what it asserts.
  * Duplicating the server bootstrap there would have meant two places that must
  * agree about which environment is safe to relax, which is precisely the thing

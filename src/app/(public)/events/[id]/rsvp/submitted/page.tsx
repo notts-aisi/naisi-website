@@ -24,7 +24,12 @@ export default async function RsvpSubmittedPage({
     <section style={{ padding: "var(--space-16) 0" }}>
       <div className="container" style={{ maxWidth: "34rem" }}>
         <Card padding="lg">
-          <h1 style={{ fontSize: "var(--text-2xl, 1.5rem)", margin: "0 0 var(--space-3)" }}>
+          {/* Addressed by the browser end-to-end suite: this headline is how a
+              guest knows the RSVP landed, so it is what the spec waits for. */}
+          <h1
+            data-testid="rsvp-submitted"
+            style={{ fontSize: "var(--text-2xl, 1.5rem)", margin: "0 0 var(--space-3)" }}
+          >
             Your RSVP is in
           </h1>
           <p style={{ color: "var(--color-text)", lineHeight: 1.6, margin: "0 0 var(--space-2)" }}>

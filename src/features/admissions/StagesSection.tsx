@@ -354,7 +354,7 @@ function StageEditor({
       />
 
       <div className={styles.actions}>
-        <Button type="button" onClick={save} disabled={busy}>
+        <Button type="button" data-testid="stage-save" onClick={save} disabled={busy}>
           {busy ? "Saving…" : "Save stage"}
         </Button>
         {saved && !error && <span className={styles.saved}>Saved.</span>}
