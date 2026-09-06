@@ -363,7 +363,7 @@ export default function CirculationPage({ worksheetId, circulationId }: Props) {
                 the aggregate route: staff hold every response here, and the
                 route exists for the recipient reading a poll's result, who
                 cannot list the subcollection at all. */}
-            <AggregateView circulation={circulation} responses={responses} nameOf={nameOf} />
+            <AggregateView circulation={circulation} responses={responses} nameOf={nameOf} loading={responsesLoading} />
           </section>
         )}
 
