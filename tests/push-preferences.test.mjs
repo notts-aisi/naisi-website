@@ -23,11 +23,21 @@
  *  4. **The dormant case.** With no VAPID configuration nothing is sent and
  *     nothing is read: the feature is unprovisioned in every environment
  *     until the secrets land (docs/pwa.md), and it must stay silent there.
- *  5. **The guard.** The weekly nudge, the deadline-reminder job and the
- *     stage-release job must never push. Scheduled mail that also buzzes
- *     every phone in a cohort is how people turn notifications off for good,
- *     so the rule is pinned as "these files import nothing from lib/push"
- *     rather than left as a habit.
+ *  5. **The guard, in both directions.** The weekly nudge and the deadline
+ *     reminders must never push: scheduled mail that also buzzes every phone
+ *     in a cohort is how people turn notifications off for good, so the rule
+ *     is pinned as "these files import nothing from lib/push" rather than
+ *     left as a habit. The stage release is the case that went the other
+ *     way. It sat on that list while the owner's decision was open; the
+ *     decision came on 6 September 2026 and it was "both", so the entry is
+ *     gone and what is pinned in its place is the SHAPE of the push it now
+ *     sends: the shared mirror rather than a sender of its own, inside the
+ *     one per-recipient claim so a retried tick repeats neither channel, and
+ *     wrapped so a push service having a bad day cannot cost an applicant
+ *     their email. The runtime proof of those three lives in
+ *     `tests/admissions-stage-release.test.mjs`, which has the fake
+ *     Firestore the job needs; what is here is the source pin that fails
+ *     when somebody unpicks the shape.
  *
  * ## The fakes
  *
@@ -549,6 +559,28 @@ describe("mirrorCourseDecisionToPush", () => {
     await mirrorCourseDecisionToPush("", { title: "D", body: "B", url: "/x" });
     assert.deepEqual(globalThis.__pushes, []);
   });
+
+  test("a recipient with no device sends nothing and says nothing about it", async () => {
+    // The ordinary case for almost everybody, and the one a scheduler job
+    // leans on: an applicant with no enabled device costs one preference read
+    // and one subscriptions query, and the caller cannot tell the difference
+    // between that and a delivered push. Neither can throw, so neither can
+    // cost the email the push mirrors.
+    reset({ users: { u1: { profile: {} } }, subscriptions: [] });
+    await mirrorCourseDecisionToPush("u1", { title: "D", body: "B", url: "/x" });
+    assert.deepEqual(globalThis.__pushes, []);
+  });
+
+  test("an applicant with NO user doc still gets the push", async () => {
+    // An applicant is not necessarily a member: the row a scheduler job holds
+    // is an application, and the account behind it may carry no stored
+    // preferences at all. Absent is the default, so the person who enabled a
+    // device and never opened /profile is pushed, exactly as task mail
+    // already assumes.
+    reset({ users: {}, subscriptions: [DEVICE] });
+    await mirrorCourseDecisionToPush("u1", { title: "D", body: "B", url: "/x" });
+    assert.equal(globalThis.__pushes.length, 1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -712,16 +744,6 @@ describe("the never-push list", () => {
       path: "src/lib/scheduler/jobs/admissionsReminders.ts",
       why: "the deadline reminder is a scheduled nag, not an answer",
     },
-    {
-      // OPEN OWNER DECISION: the V3 contract says twice that the stage
-      // release pushes under `courseDecisions`; this guard says it never
-      // pushes. Both cannot be true. Until it is settled the guard stands,
-      // because "never" is the reversible answer. The job is being built on
-      // a sibling branch, so this entry skips until the file exists and
-      // starts biting the moment the branches merge.
-      path: "src/lib/scheduler/jobs/admissionsStageRelease.ts",
-      why: "a stage opening is an announcement, not a decision",
-    },
   ];
 
   for (const { path, why } of NEVER_PUSH) {
@@ -758,5 +780,104 @@ describe("the never-push list", () => {
       ),
     );
     assert.ok(!PUSH_IMPORT.test('import { sendEmail } from "@/lib/email/send";'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. The other direction: the stage release DOES push, and in one shape
+// ---------------------------------------------------------------------------
+
+describe("the stage-release announcement pushes, through the shared mirror", () => {
+  const JOB = "src/lib/scheduler/jobs/admissionsStageRelease.ts";
+  const code = stripComments(source(JOB));
+
+  test("it reaches for the shared mirror and for no sender of its own", () => {
+    // The mirror is where the VAPID gate, the `courseDecisions` switch, the
+    // subscriptions query and the dead-endpoint prune live. A job that
+    // assembled its own would be a second copy of all four, and one of them
+    // would be wrong first.
+    assert.match(
+      code,
+      /import \{ mirrorCourseDecisionToPush \} from "@\/lib\/push\/courseNotifications";/,
+      "the stage-release job must push through the shared mirror",
+    );
+    for (const bespoke of ["sendPushToUid", "web-push", "webpush", "subscriptionsForUid"]) {
+      assert.ok(
+        !code.includes(bespoke),
+        `the stage-release job must not reach ${bespoke} directly`,
+      );
+    }
+  });
+
+  test("the push rides a send, between that send and that person's stamp", () => {
+    // THE DUPLICATE RULE. One per-recipient marker is claimed before both
+    // legs and stamped after both, so a retried tick that finds it stamped
+    // repeats neither. A push before the claim could be sent twice; a push
+    // after the stamp could be lost by the crash the stamp exists to survive.
+    const body = code.slice(
+      code.indexOf("async function mailCandidate("),
+      code.indexOf("async function pushCandidate("),
+    );
+    assert.ok(body.length > 400, "could not slice mailCandidate out of the job");
+    const claim = body.indexOf("await claim(");
+    const send = body.indexOf("await sendAdmissionEmail(");
+    const sent = body.indexOf('if (outcome === "sent")');
+    const push = body.indexOf("await pushCandidate(");
+    const stamp = body.indexOf("await stampSentOrSettle(");
+    for (const [what, at] of [
+      ["claim", claim],
+      ["send", send],
+      ["sent check", sent],
+      ["push", push],
+      ["stamp", stamp],
+    ]) {
+      assert.ok(at !== -1, `the job no longer has a ${what}`);
+    }
+    assert.ok(claim < send, "the send runs before the claim");
+    assert.ok(send < sent && sent < push, "the push does not ride a successful send");
+    assert.ok(push < stamp, "the marker is stamped before the push");
+  });
+
+  test("a push failure is counted and logged, never thrown, never a failed send", () => {
+    // A push service having a bad day must not leave a marker unstamped: an
+    // unstamped marker is a re-claim, and a re-claim is a second email. It
+    // must not reach `summary.failures` either, which the release receipt
+    // renders as "failed" and an admin reads as "somebody was not told".
+    const body = code.slice(
+      code.indexOf("async function pushCandidate("),
+      code.indexOf("async function stampSentOrSettle("),
+    );
+    assert.ok(body.length > 150, "could not slice pushCandidate out of the job");
+    assert.match(body, /catch \(err\) \{/, "the push handoff is not wrapped");
+    assert.match(body, /summary\.pushFailed \+= 1;/, "a failed push is not counted");
+    assert.match(body, /ctx\.log\(/, "a failed push is not logged");
+    assert.ok(!/throw/.test(body), "a failed push throws into the per-recipient loop");
+    assert.ok(
+      !/summary\.failures/.test(body),
+      "a failed push is recorded as a failed send",
+    );
+  });
+
+  test("the payload is the round and the stage, on a same-origin path", () => {
+    // A push renders on a lock screen. The round's name and the stage's title
+    // are what tells the applicant it is theirs; a question, an intro or a
+    // deadline belongs behind the account. The destination is a PATH, and the
+    // one the email's own button is built from: the service worker hands it
+    // to clients.openWindow, so an absolute url would let a notification
+    // wearing this site's name open somebody else's page.
+    const call = code.slice(
+      code.indexOf("await mirrorCourseDecisionToPush("),
+      code.indexOf("summary.pushed += 1;"),
+    );
+    assert.ok(call.length > 60, "could not slice the push call out of the job");
+    assert.match(call, /stage\.label/, "the push does not name the stage");
+    assert.match(call, /round\.label/, "the push does not name the round");
+    assert.match(call, /admissionApplicationPath\(round\.id, "apply"\)/);
+    for (const leak of ["questions", "intro", "deadline", "answers"]) {
+      assert.ok(
+        !new RegExp(`\\b${leak}\\b`).test(call),
+        `the push must not carry ${leak}: a lock screen is not a private surface`,
+      );
+    }
   });
 });

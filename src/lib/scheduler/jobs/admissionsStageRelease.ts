@@ -85,15 +85,43 @@ import "server-only";
  * would be noise, so a stage with neither a schedule nor a manual release
  * claims no marker and sends nothing.
  *
- * ## Push
+ * ## It also pushes, and only alongside the email
  *
- * The contract mirrors this send to push under the `courseDecisions`
- * category once that channel exists (PR32). This module imports no push
- * helper today and must not until then.
+ * Settled by the owner on 6 September 2026: the announcement goes by email
+ * AND push, which is what the V3 contract had always said and what an
+ * earlier guard had pinned as "never" while the question was open.
+ *
+ * The push rides the email rather than running beside it. It is sent from
+ * inside `mailCandidate`, after a send this job has counted and before that
+ * person's stamp, through `mirrorCourseDecisionToPush`: the SAME shared
+ * sender the decision push and (by way of its task sibling) every task email
+ * use. There is no bespoke path here, so the account switch, the VAPID gate,
+ * the dead-subscription prune and the fresh-subscription grace are all read
+ * from one place.
+ *
+ * Four consequences worth naming:
+ *
+ *  - **One push per email, never more.** The per-recipient marker is claimed
+ *    before both legs and stamped after both, so a retried tick that finds a
+ *    stamped marker sends neither. Nobody is pushed on a stage twice.
+ *  - **A push failure costs the push.** The mirror is documented never to
+ *    throw; the call is wrapped anyway, counted in `pushFailed` and logged.
+ *    It is never added to `summary.failures`, which is the EMAIL accounting
+ *    the release receipt renders, and it never leaves a marker unstamped:
+ *    re-mailing a whole round because a push service was down is the trade
+ *    nobody would take.
+ *  - **A recipient with no device costs one query and nothing else**, and a
+ *    recipient the email skipped (opted out, suppressed, no address) is not
+ *    pushed at all. Push volume is therefore bounded by the send ceiling that
+ *    already exists rather than by a new one.
+ *  - **It lands where the email lands**, on the form the new questions are
+ *    answered on, by the same `admissionApplicationPath` the email's button
+ *    is built from.
  */
 
 import { type Firestore, type QueryDocumentSnapshot } from "firebase-admin/firestore";
 import {
+  admissionApplicationPath,
   admissionApplicationUrl,
   sendAdmissionEmail,
   type AdmissionSendOutcome,
@@ -119,6 +147,7 @@ import {
   type AdmissionStageDoc,
 } from "@/lib/firestore/admissionRounds";
 import { isSuppressed } from "@/lib/firestore/suppression";
+import { mirrorCourseDecisionToPush } from "@/lib/push/courseNotifications";
 import {
   claim,
   createSettled,
@@ -185,6 +214,20 @@ export type StageAnnouncementReason =
 export type StageReleaseRunSummary = {
   /** Emails actually handed to the send pipeline and stamped. */
   sent: number;
+  /**
+   * Announcements ALSO handed to the push pipeline, which is never the same
+   * claim as "a phone buzzed": the mirror returns having sent nothing when
+   * push is unprovisioned, when the member switched the category off, and
+   * when they have no device enabled. It never exceeds `sent`, because the
+   * push rides a send this job counted.
+   */
+  pushed: number;
+  /**
+   * Push handoffs that threw. Deliberately NOT in `failures`: the release
+   * receipt renders that as "failed", and an admin reading it needs it to
+   * mean an applicant did not get their email.
+   */
+  pushFailed: number;
   /** Claimed and consciously not mailed (suppressed, opted out, no address). */
   skipped: number;
   /** Stages dropped whole for being over `maxLateHours` late. */
@@ -212,6 +255,8 @@ export type StageReleaseRunSummary = {
 function emptySummary(): StageReleaseRunSummary {
   return {
     sent: 0,
+    pushed: 0,
+    pushFailed: 0,
     skipped: 0,
     stale: 0,
     stages: 0,
@@ -711,6 +756,11 @@ async function mailCandidate(
     // Counted BEFORE the stamp, because the mail is on the wire either way
     // and a receipt that under-reports sends is a receipt that lies.
     summary.sent += 1;
+    // The push leg, INSIDE this person's claim and before their stamp, so the
+    // one marker settles both channels: a retried tick finds it stamped and
+    // repeats neither. Awaited, because the mirror's own contract is that
+    // callers await it and Cloud Run may reap work that outlives the tick.
+    await pushCandidate(ctx, { round, stage, candidate, summary });
     await stampSentOrSettle(db, ctx, marker.id, {
       roundId: round.id,
       stageId: stage.id,
@@ -738,6 +788,63 @@ async function mailCandidate(
     markerId: marker.id,
     error,
   });
+}
+
+/**
+ * The push half of one applicant's announcement.
+ *
+ * SHARED SENDER, NEVER A BESPOKE ONE. `mirrorCourseDecisionToPush` is where
+ * the VAPID gate, the `courseDecisions` switch, the subscriptions query and
+ * the dead-endpoint prune live, and it is the same door the decision push
+ * goes through. A scheduler job reaching `sendPushToUid` (or web-push) on its
+ * own would be a second copy of all four, one of which would be wrong first.
+ *
+ * SHORT, AND SAFE ON A LOCK SCREEN. The round's name and the stage's title,
+ * which is exactly what the applicant needs to know it is about them and
+ * where to go. Nothing else on the stage is theirs to leak: the questions,
+ * the intro and the deadline stay behind the account, on a surface they
+ * chose to open.
+ *
+ * ABSENT PREFERENCES ARE A YES, which is what makes this work for an
+ * applicant who is not a member. `normaliseNotifications` resolves an
+ * unwritten push map to both keys on and a missing user doc reads the same
+ * way, exactly as the task mirror already relies on; a device had to be
+ * enabled by its owner for any of this to send anything at all.
+ *
+ * NEVER THROWS. The mirror swallows its own failures, and this wraps it
+ * anyway: a push service having a bad day must not cost this person their
+ * stamp, because an unstamped marker is a re-claim, and a re-claim is a
+ * second email.
+ */
+async function pushCandidate(
+  ctx: JobContext,
+  args: {
+    round: AdmissionRoundDoc;
+    stage: AdmissionStageDoc;
+    candidate: Candidate;
+    summary: StageReleaseRunSummary;
+  },
+): Promise<void> {
+  const { round, stage, candidate, summary } = args;
+  try {
+    await mirrorCourseDecisionToPush(candidate.uid, {
+      title: `${stage.label} is open`,
+      body: `The next part of your ${round.label} application is ready to answer.`,
+      // The same destination the email's button carries, derived from the
+      // same function, as a PATH: the service worker resolves it against the
+      // app origin.
+      url: admissionApplicationPath(round.id, "apply"),
+    });
+    summary.pushed += 1;
+  } catch (err) {
+    summary.pushFailed += 1;
+    ctx.log("a stage announcement's push did not go out", {
+      roundId: round.id,
+      stageId: stage.id,
+      uid: candidate.uid,
+      error: errorText(err, 200),
+    });
+  }
 }
 
 /**

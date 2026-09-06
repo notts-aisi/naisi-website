@@ -105,9 +105,16 @@ const STUBS = new Map([
       "  (globalThis.__pushes ??= []).push({ uid, ...payload });\n" +
       "};",
   ],
+  // The stage-release job's push door, which the registry pulls in the same
+  // way. Its graph reaches `push/store.ts` and its `Timestamp` value import.
+  [
+    "@/lib/push/courseNotifications",
+    "export const mirrorCourseDecisionToPush = async () => {};",
+  ],
   [
     "@/lib/email/admissionEmails",
-    "export const admissionApplicationUrl = () => '';\n" +
+    "export const admissionApplicationPath = () => '';\n" +
+      "export const admissionApplicationUrl = () => '';\n" +
       "export const sendAdmissionEmail = async () => 'sent';",
   ],
   [

@@ -22,6 +22,13 @@
  *     three-attempt budget runs out.
  *  4. **The stale rule and the round gate**, because both are policies about
  *     what NOT to do, and a policy nobody executes is a comment.
+ *  5. **The push leg**, settled by the owner on 6 September 2026 and sent
+ *     through the shared mirror. Executed here rather than reasoned about,
+ *     because the properties that matter are all about ORDER: one push per
+ *     email and only after it, inside the same claim so a retried tick
+ *     repeats neither, and a push service having a bad day costing the push
+ *     and never the stamp (an unstamped marker is a re-claim, and a re-claim
+ *     is a second email).
  *
  * ## The fake Firestore
  *
@@ -96,8 +103,14 @@ const STUBS = new Map([
   ["@/lib/firebase/session", "export async function getCurrentUser() { return null; }"],
   [
     "@/lib/email/admissionEmails",
-    "export const admissionApplicationUrl = (roundId, surface) =>\n" +
-      "  `https://naisi.uk/${surface === 'apply' ? 'apply' : 'applications'}/${roundId}`;\n" +
+    // Both halves, because the job builds its email link from one and its
+    // push destination from the other, and the point of the pair is that they
+    // cannot drift: the real `admissionApplicationUrl` is
+    // `${base}${admissionApplicationPath(...)}`, and the stub keeps that.
+    "export const admissionApplicationPath = (roundId, surface) =>\n" +
+      "  `/${surface === 'apply' ? 'apply' : 'applications'}/${roundId}`;\n" +
+      "export const admissionApplicationUrl = (roundId, surface) =>\n" +
+      "  `https://naisi.uk${admissionApplicationPath(roundId, surface)}`;\n" +
       "export const sendAdmissionEmail = async (opts) => {\n" +
       "  const sends = (globalThis.__sends ??= []);\n" +
       "  sends.push(opts);\n" +
@@ -116,6 +129,23 @@ const STUBS = new Map([
       "export const sendWorksheetDueSoonEmail = async () => 'sent';",
   ],
   ["@/lib/push/taskNotifications", "export const mirrorTaskEmailToPush = async () => {};"],
+  // The push door. Stubbed for the same reason the email transport is: this
+  // suite must put nothing on the wire. What it records is the HANDOFF, which
+  // is all this job is responsible for; the mirror's own gates (the VAPID
+  // check, the `courseDecisions` switch, the subscriptions query, the prune)
+  // are executed for real against a fake push service in
+  // `tests/push-preferences.test.mjs`, which also pins that this job reaches
+  // for this exact door rather than building one.
+  [
+    "@/lib/push/courseNotifications",
+    "export const mirrorCourseDecisionToPush = async (uid, note) => {\n" +
+      "  if (globalThis.__pushThrows) throw new Error(globalThis.__pushThrows);\n" +
+      // The deviceless case: the real mirror returns having sent nothing, and
+      // is indistinguishable from a delivered push to its caller.
+      "  if (globalThis.__pushSilent) return;\n" +
+      "  (globalThis.__pushes ??= []).push({ uid, ...note });\n" +
+      "};",
+  ],
 ]);
 
 const { loadTs } = createLoader({ stubs: STUBS });
@@ -123,6 +153,10 @@ const { loadTs } = createLoader({ stubs: STUBS });
 function source(relativePath) {
   return readFileSync(join(REPO_ROOT, ...relativePath.split("/")), "utf8");
 }
+
+/** For pins that must read the CODE: this file explains itself at length. */
+const stripComments = (src) =>
+  src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
 // ---------------------------------------------------------------------------
 // Real imports. Everything below this line is shipping code.
@@ -455,6 +489,9 @@ function context({
 function reset(db) {
   globalThis.__db = db;
   globalThis.__sends = [];
+  globalThis.__pushes = [];
+  globalThis.__pushThrows = null;
+  globalThis.__pushSilent = false;
   globalThis.__suppressed = new Set();
   globalThis.__sendHook = null;
   globalThis.__suppressionError = null;
@@ -465,6 +502,7 @@ function reset(db) {
 }
 
 const uidsSent = () => globalThis.__sends.map((send) => send.uid).sort();
+const uidsPushed = () => globalThis.__pushes.map((push) => push.uid).sort();
 
 // ---------------------------------------------------------------------------
 // 3. The job
@@ -907,7 +945,165 @@ describe("the stage release job", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3b. The verdict a scoped run reports, and how lateness is measured
+// 3b. The push leg
+// ---------------------------------------------------------------------------
+
+describe("the announcement also pushes", () => {
+  test("one push per email, naming the round and the stage, landing on the form", async () => {
+    const db = makeDb(world({ apps: 2 }));
+    reset(db);
+
+    const { summary } = await runAdmissionsStageRelease(context().ctx);
+
+    assert.equal(summary.sent, 2);
+    assert.equal(summary.pushed, 2);
+    assert.equal(summary.pushFailed, 0);
+    assert.deepEqual(uidsPushed(), uidsSent());
+
+    const first = globalThis.__pushes[0];
+    assert.match(first.title, /Stage 2/, "the push does not name the stage");
+    assert.match(first.body, /Autumn 2026 intake/, "the push does not name the round");
+    // A PATH, and the same one the email's button carries: the service worker
+    // hands this to clients.openWindow, so an absolute url would let a
+    // notification wearing this site's name open somebody else's page.
+    assert.equal(first.url, `/apply/${ROUND_ID}`);
+    assert.equal(
+      globalThis.__sends[0].applicationUrl.endsWith(first.url),
+      true,
+      "the push and the email point at different places",
+    );
+  });
+
+  test("the push carries nothing the lock screen should not have", async () => {
+    // The round's name and the stage's title are the whole payload. A
+    // question, an intro or a deadline belongs behind the account, on a
+    // surface the applicant chose to open.
+    const db = makeDb(world({ apps: 1 }));
+    reset(db);
+
+    await runAdmissionsStageRelease(context().ctx);
+
+    const payload = JSON.stringify(globalThis.__pushes);
+    assert.equal(payload.includes("Recreate a paper"), false);
+    assert.equal(payload.includes("The technical exercise"), false);
+    assert.equal(/\d{2}:\d{2}/.test(payload), false, "a deadline rode out on a push");
+  });
+
+  test("the push happens BEFORE the stamp, inside the same claim", async () => {
+    // Order is the whole safety argument: one marker settles both channels,
+    // so a retried tick that finds it stamped repeats neither.
+    const db = makeDb(world({ apps: 2 }));
+    reset(db);
+    const pushesAtStamp = [];
+    globalThis.__setHook = (name, id, data) => {
+      if (name === "schedulerMarkers" && data.sentAt instanceof Date) {
+        pushesAtStamp.push(globalThis.__pushes.length);
+      }
+    };
+
+    await runAdmissionsStageRelease(context().ctx);
+
+    assert.deepEqual(
+      pushesAtStamp,
+      [1, 2],
+      "somebody was stamped before their push was handed off",
+    );
+  });
+
+  test("a second tick pushes nothing: the stamp covers both channels", async () => {
+    const db = makeDb(world({ apps: 3 }));
+    reset(db);
+
+    await runAdmissionsStageRelease(context().ctx);
+    assert.equal(globalThis.__pushes.length, 3);
+
+    const second = await runAdmissionsStageRelease(
+      context({ now: new Date("2026-10-05T11:00:00.000Z") }).ctx,
+    );
+
+    assert.equal(second.summary.pushed, 0);
+    assert.equal(globalThis.__pushes.length, 3, "a retried tick pushed a second time");
+    assert.equal(globalThis.__sends.length, 3);
+  });
+
+  test("a push that throws costs the push and nothing else", async () => {
+    const db = makeDb(world({ apps: 2 }));
+    reset(db);
+    globalThis.__pushThrows = "the push service refused";
+
+    const { summary, result } = await runAdmissionsStageRelease(context().ctx);
+
+    // The email accounting is untouched: a push failure is not a failed send,
+    // and it must never reach the receipt's `failed` count.
+    assert.equal(summary.sent, 2);
+    assert.deepEqual(summary.failures, []);
+    assert.equal(result.hasMore, false);
+    assert.equal(summary.pushed, 0);
+    assert.equal(summary.pushFailed, 2);
+    // And above all it did not cost anybody their stamp, because an unstamped
+    // marker is a re-claim and a re-claim is a second email.
+    for (const uid of ["uid001", "uid002"]) {
+      assert.ok(
+        db.read("schedulerMarkers", markerFor(uid)).sentAt instanceof Date,
+        `${uid} was left unstamped by a push failure`,
+      );
+    }
+
+    globalThis.__pushThrows = null;
+    globalThis.__sends = [];
+    await runAdmissionsStageRelease(
+      context({ now: new Date("2026-10-05T11:00:00.000Z") }).ctx,
+    );
+    assert.equal(globalThis.__sends.length, 0, "a push failure re-mailed the round");
+  });
+
+  test("a recipient with no device does not block or duplicate the email", async () => {
+    // What the real mirror does for somebody with nothing enabled, with push
+    // unprovisioned, or with the category switched off: returns having sent
+    // nothing, and says so to nobody. The job must treat that as an ordinary
+    // announcement, so `pushed` counts HANDOFFS and never claims a buzz.
+    const db = makeDb(world({ apps: 2 }));
+    reset(db);
+    globalThis.__pushSilent = true;
+
+    const { summary, result } = await runAdmissionsStageRelease(context().ctx);
+
+    assert.deepEqual(globalThis.__pushes, [], "the silent mirror recorded a send");
+    assert.equal(summary.sent, 2);
+    assert.equal(summary.pushed, 2);
+    assert.equal(summary.pushFailed, 0);
+    assert.equal(result.hasMore, false);
+
+    globalThis.__pushSilent = false;
+    globalThis.__sends = [];
+    await runAdmissionsStageRelease(
+      context({ now: new Date("2026-10-05T11:00:00.000Z") }).ctx,
+    );
+    assert.equal(globalThis.__sends.length, 0, "a deviceless recipient was re-mailed");
+  });
+
+  test("nobody the email skipped is pushed", async () => {
+    // Suppressed, opted out, or a send that failed: the push rides a send this
+    // job counted, so a person with no email has no push either.
+    const rows = applications(3);
+    const db = makeDb(world({ apps: rows }));
+    reset(db);
+    globalThis.__suppressed = new Set(["uid001@example.com"]);
+    db.patch("users", "uid002", {
+      profile: { notifications: { categories: { courses: false } } },
+    });
+    globalThis.__sendHook = (opts) => (opts.uid === "uid003" ? "failed" : "sent");
+
+    const { summary } = await runAdmissionsStageRelease(context().ctx);
+
+    assert.equal(summary.sent, 0);
+    assert.equal(summary.skipped, 2);
+    assert.deepEqual(globalThis.__pushes, []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3c. The verdict a scoped run reports, and how lateness is measured
 // ---------------------------------------------------------------------------
 
 describe("what a scoped run says it did", () => {
@@ -1095,10 +1291,58 @@ describe("the handler's own ordering", () => {
     assert.ok(!/\.orderBy\(/.test(src), "the audience query has an orderBy on it");
   });
 
-  test("imports no push helper yet", () => {
-    // The contract mirrors this send to push once the channel exists (PR32).
-    // Until then this job must not reach for one.
-    assert.ok(!/@\/lib\/push/.test(src), "the job imports a push helper already");
+  test("pushes through the SHARED mirror, never a sender of its own", () => {
+    // Settled by the owner on 6 September 2026: this job announces by email
+    // and push. The mirror is where the VAPID gate, the `courseDecisions`
+    // switch, the subscriptions query and the dead-endpoint prune live, so a
+    // job reaching past it would be a second copy of all four.
+    assert.match(
+      src,
+      /import \{ mirrorCourseDecisionToPush \} from "@\/lib\/push\/courseNotifications";/,
+    );
+    // Comment-stripped: the module header names the senders it does NOT use.
+    const code = stripComments(src);
+    for (const bespoke of ["sendPushToUid", "web-push", "webpush", "subscriptionsForUid"]) {
+      assert.ok(
+        !code.includes(bespoke),
+        `the job reaches ${bespoke} directly instead of the shared mirror`,
+      );
+    }
+  });
+
+  test("the push sits between the send and the stamp", () => {
+    // Inside the same claim as the email, so ONE marker settles both
+    // channels. (The runtime proof is in "the push happens BEFORE the stamp".)
+    const body = src.slice(
+      src.indexOf("async function mailCandidate("),
+      src.indexOf("async function pushCandidate("),
+    );
+    assert.ok(body.length > 500, "could not slice mailCandidate out of the source");
+    const sendAt = body.indexOf("await sendAdmissionEmail(");
+    const pushAt = body.indexOf("await pushCandidate(");
+    const stampAt = body.indexOf("await stampSentOrSettle(");
+    assert.ok(pushAt !== -1, "the handler no longer pushes");
+    assert.ok(sendAt < pushAt, "the push runs before the email it mirrors");
+    assert.ok(pushAt < stampAt, "the marker is stamped before the push");
+  });
+
+  test("a push failure is counted and logged, never thrown and never a send failure", () => {
+    const body = src.slice(
+      src.indexOf("async function pushCandidate("),
+      src.indexOf("async function stampSentOrSettle("),
+    );
+    assert.ok(body.length > 200, "could not slice pushCandidate out of the source");
+    assert.match(body, /catch \(err\) \{/, "the push handoff is not wrapped");
+    assert.match(body, /summary\.pushFailed \+= 1;/);
+    assert.match(body, /ctx\.log\(/);
+    assert.ok(
+      !/throw/.test(body),
+      "a push failure must not throw into the per-recipient loop",
+    );
+    assert.ok(
+      !/summary\.failures/.test(body),
+      "a push failure must not land in the email accounting the receipt renders",
+    );
   });
 });
 
