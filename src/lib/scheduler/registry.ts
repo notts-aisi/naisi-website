@@ -38,6 +38,7 @@ import { admissionsRemindersJob } from "./jobs/admissionsReminders";
 import { admissionsStageReleaseJob } from "./jobs/admissionsStageRelease";
 import { heartbeatJob } from "./jobs/heartbeat";
 import { unmarkedRegistersJob } from "./jobs/unmarkedRegisters";
+import { worksheetDueRemindersJob } from "./jobs/worksheetDueReminders";
 
 /**
  * Every job id the platform will register. The union is complete ahead of the
@@ -54,11 +55,11 @@ export const SCHEDULER_JOB_IDS = [
   "courses-unmarked-registers",
   "courses-break-return",
   "newsletter-drain",
-  // Worksheet due-soon reminders (docs/worksheets.md). The id is reserved
+  // Worksheet due-soon reminders (docs/worksheets.md). The id was reserved
   // here ahead of its handler for the reason the header gives: the panel and
-  // `config/scheduler` key on these strings, so the id has to be the one the
-  // job will ship with. It registers with `enabledByDefault: false` when it
-  // lands, because it emails people.
+  // `config/scheduler` key on these strings, so the id had to be the one the
+  // job shipped with. Its handler landed with wave 2 and registers with
+  // `enabledByDefault: false`, because it emails and pushes to people.
   "worksheet-due-reminders",
 ] as const;
 
@@ -207,6 +208,7 @@ export const JOBS: readonly JobRegistration[] = [
   admissionsStageReleaseJob,
   unmarkedRegistersJob,
   heartbeatJob,
+  worksheetDueRemindersJob,
 ];
 
 export function findJob(id: string): JobRegistration | null {

@@ -1,0 +1,265 @@
+/* ============================================================
+   AggregateView: everybody's answers to one circulation, added
+   up.
+
+   The bars are plain divs with a percentage width. No chart
+   library, no SVG, no canvas: a bar is a rectangle, and every
+   colour and radius on it comes from tokens.css, so the whole
+   thing follows a palette swap without anybody remembering it
+   exists.
+
+   `min-width: 0` runs the whole way down. The bar rows are
+   grids inside a card inside the page's grid, and a track left
+   at `auto` takes its content's min-content as a floor, which
+   is how a long option label turns into horizontal scroll on
+   <body> (the AppShell failure mode the repo conventions
+   document at length).
+   ============================================================ */
+
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* === Header bar ============================================ */
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.tally {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+  min-width: 0;
+}
+
+.switches {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+/* === Question cards ======================================== */
+
+.questions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  overflow-wrap: anywhere;
+}
+
+.count {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-subtle);
+  font-style: italic;
+}
+
+/* === Bars ==================================================
+   Three tracks: the label, the track it fills, and the count.
+   The label is capped rather than free so a long option cannot
+   squeeze every bar on the card into a sliver; the count is
+   `max-content` so "12 (100%)" never wraps mid-number. */
+
+.bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.barRow {
+  display: grid;
+  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.barLabel {
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+/* An option the author has since deleted. Muted and italic, so a reader can
+   tell at a glance that the bar is a leftover rather than a choice anybody
+   can still make. */
+.barLabelGone {
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--color-text-subtle);
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+.barTrack {
+  display: block;
+  height: 0.75rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.barFill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  /* The width is set inline from the data. Animating it means a chart that
+     grows into place when the tab opens and slides when a switch narrows the
+     set, rather than jumping. */
+  transition: width var(--dur-settle) var(--ease-naisi);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .barFill {
+    transition: none;
+  }
+}
+
+.barCount {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* === Text answers ========================================== */
+
+.texts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.textItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--color-border);
+  min-width: 0;
+}
+
+.attribution {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.text {
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  overflow-wrap: anywhere;
+}
+
+/* === Image answers ========================================= */
+
+.images {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.imageItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: 7rem;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+}
+
+/* === Mobile ================================================
+   The bar row loses its label column: at 360px a 12rem label
+   beside a track leaves nothing to fill, so the label goes on
+   its own line above the track and the count sits at the end
+   of it. The thumbnails come down to two per row. */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .bar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .switches {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+
+  .barRow {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    gap: var(--space-1) var(--space-2);
+  }
+
+  .barLabel,
+  .barLabelGone {
+    grid-column: 1 / -1;
+  }
+
+  .images {
+    grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr));
+  }
+}

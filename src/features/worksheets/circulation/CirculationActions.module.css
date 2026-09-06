@@ -1,0 +1,100 @@
+/* Shared by ExportButton and CloseButton: the two controls in the circulation
+   page's action row that do something irreversible or something logged.
+
+   ONE stylesheet for the pair rather than one each, because they are one
+   thing on screen: two buttons side by side in the same row, each able to
+   sprout an error line underneath without shifting the other. Splitting them
+   would mean keeping two copies of that error line in step, and the day they
+   drift is the day one refusal is legible and the other is not.
+
+   The page above owns the row itself (its `.actions` is the flex container);
+   what is here is only what one action needs inside its own slot. */
+
+.action {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* The wrapper a tooltip rides on when the button inside is disabled: a
+   disabled <button> swallows its own mouse events in some browsers, so the
+   title has to sit on something that does not. */
+.tooltipHost {
+  display: inline-flex;
+}
+
+/* Under the button rather than beside it: the action row wraps, and an error
+   that widened its slot would re-flow every button next to it just as
+   somebody is reading why one failed. */
+.error {
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-danger);
+  max-width: 22rem;
+  overflow-wrap: anywhere;
+}
+
+/* === Close confirmation ==================================== */
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.dialogTitle {
+  margin: 0;
+  font-size: var(--text-xl);
+  line-height: var(--leading-tight);
+}
+
+.dialogBody {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+/* === Mobile ================================================
+   The page's action row already stretches its children to full
+   width below --bp-md, so each action becomes a full-width
+   column: the button fills it, and the error line is free to
+   use the whole width rather than the 22rem cap it has on a
+   desktop row. The dialog's buttons stack, destructive last,
+   in the same shape as every other confirm on the site. */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .action {
+    display: flex;
+    width: 100%;
+  }
+
+  .tooltipHost {
+    display: flex;
+  }
+
+  .tooltipHost > * {
+    width: 100%;
+  }
+
+  .error {
+    max-width: none;
+  }
+
+  .dialogActions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

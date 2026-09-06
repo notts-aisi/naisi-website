@@ -99,11 +99,22 @@
   overflow-wrap: anywhere;
 }
 
+/* Two buttons at most (Unlock, then Close), so a row that ends at the right
+   edge. The order is DOM order: the consequential one first, the way out
+   last, matching every other panel in the app. */
 .footer {
   display: flex;
   justify-content: flex-end;
+  gap: var(--space-2);
   padding-top: var(--space-4);
   border-top: 1px solid var(--color-border);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
 }
 
 /* === Mobile ================================================
@@ -125,11 +136,22 @@
     font-size: var(--text-base);
   }
 
+  /* Stacked rather than stretched across a row: two full-width buttons side
+     by side in a Drawer leave neither of them wide enough to read, and the
+     unlock is the one nobody should hit by aiming badly. */
   .footer {
-    justify-content: stretch;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .footer > * {
+    width: 100%;
+    min-height: 2.75rem;
+  }
+
+  /* The unlock button is wrapped in a span carrying its tooltip, so the width
+     has to travel one level further down than it does for the Close button. */
+  .footer > span > button {
     width: 100%;
     min-height: 2.75rem;
   }

@@ -202,6 +202,29 @@ const MUST_GUARD = [
     "src/app/api/worksheets/circulations/[circulationId]/upload/route.ts",
     "files an image in a member's own answer folder, where their name is the only attribution",
   ],
+  [
+    "src/app/api/worksheets/circulations/[circulationId]/responses/[uid]/return/route.ts",
+    "puts a judgement about somebody's work in front of them under the reviewer's name",
+  ],
+  [
+    "src/app/api/worksheets/circulations/[circulationId]/responses/[uid]/unfreeze/route.ts",
+    "takes back somebody's submission and clears the feedback they were sent",
+  ],
+  [
+    "src/app/api/worksheets/circulations/[circulationId]/notify-copy-edited/route.ts",
+    "emails every recipient who is part-way through, in the name of whoever pressed it",
+  ],
+  [
+    "src/app/api/worksheets/circulations/[circulationId]/export/route.ts",
+    "takes what named people wrote off the platform, and writes the dataExports row that is the only record it happened",
+  ],
+  [
+    "src/app/api/worksheets/circulations/[circulationId]/close/route.ts",
+    "stops a circulation taking any more answers and archives a task on every recipient's board",
+  ],
+  // The aggregate GET is deliberately absent, like the recipients GET above
+  // it: it writes nothing, and reading what a member sees is what view-as is
+  // for.
 ];
 
 /**

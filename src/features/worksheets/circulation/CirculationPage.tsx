@@ -5,28 +5,31 @@ import { useCallback, useMemo, useState } from "react";
 import { useAuth } from "@/auth/AuthProvider";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
-import Card from "@/components/ui/Card";
 import Chip from "@/components/ui/Chip";
 import EmptyState from "@/components/ui/EmptyState";
-import MemberName, { MEMBER_NAME_FALLBACK } from "@/components/ui/MemberName";
+import { MEMBER_NAME_FALLBACK } from "@/components/ui/MemberName";
 import Modal from "@/components/ui/Modal";
 import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
+import SegmentedControl from "@/components/ui/SegmentedControl";
 import Skeleton from "@/components/ui/Skeleton";
 import { useTaskRoster } from "@/features/tasks/hooks/useTaskRoster";
 import { CIRCULATION_LIMITS } from "@/lib/firestore/circulations";
 import { useCirculation } from "../hooks/useCirculation";
 import { useCirculationResponses } from "../hooks/useCirculationResponses";
+import AggregateView from "./AggregateView";
+import CloseButton from "./CloseButton";
+import CopyEditor from "./CopyEditor";
+import ExportButton from "./ExportButton";
 import RecipientPicker from "./RecipientPicker";
 import RecipientRow, { RecipientTableHeader } from "./RecipientRow";
 import ResponseView from "./ResponseView";
+import SettingsPanel from "./SettingsPanel";
 import {
   CIRCULATION_SORT_OPTIONS,
-  reviewConfigSummary,
   sortResponses,
   submittedTally,
   type CirculationSortKey,
 } from "./circulationView";
-import { notificationSummaryOf } from "./notificationCopy";
 import { useRecipientCandidates, type RecipientCandidate } from "./useRecipientCandidates";
 import styles from "./CirculationPage.module.css";
 
@@ -60,13 +63,29 @@ import styles from "./CirculationPage.module.css";
  * the cases that matter. An author holding no key still sees the fallback;
  * that residue needs the roster route widened, not a `users` read here.
  *
- * Export, Close and mid-flight editing of the questions are wave 2. They are
- * rendered disabled rather than hidden: a sender who cannot find the export
- * button assumes there is no export, and goes and builds a spreadsheet by
- * hand.
+ * ── FOUR TABS, AND THE READ-ONLY RAIL BECAME ONE OF THEM ────────────────────
+ * Wave 1 put the recipient table beside an 18rem rail summarising how the
+ * circulation was set up, because nothing on it could be changed. Everything
+ * on that rail is now editable in Settings, and carrying both would mean two
+ * places saying what the review toggles are, one of which is a copy. So the
+ * rail is gone, the table has the full width it wanted (it is five columns),
+ * and the tabs are the four questions somebody opens this page to ask: who has
+ * it, what did they say, what did we ask, and how is it set up.
+ *
+ * The tab lives in component state and not in the URL. A circulation page is
+ * reached from a task, an email or the library, never linked to tab-first, and
+ * a query parameter would be one more thing to keep in step for a view that
+ * costs one click.
  */
 
-const NEXT_WAVE_TITLE = "Coming in the next wave.";
+type CirculationTab = "recipients" | "aggregate" | "copy" | "settings";
+
+const TABS: { value: CirculationTab; label: string }[] = [
+  { value: "recipients", label: "Recipients" },
+  { value: "aggregate", label: "Aggregate" },
+  { value: "copy", label: "Copy" },
+  { value: "settings", label: "Settings" },
+];
 
 type Props = {
   worksheetId: string;
@@ -123,6 +142,7 @@ export default function CirculationPage({ worksheetId, circulationId }: Props) {
     [nameByUid],
   );
 
+  const [tab, setTab] = useState<CirculationTab>("recipients");
   const [sortKey, setSortKey] = useState<CirculationSortKey>("added");
   const [viewingUid, setViewingUid] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -216,8 +236,7 @@ export default function CirculationPage({ worksheetId, circulationId }: Props) {
       })}`
     : "no due date";
 
-  const reviewSummary = reviewConfigSummary(circulation.reviewConfig);
-  const notificationSummary = notificationSummaryOf(circulation.notifications);
+  const closed = circulation.status === "closed";
   const existingRecipientUids = responses.map((response) => response.uid);
 
   return (
@@ -225,8 +244,11 @@ export default function CirculationPage({ worksheetId, circulationId }: Props) {
       <header className={styles.head}>
         <div className={styles.headTop}>
           <Badge tone="accent">Circulation</Badge>
-          <Chip size="sm" tone={circulation.status === "open" ? "accent" : "neutral"}>
-            {circulation.status === "open" ? "Open" : "Closed"}
+          {/* The one piece of state that changes what every control on this
+              page does, so it sits next to the title rather than inside the
+              tab that closed it. */}
+          <Chip size="sm" tone={closed ? "neutral" : "accent"}>
+            {closed ? "Closed" : "Open"}
           </Chip>
         </div>
         <h1 className={styles.title}>{circulation.title}</h1>
@@ -236,159 +258,126 @@ export default function CirculationPage({ worksheetId, circulationId }: Props) {
         <p className={styles.tally}>
           {tally.submitted} of {tally.total} submitted
         </p>
+        {/* A DIFFERENT DOCUMENT from the one the Copy tab edits, and the words
+            say which. This circulation carries its own copy of the questions;
+            the library worksheet is the one every future circulation is made
+            from, and editing it changes nothing here. */}
+        <Link href={`/worksheets/${worksheetId}`} className={styles.headLink}>
+          Open the library worksheet
+        </Link>
       </header>
 
       <div className={styles.actions}>
-        {canCirculate && (
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => setAddOpen(true)}
-            disabled={circulation.status === "closed"}
-            title={
-              circulation.status === "closed"
-                ? "This circulation is closed, so nobody else can be added to it."
-                : undefined
-            }
-          >
+        {/* HIDDEN once the circulation is closed rather than disabled. A
+            disabled button with a tooltip is the right shape for something
+            that might come back; nothing brings this one back, and the Chip
+            beside the title has already said why. */}
+        {canCirculate && !closed && (
+          <Button type="button" variant="secondary" onClick={() => setAddOpen(true)}>
             Add recipients
           </Button>
         )}
-        <Link
-          href={`/worksheets/${worksheetId}`}
-          className={styles.linkButton}
-          title="Editing the questions this circulation already sent lands in the next wave. This opens the library worksheet."
-        >
-          Edit copy
-        </Link>
-        {/* Disabled buttons swallow their own mouse events in some browsers, so
-            the tooltip rides on a wrapper rather than on the button. */}
-        <span title={NEXT_WAVE_TITLE}>
-          <Button type="button" variant="secondary" disabled>
-            Export
-          </Button>
-        </span>
-        <span title={NEXT_WAVE_TITLE}>
-          <Button type="button" variant="secondary" disabled>
-            Close
-          </Button>
-        </span>
+        <ExportButton circulationId={circulationId} title={circulation.title} />
+        <CloseButton circulation={circulation} />
+      </div>
+
+      <div className={styles.tabs}>
+        <SegmentedControl
+          value={tab}
+          onChange={(next) => {
+            // Reading one person's answers is an act of the recipient table.
+            // Carrying that panel into the Aggregate tab would leave a modal
+            // open over a page it has nothing to do with.
+            setViewingUid(null);
+            setTab(next);
+          }}
+          options={TABS}
+          ariaLabel="What to show for this circulation"
+        />
       </div>
 
       <div className={styles.body}>
-        <section className={styles.main} aria-label="Recipients">
-          <div className={styles.tableBar}>
-            <h2 className={styles.sectionTitle}>Recipients</h2>
-            <span className={styles.sortField}>
-              <ResponsiveSelect
-                value={sortKey}
-                onChange={(next) => setSortKey(next as CirculationSortKey)}
-                options={CIRCULATION_SORT_OPTIONS}
-                ariaLabel="Sort recipients"
-              />
-            </span>
-          </div>
-
-          {responsesError && (
-            <p className={styles.error} role="status">
-              Couldn&apos;t load the recipients: {responsesError.message}
-            </p>
-          )}
-
-          {responsesLoading && responses.length === 0 ? (
-            <div className={styles.loading}>
-              <Skeleton
-                width="100%"
-                height="3.5rem"
-                radius="var(--radius-md)"
-                ariaLabel="Loading recipients…"
-              />
-              <Skeleton width="100%" height="3.5rem" radius="var(--radius-md)" ariaLabel="" />
+        {tab === "recipients" && (
+          <section className={styles.main} aria-label="Recipients">
+            <div className={styles.tableBar}>
+              <h2 className={styles.sectionTitle}>Recipients</h2>
+              <span className={styles.sortField}>
+                <ResponsiveSelect
+                  value={sortKey}
+                  onChange={(next) => setSortKey(next as CirculationSortKey)}
+                  options={CIRCULATION_SORT_OPTIONS}
+                  ariaLabel="Sort recipients"
+                />
+              </span>
             </div>
-          ) : responses.length === 0 ? (
-            <EmptyState
-              title="Nobody has this yet"
-              body="Add the people who should answer it and they each get their own copy and their own task."
-              action={
-                canCirculate ? (
-                  <Button type="button" onClick={() => setAddOpen(true)}>
-                    Add recipients
-                  </Button>
-                ) : undefined
-              }
-            />
-          ) : (
-            <>
-              <RecipientTableHeader />
-              <ul className={styles.rows}>
-                {sorted.map((response) => (
-                  <RecipientRow
-                    key={response.uid}
-                    response={response}
-                    name={nameOf(response.uid)}
-                    onView={() => setViewingUid(response.uid)}
-                  />
-                ))}
-              </ul>
-            </>
-          )}
-        </section>
 
-        <aside className={styles.side} aria-label="How this circulation is set up">
-          <Card as="section" padding="md" className={styles.sideCard}>
-            <h2 className={styles.sideTitle}>Reviewers</h2>
-            {circulation.reviewerUids.length === 0 ? (
-              <p className={styles.sideEmpty}>Nobody was named as a reviewer.</p>
-            ) : (
-              <ul className={styles.sideList}>
-                {circulation.reviewerUids.map((reviewerUid) => (
-                  <li key={reviewerUid} className={styles.sideItem}>
-                    <MemberName name={nameByUid.get(reviewerUid)} />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-
-          <Card as="section" padding="md" className={styles.sideCard}>
-            <h2 className={styles.sideTitle}>Review</h2>
-            {reviewSummary.length === 0 ? (
-              <p className={styles.sideEmpty}>
-                No feedback and no scoring. Answers are read, and nothing goes back.
+            {responsesError && (
+              <p className={styles.error} role="status">
+                Couldn&apos;t load the recipients: {responsesError.message}
               </p>
-            ) : (
-              <ul className={styles.sideList}>
-                {reviewSummary.map((line) => (
-                  <li key={line} className={styles.sideItem}>
-                    {line}
-                  </li>
-                ))}
-              </ul>
             )}
-          </Card>
 
-          <Card as="section" padding="md" className={styles.sideCard}>
-            <h2 className={styles.sideTitle}>Notifications</h2>
-            {notificationSummary.length === 0 ? (
-              <p className={styles.sideEmpty}>Nothing is sent for this circulation.</p>
+            {responsesLoading && responses.length === 0 ? (
+              <div className={styles.loading}>
+                <Skeleton
+                  width="100%"
+                  height="3.5rem"
+                  radius="var(--radius-md)"
+                  ariaLabel="Loading recipients…"
+                />
+                <Skeleton width="100%" height="3.5rem" radius="var(--radius-md)" ariaLabel="" />
+              </div>
+            ) : responses.length === 0 ? (
+              <EmptyState
+                title="Nobody has this yet"
+                body="Add the people who should answer it and they each get their own copy and their own task."
+                action={
+                  canCirculate ? (
+                    <Button type="button" onClick={() => setAddOpen(true)}>
+                      Add recipients
+                    </Button>
+                  ) : undefined
+                }
+              />
             ) : (
-              <ul className={styles.sideList}>
-                {notificationSummary.map((row) => (
-                  <li key={row.event} className={styles.sideItem}>
-                    {row.label}: {row.channels}
-                  </li>
-                ))}
-              </ul>
+              <>
+                <RecipientTableHeader />
+                <ul className={styles.rows}>
+                  {sorted.map((response) => (
+                    <RecipientRow
+                      key={response.uid}
+                      response={response}
+                      name={nameOf(response.uid)}
+                      onView={() => setViewingUid(response.uid)}
+                    />
+                  ))}
+                </ul>
+              </>
             )}
-            {/* Read-only in this wave. Changing them after the fact means
-                deciding what a person already told about a message should be
-                told when it is turned off, which is a wave-2 question. */}
-            <p className={styles.sideNote}>
-              These were set when the worksheet went out. Changing them later lands in
-              the next wave.
-            </p>
-          </Card>
-        </aside>
+          </section>
+        )}
+
+        {tab === "aggregate" && (
+          <section className={styles.main} aria-label="Everybody's answers">
+            {/* Counted from the documents already on screen rather than from
+                the aggregate route: staff hold every response here, and the
+                route exists for the recipient reading a poll's result, who
+                cannot list the subcollection at all. */}
+            <AggregateView circulation={circulation} responses={responses} nameOf={nameOf} />
+          </section>
+        )}
+
+        {tab === "copy" && (
+          <section className={styles.main} aria-label="The questions this circulation asks">
+            <CopyEditor circulation={circulation} />
+          </section>
+        )}
+
+        {tab === "settings" && (
+          <section className={styles.main} aria-label="How this circulation is set up">
+            <SettingsPanel circulation={circulation} nameOf={nameOf} isAdmin={isAdmin} />
+          </section>
+        )}
       </div>
 
       {viewing && (

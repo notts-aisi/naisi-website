@@ -11,6 +11,7 @@ import {
   type WorksheetQuestion,
 } from "@/lib/firestore/worksheets";
 import ImageAnswer from "./ImageAnswer";
+import PollResults from "./PollResults";
 import styles from "./WorksheetQuestionField.module.css";
 
 /**
@@ -224,21 +225,25 @@ export default function WorksheetQuestionField({
       const chosen = answer?.type === "choice" ? answer.optionId : "";
       const visibility = question.poll?.resultsVisibility;
       // `disabled` is this control's read-only signal, and on this page it
-      // means the response is frozen: the recipient has submitted. So an
-      // "after-submit" poll shows its results panel here and its promise
-      // everywhere else. "staff" says nothing to the recipient at all.
-      const pollNote =
-        question.type !== "poll"
-          ? null
-          : visibility === "before-submit"
-            ? "Results are shown after you answer."
-            : visibility === "after-submit" && !disabled
-              ? "Results are shown once you have submitted."
-              : null;
+      // means the response is frozen: the recipient has submitted. "staff"
+      // says nothing to the recipient at all, which is why the panel is not
+      // mounted for it: an empty panel is still a statement that there is
+      // something to see.
       const showPollResults =
         question.type === "poll" &&
-        (visibility === "before-submit" ||
-          (visibility === "after-submit" && Boolean(disabled)));
+        (visibility === "before-submit" || visibility === "after-submit");
+      // VOTE FIRST, THEN SEE. A "before-submit" poll reveals its bars once
+      // this person has picked something (or has submitted without picking,
+      // which is the frozen case), never on arrival: results shown to somebody
+      // who has not answered prime the answer they came to give. The aggregate
+      // route enforces exactly this, so the panel and the server agree rather
+      // than the panel being decoration over an open door. Until then
+      // `PollResults` prints the wait itself, one sentence per reason, instead
+      // of a note here saying half of it a second time.
+      const pollRevealed =
+        visibility === "before-submit"
+          ? Boolean(chosen) || Boolean(disabled)
+          : visibility === "after-submit" && Boolean(disabled);
       return (
         <fieldset className={`${fr.field} ${fr.choiceField}`} aria-describedby={describedBy}>
           {groupName}
@@ -271,11 +276,16 @@ export default function WorksheetQuestionField({
               </label>
             ))}
           </div>
-          {pollNote && <p className={styles.pollNote}>{pollNote}</p>}
-          {/* The aggregate route is wave 2. Saying so beats a bar chart of
-              zeroes, which reads as "nobody agrees with you". */}
+          {/* Counts only, fetched from the aggregate route, which re-checks
+              this poll's audience setting against this caller's own state
+              server-side. It is the one place a recipient learns anything
+              about anybody else's answers. */}
           {showPollResults && (
-            <p className={styles.pollResults}>Results: coming in the next wave.</p>
+            <PollResults
+              question={question}
+              chosenOptionId={chosen}
+              revealed={pollRevealed}
+            />
           )}
           {errorNote}
         </fieldset>

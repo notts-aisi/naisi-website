@@ -120,6 +120,18 @@ const STUBS = new Map([
       "  return globalThis.__sendHook ? globalThis.__sendHook(opts) : 'sent';\n" +
       "};",
   ],
+  // The worksheet due-soon reminders job's two doors. Nothing here runs it,
+  // but `registry.ts` imports every job by value, so its email door (which
+  // reaches a `.tsx`) and its push mirror (whose graph imports `Timestamp` as
+  // a value) are both in this suite's module graph.
+  [
+    "@/lib/email/worksheetReminderEmails",
+    "export const worksheetRespondPath = () => '';\n" +
+      "export const worksheetDueSoonSubject = () => '';\n" +
+      "export const formatWorksheetDue = () => '';\n" +
+      "export const sendWorksheetDueSoonEmail = async () => 'sent';",
+  ],
+  ["@/lib/push/taskNotifications", "export const mirrorTaskEmailToPush = async () => {};"],
 ]);
 
 /** A FILE, never a directory: `@/lib/devBypass` is both. */
