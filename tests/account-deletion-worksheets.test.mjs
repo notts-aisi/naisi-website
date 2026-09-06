@@ -1,5 +1,5 @@
 /**
- * WHAT THE ACCOUNT CASCADE KEEPS, EXECUTED.
+ * WHAT THE ACCOUNT CASCADE KEEPS, EXECUTED, AND THE ONE CHANNEL IT TAKES.
  *
  * Run with `npm test` (Node's built-in runner, no dependencies).
  *
@@ -25,6 +25,16 @@
  * circulation and have no uid-keyed query), so the fixture includes a task of
  * another source and a worksheet task belonging to somebody else: a count that
  * dropped either filter would still look plausible.
+ *
+ * ## The one thing here that GOES
+ *
+ * The push subscription rows, which the owner decided on 7 September 2026 must
+ * leave with the account. They are executed in this file rather than in a
+ * suite of their own because this is the only fake Firestore that runs the
+ * WHOLE cascade, and a sweep is worth nothing unpinned: a source read cannot
+ * tell a delete that ran from a delete that was merely written. The two
+ * concerns sit together on purpose: the retention tests below are what stop
+ * that sweep growing into the circulations tree.
  *
  * Faked: `firebase-admin/firestore` (sentinels this store can interpret) and
  * `server-only`. The functions under test are the real ones, loaded through
@@ -235,6 +245,25 @@ function seedWithWork() {
     "circulations/circ-1/reviews": {
       [UID]: { overall: "Thorough.", updatedByUid: OTHER },
     },
+    // One row per device ENDPOINT, ids hashed the way `subscriptionDocId`
+    // hashes them, so the fixture cannot be swept by doc id even by accident.
+    pushSubscriptions: {
+      a1b2c3phone: {
+        endpoint: "https://fcm.example/phone",
+        keys: { p256dh: "p", auth: "a" },
+        uid: UID,
+      },
+      d4e5f6laptop: {
+        endpoint: "https://fcm.example/laptop",
+        keys: { p256dh: "p", auth: "a" },
+        uid: UID,
+      },
+      "99zzsomeone-else": {
+        endpoint: "https://fcm.example/theirs",
+        keys: { p256dh: "p", auth: "a" },
+        uid: OTHER,
+      },
+    },
   };
 }
 
@@ -282,6 +311,103 @@ test("a member with no worksheet work and no record counts zero, honestly", asyn
   assert.equal(summary.worksheetResponsesRetained, 0);
   assert.equal(summary.memberRecordApplicationsRetained, 0);
   assert.equal(summary.userDocDeleted, true, "the account itself still went");
+});
+
+// ---------------------------------------------------------------------------
+// The push subscription rows, which GO
+// ---------------------------------------------------------------------------
+
+test("every device this account subscribed is unsubscribed, and nobody else's", async () => {
+  const db = makeDb(seedWithWork());
+
+  const summary = await deleteAccountCascade(auth, db, UID);
+
+  assert.equal(
+    summary.pushSubscriptionsDeleted,
+    2,
+    "both of this member's device rows are counted; a sweep that counted refs " +
+      "rather than rows, or that swept the whole collection, would say 3",
+  );
+  assert.equal(db.has("pushSubscriptions/a1b2c3phone"), false);
+  assert.equal(db.has("pushSubscriptions/d4e5f6laptop"), false);
+  assert.ok(
+    db.has("pushSubscriptions/99zzsomeone-else"),
+    "another member's device was unsubscribed by this teardown. The uid on a " +
+      "row is whoever last claimed the device, and only rows still claimed by " +
+      "the deleted account are theirs to remove.",
+  );
+});
+
+test("an account with no device subscribed reports zero and still tears down", async () => {
+  // Zero is also what a failed sweep reports, so it is measured against a
+  // collection that exists and holds somebody else's row.
+  const db = makeDb({
+    users: { [UID]: { uid: UID, role: "member" } },
+    pushSubscriptions: {
+      "99zzsomeone-else": {
+        endpoint: "https://fcm.example/theirs",
+        keys: { p256dh: "p", auth: "a" },
+        uid: OTHER,
+      },
+    },
+  });
+
+  const summary = await deleteAccountCascade(auth, db, UID);
+
+  assert.equal(summary.pushSubscriptionsDeleted, 0);
+  assert.equal(summary.warning, undefined, "nothing to sweep is not a failure");
+  assert.equal(summary.userDocDeleted, true);
+  assert.ok(db.has("pushSubscriptions/99zzsomeone-else"));
+});
+
+test("a push sweep that fails keeps the registration row for a retry", async () => {
+  // Best-effort, not fatal: the rest of the teardown must still happen, and
+  // the tracker row must stay so the sweep is run again. A stranded row is a
+  // live channel to a lock screen, so a quiet success over one would be the
+  // worst of the three outcomes.
+  const db = makeDb(seedWithWork());
+  const realCollection = db.collection;
+  db.collection = (name) => {
+    if (name === "pushSubscriptions") throw new Error("UNAVAILABLE: pushSubscriptions");
+    return realCollection(name);
+  };
+
+  const summary = await deleteAccountCascade(auth, db, UID);
+
+  assert.equal(summary.pushSubscriptionsDeleted, 0);
+  assert.equal(summary.userDocDeleted, true, "one failed sweep costs the others nothing");
+  assert.equal(summary.registrationDeleted, false);
+  assert.match(summary.warning ?? "", /registration row was kept/);
+});
+
+test("the cascade sweeps the collection the push store actually writes to", () => {
+  // The cascade cannot import `src/lib/push/store.ts` (it would pull the Admin
+  // SDK handle into this module graph), so the collection name is a literal in
+  // two files. Renaming one and not the other leaves every device subscribed
+  // to an account that no longer exists, with nothing failing.
+  const cascade = readFileSync(
+    join(REPO_ROOT, "src", "lib", "firestore", "accountDeletion.ts"),
+    "utf8",
+  );
+  const store = readFileSync(join(REPO_ROOT, "src", "lib", "push", "store.ts"), "utf8");
+
+  assert.match(
+    cascade,
+    /deleteOwnedCourseRows\(\s*db,\s*"pushSubscriptions",\s*uid,?\s*\)/,
+    "account deletion no longer sweeps the push subscription rows",
+  );
+  assert.match(
+    store,
+    /collection\("pushSubscriptions"\)/,
+    'the push store no longer writes to "pushSubscriptions", so the cascade above ' +
+      "is sweeping a collection nothing fills",
+  );
+  assert.match(
+    store,
+    /collection\("pushSubscriptions"\)\.where\("uid", "==", uid\)/,
+    "the store's own uid-keyed read is the shape the sweep copies; if the owner " +
+      "field is renamed, the sweep's default `uid` field stops matching anything",
+  );
 });
 
 // ---------------------------------------------------------------------------
