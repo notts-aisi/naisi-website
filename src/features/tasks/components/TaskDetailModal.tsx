@@ -40,6 +40,7 @@ import RichTextRender from "./RichTextRender";
 import TaskCalendar from "./TaskCalendar";
 import SubtaskBreakdown from "./SubtaskBreakdown";
 import SubtaskList from "./SubtaskList";
+import WorksheetTaskPanel from "@/features/worksheets/respond/WorksheetTaskPanel";
 import { useCommentsAndActivity } from "../hooks/useCommentsAndActivity";
 import { useTaskAttachments } from "../hooks/useTaskAttachments";
 import type { ActivityDoc } from "@/lib/firestore/taskActivity";
@@ -644,28 +645,44 @@ export default function TaskDetailModal({
             )}
           </section>
 
-          <section className={styles.subtaskSection}>
-            <h3 className={styles.sectionLabel}>Subtasks</h3>
-            {task.subtaskStats.total > 0 && (
-              <div className={styles.subtaskBreakdownWrapper}>
-                <SubtaskBreakdown breakdown={getSubtaskBreakdown(task)} variant="verbose" />
-              </div>
-            )}
-            {canSeeReviewerSection && task.reviewerUids.length > 0 && (
-              <ReviewerProgressSummary task={task} users={users} />
-            )}
-            <SubtaskList
+          {/* A WORKSHEET TASK HAS NO SUBTASKS, and that is the whole of
+              this branch. Its Done is decided by the worksheet's own
+              lifecycle (the submit, return and unfreeze routes move the
+              task from the response), so the block ritual and the review
+              matrix would be ceremony with no participants. The panel
+              takes the section's place; Attachments and Discussion below
+              are untouched, because a worksheet task is still a task
+              people talk on. */}
+          {task.artefact?.kind === "worksheet-response" ? (
+            <WorksheetTaskPanel
               task={task}
-              users={users}
               viewerUid={viewerUid}
-              viewerRole={viewerRole}
-              canEdit={canEditProgressFields}
-              canEditStructure={canEditAll}
-              canEditRoster={isAdmin || isCreator}
-              showMatrix={canSeeReviewerSection}
-              pendingReviewSubtaskIds={pendingSubtaskIds}
+              viewerIsStaff={isAdmin || isTaskReviewer}
             />
-          </section>
+          ) : (
+            <section className={styles.subtaskSection}>
+              <h3 className={styles.sectionLabel}>Subtasks</h3>
+              {task.subtaskStats.total > 0 && (
+                <div className={styles.subtaskBreakdownWrapper}>
+                  <SubtaskBreakdown breakdown={getSubtaskBreakdown(task)} variant="verbose" />
+                </div>
+              )}
+              {canSeeReviewerSection && task.reviewerUids.length > 0 && (
+                <ReviewerProgressSummary task={task} users={users} />
+              )}
+              <SubtaskList
+                task={task}
+                users={users}
+                viewerUid={viewerUid}
+                viewerRole={viewerRole}
+                canEdit={canEditProgressFields}
+                canEditStructure={canEditAll}
+                canEditRoster={isAdmin || isCreator}
+                showMatrix={canSeeReviewerSection}
+                pendingReviewSubtaskIds={pendingSubtaskIds}
+              />
+            </section>
+          )}
 
           <section>
             <h3 className={styles.sectionLabel}>Attachments</h3>

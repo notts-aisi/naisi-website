@@ -22,7 +22,7 @@ export default function RichTextEditor({ html, onChange, disabled }: Props) {
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
-        // Headings come from the Heading BLOCK, not inline — keeps the outer
+        // Headings come from the Heading BLOCK, not inline, which keeps the outer
         // document structure consistent with the block system.
         heading: false,
         // We don't need a code block here; inline code is useless for newsletters.
@@ -38,7 +38,7 @@ export default function RichTextEditor({ html, onChange, disabled }: Props) {
         openOnClick: false,
         // Non-inclusive mark: typing at the edge of a link won't extend it
         // (matches Gmail). The Link extension ties `inclusive` to `autolink`,
-        // so disabling autolink also disables URL auto-detection-as-you-type —
+        // so disabling autolink also disables URL auto-detection-as-you-type,
         // paste-to-link still works via `linkOnPaste` (default true).
         autolink: false,
         HTMLAttributes: {

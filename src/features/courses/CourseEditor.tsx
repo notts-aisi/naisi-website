@@ -14,7 +14,7 @@ import ResponsiveSelect, {
   type ResponsiveSelectOption,
 } from "@/components/ui/ResponsiveSelect";
 import { AdminLoadingBar, AdminPage } from "@/features/admin/adminList";
-import BlockEditor from "@/features/newsletter/editor/BlockEditor";
+import BlockEditor from "@/components/blocks/BlockEditor";
 import { isValidDateKey } from "@/lib/courses/weekPlan";
 import type { Block } from "@/lib/firestore/newsletterBlocks";
 import {

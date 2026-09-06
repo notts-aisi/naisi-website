@@ -1,4 +1,4 @@
-import { youtubeIdFromUrl, type Block } from "@/lib/firestore/newsletterBlocks";
+import { videoEmbedFromUrl, type Block } from "@/lib/firestore/newsletterBlocks";
 import styles from "./BlockView.module.css";
 
 /**
@@ -44,14 +44,17 @@ function BlockItem({ block }: { block: Block }) {
     case "divider":
       return <hr className={styles.divider} />;
     case "video": {
-      const id = youtubeIdFromUrl(block.url);
-      if (!id) return null;
+      // Both providers resolve through one helper, so a Loom URL embeds here
+      // exactly as a YouTube one does. A URL neither provider recognises still
+      // renders nothing at all, which is what this case has always done.
+      const embed = videoEmbedFromUrl(block.url);
+      if (!embed) return null;
       return (
         <figure className={styles.figure}>
           <div className={styles.videoWrap}>
             <iframe
               className={styles.videoFrame}
-              src={`https://www.youtube-nocookie.com/embed/${id}`}
+              src={embed.embedUrl}
               title={block.caption || "Video"}
               allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowFullScreen

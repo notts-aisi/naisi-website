@@ -1,0 +1,253 @@
+/* The worksheet field family: the parts the events FormRenderer stylesheet
+   does not have, and nothing it does.
+
+   WHY TWO STYLESHEETS RATHER THAN ONE. Choice rows, labels, legends and error
+   lines are imported straight from FormRenderer.module.css so an option on a
+   worksheet looks exactly like an option on an RSVP form (docs/worksheets.md:
+   "the same primitives ... so the two look like one system"). What lives here
+   is what a worksheet has and an RSVP form does not: option images, a rating
+   scale, a poll note, a word counter and image answers. Editing the events
+   stylesheet to hold them would have put all five on the frozen RSVP baseline
+   (docs/mobile-baseline-events.md), which is the outcome that document exists
+   to prevent.
+
+   Every interactive target here is at least 44px on its shortest side, because
+   this is a member-facing surface and the floor is enforced rather than
+   aspirational (docs/touch-targets.md). That includes the choice rows, which
+   is why `.optionRow` exists below: the events row they otherwise inherit is
+   sized for an RSVP form and comes out around 38px. */
+
+.counter {
+  align-self: flex-end;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.counterNear {
+  color: var(--color-warning);
+}
+
+/* === Choice rows === */
+
+/* Composed with the events `.checkRow`, never instead of it: the look is
+   shared on purpose, and only the SIZE differs. `.checkRow` pairs `--space-2`
+   of vertical padding with `--text-sm`, which comes out around 38px tall, and
+   docs/touch-targets.md puts every label used as a click target in the
+   ENFORCED set. So the floor is added here rather than there: raising it in
+   the events stylesheet would change the mobile-frozen RSVP baseline
+   (docs/mobile-baseline-events.md) from a file that has nothing to do with
+   RSVPs. Fixing the events row is worth doing on its own terms, in a pull
+   request that re-verifies that baseline. */
+.optionRow {
+  min-height: 2.75rem;
+}
+
+/* === Options with images === */
+
+/* An option that carries a picture stops being a row and becomes a tile: the
+   label sits under the image so the two read as one answer rather than as a
+   caption floating beside a box. */
+.optionWithImage {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.optionImage {
+  max-width: 100%;
+  max-height: 12rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  object-fit: cover;
+}
+
+.optionLabelRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* === Rating === */
+
+.ratingRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* `appearance: none` first, and the colours in classes rather than inline
+   styles: Safari paints its own grey button face over an inline background,
+   and Chromium never shows it (feedback_safari_button_appearance_reset). */
+.ratingButton {
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0 var(--space-2);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--text-base);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-quick) var(--ease-naisi),
+    background var(--dur-quick) var(--ease-naisi),
+    color var(--dur-quick) var(--ease-naisi);
+}
+
+.ratingButton:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+}
+
+.ratingButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.ratingButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ratingButtonOn {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.ratingEnds {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+/* === Poll === */
+
+.pollNote {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.pollResults {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  color: var(--color-text-subtle);
+}
+
+/* === Image answers === */
+
+.thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.thumb {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.thumbImg {
+  display: block;
+  max-width: 12rem;
+  max-height: 9rem;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+}
+
+.thumbRemove {
+  appearance: none;
+  -webkit-appearance: none;
+  min-height: 2.75rem;
+  padding: 0 var(--space-3);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.thumbRemove:hover:not(:disabled) {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.thumbRemove:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.thumbRemove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.uploadRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.uploadHint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+}
+
+.hiddenInput {
+  display: none;
+}
+
+/* An upload refusal, in the route's own words. Not the shared field error
+   below it: that one carries the ANSWER's validation message, and an image
+   that failed to upload has not become an answer yet. */
+.uploadError {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+  line-height: 1.5;
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  /* The option grid itself is the events one (two 11rem tiles fit across a
+     360px phone, which is the frozen RSVP baseline and is right for plain
+     labels). What changes is the picture: at half the width a 12rem-tall
+     image is mostly crop, so it comes down with the column. */
+  .optionImage {
+    max-height: 9rem;
+  }
+
+  /* The scale spreads to fill the width instead of leaving a ragged second
+     row of one button. */
+  .ratingRow {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(2.75rem, 1fr));
+  }
+
+  .thumbImg {
+    max-width: 100%;
+  }
+
+  .thumb {
+    flex: 1 1 100%;
+  }
+}

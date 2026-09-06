@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import Link from "next/link";
+import { useAuth } from "@/auth/AuthProvider";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import Dropdown, { type DropdownOption } from "@/components/ui/Dropdown";
@@ -80,6 +81,21 @@ function courseRefOf(task: TaskDoc): { cohortId: string; weekNumber: number } | 
   return ref;
 }
 
+/**
+ * The worksheet pointer, or null for every other card.
+ *
+ * `artefact` normalises to null for a kind this build cannot render and for an
+ * empty circulation id (see normalizeArtefact in tasks.ts), so a card either
+ * has a pointer worth following or has none. The pointer confers nothing on
+ * its own: whoever follows it still has to be allowed to read the response at
+ * the far end, which the circulation rules gate on being that response's
+ * recipient or the circulation's staff.
+ */
+function worksheetRefOf(task: TaskDoc): { circulationId: string } | null {
+  if (task.artefact?.kind !== "worksheet-response") return null;
+  return { circulationId: task.artefact.circulationId };
+}
+
 export default function TaskCard({
   task,
   projects,
@@ -100,6 +116,23 @@ export default function TaskCard({
   );
 
   const courseRef = useMemo(() => courseRefOf(task), [task]);
+  const worksheetRef = useMemo(() => worksheetRefOf(task), [task]);
+  /**
+   * Only the person who has to ANSWER the worksheet gets the link. A reviewer
+   * or an admin looking at the same card reaches it from the circulation page
+   * instead, and the panel in the detail modal takes them there: the respond
+   * page reads a response document keyed by the viewer's own uid, so for
+   * anybody else the link would open its not-found state.
+   *
+   * The viewer comes from the auth context rather than a prop because this
+   * card is rendered by the board, the phone board and My Work, and none of
+   * them pass a viewer today. The context is mounted in the root layout, so it
+   * is always present here; before it resolves `user` is null and the card
+   * simply shows no link, which is the same as the state it shows for
+   * everybody else.
+   */
+  const { user: viewer } = useAuth();
+  const viewerIsCompleter = viewer ? task.completerUids.includes(viewer.uid) : false;
 
   const completers = useMemo(
     () =>
@@ -193,6 +226,10 @@ export default function TaskCard({
           )}
           {task.kind === "instagram-post" && <Badge tone="warning">Insta post</Badge>}
           {task.kind === "instagram-story" && <Badge tone="warning">Insta story</Badge>}
+          {/* A worksheet task is machine-minted and always assignees-only, so
+              this badge is the only place a board says what the card is about.
+              Neutral, like the course marker: a marker, not a heading. */}
+          {worksheetRef && <Badge tone="neutral">Worksheet</Badge>}
           {/* A course mirror says "Course" rather than "Fellowship" — the
               badge row is where markers live, and this is the marker. The
               week NUMBER is carried by the link below instead: it is longer,
@@ -253,6 +290,24 @@ export default function TaskCard({
                   member may rename — this line stays true either way. */}
               Week {courseRef.weekNumber} in the course
               <span className={styles.courseNote}> — {ONE_WAY_NOTE}</span>
+              <span className={styles.courseArrow} aria-hidden="true">
+                ↗
+              </span>
+            </Link>
+          )}
+
+          {/* Same quiet-aside treatment as the course link above, and the same
+              `stopPropagation` reason: the whole Card is a click target that
+              opens the task modal, and without it a tap would navigate AND
+              leave a modal open behind it. The class is shared rather than
+              duplicated; its name predates this second user. */}
+          {worksheetRef && viewerIsCompleter && (
+            <Link
+              href={`/worksheets/respond/${encodeURIComponent(worksheetRef.circulationId)}`}
+              className={styles.courseLink}
+              onClick={(e) => e.stopPropagation()}
+            >
+              Open worksheet
               <span className={styles.courseArrow} aria-hidden="true">
                 ↗
               </span>

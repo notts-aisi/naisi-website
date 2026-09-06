@@ -1,0 +1,24 @@
+/* ============================================================
+   ActivityLine: the one-line "what have they done" summary.
+   ============================================================ */
+
+.line {
+  display: block;
+  min-width: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+  /* Wraps rather than ellipsing: every clause is a separate fact, and cutting
+     the sentence at "4 page ope…" loses the one somebody was reading. */
+  overflow-wrap: anywhere;
+}
+
+/* === Mobile ================================================
+   In a stacked card the line has the full width and no
+   neighbouring column to stay clear of, so it can breathe. */
+
+@media (max-width: 48rem) { /* --bp-md */
+  .line {
+    font-size: var(--text-sm);
+  }
+}

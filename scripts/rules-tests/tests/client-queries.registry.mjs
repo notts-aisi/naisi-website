@@ -186,6 +186,71 @@ function taskDoc(overrides = {}) {
 /** The id `useTask` and the task subcollection hooks address for a persona. */
 const taskId = (p) => `task__${p.uid}`;
 
+const WORKSHEET_ID = "guard-worksheet";
+const FOLDER_ID = "guard-folder";
+const CIRC_ID = "guard-circulation";
+
+/**
+ * A library worksheet as the editor saves it: somebody else's, and not private.
+ * `private` is written on every fixture because the read rule compares the
+ * field bare (`resource.data.private == false`) so the query-shape analyser can
+ * discharge it, and a document missing the key would deny by evaluation error.
+ */
+function worksheetDoc(overrides = {}) {
+  return {
+    title: "Guard worksheet",
+    description: "",
+    folderId: null,
+    authorUid: OTHER,
+    private: false,
+    items: [],
+    ...overrides,
+  };
+}
+
+/**
+ * One act of sending, as POST /api/worksheets/circulations writes it. Only
+ * `staffUids` matters to the rules; the rest is here so a fixture reads like a
+ * real document rather than a stub whose missing fields might be load-bearing.
+ */
+function circulationDoc(overrides = {}) {
+  return {
+    worksheetId: WORKSHEET_ID,
+    title: "Guard worksheet",
+    description: "",
+    items: [],
+    senderUid: OTHER,
+    authorUid: OTHER,
+    reviewerUids: [],
+    staffUids: [OTHER],
+    status: "open",
+    anonymity: "named",
+    source: { kind: "worksheet" },
+    recipientCount: 1,
+    submittedCount: 0,
+    reviewedCount: 0,
+    ...overrides,
+  };
+}
+
+/**
+ * One recipient's response. The uid is a parameter rather than an override
+ * because the DOCUMENT ID is the recipient's uid and the field has to agree
+ * with it: the rules bind the two structurally, and a fixture that let them
+ * drift would prove the wrong thing.
+ */
+function responseDoc(uid, overrides = {}) {
+  return {
+    uid,
+    circulationId: CIRC_ID,
+    taskId: `task__${uid}`,
+    state: "not-opened",
+    answers: {},
+    addedByUid: OTHER,
+    ...overrides,
+  };
+}
+
 export const REGISTRY = [
   // =====================================================================
   // The learner surfaces under /learn
@@ -1926,6 +1991,341 @@ export const REGISTRY = [
       await db.doc("tasks/guard-board-task").set(taskDoc());
     },
     run: (db) => db.collection("tasks").get(),
+  },
+
+  // =====================================================================
+  // Worksheets: the library, its shelves, and the circulations under them
+  //
+  // Two gates, and they are not the same one. The LIBRARY and the EDITOR sit
+  // under src/app/(app)/worksheets/(author)/layout.tsx, which admits committee
+  // and admin and nothing else, SU recognition deliberately not consulted (a
+  // worksheet holds questions, not member PII). The RESPOND page sits OUTSIDE
+  // that group, under the plain (app) shell, so its audience is every approved
+  // member: gating a recipient behind a committee role would lock them out of
+  // the thing they were sent. `permissions.circulateWorksheet` grants nothing
+  // in firestore.rules at all: sending is a route, so no permission persona is
+  // named on any entry below.
+  // =====================================================================
+  {
+    id: "worksheets-library-unfiltered",
+    file: "src/features/worksheets/hooks/useWorksheets.ts",
+    path: "worksheets",
+    clauses: [],
+    reason:
+      "The library list as an ADMIN issues it. /worksheets admits committee and admin alike, but only the admin branch of the worksheets read rule is resource-independent, so this unfiltered shape is refused for every committee member, with an empty library and a console line nobody reads. That is why the hook holds two literal call sites rather than one query it appends a clause to. Both halves are registered so a later edit that collapses the branch takes the whole library away from the committee visibly, here, rather than in production.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc(`worksheets/${WORKSHEET_ID}`).set(worksheetDoc());
+    },
+    run: (db) => db.collection("worksheets").get(),
+  },
+  {
+    id: "worksheets-library-not-private",
+    file: "src/features/worksheets/hooks/useWorksheets.ts",
+    path: "worksheets",
+    clauses: ["where(private,==)"],
+    reason:
+      "The same library list as every committee member runs it, and the clause is not a filter the caller may drop. Firestore discharges the rule's bare `resource.data.private == false` from a matching `where('private','==',false)` and refuses the whole listen without it. A non-admin author does not see their own private worksheets in this list and that is a non-gap: `private` is admin-only to set in both directions, so a committee member can never own one. Their route to a private worksheet an admin made is the `get` on the editor page, not this list.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "allowed",
+      "su-committee": "allowed",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc(`worksheets/${WORKSHEET_ID}`).set(worksheetDoc());
+    },
+    run: (db) => db.collection("worksheets").where("private", "==", false).get(),
+  },
+  {
+    id: "worksheet-doc-shared",
+    sharesKeyWith: "worksheet-doc-private",
+    file: "src/features/worksheets/hooks/useWorksheet.ts",
+    path: "worksheets/{worksheetId}",
+    clauses: [],
+    docShape:
+      "A worksheet somebody else wrote with `private: false`: the ordinary library document, which the editor page opens so a committee member can read it and take a copy of it.",
+    reason:
+      "The editor page's document listen at /worksheets/[worksheetId], gated to committee and admin. A `get` rather than a list, which is what lets the rule's author branch apply to a single document the library list could never show. The page tells a non-author 'This one is somebody else's. You can read it and take a copy to work on', so a refusal for the committee persona here would make that sentence false, and the row bodies unreadable.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "allowed",
+      "su-committee": "allowed",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc(`worksheets/${WORKSHEET_ID}`).set(worksheetDoc());
+    },
+    run: (db) => db.doc(`worksheets/${WORKSHEET_ID}`).get(),
+  },
+  {
+    id: "worksheet-doc-private",
+    sharesKeyWith: "worksheet-doc-shared",
+    file: "src/features/worksheets/hooks/useWorksheet.ts",
+    path: "worksheets/{worksheetId}",
+    clauses: [],
+    docShape:
+      "The same path holding an admin's private worksheet, authored by somebody else. `private` is admin-only to set at create and at update, so this is a document no committee member can own or produce.",
+    reason:
+      "The fixture is the variable here, not the shape: the identical call is allowed on a shared worksheet and refused on a private one for everybody but an admin. The editor page renders one screen for a refusal and for a missing document on purpose, because the rule dereferences `resource.data.private` and a client cannot tell the two apart. Registered so that widening the read rule to make private worksheets browsable shows up as a changed outcome rather than as nobody noticing.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc(`worksheets/${WORKSHEET_ID}`).set(worksheetDoc({ private: true }));
+    },
+    run: (db) => db.doc(`worksheets/${WORKSHEET_ID}`).get(),
+  },
+  {
+    id: "worksheet-folders-list",
+    file: "src/features/worksheets/hooks/useWorksheetFolders.ts",
+    path: "worksheetFolders",
+    clauses: [],
+    reason:
+      "The shelf chips above the library. `worksheetFolders` is readable by committee and admin with no per-document condition, so there is no clause for a query to carry and none is written: a folder is shared furniture rather than an owned document, deliberately, so that a shelf whose maker has left the committee is still one somebody can rename. Registered so that adding an ownership test to the folder rule later fails here rather than as a chip row that quietly stops rendering.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "allowed",
+      "su-committee": "allowed",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc(`worksheetFolders/${FOLDER_ID}`).set({
+        name: "Guard shelf",
+        createdByUid: OTHER,
+      });
+    },
+    run: (db) => db.collection("worksheetFolders").get(),
+  },
+  {
+    id: "worksheets-folder-refile-scan",
+    file: "src/features/worksheets/worksheetMutations.ts",
+    path: "worksheets",
+    clauses: ["where(folderId,==)", "where(authorUid,==)"],
+    reason:
+      "`deleteFolder` reads the caller's OWN worksheets off a shelf before deleting it, and `authorUid == self` does two jobs at once: it scopes the re-file to updates the caller is certainly allowed to make, and it is the clause Firestore proves the read rule's author branch from, so the read is granted whether or not those worksheets are private. An earlier draft carried `private == false` instead, which made any shelf holding a second author's worksheet undeletable by anybody but an admin. Same library gate: committee or admin.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "allowed",
+      "su-committee": "allowed",
+      admin: "allowed",
+    },
+    seed: async (db, p) => {
+      await db
+        .doc(`worksheets/${WORKSHEET_ID}`)
+        .set(worksheetDoc({ folderId: FOLDER_ID, authorUid: p.uid }));
+    },
+    run: (db, p) =>
+      db
+        .collection("worksheets")
+        .where("folderId", "==", FOLDER_ID)
+        .where("authorUid", "==", p.uid)
+        .get(),
+  },
+  {
+    id: "my-circulations-staff-list",
+    file: "src/features/worksheets/hooks/useMyCirculations.ts",
+    path: "circulations",
+    clauses: ["where(staffUids,array-contains)"],
+    reason:
+      "The Sent tab on /worksheets: every circulation the viewer is staff on, which is wider than the ones they sent because a reviewer needs the door to the sends they are expected to read. `allow list: if isAdmin() || isStaff()` and the staff half is resource-dependent, so `array-contains` on staffUids is what discharges it and the listen is refused wholesale without it. Note what the rule does NOT test: role. Any signed-in account named in staffUids may run this shape, and the committee gate on the page is what keeps a pending or plain member off the tab.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "allowed",
+      member: "allowed",
+      committee: "allowed",
+      "su-committee": "allowed",
+      admin: "allowed",
+    },
+    seed: async (db, p) => {
+      await db.doc(`circulations/${CIRC_ID}`).set(circulationDoc({ staffUids: [p.uid] }));
+    },
+    run: (db, p) =>
+      db.collection("circulations").where("staffUids", "array-contains", p.uid).get(),
+  },
+  {
+    id: "worksheet-circulations-staff-list",
+    file: "src/features/worksheets/hooks/useWorksheetCirculations.ts",
+    path: "circulations",
+    clauses: ["where(worksheetId,==)", "where(staffUids,array-contains)"],
+    reason:
+      "The circulations of ONE worksheet, listed under the editor so an author can see where their questions have gone. `worksheetId` narrows it and `staffUids array-contains` is the clause the list rule is proved from, exactly as on the Sent tab. Equality plus array-contains with no orderBy merges from the automatic single-field indexes, so this shape owes no composite index and tests/firestore-indexes.test.mjs agrees; the sort is client-side for the same reason.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "allowed",
+      member: "allowed",
+      committee: "allowed",
+      "su-committee": "allowed",
+      admin: "allowed",
+    },
+    seed: async (db, p) => {
+      await db.doc(`circulations/${CIRC_ID}`).set(circulationDoc({ staffUids: [p.uid] }));
+    },
+    run: (db, p) =>
+      db
+        .collection("circulations")
+        .where("worksheetId", "==", WORKSHEET_ID)
+        .where("staffUids", "array-contains", p.uid)
+        .get(),
+  },
+  {
+    id: "circulation-doc-staff",
+    sharesKeyWith: "circulation-doc-recipient",
+    file: "src/features/worksheets/hooks/useCirculation.ts",
+    path: "circulations/{circulationId}",
+    clauses: [],
+    docShape:
+      "One circulation whose `staffUids` names the caller: the sender, the worksheet's author, or a reviewer they named. That array is written by the routes only, and every staff rule keys off it.",
+    reason:
+      "The circulation page's document listen at /worksheets/[worksheetId]/circulations/[circulationId]. `get` and `list` are split on this collection precisely so this call can admit a recipient as well as staff without putting an exists() inside a list rule, where it would blow the twenty-document access budget once a Sent tab grew past twenty rows. The recipient half is the paired entry.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "allowed",
+      member: "allowed",
+      committee: "allowed",
+      "su-committee": "allowed",
+      admin: "allowed",
+    },
+    seed: async (db, p) => {
+      await db.doc(`circulations/${CIRC_ID}`).set(circulationDoc({ staffUids: [p.uid] }));
+    },
+    run: (db) => db.doc(`circulations/${CIRC_ID}`).get(),
+  },
+  {
+    id: "circulation-doc-recipient",
+    sharesKeyWith: "circulation-doc-staff",
+    file: "src/features/worksheets/hooks/useCirculation.ts",
+    path: "circulations/{circulationId}",
+    clauses: [],
+    docShape:
+      "The same circulation with `staffUids` naming somebody else, plus a `responses/{caller}` document. That response IS the recipient's proof of access: there is no roster array on the circulation to test against.",
+    reason:
+      "The respond page and the worksheet task panel read the circulation as the RECIPIENT, who is not staff and may be any approved member, because /worksheets/respond sits outside the committee group on purpose. The rule proves them with one exists() on a path built from their own uid, so it cannot be aimed at anybody else's send. Pending is recorded as allowed because that is what the rule says: the (app) shell redirects a pending account before the page renders, and nothing mints a response for one today (the circulate route addresses committee and admins only).",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "allowed",
+      member: "allowed",
+      committee: "allowed",
+      "su-committee": "allowed",
+      admin: "allowed",
+    },
+    seed: async (db, p) => {
+      await db.doc(`circulations/${CIRC_ID}`).set(circulationDoc());
+      await db.doc(`circulations/${CIRC_ID}/responses/${p.uid}`).set(responseDoc(p.uid));
+    },
+    run: (db) => db.doc(`circulations/${CIRC_ID}`).get(),
+  },
+  {
+    id: "circulation-responses-staff",
+    sharesKeyWith: "circulation-responses-recipient",
+    file: "src/features/worksheets/hooks/useCirculationResponses.ts",
+    path: "circulations/{circulationId}/responses",
+    clauses: [],
+    reason:
+      "The recipient table on the circulation page: every response on one send, unfiltered. Staff read the whole subcollection and the rule discharges that with ONE get() of the parent circulation however many rows come back, which is why no clause is written and why none would help. Ordering is client-side by addedAt, because an orderBy would drop any response written without the field from the listen entirely, and a recipient missing from the table is a person nobody chases.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "allowed",
+      member: "allowed",
+      committee: "allowed",
+      "su-committee": "allowed",
+      admin: "allowed",
+    },
+    seed: async (db, p) => {
+      await db.doc(`circulations/${CIRC_ID}`).set(circulationDoc({ staffUids: [p.uid] }));
+      await db.doc(`circulations/${CIRC_ID}/responses/${OTHER}`).set(responseDoc(OTHER));
+    },
+    run: (db) => db.collection(`circulations/${CIRC_ID}/responses`).get(),
+  },
+  {
+    id: "circulation-responses-recipient",
+    sharesKeyWith: "circulation-responses-staff",
+    file: "src/features/worksheets/hooks/useCirculationResponses.ts",
+    path: "circulations/{circulationId}/responses",
+    clauses: [],
+    reason:
+      "The same listen issued by a RECIPIENT, which is refused and has to be. `isOwner()` is per-document-id, and a document id is not something a query constrains, so a recipient's list of the subcollection is denied wholesale rather than trimmed to their own row: one recipient must never enumerate what the others wrote. This is why CirculationPage passes null to the hook until it knows the viewer is staff. Written down as an expected refusal so that making the table load for everybody is a visible decision rather than a one-line rule edit.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db, p) => {
+      await db.doc(`circulations/${CIRC_ID}`).set(circulationDoc());
+      await db.doc(`circulations/${CIRC_ID}/responses/${p.uid}`).set(responseDoc(p.uid));
+    },
+    run: (db) => db.collection(`circulations/${CIRC_ID}/responses`).get(),
+  },
+  {
+    id: "response-doc-own",
+    sharesKeyWith: "response-doc-staff",
+    file: "src/features/worksheets/hooks/useResponse.ts",
+    path: "circulations/{circulationId}/responses/{responseUid}",
+    clauses: [],
+    docShape:
+      "The caller's own response, at the document id that IS their uid, holding the answers the respond page autosaves into and the state that freezes it once submitted.",
+    reason:
+      "The respond page's own read at /worksheets/respond/[circulationId], which sits outside the committee gate because a recipient may be any approved member. `isOwner()` is structural (the id is the uid), so this branch needs no lookup and cannot be aimed at somebody else's answers. Pending is allowed by the rule and kept off the page by the (app) shell, the same split as the circulation get above.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "allowed",
+      member: "allowed",
+      committee: "allowed",
+      "su-committee": "allowed",
+      admin: "allowed",
+    },
+    seed: async (db, p) => {
+      await db.doc(`circulations/${CIRC_ID}`).set(circulationDoc());
+      await db.doc(`circulations/${CIRC_ID}/responses/${p.uid}`).set(responseDoc(p.uid));
+    },
+    run: (db, p) => db.doc(`circulations/${CIRC_ID}/responses/${p.uid}`).get(),
+  },
+  {
+    id: "response-doc-staff",
+    sharesKeyWith: "response-doc-own",
+    file: "src/features/worksheets/hooks/useResponse.ts",
+    path: "circulations/{circulationId}/responses/{responseUid}",
+    clauses: [],
+    docShape:
+      "Somebody else's response, addressed by their uid: what WorksheetTaskPanel passes when a reviewer opens the task (task.completerUids[0]), and what the response drawer reads on the circulation page.",
+    reason:
+      "The staff half of the same call, and the fixture is what decides which branch runs. This one takes `isParentStaff()`, which costs one get() of the parent circulation, so a caller who is neither the owner nor staff is refused, and a caller whose parent circulation does not exist is refused by evaluation error rather than served an empty document. The cross-recipient refusal itself (one recipient reading another's answers) is proven in scripts/rules-tests/tests/worksheets.test.mjs; what this entry adds is that the hook's own shape reaches the staff branch.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "allowed",
+      member: "allowed",
+      committee: "allowed",
+      "su-committee": "allowed",
+      admin: "allowed",
+    },
+    seed: async (db, p) => {
+      await db.doc(`circulations/${CIRC_ID}`).set(circulationDoc({ staffUids: [p.uid] }));
+      await db.doc(`circulations/${CIRC_ID}/responses/${OTHER}`).set(responseDoc(OTHER));
+    },
+    run: (db) => db.doc(`circulations/${CIRC_ID}/responses/${OTHER}`).get(),
   },
 ];
 

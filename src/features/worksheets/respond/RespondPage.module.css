@@ -1,0 +1,286 @@
+/* The recipient's page.
+
+   SINGLE COLUMN AT EVERY WIDTH. This is a reading-and-writing surface, and a
+   question with a picture, a paragraph and a text box in it is already as wide
+   as it wants to be; a second column would only put something else in the
+   corner of the eye. The desktop version is the mobile version with more air,
+   which is why there is very little in the media block at the bottom.
+
+   NOTHING SCROLLS SIDEWAYS. Images inside answers and inside question bodies
+   are capped at 100% width, and the one element that could outgrow the column
+   (a wide option grid) wraps. See the no-horizontal-overflow rule in
+   CLAUDE.md. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  /* The bar at the bottom is sticky, so the last question needs room to clear
+     it when the page is scrolled to the end. */
+  padding-bottom: var(--space-4);
+}
+
+/* === Header === */
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-3xl);
+  line-height: var(--leading-tight);
+}
+
+.description {
+  margin: 0;
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+  /* Written in a textarea, so the line breaks the sender typed are meaning. */
+  white-space: pre-wrap;
+}
+
+.metaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--color-text-subtle);
+}
+
+/* === Progress === */
+
+.progressRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.progressMeta {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The per-page count, quieter than the whole-worksheet one above it: the bar
+   and its numbers are the headline, this is the footnote. */
+.pageMeta {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+/* === Banners === */
+
+.banner {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--color-border-strong);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.bannerDone {
+  border-left-color: var(--color-success);
+  background: var(--color-success-soft);
+}
+
+.bannerNotice {
+  border-left-color: var(--color-warning);
+  background: var(--color-warning-soft);
+}
+
+/* === One page of items === */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  /* Same reason as .question below: a flex child defaults to a min-width of
+     its content, so a wide image or an unbroken string inside a section body
+     would widen the column and take the document with it. `min-width: 0` lets
+     the column shrink; `overflow-wrap` is what makes the string inside it
+     break rather than paint straight past the edge. Both are needed, and a
+     pasted URL in an author's body is the ordinary way to find that out. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sectionHeading {
+  margin: 0;
+  font-size: var(--text-xl);
+  line-height: var(--leading-snug);
+}
+
+.question {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  /* min-width: 0 so a long word inside a question body cannot widen the
+     column, and overflow-wrap so it breaks instead of overflowing it. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.questionTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-snug);
+  font-weight: 600;
+}
+
+.required {
+  color: var(--color-danger);
+}
+
+/* === Returned feedback === */
+
+.feedback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.feedbackHead {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+}
+
+.feedbackText {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  line-height: var(--leading-normal);
+  white-space: pre-wrap;
+}
+
+/* === The bar === */
+
+/* Sticky at every width, not only on a phone: a worksheet is a long page
+   everywhere, and Save being somewhere below the fold is how somebody closes
+   a tab believing they saved. `bottom` carries the safe-area inset so the bar
+   floats clear of the home indicator rather than under it. */
+.bar {
+  position: sticky;
+  bottom: env(safe-area-inset-bottom, 0px);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+}
+
+.barSpacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.barActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.errorLine {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+  line-height: var(--leading-normal);
+}
+
+/* Why a control in the bar below is unavailable, said where the control is.
+   Muted rather than danger: nothing has gone wrong, the worksheet is closed. */
+.barNote {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+}
+
+/* === Confirm dialog === */
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+}
+
+.confirmTitle {
+  margin: 0;
+  font-size: var(--text-xl);
+}
+
+.confirmBody {
+  margin: 0;
+  color: var(--color-text-muted);
+  line-height: var(--leading-normal);
+}
+
+.confirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .title {
+    font-size: var(--text-2xl);
+  }
+
+  .page {
+    gap: var(--space-5);
+  }
+
+  /* The bar becomes the page's only chrome: three equal controls, each over
+     the 44px floor, sitting inside the safe area. The autosave's SavedFlash
+     goes with the spacer that holds it, because at this width the row cannot
+     spare the space for a sentence that appears and disappears, and the Save
+     button's own green flash already says the same thing. An autosave FAILURE
+     is a different matter and stays, above the bar, at every width. */
+  .bar {
+    gap: var(--space-2);
+    padding: var(--space-2);
+  }
+
+  .barActions {
+    flex: 1 1 auto;
+    gap: var(--space-2);
+  }
+
+  .barSpacer {
+    display: none;
+  }
+
+  .confirmActions {
+    flex-direction: column-reverse;
+  }
+}

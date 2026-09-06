@@ -17,7 +17,7 @@ import {
   type CourseTemplateDoc,
   type CourseTemplateId,
 } from "@/lib/firestore/courseEmails";
-import BlockEditor from "@/features/newsletter/editor/BlockEditor";
+import BlockEditor from "@/components/blocks/BlockEditor";
 import EmailPreview from "@/features/newsletter/editor/EmailPreview";
 import {
   admissionsTokensFor,

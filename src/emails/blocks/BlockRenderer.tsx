@@ -6,10 +6,10 @@ import {
   Section,
   Text,
 } from "@react-email/components";
-import { youtubeIdFromUrl, type Block } from "@/lib/firestore/newsletterBlocks";
+import { videoEmbedFromUrl, type Block } from "@/lib/firestore/newsletterBlocks";
 
 /**
- * Render a single block as email-safe React Email JSX. All styles are inline —
+ * Render a single block as email-safe React Email JSX. All styles are inline:
  * Gmail and Outlook strip <style> blocks.
  */
 export default function BlockRenderer({ block }: { block: Block }) {
@@ -28,25 +28,30 @@ export default function BlockRenderer({ block }: { block: Block }) {
 }
 
 function VideoBlockView({ block }: { block: Extract<Block, { type: "video" }> }) {
-  const id = youtubeIdFromUrl(block.url);
-  if (!id) return null;
-  const href = `https://www.youtube.com/watch?v=${id}`;
-  // Email clients strip iframes, so fall back to a clickable thumbnail.
-  const thumb = `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+  const embed = videoEmbedFromUrl(block.url);
+  if (!embed) return null;
+  // Email clients strip iframes, so a video block is a link in the inbox
+  // whichever provider it came from. YouTube gets a clickable thumbnail on top
+  // of that link; Loom publishes no thumbnail endpoint, so a Loom block is the
+  // caption line and the link alone. Rendering a placeholder image instead
+  // would put a broken picture in somebody's inbox to say nothing.
+  const label = embed.provider === "loom" ? "Watch on Loom" : "Watch on YouTube";
   return (
     <Section style={sectionStyle}>
-      <EmailLink href={href} style={{ textDecoration: "none" }}>
-        <Img
-          src={thumb}
-          alt={block.caption || "Watch on YouTube"}
-          width="100%"
-          style={imageStyle}
-        />
-      </EmailLink>
+      {embed.thumbnailUrl && (
+        <EmailLink href={embed.watchUrl} style={{ textDecoration: "none" }}>
+          <Img
+            src={embed.thumbnailUrl}
+            alt={block.caption || label}
+            width="100%"
+            style={imageStyle}
+          />
+        </EmailLink>
+      )}
       <Text style={captionStyle}>
         {block.caption ? `${block.caption} · ` : ""}
-        <EmailLink href={href} style={{ color: "#2563eb" }}>
-          Watch on YouTube
+        <EmailLink href={embed.watchUrl} style={{ color: "#2563eb" }}>
+          {label}
         </EmailLink>
       </Text>
     </Section>

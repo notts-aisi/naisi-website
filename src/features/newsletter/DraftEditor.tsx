@@ -32,7 +32,7 @@ import {
   submitDraftForReview,
   updateDraft,
 } from "./draftMutations";
-import BlockEditor from "./editor/BlockEditor";
+import BlockEditor from "@/components/blocks/BlockEditor";
 import EmailPreview from "./editor/EmailPreview";
 import styles from "../../app/(app)/newsletter/newsletter.module.css";
 

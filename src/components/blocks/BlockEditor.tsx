@@ -5,7 +5,7 @@ import Card from "@/components/ui/Card";
 import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import {
   emptyBlock,
-  youtubeIdFromUrl,
+  videoEmbedFromUrl,
   type Block,
   type BlockType,
 } from "@/lib/firestore/newsletterBlocks";
@@ -20,19 +20,51 @@ type Props = {
   blocks: Block[];
   onChange: (next: Block[]) => void;
   disabled?: boolean;
+  /**
+   * Restrict which block types the add menu and the insert divider offer.
+   * Omitted means every type, so every caller that predates this prop keeps
+   * exactly the menu it had.
+   *
+   * It filters the MENU, not the list: a block of an excluded type already in
+   * `blocks` still renders its form. A body pasted from somewhere with a wider
+   * menu is somebody's content, and hiding its editor would leave them a block
+   * they can see, cannot change, and cannot work out how to delete.
+   */
+  allowedTypes?: BlockType[];
+  /**
+   * Tighter chrome for a block editor nested inside another editor's row
+   * (a worksheet question's body, where the block list is a FIELD rather than
+   * the page). Smaller headers, less padding, and the add menu as one row of
+   * small buttons instead of a two-step grid, because the enclosing row
+   * already carries the "what am I editing" framing that the grid's headline
+   * and hints supply on a full-page editor.
+   */
+  compact?: boolean;
 };
 
 const ADD_MENU: Array<{ type: BlockType; label: string; hint: string }> = [
   { type: "heading", label: "Heading", hint: "Big section title" },
   { type: "richText", label: "Rich text", hint: "Paragraphs, lists, links" },
   { type: "image", label: "Image", hint: "Uploaded photo with caption" },
-  { type: "video", label: "Video", hint: "Embed a YouTube URL" },
+  { type: "video", label: "Video", hint: "Embed a YouTube or Loom URL" },
   { type: "divider", label: "Divider", hint: "Thin line between sections" },
 ];
 
-export default function BlockEditor({ draftId, storagePrefix, blocks, onChange, disabled }: Props) {
+export default function BlockEditor({
+  draftId,
+  storagePrefix,
+  blocks,
+  onChange,
+  disabled,
+  allowedTypes,
+  compact,
+}: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAfterIndex, setMenuAfterIndex] = useState<number | null>(null);
+
+  const menuItems = allowedTypes
+    ? ADD_MENU.filter((item) => allowedTypes.includes(item.type))
+    : ADD_MENU;
 
   function patchBlock(index: number, patch: Partial<Block>) {
     const next = blocks.slice();
@@ -65,8 +97,8 @@ export default function BlockEditor({ draftId, storagePrefix, blocks, onChange, 
   }
 
   return (
-    <div className={styles.wrap}>
-      {blocks.length === 0 && (
+    <div className={`${styles.wrap} ${compact ? styles.compact : ""}`}>
+      {blocks.length === 0 && !compact && (
         <Card padding="md">
           <p style={{ color: "var(--color-text-muted)", margin: 0 }}>
             No content yet. Add your first block below.
@@ -123,6 +155,8 @@ export default function BlockEditor({ draftId, storagePrefix, blocks, onChange, 
           </div>
 
           <InsertDivider
+            items={menuItems}
+            compact={compact}
             open={menuOpen && menuAfterIndex === i}
             onOpen={() => {
               setMenuOpen(true);
@@ -140,6 +174,8 @@ export default function BlockEditor({ draftId, storagePrefix, blocks, onChange, 
 
       {(blocks.length === 0 || menuAfterIndex === null) && (
         <AddBlockMenu
+          items={menuItems}
+          compact={compact}
           open={menuOpen && menuAfterIndex === null}
           onOpen={() => {
             setMenuOpen(true);
@@ -196,8 +232,8 @@ function BlockForm({
               value={String(block.level)}
               onChange={(next) => onChange({ level: Number(next) as 2 | 3 })}
               options={[
-                { value: "2", label: "Major (H2) — big" },
-                { value: "3", label: "Minor (H3) — smaller" },
+                { value: "2", label: "Major (H2), big" },
+                { value: "3", label: "Minor (H3), smaller" },
               ]}
               disabled={disabled}
               ariaLabel="Heading size"
@@ -239,18 +275,20 @@ function BlockForm({
         </div>
       );
     case "video": {
-      const videoId = youtubeIdFromUrl(block.url);
+      // One resolver for both providers, so the preview an author sees here is
+      // built from exactly the URL the public renderer will build from.
+      const embed = videoEmbedFromUrl(block.url);
       return (
         <div className={styles.fields}>
           <label className={styles.fieldLabel}>
-            <span>YouTube URL</span>
+            <span>YouTube or Loom URL</span>
             <input
               type="url"
               className={styles.fieldInput}
               value={block.url}
               onChange={(e) => onChange({ url: e.target.value })}
               disabled={disabled}
-              placeholder="https://www.youtube.com/watch?v=…"
+              placeholder="https://www.youtube.com/watch?v=… or https://www.loom.com/share/…"
             />
           </label>
           <label className={styles.fieldLabel}>
@@ -265,7 +303,7 @@ function BlockForm({
             />
           </label>
           {block.url &&
-            (videoId ? (
+            (embed ? (
               <div
                 style={{
                   position: "relative",
@@ -277,7 +315,7 @@ function BlockForm({
                 }}
               >
                 <iframe
-                  src={`https://www.youtube-nocookie.com/embed/${videoId}`}
+                  src={embed.embedUrl}
                   title={block.caption || "Video preview"}
                   allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
@@ -293,8 +331,8 @@ function BlockForm({
               </div>
             ) : (
               <p style={{ color: "var(--color-danger)", fontSize: "var(--text-sm)", margin: 0 }}>
-                That doesn&apos;t look like a YouTube URL. Paste a link like
-                https://www.youtube.com/watch?v=… or https://youtu.be/…
+                That doesn&apos;t look like a YouTube or Loom URL. Paste a link like
+                https://www.youtube.com/watch?v=… or https://www.loom.com/share/…
               </p>
             ))}
         </div>
@@ -303,19 +341,62 @@ function BlockForm({
   }
 }
 
+type MenuItem = { type: BlockType; label: string; hint: string };
+
+/**
+ * The compact shape: one row of small buttons, each adding its type outright.
+ * No open/close step, because the two-step menu exists to give a full-page
+ * editor a headline and per-type hints, and inside a question row there is no
+ * room for either and no ambiguity about what is being added.
+ */
+function AddChips({
+  items,
+  onPick,
+  disabled,
+}: {
+  items: MenuItem[];
+  onPick: (type: BlockType) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className={styles.addChips}>
+      {items.map((item) => (
+        <button
+          key={item.type}
+          type="button"
+          className={styles.addChip}
+          onClick={() => onPick(item.type)}
+          disabled={disabled}
+          title={item.hint}
+        >
+          + {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function AddBlockMenu({
+  items,
+  compact,
   open,
   onOpen,
   onClose,
   onPick,
   disabled,
 }: {
+  items: MenuItem[];
+  compact?: boolean;
   open: boolean;
   onOpen: () => void;
   onClose: () => void;
   onPick: (type: BlockType) => void;
   disabled?: boolean;
 }) {
+  if (items.length === 0) return null;
+  if (compact) {
+    return <AddChips items={items} onPick={onPick} disabled={disabled} />;
+  }
   if (!open) {
     return (
       <button
@@ -337,7 +418,7 @@ function AddBlockMenu({
         </button>
       </div>
       <div className={styles.addMenuGrid}>
-        {ADD_MENU.map((item) => (
+        {items.map((item) => (
           <button
             key={item.type}
             type="button"
@@ -354,18 +435,23 @@ function AddBlockMenu({
 }
 
 function InsertDivider({
+  items,
+  compact,
   open,
   onOpen,
   onClose,
   onPick,
   disabled,
 }: {
+  items: MenuItem[];
+  compact?: boolean;
   open: boolean;
   onOpen: () => void;
   onClose: () => void;
   onPick: (type: BlockType) => void;
   disabled?: boolean;
 }) {
+  if (items.length === 0) return null;
   if (!open) {
     return (
       <div className={styles.insertRow}>
@@ -381,6 +467,16 @@ function InsertDivider({
       </div>
     );
   }
+  if (compact) {
+    return (
+      <div className={styles.insertRow}>
+        <AddChips items={items} onPick={onPick} disabled={disabled} />
+        <button type="button" onClick={onClose} className={styles.addMenuClose}>
+          Cancel
+        </button>
+      </div>
+    );
+  }
   return (
     <div className={styles.insertRow}>
       <div className={styles.addMenu}>
@@ -391,7 +487,7 @@ function InsertDivider({
           </button>
         </div>
         <div className={styles.addMenuGrid}>
-          {ADD_MENU.map((item) => (
+          {items.map((item) => (
             <button
               key={item.type}
               type="button"

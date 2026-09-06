@@ -10,12 +10,19 @@ import { marked } from "marked";
  * recognised: see `videoEmbedFromUrl` at the foot of this file, which is the
  * one place that decides which provider a pasted URL belongs to.
  *
- * NO RENDERER CALLS `videoEmbedFromUrl` YET. Every video block on the site
- * still resolves through `youtubeIdFromUrl`, so a pasted Loom URL is accepted
- * by this module and rendered by nothing: the resolver landed first, with the
- * worksheets data model, and the surfaces adopt it in the wave that builds the
- * editors. Said here because "Loom is recognised" is true of this file and not
- * yet true of anything a reader can see.
+ * THREE SURFACES RESOLVE A VIDEO BLOCK, and all three now go through
+ * `videoEmbedFromUrl`: `src/features/events/BlockView.tsx` (the web renderer,
+ * used by events and courses), `src/emails/blocks/BlockRenderer.tsx` (email,
+ * where Loom becomes a plain link because iframes are blocked) and the preview
+ * inside `src/components/blocks/BlockEditor.tsx`. A Loom URL pasted into any
+ * block editor therefore renders everywhere a YouTube one does.
+ *
+ * The remaining `youtubeIdFromUrl` callers are DELIBERATE holdouts and belong
+ * to a different model: `CourseMaterial` in `src/lib/firestore/courses.ts` is
+ * not a `Block`, it validates YouTube-only on save (`MaterialListEditor`,
+ * `GroupWeekEditor`) and renders YouTube-only (`WeekCurriculum`). Widening
+ * those means widening the save validation with them, which is a course
+ * decision rather than a block one, so they are left alone.
  */
 
 export type BlockType = "heading" | "richText" | "image" | "divider" | "video";
