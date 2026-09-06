@@ -85,8 +85,10 @@ const STUBS = new Map([
   ],
   [
     "@/lib/email/admissionEmails",
-    "export const admissionApplicationUrl = (roundId, surface) =>\n" +
-      "  `https://naisi.uk/${surface === 'apply' ? 'apply' : 'applications'}/${roundId}`;\n" +
+    "export const admissionApplicationPath = (roundId, surface) =>\n" +
+      "  `/${surface === 'apply' ? 'apply' : 'applications'}/${roundId}`;\n" +
+      "export const admissionApplicationUrl = (roundId, surface) =>\n" +
+      "  `https://naisi.uk${admissionApplicationPath(roundId, surface)}`;\n" +
       "export const sendAdmissionEmail = async (opts) => {\n" +
       "  const sends = (globalThis.__sends ??= []);\n" +
       "  sends.push(opts);\n" +
@@ -105,6 +107,12 @@ const STUBS = new Map([
       "export const sendWorksheetDueSoonEmail = async () => 'sent';",
   ],
   ["@/lib/push/taskNotifications", "export const mirrorTaskEmailToPush = async () => {};"],
+  // The stage-release job's push door, which the registry pulls in the same
+  // way. Its graph reaches `push/store.ts` and its `Timestamp` value import.
+  [
+    "@/lib/push/courseNotifications",
+    "export const mirrorCourseDecisionToPush = async () => {};",
+  ],
 ]);
 
 const { loadTs } = createLoader({ stubs: STUBS });

@@ -251,6 +251,26 @@ export type AdmissionEmailOptions = {
   roundId: string;
 };
 
+/**
+ * The SAME-ORIGIN PATH for a round's application, for whichever surface owns
+ * it.
+ *
+ * Split out of {@link admissionApplicationUrl} for the callers that must not
+ * send an absolute url: a push payload's `navigate` is resolved against the
+ * app origin by the service worker, and an absolute one would leave a
+ * notification carrying this site's name pointing at whatever
+ * `NEXT_PUBLIC_APP_URL` happened to be at build time. Deriving both from one
+ * function is what keeps a push landing where its email's button lands: two
+ * string literals in two files drift the first time a surface is renamed.
+ */
+export function admissionApplicationPath(
+  roundId: string,
+  surface: "apply" | "status",
+): string {
+  const path = surface === "apply" ? "apply" : "applications";
+  return `/${path}/${encodeURIComponent(roundId)}`;
+}
+
 /** The absolute url for a round's application, for whichever surface owns it. */
 export function admissionApplicationUrl(
   roundId: string,
@@ -258,8 +278,7 @@ export function admissionApplicationUrl(
 ): string {
   const base = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/+$/, "");
   if (!base) return "";
-  const path = surface === "apply" ? "apply" : "applications";
-  return `${base}/${path}/${encodeURIComponent(roundId)}`;
+  return `${base}${admissionApplicationPath(roundId, surface)}`;
 }
 
 /**

@@ -362,6 +362,7 @@ form** opens.
 | Cap | 200 sends per tick |
 | Stale after | 72 hours |
 | Template | `admissions-stage-released`, editable under Admin, Email designs |
+| Push | Yes, alongside the email, under the member's `courseDecisions` switch |
 
 **It announces; it does not release.** The release is derived at read time by
 `isStageReleased`, on every serialisation of every stage, so a stage whose
@@ -374,6 +375,21 @@ switched off.
 **Who hears about it.** Everybody on the round holding a `draft` (still
 writing) or a `submitted` application (sent an earlier stage, and now has more
 to write). Withdrawn and decided rows are out.
+
+**The announcement goes by email AND push**, decided by the owner on 6
+September 2026. The push carries the round's name and the stage's title, links
+to the same form the email's button does, and goes through the same shared
+mirror as the decision push, so it obeys the member's **Course and application
+updates** switch on /profile and reaches only devices that person enabled. It
+is sent inside the same per-recipient marker as the email, after a send this
+job has counted and before that person's stamp, which is what makes "once per
+recipient" cover both channels: a retried tick repeats neither. A push that
+fails is logged and counted and costs the push alone. It never marks a send
+failed, never leaves a marker unstamped, and therefore can never re-mail a
+round. Nobody the email skipped (opted out, suppressed, no address) is pushed,
+so the 200-per-tick send ceiling bounds the push volume too. Push is dormant in
+any environment without VAPID secrets ([docs/pwa.md](pwa.md)); the email is
+unaffected there.
 
 **A stage that opens WITH the round is never announced.** `releaseAt: null`
 means "this stage is the form": it becomes readable the moment the round opens,

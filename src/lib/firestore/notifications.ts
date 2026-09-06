@@ -82,30 +82,32 @@ export const CHANNEL_LABELS: Record<NotificationChannel, string> = {
  *
  * The keys name what a push is ABOUT, never which route sends it:
  *   - `tasks`: the task board's mirror of every task email.
- *   - `courseDecisions`: an application decision or a course placement.
- * The weekly course nudge has no key here because it does not push at all,
- * and `tests/push-preferences.test.mjs` pins that it never learns to.
+ *   - `courseDecisions`: an answer on an application, a course placement, or
+ *     a new part of an application form opening.
+ * The weekly course nudge and the admissions deadline reminders have no key
+ * here because they do not push at all, and
+ * `tests/push-preferences.test.mjs` pins that they never learn to.
  */
 export type PushNotificationKey = "tasks" | "courseDecisions";
 export const ALL_PUSH_KEYS: PushNotificationKey[] = ["tasks", "courseDecisions"];
 
 export const PUSH_LABELS: Record<PushNotificationKey, string> = {
   tasks: "Task emails",
-  courseDecisions: "Course and application decisions",
+  courseDecisions: "Course and application updates",
 };
 
 export const PUSH_DESCRIPTIONS: Record<PushNotificationKey, string> = {
   tasks:
     "A notification alongside each task email: added to a task, a comment, a mention, a review request, a review outcome.",
-  // This copy is exhaustive TODAY, and only because the two moments named are
-  // the only ones that push. RE-READ IT if a stage announcement is ever put
-  // behind this key: an announcement is not "a decision on your application",
-  // so the switch would then be promising less than it delivers. The V3
-  // contract and `tests/push-preferences.test.mjs` disagree about whether the
-  // stage release should push at all; that is an open owner decision, and
-  // whoever settles it owns this string too.
+  // This copy is exhaustive TODAY, and only because the three moments named
+  // are the only ones that push. The label says "updates" rather than
+  // "decisions" because the owner settled the open question on 6 September
+  // 2026 and put the stage announcement behind this key: a switch promising
+  // only decisions while delivering announcements too is the failure mode the
+  // earlier note here warned about. Anything new put behind this key owns
+  // this string as well.
   courseDecisions:
-    "A notification when a decision on your application lands, or when you're placed in a course group. The email is sent either way.",
+    "A notification when a decision on your application lands, when a new part of an application form opens, or when you're placed in a course group. The email is sent either way.",
 };
 
 export type NotificationPrefs = {
