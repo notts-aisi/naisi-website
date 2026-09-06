@@ -62,14 +62,14 @@ function emptyCell(): Record<SubscriptionCategory, boolean> {
 }
 
 /**
- * Read the stored `courses` opt-out RAW, off the untouched document data —
- * deliberately NOT via `normaliseNotifications`, which collapses "absent" and
- * "false" into the same `false`. Absent means "hasn't answered", so the switch
- * starts ON and only an explicit stored `false` unticks it. Getting this wrong
- * would show every member who has never answered as opted out, and then store
- * that invented refusal on their next save. Mirror of
- * `hasOptedOutOfCourseAnnouncements` in the run email route — the two are one
- * decision spelled in two places.
+ * Read the stored `courses` opt-out RAW, off the untouched document data.
+ *
+ * Absent means "hasn't answered", so the switch starts ON and only an explicit
+ * stored `false` unticks it. `normaliseNotifications` now resolves this row
+ * the same way (it is an OPT_OUT row), so this reader agrees with it rather
+ * than working around it; it is kept because it reads the raw document and is
+ * the mirror of `hasOptedOutOfCourseAnnouncements` in the run email route —
+ * the two are one decision spelled in two places.
  */
 function readCourseAnnouncements(data: Record<string, unknown> | undefined): boolean {
   const profile = (data?.profile as Record<string, unknown> | undefined) ?? {};
@@ -81,21 +81,27 @@ function readCourseAnnouncements(data: Record<string, unknown> | undefined): boo
 }
 
 /**
- * The push switches are NOT on this form: they live on the push card, beside
- * the per-device opt-in they qualify. This form still has to read them,
- * because its save writes the whole `profile.notifications` map and would
- * otherwise reset both keys to the default every time somebody changed their
- * preferred name. Read through `normaliseNotifications` so "absent" resolves
- * to the same default the card shows.
+ * The cells this form writes but does not draw.
+ *
+ * The push column is NOT on this form: it lives on the push card, beside the
+ * per-device opt-in it qualifies. The `tasks` email cell has no control here
+ * yet either (the grid that draws it is the follow-up PR). This form still has
+ * to READ both, because its save writes the whole `profile.notifications` map
+ * and would otherwise reset them to the default every time somebody changed
+ * their preferred name — which for `tasks` would silently un-refuse a member
+ * who had switched task mail off. Read through `normaliseNotifications` so
+ * "absent" resolves to the same default every other reader sees.
  */
-function readPushPrefs(
-  data: Record<string, unknown> | undefined,
-): NotificationPrefs["push"] {
+function readCarriedPrefs(data: Record<string, unknown> | undefined): {
+  push: NotificationPrefs["push"];
+  taskEmails: boolean;
+} {
   const profile = (data?.profile as Record<string, unknown> | undefined) ?? {};
-  return normaliseNotifications({
+  const prefs = normaliseNotifications({
     notifications: profile.notifications,
     newsletter: profile.newsletter,
-  }).push;
+  });
+  return { push: prefs.push, taskEmails: prefs.categories.tasks };
 }
 
 function asDate(v: unknown): Date | null {
@@ -122,6 +128,7 @@ function legacyPrefsFromMatrix(
   matrix: Matrix,
   verifiedEmails: VerifiedEmail[],
   courseAnnouncements: boolean,
+  taskEmails: boolean,
   push: NotificationPrefs["push"],
 ): NotificationPrefs {
   const newsletter = verifiedEmails.some(
@@ -139,15 +146,16 @@ function legacyPrefsFromMatrix(
     ? Boolean(matrix[uni.email]?.newsletter || matrix[uni.email]?.events)
     : false;
   return {
-    // `courses` comes from the standalone switch, not the matrix. It MUST be
-    // carried through: `serialiseNotifications` writes all three booleans, so
-    // dropping it here would store `courses: false` on every save and the run
-    // email route would read that as an explicit refusal.
-    categories: { newsletter, events, courses: courseAnnouncements },
+    // `courses` comes from the standalone switch and `tasks` from the stored
+    // document, neither from the matrix. Both MUST be carried through:
+    // `serialiseNotifications` writes all four booleans, so dropping either
+    // would store a `false` on every save that the run email route and the
+    // task senders read as an explicit refusal.
+    categories: { newsletter, events, courses: courseAnnouncements, tasks: taskEmails },
     channels: { gmail: gmailGetsAnything, uniEmail: uniEmailGetsAnything },
     // Passed straight through from the stored document, never derived here.
     // This form does not own the push switches; it only has to avoid
-    // trampling them. See readPushPrefs.
+    // trampling them. See readCarriedPrefs.
     push,
   };
 }
@@ -163,12 +171,16 @@ export default function ProfileForm() {
   // Account-level, not per-address. Starts ON: absent = "hasn't answered",
   // and cohort mail is an opt-out. See readCourseAnnouncements.
   const [courseAnnouncements, setCourseAnnouncements] = useState(true);
-  // Read-only here, and edited on the push card. Held in state purely so the
-  // save below can write the map back unchanged. See readPushPrefs.
+  // Read-only here: the push column is edited on the push card and the task
+  // email cell has no control on this form yet. Both are held in state purely
+  // so the save below can write them back unchanged. See readCarriedPrefs.
   const [pushPrefs, setPushPrefs] = useState<NotificationPrefs["push"]>({
+    newsletter: false,
+    events: false,
+    courses: true,
     tasks: true,
-    courseDecisions: true,
   });
+  const [taskEmails, setTaskEmails] = useState(true);
 
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -192,7 +204,9 @@ export default function ProfileForm() {
       // Raw data, not the normalized doc: `UserProfile.notifications` is typed
       // as the full shape, so a missing `courses` reads as `false` through it.
       setCourseAnnouncements(readCourseAnnouncements(snap.data()));
-      setPushPrefs(readPushPrefs(snap.data()));
+      const carried = readCarriedPrefs(snap.data());
+      setPushPrefs(carried.push);
+      setTaskEmails(carried.taskEmails);
       setLoading(false);
     });
     return unsub;
@@ -318,6 +332,7 @@ export default function ProfileForm() {
         matrix,
         verifiedEmails,
         courseAnnouncements,
+        taskEmails,
         pushPrefs,
       );
       const patch: Record<string, unknown> = {
@@ -329,7 +344,7 @@ export default function ProfileForm() {
         // follow-up cleanup PR after the new paths settle.
         "profile.newsletter": {
           // Matrix-backed categories only — NOT `isSubscribedToAnything`,
-          // which now counts `courses` too. This field is the legacy
+          // which now counts `courses` and `tasks` too. This field is the legacy
           // newsletter flag some read paths still show as "newsletter: yes"
           // (e.g. the admin approval card); a default-on course opt-out must
           // not flip it. Same value this line produced before `courses`

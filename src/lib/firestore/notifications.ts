@@ -7,13 +7,45 @@
  * window; writes always go to the new `profile.notifications` field, and a
  * one-shot admin backfill (`/api/admin/migrate-notifications`) promotes any
  * users still on the legacy shape.
+ *
+ * THE SHAPE IS A GRID: four rows (newsletter, events, courses, tasks) and two
+ * columns (email, push), stored as two parallel maps.
+ *
+ *   channels:   { gmail, uniEmail }                       // address routing
+ *   categories: { newsletter, events, courses, tasks }    // the EMAIL column
+ *   push:       { newsletter, events, courses, tasks }    // the PUSH column
+ *
+ * NO `{ email, push }` CONTAINER INSIDE `categories`, deliberately. Such an
+ * object is truthy, so every `Boolean(categories.x)` read in the tree would
+ * report every row as wanted for every member, `readCourseAnnouncements` and
+ * `hasOptedOutOfCourseAnnouncements` (`!== false`) would never see a refusal
+ * again, and the three leaf writers that set a category by dotted path would
+ * silently replace it. Two sibling maps keep every existing reader and writer
+ * type-correct.
  */
 
 export type NotificationChannel = "gmail" | "uniEmail";
 export const ALL_CHANNELS: NotificationChannel[] = ["gmail", "uniEmail"];
 
-export type NotificationCategory = "newsletter" | "events" | "courses";
+export type NotificationCategory = "newsletter" | "events" | "courses" | "tasks";
 export const ALL_CATEGORIES: NotificationCategory[] = [
+  "newsletter",
+  "events",
+  "courses",
+  "tasks",
+];
+
+/**
+ * The rows a marketing-style unsubscribe link may switch off.
+ *
+ * `tasks` is deliberately absent. A member clicking "unsubscribe" at the foot
+ * of a newsletter is refusing bulk mail; silencing their review requests,
+ * mentions and worksheet deadlines on the same click would take away mail they
+ * need to do the thing they volunteered for, without ever telling them. That
+ * row is switched off on /profile, where it says what it stops, and nowhere
+ * else. `/api/unsubscribe` iterates THIS, never `ALL_CATEGORIES`.
+ */
+export const UNSUBSCRIBABLE_CATEGORIES: NotificationCategory[] = [
   "newsletter",
   "events",
   "courses",
@@ -31,10 +63,16 @@ export const ALL_CATEGORIES: NotificationCategory[] = [
  * could not change where a cohort email lands. It would only mint a top-level
  * `courses` row nothing ever sends to. `categories.courses` is an
  * account-level OPT-OUT instead; see `DEFAULT_NOTIFICATION_PREFS` below and
- * the module comment on the run email route.
+ * the module comment on the run email route. `tasks` is out for the same
+ * reason: task mail is addressed by uid, not by list membership.
  *
  * Iterate THIS, not `ALL_CATEGORIES`, anywhere a category is being turned
  * into a subscription row.
+ *
+ * MEMBERSHIP AND ORDER ARE PINNED. `scripts/e2e-fixtures/member-journey.mjs`
+ * regex-parses this constant and the two labels below out of this file and
+ * refuses to seed a run when they drift, because the browser suite finds each
+ * cell by its rendered label.
  */
 export type SubscriptionCategory = Extract<
   NotificationCategory,
@@ -55,6 +93,7 @@ export const CATEGORY_LABELS: Record<NotificationCategory, string> = {
   newsletter: "Newsletter",
   events: "Event announcements",
   courses: "Course announcements",
+  tasks: "Tasks and worksheets",
 };
 
 export const CATEGORY_DESCRIPTIONS: Record<NotificationCategory, string> = {
@@ -64,6 +103,12 @@ export const CATEGORY_DESCRIPTIONS: Record<NotificationCategory, string> = {
     "A short email when we publish a new event — talks, socials, workshops — so you don't have to watch the site or socials.",
   courses:
     "Announcements sent to a whole cohort you're enrolled in. Untick to stop them — your own group's practical emails (a moved session, a changed reading) still reach you.",
+  // Says what it stops, because this row is the one a member can switch off
+  // and then wonder why nobody told them about a review. The owner's call on
+  // 6 September 2026 was that granularity wins over safety here, so the copy
+  // has to carry the warning the default no longer does.
+  tasks:
+    "Review requests, mentions in a comment, and worksheets sent to you. Switching this off stops those emails too, not just the reminders.",
 };
 
 export const CHANNEL_LABELS: Record<NotificationChannel, string> = {
@@ -72,86 +117,111 @@ export const CHANNEL_LABELS: Record<NotificationChannel, string> = {
 };
 
 /**
- * PUSH IS ITS OWN AXIS, and that separation is the point of this block.
+ * WHICH ROWS DEFAULT ON, AS ONE TABLE, applied to BOTH columns.
+ *
+ * The two lists are not a style choice: two different consent stories are
+ * already live and the resolver has to keep both.
+ *
+ * OPT-IN (`Boolean(v)`, absent means no): newsletter and events. Nobody
+ * consents to bulk mail by having an email address, and these are the two
+ * rows that also mint `subscriptions` records, so a default of on would be a
+ * consent claim we cannot evidence.
+ *
+ * OPT-OUT (`v !== false`, absent means "hasn't answered"): courses and tasks.
+ * Cohort mail's opt-in is the `cohort:<runId>` subscription row written when
+ * a member is placed in a group; task mail's is volunteering for the task.
+ * The row is the refusal layered on top, so only a stored `false` counts. A
+ * default of off here would silence, for everybody at once, mail members
+ * already receive.
+ *
+ * Both columns use the same table. The push column inherits it rather than
+ * defaulting uniformly on: a device only receives anything at all after its
+ * owner granted the browser permission and pressed Enable, which is a real
+ * per-device opt-in, but that says nothing about whether they want the
+ * newsletter on their lock screen.
+ */
+export const OPT_IN_ROWS: NotificationCategory[] = ["newsletter", "events"];
+export const OPT_OUT_ROWS: NotificationCategory[] = ["courses", "tasks"];
+
+/**
+ * Resolve ONE stored cell, in either column, against the table above.
+ *
+ * Junk (a string, a null, a number) reads as the row's default rather than as
+ * an answer: an opt-in row needs a truthy value to be on, an opt-out row needs
+ * a literal `false` to be off. Nothing else is a preference.
+ */
+export function resolveRow(row: NotificationCategory, stored: unknown): boolean {
+  return OPT_IN_ROWS.includes(row) ? Boolean(stored) : stored !== false;
+}
+
+/**
+ * PUSH IS ITS OWN COLUMN, and that separation is the point of this block.
  *
  * `channels` is EMAIL-ADDRESS ROUTING (which inbox a send lands in) and
  * `categories` is which mail somebody wants. A push notification has no
  * address and belongs to a device, so folding it into either would break
  * `addressesForSend`, which reads `channels` as a list of inboxes to write
- * into. Push gets a third, sibling map instead.
+ * into. Push gets a third, sibling map with the SAME keys as `categories` —
+ * one row per topic, two switches.
  *
- * The keys name what a push is ABOUT, never which route sends it:
- *   - `tasks`: the task board's mirror of every task email.
- *   - `courseDecisions`: an answer on an application, a course placement, or
- *     a new part of an application form opening.
- * The weekly course nudge and the admissions deadline reminders have no key
- * here because they do not push at all, and
- * `tests/push-preferences.test.mjs` pins that they never learn to.
+ * `courseDecisions` was the old name of the `courses` push key, from when the
+ * push map had two topic-shaped keys of its own rather than one cell per grid
+ * row. It is READ as an alias (see `resolvePush`) so stored answers survive,
+ * and it is never written again.
  */
-export type PushNotificationKey = "tasks" | "courseDecisions";
-export const ALL_PUSH_KEYS: PushNotificationKey[] = ["tasks", "courseDecisions"];
+export type PushNotificationKey = NotificationCategory;
+export const ALL_PUSH_KEYS: PushNotificationKey[] = [...ALL_CATEGORIES];
+
+/** The stored push key this module still reads and never writes. */
+export const LEGACY_PUSH_KEY = "courseDecisions";
 
 export const PUSH_LABELS: Record<PushNotificationKey, string> = {
-  tasks: "Task emails",
-  courseDecisions: "Course and application updates",
+  newsletter: "Newsletter",
+  events: "Event announcements",
+  courses: "Course announcements",
+  tasks: "Tasks and worksheets",
 };
 
 export const PUSH_DESCRIPTIONS: Record<PushNotificationKey, string> = {
-  tasks:
-    "A notification alongside each task email: added to a task, a comment, a mention, a review request, a review outcome.",
+  newsletter: "A notification when a new newsletter goes out.",
+  events: "A notification when we publish a new event.",
   // This copy is exhaustive TODAY, and only because the three moments named
-  // are the only ones that push. The label says "updates" rather than
-  // "decisions" because the owner settled the open question on 6 September
-  // 2026 and put the stage announcement behind this key: a switch promising
-  // only decisions while delivering announcements too is the failure mode the
-  // earlier note here warned about. Anything new put behind this key owns
-  // this string as well.
-  courseDecisions:
+  // are the only ones that push. Anything new put behind this row owns this
+  // string as well.
+  courses:
     "A notification when a decision on your application lands, when a new part of an application form opens, or when you're placed in a course group. The email is sent either way.",
+  tasks:
+    "A notification alongside each task and worksheet email: added to a task, a comment, a mention, a review request, a review outcome.",
 };
 
 export type NotificationPrefs = {
   channels: Record<NotificationChannel, boolean>;
+  /** The EMAIL column, one cell per row. */
   categories: Record<NotificationCategory, boolean>;
-  /** Per-topic push switches. A sibling of the two above, never folded in. */
+  /** The PUSH column, the same rows. A sibling of the two above, never folded in. */
   push: Record<PushNotificationKey, boolean>;
 };
 
 /**
- * Every category defaults FALSE — nothing is opt-out-by-default.
+ * The resolved value of every cell when nothing at all is stored.
  *
- * `courses` needs one note, because "default false" reads like "nobody ever
- * gets cohort mail". It doesn't. Cohort mail is addressed by SUBSCRIPTION ROW
- * (`cohort:<runId>`, written by the allocation route with `inboxProven` when a
- * member is placed in a group), and being placed IS the opt-in. This category
- * is the OPT-OUT switch layered on top: the run email route skips a recipient
- * whose stored prefs say `categories.courses === false`, and treats an absent
- * value as "hasn't answered", not as a refusal. Read that route's module
- * comment before changing this default or that check — they are one decision
- * spelled in two places.
+ * Derived from the one table above rather than restated, so a row cannot
+ * default one way here and the other way in `normaliseNotifications`.
  */
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   channels: { gmail: true, uniEmail: false },
-  categories: { newsletter: false, events: false, courses: false },
-  /*
-   * BOTH PUSH KEYS DEFAULT TRUE, and that is not an inconsistency with the
-   * categories above.
-   *
-   * A category default of false is right because nobody consented to bulk
-   * mail by having an email address. Push is the opposite case: a device only
-   * receives anything at all after its owner granted the browser notification
-   * permission and pressed Enable on this very page, which is a deliberate,
-   * per-device opt-in that no amount of default-false here could improve on.
-   *
-   * Defaulting these false would also silently break what already ships: task
-   * emails have mirrored to enabled devices since the push pipeline landed
-   * (docs/pwa.md), with no preference field to consult, so a false default
-   * would switch off, for everyone at once, notifications they had already
-   * turned on. These switches are therefore an OPT-OUT layered on top of the
-   * device opt-in, and an absent key reads as "hasn't answered", not as a
-   * refusal.
-   */
-  push: { tasks: true, courseDecisions: true },
+  categories: {
+    newsletter: false,
+    events: false,
+    courses: true,
+    tasks: true,
+  },
+  push: {
+    newsletter: false,
+    events: false,
+    courses: true,
+    tasks: true,
+  },
 };
 
 type LegacyNewsletter = {
@@ -160,23 +230,41 @@ type LegacyNewsletter = {
   deliverToUniEmail?: unknown;
 };
 
-type MaybeNew = {
-  channels?: { gmail?: unknown; uniEmail?: unknown };
-  categories?: { newsletter?: unknown; events?: unknown; courses?: unknown };
-  push?: { tasks?: unknown; courseDecisions?: unknown };
+type StoredRow = {
+  newsletter?: unknown;
+  events?: unknown;
+  courses?: unknown;
+  tasks?: unknown;
 };
 
+type MaybeNew = {
+  channels?: { gmail?: unknown; uniEmail?: unknown };
+  categories?: StoredRow;
+  /** `courseDecisions` is the read-only legacy alias of `courses`. */
+  push?: StoredRow & { courseDecisions?: unknown };
+};
+
+/** Resolve one column off whatever is stored, row by row. */
+function resolveColumn(stored: StoredRow | undefined): Record<NotificationCategory, boolean> {
+  return {
+    newsletter: resolveRow("newsletter", stored?.newsletter),
+    events: resolveRow("events", stored?.events),
+    courses: resolveRow("courses", stored?.courses),
+    tasks: resolveRow("tasks", stored?.tasks),
+  };
+}
+
 /**
- * Resolve the push map off whatever is stored, defaulting each key to ON.
+ * Resolve the push column, honouring the `courseDecisions` alias.
  *
- * Only a stored `false` turns a key off; absent, null, or any non-boolean
- * reads as the default. That asymmetry is deliberate and matches the
- * `categories.courses` opt-out: the member has to have said no.
+ * The alias applies only when `courses` is ABSENT: a member who has answered
+ * under the new key has answered, and an older value must not overrule them.
  */
 function resolvePush(stored: MaybeNew["push"]): Record<PushNotificationKey, boolean> {
+  const courses = stored?.courses === undefined ? stored?.courseDecisions : stored?.courses;
   return {
-    tasks: stored?.tasks !== false,
-    courseDecisions: stored?.courseDecisions !== false,
+    ...resolveColumn(stored),
+    courses: resolveRow("courses", courses),
   };
 }
 
@@ -193,8 +281,8 @@ function resolvePush(stored: MaybeNew["push"]): Record<PushNotificationKey, bool
  * third axis that neither version ever carried, so it is read once and
  * attached to whichever branch returns. That is what makes a LEGACY profile,
  * which has `newsletter` and no `notifications` at all, still come out with
- * both push keys on, and it is why a member who has only ever touched the
- * push switches (leaving `channels` and `categories` unwritten) still has
+ * the opt-out push rows on, and it is why a member who has only ever touched
+ * the push switches (leaving `channels` and `categories` unwritten) still has
  * their stored `false` honoured instead of quietly reverting to the default.
  */
 export function normaliseNotifications(profile: {
@@ -209,11 +297,7 @@ export function normaliseNotifications(profile: {
         gmail: Boolean(modern.channels?.gmail),
         uniEmail: Boolean(modern.channels?.uniEmail),
       },
-      categories: {
-        newsletter: Boolean(modern.categories?.newsletter),
-        events: Boolean(modern.categories?.events),
-        courses: Boolean(modern.categories?.courses),
-      },
+      categories: resolveColumn(modern.categories),
       push,
     };
   }
@@ -226,16 +310,17 @@ export function normaliseNotifications(profile: {
         uniEmail: Boolean(legacy.deliverToUniEmail),
       },
       categories: {
-        // Legacy users were subscribed only to the newsletter; events and
-        // courses were never separate toggles on the old shape. They opt into
-        // both explicitly later. (`courses` false here is the same "hasn't
-        // answered" state as an absent field — see DEFAULT_NOTIFICATION_PREFS:
-        // it is the stored `false` under the MODERN shape that the run email
-        // route reads as a refusal, and a legacy profile has no modern shape
-        // at all.)
+        // Legacy users were subscribed only to the newsletter; events was
+        // never a separate toggle on the old shape, and they opt in later.
         newsletter: subscribed,
         events: false,
-        courses: false,
+        // The OPT-OUT rows resolve TRUE here, and that is the whole reason
+        // this branch spells them out. Under the resolver a stored `false`
+        // means a refusal, and the legacy shape cannot express one: it has no
+        // slot for either row. Returning `false` would invent a refusal
+        // nobody made and silence a legacy member's cohort and task mail.
+        courses: true,
+        tasks: true,
       },
       push,
     };
@@ -246,21 +331,22 @@ export function normaliseNotifications(profile: {
 /**
  * True iff the user wants *any* email at all. Cheap pre-filter before a send loop.
  *
- * Counts EVERY category, including `courses` — which is an announcement opt-out
- * that defaults ON and is not backed by a subscription row. Callers asking "does
- * this person have any subscriptions?" want SUBSCRIPTION_CATEGORIES instead; the
- * two answers diverge for a member who wants neither the newsletter nor events.
+ * Counts EVERY row, including the two that default ON and are not backed by a
+ * subscription row, so in practice it is true for nearly everybody. Callers
+ * asking "does this person have any subscriptions?" want
+ * `SUBSCRIPTION_CATEGORIES` instead; the two answers diverge for a member who
+ * wants neither the newsletter nor events.
  */
 export function isSubscribedToAnything(prefs: NotificationPrefs): boolean {
   return Object.values(prefs.categories).some(Boolean);
 }
 
-/** True iff the user wants this specific category. */
+/** True iff the user wants email for this row. */
 export function wantsCategory(
   prefs: NotificationPrefs,
   category: NotificationCategory,
 ): boolean {
-  return Boolean(prefs.categories[category]);
+  return resolveRow(category, prefs.categories[category]);
 }
 
 /**
@@ -289,7 +375,7 @@ export function addressesForSend(args: {
   return out;
 }
 
-/** Per-category set/unset helper for UI controls. */
+/** Per-row set/unset helper for the email column. */
 export function setCategory(
   prefs: NotificationPrefs,
   category: NotificationCategory,
@@ -312,15 +398,15 @@ export function setChannel(
   };
 }
 
-/** True iff this member wants push for this topic. */
+/** True iff this member wants push for this row. */
 export function wantsPush(
   prefs: NotificationPrefs,
   key: PushNotificationKey,
 ): boolean {
-  return prefs.push[key] !== false;
+  return resolveRow(key, prefs.push[key]);
 }
 
-/** Per-key set/unset helper for the profile's push switches. */
+/** Per-row set/unset helper for the push column. */
 export function setPushPreference(
   prefs: NotificationPrefs,
   key: PushNotificationKey,
@@ -335,17 +421,22 @@ export function setPushPreference(
 /**
  * The push half of the stored shape, on its own.
  *
- * Written under the `profile.notifications.push` field path so the switches
- * on the push card can save without restating `channels` and `categories`,
- * which belong to the profile form. Both writers use the same normalising
- * read, so neither can invent a value for the other's half.
+ * Written under the `profile.notifications.push` field path so the push
+ * switches can save without restating `channels` and `categories`, which
+ * belong to the profile form. Both writers use the same normalising read, so
+ * neither can invent a value for the other's half.
+ *
+ * Four booleans and NO `courseDecisions`: the alias is a read, and writing it
+ * back would keep a second name for one cell alive forever.
  */
 export function serialisePush(
   push: Record<PushNotificationKey, boolean>,
 ): Record<PushNotificationKey, boolean> {
   return {
+    newsletter: Boolean(push.newsletter),
+    events: Boolean(push.events),
+    courses: Boolean(push.courses),
     tasks: Boolean(push.tasks),
-    courseDecisions: Boolean(push.courseDecisions),
   };
 }
 
@@ -360,12 +451,13 @@ export function serialiseNotifications(prefs: NotificationPrefs): NotificationPr
       newsletter: Boolean(prefs.categories.newsletter),
       events: Boolean(prefs.categories.events),
       courses: Boolean(prefs.categories.courses),
+      tasks: Boolean(prefs.categories.tasks),
     },
     // This write REPLACES the whole map, so push has to be carried even
     // though nothing in the profile form edits it: dropping it here would
-    // reset both switches to the default on every unrelated profile save.
+    // reset every switch to the default on every unrelated profile save.
     // ProfileForm reads the stored value off its live snapshot for exactly
-    // this reason.
+    // this reason, and does the same for the rows it does not yet draw.
     push: serialisePush(prefs.push),
   };
 }

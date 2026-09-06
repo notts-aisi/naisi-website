@@ -3,7 +3,7 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { verifyToken } from "@/lib/signedTokens";
 import { obfuscateEmail } from "@/lib/obfuscateEmail";
 import {
-  ALL_CATEGORIES,
+  UNSUBSCRIBABLE_CATEGORIES,
   type NotificationCategory,
 } from "@/lib/firestore/notifications";
 import {
@@ -147,10 +147,16 @@ async function performUnsubscribe(signed: string | null): Promise<{
     const uniEmail =
       (profile.universityEmail as string | undefined) ?? null;
 
+    // `UNSUBSCRIBABLE_CATEGORIES`, never `ALL_CATEGORIES`. An unsubscribe link
+    // is a marketing control: "all" means all the bulk mail, not all the mail.
+    // `tasks` is outside the list, so neither an "all" token nor a token
+    // naming it can switch off a member's review requests, mentions and
+    // worksheet deadlines from the footer of a newsletter they did not want.
+    // See the constant's comment in notifications.ts.
     const knownCategoriesToFlip: NotificationCategory[] =
       category === "all"
-        ? ALL_CATEGORIES.slice()
-        : (ALL_CATEGORIES as NotificationCategory[]).includes(category as NotificationCategory)
+        ? UNSUBSCRIBABLE_CATEGORIES.slice()
+        : UNSUBSCRIBABLE_CATEGORIES.includes(category as NotificationCategory)
           ? [category as NotificationCategory]
           : [];
 
@@ -160,7 +166,7 @@ async function performUnsubscribe(signed: string | null): Promise<{
     // `normaliseNotifications(profile)` and wrote it back wholesale. That
     // normaliser collapses ABSENT into `false`, so every unsubscribe click
     // stamped an explicit value on every category — including ones the token
-    // says nothing about. Once `courses` joined ALL_CATEGORIES that stopped
+    // says nothing about. Once `courses` joined the unsubscribable rows that stopped
     // being cosmetic: a member clicking unsubscribe on a NEWSLETTER or EVENTS
     // email got `categories.courses: false` written to their user doc having
     // never seen the toggle, and the run email route reads exactly that stored

@@ -794,7 +794,7 @@ async function mailCandidate(
  * The push half of one applicant's announcement.
  *
  * SHARED SENDER, NEVER A BESPOKE ONE. `mirrorCourseDecisionToPush` is where
- * the VAPID gate, the `courseDecisions` switch, the subscriptions query and
+ * the VAPID gate, the `courses` push switch, the subscriptions query and
  * the dead-endpoint prune live, and it is the same door the decision push
  * goes through. A scheduler job reaching `sendPushToUid` (or web-push) on its
  * own would be a second copy of all four, one of which would be wrong first.

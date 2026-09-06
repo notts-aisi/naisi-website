@@ -48,7 +48,7 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -178,6 +178,17 @@ function source(relativePath) {
 const stripComments = (src) =>
   src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
+/** Every .ts/.tsx file under a directory, so a guard can walk the tree. */
+function tsFilesUnder(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...tsFilesUnder(full));
+    else if (/\.tsx?$/.test(entry.name)) out.push(full);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // The fake Firestore: one user doc lookup and one subscriptions query.
 // ---------------------------------------------------------------------------
@@ -244,13 +255,21 @@ function reset({ users, subscriptions } = {}) {
 // ---------------------------------------------------------------------------
 
 const {
+  ALL_CATEGORIES,
   ALL_PUSH_KEYS,
+  CATEGORY_LABELS,
   DEFAULT_NOTIFICATION_PREFS,
+  OPT_IN_ROWS,
+  OPT_OUT_ROWS,
   PUSH_LABELS,
+  UNSUBSCRIBABLE_CATEGORIES,
   normaliseNotifications,
+  resolveRow,
   serialiseNotifications,
   serialisePush,
+  setCategory,
   setPushPreference,
+  wantsCategory,
   wantsPush,
 } = await loadTs("lib/firestore/notifications.ts");
 
@@ -262,91 +281,173 @@ const { wantsPushFor } = await loadTs("lib/push/preferences.ts");
 // 1. The shape and its defaults
 // ---------------------------------------------------------------------------
 
-describe("the push preference map", () => {
-  test("DEFAULT_NOTIFICATION_PREFS carries push, both keys on", () => {
-    assert.deepEqual(DEFAULT_NOTIFICATION_PREFS.push, {
-      tasks: true,
-      courseDecisions: true,
-    });
-  });
+describe("the grid's two columns", () => {
+  const ROWS = ["newsletter", "events", "courses", "tasks"];
 
-  test("the keys are exactly the two topics that push", () => {
-    assert.deepEqual([...ALL_PUSH_KEYS].sort(), ["courseDecisions", "tasks"]);
-    for (const key of ALL_PUSH_KEYS) {
-      assert.equal(typeof PUSH_LABELS[key], "string");
-      assert.ok(PUSH_LABELS[key].length > 0, `${key} needs a label`);
+  test("categories and push have the SAME key set, one cell per row", () => {
+    // The shape IS a grid: four rows, two columns. A key in one column and
+    // not the other is a cell the /profile grid would draw and nothing would
+    // store, or store and never draw.
+    assert.deepEqual(Object.keys(DEFAULT_NOTIFICATION_PREFS.categories).sort(), [...ROWS].sort());
+    assert.deepEqual(Object.keys(DEFAULT_NOTIFICATION_PREFS.push).sort(), [...ROWS].sort());
+    assert.deepEqual([...ALL_CATEGORIES].sort(), [...ROWS].sort());
+    assert.deepEqual([...ALL_PUSH_KEYS].sort(), [...ROWS].sort());
+    for (const row of ALL_CATEGORIES) {
+      assert.equal(typeof CATEGORY_LABELS[row], "string");
+      assert.ok(CATEGORY_LABELS[row].length > 0, `${row} needs an email label`);
+      assert.equal(typeof PUSH_LABELS[row], "string");
+      assert.ok(PUSH_LABELS[row].length > 0, `${row} needs a push label`);
     }
   });
 
-  test("push is not folded into channels, which is address routing", () => {
-    // If push ever became a channel, addressesForSend would try to deliver
-    // email to it. The two maps must stay disjoint.
+  test("neither column holds a channel key, and channels holds only addresses", () => {
+    // If push or a category ever became a channel, addressesForSend would try
+    // to deliver email to it. `channels` is ADDRESS ROUTING and nothing else.
     assert.deepEqual(Object.keys(DEFAULT_NOTIFICATION_PREFS.channels), [
       "gmail",
       "uniEmail",
     ]);
-    for (const key of ALL_PUSH_KEYS) {
+    for (const channel of ["gmail", "uniEmail"]) {
       assert.ok(
-        !(key in DEFAULT_NOTIFICATION_PREFS.channels),
-        `${key} must not be a channel`,
+        !(channel in DEFAULT_NOTIFICATION_PREFS.categories),
+        `${channel} must not be a row of the email column`,
       );
       assert.ok(
-        !(key in DEFAULT_NOTIFICATION_PREFS.categories),
-        `${key} must not be a category`,
+        !(channel in DEFAULT_NOTIFICATION_PREFS.push),
+        `${channel} must not be a row of the push column`,
+      );
+    }
+  });
+
+  test("the defaults come from ONE table, applied to both columns", () => {
+    assert.deepEqual([...OPT_IN_ROWS].sort(), ["events", "newsletter"]);
+    assert.deepEqual([...OPT_OUT_ROWS].sort(), ["courses", "tasks"]);
+    assert.deepEqual([...OPT_IN_ROWS, ...OPT_OUT_ROWS].sort(), [...ROWS].sort());
+    for (const row of OPT_IN_ROWS) {
+      assert.equal(resolveRow(row, undefined), false, `${row} is opt-in`);
+      assert.equal(DEFAULT_NOTIFICATION_PREFS.categories[row], false);
+      assert.equal(DEFAULT_NOTIFICATION_PREFS.push[row], false);
+    }
+    for (const row of OPT_OUT_ROWS) {
+      assert.equal(resolveRow(row, undefined), true, `${row} is opt-out`);
+      assert.equal(resolveRow(row, false), false, `${row} honours a refusal`);
+      assert.equal(DEFAULT_NOTIFICATION_PREFS.categories[row], true);
+      assert.equal(DEFAULT_NOTIFICATION_PREFS.push[row], true);
+    }
+  });
+
+  test("the legacy courseDecisions key is READ and never written", () => {
+    // The alias exists so a member who answered under the old key keeps their
+    // answer. Writing it again would keep a second name for one cell alive
+    // forever, and the two would drift the first time only one was updated.
+    assert.equal(
+      normaliseNotifications({ notifications: { push: { courseDecisions: false } } }).push
+        .courses,
+      false,
+      "the alias must still be readable",
+    );
+    const files = tsFilesUnder(SRC);
+    assert.ok(files.length > 200, "the walk found suspiciously few source files");
+    const NOTIFICATIONS = join(SRC, "lib", "firestore", "notifications.ts");
+    for (const file of files) {
+      const code = stripComments(readFileSync(file, "utf8"));
+      if (file !== NOTIFICATIONS) {
+        assert.ok(
+          !code.includes("courseDecisions"),
+          `${file} mentions courseDecisions: the alias is read in notifications.ts alone`,
+        );
+        continue;
+      }
+      // Inside the module: the read path may name it, the write path may not.
+      const writer = code.slice(code.indexOf("export function serialisePush"));
+      assert.ok(writer.length > 100, "serialisePush moved");
+      assert.ok(
+        !writer.includes("courseDecisions"),
+        "serialisePush and serialiseNotifications must never write the alias",
+      );
+      assert.ok(
+        code.includes("stored?.courseDecisions"),
+        "the alias must still be read off the stored map",
       );
     }
   });
 });
 
-describe("normaliseNotifications resolves push on every branch", () => {
-  test("a LEGACY profile, with no notifications field at all, gets both defaults", () => {
-    const prefs = normaliseNotifications({
-      newsletter: { subscribed: true, deliverToGmail: true },
-    });
-    assert.deepEqual(prefs.push, { tasks: true, courseDecisions: true });
-    // And the legacy branch really was the one taken.
-    assert.equal(prefs.categories.newsletter, true);
-    assert.equal(prefs.categories.events, false);
+describe("normaliseNotifications, every stored shape", () => {
+  const DEFAULTS = { newsletter: false, events: false, courses: true, tasks: true };
+
+  test("no profile at all", () => {
+    const prefs = normaliseNotifications({});
+    assert.deepEqual(prefs.categories, DEFAULTS);
+    assert.deepEqual(prefs.push, DEFAULTS);
+    assert.deepEqual(prefs.channels, { gmail: true, uniEmail: false });
   });
 
-  test("an empty profile gets both defaults", () => {
-    assert.deepEqual(normaliseNotifications({}).push, {
+  test("legacy newsletter, subscribed TRUE", () => {
+    const prefs = normaliseNotifications({
+      newsletter: { subscribed: true, deliverToGmail: true, deliverToUniEmail: true },
+    });
+    assert.deepEqual(prefs.categories, {
+      newsletter: true,
+      events: false,
+      // The legacy shape cannot express a refusal on these two, so they
+      // resolve ON. A false here would invent an opt-out nobody made.
+      courses: true,
       tasks: true,
-      courseDecisions: true,
     });
+    assert.deepEqual(prefs.channels, { gmail: true, uniEmail: true });
+    assert.deepEqual(prefs.push, DEFAULTS);
   });
 
-  test("a modern profile with no push key gets both defaults", () => {
-    const prefs = normaliseNotifications({
-      notifications: {
-        channels: { gmail: true, uniEmail: false },
-        categories: { newsletter: true, events: false, courses: false },
-      },
-    });
-    assert.deepEqual(prefs.push, { tasks: true, courseDecisions: true });
+  test("legacy newsletter, subscribed FALSE, still gets the opt-out rows", () => {
+    const prefs = normaliseNotifications({ newsletter: { subscribed: false } });
+    assert.equal(prefs.categories.newsletter, false);
+    assert.equal(prefs.categories.courses, true);
+    assert.equal(prefs.categories.tasks, true);
   });
 
-  test("an explicit false is honoured, one key at a time", () => {
+  test("legacy with deliverToGmail undefined defaults the inbox on", () => {
+    const prefs = normaliseNotifications({ newsletter: { subscribed: true } });
+    assert.equal(prefs.channels.gmail, true);
+    assert.equal(prefs.channels.uniEmail, false);
+  });
+
+  test("modern with CHANNELS only", () => {
     const prefs = normaliseNotifications({
-      notifications: {
-        channels: { gmail: true, uniEmail: false },
-        categories: { newsletter: false, events: false, courses: false },
-        push: { tasks: false },
-      },
+      notifications: { channels: { gmail: false, uniEmail: true } },
     });
+    assert.deepEqual(prefs.channels, { gmail: false, uniEmail: true });
+    // No categories stored: every row resolves to its own default, so the
+    // opt-out rows stay on rather than being silenced by an absent map.
+    assert.deepEqual(prefs.categories, DEFAULTS);
+    assert.deepEqual(prefs.push, DEFAULTS);
+  });
+
+  test("modern with CATEGORIES only", () => {
+    const prefs = normaliseNotifications({
+      notifications: { categories: { newsletter: true, tasks: false } },
+    });
+    assert.deepEqual(prefs.categories, {
+      newsletter: true,
+      events: false,
+      courses: true,
+      tasks: false,
+    });
+    // The modern branch was taken, so channels come from an absent map.
+    assert.deepEqual(prefs.channels, { gmail: false, uniEmail: false });
+  });
+
+  test("modern with PUSH only is still honoured", () => {
+    // The push switches save on toggle, so a member who has touched only
+    // those has a document with `push` and nothing else under
+    // `notifications`. Reading that as "no modern shape" would silently
+    // revert their answer.
+    const prefs = normaliseNotifications({ notifications: { push: { tasks: false } } });
     assert.equal(prefs.push.tasks, false);
-    assert.equal(prefs.push.courseDecisions, true);
-  });
-
-  test("a push map with no channels beside it is still honoured", () => {
-    // The switches save on toggle, so a member who has touched only those has
-    // a document with `push` and nothing else under `notifications`. Reading
-    // that as "no modern shape" would silently revert their answer.
-    const prefs = normaliseNotifications({
-      notifications: { push: { courseDecisions: false } },
-    });
-    assert.equal(prefs.push.courseDecisions, false);
-    assert.equal(prefs.push.tasks, true);
+    assert.equal(prefs.push.courses, true);
+    // No channels and no categories: the LEGACY-or-default branch runs for
+    // the email half, so the opt-out rows still resolve on.
+    assert.deepEqual(prefs.categories, DEFAULTS);
   });
 
   test("a legacy profile that ALSO carries a push map keeps both answers", () => {
@@ -358,51 +459,172 @@ describe("normaliseNotifications resolves push on every branch", () => {
     assert.equal(prefs.categories.newsletter, true);
   });
 
-  test("junk in the stored map reads as the default, not as a refusal", () => {
+  test("push.courseDecisions false with no push.courses turns the courses push off", () => {
     const prefs = normaliseNotifications({
-      notifications: { push: { tasks: "no", courseDecisions: null } },
+      notifications: { push: { courseDecisions: false } },
     });
-    assert.deepEqual(prefs.push, { tasks: true, courseDecisions: true });
+    assert.equal(prefs.push.courses, false);
+    assert.equal(prefs.push.tasks, true);
+  });
+
+  test("an explicit push.courses WINS over the alias, in both directions", () => {
+    assert.equal(
+      normaliseNotifications({
+        notifications: { push: { courses: true, courseDecisions: false } },
+      }).push.courses,
+      true,
+    );
+    assert.equal(
+      normaliseNotifications({
+        notifications: { push: { courses: false, courseDecisions: true } },
+      }).push.courses,
+      false,
+    );
+  });
+
+  test("junk in every slot reads as the row's default, never as an answer", () => {
+    const prefs = normaliseNotifications({
+      notifications: {
+        channels: { gmail: "yes", uniEmail: null },
+        categories: { newsletter: null, events: 0, courses: "no", tasks: {} },
+        push: { newsletter: undefined, events: [], courses: 1, tasks: "no" },
+      },
+    });
+    // Opt-in rows need a truthy value; opt-out rows need a literal false.
+    assert.deepEqual(prefs.categories, {
+      newsletter: false,
+      events: false,
+      courses: true,
+      tasks: true,
+    });
+    assert.deepEqual(prefs.push, {
+      newsletter: false,
+      events: true,
+      courses: true,
+      tasks: true,
+    });
+    assert.deepEqual(prefs.channels, { gmail: true, uniEmail: false });
+  });
+
+  test("an explicit false is a refusal on EACH opt-out row, one at a time", () => {
+    for (const row of OPT_OUT_ROWS) {
+      const email = normaliseNotifications({
+        notifications: { channels: { gmail: true }, categories: { [row]: false } },
+      });
+      assert.equal(email.categories[row], false, `${row} email must honour the false`);
+      for (const other of OPT_OUT_ROWS) {
+        if (other !== row) assert.equal(email.categories[other], true);
+      }
+      const push = normaliseNotifications({ notifications: { push: { [row]: false } } });
+      assert.equal(push.push[row], false, `${row} push must honour the false`);
+    }
+  });
+
+  test("absent is OFF on each opt-in row and ON on each opt-out row", () => {
+    const prefs = normaliseNotifications({
+      notifications: { channels: { gmail: true }, categories: {}, push: {} },
+    });
+    for (const row of OPT_IN_ROWS) {
+      assert.equal(prefs.categories[row], false, `${row} email must default off`);
+      assert.equal(prefs.push[row], false, `${row} push must default off`);
+    }
+    for (const row of OPT_OUT_ROWS) {
+      assert.equal(prefs.categories[row], true, `${row} email must default on`);
+      assert.equal(prefs.push[row], true, `${row} push must default on`);
+    }
+  });
+
+  test("wantsCategory and wantsPush read the same table", () => {
+    const prefs = normaliseNotifications({});
+    for (const row of OPT_IN_ROWS) {
+      assert.equal(wantsCategory(prefs, row), false);
+      assert.equal(wantsPush(prefs, row), false);
+    }
+    for (const row of OPT_OUT_ROWS) {
+      assert.equal(wantsCategory(prefs, row), true);
+      assert.equal(wantsPush(prefs, row), true);
+    }
+    assert.equal(wantsPush({ push: {} }, "tasks"), true);
+    assert.equal(wantsPush({ push: { tasks: false } }, "tasks"), false);
+    assert.equal(wantsCategory({ categories: {} }, "newsletter"), false);
   });
 });
 
 describe("the write shape round-trips", () => {
+  test("every stored answer survives serialise then normalise", () => {
+    const stored = normaliseNotifications({
+      notifications: {
+        channels: { gmail: true, uniEmail: true },
+        categories: { newsletter: true, events: false, courses: false, tasks: false },
+        push: { newsletter: true, events: false, courses: false, tasks: true },
+      },
+    });
+    const written = serialiseNotifications(stored);
+    assert.deepEqual(written, stored, "the write shape is the read shape");
+    assert.deepEqual(normaliseNotifications({ notifications: written }), stored);
+  });
+
   test("serialiseNotifications carries push, so a profile save cannot wipe it", () => {
     const stored = normaliseNotifications({
       notifications: {
         channels: { gmail: true, uniEmail: false },
-        categories: { newsletter: false, events: false, courses: false },
-        push: { tasks: false, courseDecisions: true },
+        categories: { newsletter: false, events: false, courses: false, tasks: true },
+        push: { tasks: false, courses: true },
       },
     });
-    const written = serialiseNotifications(stored);
-    assert.deepEqual(written.push, { tasks: false, courseDecisions: true });
-    assert.deepEqual(normaliseNotifications({ notifications: written }).push, {
+    assert.deepEqual(serialiseNotifications(stored).push, {
+      newsletter: false,
+      events: false,
+      courses: true,
       tasks: false,
-      courseDecisions: true,
     });
   });
 
-  test("serialisePush writes booleans only", () => {
-    assert.deepEqual(serialisePush({ tasks: 1, courseDecisions: undefined }), {
+  test("serialisePush writes four booleans and drops the alias", () => {
+    const written = serialisePush({ tasks: 1, courses: undefined, courseDecisions: true });
+    assert.deepEqual(written, {
+      newsletter: false,
+      events: false,
+      courses: false,
       tasks: true,
-      courseDecisions: false,
     });
+    assert.ok(!("courseDecisions" in written));
   });
 
-  test("setPushPreference touches one key and no other axis", () => {
+  test("setPushPreference and setCategory touch one cell and no other axis", () => {
     const before = DEFAULT_NOTIFICATION_PREFS;
     const after = setPushPreference(before, "tasks", false);
     assert.equal(after.push.tasks, false);
-    assert.equal(after.push.courseDecisions, true);
+    assert.equal(after.push.courses, true);
     assert.deepEqual(after.channels, before.channels);
     assert.deepEqual(after.categories, before.categories);
     assert.equal(before.push.tasks, true, "the input must not be mutated");
+
+    const emailed = setCategory(before, "tasks", false);
+    assert.equal(emailed.categories.tasks, false);
+    assert.deepEqual(emailed.push, before.push, "the email cell must not move the push cell");
+  });
+});
+
+describe("a marketing unsubscribe link cannot silence task mail", () => {
+  test("UNSUBSCRIBABLE_CATEGORIES is the three bulk rows", () => {
+    assert.deepEqual(UNSUBSCRIBABLE_CATEGORIES, ["newsletter", "events", "courses"]);
+    assert.ok(
+      !UNSUBSCRIBABLE_CATEGORIES.includes("tasks"),
+      "an unsubscribe footer must never switch off review requests and mentions",
+    );
   });
 
-  test("wantsPush treats an absent key as yes", () => {
-    assert.equal(wantsPush({ push: {} }, "tasks"), true);
-    assert.equal(wantsPush({ push: { tasks: false } }, "tasks"), false);
+  test("/api/unsubscribe iterates it, never ALL_CATEGORIES", () => {
+    const route = stripComments(source("src/app/api/unsubscribe/route.ts"));
+    assert.ok(
+      route.includes("UNSUBSCRIBABLE_CATEGORIES"),
+      "the route must iterate the unsubscribable rows",
+    );
+    assert.ok(
+      !route.includes("ALL_CATEGORIES"),
+      "an `all` token must mean all the BULK mail, not every row in the grid",
+    );
   });
 });
 
@@ -421,12 +643,12 @@ describe("wantsPushFor", () => {
       users: { u1: { profile: { notifications: { push: { tasks: false } } } } },
     });
     assert.equal(await wantsPushFor("u1", "tasks"), false);
-    assert.equal(await wantsPushFor("u1", "courseDecisions"), true);
+    assert.equal(await wantsPushFor("u1", "courses"), true);
   });
 
   test("a missing user doc falls back to the default", async () => {
     reset({ users: {} });
-    assert.equal(await wantsPushFor("ghost", "courseDecisions"), true);
+    assert.equal(await wantsPushFor("ghost", "courses"), true);
   });
 
   test("a FAILED read is a no, because we cannot know", async () => {
@@ -523,7 +745,17 @@ describe("mirrorCourseDecisionToPush", () => {
     assert.equal(payload.notification.navigate, "/applications/autumn");
   });
 
-  test("sends NOTHING when courseDecisions is false", async () => {
+  test("sends NOTHING when the courses push cell is false", async () => {
+    reset({
+      users: { u1: { profile: { notifications: { push: { courses: false } } } } },
+      subscriptions: [DEVICE],
+    });
+    await mirrorCourseDecisionToPush("u1", { title: "D", body: "B", url: "/x" });
+    assert.deepEqual(globalThis.__pushes, []);
+  });
+
+  test("sends NOTHING when only the LEGACY courseDecisions key says no", async () => {
+    // The rename must not re-enable a push somebody already switched off.
     reset({
       users: {
         u1: { profile: { notifications: { push: { courseDecisions: false } } } },
@@ -792,7 +1024,7 @@ describe("the stage-release announcement pushes, through the shared mirror", () 
   const code = stripComments(source(JOB));
 
   test("it reaches for the shared mirror and for no sender of its own", () => {
-    // The mirror is where the VAPID gate, the `courseDecisions` switch, the
+    // The mirror is where the VAPID gate, the `courses` push cell, the
     // subscriptions query and the dead-endpoint prune live. A job that
     // assembled its own would be a second copy of all four, and one of them
     // would be wrong first.

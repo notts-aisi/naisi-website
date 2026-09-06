@@ -89,7 +89,7 @@ import { normalizeCourseRun } from "@/lib/firestore/courses";
  *
  * The same is true of the decision push that goes with it: it is mirrored to
  * whatever devices the applicant has enabled, respects their
- * `notifications.push.courseDecisions` switch, sends nothing where the
+ * `notifications.push.courses` switch, sends nothing where the
  * environment has no VAPID configuration, and cannot fail the decision.
  */
 

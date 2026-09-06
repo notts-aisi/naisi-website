@@ -44,14 +44,28 @@ import {
   type AffiliationStatus,
 } from "@/lib/firestore/users";
 import {
-  ALL_CATEGORIES,
   CATEGORY_DESCRIPTIONS,
   CATEGORY_LABELS,
   setCategory,
   setChannel,
   SUBSCRIPTION_CATEGORIES,
+  type NotificationCategory,
   type NotificationPrefs,
 } from "@/lib/firestore/notifications";
+
+/**
+ * The rows this form asks about, and it is NOT `ALL_CATEGORIES`.
+ *
+ * `tasks` is deliberately absent: it defaults on, it is not bulk mail, and a
+ * registrant with no tasks yet cannot make a useful decision about review
+ * requests they have never seen. It is switched on /profile, beside the copy
+ * that says what turning it off stops.
+ */
+const REGISTER_CATEGORIES: NotificationCategory[] = [
+  "newsletter",
+  "events",
+  "courses",
+];
 
 type SignInPhase = "idle" | "active" | "success" | "exiting" | "exitingBack";
 
@@ -404,12 +418,16 @@ function RegisterPageInner() {
   // cohort" long before they have one.
   const [prefs, setPrefs] = useState<NotificationPrefs>({
     channels: { gmail: true, uniEmail: false },
-    categories: { newsletter: true, events: true, courses: true },
+    // `tasks` starts ON for the same reason as `courses` and is not rendered
+    // (see REGISTER_CATEGORIES).
+    categories: { newsletter: true, events: true, courses: true, tasks: true },
     // No switch on this form, and there should not be one: push is per
     // device and a registrant has not enabled notifications on anything yet.
-    // The stored defaults are written so the shape is complete from the
-    // first save; both switches live on /profile beside the device opt-in.
-    push: { tasks: true, courseDecisions: true },
+    // The stored defaults are written so the shape is complete from the first
+    // save; the switches live on /profile beside the device opt-in. The two
+    // opt-in rows are stored OFF: ticking "email me the newsletter" is not
+    // consent to a notification about it.
+    push: { newsletter: false, events: false, courses: true, tasks: true },
   });
 
   // Verification state
@@ -1089,7 +1107,7 @@ function RegisterPageInner() {
             >
               Email preferences
             </legend>
-            {ALL_CATEGORIES.map((cat) => (
+            {REGISTER_CATEGORIES.map((cat) => (
               <Switch
                 key={cat}
                 checked={prefs.categories[cat]}
