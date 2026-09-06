@@ -1,45 +1,21 @@
 /**
- * ============================ OWNER TO CONFIRM ============================
+ * Version 4 of the Privacy Policy, checked sentence by sentence against the
+ * code on 7 September 2026.
  *
- * READ THIS BEFORE MERGING. The wording of a privacy policy is the owner's,
- * not an agent's, and publishing it moves CURRENT_POLICY_VERSION, which asks
- * every member on the site, the owner included, to re-accept the policy on
- * their next signed-in page. The ten items on v3's list were settled when
- * v3 was accepted and are NOT reopened here: v3 is frozen and its list stays
- * on that file. This version adds exactly one sentence, and it is the only
- * numbered item below.
+ * What changed from v3: the worksheet activity sentence, and the corrections
+ * that check turned up (certificates cut, deletion by email rather than a
+ * button, what a deletion removes and what it keeps, no 30-day purge, only the
+ * two exports that are logged, collaborator applications, email-and-password
+ * signups, the SU membership file, reCAPTCHA, the full cookie and local
+ * storage list, per-round blind settings, the star rating in place of
+ * anonymous surveys, what other participants see, the push record, view-as,
+ * and the worksheet recipient picker).
  *
- * One further thing needs a decision and is not a sentence on the page: the
- * date on this version (see POLICIES in src/lib/legal/policies.ts) is a
- * PLACEHOLDER, one day after v3's planned live date, because neither version
- * has reached production yet. Set the real publish date before merging.
- *
- *  1. "When a worksheet is sent to you, we record when you first opened it,
- *     how many times you opened each page and roughly how long you were
- *     active on it, and show that to you and to the people reviewing it; we
- *     never record keystrokes or pasting." (Data we collect.) This one is
- *     BOTH: the first half describes what the code does and can be checked
- *     against `activity` on a worksheet response, but the second half is the
- *     policy, and it is a promise about every future version of the feature
- *     rather than about this one. Monitoring how long somebody spent on a
- *     page is the sort of thing people expect to be told about, so the
- *     sentence also names the audience: the recipient sees their own figures,
- *     not only the reviewers. If the committee would rather not measure
- *     active time at all, this sentence and the tracking come out together.
- *
- * =========================================================================
- *
- * Version 4 of the Privacy Policy. v1, v2 and v3 are FROZEN: they still
- * render unchanged at their archive URLs (/privacy/v/1, /privacy/v/2 and
- * /privacy/v/3), so this file is a copy-and-edit of v3 rather than a refactor
- * of it. Never reach into an older version to share markup with this one.
- * That is why the worksheet sentence is here and not in v3: v3 is the text
- * the owner accepted, and editing accepted text in place would change what
- * an archive URL shows without anyone having agreed to the change.
- *
- * What changed from v3: one bullet under "When you join the committee", in
- * "Data we collect", saying what a circulated worksheet records about the
- * person it was sent to. Nothing else moved.
+ * v1, v2 and v3 are FROZEN: they still render unchanged at their archive URLs
+ * (/privacy/v/1, /privacy/v/2 and /privacy/v/3), so this file is a
+ * copy-and-edit of v3 rather than a refactor of it. Never reach into an older
+ * version to share markup with this one. The date on this version (see
+ * POLICIES in src/lib/legal/policies.ts) is the owner's to set.
  */
 import type { ReactNode } from "react";
 import Badge from "@/components/ui/Badge";
@@ -136,6 +112,20 @@ export default function PrivacyContentV4({
                 </li>
               </ul>
 
+              <h3>When you create an account with an email address</h3>
+              <ul>
+                <li>
+                  If you create an account with an email address rather than
+                  through Google, we hold that address, a password you set
+                  yourself (stored by Firebase Auth, never by us in readable
+                  form), and a record of the signup itself: when you started
+                  it, whether you confirmed your address, whether you finished,
+                  and how many verification emails we sent. That record stays
+                  even if you never finish signing up, until you ask us to
+                  remove it.
+                </li>
+              </ul>
+
               <h3>When you register as a member</h3>
               <ul>
                 <li>
@@ -152,6 +142,22 @@ export default function PrivacyContentV4({
                 <li>
                   Your notification preferences, broken down by channel (Google
                   inbox, university inbox) and category (newsletter, events).
+                </li>
+              </ul>
+
+              <h3>When you apply as an external collaborator</h3>
+              <ul>
+                <li>
+                  Your name and email address, the institution or company you
+                  are at and your role there, the project you are proposing and
+                  your background, any LinkedIn or portfolio link you give us,
+                  the areas you are interested in, how you heard about us, and
+                  whether you already know somebody on the committee (and who,
+                  if you tell us).
+                </li>
+                <li>
+                  The decision on your application and, where it is turned
+                  down, the reason we recorded.
                 </li>
               </ul>
 
@@ -184,9 +190,12 @@ export default function PrivacyContentV4({
                   If you turn on push notifications, a push subscription from
                   your browser: an endpoint URL issued by your browser vendor
                   and two keys that let us encrypt a message to that device.
-                  It is tied to one browser on one device, not to you, and we
-                  hold one record per device you enable. Turning notifications
-                  off in the site or in your browser deletes it.
+                  The record is tied to one browser on one device and carries
+                  your account so we know where to send, together with your
+                  browser&apos;s user-agent string and the last time that
+                  device checked in. We hold one record per device you enable.
+                  Turning notifications off deletes it; deleting your account
+                  does not, so ask us if you want it gone.
                 </li>
               </ul>
 
@@ -204,10 +213,13 @@ export default function PrivacyContentV4({
                 </li>
                 <li>
                   When a worksheet is sent to you, we record when you first
-                  opened it, how many times you opened each page and roughly
-                  how long you were active on it, and show that to you and to
-                  the people reviewing it; we never record keystrokes or
-                  pasting.
+                  opened it, how many times you moved between its pages, when
+                  you were last active on it, and roughly how long you spent on
+                  it, sampled in half-minute steps while the page is in front
+                  of you. The person who sent it, the worksheet&apos;s author,
+                  your reviewers and site admins can see those figures. We do
+                  not record which page you were on, what you typed, or when
+                  you pasted.
                 </li>
               </ul>
 
@@ -219,10 +231,10 @@ export default function PrivacyContentV4({
                   marked our mail as spam, so we can stop sending to them.
                 </li>
                 <li>
-                  A record of the spreadsheet downloads the site generates
-                  (registers, rosters, application tables, membership lists):
-                  who asked for it, what it covered, how many people were in
-                  it, and when. See{" "}
+                  A record of two of the spreadsheet downloads the site
+                  generates, the membership list and the answers to a
+                  circulated worksheet: who asked for it, what it covered, how
+                  many people were in it, and when. See{" "}
                   <a href="#courses">Courses and programmes</a> for what that
                   does and does not cover.
                 </li>
@@ -284,8 +296,8 @@ export default function PrivacyContentV4({
                   <strong>Whether you are a paid member,</strong> and where
                   that came from (see membership below). This is shown to the
                   person making the final decision and to admins. It is hidden
-                  from reviewers and it does not affect whether you are
-                  offered a place.
+                  from reviewers by default and it does not affect whether you
+                  are offered a place.
                 </li>
               </ul>
 
@@ -295,9 +307,11 @@ export default function PrivacyContentV4({
                   <strong>Reviewer scores and notes.</strong> Each reviewer
                   scores your application against the round&apos;s criteria and
                   can write free-text notes about it. Reviewers are other
-                  students: SU-recognised committee members and admins. They
-                  review name-blind, meaning your name is hidden from them,
-                  though a piece of writing can of course identify its author.
+                  students: SU-recognised committee members and admins. Rounds
+                  are set up name-blind by default, and your membership tier is
+                  hidden from reviewers by default. If a round is run
+                  differently we will say so on the application form. A piece
+                  of writing can of course identify its author.
                   Scores and notes are personal data about you. If you ask us
                   what a reviewer wrote about your application, we will tell
                   you, and reviewers are told that before they write anything.
@@ -330,19 +344,22 @@ export default function PrivacyContentV4({
                 <li>
                   <strong>Your written work.</strong> Answers to exercises,
                   your progress through each week&apos;s materials, and any
-                  feedback a facilitator writes on your work. We do not publish
+                  feedback a facilitator writes on your work. You can also keep
+                  a private note against a piece of material: it is not shown
+                  to the rest of your run, but your facilitator and site admins
+                  can read it. We do not publish
                   anything you write to the rest of your group unless you
                   choose to share it, and we will not use anything you write in
                   a course to make decisions about you outside the programme.
                 </li>
                 <li>
-                  <strong>Feedback and surveys.</strong> Weekly feedback forms
-                  and any before-and-after surveys we run. Where a form says it
-                  is anonymous, we store the answers with no link to you: your
-                  identity is not recorded on the response at all, and we keep
-                  a separate note that you responded so we stop reminding you.
-                  Where a form is not anonymous it says so, and the answers are
-                  stored against your account.
+                  <strong>Feedback on the material.</strong> You can give a
+                  piece of course material a star rating and leave a comment on
+                  it. Both are stored against your account and your name, and
+                  the comment is shown to the rest of your run. We do not run
+                  anonymous surveys on this site. If we ever ask for feedback
+                  anonymously it will be through a form somewhere else, and it
+                  will say so.
                 </li>
                 <li>
                   <strong>Dropping out.</strong> If you leave a programme we
@@ -358,6 +375,15 @@ export default function PrivacyContentV4({
                   Students&apos; Union gives us, or an admin adding you by
                   hand. You can see your own tier on your profile.
                 </li>
+                <li>
+                  When the Students&apos; Union gives us a membership list, we
+                  keep the file as we received it: for each person on it, their
+                  name, the email addresses on the list, and their membership
+                  tier, together with a note of which NAISI account, if any, we
+                  matched them to. We keep it so a membership can be checked or
+                  corrected later. If you are on that list and have no account
+                  with us, you can ask us to remove your row.
+                </li>
               </ul>
 
               <h3>Conduct</h3>
@@ -372,43 +398,38 @@ export default function PrivacyContentV4({
               </ul>
 
               <h3>Certificates</h3>
-              <ul>
-                <li>
-                  When you complete a programme we can issue a certificate with
-                  a verification page anyone holding the link can open. That
-                  page names you, the programme and the date, so that an
-                  employer can check the certificate is real. The link is not
-                  guessable and the page is not listed anywhere. A certificate
-                  page stays online unless you ask us to withdraw it, which you
-                  can do at any time by emailing us. That includes after you
-                  delete your account: deleting the account does not take the
-                  page down, because the page is there for the people you sent
-                  the link to. Ask us and we will withdraw it, account or no
-                  account.
-                </li>
-              </ul>
+              <p>
+                We may issue certificates in future. If we do, we will say here
+                what a certificate shows and who can see it before we issue the
+                first one.
+              </p>
 
               <h3>Downloads</h3>
               <p>
                 Staff sometimes need a spreadsheet: a register to take to a
                 session, a roster, the applications for a round, a membership
-                list. Downloads generated by the site are recorded, with who
-                asked for it, what it covered, how many people were in it and
-                when. We are being careful with that sentence: it means we log
-                the files the site produces. It does not mean we can track a
-                file once it has been downloaded, and it does not cover
-                somebody copying what is on their screen.
+                list. Two of those downloads are recorded, with who asked for
+                it, what it covered, how many people were in it and when: the
+                membership list, and the answers to a circulated worksheet.
+                Both refuse to hand over the file if that record cannot be
+                written. The event attendee list and the subscriber list are
+                built in your browser and are not recorded. We are being
+                careful with that sentence: it means we log two of the files
+                the site produces. It does not mean we can track a file once it
+                has been downloaded, and it does not cover somebody copying
+                what is on their screen.
               </p>
 
               <h3>Who can see what</h3>
               <ul>
                 <li>
                   <strong>Reviewers</strong> (SU-recognised committee members
-                  and admins, all of them students) see applications without
-                  names, their own and other reviewers&apos; scores and notes,
-                  and a conduct flag if there is one. They do not see access
-                  requirements, membership tier, or the reason behind a conduct
-                  flag.
+                  and admins, all of them students) see applications with the
+                  name hidden on a round left name-blind, which is the default,
+                  their own and other reviewers&apos; scores and notes, and a
+                  conduct flag if there is one. They do not see access
+                  requirements, the membership tier, or the reason behind a
+                  conduct flag.
                 </li>
                 <li>
                   <strong>The person making the final decision</strong> sees
@@ -424,8 +445,9 @@ export default function PrivacyContentV4({
                   group. They do not see applications or review scores.
                 </li>
                 <li>
-                  <strong>Other participants</strong> see the names of the
-                  people in their group, and nothing else about them.
+                  <strong>Other participants</strong> on your run see your
+                  name, and any comment or star rating you choose to leave on a
+                  piece of course material. They see nothing else about you.
                 </li>
                 <li>
                   <strong>Admins</strong> can see all of the above. Admin
@@ -450,8 +472,7 @@ export default function PrivacyContentV4({
                 <li>
                   Run our courses: assess applications, place people into
                   groups that fit their availability, keep registers, give
-                  feedback on work, ask how the sessions are going, and issue
-                  certificates at the end.
+                  feedback on work, and ask how the sessions are going.
                 </li>
                 <li>
                   Send you transactional emails you have asked for, such as
@@ -556,6 +577,14 @@ export default function PrivacyContentV4({
                   .
                 </li>
                 <li>
+                  <strong>Google reCAPTCHA</strong> checks that the person
+                  filling in our registration and course application forms is
+                  not a bot. When one of those forms is on screen, Google
+                  receives information about your browser and how you
+                  interacted with the page, and sets its own cookie. We see
+                  only Google&apos;s pass or fail verdict.
+                </li>
+                <li>
                   <strong>Your browser vendor</strong> (for example Google,
                   Apple or Mozilla) delivers push notifications to a device
                   where you have turned them on. The message is encrypted to
@@ -577,24 +606,53 @@ export default function PrivacyContentV4({
               <h2>Cookies and local storage</h2>
               <p>
                 We do not use analytics, advertising, or tracking cookies. The
-                site sets the following storage:
+                one exception is Google reCAPTCHA, which sets a cookie of its
+                own while our registration and course application forms are on
+                screen (see <a href="#sharing">Sharing and processors</a>).
+                Every cookie the site itself sets is strictly necessary:
               </p>
               <ul>
                 <li>
-                  <strong>Firebase Auth session cookie</strong> (strictly
-                  necessary). Set when you sign in so we can keep you signed
-                  in and route you to the right pages. Cleared when you sign
-                  out.
+                  <code>__session</code> keeps you signed in and routes you to
+                  the right pages. Set when you sign in, it lasts one day for
+                  committee members and admins and five days for everybody
+                  else. Cleared when you sign out.
                 </li>
                 <li>
-                  <strong>Sidebar preference</strong> stored in your browser&apos;s
-                  local storage under the key{" "}
-                  <code>naisi.sidebar.collapsed</code>. It only records
-                  whether you have collapsed the committee-area sidebar. It
-                  never leaves your device. You can clear it from your
-                  browser&apos;s site-data settings at any time.
+                  <code>__impersonator</code> marks a &quot;view as&quot;
+                  session. It is set only on an admin&apos;s browser while they
+                  are viewing the site as another member, and lasts five days
+                  or until they leave the session, whichever comes first.
+                </li>
+                <li>
+                  <code>__auth_next</code> remembers which page to send you to
+                  once you have signed in. Ten minutes.
+                </li>
+                <li>
+                  <code>__google_credential</code> hands the result of a Google
+                  sign-in from the redirect back to the page. Sixty seconds.
+                </li>
+                <li>
+                  <code>g_csrf_token</code> is set by Google during the Google
+                  sign-in redirect. We compare it with the value Google sends
+                  us so that the sign-in cannot be forged.
                 </li>
               </ul>
+              <p>
+                In your browser&apos;s own local storage the site keeps four
+                small preferences, none of which leave your device:{" "}
+                <code>naisi.sidebar.collapsed</code> (whether you have
+                collapsed the committee-area sidebar),{" "}
+                <code>naisi.lastRoute</code> (the last page you had open, so
+                the installed app can return you to it),{" "}
+                <code>naisi.installCard.dismissed</code> (that you have
+                dismissed the prompt to install the app), and{" "}
+                <code>naisi.auth.loaderOpen</code> (whether the sign-in panel
+                was open). Signing in also stores your session tokens in your
+                browser&apos;s own storage, which Firebase Auth keeps in
+                IndexedDB. You can clear all of it from your browser&apos;s
+                site-data settings at any time.
+              </p>
             </section>
 
             <section id="retention" className={styles.section}>
@@ -603,11 +661,7 @@ export default function PrivacyContentV4({
                 We hold your account data while your account is active and for
                 a reasonable period after it becomes inactive, so we can
                 restore it if you come back and so we can answer any questions
-                that come up afterwards. Where you ask us to delete your
-                account, we will do so without undue delay, subject to records
-                we are required to keep (for example, suppression entries for
-                addresses that have asked not to be contacted, kept so we do
-                not re-contact them by mistake).
+                that come up afterwards.
               </p>
               <p>
                 <strong>Course applications and course records.</strong>{" "}
@@ -617,43 +671,75 @@ export default function PrivacyContentV4({
                 strip them after a fixed period. The same goes for the rest of
                 your course record: attendance, written work, feedback you gave
                 us, and notes written about you. If you want any of it removed
-                sooner, email us. Deleting your account deletes all of that,
-                including your access-requirements answer, your applications
-                and drafts, the review scores and notes written about you, your
-                marks on registers and the notes about you on them.
+                sooner, email us.
               </p>
               <p>
-                <strong>Certificates are the exception.</strong> A certificate
-                and its verification page are not removed when your account is
-                deleted. The page exists so that somebody you sent the link to
-                can check the certificate is real, and that is the moment you
-                are least likely to still have an account with us. It stays
-                online until you ask us to withdraw it, which you can do at any
-                time by emailing us, whether or not you still have an account.
+                <strong>Asking us to delete your account.</strong> Email us and
+                we will delete it, without undue delay. There is no
+                self-service delete button once you are a member or an approved
+                collaborator, because taking somebody&apos;s work out of the
+                committee tooling is done by hand: an admin runs the deletion.
               </p>
               <p>
-                <strong>For up to 30 days after deletion.</strong> When your
-                account is deleted, whether by you or by us, we may keep your
-                account data, the content you contributed, and our logs for up
-                to 30 days afterwards. We do this so we can meet our legal
-                obligations and, where it is necessary, investigate abuse or
-                misuse of the site, including activity that may break the law.
-                Once that period has passed we permanently delete or anonymise
-                this information, except for the limited records described in
-                this section that we are required or permitted to keep for
-                longer.
+                <strong>What a deletion removes.</strong> Your account record
+                and profile, your newsletter subscriptions and their history,
+                your collaborator application if you made one, any outstanding
+                email-verification links, your course enrolments, applications
+                and drafts, your progress and your answers to exercises, your
+                admission applications together with the access-requirements
+                answer stored separately beside them, the review scores and
+                notes written about those applications and any you wrote about
+                somebody else, a conduct flag if there is one, your membership
+                records and the lines naming you on a Students&apos; Union
+                membership file, and your sign-in record. Your marks and the
+                notes about you are stripped out of attendance registers, which
+                stay for the rest of the group.
               </p>
               <p>
-                <strong>Content you contributed.</strong> Some content you
-                created while using the site is not always removed at the moment
-                your account is deleted. In particular, tasks, comments, and
-                file attachments you created or were added to in the committee
-                tooling, and event RSVPs and the answers you gave, may be
-                retained for a limited period so that ongoing committee work and
-                event records are not disrupted. We then delete this content, or
-                detach it from your identity, in line with the retention periods
-                described here. If you need specific content removed sooner,
-                email us and we will deal with it.
+                <strong>What a deletion leaves behind.</strong> These are not
+                removed:
+              </p>
+              <ul>
+                <li>
+                  A short record of each application you made: what you applied
+                  for, the decision, and the scores and notes the reviewers
+                  wrote. We keep it deliberately, so that a later application
+                  from the same person can be read in context. The reviewers&apos;
+                  scores and notes about an application stay in that record
+                  after the account is deleted.
+                </li>
+                <li>
+                  Worksheets that were sent to you: your answers, and the
+                  reviews written on them.
+                </li>
+                <li>
+                  Tasks you were on, with their comments, activity and
+                  attachments.
+                </li>
+                <li>
+                  Event RSVPs, including the name, email address and any
+                  dietary or accessibility answers you gave when you signed up.
+                </li>
+                <li>
+                  Files you uploaded. Nothing in file storage is removed by an
+                  account deletion.
+                </li>
+                <li>
+                  The push notification record for any device you turned
+                  notifications on for. Ask us and we will remove it.
+                </li>
+                <li>
+                  The log of emails we sent you, and a suppression entry if
+                  your address ever bounced or reported us as spam, kept so we
+                  do not write to it again by mistake.
+                </li>
+                <li>The audit-style records described below.</li>
+              </ul>
+              <p>
+                Some of what you contributed stays after your account goes,
+                because removing it would break work other people are still
+                doing. We remove it when we clear it out by hand, and you can
+                ask us to remove specific items sooner.
               </p>
               <p>
                 Audit-style records are kept for as long as needed to
@@ -662,10 +748,10 @@ export default function PrivacyContentV4({
                 of what staff did rather than of what you wrote: the email send
                 log, the subscription event log, the impersonation log used for
                 committee oversight, the log of course actions including who
-                read an access-requirements answer, and the record of downloads
-                the site generated. They name the person who took the action
-                and what it concerned, and hold no course answers, marks or
-                notes.
+                read an access-requirements answer, and the record of the two
+                downloads the site logs. They name the person who took the
+                action and what it concerned, and hold no course answers, marks
+                or notes.
               </p>
             </section>
 
@@ -706,10 +792,13 @@ export default function PrivacyContentV4({
               <p>
                 Most of these are self-serve. You can edit your profile and
                 notification preferences from{" "}
-                <a href="/profile">your profile page</a>, unsubscribe from any
-                email through the link in that email, and ask us to delete
-                your account by emailing{" "}
-                <a href="mailto:ai-safety@uonsu.com">ai-safety@uonsu.com</a>.
+                <a href="/profile">your profile page</a>, and unsubscribe from
+                any email through the link in that email. Deleting your account
+                is by request: email{" "}
+                <a href="mailto:ai-safety@uonsu.com">ai-safety@uonsu.com</a>{" "}
+                and we will delete it. There is no delete button on the site,
+                because removing a member&apos;s work from the committee tooling
+                is done by hand.
               </p>
               <p>
                 A request for a copy of your data covers what other people have
@@ -742,13 +831,23 @@ export default function PrivacyContentV4({
                 in-transit encryption, and on Firestore&apos;s rule engine to
                 enforce access. Member personal data is readable only by
                 committee members the Students&apos; Union has formally
-                recognised, and by admins; ordinary members can only see their
-                own record and the tasks they have been added to. Course
+                recognised, and by admins, and by the small number of people we
+                have given permission to circulate a worksheet, who can see
+                members&apos; names and photos in order to choose recipients.
+                Ordinary members can only see their own record and the tasks
+                they have been added to. Course
                 material about a named person (applications, access
                 requirements, registers, participant notes) is served only
                 through checks on our servers, never handed to a browser that
                 has no reason for it. Email is signed with DKIM and aligned
                 with DMARC on the <code>naisi.uk</code> domain.
+              </p>
+              <p>
+                Site admins can open the site as you see it, to reproduce a
+                problem you have reported. Doing so does not give them anything
+                they could not already see, they cannot use it to make
+                high-trust changes, and every session is logged with who did
+                it, whose account, and when.
               </p>
               <p>
                 No service is perfectly secure. If you spot a problem, please
@@ -765,7 +864,9 @@ export default function PrivacyContentV4({
                 of the page. For changes that materially affect how we use
                 your data, we will ask you to review and accept the updated
                 policy the next time you open a signed-in page, and we will let
-                active members know by email. Earlier versions stay readable at{" "}
+                active members know by email. If you decline, you are signed
+                out, and you can then email us to have the account removed.
+                Earlier versions stay readable at{" "}
                 <a href="/privacy/versions">/privacy/versions</a>.
               </p>
             </section>
