@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 import { useAuth } from "@/auth/AuthProvider";
 import Badge from "@/components/ui/Badge";
@@ -12,8 +13,9 @@ import Modal from "@/components/ui/Modal";
 import ResponsiveSelect from "@/components/ui/ResponsiveSelect";
 import SegmentedControl from "@/components/ui/SegmentedControl";
 import Skeleton from "@/components/ui/Skeleton";
+import DestroyPanel from "@/features/destroy/DestroyPanel";
 import { useTaskRoster } from "@/features/tasks/hooks/useTaskRoster";
-import { CIRCULATION_LIMITS } from "@/lib/firestore/circulations";
+import { CIRCULATION_LIMITS, type CirculationDoc } from "@/lib/firestore/circulations";
 import { useCirculation } from "../hooks/useCirculation";
 import { useCirculationResponses } from "../hooks/useCirculationResponses";
 import AggregateView from "./AggregateView";
@@ -93,11 +95,13 @@ type Props = {
 };
 
 export default function CirculationPage({ worksheetId, circulationId }: Props) {
+  const router = useRouter();
   const { user, role, permissions } = useAuth();
   const uid = user?.uid ?? null;
   const isAdmin = role === "admin";
 
-  const { circulation, loading, error } = useCirculation(circulationId);
+  const { circulation: liveCirculation, loading, error } = useCirculation(circulationId);
+  const circulation = useCirculationThroughDestroy(liveCirculation);
 
   const isStaff = Boolean(circulation && uid && (isAdmin || circulation.staffUids.includes(uid)));
   const canCirculate = isAdmin || Boolean(permissions.circulateWorksheet);
@@ -192,7 +196,11 @@ export default function CirculationPage({ worksheetId, circulationId }: Props) {
     );
   }
 
-  if (refused || !circulation) {
+  // `refused` is folded into the null check rather than tested beside it: a
+  // refused read hands the hook no document, so `!circulation` already covers
+  // it, and testing `refused` separately would throw away the one document
+  // this page is allowed to outlive (see `useCirculationThroughDestroy`).
+  if (!circulation) {
     return (
       <EmptyState
         title="That circulation isn't here"
@@ -220,6 +228,39 @@ export default function CirculationPage({ worksheetId, circulationId }: Props) {
     );
   }
 
+  // A DESTROY IS RUNNING, and this is where everybody EXCEPT AN ADMIN stops.
+  // The cascade sets `destroying` in the same write that closes the
+  // circulation, before it deletes anything, so this is the first thing every
+  // listen sees. Rendering the recipient table underneath it would show a list
+  // emptying itself row by row, with every control on the page pointed at
+  // documents that are going; and the page cannot be honest about what is
+  // left, because by design it will shortly be nothing.
+  //
+  // AN ADMIN FALLS THROUGH, and it is not a courtesy: the danger zone at the
+  // foot of this page is the ONLY circulation destroy panel in the app, and it
+  // owns the progress view, the resume banner and the receipt. A cascade
+  // bigger than one page budget returns `complete: false` and needs the same
+  // panel to run the next pass, so unmounting it here on the listener's own
+  // mid-cascade update would strand the circulation half destroyed with
+  // nothing anywhere offering to finish it. The notice below says what is
+  // happening; everything the notice describes as unusable is not rendered.
+  //
+  // Not a gate either way: the routes and the rules refuse the writes. This is
+  // what the screen says while they do.
+  if (circulation.destroying && !isAdmin) {
+    return (
+      <EmptyState
+        title="This circulation is being removed"
+        body="An admin is destroying it: the answers, the reviews and the cards it put on people's boards are being deleted, and this page will stop resolving when that finishes. Nothing here can be edited or exported any more."
+        action={
+          <Link href={`/worksheets/${worksheetId}`} className={styles.linkButton}>
+            Open the library worksheet
+          </Link>
+        }
+      />
+    );
+  }
+
   const senderName = uid === circulation.senderUid ? "you" : nameOf(circulation.senderUid);
   const sentOn = circulation.createdAt
     ? circulation.createdAt.toLocaleDateString("en-GB", {
@@ -237,7 +278,74 @@ export default function CirculationPage({ worksheetId, circulationId }: Props) {
     : "no due date";
 
   const closed = circulation.status === "closed";
+  // Only an admin can reach this true (see the early return above), and from
+  // here it means "render the notice and the danger zone, and nothing else".
+  const destroying = circulation.destroying;
   const existingRecipientUids = responses.map((response) => response.uid);
+
+  /* ADMIN ONLY, and it is the owner's decision rather than an oversight: a
+     circulation destroy is offered to admins and never to the sender, because
+     what it deletes is other people's answers. The routes behind the panel
+     refuse everybody else, so this test is the manners and not the gate.
+
+     Written as a value used by BOTH returns below, so there is exactly one
+     mount of it. Two mounts would be two components, and the one mid-cascade
+     would lose its progress state the moment the listener flipped the page
+     from one branch to the other. */
+  const dangerZone = isAdmin ? (
+    <DestroyPanel
+      kind="circulation"
+      targetId={circulationId}
+      label={circulation.title}
+      nameLabel="circulation title"
+      // The document's own counter, not the response listener's length: during
+      // the cascade the subcollection is emptying, and a subtitle that counted
+      // it would tell the admin the circulation had no recipients.
+      subtitle={`Sent ${sentOn}, ${circulation.recipientCount} recipient${
+        circulation.recipientCount === 1 ? "" : "s"
+      }`}
+      // The circulation document is gone by the time this fires, so there is
+      // nothing on this page left to read: the library worksheet is the
+      // nearest thing that still exists.
+      onDestroyed={() => router.push(`/worksheets/${worksheetId}`)}
+    />
+  ) : null;
+
+  // MID-DESTROY, FOR THE ADMIN RUNNING IT. Everything the notice calls unusable
+  // is left out (the tabs, the export, the recipient table, the dialogs), and
+  // the danger zone stays because it is the thing driving the cascade: the
+  // progress view, the resume offer for a pass that ran out of budget, and the
+  // receipt all live inside it.
+  if (destroying) {
+    return (
+      <div className={styles.page}>
+        <header className={styles.head}>
+          <div className={styles.headTop}>
+            <Badge tone="accent">Circulation</Badge>
+            <Chip size="sm" tone="neutral">
+              Being removed
+            </Chip>
+          </div>
+          <h1 className={styles.title}>{circulation.title}</h1>
+          <p className={styles.meta}>
+            Sent by {senderName} on {sentOn}.
+          </p>
+        </header>
+
+        <EmptyState
+          title="This circulation is being removed"
+          body="The answers, the reviews and the cards it put on people's boards are being deleted. Nothing here can be edited or exported any more. If the destroy stopped part-way, the danger zone below reports where it got to and offers to finish it."
+          action={
+            <Link href={`/worksheets/${worksheetId}`} className={styles.linkButton}>
+              Open the library worksheet
+            </Link>
+          }
+        />
+
+        {dangerZone}
+      </div>
+    );
+  }
 
   return (
     <div className={styles.page}>
@@ -380,6 +488,8 @@ export default function CirculationPage({ worksheetId, circulationId }: Props) {
         )}
       </div>
 
+      {dangerZone}
+
       {viewing && (
         <ResponseView
           circulation={circulation}
@@ -402,6 +512,46 @@ export default function CirculationPage({ worksheetId, circulationId }: Props) {
       )}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Outliving the document
+// ---------------------------------------------------------------------------
+
+/**
+ * The circulation as the page should render it, which for a destroy is NOT
+ * quite what the listener last said.
+ *
+ * `useCirculation` is live, and the last thing a destroy does is delete the
+ * document it is listening to. So at the exact moment the cascade succeeds the
+ * snapshot arrives empty and the page would flip to "That circulation isn't
+ * here", taking the receipt with it: the totals and the audit id are shown
+ * nowhere else, the panel deliberately waits for the operator to press Done
+ * before it navigates, and the operator would never see the button. An admin
+ * would be left to work out from an empty page whether their destroy finished.
+ *
+ * So the LAST SNAPSHOT THAT WAS MID-DESTROY is kept and served after the
+ * document goes. Two properties make that narrow rather than a stale cache:
+ * the only document it can serve is one already flagged `destroying`, which
+ * only the destroy engine writes, and it is only ever reached once the live
+ * read has stopped answering. A circulation nobody destroyed still disappears
+ * from this page the instant it disappears from Firestore, and so does one
+ * whose read is refused for any other reason.
+ */
+function useCirculationThroughDestroy(live: CirculationDoc | null): CirculationDoc | null {
+  // STATE, ADJUSTED DURING RENDER, which is the shape React documents for
+  // "remember something about the value you were just given". The two shapes
+  // that read more naturally are both refused, and rightly: a ref cannot be
+  // read during render (`react-hooks/refs`), and a `setKept` inside an effect
+  // is a second render pass for something already known in the first
+  // (`react-hooks/set-state-in-effect`). The identity test is what stops it
+  // looping: `live` is a fresh object per snapshot, and the circulation
+  // document is written once during a destroy.
+  const [kept, setKept] = useState<CirculationDoc | null>(null);
+  if (live?.destroying && live !== kept) setKept(live);
+  // The live document always wins. The kept one is only reachable once the
+  // listener has stopped answering, and only if it was mid-destroy.
+  return live ?? (kept?.destroying ? kept : null);
 }
 
 // ---------------------------------------------------------------------------

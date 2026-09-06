@@ -9,6 +9,10 @@ import {
 } from "firebase-admin/firestore";
 import { normalizeCourseEnrolment } from "./courseEnrolments";
 import {
+  MEMBER_RECORDS_COLLECTION,
+  MEMBER_RECORD_APPLICATIONS,
+} from "./memberRecords";
+import {
   MEMBERSHIPS_COLLECTION,
   MEMBERSHIP_PERIODS_COLLECTION,
   isMembershipTier,
@@ -66,6 +70,25 @@ export type AccountDeletionSummary = {
    * `deleteMembershipImportRows`.
    */
   membershipImportRowsDeleted: number;
+  /**
+   * Worksheet responses this cascade KEPT, counted through the member's
+   * worksheet tasks (one task per recipient, written beside the response). A
+   * retention, not a deletion: the owner's decision is that the answers a
+   * member gave, and the staff notes on them, stay. See the retention
+   * paragraph below and `countRetainedMemberWork`.
+   *
+   * A FLOOR RATHER THAN A CENSUS, and the name says "responses" while the
+   * count is of tasks for one honest reason: the task is the only handle this
+   * file has on a response, and somebody who deletes a worksheet task off the
+   * board takes it away without touching the answers. So the number can read
+   * low and never high. `countRetainedMemberWork` has the full reasoning.
+   */
+  worksheetResponsesRetained: number;
+  /**
+   * Entries on this person's member record (`memberRecords/{uid}/applications`)
+   * that the cascade KEPT: one per round they applied to. Also a retention.
+   */
+  memberRecordApplicationsRetained: number;
   conductFlagDeleted: boolean;
   authDeleted: boolean;
   /** Set when the teardown was not fully clean (a best-effort step failed, or the
@@ -550,6 +573,81 @@ export async function clearAdmissionRoundRoles(
 }
 
 /**
+ * Count what this cascade KEEPS: the member's worksheet work, and their member
+ * record. Nothing here deletes anything, and nothing here may be made to.
+ *
+ * ## Why the responses are counted through the tasks
+ *
+ * A response lives at `circulations/{circulationId}/responses/{uid}`, filed
+ * under the act of sending rather than under the person, so there is no
+ * uid-keyed query to run: the only handle back to one is a circulation id.
+ * Reaching them all by hand would mean listing every circulation the society
+ * has ever sent, and reaching them in one query would mean a collection-group
+ * index that nothing else here needs.
+ *
+ * The circulate route writes ONE TASK per recipient beside each response
+ * (`src/lib/worksheets/mint.ts`): `source: "worksheet"`, the recipient as the
+ * sole completer. Those tasks are retained by the same policy that retains
+ * every other task, so the member's worksheet tasks ARE the addressable index
+ * of their responses, they outlive this cascade, and the number stays
+ * re-derivable long after the summary that reported it was read.
+ *
+ * THE ONE WAY THAT INDEX DIVERGES, said out loud because a silent
+ * under-report is worse than a stated limit: `deleteTask`
+ * (`src/features/tasks/taskMutations.ts`) removes a task without touching the
+ * response it was minted beside, so a committee member who tidies a worksheet
+ * task off the board takes a row off this count while the answers themselves
+ * stay exactly where they were. The number is therefore a floor, not a census.
+ * Closing the gap properly means either refusing to delete a task whose
+ * `source` is `"worksheet"` while its response lives, or a collection-group
+ * index over `responses`; both are bigger than this summary line, and the
+ * count being low is the safe direction (it never claims data is held that is
+ * not).
+ *
+ * ## What is NOT counted, said out loud
+ *
+ * Reviews this member wrote as STAFF about other people live at
+ * `circulations/{id}/reviews/{theOtherPersonsUid}`: under somebody else's
+ * document id, in a subcollection nothing indexes across circulations, with
+ * the author recorded only as `updatedByUid` inside it. Counting them needs a
+ * collection-group query and therefore a declared collection-group index,
+ * which is a schema change and a deploy for one number on a summary. So they
+ * are not counted, and this summary does not imply that they were. The reviews
+ * written ABOUT this member ride with the response they assess: retained, and
+ * inside the responses count above.
+ *
+ * Both reads are aggregations, so a member with years of worksheets costs two
+ * counts rather than pages of documents.
+ */
+export async function countRetainedMemberWork(
+  db: Firestore,
+  uid: string,
+): Promise<{ worksheetResponses: number; memberRecordApplications: number }> {
+  const [tasks, records] = await Promise.all([
+    // An equality filter plus an array-contains, with no orderBy. Array
+    // filters take part in Firestore's index merging (confirmed against the
+    // dev project on 6 September 2026 and written down in
+    // `tests/firestore-indexes.test.mjs`), so this needs no composite index.
+    db
+      .collection("tasks")
+      .where("completerUids", "array-contains", uid)
+      .where("source", "==", "worksheet")
+      .count()
+      .get(),
+    db
+      .collection(MEMBER_RECORDS_COLLECTION)
+      .doc(uid)
+      .collection(MEMBER_RECORD_APPLICATIONS)
+      .count()
+      .get(),
+  ]);
+  return {
+    worksheetResponses: tasks.data().count,
+    memberRecordApplications: records.data().count,
+  };
+}
+
+/**
  * Cascade-delete an account by uid — the single source of truth for "delete this
  * account," reused by the admin Members delete, the collaborator delete, the
  * admin registrations-tracker delete, and the self-service unfinished-account
@@ -637,6 +735,24 @@ export async function clearAdmissionRoundRoles(
  * card exactly as it does on any other committee task, which is what the
  * deferred hygiene sweep is for; the run's own destroy takes these rows in
  * full (courseDeletion.ts, the `registerTasks` stage).
+ *
+ * WORKSHEET WORK AND THE MEMBER RECORD ARE RETAINED, AND COUNTED. The owner
+ * decided on 7 September 2026 that a deleted account's worksheet responses and
+ * the staff reviews of them STAY, exactly as its tasks do, and that the
+ * deletion summary states how many, so the policy can be changed knowingly
+ * rather than discovered by somebody hunting for data that has gone. The
+ * reasoning is the tasks reasoning with one addition: a response is
+ * substantive content the committee holds (the answers to a document the
+ * committee sent, and the notes it wrote about them), and it hangs off the
+ * circulation rather than off the person, so it is not a ghost row the way an
+ * unowned `courseApplications` row is. The member record
+ * (`memberRecords/{uid}/applications`: when they applied, what for, the
+ * outcome, how they scored, what the reviewers wrote) is kept for the same
+ * reason `dataExports` rows are, and it is the rule the whole deletion wave is
+ * built around: a destroy never deletes what the committee wants to remember
+ * about a person, and neither does an account deletion. Both are COUNTED and
+ * neither is touched; `countRetainedMemberWork` has the how, and names the one
+ * thing it deliberately does not count.
  */
 export async function deleteAccountCascade(
   auth: Auth,
@@ -662,6 +778,8 @@ export async function deleteAccountCascade(
     admissionRoundRolesCleared: 0,
     membershipsDeleted: 0,
     membershipImportRowsDeleted: 0,
+    worksheetResponsesRetained: 0,
+    memberRecordApplicationsRetained: 0,
     conductFlagDeleted: false,
     authDeleted: false,
   };
@@ -1004,6 +1122,39 @@ export async function deleteAccountCascade(
     partialFailure = true;
   }
 
+  // 5g. THE TWO RETENTION COUNTS. Reads only, and they are the last thing this
+  //     function does before Auth precisely so nothing after them can be
+  //     mistaken for a sweep of what they counted.
+  //
+  //     A failure here costs the summary two honest numbers and nothing else,
+  //     so it does NOT set `partialFailure`: holding the tracker row open would
+  //     resurface the account as an orphan in the registrations tracker over a
+  //     count of data that nobody lost, which is the ghost row this function
+  //     exists to stop. It DOES earn a sentence in the warning, because the
+  //     alternative is a summary reporting zero retained rows, and zero is
+  //     exactly what somebody revisiting this retention policy would read as
+  //     "there was nothing to keep".
+  //
+  //     A LOCAL FLAG rather than a write straight to `summary.warning`, and
+  //     this is the whole reason the flag exists: a count is a Firestore call
+  //     in the same request as every best-effort step above, so it fails for
+  //     the same transient causes they do (deadline exceeded, unavailable,
+  //     quota) and the two failures arrive together. A warning written here
+  //     would then occupy the field the residue sentence needs, the
+  //     `partialFailure` block at the end would find it already set and stay
+  //     quiet, and the admin would read a note about a missing telemetry number
+  //     while the registration row was deliberately kept for a re-run. Both
+  //     sentences are composed below instead, residue first.
+  let countsUnavailable = false;
+  try {
+    const kept = await countRetainedMemberWork(db, uid);
+    summary.worksheetResponsesRetained = kept.worksheetResponses;
+    summary.memberRecordApplicationsRetained = kept.memberRecordApplications;
+  } catch (err) {
+    console.error("[deleteAccount] retained-work counts failed:", uid, err);
+    countsUnavailable = true;
+  }
+
   // 6. Firebase Auth user. Already-gone counts as success.
   try {
     await auth.deleteUser(uid);
@@ -1040,12 +1191,30 @@ export async function deleteAccountCascade(
     }
   }
 
-  // A swallowed best-effort failure is still a non-clean delete — surface it as a
-  // warning (→ 207) so callers don't report a clean success.
-  if (partialFailure && !summary.warning) {
-    summary.warning =
-      "Some account data couldn't be removed; the registration row was kept so the deletion can be retried.";
+  // The warning, composed rather than assigned. Three different things can want
+  // to say something here (residue left behind, an Auth account that survived,
+  // and a retention count that could not be read), they are not mutually
+  // exclusive, and only the first two mean "retry this". So each contributes a
+  // SENTENCE and the residue one goes first: it is the one that changes what
+  // the admin has to do next, and the one that used to be lost whenever
+  // anything else had already written to the field.
+  const notices: string[] = [];
+  if (partialFailure) {
+    // A swallowed best-effort failure is still a non-clean delete, so it is
+    // surfaced as a warning (which the routes turn into a 207) rather than
+    // letting a caller report a clean success.
+    notices.push(
+      "Some account data couldn't be removed; the registration row was kept so the deletion can be retried.",
+    );
   }
+  // Set in step 6, and phrased there as its own sentence.
+  if (summary.warning) notices.push(summary.warning);
+  if (countsUnavailable) {
+    notices.push(
+      "The counts of the worksheet work and the member record kept with this account could not be read, so both are reported as zero. That is a reporting gap and not a deletion: nothing counted there is ever removed by a deletion.",
+    );
+  }
+  if (notices.length > 0) summary.warning = notices.join(" ");
 
   return summary;
 }

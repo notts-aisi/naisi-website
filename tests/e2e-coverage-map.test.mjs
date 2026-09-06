@@ -279,6 +279,12 @@ const NOT_COVERED = {
     coverWhen:
       "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
   },
+  "/api/worksheets/[worksheetId]": {
+    reason:
+      "Worksheet engine: /api/worksheets/[worksheetId] belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
   "/(app)/worksheets/(author)": {
     reason:
       "Worksheet engine: /(app)/worksheets/(author) belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
@@ -744,6 +750,30 @@ const NOT_COVERED = {
   "/api/courses/runs/[runId]/destroy-manifest": {
     reason:
       "Destroy protocol: /api/courses/runs/[runId]/destroy-manifest removes a whole course or run, and must never be automated against a database other people are using.",
+    coverWhen:
+      "Never automated here: cover it by hand against the written destroy checklist before an archive.",
+  },
+  "/api/worksheets/circulations/[circulationId]/destroy": {
+    reason:
+      "Destroy protocol: /api/worksheets/circulations/[circulationId]/destroy removes a whole circulation with everything under it, and must never be automated against a database other people are using.",
+    coverWhen:
+      "Never automated here: cover it by hand against the written destroy checklist before an archive.",
+  },
+  "/api/worksheets/circulations/[circulationId]/destroy-manifest": {
+    reason:
+      "Destroy protocol: /api/worksheets/circulations/[circulationId]/destroy-manifest removes a whole circulation with everything under it, and must never be automated against a database other people are using.",
+    coverWhen:
+      "Never automated here: cover it by hand against the written destroy checklist before an archive.",
+  },
+  "/api/admissions/rounds/[roundId]/destroy": {
+    reason:
+      "Destroy protocol: /api/admissions/rounds/[roundId]/destroy removes a whole admission round with its applications and reviews, and must never be automated against a database other people are using.",
+    coverWhen:
+      "Never automated here: cover it by hand against the written destroy checklist before an archive.",
+  },
+  "/api/admissions/rounds/[roundId]/destroy-manifest": {
+    reason:
+      "Destroy protocol: /api/admissions/rounds/[roundId]/destroy-manifest removes a whole admission round with its applications and reviews, and must never be automated against a database other people are using.",
     coverWhen:
       "Never automated here: cover it by hand against the written destroy checklist before an archive.",
   },

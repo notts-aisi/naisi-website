@@ -1,0 +1,157 @@
+/* The member record on the admin Members row: quiet, and it reads as a record
+   rather than as another block of controls. It sits at the foot of the
+   expanded panel, under the toggles and the edit form, because an admin opens
+   a row to change something far more often than to read a history. */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* `h3` is sized down here because typography.css gives it a page voice, which
+   would out-shout every control label on the panel.
+
+   An h3 rather than an h4, and the level is chosen for the branch where this
+   panel matters most. A rejected member's row renders no edit form and so no
+   heading at all above this one, so an h4 there would skip a level under the
+   page's h1. On every other row the edit form's own h3 sits above this section
+   as a SIBLING, not a parent: the record is not part of the edit form, and
+   nesting its heading under one would say it was. */
+.heading {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.note,
+.muted {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+}
+
+.entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+
+.entryHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* Wraps rather than squeezing the chips: the round title is the long part
+     and the two chips beside it are what the eye lands on first. */
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.title {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.dates,
+.appliedFor,
+.decision,
+.score {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* Smaller than the facts above it: it is about the record rather than about
+   the round, so it should be readable and never the first thing read. */
+.provenance {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.fieldLabel {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reviewerNote {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+
+.noteHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.reviewer {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.reviewerTotal {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+/* Size only. `MemberText` already carries the two properties that matter for a
+   reviewer's note (`pre-wrap`, so the line breaks they typed survive, and
+   `overflow-wrap: anywhere`, so a pasted URL cannot widen the row), and
+   restating them here would be two modules setting the same property at the
+   same specificity, where which one wins depends on stylesheet order. */
+.noteText {
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 48rem) { /* --bp-md */
+  .entry {
+    /* The panel loses its side padding to the shell on a phone, so the entry
+       card leans on its border alone rather than on an indent that is no
+       longer there. */
+    padding: var(--space-2);
+  }
+  .title {
+    /* Title on its own line, both chips on the next: a round title plus two
+       chips does not fit across a 360px screen, and a title that wraps with
+       one chip stranded beside it reads as two rounds. */
+    flex: 1 1 100%;
+  }
+  .reviewerNote {
+    padding: var(--space-2);
+  }
+}

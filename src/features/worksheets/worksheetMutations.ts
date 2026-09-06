@@ -2,7 +2,6 @@
 
 import {
   collection,
-  deleteDoc,
   doc,
   getDocs,
   query,
@@ -26,13 +25,18 @@ import {
 /**
  * The library's client-direct writes: worksheets and the folders they sit in.
  *
- * EVERYTHING HERE IS CLIENT-DIRECT, and that is the split the feature is built
- * on. A worksheet is content its author owns, and `firestore.rules` can express
- * every invariant that matters about it: `authorUid` pinned, `private`
- * admin-only in both directions, the three size caps. Circulating one is the
- * opposite (it copies a worksheet, writes a response document and a task per
- * recipient, and sends mail), so that is a route, and nothing in this file
- * touches a circulation.
+ * EVERYTHING HERE IS CLIENT-DIRECT EXCEPT THE DELETE, and that is the split
+ * the feature is built on. A worksheet is content its author owns, and
+ * `firestore.rules` can express every invariant that matters about it:
+ * `authorUid` pinned, `private` admin-only in both directions, the three size
+ * caps. Circulating one is the opposite (it copies a worksheet, writes a
+ * response document and a task per recipient, and sends mail), so that is a
+ * route, and nothing in this file touches a circulation.
+ *
+ * Deleting is the other exception, for two reasons no rule can reach: the
+ * question images live in Storage, where no client may delete, and an open
+ * circulation of the worksheet has to refuse the delete, which means counting
+ * documents in another collection. See `deleteWorksheet` below.
  *
  * NO `undefined` EVER REACHES FIRESTORE. A client-direct write refuses an
  * explicit undefined outright, including one nested inside an array, so every
@@ -154,14 +158,39 @@ export async function setWorksheetPrivate(id: string, value: boolean): Promise<v
 }
 
 /**
+ * Delete the library worksheet through its route.
+ *
+ * IT USED TO BE A `deleteDoc` HERE, and that could only ever remove half of
+ * it. The question images under `worksheet-images/{id}/` are written from the
+ * browser but can only be REMOVED with the Admin SDK (storage.rules grants no
+ * client delete), so every deleted worksheet stranded its pictures in the
+ * bucket; and a rule cannot count another collection, so a worksheet could be
+ * deleted while people were part-way through a circulation of it. The route
+ * does both, and `firestore.rules` closes the client delete so this is the
+ * only path.
+ *
  * Deleting the library document does NOT touch anything already sent: a
  * circulation carries its own copy of the items, its own responses and its own
- * tasks. That is why an author may do this without an admin, and why the
- * confirmation copy says the sent copies stay.
+ * tasks. The one thread between them is images, because a circulation's copy
+ * points at this worksheet's image folder until somebody re-uploads a picture
+ * on the circulation's own copy, and the route keeps that folder rather than
+ * sweeping it whenever any circulation of the worksheet exists. The editor's
+ * confirmation copy says which of the two will happen.
+ *
+ * THE ROUTE'S SENTENCE IS THROWN AS IT ARRIVES. Its refusals are the
+ * interesting half of this call ("2 circulations of this worksheet are still
+ * open"), and a caller that replaced them with a generic apology would leave
+ * the author with no idea what to do next.
  */
 export async function deleteWorksheet(id: string): Promise<void> {
-  const db = getClientDb();
-  await deleteDoc(doc(db, "worksheets", id));
+  const res = await fetch(`/api/worksheets/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { Accept: "application/json" },
+  });
+  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  if (!res.ok) {
+    throw new Error(body?.error ?? `Couldn't delete that worksheet (${res.status}).`);
+  }
 }
 
 /**

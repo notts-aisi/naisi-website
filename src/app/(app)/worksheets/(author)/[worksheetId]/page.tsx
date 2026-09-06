@@ -268,7 +268,13 @@ export default function WorksheetEditorPage() {
       await deleteWorksheet(worksheetId);
       router.push("/worksheets");
     } catch (err) {
-      setActionError(refusal(err, "Only the author or an admin can delete this worksheet."));
+      // THE ROUTE'S OWN SENTENCE, verbatim wherever there is one. Deleting is
+      // now a route rather than a client write, and its refusals are the
+      // useful half: "3 circulations of this worksheet are still open. Close
+      // them first" tells the author what to do, where the old client-write
+      // fallback ("only the author or an admin can delete this") would have
+      // told them something both wrong and unactionable.
+      setActionError(refusal(err, "Couldn't delete that worksheet."));
       setBusy(false);
     }
   }
@@ -504,8 +510,15 @@ export default function WorksheetEditorPage() {
           <h2 className={styles.dangerTitle}>Delete this worksheet</h2>
           <p className={styles.dangerBody}>
             Anything already circulated keeps its own copy of the questions, its answers and
-            its tasks, so deleting this document does not reach the people who have it. It
+            its tasks, so deleting this document does not reach the people who have it. A
+            circulation of it that is still open refuses the delete: close it first. It
             cannot be undone.
+          </p>
+          <p className={styles.dangerBody}>
+            The pictures in these questions are stored against this worksheet. If it has
+            ever been circulated they stay where they are, because the copies those
+            circulations carry show the same files and blanking them would put a hole in
+            a record of what people were asked. Otherwise they go with the worksheet.
           </p>
           {expectedTitle.length === 0 ? (
             <p className={styles.dangerBody}>
