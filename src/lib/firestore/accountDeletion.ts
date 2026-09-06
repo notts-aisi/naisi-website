@@ -27,6 +27,14 @@ import { deleteEventsForSubscriptions } from "./subscriptions";
 
 export type AccountDeletionSummary = {
   subscriptionsDeleted: number;
+  /**
+   * Web push subscription rows for this account's devices, one per endpoint
+   * (`src/lib/push/store.ts` owns the collection). Deleted rather than
+   * retained: the row is a live channel to a device's lock screen, and the
+   * tasks this cascade keeps still name the uid, so a survivor would go on
+   * buzzing a phone for somebody who no longer has an account here.
+   */
+  pushSubscriptionsDeleted: number;
   registrationDeleted: boolean;
   collaboratorDeleted: boolean;
   userDocDeleted: boolean;
@@ -136,7 +144,7 @@ const ADMISSION_PAGE_SIZE = 250;
 /**
  * Delete every row a member owns in one `uid`-keyed collection, a page at a
  * time. (Named for the course collections it was written for; it is generic,
- * and the scheduler markers use it too.)
+ * and the scheduler markers and the push subscription rows use it too.)
  *
  * No cursor: the rows are deleted as they are read, so the next query's first
  * page IS the next unprocessed page. That also makes a mid-way failure
@@ -659,6 +667,9 @@ export async function countRetainedMemberWork(
  *    keep mailing a deleted user. Their append-only event log is best-effort
  *    (the rows are already gone, so a stale audit line is acceptable degradation,
  *    mirroring safeRecordEvent) and must NOT abort the rest of the teardown.
+ *    The PUSH subscription rows follow them, as the account's other delivery
+ *    channel, but best-effort rather than fatal: step 1c argues why a device
+ *    endpoint is not the same kind of survivor as a mailing row.
  *  - COURSE data goes before Auth for the same reason as everything else in the
  *    best-effort block: a failure there must not cost the caller the Auth
  *    deletion. Within it, attendance is cleared BEFORE the enrolments are
@@ -685,8 +696,9 @@ export async function countRetainedMemberWork(
  *    the row once the failed step succeeds.
  *
  * SCOPE: deletes registration-stage + identity data — subscriptions (+ their
- * event log), the registrations row, the collaborators doc, the users doc, the
- * account's email-verification token docs, and the Auth user. It deliberately
+ * event log), the push subscription rows for this account's devices, the
+ * registrations row, the collaborators doc, the users doc, the account's
+ * email-verification token docs, and the Auth user. It deliberately
  * does NOT delete a member's substantive content (tasks, comments, attachments,
  * events, RSVPs, bookings). That's the deferred hygiene sweep, and retaining
  * content for a period after deletion is the intended behaviour (a privacy-policy
@@ -761,6 +773,7 @@ export async function deleteAccountCascade(
 ): Promise<AccountDeletionSummary> {
   const summary: AccountDeletionSummary = {
     subscriptionsDeleted: 0,
+    pushSubscriptionsDeleted: 0,
     registrationDeleted: false,
     collaboratorDeleted: false,
     userDocDeleted: false,
@@ -817,6 +830,38 @@ export async function deleteAccountCascade(
     } catch (err) {
       console.error("[deleteAccount] subscriptionEvents cleanup failed (best-effort):", uid, err);
     }
+  }
+
+  // 1c. PUSH subscription rows, the account's other delivery channel: one row
+  //     per device endpoint. The collection is owned by `src/lib/push/store.ts`;
+  //     the `uid` on a row is whoever last claimed that device (it is rewritten
+  //     on every subscribe), so this sweeps the devices still recorded as
+  //     theirs and leaves a device that has since changed hands alone.
+  //
+  //     Deleted rather than left to expire, because the tasks this cascade
+  //     RETAINS still name the uid: the task mirror reads the subscriptions for
+  //     a uid at send time, so a stranded row is a lock-screen notification for
+  //     a person who no longer has an account here.
+  //
+  //     BEST-EFFORT, unlike step 1, and the difference is bounded survival. A
+  //     stranded mailing row keeps mailing until somebody notices; a stranded
+  //     push endpoint is pruned by the sender the first time the push service
+  //     answers 404/410 (`pruneSubscription`), and the 207 this failure produces
+  //     keeps the registration row so the sweep is retried. Aborting the whole
+  //     teardown over it would leave the account itself intact, which is worse.
+  //
+  //     Paged by `deleteOwnedCourseRows` on its default `uid` field: one
+  //     equality filter and no orderBy, which Firestore's automatic
+  //     single-field index serves, so no composite index is declared for it.
+  try {
+    summary.pushSubscriptionsDeleted = await deleteOwnedCourseRows(
+      db,
+      "pushSubscriptions",
+      uid,
+    );
+  } catch (err) {
+    console.error("[deleteAccount] pushSubscriptions delete failed:", uid, err);
+    partialFailure = true;
   }
 
   // 2. collaborators doc (id is name-slug__uid, so query the uid field).

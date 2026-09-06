@@ -1,15 +1,24 @@
 /**
  * Version 4 of the Privacy Policy, checked sentence by sentence against the
- * code on 7 September 2026.
+ * code on 6 September 2026.
  *
  * What changed from v3: the worksheet activity sentence, and the corrections
- * that check turned up (certificates cut, deletion by email rather than a
- * button, what a deletion removes and what it keeps, no 30-day purge, only the
- * two exports that are logged, collaborator applications, email-and-password
- * signups, the SU membership file, reCAPTCHA, the full cookie and local
- * storage list, per-round blind settings, the star rating in place of
- * anonymous surveys, what other participants see, the push record, view-as,
- * and the worksheet recipient picker).
+ * that check turned up (deletion by email rather than a button, what a
+ * deletion removes and what it keeps, no 30-day purge, only the two exports
+ * that are logged, collaborator applications, email-and-password signups, the
+ * SU membership file, reCAPTCHA, the full cookie and local storage list,
+ * per-round blind settings, the star rating in place of anonymous surveys,
+ * what other participants see, the push record, view-as, and the worksheet
+ * recipient picker).
+ *
+ * Second pass, on the owner's decisions: certificates described as the
+ * participant minting their own, opt-in, with the retention carve-out that
+ * follows; who is name-blind and who is deliberately not; anonymous feedback
+ * as a thing we would announce before building; the push record going with
+ * the account; re-consent replacing the promise of an email; a 30-day
+ * response time; and the standard lines this policy had never carried, on
+ * automated decisions, children, event dietary answers, the Google avatar,
+ * video thumbnails in email, the export kinds, and Google's sign-in script.
  *
  * v1, v2 and v3 are FROZEN: they still render unchanged at their archive URLs
  * (/privacy/v/1, /privacy/v/2 and /privacy/v/3), so this file is a
@@ -84,6 +93,11 @@ export default function PrivacyContentV4({
                 personal data processed through this website.
               </p>
               <p>
+                This site is for university students and staff. We do not
+                knowingly collect data from anyone under 16. If you think a
+                child has given us their data, email us and we will remove it.
+              </p>
+              <p>
                 You can reach us at{" "}
                 <a href="mailto:ai-safety@uonsu.com">ai-safety@uonsu.com</a>{" "}
                 with any privacy question, including requests to exercise the
@@ -109,6 +123,13 @@ export default function PrivacyContentV4({
                 <li>
                   A Firebase Auth session record so we can keep you signed in
                   across visits.
+                </li>
+                <li>
+                  Your Google profile photo is shown wherever your avatar
+                  appears, and that includes public pages if you opt into the
+                  members directory. The image itself stays with Google: a
+                  visitor&apos;s browser fetches it from Google&apos;s servers,
+                  which tells Google that somebody loaded the page it is on.
                 </li>
               </ul>
 
@@ -194,8 +215,8 @@ export default function PrivacyContentV4({
                   your account so we know where to send, together with your
                   browser&apos;s user-agent string and the last time that
                   device checked in. We hold one record per device you enable.
-                  Turning notifications off deletes it; deleting your account
-                  does not, so ask us if you want it gone.
+                  Turning notifications off deletes it, and so does deleting
+                  your account.
                 </li>
               </ul>
 
@@ -231,10 +252,11 @@ export default function PrivacyContentV4({
                   marked our mail as spam, so we can stop sending to them.
                 </li>
                 <li>
-                  A record of two of the spreadsheet downloads the site
-                  generates, the membership list and the answers to a
-                  circulated worksheet: who asked for it, what it covered, how
-                  many people were in it, and when. See{" "}
+                  A record of the spreadsheet downloads the site generates. Two
+                  kinds are logged today, a membership list and the responses
+                  to a circulated worksheet, and each row holds who asked for
+                  it, what it covered, how many people were in it, and when.
+                  See{" "}
                   <a href="#courses">Courses and programmes</a> for what that
                   does and does not cover.
                 </li>
@@ -307,11 +329,15 @@ export default function PrivacyContentV4({
                   <strong>Reviewer scores and notes.</strong> Each reviewer
                   scores your application against the round&apos;s criteria and
                   can write free-text notes about it. Reviewers are other
-                  students: SU-recognised committee members and admins. Rounds
-                  are set up name-blind by default, and your membership tier is
-                  hidden from reviewers by default. If a round is run
-                  differently we will say so on the application form. A piece
-                  of writing can of course identify its author.
+                  students: SU-recognised committee members and admins.
+                  Reviewers score name-blind by default: a round&apos;s author
+                  can switch that off, and the application form will say so
+                  when they have. Your membership tier is hidden from reviewers
+                  by default in the same way. The final decider and the admins
+                  who make the decision and place you in a group are never
+                  blind. They see your name and your whole application, because
+                  deciding where you will do best is a judgement about you. A
+                  piece of writing can of course identify its author.
                   Scores and notes are personal data about you. If you ask us
                   what a reviewer wrote about your application, we will tell
                   you, and reviewers are told that before they write anything.
@@ -356,10 +382,10 @@ export default function PrivacyContentV4({
                   <strong>Feedback on the material.</strong> You can give a
                   piece of course material a star rating and leave a comment on
                   it. Both are stored against your account and your name, and
-                  the comment is shown to the rest of your run. We do not run
-                  anonymous surveys on this site. If we ever ask for feedback
-                  anonymously it will be through a form somewhere else, and it
-                  will say so.
+                  the comment is shown to the rest of your run. We do not
+                  currently run anonymous surveys on this site. If we add one,
+                  the form will say that it is anonymous and how that is done,
+                  and we will update this policy first.
                 </li>
                 <li>
                   <strong>Dropping out.</strong> If you leave a programme we
@@ -399,9 +425,17 @@ export default function PrivacyContentV4({
 
               <h3>Certificates</h3>
               <p>
-                We may issue certificates in future. If we do, we will say here
-                what a certificate shows and who can see it before we issue the
-                first one.
+                When you complete the fellowship or the incubator you will be
+                able to mint a certificate for yourself. Nothing is issued
+                unless you choose to: if you would rather no page on our site
+                named you, simply never mint one. If you do mint one, it
+                creates a page that names you, the programme and the date,
+                which anyone holding the link can open. The link is not
+                guessable and the page is not listed anywhere. It stays until
+                you ask us to withdraw it, which you can do at any time by
+                emailing us, including after your account is deleted, because
+                the people you sent the link to still need it. By applying to a
+                programme you agree that we may offer this.
               </p>
 
               <h3>Downloads</h3>
@@ -424,18 +458,20 @@ export default function PrivacyContentV4({
               <ul>
                 <li>
                   <strong>Reviewers</strong> (SU-recognised committee members
-                  and admins, all of them students) see applications with the
-                  name hidden on a round left name-blind, which is the default,
+                  and admins, all of them students) score name-blind by
+                  default, so they see your application without your name
+                  unless the round&apos;s author turned that off. They also see
                   their own and other reviewers&apos; scores and notes, and a
                   conduct flag if there is one. They do not see access
                   requirements, the membership tier, or the reason behind a
                   conduct flag.
                 </li>
                 <li>
-                  <strong>The person making the final decision</strong> sees
-                  everything a reviewer sees, with names, plus membership tier,
-                  plus access requirements when they open them, which is
-                  recorded.
+                  <strong>The person making the final decision,</strong> and
+                  the admins who take that decision and place people into
+                  groups, see everything a reviewer sees, with names, plus
+                  membership tier, plus access requirements when they open
+                  them, which is recorded.
                 </li>
                 <li>
                   <strong>Facilitators</strong> (students, in most cases only a
@@ -534,9 +570,18 @@ export default function PrivacyContentV4({
                   and rely on your explicit consent, given when you choose to
                   fill that box in. You do not have to fill it in, and you can
                   ask us to delete what you wrote there without affecting your
-                  application.
+                  application. The same goes for the dietary and accessibility
+                  answers you give on an event signup form: you choose whether
+                  to answer, you can leave them blank, and we use what you
+                  write only to run that event.
                 </li>
               </ul>
+              <p>
+                <strong>No automated decisions.</strong> No decision about you
+                is made solely by automated means. Scores are written by named
+                reviewers, a total is only the sum of what those reviewers
+                wrote, and every decision is taken by a person.
+              </p>
             </section>
 
             <section id="sharing" className={styles.section}>
@@ -583,6 +628,14 @@ export default function PrivacyContentV4({
                   receives information about your browser and how you
                   interacted with the page, and sets its own cookie. We see
                   only Google&apos;s pass or fail verdict.
+                </li>
+                <li>
+                  <strong>YouTube (Google)</strong> hosts the thumbnail image
+                  on an email from us whose body embeds a video, the newsletter
+                  included. If your mail client loads remote images, it fetches
+                  that thumbnail from YouTube, which tells Google the message
+                  was opened and roughly where from. Blocking remote images in
+                  your mail client stops it.
                 </li>
                 <li>
                   <strong>Your browser vendor</strong> (for example Google,
@@ -638,6 +691,14 @@ export default function PrivacyContentV4({
                   us so that the sign-in cannot be forged.
                 </li>
               </ul>
+              <p>
+                Google&apos;s sign-in script is loaded from{" "}
+                <code>accounts.google.com</code> on the sign-in and register
+                pages, and as soon as you press a link to one of them, so that
+                the Google button is ready by the time the page appears.
+                Loading it tells Google that a browser opened one of those
+                pages.
+              </p>
               <p>
                 In your browser&apos;s own local storage the site keeps four
                 small preferences, none of which leave your device:{" "}
@@ -725,16 +786,20 @@ export default function PrivacyContentV4({
                   account deletion.
                 </li>
                 <li>
-                  The push notification record for any device you turned
-                  notifications on for. Ask us and we will remove it.
-                </li>
-                <li>
                   The log of emails we sent you, and a suppression entry if
                   your address ever bounced or reported us as spam, kept so we
                   do not write to it again by mistake.
                 </li>
                 <li>The audit-style records described below.</li>
               </ul>
+              <p>
+                <strong>A certificate you minted is a deliberate
+                exception.</strong> If you chose to mint one, its page is not
+                removed when your account is deleted, because it exists for the
+                people you sent the link to and that is the moment you are
+                least likely to still have an account with us. Email us and we
+                will withdraw it, account or no account.
+              </p>
               <p>
                 Some of what you contributed stays after your account goes,
                 because removing it would break work other people are still
@@ -861,12 +926,12 @@ export default function PrivacyContentV4({
               <h2>Changes to this policy</h2>
               <p>
                 When we change this policy we will update the date at the top
-                of the page. For changes that materially affect how we use
-                your data, we will ask you to review and accept the updated
-                policy the next time you open a signed-in page, and we will let
-                active members know by email. If you decline, you are signed
-                out, and you can then email us to have the account removed.
-                Earlier versions stay readable at{" "}
+                of the page. We do not have to tell you by email. For changes
+                that materially affect how we use your data, the next time you
+                sign in you will be shown the new version and asked to accept
+                or decline it. Declining signs you out, and you can then email
+                us to have the account removed. Earlier versions stay readable
+                at{" "}
                 <a href="/privacy/versions">/privacy/versions</a>.
               </p>
             </section>
@@ -878,8 +943,7 @@ export default function PrivacyContentV4({
               Email{" "}
               <a href="mailto:ai-safety@uonsu.com">ai-safety@uonsu.com</a>{" "}
               with anything privacy-related, including requests to access,
-              correct, or delete your data. We aim to respond within a few
-              working days.
+              correct, or delete your data. We aim to respond within 30 days.
             </p>
           </aside>
         </div>

@@ -530,12 +530,17 @@ const MUST_NAME = [
   ["exercise responses", /Answers to exercises/i],
   ["facilitator feedback", /feedback a facilitator writes on your work/i],
   ["feedback on the material", /star rating and leave a comment/i],
-  ["no anonymous surveys are claimed", /We do not run anonymous surveys on this site/i],
+  ["no anonymous survey is claimed yet", /We do not\s+currently run anonymous surveys on this site/i],
+  ["an anonymous form would say so and move the policy first", /the form will say that it is anonymous and how that is done/i],
   ["membership tier", /membership tier \(paid, comped, alumni, staff\)/i],
   ["membership provenance", /a list the\s+Students&apos; Union gives us/i],
   ["the conduct flag", /an admin can\s+flag an\s+account and must record a reason/i],
   ["the conduct reason is admin-only", /Reviewers see only that a\s+flag exists, never the reason/i],
-  ["certificates are not promised", /We may issue certificates in future/i],
+  ["certificates are minted by the participant", /able to mint a certificate for yourself/i],
+  ["minting a certificate is opt-in", /Nothing is issued unless you choose to/i],
+  ["what a certificate page shows", /names you, the programme and the date/i],
+  ["reviewers score name-blind by default", /Reviewers score name-blind by default/i],
+  ["the decider and the allocating admins are never blind", /never\s+blind. They see your name and your whole application/i],
   ["only the two logged downloads are recorded", /Two of those downloads are recorded/],
   ["who can see what", /Who can see what/],
 ];
@@ -584,8 +589,12 @@ describe("the courses section", () => {
     assert.match(V4_FLAT, /What a deletion leaves behind/);
     assert.match(V4_FLAT, /scores and notes the reviewers\s+wrote/i);
     assert.match(V4_FLAT, /Nothing in file storage is removed by an account deletion/);
+    // Narrowly worded: v4 does promise to answer a rights request within 30
+    // days, which is the statutory deadline and nothing to do with deletion.
+    // What it may not do is promise that data GOES after a period, because no
+    // job enforces one.
     assert.ok(
-      !/30 days/.test(V4_FLAT),
+      !/30 days afterwards/i.test(V4_FLAT) && !/delete or anonymise/i.test(V4_FLAT),
       "v4 must not promise a deletion period: no job enforces one. Build the " +
         "sweep first, then say so.",
     );
@@ -596,22 +605,54 @@ describe("the courses section", () => {
     );
   });
 
-  test("certificates are not described until they exist", () => {
-    // No certificates collection, route or page exists anywhere in src. v3
-    // described an issued certificate with a public verification page naming
-    // the holder and withdrawal on request; v4 says only that we may issue
-    // them in future. The day a certificate sweep appears in the cascade,
-    // the policy has to describe the feature again.
-    assert.ok(
-      !/verification page/i.test(V4_FLAT),
-      "v4 describes a certificate verification page, and none exists.",
-    );
+  test("certificates are described in the conditional, opt-in voice the owner chose", () => {
+    // OWNER DECISION (C1). Certificates will exist for participants and
+    // completers of the fellowship and the incubator, and the PARTICIPANT
+    // mints their own: nothing is issued unless they ask for it, so somebody
+    // who does not want a page on our site naming them simply never mints
+    // one. Applicants agree to the mechanism when they apply. Every clause
+    // below is load-bearing, because the whole justification for a public
+    // page that outlives an account deletion is that the person chose to
+    // create it.
+    assert.match(V4_FLAT, /able to mint a certificate for yourself/i);
+    assert.match(V4_FLAT, /Nothing is issued unless you choose to/i);
+    assert.match(V4_FLAT, /anyone holding the link can open/i);
+    assert.match(V4_FLAT, /not listed anywhere/i);
+    assert.match(V4_FLAT, /By applying to a programme you\s+agree that we may offer this/i);
+    // And the retention carve-out that follows from it.
+    assert.match(V4_FLAT, /A certificate you minted is a deliberate\s+exception/i);
+    assert.match(V4_FLAT, /Email us and we\s+will withdraw it, account or no account/i);
+
+    // The cascade check stays, with the opposite message: no sweep exists
+    // yet, so the carve-out above is currently a statement about a feature
+    // nobody can trip over. The day one appears, the carve-out is the
+    // paragraph that has to be revisited.
     const cascade = read("src/lib/firestore/accountDeletion.ts");
     assert.ok(
       !/collection\(\s*"certificates"\s*\)/.test(cascade),
-      "account deletion now sweeps certificates, so certificates exist and " +
-        "the policy must describe them again: what one shows, who can see it, " +
-        "and what happens to it on deletion.",
+      "account deletion now sweeps certificates, so the retention carve-out " +
+        "that says a minted certificate survives an account deletion must be " +
+        "revisited: say what the sweep removes and what it leaves.",
+    );
+  });
+
+  test("the push record goes with the account", () => {
+    // OWNER DECISION (C8). The cascade removes pushSubscriptions rows for the
+    // deleted uid, so the policy no longer tells a member to email and ask.
+    // Both halves are pinned: the sentence that says so, and the absence of
+    // the old one, which would otherwise survive a careless merge.
+    assert.match(
+      V4_FLAT,
+      /Turning notifications off deletes it, and so does deleting\s+your account/i,
+    );
+    assert.ok(
+      !/deleting your account\s+does not/i.test(V4_FLAT),
+      "v4 still says deleting the account keeps the push record; the cascade " +
+        "removes it.",
+    );
+    assert.ok(
+      !/push notification record for any device/i.test(V4_FLAT),
+      "the push record is still listed among what a deletion leaves behind.",
     );
   });
 
@@ -620,7 +661,9 @@ describe("the courses section", () => {
     // collaborators document; an admin runs the cascade. v3 read as though
     // the site did it.
     assert.match(V4_FLAT, /There is no delete button on the site/);
-    assert.match(V4_FLAT, /If you decline, you are signed\s+out/);
+    // The other end of the same door: declining an updated policy signs you
+    // out, and email is then the only way to have the account removed.
+    assert.match(V4_FLAT, /Declining signs you out, and you can then email\s+us to have the account removed/i);
   });
 
   test("the export sentence is not upgraded to a promise the code cannot keep", () => {
@@ -636,7 +679,7 @@ describe("the courses section", () => {
 
   test("the OWNER TO CONFIRM block is gone from v4", () => {
     // The wording of a privacy policy is the owner's. v4 was checked sentence
-    // by sentence against the code on 7 September 2026 and its corrections
+    // by sentence against the code on 6 September 2026 and its corrections
     // were signed off by the owner in the pull request that landed them, so
     // the block that held the open question is gone. v3 keeps its own list,
     // which §1b checks, because v3 is frozen.
@@ -647,7 +690,7 @@ describe("the courses section", () => {
     );
   });
 
-  test("the disclosures the 7 September 2026 check added are all still there", () => {
+  test("the disclosures the 6 September 2026 check added are all still there", () => {
     // Each of these was something the site did that no earlier version
     // mentioned. A future edit that drops one puts the policy back out of
     // step with the code.
@@ -665,6 +708,17 @@ describe("the courses section", () => {
       ["blind review as a per-round default", /name-blind by default/i],
       ["what other participants see", /any comment or star rating you choose to leave/i],
       ["the push record carries the account", /carries\s+your account so we know where to send/i],
+      // Second pass, 6 September 2026: the owner's decisions on the review's
+      // C and D items, and the B items accepted in full.
+      ["re-consent is the notice, not an email", /asked to accept\s+or decline it/i],
+      ["the statutory response time", /respond within 30 days/i],
+      ["no solely automated decisions", /No decision about you\s+is made solely by automated means/i],
+      ["children", /do not\s+knowingly collect data from anyone under 16/i],
+      ["RSVP dietary and accessibility answers are given by explicit consent", /dietary and accessibility\s+answers you give on an event signup form/i],
+      ["the Google profile photo is fetched from Google by the visitor", /visitor&apos;s browser fetches it from Google&apos;s servers/i],
+      ["a video thumbnail in an email is fetched from YouTube", /fetches\s+that thumbnail from YouTube/i],
+      ["the export log names the kinds that exist", /Two\s+kinds are logged today/i],
+      ["Google's sign-in script and where it is loaded from", /sign-in script is loaded from/i],
     ]) {
       assert.match(V4_FLAT, pattern, `v4 no longer says: ${name}`);
     }

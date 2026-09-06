@@ -314,16 +314,20 @@ const UNRESOLVED_SITES = new Map([
       why:
         "deleteOwnedCourseRows(db, collection, uid, field) is the account cascade's paging " +
         "delete. Its callers pass (courseApplications | courseProgress | courseExerciseResponses " +
-        "| schedulerMarkers, 'uid') and (admissionReviews, 'applicantUid') and " +
-        "(admissionReviews, 'reviewerUid'). Every one is a single equality filter with no " +
-        "orderBy at collection scope, so AUTOMATIC_SINGLE_FIELD covers all six and no shape here " +
-        "can ever owe a composite index. A caller adding a second filter or an orderBy would " +
-        "have to edit this function, at which point the shapes below stop describing it.",
+        "| schedulerMarkers | pushSubscriptions, 'uid') and (admissionReviews, 'applicantUid') " +
+        "and (admissionReviews, 'reviewerUid'). Every one is a single equality filter with no " +
+        "orderBy at collection scope, so AUTOMATIC_SINGLE_FIELD covers all seven and no shape " +
+        "here can ever owe a composite index. pushSubscriptions is the same shape the push " +
+        "sender already runs (subscriptionsForUid in src/lib/push/store.ts), so the cascade's " +
+        "sweep adds no index requirement the feature did not already have. A caller adding a " +
+        "second filter or an orderBy would have to edit this function, at which point the " +
+        "shapes below stop describing it.",
       shapes: [
         { collection: "courseApplications", filters: [["uid", "=="]], orders: [] },
         { collection: "courseProgress", filters: [["uid", "=="]], orders: [] },
         { collection: "courseExerciseResponses", filters: [["uid", "=="]], orders: [] },
         { collection: "schedulerMarkers", filters: [["uid", "=="]], orders: [] },
+        { collection: "pushSubscriptions", filters: [["uid", "=="]], orders: [] },
         { collection: "admissionReviews", filters: [["applicantUid", "=="]], orders: [] },
         { collection: "admissionReviews", filters: [["reviewerUid", "=="]], orders: [] },
       ],
