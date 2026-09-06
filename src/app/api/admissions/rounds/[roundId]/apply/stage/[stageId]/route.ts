@@ -75,7 +75,10 @@ export async function POST(req: Request, ctx: Ctx) {
   const body = await readJson(req);
   if (!body) return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
 
-  const captcha = await requireRecaptcha(body, "stage-submit");
+  const captcha = await requireRecaptcha(body, "stage-submit", {
+    headers: req.headers,
+    email: user.email,
+  });
   if (captcha) return captcha;
 
   try {

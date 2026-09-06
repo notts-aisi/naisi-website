@@ -6,6 +6,7 @@ import { sendEmail } from "@/lib/email/send";
 import { randomOpaqueId, signToken } from "@/lib/signedTokens";
 import { isAcademicEmail, isNottinghamEmail } from "@/lib/firestore/users";
 import { verifyRecaptcha } from "@/lib/recaptcha/server";
+import { recaptchaBypassGranted } from "@/lib/recaptcha/bypass";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import VerifyLoginEmail from "@/emails/VerifyLoginEmail";
 import {
@@ -103,7 +104,16 @@ export async function POST(req: Request) {
     );
   }
 
-  if (!(await verifyRecaptcha(body.recaptchaToken))) {
+  // The harness bypass, for a TOKENLESS request from a harness address on the
+  // dev backend only (see src/lib/recaptcha/bypass.ts). A token that is
+  // present is always verified for real.
+  const recaptchaToken =
+    typeof body.recaptchaToken === "string" && body.recaptchaToken.length > 0
+      ? body.recaptchaToken
+      : undefined;
+  const bypassed =
+    recaptchaToken === undefined && recaptchaBypassGranted(req.headers, email);
+  if (!bypassed && !(await verifyRecaptcha(recaptchaToken))) {
     await recordSignupOutcome("recaptcha-failed");
     return NextResponse.json(
       { error: "Couldn't verify you're human. Please try again." },
