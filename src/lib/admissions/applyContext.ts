@@ -2,6 +2,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { type Db } from "./applicantSession";
 import { verifyRecaptcha } from "@/lib/recaptcha/server";
+import { recaptchaBypassGranted } from "@/lib/recaptcha/bypass";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 import {
   DEFAULT_PAUSED_MESSAGE,
@@ -128,8 +129,18 @@ export function throttleUid(uid: string, kind: ThrottleKind): NextResponse | nul
 export async function requireRecaptcha(
   body: Record<string, unknown>,
   action: RecaptchaAction,
+  bypass?: { headers: Headers; email: string | null | undefined },
 ): Promise<NextResponse | null> {
-  const token = typeof body.recaptchaToken === "string" ? body.recaptchaToken : undefined;
+  const token =
+    typeof body.recaptchaToken === "string" && body.recaptchaToken.length > 0
+      ? body.recaptchaToken
+      : undefined;
+  // The harness bypass, consulted ONLY for a request that carries no token
+  // (see src/lib/recaptcha/bypass.ts). A token that is present is verified
+  // with Google whatever headers came with it.
+  if (token === undefined && bypass && recaptchaBypassGranted(bypass.headers, bypass.email)) {
+    return null;
+  }
   if (await verifyRecaptcha(token)) return null;
   console.warn(`[admissions apply] recaptcha refused action=${action}`);
   return NextResponse.json(

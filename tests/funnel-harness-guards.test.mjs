@@ -471,6 +471,24 @@ test("assertTarget still refuses production for the harness's default", () => {
   }
 });
 
+test("the harness sends the same bypass header the gate reads", () => {
+  // Two literals, one on each side of the HTTP request. The harness cannot
+  // import the TypeScript, so both are read off the source and compared; a
+  // rename on either side fails here rather than as a silent skip in dev mode.
+  const helper = readFileSync(join(REPO_ROOT, "scripts", "e2e", "lib", "browser.mjs"), "utf8");
+  const gate = readFileSync(join(REPO_ROOT, "src", "lib", "recaptcha", "bypass.ts"), "utf8");
+  const helperHeader = /export const RECAPTCHA_BYPASS_HEADER = "([^"]+)";/.exec(helper)?.[1];
+  const gateHeader = /export const RECAPTCHA_BYPASS_HEADER = "([^"]+)";/.exec(gate)?.[1];
+  assert.ok(helperHeader, "scripts/e2e/lib/browser.mjs no longer pins RECAPTCHA_BYPASS_HEADER as a literal");
+  assert.ok(gateHeader, "src/lib/recaptcha/bypass.ts no longer pins RECAPTCHA_BYPASS_HEADER as a literal");
+  assert.equal(
+    helperHeader,
+    gateHeader,
+    "the harness and the gate disagree on the bypass header name, so every dev-mode " +
+      "run would be refused and reported as a reCAPTCHA failure.",
+  );
+});
+
 test("the fixture's restated production constants are pinned to literals", () => {
   // Every one of these is a copy of a rule that lives in src/. The fixture
   // cannot import them (they are TypeScript, and `emailDocId` is

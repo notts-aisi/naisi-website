@@ -247,7 +247,7 @@ function runAgainstTarget(origin, specFiles) {
  * Hence one shared constant, `RECAPTCHA_SKIP_REASON`, which the spec records
  * and this compares against.
  */
-function markerShortfall(spec, { deployed }) {
+function markerShortfall(spec, { acceptRecaptchaSkips }) {
   let marker;
   try {
     marker = JSON.parse(readFileSync(markerPath(spec.name), "utf8"));
@@ -263,7 +263,7 @@ function markerShortfall(spec, { deployed }) {
       .filter((s) => s && typeof s.name === "string")
       .map((s) => [s.name, String(s.reason ?? "")]),
   );
-  const acceptedSkips = new Set(deployed ? spec.recaptchaDependentSteps : []);
+  const acceptedSkips = new Set(acceptRecaptchaSkips ? spec.recaptchaDependentSteps : []);
   /** Gated steps that were skipped, but not for the one accepted reason. */
   const wrongReason = [];
   const missing = spec.steps.filter((name) => {
@@ -377,6 +377,26 @@ async function main() {
     return 1;
   }
   log(`Project ${target.projectId}, target ${origin} (${deployed ? "deployed" : "loopback"}).`);
+  /**
+   * Whether the reCAPTCHA-dependent steps may be skipped on this run. Only
+   * against a deployed target with NO bypass secret: there the real widget
+   * challenges headless Chromium. With E2E_RECAPTCHA_BYPASS_SECRET in the
+   * secrets file (and the same value on the dev backend), the specs arm the
+   * bypass header (see armRecaptcha in scripts/e2e/lib/browser.mjs) and every
+   * step must run; a skip is then a shortfall like any other. On loopback the
+   * stub answers, and nothing is ever skipped.
+   */
+  const recaptchaBypass = deployed && Boolean(loadSecrets().recaptchaBypassSecret);
+  const acceptRecaptchaSkips = deployed && !recaptchaBypass;
+  log(
+    deployed
+      ? recaptchaBypass
+        ? "reCAPTCHA: the dev-backend bypass is armed (E2E_RECAPTCHA_BYPASS_SECRET is set), " +
+          "so the reCAPTCHA-dependent steps run and may not be skipped."
+        : "reCAPTCHA: no bypass secret, so the real widget runs and the reCAPTCHA-dependent " +
+          "steps will be SKIPPED and reported. Set E2E_RECAPTCHA_BYPASS_SECRET to drive them."
+      : "reCAPTCHA: stubbed against the loopback server; every step runs.",
+  );
   log(
     mailCaught
       ? "Mailpit catches this run's mail, so fixture addresses are NOT suppressed and " +
@@ -518,7 +538,7 @@ async function main() {
       : await runAgainstTarget(origin, specFiles);
 
     const shortfalls = selected
-      .map(({ spec }) => markerShortfall(spec, { deployed }))
+      .map(({ spec }) => markerShortfall(spec, { acceptRecaptchaSkips }))
       .filter(Boolean);
     if (shortfalls.length > 0) {
       for (const line of shortfalls) console.error(`[e2e:browser] NOT A PASS: ${line}`);

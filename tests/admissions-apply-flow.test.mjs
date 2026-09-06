@@ -1130,12 +1130,15 @@ describe("the route prologue", () => {
   });
 
   test("reCAPTCHA is verified on each deliberate action, and NOT on the autosave", () => {
+    // The call may carry a third argument (the request headers and the acting
+    // identity, for the dev-backend harness bypass in
+    // src/lib/recaptcha/bypass.ts); the pin is on the action being named.
     const applySrc = source(APPLY_ROUTE);
-    assert.match(handler(applySrc, "POST"), /requireRecaptcha\(body, "create"\)/);
-    assert.match(handler(source(SUBMIT_ROUTE), "POST"), /requireRecaptcha\(body, "submit"\)/);
+    assert.match(handler(applySrc, "POST"), /requireRecaptcha\(body, "create"[,)]/);
+    assert.match(handler(source(SUBMIT_ROUTE), "POST"), /requireRecaptcha\(body, "submit"[,)]/);
     assert.match(
       handler(source(STAGE_ROUTE), "POST"),
-      /requireRecaptcha\(body, "stage-submit"\)/,
+      /requireRecaptcha\(body, "stage-submit"[,)]/,
     );
     // The draft save deliberately carries no token: a Google token goes stale
     // in about two minutes and the autosave fires on a timer with nobody
@@ -1150,9 +1153,9 @@ describe("the route prologue", () => {
   test("each verified action names an action the shared list knows about", () => {
     const actions = new Set(apply.RECAPTCHA_ACTIONS);
     const named = [
-      ...source(APPLY_ROUTE).matchAll(/requireRecaptcha\(body, "([a-z-]+)"\)/g),
-      ...source(SUBMIT_ROUTE).matchAll(/requireRecaptcha\(body, "([a-z-]+)"\)/g),
-      ...source(STAGE_ROUTE).matchAll(/requireRecaptcha\(body, "([a-z-]+)"\)/g),
+      ...source(APPLY_ROUTE).matchAll(/requireRecaptcha\(body, "([a-z-]+)"[,)]/g),
+      ...source(SUBMIT_ROUTE).matchAll(/requireRecaptcha\(body, "([a-z-]+)"[,)]/g),
+      ...source(STAGE_ROUTE).matchAll(/requireRecaptcha\(body, "([a-z-]+)"[,)]/g),
     ].map((m) => m[1]);
     assert.ok(named.length >= 3);
     for (const action of named) assert.ok(actions.has(action), `unknown action ${action}`);

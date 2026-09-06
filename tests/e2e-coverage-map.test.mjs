@@ -213,6 +213,42 @@ const NOT_COVERED = {
   // landed (#278, #279) and still moving; a spec written against today's shape
   // would be thrown away with its next iteration. The engine's own chat adds
   // its later routes here until it settles.
+  "/api/worksheets/circulations/[circulationId]/aggregate": {
+    reason:
+      "Worksheet engine: /api/worksheets/circulations/[circulationId]/aggregate belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
+  "/api/worksheets/circulations/[circulationId]/close": {
+    reason:
+      "Worksheet engine: /api/worksheets/circulations/[circulationId]/close belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
+  "/api/worksheets/circulations/[circulationId]/export": {
+    reason:
+      "Worksheet engine: /api/worksheets/circulations/[circulationId]/export belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
+  "/api/worksheets/circulations/[circulationId]/notify-copy-edited": {
+    reason:
+      "Worksheet engine: /api/worksheets/circulations/[circulationId]/notify-copy-edited belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
+  "/api/worksheets/circulations/[circulationId]/responses/[uid]/return": {
+    reason:
+      "Worksheet engine: /api/worksheets/circulations/[circulationId]/responses/[uid]/return belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
+  "/api/worksheets/circulations/[circulationId]/responses/[uid]/unfreeze": {
+    reason:
+      "Worksheet engine: /api/worksheets/circulations/[circulationId]/responses/[uid]/unfreeze belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
   "/api/worksheets/circulations": {
     reason:
       "Worksheet engine: /api/worksheets/circulations belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",

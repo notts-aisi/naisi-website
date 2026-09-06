@@ -264,13 +264,19 @@ around what it may touch and the hand-driven fixture CLI are in
   `<button>` whose inline background WebKit painted over), so a green run is a
   regression net and never a substitute for the manual Safari pass before `dev`
   goes to `main`. Google sign-in is not automatable at all, by design.
-- **The reCAPTCHA-dependent legs are local mode only.** Against a deployed
-  target Google's real widget answers headless Chromium with an image
+- **The reCAPTCHA-dependent legs run against dev only through the harness
+  bypass.** Google's real widget answers headless Chromium with an image
   challenge, which no spec may solve. Each spec declares those steps in
-  `recaptchaDependentSteps`; the runner accepts exactly that set as skipped,
-  only against a deployed target, and only when the marker carries the shared
-  `RECAPTCHA_SKIP_REASON`. Any other skip is a shortfall and fails the run.
-  This stops being a hole when the dev backend gets a captcha bypass header.
+  `recaptchaDependentSteps`. With no bypass secret the runner accepts exactly
+  that set as skipped, only against a deployed target, and only when the
+  marker carries the shared `RECAPTCHA_SKIP_REASON`; any other skip is a
+  shortfall and fails the run. With `E2E_RECAPTCHA_BYPASS_SECRET` in the
+  secrets file the specs send the bypass header with a tokenless request and
+  every step must run. The gate (`src/lib/recaptcha/bypass.ts`) grants only
+  when the dev backend holds the same variable, the header matches and the
+  acting identity is a harness address; a token that is present is always
+  verified with Google, and `tests/recaptcha-bypass.test.mjs` keeps the
+  variable out of `apphosting.yaml` and the bypass out of the verifier.
 - **A pinned defect is a defect, not a passing feature.** The funnel asserts
   that the public course page's second `CourseCTA` still offers "Take this
   place" after a member has left the course: the hero and foot placements each
