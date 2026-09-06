@@ -132,7 +132,7 @@ const STUBS = new Map([
   // The push door. Stubbed for the same reason the email transport is: this
   // suite must put nothing on the wire. What it records is the HANDOFF, which
   // is all this job is responsible for; the mirror's own gates (the VAPID
-  // check, the `courseDecisions` switch, the subscriptions query, the prune)
+  // check, the `courses` push switch, the subscriptions query, the prune)
   // are executed for real against a fake push service in
   // `tests/push-preferences.test.mjs`, which also pins that this job reaches
   // for this exact door rather than building one.
@@ -1293,7 +1293,7 @@ describe("the handler's own ordering", () => {
 
   test("pushes through the SHARED mirror, never a sender of its own", () => {
     // Settled by the owner on 6 September 2026: this job announces by email
-    // and push. The mirror is where the VAPID gate, the `courseDecisions`
+    // and push. The mirror is where the VAPID gate, the `courses` push
     // switch, the subscriptions query and the dead-endpoint prune live, so a
     // job reaching past it would be a second copy of all four.
     assert.match(

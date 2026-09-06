@@ -235,12 +235,16 @@ export function displayNameOf(data: Record<string, unknown>): string {
 }
 
 /**
- * An EXPLICIT refusal, read off the raw stored prefs — deliberately not
- * `normaliseNotifications`, which collapses "absent" and "false" into the same
- * `false` and would turn every unanswered profile into an opt-out. Only the
- * modern `notifications` shape can carry this refusal; the legacy `newsletter`
- * shape predates the category entirely and never means "no" to it. The
- * subscription row is the opt-IN; this category is the opt-OUT layered on top.
+ * An EXPLICIT refusal, read off the raw stored prefs. Only the modern
+ * `notifications` shape can carry this refusal; the legacy `newsletter` shape
+ * predates the category entirely and never means "no" to it. The subscription
+ * row is the opt-IN; this category is the opt-OUT layered on top.
+ *
+ * `normaliseNotifications` now resolves this row the same way (`courses` is an
+ * OPT_OUT row: absent reads as on, only a stored `false` is a refusal), so this
+ * reader agrees with it rather than working around it. It stays a raw read
+ * because the audience resolver holds raw documents and has no reason to
+ * normalise a whole prefs object per recipient.
  */
 export function hasOptedOutOfCourseAnnouncements(
   data: Record<string, unknown>,
@@ -402,12 +406,12 @@ export const MAX_COHORT_CHANNEL_ROWS = 500;
  * SUPPRESSION IS APPLIED HERE, not at the call site, so a preview's count and
  * the send's count are the same number.
  *
- * `notifications.categories.courses` defaults FALSE like every other category,
- * and requiring it to be true would empty the audience on day one — nothing sets
- * it on placement. That is not what the toggle is for: the OPT-IN is the
- * subscription row (you were placed in a group; you consented by enrolling), and
- * the CATEGORY is the opt-out layered on top. So an explicit `courses === false`
- * skips a recipient and absent means "hasn't answered".
+ * `notifications.categories.courses` is an OPT-OUT row: nothing sets it on
+ * placement, so requiring it to be true would empty the audience on day one.
+ * That is not what the toggle is for: the OPT-IN is the subscription row (you
+ * were placed in a group; you consented by enrolling), and the CATEGORY is the
+ * opt-out layered on top. So an explicit `courses === false` skips a recipient
+ * and absent means "hasn't answered".
  * `DEFAULT_NOTIFICATION_PREFS` in notifications.ts carries the other half of this
  * comment; change neither alone.
  */

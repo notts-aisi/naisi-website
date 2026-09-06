@@ -362,7 +362,7 @@ form** opens.
 | Cap | 200 sends per tick |
 | Stale after | 72 hours |
 | Template | `admissions-stage-released`, editable under Admin, Email designs |
-| Push | Yes, alongside the email, under the member's `courseDecisions` switch |
+| Push | Yes, alongside the email, under the member's `courses` push switch |
 
 **It announces; it does not release.** The release is derived at read time by
 `isStageReleased`, on every serialisation of every stage, so a stage whose

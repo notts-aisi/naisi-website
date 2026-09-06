@@ -8,7 +8,6 @@ import Switch from "@/components/ui/Switch";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
 import {
-  ALL_PUSH_KEYS,
   PUSH_DESCRIPTIONS,
   PUSH_LABELS,
   normaliseNotifications,
@@ -253,6 +252,9 @@ export function PushSettings() {
   );
 }
 
+/** The rows this card draws. See the block below for why it is not every row. */
+const TOPIC_KEYS: PushNotificationKey[] = ["tasks", "courses"];
+
 /**
  * The account-level topic switches, rendered on /profile as their own card.
  *
@@ -270,10 +272,17 @@ export function PushSettings() {
  * nor `categories` (the profile form owns those, and carries this map through
  * untouched when it writes).
  *
- * ABSENT MEANS ON. `normaliseNotifications` resolves an unwritten map to both
- * switches on, which is exactly what the member has already consented to by
- * enabling notifications on a device, so nothing is stored until they turn
- * one off.
+ * ABSENT MEANS ON, for the two rows shown here. `normaliseNotifications`
+ * resolves an unwritten opt-out row to on, which is exactly what the member
+ * has already consented to by enabling notifications on a device, so nothing
+ * is stored until they turn one off.
+ *
+ * ONLY THE TWO ROWS THAT PUSH TODAY are drawn, rather than `ALL_PUSH_KEYS`.
+ * The push column now has a cell per grid row, including the newsletter and
+ * events rows nothing sends a notification for yet; drawing them here would
+ * offer two switches with no traffic behind them. The whole card is absorbed
+ * into the /profile grid in the follow-up PR, which draws every row against
+ * both columns at once.
  */
 export function PushTopics() {
   const { user } = useAuth();
@@ -331,7 +340,7 @@ export function PushTopics() {
       <h2 className={styles.heading}>Notifications</h2>
       <p className={styles.topicsEyebrow}>All your devices, not just this one</p>
       <div className={styles.topicsRows}>
-        {ALL_PUSH_KEYS.map((key) => (
+        {TOPIC_KEYS.map((key) => (
           <Switch
             key={key}
             checked={prefs.push[key]}

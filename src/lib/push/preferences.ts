@@ -13,10 +13,12 @@ import {
  * One helper, used by every mirror, so the three decisions below are made
  * once rather than per caller.
  *
- * ABSENT IS THE DEFAULT, NOT A REFUSAL. `normaliseNotifications` resolves an
- * unwritten `push` map to both keys on, which is what keeps today's task
- * mirrors working for every member who has enabled a device and never
- * visited the switches.
+ * ABSENT IS THE DEFAULT, NOT A REFUSAL, for the opt-out rows.
+ * `normaliseNotifications` resolves an unwritten `push` map to `courses` and
+ * `tasks` on, which is what keeps today's task and decision mirrors working
+ * for every member who has enabled a device and never visited the switches.
+ * The `newsletter` and `events` rows are opt-in and resolve off, because
+ * nothing pushes for them yet and a switch nobody has seen is not consent.
  *
  * A MISSING USER DOC IS ALSO THE DEFAULT. There is no stored preference to
  * honour, and the only people in that state are accounts whose doc has been

@@ -58,7 +58,10 @@ export async function mirrorCourseDecisionToPush(
   try {
     if (!isPushConfigured()) return;
     if (!uid) return;
-    if (!(await wantsPushFor(uid, "courseDecisions"))) return;
+    // The `courses` row of the notification grid. Members who answered under
+    // the old `courseDecisions` key are still honoured: `normaliseNotifications`
+    // reads it as an alias when `courses` is absent.
+    if (!(await wantsPushFor(uid, "courses"))) return;
     await sendPushToUid(uid, { title, body, url });
   } catch (err) {
     console.warn("[push] course decision mirror failed", { uid, err });
