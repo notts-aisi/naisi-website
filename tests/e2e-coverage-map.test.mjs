@@ -209,6 +209,64 @@ const AUTH_BATTERIES = {
  * down rather than quietly absent.
  */
 const NOT_COVERED = {
+  // Worksheet engine. Built in a parallel branch during the week this map
+  // landed (#278, #279) and still moving; a spec written against today's shape
+  // would be thrown away with its next iteration. The engine's own chat adds
+  // its later routes here until it settles.
+  "/api/worksheets/circulations": {
+    reason:
+      "Worksheet engine: /api/worksheets/circulations belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
+  "/api/worksheets/circulations/[circulationId]/recipients": {
+    reason:
+      "Worksheet engine: /api/worksheets/circulations/[circulationId]/recipients belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
+  "/api/worksheets/circulations/[circulationId]/submit": {
+    reason:
+      "Worksheet engine: /api/worksheets/circulations/[circulationId]/submit belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
+  "/api/worksheets/circulations/[circulationId]/upload": {
+    reason:
+      "Worksheet engine: /api/worksheets/circulations/[circulationId]/upload belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
+  "/api/worksheets/recipients": {
+    reason:
+      "Worksheet engine: /api/worksheets/recipients belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
+  "/(app)/worksheets/(author)": {
+    reason:
+      "Worksheet engine: /(app)/worksheets/(author) belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
+  "/(app)/worksheets/(author)/[worksheetId]": {
+    reason:
+      "Worksheet engine: /(app)/worksheets/(author)/[worksheetId] belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
+  "/(app)/worksheets/(author)/[worksheetId]/circulations/[circulationId]": {
+    reason:
+      "Worksheet engine: /(app)/worksheets/(author)/[worksheetId]/circulations/[circulationId] belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
+  "/(app)/worksheets/respond/[circulationId]": {
+    reason:
+      "Worksheet engine: /(app)/worksheets/respond/[circulationId] belongs to a parallel build that is still landing on dev, so its shape is not yet stable enough to pin.",
+    coverWhen:
+      "When the worksheet engine has landed in full and its first circulation has gone to real committee members.",
+  },
   "/api/account/delete": {
     reason:
       "Account deletion is irreversible and its sweep is pinned by three unit suites over a fake database.",
