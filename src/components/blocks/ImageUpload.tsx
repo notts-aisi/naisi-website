@@ -40,23 +40,6 @@ type UploadState =
 const MAX_DIMENSION = 1600;
 const MAX_SIZE_MB = 3;
 
-/**
- * Storage prefixes whose `storage.rules` block refuses `image/svg+xml`
- * outright, mirrored here so the author is told in a sentence.
- *
- * `accept="image/*"` includes SVG and the picker offers it, so without this
- * the file is compressed, uploaded, refused at the network, and the raw
- * Firebase permission string is what lands in the error line. The rule is
- * still the enforcement; this is only the part that makes the refusal legible.
- *
- * SCOPED, not universal. Only `worksheet-images` carries the rule, because a
- * worksheet image is readable by every signed-in account and SVG is a document
- * format that can carry script. The other prefixes accept SVG today, and
- * refusing it for all of them would be a behaviour change on the newsletter,
- * events, courses and email-design editors that nobody asked for.
- */
-const SVG_REFUSING_PREFIXES = new Set(["worksheet-images"]);
-
 function safeFileName(name: string): string {
   return name
     .toLowerCase()
@@ -119,12 +102,33 @@ export default function ImageUpload({
     if (fileInputRef.current) fileInputRef.current.value = "";
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
+    // Lowercased once, and both checks below read this rather than `file.type`.
+    // A media type is case-insensitive, so `image/SVG+xml` names exactly the
+    // format `image/svg+xml` does and has to be treated as it.
+    const declaredType = file.type.toLowerCase();
+
+    if (!declaredType.startsWith("image/")) {
       setState({ kind: "error", message: "Please pick an image file." });
       return;
     }
 
-    if (file.type === "image/svg+xml" && SVG_REFUSING_PREFIXES.has(storagePrefix)) {
+    // Refused for EVERY prefix, because `storage.rules` now refuses SVG on
+    // every image folder it grants writes on: the four world-readable ones
+    // (newsletter, events, application emails, courses) as well as
+    // `worksheet-images`, which refused it first. An SVG is a document that
+    // can carry script and links rather than a picture.
+    //
+    // Matched as a PREFIX rather than compared to `image/svg+xml`, mirroring
+    // the rule it stands in front of. `image/svg+xml; charset=utf-8` carries a
+    // perfectly ordinary media-type parameter and is still an SVG, so an
+    // equality test here would send a file the rule refuses, and the person
+    // would read a Firebase permission string instead of a sentence.
+    //
+    // This check is not the enforcement, only the part that makes the refusal
+    // legible: `accept="image/*"` includes SVG and the picker offers it, so
+    // without it the file is compressed, uploaded, refused at the network, and
+    // the raw Firebase permission string is what lands in the error line.
+    if (declaredType.startsWith("image/svg")) {
       setState({
         kind: "error",
         message: "SVG files cannot be used here. Please pick a JPG, PNG, GIF or WebP.",

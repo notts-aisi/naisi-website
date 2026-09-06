@@ -1403,19 +1403,19 @@ const NOT_COVERED = {
   },
   "/(public)/privacy": {
     reason:
-      "/(public)/privacy renders the versioned policy files, whose content tests/privacy-policy-v3.test.mjs already pins.",
+      "/(public)/privacy renders the versioned policy files, whose content tests/privacy-policy.test.mjs already pins.",
     coverWhen:
       "When a policy version ships and the re-consent gate has to be proven end to end.",
   },
   "/(public)/privacy/v/[version]": {
     reason:
-      "/(public)/privacy/v/[version] renders the versioned policy files, whose content tests/privacy-policy-v3.test.mjs already pins.",
+      "/(public)/privacy/v/[version] renders the versioned policy files, whose content tests/privacy-policy.test.mjs already pins.",
     coverWhen:
       "When a policy version ships and the re-consent gate has to be proven end to end.",
   },
   "/(public)/privacy/versions": {
     reason:
-      "/(public)/privacy/versions renders the versioned policy files, whose content tests/privacy-policy-v3.test.mjs already pins.",
+      "/(public)/privacy/versions renders the versioned policy files, whose content tests/privacy-policy.test.mjs already pins.",
     coverWhen:
       "When a policy version ships and the re-consent gate has to be proven end to end.",
   },
@@ -1433,19 +1433,19 @@ const NOT_COVERED = {
   },
   "/(public)/terms": {
     reason:
-      "/(public)/terms renders the versioned policy files, whose content tests/privacy-policy-v3.test.mjs already pins.",
+      "/(public)/terms renders the versioned policy files, whose content tests/privacy-policy.test.mjs already pins.",
     coverWhen:
       "When a policy version ships and the re-consent gate has to be proven end to end.",
   },
   "/(public)/terms/v/[version]": {
     reason:
-      "/(public)/terms/v/[version] renders the versioned policy files, whose content tests/privacy-policy-v3.test.mjs already pins.",
+      "/(public)/terms/v/[version] renders the versioned policy files, whose content tests/privacy-policy.test.mjs already pins.",
     coverWhen:
       "When a policy version ships and the re-consent gate has to be proven end to end.",
   },
   "/(public)/terms/versions": {
     reason:
-      "/(public)/terms/versions renders the versioned policy files, whose content tests/privacy-policy-v3.test.mjs already pins.",
+      "/(public)/terms/versions renders the versioned policy files, whose content tests/privacy-policy.test.mjs already pins.",
     coverWhen:
       "When a policy version ships and the re-consent gate has to be proven end to end.",
   },

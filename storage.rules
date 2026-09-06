@@ -39,7 +39,14 @@ service firebase.storage {
           )
         )
         && request.resource.size < 5 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
+        && request.resource.contentType.matches('image/.*')
+        // No SVG: this folder is world-readable, and an SVG is a document that
+        // can carry script and links rather than a picture. Matched on the
+        // LOWERCASED type with a prefix pattern, not compared to the one exact
+        // string: rules compare strings byte for byte, so `image/SVG+xml` and
+        // `image/svg+xml; charset=utf-8` walked straight past an equality test
+        // while a browser opens both as an SVG document.
+        && !request.resource.contentType.lower().matches('image/svg.*');
     }
 
     // Event images: same shape as newsletter — public read so rendered emails
@@ -77,7 +84,14 @@ service firebase.storage {
           )
         )
         && request.resource.size < 5 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
+        && request.resource.contentType.matches('image/.*')
+        // No SVG: this folder is world-readable, and an SVG is a document that
+        // can carry script and links rather than a picture. Matched on the
+        // LOWERCASED type with a prefix pattern, not compared to the one exact
+        // string: rules compare strings byte for byte, so `image/SVG+xml` and
+        // `image/svg+xml; charset=utf-8` walked straight past an equality test
+        // while a browser opens both as an SVG document.
+        && !request.resource.contentType.lower().matches('image/svg.*');
     }
 
     // Application-email images: public read (a sent email renders in an inbox
@@ -97,7 +111,14 @@ service firebase.storage {
       allow write: if request.auth != null
         && userData().role == 'admin'
         && request.resource.size < 5 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
+        && request.resource.contentType.matches('image/.*')
+        // No SVG: this folder is world-readable, and an SVG is a document that
+        // can carry script and links rather than a picture. Matched on the
+        // LOWERCASED type with a prefix pattern, not compared to the one exact
+        // string: rules compare strings byte for byte, so `image/SVG+xml` and
+        // `image/svg+xml; charset=utf-8` walked straight past an equality test
+        // while a browser opens both as an SVG document.
+        && !request.resource.contentType.lower().matches('image/svg.*');
     }
 
     // Course images: the guide imagery in a week's editor and the intro on a
@@ -133,7 +154,14 @@ service firebase.storage {
           || userData().get(['permissions', 'draftCourse'], false) == true
         )
         && request.resource.size < 5 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
+        && request.resource.contentType.matches('image/.*')
+        // No SVG: this folder is world-readable, and an SVG is a document that
+        // can carry script and links rather than a picture. Matched on the
+        // LOWERCASED type with a prefix pattern, not compared to the one exact
+        // string: rules compare strings byte for byte, so `image/SVG+xml` and
+        // `image/svg+xml; charset=utf-8` walked straight past an equality test
+        // while a browser opens both as an SVG document.
+        && !request.resource.contentType.lower().matches('image/svg.*');
     }
 
     // Task attachments: mirror the Firestore task access gate — anyone who
@@ -221,12 +249,23 @@ service firebase.storage {
     // with no session; a worksheet is never public, and a question body can
     // carry a screenshot of something internal.
     //
-    // `image/svg+xml` is refused EXPLICITLY. It satisfies `image/.*`, it is a
-    // document format that can carry script, and this path is readable by
-    // every signed-in account including a brand-new pending one, so the
-    // characterisation recorded against newsletter-images (an SVG on a
-    // world-readable path) is not a thing to repeat on a path being added
-    // today.
+    // SVG is refused EXPLICITLY. It satisfies `image/.*`, it is a document
+    // format that can carry script, and this path is readable by every
+    // signed-in account including a brand-new pending one. This block refused
+    // it first and the four world-readable image blocks above admitted it,
+    // which was the wrong way round; they now carry the same clause.
+    //
+    // The clause used to be `contentType != 'image/svg+xml'`, an equality test
+    // against one spelling, and the emulator showed `image/SVG+xml` and
+    // `image/svg+xml; charset=utf-8` being stored verbatim through it. A media
+    // type is case-insensitive and may carry parameters, so a browser opens
+    // both of those as an SVG document while the rule reads them as two
+    // strings it has never heard of. It is a prefix match on the lowercased
+    // type now, which is the same reasoning as the allowlist in
+    // src/lib/worksheets/imageMagic.ts: refuse the FORMAT rather than the one
+    // shape somebody remembered to ban. The guard in
+    // scripts/rules-tests/tests/storage.test.mjs holds every image folder to
+    // the clause so the next folder added cannot forget it.
     match /worksheet-images/{ownerId}/{image=**} {
       function worksheetPath() {
         return /databases/(default)/documents/worksheets/$(ownerId);
@@ -255,7 +294,7 @@ service firebase.storage {
         )
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*')
-        && request.resource.contentType != 'image/svg+xml';
+        && !request.resource.contentType.lower().matches('image/svg.*');
     }
 
     // Worksheet image ANSWERS: what a recipient uploaded in reply to an

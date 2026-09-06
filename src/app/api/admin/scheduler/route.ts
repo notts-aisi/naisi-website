@@ -62,7 +62,13 @@ export async function GET(req: Request) {
   ]);
 
   // Optional drill-down: the markers one job has claimed most recently. Served
-  // by the (job ASC, claimedAt ASC) composite index, scanned in reverse.
+  // by the (job ASC, claimedAt DESC) composite index, which is declared in that
+  // direction because this sort is descending. An earlier comment here claimed
+  // the ascending declaration was "scanned in reverse"; Firestore does not scan
+  // an index backwards, and a probe against the dev project on 2026-09-06 had
+  // this exact query fail FAILED_PRECONDITION asking for (job ASC, claimedAt
+  // DESC) while the ascending declaration stood. Flipping the sort here without
+  // flipping the declaration puts the panel back on that error.
   const requestedJob = new URL(req.url).searchParams.get("job");
   let jobMarkers: unknown[] = [];
   if (requestedJob !== null && isSchedulerJobId(requestedJob)) {

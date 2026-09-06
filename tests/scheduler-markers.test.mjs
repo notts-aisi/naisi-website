@@ -36,25 +36,25 @@
  *  4. `FieldValue.serverTimestamp()` resolves to the fake's clock at write
  *     time, so a re-claimed marker's `claimedAt` really does move.
  *
- * ## The loader dance
+ * ## The loader
  *
- * Same as tests/course-deletion.test.mjs: this repo's Node is v20 and cannot
- * import `.ts`, so the module is transpiled in memory with the `typescript`
- * devDependency, `@/…` is resolved by hand, and `server-only` plus
- * `firebase-admin/firestore` are stubbed.
+ * The shared one, `tests/lib/tsLoader.mjs`: this repo's Node is v20 and cannot
+ * import `.ts`, so each module is transpiled in memory with the `typescript`
+ * devDependency and `@/…` is resolved by hand. It compiles JSX, which matters
+ * here because `registry.ts` imports every job by value and several of those
+ * jobs reach an email template.
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createLoader } from "./lib/tsLoader.mjs";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(REPO_ROOT, "src");
 /** Every job module, walked by the ships-dark guard at the bottom of the file. */
 const JOBS_DIR = join(SRC, "lib", "scheduler", "jobs");
-
-const SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"']+)\2/g;
 
 /** The sentinel the stubbed `FieldValue.serverTimestamp()` returns. */
 const SERVER_TIMESTAMP = "__serverTimestamp__";
@@ -67,9 +67,9 @@ const SERVER_TIMESTAMP = "__serverTimestamp__";
  * doors to the outside world rather than logic: the registry imports its job
  * modules by value (that is how a registration is a registration), so loading
  * `registry.ts` here loads every job, and the reminders job reaches the Resend
- * send path, the JSX email components and the Admin SDK. Without these the
- * loader tries to transpile a `.tsx` component it has no JSX setting for, and
- * this suite fails on a syntax error that has nothing to do with markers.
+ * send path and the Admin SDK. They are stubbed so this suite cannot put mail
+ * on the wire, NOT because of the email templates behind them: the shared
+ * loader compiles those.
  *
  * The last two arrived with the worksheet due-soon reminders, which is the
  * first tick job that also PUSHES. The push mirror's own graph reaches
@@ -117,92 +117,7 @@ const STUBS = new Map([
   ["@/lib/firestore/suppression", "export const isSuppressed = async () => false;"],
 ]);
 
-/**
- * A FILE, never a directory. The extension candidates come first and the bare
- * path is only accepted when it is a file, because `@/lib/devBypass` is both a
- * directory and a module: taking the directory hands `readFileSync` an EISDIR
- * instead of a module, which is what happened the first time the registry
- * imported a job whose graph reaches `session.ts`.
- */
-function resolveLocalTs(specifier, fromFile) {
-  const base = specifier.startsWith("@/")
-    ? join(SRC, specifier.slice(2))
-    : resolve(dirname(fromFile), specifier);
-  for (const candidate of [`${base}.ts`, `${base}.tsx`, base, join(base, "index.ts")]) {
-    if (!existsSync(candidate)) continue;
-    if (statSync(candidate).isDirectory()) continue;
-    return candidate;
-  }
-  return null;
-}
-
-const graph = new Map();
-let tsc = null;
-
-function dataUrl(source) {
-  return `data:text/javascript;base64,${Buffer.from(source, "utf8").toString("base64")}`;
-}
-
-function stubUrl(key) {
-  const cached = graph.get(key);
-  if (cached) return cached;
-  const url = dataUrl(STUBS.get(key));
-  graph.set(key, url);
-  return url;
-}
-
-async function transpileToDataUrl(file) {
-  if (STUBS.has(file)) return stubUrl(file);
-  const cached = graph.get(file);
-  if (cached) return cached;
-
-  const { outputText } = tsc.transpileModule(readFileSync(file, "utf8"), {
-    fileName: file,
-    compilerOptions: {
-      target: tsc.ScriptTarget.ES2022,
-      module: tsc.ModuleKind.ESNext,
-    },
-  });
-
-  const rewrites = new Map();
-  for (const [, , , specifier] of outputText.matchAll(SPECIFIER)) {
-    if (rewrites.has(specifier)) continue;
-    if (STUBS.has(specifier)) {
-      rewrites.set(specifier, stubUrl(specifier));
-    } else if (specifier.startsWith(".") || specifier.startsWith("@/")) {
-      const target = resolveLocalTs(specifier, file);
-      if (!target) throw new Error(`cannot resolve "${specifier}" imported from ${file}`);
-      rewrites.set(specifier, await transpileToDataUrl(target));
-    } else {
-      rewrites.set(specifier, import.meta.resolve(specifier));
-    }
-  }
-
-  const rewritten = outputText.replace(
-    SPECIFIER,
-    (whole, prefix, quote, specifier) =>
-      rewrites.has(specifier)
-        ? `${prefix}${quote}${rewrites.get(specifier)}${quote}`
-        : whole,
-  );
-  const url = dataUrl(rewritten);
-  graph.set(file, url);
-  return url;
-}
-
-async function loadTs(relativePath) {
-  if (!tsc) {
-    try {
-      tsc = (await import("typescript")).default;
-    } catch (err) {
-      throw new Error(
-        "the `typescript` devDependency is not installed. Run `npm install`.",
-        { cause: err },
-      );
-    }
-  }
-  return import(await transpileToDataUrl(join(SRC, relativePath)));
-}
+const { loadTs } = createLoader({ stubs: STUBS });
 
 const {
   DEFAULT_MARKER_POLICY,

@@ -27,7 +27,7 @@ import type { ApplicationStatusPayload } from "@/lib/admissions/statusTypes";
  * import graph is the apply tree's shared context module: that is the module
  * holding the two helpers which address the access-requirements collection on
  * a caller's behalf, and this route must be provably unable to reach them. The
- * privacy scan in `tests/privacy-policy-v3.test.mjs` reads the import list,
+ * privacy scan in `tests/privacy-policy.test.mjs` reads the import list,
  * which is the right thing for it to read, and a source pin in
  * `tests/admissions-status-hub.test.mjs` keeps this route and the loader off
  * that module.

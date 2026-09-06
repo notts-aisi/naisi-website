@@ -12,7 +12,7 @@ import { getCurrentUser, type SessionUser } from "@/lib/firebase/session";
  * them (`privateRef`, `loadOwnApplication`) reach
  * `admissionApplicationPrivate`, the collection holding the
  * access-requirements answer. The privacy policy promises that every read of
- * that answer is recorded, and `tests/privacy-policy-v3.test.mjs` enforces the
+ * that answer is recorded, and `tests/privacy-policy.test.mjs` enforces the
  * promise by scanning route sources: a route that can reach that collection,
  * including by importing the module that can, has to either log the read or be
  * listed in the owner lane with a reason.

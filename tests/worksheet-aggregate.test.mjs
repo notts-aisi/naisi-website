@@ -40,18 +40,18 @@
  * this store interprets), the Admin SDK handle, the session and the
  * impersonation guard. Nothing here can reach a Firestore project.
  *
- * The loader dance is the one from `tests/worksheet-routes.test.mjs`.
+ * The loader is the shared one, `tests/lib/tsLoader.mjs`, as in the other two
+ * suites over this tree. Nothing the three routes here load reaches a `.tsx`
+ * today. It is on the shared loader anyway, for the reason the fake store is
+ * the same one: the routes BESIDE these three (add recipients, submit, return)
+ * all import `notify.ts` and the four email templates behind it, and a private
+ * loader that cannot read JSX turns the day this file loads one of them into a
+ * `SyntaxError` that kills the whole file before a test runs.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SRC = join(REPO_ROOT, "src");
-
-const SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"']+)\2/g;
+import { join } from "node:path";
+import { createLoader } from "./lib/tsLoader.mjs";
 
 /** Every write in this file resolves `serverTimestamp()` to this instant. */
 const STAMP = new Date("2026-09-06T12:00:00Z");
@@ -89,86 +89,7 @@ const STUBS = new Map([
   ],
 ]);
 
-function resolveLocalTs(specifier, fromFile) {
-  const base = specifier.startsWith("@/")
-    ? join(SRC, specifier.slice(2))
-    : resolve(dirname(fromFile), specifier);
-  for (const candidate of [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
-const graph = new Map();
-let tsc = null;
-
-function dataUrl(source) {
-  return `data:text/javascript;base64,${Buffer.from(source, "utf8").toString("base64")}`;
-}
-
-function stubUrl(key) {
-  const cached = graph.get(key);
-  if (cached) return cached;
-  const url = dataUrl(STUBS.get(key));
-  graph.set(key, url);
-  return url;
-}
-
-async function transpileToDataUrl(file) {
-  if (STUBS.has(file)) return stubUrl(file);
-  const cached = graph.get(file);
-  if (cached) return cached;
-
-  const { outputText } = tsc.transpileModule(readFileSync(file, "utf8"), {
-    fileName: file,
-    compilerOptions: {
-      target: tsc.ScriptTarget.ES2022,
-      module: tsc.ModuleKind.ESNext,
-    },
-  });
-
-  const rewrites = new Map();
-  for (const [, , , specifier] of outputText.matchAll(SPECIFIER)) {
-    if (rewrites.has(specifier)) continue;
-    if (STUBS.has(specifier)) {
-      rewrites.set(specifier, stubUrl(specifier));
-    } else if (specifier.startsWith(".") || specifier.startsWith("@/")) {
-      const target = resolveLocalTs(specifier, file);
-      if (!target) throw new Error(`cannot resolve "${specifier}" imported from ${file}`);
-      rewrites.set(specifier, await transpileToDataUrl(target));
-    } else {
-      try {
-        rewrites.set(specifier, import.meta.resolve(specifier));
-      } catch {
-        // Not a module: a string literal can look like an import to a regex.
-      }
-    }
-  }
-
-  const rewritten = outputText.replace(
-    SPECIFIER,
-    (whole, prefix, quote, specifier) =>
-      rewrites.has(specifier)
-        ? `${prefix}${quote}${rewrites.get(specifier)}${quote}`
-        : whole,
-  );
-  const url = dataUrl(rewritten);
-  graph.set(file, url);
-  return url;
-}
-
-async function loadTs(relativePath) {
-  if (!tsc) {
-    try {
-      tsc = (await import("typescript")).default;
-    } catch (err) {
-      throw new Error("the `typescript` devDependency is not installed. Run `npm install`.", {
-        cause: err,
-      });
-    }
-  }
-  return import(await transpileToDataUrl(join(SRC, relativePath)));
-}
+const { loadTs } = createLoader({ stubs: STUBS });
 
 // ---------------------------------------------------------------------------
 // A Firestore small enough to read. The same shape as the one in

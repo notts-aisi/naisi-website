@@ -34,14 +34,13 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createLoader } from "./lib/tsLoader.mjs";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SRC = join(REPO_ROOT, "src");
 
-const SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"']+)\2/g;
 const SERVER_TIMESTAMP = "__serverTimestamp__";
 
 /** The doors to the outside world, replaced. Same set as the reminders suite. */
@@ -85,30 +84,15 @@ const STUBS = new Map([
       "  (typeof data?.profile?.preferredName === 'string' && data.profile.preferredName) ||\n" +
       "  (typeof data?.displayName === 'string' && data.displayName) || '';",
   ],
-  // The JSX components, and the transport. `lib/email/admissionEmails.ts` is
-  // loaded FOR REAL further down (its token contract is imported rather than
-  // pattern-matched), and it imports all six components plus the Resend send
-  // path: a real `.tsx` here would be transpiled with no JSX option and throw
-  // before a single assertion ran, and a real `./send` could put mail on the
-  // wire. The stub of the module itself, below, is what the JOB imports.
-  ["@/emails/AdmissionsSubmittedEmail", "export default function Stub() { return null; }"],
-  ["@/emails/AdmissionsReinstatedEmail", "export default function Stub() { return null; }"],
-  [
-    "@/emails/AdmissionsDeadlineReminderEmail",
-    "export default function Stub() { return null; }",
-  ],
-  [
-    "@/emails/AdmissionsStageReleasedEmail",
-    "export default function Stub() { return null; }",
-  ],
-  ["@/emails/AdmissionsAppointedEmail", "export default function Stub() { return null; }"],
-  ["@/emails/AdmissionsDeclinedEmail", "export default function Stub() { return null; }"],
+  // The transport. `lib/email/admissionEmails.ts` is loaded FOR REAL further
+  // down (its token contract is imported rather than pattern-matched), and it
+  // imports the Resend send path along with the six templates: a real `./send`
+  // in this graph could put mail on the wire. The templates themselves are the
+  // real ones, compiled by the shared loader; they were stubbed here only
+  // because a hand-copied loader could not read JSX, and a stub that stands in
+  // for a file nothing can read is a file nothing ever checks. The stub of
+  // `admissionEmails` itself, below, is what the JOB imports.
   ["./send", "export async function sendEmail() {}"],
-  // Only reached when `courseFacilitatorEmails.ts` is loaded FOR REAL (the
-  // opt-out predicate's own test, at the bottom of this file). The JOB reads
-  // the stub of that module, below.
-  ["@/emails/ApplicationEmail", "export default function Stub() { return null; }"],
-  ["@/emails/NewsletterEmail", "export default function Stub() { return null; }"],
   ["@/lib/firebase/session", "export async function getCurrentUser() { return null; }"],
   [
     "@/lib/email/admissionEmails",
@@ -134,86 +118,7 @@ const STUBS = new Map([
   ["@/lib/push/taskNotifications", "export const mirrorTaskEmailToPush = async () => {};"],
 ]);
 
-/** A FILE, never a directory: `@/lib/devBypass` is both. */
-function resolveLocalTs(specifier, fromFile) {
-  const base = specifier.startsWith("@/")
-    ? join(SRC, specifier.slice(2))
-    : resolve(dirname(fromFile), specifier);
-  for (const candidate of [`${base}.ts`, `${base}.tsx`, base, join(base, "index.ts")]) {
-    if (!existsSync(candidate)) continue;
-    if (statSync(candidate).isDirectory()) continue;
-    return candidate;
-  }
-  return null;
-}
-
-const graph = new Map();
-let tsc = null;
-
-function dataUrl(source) {
-  return `data:text/javascript;base64,${Buffer.from(source, "utf8").toString("base64")}`;
-}
-
-function stubUrl(key) {
-  const cached = graph.get(key);
-  if (cached) return cached;
-  const url = dataUrl(STUBS.get(key));
-  graph.set(key, url);
-  return url;
-}
-
-async function transpileToDataUrl(file) {
-  if (STUBS.has(file)) return stubUrl(file);
-  const cached = graph.get(file);
-  if (cached) return cached;
-
-  const { outputText } = tsc.transpileModule(readFileSync(file, "utf8"), {
-    fileName: file,
-    compilerOptions: {
-      target: tsc.ScriptTarget.ES2022,
-      module: tsc.ModuleKind.ESNext,
-    },
-  });
-
-  const rewrites = new Map();
-  for (const [, , , specifier] of outputText.matchAll(SPECIFIER)) {
-    if (rewrites.has(specifier)) continue;
-    if (STUBS.has(specifier)) {
-      rewrites.set(specifier, stubUrl(specifier));
-    } else if (specifier.startsWith(".") || specifier.startsWith("@/")) {
-      const target = resolveLocalTs(specifier, file);
-      if (!target) throw new Error(`cannot resolve "${specifier}" imported from ${file}`);
-      rewrites.set(specifier, await transpileToDataUrl(target));
-    } else {
-      rewrites.set(specifier, import.meta.resolve(specifier));
-    }
-  }
-
-  const rewritten = outputText.replace(
-    SPECIFIER,
-    (whole, prefix, quote, specifier) =>
-      rewrites.has(specifier)
-        ? `${prefix}${quote}${rewrites.get(specifier)}${quote}`
-        : whole,
-  );
-  const url = dataUrl(rewritten);
-  graph.set(file, url);
-  return url;
-}
-
-async function loadTs(relativePath) {
-  if (!tsc) {
-    try {
-      tsc = (await import("typescript")).default;
-    } catch (err) {
-      throw new Error(
-        "the `typescript` devDependency is not installed. Run `npm install`.",
-        { cause: err },
-      );
-    }
-  }
-  return import(await transpileToDataUrl(join(SRC, relativePath)));
-}
+const { loadTs } = createLoader({ stubs: STUBS });
 
 function source(relativePath) {
   return readFileSync(join(REPO_ROOT, ...relativePath.split("/")), "utf8");

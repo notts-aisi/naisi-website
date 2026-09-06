@@ -24,26 +24,24 @@
  * ## What is faked, and what is real
  *
  * The handlers, the item and answer model, the circulation normalisers, the
- * mint, the notifier's dispatch logic and `sniffImageType` are the REAL
- * modules. Faked: `next/server`, `firebase-admin/firestore` (sentinels this
- * store interprets), the Admin SDK handles, the session, the impersonation
- * guard, the SMTP transport, the push mirror, the two email templates (`.tsx`
- * pulling in `@react-email/components`, and only the send path renders them)
- * and the roster resolver. Nothing here can reach a Firestore project, a
+ * mint, the notifier's dispatch logic, the four email templates and
+ * `sniffImageType` are the REAL modules. Faked: `next/server`,
+ * `firebase-admin/firestore` (sentinels this store interprets), the Admin SDK
+ * handles, the session, the impersonation guard, the SMTP transport, the push
+ * mirror and the roster resolver. Nothing here can reach a Firestore project, a
  * bucket or an inbox.
  *
- * The loader dance is the one from `tests/membership-grant-route.test.mjs`.
+ * The loader is the shared one, `tests/lib/tsLoader.mjs`, which compiles JSX.
+ * That is why the templates above are real: they used to be stubbed for no
+ * better reason than that a hand-copied loader could not read a `.tsx`, and the
+ * stub took the messages this file sends out of anybody's reach. Each one is
+ * now asserted as the HTML the recipient is handed.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SRC = join(REPO_ROOT, "src");
-
-const SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])([^"']+)\2/g;
+import { join } from "node:path";
+import { render } from "@react-email/render";
+import { createLoader } from "./lib/tsLoader.mjs";
 
 /** Every write in this file resolves `serverTimestamp()` to this instant. */
 const STAMP = new Date("2026-09-06T12:00:00Z");
@@ -108,114 +106,9 @@ const STUBS = new Map([
       "    out.set(uid, { email: data.email, displayName: data.displayName || 'there' });\n" +
       "  }\n  return out;\n}",
   ],
-  [
-    "@/emails/TaskMembershipEmail",
-    "export default function TaskMembershipEmail(props) {\n" +
-      "  return { template: 'TaskMembershipEmail', props };\n}",
-  ],
-  [
-    "@/emails/TaskReviewRequestEmail",
-    "export default function TaskReviewRequestEmail(props) {\n" +
-      "  return { template: 'TaskReviewRequestEmail', props };\n}",
-  ],
-  // The two wave-2 templates. They are not sent by anything this file exercises,
-  // but `notify.ts` imports all four at the top, and the loader has no JSX
-  // transform: an unstubbed `.tsx` reaches Node as JSX and fails the whole file
-  // before a single test runs.
-  [
-    "@/emails/WorksheetFeedbackEmail",
-    "export default function WorksheetFeedbackEmail(props) {\n" +
-      "  return { template: 'WorksheetFeedbackEmail', props };\n}",
-  ],
-  [
-    "@/emails/WorksheetUpdatedEmail",
-    "export default function WorksheetUpdatedEmail(props) {\n" +
-      "  return { template: 'WorksheetUpdatedEmail', props };\n}",
-  ],
 ]);
 
-function resolveLocalTs(specifier, fromFile) {
-  const base = specifier.startsWith("@/")
-    ? join(SRC, specifier.slice(2))
-    : resolve(dirname(fromFile), specifier);
-  for (const candidate of [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
-const graph = new Map();
-let tsc = null;
-
-function dataUrl(source) {
-  return `data:text/javascript;base64,${Buffer.from(source, "utf8").toString("base64")}`;
-}
-
-function stubUrl(key) {
-  const cached = graph.get(key);
-  if (cached) return cached;
-  const url = dataUrl(STUBS.get(key));
-  graph.set(key, url);
-  return url;
-}
-
-async function transpileToDataUrl(file) {
-  if (STUBS.has(file)) return stubUrl(file);
-  const cached = graph.get(file);
-  if (cached) return cached;
-
-  const { outputText } = tsc.transpileModule(readFileSync(file, "utf8"), {
-    fileName: file,
-    compilerOptions: {
-      target: tsc.ScriptTarget.ES2022,
-      module: tsc.ModuleKind.ESNext,
-    },
-  });
-
-  const rewrites = new Map();
-  for (const [, , , specifier] of outputText.matchAll(SPECIFIER)) {
-    if (rewrites.has(specifier)) continue;
-    if (STUBS.has(specifier)) {
-      rewrites.set(specifier, stubUrl(specifier));
-    } else if (specifier.startsWith(".") || specifier.startsWith("@/")) {
-      const target = resolveLocalTs(specifier, file);
-      if (!target) throw new Error(`cannot resolve "${specifier}" imported from ${file}`);
-      rewrites.set(specifier, await transpileToDataUrl(target));
-    } else {
-      // A string literal can look like an import to a regex. Anything
-      // unresolvable is left exactly as it is.
-      try {
-        rewrites.set(specifier, import.meta.resolve(specifier));
-      } catch {
-        // Not a module.
-      }
-    }
-  }
-
-  const rewritten = outputText.replace(
-    SPECIFIER,
-    (whole, prefix, quote, specifier) =>
-      rewrites.has(specifier)
-        ? `${prefix}${quote}${rewrites.get(specifier)}${quote}`
-        : whole,
-  );
-  const url = dataUrl(rewritten);
-  graph.set(file, url);
-  return url;
-}
-
-async function loadTs(relativePath) {
-  if (!tsc) {
-    try {
-      tsc = (await import("typescript")).default;
-    } catch (err) {
-      throw new Error("the `typescript` devDependency is not installed. Run `npm install`.", {
-        cause: err,
-      });
-    }
-  }
-  return import(await transpileToDataUrl(join(SRC, relativePath)));
-}
+const { loadTs } = createLoader({ stubs: STUBS });
 
 // ---------------------------------------------------------------------------
 // A Firestore small enough to read: addressed documents, one-field queries,
@@ -789,9 +682,19 @@ test("everyone added gets one email and one push, pointed at the respond page", 
   assert.equal(first.kind, "task");
   assert.equal(first.fromName, "NAISI Worksheets");
   assert.equal(first.referenceId, circulationId);
-  assert.equal(first.react.template, "TaskMembershipEmail");
-  assert.equal(first.react.props.recipientName, "Rae One");
-  assert.match(first.react.props.taskLink, new RegExp(`/worksheets/respond/${circulationId}$`));
+  // The message itself, rendered the way the transport renders it. Asserting on
+  // the HTML rather than on the props is what the real templates buy: a link
+  // built correctly and then dropped from the layout is a message nobody can
+  // act on, and a props assertion cannot see that.
+  const firstHtml = await render(first.react);
+  assert.match(firstHtml, /Hi Rae One,/);
+  assert.match(firstHtml, /Open task/, "the button that opens their own copy");
+  // The closing quote is the anchor. Reading the link out of the HTML rather
+  // than off the props costs the `$` that used to end this pattern, and without
+  // something in its place a link that grew a suffix (a second id, a stray
+  // query) would still match somewhere inside itself. The quote is where the
+  // href ends.
+  assert.match(firstHtml, new RegExp(`/worksheets/respond/${circulationId}"`));
 
   assert.equal(globalThis.__pushed.length, 2);
   assert.equal(globalThis.__pushed[0].uid, "recip1");
@@ -1003,12 +906,14 @@ test("submitting freezes the response, moves the counter and sends the task to R
     ["recip2@example.com", "sender@example.com"],
   );
   const mail = globalThis.__sent[0];
-  assert.equal(mail.react.template, "TaskReviewRequestEmail");
-  assert.equal(mail.react.props.requesterName, "Rae One");
-  assert.equal(mail.react.props.taskTitle, "Term plan");
+  const mailHtml = await render(mail.react);
+  assert.match(mailHtml, /Rae One/, "a review request names who is asking");
+  assert.match(mailHtml, /Term plan/);
+  assert.match(mailHtml, /Open task to review/);
   assert.match(
-    mail.react.props.taskLink,
-    new RegExp(`/worksheets/ws1/circulations/${circulationId}$`),
+    mailHtml,
+    new RegExp(`/worksheets/ws1/circulations/${circulationId}"`),
+    "a reviewer's message opens the circulation, where everybody's answers are",
   );
   assert.equal(
     globalThis.__pushed[0].url,

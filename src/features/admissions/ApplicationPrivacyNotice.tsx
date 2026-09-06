@@ -19,8 +19,14 @@
  * on any of them from a saved draft.
  *
  * The wording is the owner's: it must stay consistent with the "Courses and
- * programmes" section of the current privacy policy
- * (src/content/legal/privacy/v3.tsx). If one changes, change both.
+ * programmes" section of the CURRENT privacy policy
+ * (src/content/legal/privacy/v4.tsx). If one changes, change both, and move
+ * this pointer the day a newer version supersedes v4. A published version is
+ * frozen text, so a pointer left aimed at an old one sends the next engineer
+ * to edit a policy members have already accepted, which changes what an
+ * archive URL shows without moving CURRENT_POLICY_VERSION and so without
+ * anybody being asked. `tests/privacy-policy.test.mjs` fails any pointer in
+ * `src` or `docs` that names a version other than the current one.
  */
 
 /** Where the full section lives. One place to fix if the anchor ever moves. */

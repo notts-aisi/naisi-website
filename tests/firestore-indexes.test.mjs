@@ -268,15 +268,18 @@ const INDEX_RULES = [
     encodedAs:
       "NOT encoded as a satisfier. An index whose ordered directions are all exactly inverted " +
       "relative to the query does NOT serve it, so such a query lands in the missing list like " +
-      "any other and has to be recorded in KNOWN_MISSING_INDEXES with an owner. An earlier draft " +
-      "of this guard did treat a reversed index as serving the query, on the argument that " +
+      "any other, and is fixed by declaring the direction it actually sorts in (or, when that " +
+      "cannot land with the change, recorded in KNOWN_MISSING_INDEXES with an owner). An earlier " +
+      "draft of this guard did treat a reversed index as serving the query, on the argument that " +
       "AUTOMATIC_SINGLE_FIELD maintains every field in both directions. That argument is " +
       "backwards: maintaining both directions is exactly what you do when you CANNOT scan an " +
       "index backwards. The only other support was the comment on the one query it excused, " +
       "which is circular. SETTLED on 2026-09-06 by a read-only probe against the dev project: " +
       "`schedulerMarkers.where(job ==).orderBy(claimedAt, desc)` failed FAILED_PRECONDITION " +
       "asking for (job ASC, claimedAt DESC, __name__ DESC) while the ascending sort was served " +
-      "by the declared (job ASC, claimedAt ASC). Firestore does not scan an index backwards.",
+      "by the declaration as it then stood, (job ASC, claimedAt ASC). Firestore does not scan an " +
+      "index backwards, so that declaration now reads (job ASC, claimedAt DESC), which is the " +
+      "sort the one query on the pair actually asks for.",
   },
 ];
 
@@ -366,12 +369,20 @@ const UNRESOLVED_SITES = new Map([
  * Queries this guard says need an index that `firestore.indexes.json` does not
  * declare, RECORDED RATHER THAN FIXED.
  *
- * These are findings, not exemptions. The guard was written as a test-only
- * change, so it may not edit the index file; an entry here is a bug the next
- * person to touch that surface owes an index for, written down so the suite
- * stays honest about what it found instead of going green by pretending it
- * found nothing. `scripts/rules-tests/candidate-findings.test.mjs` records its
- * findings the same way, for the same reason.
+ * These are findings, not exemptions. When the guard first ran it found two,
+ * and it was written as a test-only change so it could not declare either: the
+ * review-outcome scan of a task's `activity` subcollection (kind ==, createdAt
+ * >=), and the scheduler drill-down (job ==, orderBy claimedAt DESC) against a
+ * declaration that carried claimedAt ASCENDING. Both were confirmed against the
+ * dev project on 2026-09-06, both are declared now, and the list is empty.
+ * `scripts/rules-tests/candidate-findings.test.mjs` records its findings the
+ * same way, for the same reason.
+ *
+ * An entry belongs here only when the index genuinely cannot land alongside the
+ * change that found it. Write down the stanza that is owed, who hits the
+ * failure and how it was confirmed, so the next person declares it and deletes
+ * the entry rather than rediscovering it from a FAILED_PRECONDITION in
+ * production.
  *
  * The list is checked BOTH ways. A new missing index fails outright, and an
  * entry that stops matching a missing query also fails, so the day somebody
@@ -379,37 +390,7 @@ const UNRESOLVED_SITES = new Map([
  * Key is `<file> :: <shape>`, with no line number in it, so the entry survives
  * an edit above the query.
  */
-const KNOWN_MISSING_INDEXES = new Map([
-  [
-    'src/app/api/tasks/[id]/send-review-outcome/route.ts :: collection("activity") | kind ==, ' +
-      "createdAt >= | orderBy no sort",
-    "The review-outcome send scans the task's activity subcollection for subtasks questioned " +
-      "during the current review pass: one equality filter on `kind` and a `>=` on `createdAt`, " +
-      "two different fields, which is RANGE_PLUS_OTHER_FIELD_NEEDS_COMPOSITE exactly. It owes " +
-      "{activity: kind ASC, createdAt ASC} at COLLECTION scope and nothing in " +
-      "firestore.indexes.json provides it. Live: the branch runs whenever the block has a " +
-      "reviewPassSentAt or sealedAt stamp, which every sealed block has, so the first reviewer " +
-      "to press Send review outcome on a sealed block gets a FAILED_PRECONDITION. The emulator " +
-      "suite cannot see it and neither can any existing test. CONFIRMED against the dev " +
-      "project on 2026-09-06: the same shape on an empty activity subcollection failed " +
-      "FAILED_PRECONDITION asking for (kind ASC, createdAt ASC).",
-  ],
-  [
-    'src/app/api/admin/scheduler/route.ts :: collection("schedulerMarkers") | job == | orderBy ' +
-      "claimedAt desc",
-    "The scheduler job drill-down filters on `job` and sorts `claimedAt` DESCENDING, and the only " +
-      "declaration is {schedulerMarkers: job ASCENDING, claimedAt ASCENDING}. The route's own " +
-      "comment says that index is 'scanned in reverse', but the documentation says the opposite " +
-      "in as many words (a descending sort 'requires a composite index with the ordering field " +
-      "configured in descending order') and nowhere states that an index can be walked backwards, " +
-      "so this guard refuses to call it served: see the REVERSE_SCAN rule. REFUSED AND REACHABLE. " +
-      "Any admin who opens /admin with ?job=<id> on the scheduler panel runs it. CONFIRMED " +
-      "against the dev project on 2026-09-06: the query failed FAILED_PRECONDITION asking for " +
-      "(job ASC, claimedAt DESC). The fix is to redeclare that index as (job ASCENDING, " +
-      "claimedAt DESCENDING); nothing else in the tree touches the pair, so the ascending " +
-      "declaration serves no other query.",
-  ],
-]);
+const KNOWN_MISSING_INDEXES = new Map();
 
 /**
  * Local helpers that hand back a collection reference, so a chain rooted on
@@ -1362,7 +1343,7 @@ test("every query that needs an index has one declared", () => {
   if (recorded.length > 0) {
     console.log(
       `\n[firestore-indexes] KNOWN MISSING, recorded in KNOWN_MISSING_INDEXES rather than fixed ` +
-        `here (this guard is a test-only change and may not edit the index file):\n` +
+        `here, each with an owner and the stanza it is owed:\n` +
         recorded
           .map(
             ({ q, reversed }) =>

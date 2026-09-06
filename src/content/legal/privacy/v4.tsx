@@ -3,63 +3,43 @@
  *
  * READ THIS BEFORE MERGING. The wording of a privacy policy is the owner's,
  * not an agent's, and publishing it moves CURRENT_POLICY_VERSION, which asks
- * every member on the site to re-accept. Most of the new "Courses and
- * programmes" section is a description of what the code does and can be
- * checked against it. The sentences below are DIFFERENT: they state POLICY,
- * meaning they are promises about how NAISI will behave, and nothing in the
- * codebase can make them true or false. Each one has to be true of how the
- * committee actually runs the programme, or it has to be cut.
+ * every member on the site, the owner included, to re-accept the policy on
+ * their next signed-in page. The ten items on v3's list were settled when
+ * v3 was accepted and are NOT reopened here: v3 is frozen and its list stays
+ * on that file. This version adds exactly one sentence, and it is the only
+ * numbered item below.
  *
- *  1. "Where an access-requirements answer includes health or disability
- *     information, we treat it as special category data and rely on your
- *     explicit consent." (Legal bases.) This is the lawful-basis claim for
- *     the most sensitive field the platform holds. If the committee would
- *     rather rely on a different condition, this sentence changes.
- *  2. "Your access requirements are never scored and never shown to
- *     reviewers." (Courses.) True of the code today, and a promise about
- *     every future route.
- *  3. "If you ask us what a reviewer wrote about your application, we will
- *     tell you." (Courses, and Your rights.) A commitment to answer subject
- *     access requests for reviewer notes rather than argue exemptions.
- *  4. "We will not use anything you write in a course to make decisions about
- *     you outside the programme." (Courses.)
- *  5. "Applications are kept against your account for as long as it exists,
- *     so you can see what you sent us." (Retention.) The owner decision was
- *     to keep applications rather than strip them after a fixed period; this
- *     sentence is that decision written down.
- *  6. "A certificate page stays online unless you ask us to withdraw it."
- *     (Courses.) States what happens to a published verification page, which
- *     names the recipient.
- *  7. "Deleting your account does not take a certificate down." (Retention,
- *     and Courses.) This is a CHOICE, and the opposite choice is just as
- *     defensible, so it is the one item here most worth a second look. The
- *     case for it: the verification page exists so somebody the holder sent
- *     the link to can check the certificate is real, and that is precisely
- *     the moment they are least likely to still have an account. The case
- *     against: a page naming a person outlives the account they closed.
- *     Whichever way this goes, the page and the code must agree.
- *     `accountDeletion.ts` has no certificate sweep today, so the wording
- *     below matches the build; reversing the decision means writing that
- *     sweep in the same change as the sentence, not after it.
- *  8. "Facilitators are students. They can see your attendance, your written
- *     work and the notes their colleagues wrote about you in their group."
- *     (Courses.) Deliberately blunt, because it is the fact a participant is
- *     least likely to guess. Confirm it is the level of frankness wanted.
- *  9. "We do not publish anything you write to the rest of your group unless
- *     you choose to share it." (Courses.)
- * 10. The date on this version (see POLICIES in src/lib/legal/policies.ts) is
- *     the planned live date, 16 September 2026. If the merge slips, move it.
+ * One further thing needs a decision and is not a sentence on the page: the
+ * date on this version (see POLICIES in src/lib/legal/policies.ts) is a
+ * PLACEHOLDER, one day after v3's planned live date, because neither version
+ * has reached production yet. Set the real publish date before merging.
+ *
+ *  1. "When a worksheet is sent to you, we record when you first opened it,
+ *     how many times you opened each page and roughly how long you were
+ *     active on it, and show that to you and to the people reviewing it; we
+ *     never record keystrokes or pasting." (Data we collect.) This one is
+ *     BOTH: the first half describes what the code does and can be checked
+ *     against `activity` on a worksheet response, but the second half is the
+ *     policy, and it is a promise about every future version of the feature
+ *     rather than about this one. Monitoring how long somebody spent on a
+ *     page is the sort of thing people expect to be told about, so the
+ *     sentence also names the audience: the recipient sees their own figures,
+ *     not only the reviewers. If the committee would rather not measure
+ *     active time at all, this sentence and the tracking come out together.
  *
  * =========================================================================
  *
- * Version 3 of the Privacy Policy. v1 and v2 are FROZEN: they still render
- * unchanged at their archive URLs (/privacy/v/1 and /privacy/v/2), so this
- * file is a copy-and-edit of v2 rather than a refactor of it. Never reach
- * into an older version to share markup with this one.
+ * Version 4 of the Privacy Policy. v1, v2 and v3 are FROZEN: they still
+ * render unchanged at their archive URLs (/privacy/v/1, /privacy/v/2 and
+ * /privacy/v/3), so this file is a copy-and-edit of v3 rather than a refactor
+ * of it. Never reach into an older version to share markup with this one.
+ * That is why the worksheet sentence is here and not in v3: v3 is the text
+ * the owner accepted, and editing accepted text in place would change what
+ * an archive URL shows without anyone having agreed to the change.
  *
- * What changed from v2: a new "Courses and programmes" section covering the
- * admissions and learning platform, plus the courses-shaped additions to How
- * we use it, Legal bases, Retention and Your rights.
+ * What changed from v3: one bullet under "When you join the committee", in
+ * "Data we collect", saying what a circulated worksheet records about the
+ * person it was sent to. Nothing else moved.
  */
 import type { ReactNode } from "react";
 import Badge from "@/components/ui/Badge";
@@ -82,7 +62,7 @@ const SECTIONS = [
   { id: "changes", label: "Changes to this policy" },
 ];
 
-export default function PrivacyContentV3({
+export default function PrivacyContentV4({
   meta,
   banner,
 }: {
@@ -221,6 +201,13 @@ export default function PrivacyContentV3({
                   to inside the committee tooling area of the site. These are
                   visible to other committee members under the access rules
                   described in our role model.
+                </li>
+                <li>
+                  When a worksheet is sent to you, we record when you first
+                  opened it, how many times you opened each page and roughly
+                  how long you were active on it, and show that to you and to
+                  the people reviewing it; we never record keystrokes or
+                  pasting.
                 </li>
               </ul>
 

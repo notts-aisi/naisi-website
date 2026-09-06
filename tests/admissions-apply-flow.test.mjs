@@ -1046,7 +1046,7 @@ describe("the route prologue", () => {
     // address the MEMBER's row and join their access-requirements answer,
     // which is disability and health information filed apart precisely so
     // nobody reads it unrecorded. The owner-lane exemption in
-    // tests/privacy-policy-v3.test.mjs rests on this guard.
+    // tests/privacy-policy.test.mjs rests on this guard.
     const body = handler(source(APPLY_ROUTE), "GET");
     const guard = body.indexOf("assertNotImpersonating()");
     assert.ok(guard !== -1, "the apply GET does not call the view-as guard");

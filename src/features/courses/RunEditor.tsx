@@ -22,7 +22,7 @@ import {
   validateQuestionLimits,
   type FormQuestion,
 } from "@/lib/firestore/events";
-import { ACADEMIC_YEAR_PATTERN } from "@/lib/firestore/users";
+import { ACADEMIC_YEAR_PATTERN, type UserDoc } from "@/lib/firestore/users";
 import { isValidDateKey } from "@/lib/courses/weekPlan";
 import {
   COHORT_LIMITS,
@@ -41,6 +41,7 @@ import {
   type CourseRunDoc,
   type CourseRunStatus,
 } from "@/lib/firestore/courses";
+import type { CourseGroupDoc } from "@/lib/firestore/courseGroups";
 import type { CourseTemplateRow } from "@/lib/firestore/courseTemplates";
 import { formatCivilDate, taughtWeekCount } from "./AdminCourseList";
 import { setRunStatus, updateRun } from "./courseMutations";
@@ -78,6 +79,13 @@ import pickerStyles from "./TemplatePicker.module.css";
  */
 
 type Props = { courseId: string; runId: string };
+
+/**
+ * The page's one toast runner, as the sections take it. Derived from the hook
+ * rather than restated so a change to its options cannot leave this file
+ * typechecking against a shape the runner no longer has.
+ */
+type ToastRun = ReturnType<typeof useActionToast>["run"];
 
 function statusTone(
   status: CourseRunStatus,
@@ -218,9 +226,8 @@ export default function RunEditor({ courseId, runId }: Props) {
   // Who is looking. The admissions and allocation ROUTES answer to a narrower
   // set than this page's gate does (see the two links below), so the editor
   // needs the caller's identity to avoid offering a door that answers 403.
-  const { user: authUser, role } = useAuth();
+  const { user: authUser, role, suRecognised } = useAuth();
   const { run, loading, notFound, error, reload } = useCourseRun(runId);
-  const { users: members, loading: membersLoading } = useMembers();
   const {
     items: groups,
     loading: groupsLoading,
@@ -301,6 +308,17 @@ export default function RunEditor({ courseId, runId }: Props) {
   // Archived groups are shown by default, greyed rather than hidden: that is
   // what `useCourseGroups` fetches for, and it keeps "restore" discoverable
   // instead of parked behind a toggle nobody flips.
+  //
+  // Both flags live HERE rather than inside the section that uses them,
+  // because that section is mounted through one of two component types (with
+  // the roster, or without it) and the choice turns on `role`, which is null
+  // until the user-doc snapshot lands. Two element types in one position means
+  // React unmounts the first and mounts the second, so state held down there
+  // would be discarded the instant the viewer's role resolved: a half-filled
+  // New group form would vanish under the author's hands. The group cards
+  // below still hold their own draft state and are remounted by the same
+  // swap, which is harmless because the swap happens while the page is still
+  // resolving who is looking, before anybody can have typed into one.
   const [showArchived, setShowArchived] = useState(true);
   const [creatingGroup, setCreatingGroup] = useState(false);
 
@@ -334,6 +352,11 @@ export default function RunEditor({ courseId, runId }: Props) {
   // (admin, draftCourse or approveCourse), so a drafter with no role on this
   // run would otherwise be handed two buttons that 403.
   const isAdmin = role === "admin";
+  // Whether this caller may read the member roster at all. `users` is open to
+  // admins and SU-recognised committee only, and this page is gated wider, so
+  // the two sections built out of the roster are mounted through a child only
+  // these viewers render. See GroupsAndRolesWithRoster at the foot of the file.
+  const canReadRoster = isAdmin || (role === "committee" && suRecognised);
   const myUid = authUser?.uid ?? null;
   const onRun = (uids: string[]) => myUid !== null && uids.includes(myUid);
   const canReview =
@@ -389,7 +412,23 @@ export default function RunEditor({ courseId, runId }: Props) {
     (s) => s !== "cancelled" || currentStatus === "cancelled",
   );
   const saving = toast?.phase === "saving";
-  const visibleGroups = groups.filter((g) => (showArchived ? true : !g.archived));
+  // Everything the groups-and-roles section needs except the roster itself,
+  // built once so the two mount forms below cannot drift apart.
+  const groupsAndRoles: GroupsAndRolesProps = {
+    run,
+    runId,
+    runAction,
+    groups,
+    groupsLoading,
+    groupsRefreshing,
+    groupsError,
+    reloadGroups,
+    onRolesSaved: reload,
+    showArchived,
+    setShowArchived,
+    creatingGroup,
+    setCreatingGroup,
+  };
   const counts = run.applicationCounts;
   // Everyone who has actually filled the form in, whatever admissions has
   // since decided about them. Withdrawn rows count too: the row (and its
@@ -1324,84 +1363,24 @@ export default function RunEditor({ courseId, runId }: Props) {
         </div>
       </Card>
 
-      {/* ---- Groups ---- */}
-      <Card padding="lg">
-        <div className={styles.sectionHeader}>
-          <h3 className={styles.sectionTitle}>Groups</h3>
-          <div className={styles.sectionHeaderActions}>
-            <Switch
-              checked={showArchived}
-              onChange={setShowArchived}
-              label="Show archived groups"
-            />
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => setCreatingGroup((c) => !c)}
-            >
-              {creatingGroup ? "Close" : "New group"}
-            </Button>
-          </div>
-        </div>
-
-        {groupsError && <p className={styles.error}>{groupsError.message}</p>}
-        {groupsLoading && <AdminLoadingBar label="Loading groups…" />}
-
-        <div className={styles.groups}>
-          {creatingGroup && (
-            <NewGroupForm
-              run={{
-                id: run.id,
-                courseId: run.courseId,
-                label: run.label,
-                enrolMode: run.enrolMode,
-              }}
-              runAction={runAction}
-              onCreated={() => {
-                setCreatingGroup(false);
-                reloadGroups();
-              }}
-              onCancel={() => setCreatingGroup(false)}
-            />
-          )}
-
-          {!groupsLoading && visibleGroups.length === 0 && !creatingGroup && (
-            <p className={styles.hint}>
-              No groups yet. Add one per weekly session — allocation places
-              accepted applicants into these.
-            </p>
-          )}
-
-          {visibleGroups.map((group) => (
-            <GroupEditor
-              key={group.id}
-              group={group}
-              members={members}
-              enrolMode={run.enrolMode}
-              runAction={runAction}
-              onSaved={reloadGroups}
-            />
-          ))}
-        </div>
-
-        {groupsRefreshing && <span className={styles.muted}>Refreshing…</span>}
-      </Card>
-
-      {/* ---- Roles ---- */}
-      <Card padding="lg">
-        <h3 className={styles.sectionTitle}>Roles</h3>
-        <RolePickers
-          runId={runId}
-          admissionsReviewerUids={run.admissionsReviewerUids}
-          trackLeadUids={run.trackLeadUids}
-          runFacilitatorUids={run.runFacilitatorUids}
-          members={members}
-          membersLoading={membersLoading}
-          runAction={runAction}
-          onSaved={reload}
+      {/* ---- Groups and roles ----
+          One child, two mount forms: the roster read that both sections need
+          is only issued by the viewers the `users` rule admits. The note on
+          GroupsAndRolesWithRoster says what goes wrong without the split. */}
+      {canReadRoster ? (
+        <GroupsAndRolesWithRoster {...groupsAndRoles} />
+      ) : (
+        <GroupsAndRoles
+          {...groupsAndRoles}
+          members={null}
+          // `role` stays null until the user-doc snapshot lands, so for that
+          // moment we do not yet know whether this viewer is closed out or an
+          // admin. Reported as still loading, because flashing "you may not do
+          // this" at somebody who may do all of it is a lie a reader remembers
+          // longer than the correction.
+          membersLoading={role === null}
         />
-      </Card>
+      )}
 
       {/* ---- Archive + destroy ----
           Last on the page by design: the end-of-life controls sit after
@@ -1470,4 +1449,203 @@ export default function RunEditor({ courseId, runId }: Props) {
       <ActionToast toast={toast} onDismiss={dismiss} />
     </div>
   );
+}
+
+/**
+ * What a viewer who cannot read the member roster is told, in place of the
+ * pickers. Each names who CAN do the thing: an empty picker with no
+ * explanation is the silent-empty-panel failure this repo has shipped before.
+ *
+ * TWO sentences, not one printed twice. The Roles card can replace its
+ * pickers outright, so it says who appoints. The Groups card cannot: each
+ * group card is `GroupEditor`, which draws its own facilitator picker from
+ * whatever roster it is handed, and closing that out would take the rest of
+ * the card (name, capacity, session, archive) with it, which is exactly what
+ * a course-key holder is meant to edit. So that picker is drawn with an empty
+ * roster: it still counts the facilitators the group has, it just cannot name
+ * them, and this note says so rather than leaving the reader to guess. Saving
+ * a group cannot silently drop them either, because `GroupEditor` only writes
+ * the facilitator list when it actually changed.
+ */
+const ROSTER_NOTE_ROLES =
+  "Only an admin or an SU-recognised committee member can appoint reviewers, " +
+  "track leads and run facilitators: choosing one means reading the member " +
+  "list, which this account cannot.";
+
+const ROSTER_NOTE_GROUPS =
+  "Facilitator names are hidden on these group cards, because reading them " +
+  "means reading the member list, which this account cannot. Each card still " +
+  "counts the facilitators the group has, and everything else about a group " +
+  "can be edited here.";
+
+/** The run-editor state both roster sections need, minus the roster itself. */
+type GroupsAndRolesProps = {
+  run: CourseRunDoc;
+  runId: string;
+  runAction: ToastRun;
+  groups: CourseGroupDoc[];
+  groupsLoading: boolean;
+  groupsRefreshing: boolean;
+  groupsError: Error | null;
+  reloadGroups: () => void;
+  onRolesSaved: () => void;
+  showArchived: boolean;
+  setShowArchived: (next: boolean) => void;
+  creatingGroup: boolean;
+  setCreatingGroup: (next: boolean) => void;
+};
+
+/**
+ * Groups and roles: the two sections built out of the member roster, in one
+ * component because they share one read of it.
+ *
+ * `members` is `null`, not `[]`, for a viewer the roster is closed to. An
+ * empty array would draw the same pickers with nobody in them, which reads as
+ * "there is nobody to pick" rather than "you may not see who there is", and
+ * the group cards would still be editable in every other respect (name,
+ * capacity, session, archived), which is exactly what a course-key holder is
+ * allowed to change.
+ */
+function GroupsAndRoles({
+  run,
+  runId,
+  runAction,
+  groups,
+  groupsLoading,
+  groupsRefreshing,
+  groupsError,
+  reloadGroups,
+  onRolesSaved,
+  showArchived,
+  setShowArchived,
+  creatingGroup,
+  setCreatingGroup,
+  members,
+  membersLoading,
+}: GroupsAndRolesProps & {
+  members: UserDoc[] | null;
+  membersLoading: boolean;
+}) {
+  const visibleGroups = groups.filter((g) => (showArchived ? true : !g.archived));
+  // Closed OUT, as opposed to not answered yet: `membersLoading` covers the
+  // roster fetch and the moment before the viewer's own role is known, and the
+  // note may only appear once the answer is actually no.
+  const rosterClosed = members === null && !membersLoading;
+
+  return (
+    <>
+      {/* ---- Groups ---- */}
+      <Card padding="lg">
+        <div className={styles.sectionHeader}>
+          <h3 className={styles.sectionTitle}>Groups</h3>
+          <div className={styles.sectionHeaderActions}>
+            <Switch
+              checked={showArchived}
+              onChange={setShowArchived}
+              label="Show archived groups"
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => setCreatingGroup(!creatingGroup)}
+            >
+              {creatingGroup ? "Close" : "New group"}
+            </Button>
+          </div>
+        </div>
+
+        {rosterClosed && <p className={styles.hint}>{ROSTER_NOTE_GROUPS}</p>}
+
+        {groupsError && <p className={styles.error}>{groupsError.message}</p>}
+        {groupsLoading && <AdminLoadingBar label="Loading groups…" />}
+
+        <div className={styles.groups}>
+          {creatingGroup && (
+            <NewGroupForm
+              run={{
+                id: run.id,
+                courseId: run.courseId,
+                label: run.label,
+                enrolMode: run.enrolMode,
+              }}
+              runAction={runAction}
+              onCreated={() => {
+                setCreatingGroup(false);
+                reloadGroups();
+              }}
+              onCancel={() => setCreatingGroup(false)}
+            />
+          )}
+
+          {!groupsLoading && visibleGroups.length === 0 && !creatingGroup && (
+            <p className={styles.hint}>
+              No groups yet. Add one per weekly session: allocation places
+              accepted applicants into these.
+            </p>
+          )}
+
+          {visibleGroups.map((group) => (
+            <GroupEditor
+              key={group.id}
+              group={group}
+              members={members ?? []}
+              enrolMode={run.enrolMode}
+              runAction={runAction}
+              onSaved={reloadGroups}
+            />
+          ))}
+        </div>
+
+        {groupsRefreshing && <span className={styles.muted}>Refreshing…</span>}
+      </Card>
+
+      {/* ---- Roles ---- */}
+      <Card padding="lg">
+        <h3 className={styles.sectionTitle}>Roles</h3>
+        {members === null ? (
+          rosterClosed ? (
+            <p className={styles.hint}>{ROSTER_NOTE_ROLES}</p>
+          ) : (
+            <AdminLoadingBar label="Loading roles…" />
+          )
+        ) : (
+          <RolePickers
+            runId={runId}
+            admissionsReviewerUids={run.admissionsReviewerUids}
+            trackLeadUids={run.trackLeadUids}
+            runFacilitatorUids={run.runFacilitatorUids}
+            members={members}
+            membersLoading={membersLoading}
+            runAction={runAction}
+            onSaved={onRolesSaved}
+          />
+        )}
+      </Card>
+    </>
+  );
+}
+
+/**
+ * The roster-reading mount of the section above, and the whole point of the
+ * split.
+ *
+ * `useMembers` LISTS `users`, which firestore.rules opens to admins and
+ * SU-recognised committee only. /admin/courses is gated wider than that: a
+ * `draftCourse` or `approveCourse` holder who is a plain member reaches this
+ * editor, and while the hook was called from RunEditor itself their browser
+ * fired that denied list on every load of the page. The cost was not just the
+ * console error: the facilitator and role pickers came back empty, with
+ * nothing on screen to tell them apart from a run that genuinely has nobody
+ * on it. Mounting the hook in a child only the admitted viewers render is how
+ * RoundEditor's RolesSection solves the same problem, and it is the shape to
+ * copy the next time a course surface needs the roster.
+ *
+ * Hoisting this call back into RunEditor turns `tests/roster-read-gates.test.mjs`
+ * red rather than turning the pickers quietly empty, which is the whole reason
+ * that guard exists: this is the second time the mistake has been made by hand.
+ */
+function GroupsAndRolesWithRoster(props: GroupsAndRolesProps) {
+  const { users, loading } = useMembers();
+  return <GroupsAndRoles {...props} members={users} membersLoading={loading} />;
 }
