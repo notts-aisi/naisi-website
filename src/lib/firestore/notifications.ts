@@ -149,9 +149,17 @@ export const OPT_OUT_ROWS: NotificationCategory[] = ["courses", "tasks"];
  * Junk (a string, a null, a number) reads as the row's default rather than as
  * an answer: an opt-in row needs a truthy value to be on, an opt-out row needs
  * a literal `false` to be off. Nothing else is a preference.
+ *
+ * A row in neither table resolves OFF, deliberately. `npm test` pins the two
+ * lists to the four rows so a forgotten row cannot reach production, but the
+ * guard lives in another file and this function is exported: falling through
+ * to the opt-out branch would send mail on behalf of a row nobody has
+ * classified. Silence is the recoverable failure.
  */
 export function resolveRow(row: NotificationCategory, stored: unknown): boolean {
-  return OPT_IN_ROWS.includes(row) ? Boolean(stored) : stored !== false;
+  if (OPT_IN_ROWS.includes(row)) return Boolean(stored);
+  if (OPT_OUT_ROWS.includes(row)) return stored !== false;
+  return false;
 }
 
 /**
@@ -161,7 +169,7 @@ export function resolveRow(row: NotificationCategory, stored: unknown): boolean 
  * `categories` is which mail somebody wants. A push notification has no
  * address and belongs to a device, so folding it into either would break
  * `addressesForSend`, which reads `channels` as a list of inboxes to write
- * into. Push gets a third, sibling map with the SAME keys as `categories` —
+ * into. Push gets a third, sibling map with the SAME keys as `categories`:
  * one row per topic, two switches.
  *
  * `courseDecisions` was the old name of the `courses` push key, from when the
@@ -175,19 +183,36 @@ export const ALL_PUSH_KEYS: PushNotificationKey[] = [...ALL_CATEGORIES];
 /** The stored push key this module still reads and never writes. */
 export const LEGACY_PUSH_KEY = "courseDecisions";
 
+/*
+ * TWO OF THESE FOUR ARE DRAWN TODAY, and they keep the names the standalone
+ * push card has always given them. `/profile` renders that card alongside the
+ * email switches, so naming the push row "Course announcements" would put two
+ * rows under one name on one page, one writing `categories.courses` and one
+ * writing `push.courses`. It would also promise less than the row delivers:
+ * the only producers behind `push.courses` are application decisions, a new
+ * part of an application form opening, and a course placement, so a member
+ * switching off a row called "Course announcements" would be switching off
+ * their decision notifications. The grid PR is where the card is absorbed and
+ * a row carries ONE label across both columns; the rename belongs there, with
+ * the collision gone.
+ */
 export const PUSH_LABELS: Record<PushNotificationKey, string> = {
   newsletter: "Newsletter",
   events: "Event announcements",
-  courses: "Course announcements",
-  tasks: "Tasks and worksheets",
+  courses: "Course and application updates",
+  tasks: "Task emails",
 };
 
 export const PUSH_DESCRIPTIONS: Record<PushNotificationKey, string> = {
   newsletter: "A notification when a new newsletter goes out.",
   events: "A notification when we publish a new event.",
   // This copy is exhaustive TODAY, and only because the three moments named
-  // are the only ones that push. Anything new put behind this row owns this
-  // string as well.
+  // are the only ones that push. The label says "updates" rather than
+  // "decisions" because the owner settled the open question on 6 September
+  // 2026 and put the stage announcement behind this row: a switch promising
+  // only decisions while delivering announcements too is the failure mode the
+  // earlier note here warned about. Anything new put behind this row owns
+  // this string as well.
   courses:
     "A notification when a decision on your application lands, when a new part of an application form opens, or when you're placed in a course group. The email is sent either way.",
   tasks:

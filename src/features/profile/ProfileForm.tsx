@@ -68,8 +68,8 @@ function emptyCell(): Record<SubscriptionCategory, boolean> {
  * stored `false` unticks it. `normaliseNotifications` now resolves this row
  * the same way (it is an OPT_OUT row), so this reader agrees with it rather
  * than working around it; it is kept because it reads the raw document and is
- * the mirror of `hasOptedOutOfCourseAnnouncements` in the run email route —
- * the two are one decision spelled in two places.
+ * the mirror of `hasOptedOutOfCourseAnnouncements` in the run email route.
+ * The two are one decision spelled in two places.
  */
 function readCourseAnnouncements(data: Record<string, unknown> | undefined): boolean {
   const profile = (data?.profile as Record<string, unknown> | undefined) ?? {};
@@ -88,7 +88,7 @@ function readCourseAnnouncements(data: Record<string, unknown> | undefined): boo
  * yet either (the grid that draws it is the follow-up PR). This form still has
  * to READ both, because its save writes the whole `profile.notifications` map
  * and would otherwise reset them to the default every time somebody changed
- * their preferred name — which for `tasks` would silently un-refuse a member
+ * their preferred name, which for `tasks` would silently un-refuse a member
  * who had switched task mail off. Read through `normaliseNotifications` so
  * "absent" resolves to the same default every other reader sees.
  */
