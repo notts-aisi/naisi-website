@@ -98,7 +98,7 @@ export default function ReConsentActions({
   return (
     <div style={{ marginTop: "var(--space-5)" }}>
       <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
-        <Button onClick={accept} disabled={busy !== null}>
+        <Button onClick={accept} disabled={busy !== null} data-testid="reconsent-accept">
           {busy === "accept" ? "Saving…" : "Accept and continue"}
         </Button>
         {isMember ? (

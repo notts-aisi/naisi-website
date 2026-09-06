@@ -437,8 +437,9 @@ export function subscriptionId(email, channel) {
 
 /**
  * One throwaway account: an Auth user in the harness namespace, the `users`
- * document the auth harness's guarded seeder writes at role `pending`, and
- * (by default) a suppression row for its address.
+ * document the auth harness's guarded seeder writes at role `pending` (current
+ * on the policy version unless `legacyConsent` is asked for), and (by default)
+ * a suppression row for its address.
  *
  * `suppress` defaults to TRUE because that is the safe answer: a send to a
  * `.invalid` address is still a real hand-off to Resend and a hard bounce
@@ -463,6 +464,7 @@ export async function createFixtureUser({
   index,
   password,
   suppress = true,
+  legacyConsent = false,
 }) {
   // The auth harness's ledger is in-memory and this process may not be the one
   // that tears down, so the ledger is not the record: teardown deletes each
@@ -481,10 +483,15 @@ export async function createFixtureUser({
     // alone leaves every client island in its signed-out branch.
     password,
   });
+  // `legacyConsent` seeds the document WITHOUT a policy version, the shape
+  // of a member from before the field existed, so the account meets the
+  // re-consent gate on a production build. Off by default: only a spec that
+  // means to drive the gate asks for it. See `seedPendingUserDoc`.
   await seedPendingUserDoc(ledger, {
     uid: account.uid,
     email: account.email,
     universityEmail: "",
+    legacyConsent,
   });
   let suppressionId = null;
   if (suppress) {

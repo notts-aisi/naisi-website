@@ -77,6 +77,7 @@ import {
   createStepRecorder,
   newIdentityPage,
   openBrowser,
+  acceptReConsentIfAsked,
   signInWithPassword,
   stubRecaptchaOnLoopback,
 } from "../../scripts/e2e/lib/browser.mjs";
@@ -411,9 +412,12 @@ test(
           .waitFor({ timeout: WAIT_MS });
       });
 
+      /** Whether the member's sign-in was met by the consent gate. Set below. */
+      let askedOnSignIn = false;
+
       await step("the new member signs in and lands past the pending gate", async () => {
         activePage = memberPage;
-        await signIn(memberPage, member);
+        ({ reconsented: askedOnSignIn } = await signIn(memberPage, member));
         // The approval is what decides this. A `pending` account is sent to
         // /pending-approval by (app)/layout.tsx, so landing anywhere else is
         // the member area agreeing with the document the admin wrote.
@@ -423,6 +427,60 @@ test(
           "the approved member was still held at the pending gate after signing in",
         );
       });
+
+      await step(
+        "a legacy account accepts the updated policy once and is not asked again",
+        async () => {
+          activePage = memberPage;
+          // The member was seeded with NO policy version, the shape of everybody
+          // who registered before the field existed. On a production build the
+          // member area sends that account to /re-consent before it renders a
+          // page, so the sign-in above already met the gate and accepted through
+          // it (`signInWithPassword` reports that). Under `next dev` the gate is
+          // off, and a step that only ran when the gate happened to be on would
+          // pass on a dev server having proved nothing: so when the sign-in was
+          // not asked, the step opens the consent page itself. The page decides
+          // on the stored version, not on NODE_ENV, so a legacy account is
+          // offered the Accept button either way, and the press it makes is the
+          // same one, through the same helper, reaching the same route.
+          if (!askedOnSignIn) {
+            await memberPage.goto(`${origin}/re-consent`, { waitUntil: "domcontentloaded" });
+            const accepted = await acceptReConsentIfAsked(memberPage, { timeout: WAIT_MS });
+            assert.ok(
+              accepted,
+              "a legacy account opened /re-consent and was sent away without being asked: " +
+                `it landed on ${new URL(memberPage.url()).pathname}. The page bounces an ` +
+                "account whose stored version is already current, so either the seed " +
+                "stamped a version it should have left off or the gate accepted on the " +
+                "member's behalf.",
+            );
+          }
+          // Asked ONCE. The account is current now, by its own press, so the page
+          // refuses to trap it: a second visit is sent home. On a production
+          // build the member-area gate also no longer redirects here, which the
+          // next steps prove by opening /profile without incident.
+          await memberPage.goto(`${origin}/re-consent`, { waitUntil: "domcontentloaded" });
+          await memberPage.waitForURL((url) => url.pathname !== "/re-consent", {
+            timeout: WAIT_MS,
+            waitUntil: "domcontentloaded",
+          });
+          assert.equal(
+            new URL(memberPage.url()).pathname,
+            "/dashboard",
+            "an account that had just accepted the policy was not sent home from /re-consent",
+          );
+          // The acceptance is on the member's own document, stamped by the route
+          // as the member. Read back rather than assumed: this is the one write
+          // on the site whose whole value is that the person made it, and the
+          // fixture seed left the field off on purpose.
+          const doc = await readUserDoc(member.uid);
+          assert.equal(
+            typeof doc?.policyVersion,
+            "string",
+            "the Accept press did not leave a policyVersion on the member's document",
+          );
+        },
+      );
 
       await step("the profile grid shows the member their own subscriptions", async () => {
         activePage = memberPage;

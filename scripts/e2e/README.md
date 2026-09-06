@@ -355,6 +355,21 @@ never printed, and refused if it carries a service-account key), or in the
 shell. The runner checks for them BEFORE it seeds anything and names the file
 and the missing variables if they are not there.
 
+**A policy version shipping needs no console edit.** On a production build the
+member area sends any signed-in account whose stored `policyVersion` is behind
+`CURRENT_POLICY_VERSION` to `/re-consent` before it renders a page, and that
+includes the owner's admin account the first time it signs in after a bump.
+`signInWithPassword` handles it the way a person does: when the handoff lands
+on the consent page it presses the real Accept button (`acceptReConsentIfAsked`
+in `scripts/e2e/lib/browser.mjs`) and waits for the page's own navigation home,
+so the account is current by its own acceptance through
+`/api/account/reconsent`. Fixture accounts are seeded current, except
+member-journey's member, which is seeded as a legacy account (no version on the
+document) so the gate, the page and the route are driven on every production
+run rather than only on the first after a bump. The harness never stamps a
+version any other way: `tests/funnel-harness-guards.test.mjs` fails on a
+`policyVersion` key written anywhere but the seed.
+
 **`E2E_SIGNING_SERVICE_ACCOUNT`** overrides the identity custom tokens are
 signed as. It defaults to `firebase-adminsdk-fbsvc@naisi-website-dev…`, which
 needs `roles/iam.serviceAccountTokenCreator` granted to whoever is running;

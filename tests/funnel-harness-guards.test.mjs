@@ -548,6 +548,42 @@ test("the seeded policy version is the one the re-consent gate wants", () => {
   );
 });
 
+test("the harness stamps a policy version only where it seeds its own accounts", () => {
+  // Accepting a policy is the one write on this site whose whole value is that
+  // the person made it. So the harness is allowed to write `policyVersion` in
+  // exactly one place: `seedPendingUserDoc`, onto a document it created a
+  // moment earlier (and that seed can leave the field off, which is how
+  // member-journey drives the consent gate). An account that meets the gate is
+  // made current by pressing Accept on the real page, through
+  // `acceptReConsentIfAsked`, or not at all. The owner-made admin account is
+  // the case that matters: after a version ships its first sign-in lands on
+  // /re-consent, and the fix is the press, never an Admin SDK stamp and never a
+  // console edit. A `policyVersion:` key written anywhere else in the harness
+  // is the shortcut this refuses.
+  const allowed = join(REPO_ROOT, "scripts", "e2e", "lib", "firestore.mjs");
+  const files = [...HARNESS_FILES, ...walkMjs(join(REPO_ROOT, "scripts", "e2e"))];
+  for (const file of new Set(files)) {
+    if (file === allowed) continue;
+    assert.ok(
+      !/\bpolicyVersion\s*:/.test(codeOf(file)),
+      `${rel(file)} writes a policyVersion key. Only scripts/e2e/lib/firestore.mjs may, ` +
+        "and only when seeding a harness-created account; an account that reaches " +
+        "/re-consent is made current by pressing Accept there (acceptReConsentIfAsked in " +
+        "scripts/e2e/lib/browser.mjs), the same as a person.",
+    );
+  }
+  const browser = codeOf(join(REPO_ROOT, "scripts", "e2e", "lib", "browser.mjs"));
+  const signIn = browser.slice(browser.indexOf("export async function signInWithPassword("));
+  const body = signIn.slice(0, signIn.indexOf("\n}\n"));
+  assert.ok(
+    body.includes("await acceptReConsentIfAsked(page"),
+    "signInWithPassword in scripts/e2e/lib/browser.mjs must press Accept on /re-consent when " +
+      "the sign-in lands there. Without that, every admin spec stops at its first step on " +
+      "the first production run after a policy version ships, and the only way past is the " +
+      "console edit this suite exists to make unnecessary.",
+  );
+});
+
 test("the harness's scratch files live outside the build output", () => {
   // The regression this pins: the ledger used to sit in `.next/`, and
   // `next build` clears that directory, so `--local` wrote the fixture ids and

@@ -287,6 +287,18 @@ around what it may touch and the hand-driven fixture CLI are in
   rule generalises: a real defect a spec finds is pinned with the fix's own
   instructions, never silently fixed or silently worked around, and the fix
   deletes the pin in the same change.
+- **A policy version shipping stops nothing.** On a production build the
+  member area sends a signed-in account whose stored policy version is behind
+  the current one to `/re-consent` before it renders a page, which after a
+  bump includes the owner-made admin account every admin spec signs in as.
+  The shared sign-in helper presses the real Accept button when the handoff
+  lands there and waits for the page to take the browser home, so the account
+  is current by its own acceptance and no console edit is ever the fix.
+  Member-journey seeds its member as a legacy account (no version on the
+  document) so the gate, the consent page and `/api/account/reconsent` are
+  driven on every production run, not only the first after a bump; and
+  `tests/funnel-harness-guards.test.mjs` fails on a `policyVersion` key
+  written anywhere in the harness but the seed of a harness-created account.
 - **A spec that reads its own mail runs only where the mail is caught.** The
   suite's no-real-mail promise is that every fixture address is suppressed
   before anything is seeded, which is a promise because `sendEmail()` consults
