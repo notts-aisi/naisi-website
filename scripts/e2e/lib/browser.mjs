@@ -48,6 +48,11 @@ const SIGN_IN_HANDOFF_MS = 120_000;
 
 /** How long a fill is given to survive before it is read back. */
 const FILL_SETTLE_MS = 500;
+/**
+ * Where `(app)/layout.tsx` parks a signed-in account whose stored policy
+ * version is behind the current one, on production builds only.
+ */
+const RE_CONSENT_PATH = "/re-consent";
 
 /**
  * The viewport every browser spec gets unless it says otherwise.
@@ -420,13 +425,34 @@ export function createStepRecorder({ t, page, markerPath, artifactsDir, skipReas
  * The password is never logged, and never compared by value: the read-back
  * compares its LENGTH, so no failure message can carry it.
  *
+ * ## The consent page, when the sign-in lands on it
+ *
+ * On a production build `(app)/layout.tsx` sends any account whose stored
+ * `policyVersion` is behind `CURRENT_POLICY_VERSION` to `/re-consent` before
+ * it renders a single authed page, so after a policy bump the handoff above
+ * ends on the consent page rather than in the member area. That is the
+ * product working, and the helper treats it the way a person does: it presses
+ * the real Accept button, through `acceptReConsentIfAsked`, and waits for the
+ * page's own navigation home. The account is then current in the same way a
+ * member's is, by its own acceptance recorded through `/api/account/reconsent`,
+ * which is why no fixture or spec ever stamps `policyVersion` with the Admin
+ * SDK to get past the gate and why the owner-made admin account never needs a
+ * console edit when a version ships. The gate is off under `next dev`, so
+ * against a dev server this branch is simply not taken.
+ *
+ * Returns `{ reconsented }`, true when the consent page was shown and accepted
+ * on this sign-in, so a spec can assert that a stale account was asked exactly
+ * once.
+ *
  * @param {object} page              Playwright page.
  * @param {string} origin            The target origin.
  * @param {{email: string, password: string}} credentials
  * @param {{timeout?: number, handoffTimeout?: number}} [options]
  *   `timeout` is the patience for the first load and for every locator here.
  *   Pass a longer one on a DEV server, whose first request to a route compiles
- *   it. `handoffTimeout` is the patience for the URL leaving /login.
+ *   it. `handoffTimeout` is the patience for the URL leaving /login, and for
+ *   the consent page's navigation home when it was shown.
+ * @returns {Promise<{reconsented: boolean}>}
  */
 export async function signInWithPassword(
   page,
@@ -500,6 +526,61 @@ export async function signInWithPassword(
     timeout: handoffTimeout,
     waitUntil: "domcontentloaded",
   });
+
+  const reconsented = await acceptReConsentIfAsked(page, { timeout, handoffTimeout });
+  if (reconsented) {
+    console.log(
+      "[e2e-browser] the sign-in landed on /re-consent (the stored policy version was " +
+        "behind the current one) and the updated policy was accepted through the page.",
+    );
+  }
+  return { reconsented };
+}
+
+/**
+ * Accepts the updated policy through the REAL consent page, if that is where
+ * the browser is standing, and waits for the page to take the browser home.
+ *
+ * Returns `true` when it accepted and `false` when the page was somewhere
+ * else, so a caller can tell "the gate asked" from "the gate did not". Nothing
+ * is written by this helper itself: the press reaches `/api/account/reconsent`
+ * as the signed-in account, which stamps its own document, and the page's
+ * `hardNavigate` home is what moves the URL. A stale account that is NOT
+ * offered the button (the id missing, the page changed) fails here by name
+ * rather than as a timeout on whatever the spec tried to do next.
+ *
+ * Exported so a spec that reaches the gate some other way (a direct visit to
+ * `/re-consent`, a first authed navigation after a sign-in that landed on a
+ * public page) can use the same press.
+ *
+ * @param {object} page   Playwright page.
+ * @param {{timeout?: number, handoffTimeout?: number}} [options]
+ *   `timeout` is the patience for the Accept button; `handoffTimeout` is the
+ *   patience for the URL leaving /re-consent afterwards.
+ * @returns {Promise<boolean>}
+ */
+export async function acceptReConsentIfAsked(
+  page,
+  { timeout = WAIT_MS, handoffTimeout = SIGN_IN_HANDOFF_MS } = {},
+) {
+  if (new URL(page.url()).pathname !== RE_CONSENT_PATH) return false;
+  const accept = page.getByTestId("reconsent-accept");
+  await accept.waitFor({ timeout }).catch((err) => {
+    throw new Error(
+      `the browser is on ${RE_CONSENT_PATH} but no Accept button carried the ` +
+        "reconsent-accept test id within " +
+        `${timeout}ms. ReConsentActions in src/app/re-consent renders it for every ` +
+        "account the gate admits, so either the id moved or the page rendered " +
+        `something else. ${err.message}`,
+    );
+  });
+  await waitForHydration(page, '[data-testid="reconsent-accept"]', { timeout });
+  await accept.click();
+  await page.waitForURL((url) => url.pathname !== RE_CONSENT_PATH, {
+    timeout: handoffTimeout,
+    waitUntil: "domcontentloaded",
+  });
+  return true;
 }
 
 /**

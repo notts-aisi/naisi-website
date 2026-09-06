@@ -309,12 +309,6 @@ const NOT_COVERED = {
     coverWhen:
       "When account deletion is offered to members rather than run by hand, because a missed row is then somebody's data left behind.",
   },
-  "/api/account/reconsent": {
-    reason:
-      "The reconsent gate is skipped under NODE_ENV=development, so a dev-server run cannot see it at all.",
-    coverWhen:
-      "When a spec runs against a production build and a policy version bumps.",
-  },
   "/api/admin/application-emails/[templateId]/send-test": {
     reason:
       "Email rendering: /api/admin/application-emails/[templateId]/send-test renders a template for a person who is looking at the result, so a bad render is seen the moment it happens.",
@@ -1405,19 +1399,19 @@ const NOT_COVERED = {
     reason:
       "/(public)/privacy renders the versioned policy files, whose content tests/privacy-policy.test.mjs already pins.",
     coverWhen:
-      "When a policy version ships and the re-consent gate has to be proven end to end.",
+      "When one of these pages changes how it renders rather than what it says: member-journey drives the re-consent gate, and tests/privacy-policy.test.mjs pins the words.",
   },
   "/(public)/privacy/v/[version]": {
     reason:
       "/(public)/privacy/v/[version] renders the versioned policy files, whose content tests/privacy-policy.test.mjs already pins.",
     coverWhen:
-      "When a policy version ships and the re-consent gate has to be proven end to end.",
+      "When one of these pages changes how it renders rather than what it says: member-journey drives the re-consent gate, and tests/privacy-policy.test.mjs pins the words.",
   },
   "/(public)/privacy/versions": {
     reason:
       "/(public)/privacy/versions renders the versioned policy files, whose content tests/privacy-policy.test.mjs already pins.",
     coverWhen:
-      "When a policy version ships and the re-consent gate has to be proven end to end.",
+      "When one of these pages changes how it renders rather than what it says: member-journey drives the re-consent gate, and tests/privacy-policy.test.mjs pins the words.",
   },
   "/(public)/resources": {
     reason:
@@ -1435,31 +1429,25 @@ const NOT_COVERED = {
     reason:
       "/(public)/terms renders the versioned policy files, whose content tests/privacy-policy.test.mjs already pins.",
     coverWhen:
-      "When a policy version ships and the re-consent gate has to be proven end to end.",
+      "When one of these pages changes how it renders rather than what it says: member-journey drives the re-consent gate, and tests/privacy-policy.test.mjs pins the words.",
   },
   "/(public)/terms/v/[version]": {
     reason:
       "/(public)/terms/v/[version] renders the versioned policy files, whose content tests/privacy-policy.test.mjs already pins.",
     coverWhen:
-      "When a policy version ships and the re-consent gate has to be proven end to end.",
+      "When one of these pages changes how it renders rather than what it says: member-journey drives the re-consent gate, and tests/privacy-policy.test.mjs pins the words.",
   },
   "/(public)/terms/versions": {
     reason:
       "/(public)/terms/versions renders the versioned policy files, whose content tests/privacy-policy.test.mjs already pins.",
     coverWhen:
-      "When a policy version ships and the re-consent gate has to be proven end to end.",
+      "When one of these pages changes how it renders rather than what it says: member-journey drives the re-consent gate, and tests/privacy-policy.test.mjs pins the words.",
   },
   "/collaborator": {
     reason:
       "The collaborator page is reached by an invited outsider through a signed link, and the redirect half of it is asserted by the protected-route-gate battery.",
     coverWhen:
       "When an outside collaborator is next invited to an event and has to follow the signed link in.",
-  },
-  "/re-consent": {
-    reason:
-      "The re-consent gate is skipped under NODE_ENV=development, so a dev-server run cannot see it at all.",
-    coverWhen:
-      "When a spec runs against a production build and a policy version bumps.",
   },
 };
 

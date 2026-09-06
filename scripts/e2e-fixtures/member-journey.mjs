@@ -92,6 +92,7 @@ export const JOURNEY_STEPS = [
   "approving the applicant makes them a member",
   "another sign-up takes the last place in the one-place session",
   "the new member signs in and lands past the pending gate",
+  "a legacy account accepts the updated policy once and is not asked again",
   "the profile grid shows the member their own subscriptions",
   "unticking a channel writes it through and survives a reload",
   "taking a place on the course confirms the session",
@@ -451,15 +452,24 @@ async function seed({ runId: journeyRunId, suppress = true, onState } = {}) {
   // Accounts first: everything else can be torn down without them, but an
   // account with no fixture to use is the harmless failure and a fixture with
   // no accounts is not.
-  for (const [index, key] of [
-    [0, "member"],
-    [1, "other"],
+  // The member is seeded as a LEGACY account: no policy version on the
+  // document, the shape of everybody who registered before the field existed.
+  // On a production build the member area sends such an account to
+  // /re-consent the moment it signs in, so this is how the spec drives the
+  // consent gate, the consent page and `/api/account/reconsent` on every run
+  // rather than only on the first run after a version ships. The other
+  // account is seeded current, as every other fixture is, because it holds
+  // the last place on the public course page and never enters the member area.
+  for (const [index, key, legacyConsent] of [
+    [0, "member", true],
+    [1, "other", false],
   ]) {
     const account = await createFixtureUser({
       runId: journeyRunId,
       index,
       password: `E2eJourney!${journeyRunId}${index}`,
       suppress,
+      legacyConsent,
     });
     if (account.suppressionId) state.suppressed.push(account.suppressionId);
     state[key] = {
@@ -771,9 +781,9 @@ export const SPEC = {
   steps: JOURNEY_STEPS,
   recaptchaDependentSteps: RECAPTCHA_DEPENDENT_STEPS,
   /**
-   * VERIFIED: every step of this spec has been driven end to end against the
-   * shared loopback server (6 September 2026), with the fixture manifest
-   * reading zero afterwards.
+   * VERIFIED: every step of this spec has been driven end to end against a
+   * production build on the loopback server (7 September 2026, the consent
+   * step included), with the fixture manifest reading zero afterwards.
    *
    * What that run does NOT cover, stated so the word is not read too widely:
    * it was a caught-mail run, so the mail step's suppressed branch was not the
@@ -793,10 +803,17 @@ export const SPEC = {
    * list because the pages this spec drives call them without being asked to:
    * the Approvals page fires the first from its Approve handler, and the
    * profile page's membership badge fetches the second on mount.
+   *
+   * `/re-consent` and `/api/account/reconsent` are covered by the consent
+   * step: the member is seeded as a legacy account (see `seed`), so on a
+   * production build its first sign-in is sent to the consent page and the
+   * Accept press is the route's only caller. Against a dev server the gate is
+   * off, and the step opens the page itself so the same press still happens.
    */
   covers: {
     routes: [
       "/api/auth/session",
+      "/api/account/reconsent",
       "/api/admin/application-emails/send",
       "/api/membership/me",
       "/api/subscriptions/sync",
@@ -804,6 +821,7 @@ export const SPEC = {
     ],
     pages: [
       "/(auth)/login",
+      "/re-consent",
       "/(app)/admin/(admin-only)",
       "/(app)/profile",
       "/(public)/courses/[courseId]",

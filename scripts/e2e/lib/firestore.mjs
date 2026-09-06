@@ -163,14 +163,32 @@ const ACCEPTED_POLICY_VERSION = "terms.1+privacy.4";
  * `role` is hard-coded, not a parameter: a caller-supplied role is exactly the
  * shape that lets a future edit quietly escalate. The offline guard also
  * rejects any other role literal appearing anywhere in this tree.
+ *
+ * `legacyConsent: true` leaves `policyVersion` and `policyAgreedAt` OFF the
+ * document, which is the shape of a member who registered before the field
+ * existed and the one shape that reaches `/re-consent` on a production build.
+ * The default seeds the current version, so a spec that has no stake in the
+ * gate never sees it; member-journey opts in so the gate, the consent page and
+ * the sign-in helper's handling of them are driven on every production run.
+ * This seed is the ONLY place the harness writes a policy version at all, and
+ * only ever onto a document it created a moment earlier: an account is made
+ * current by its own Accept press or not at all (see `acceptReConsentIfAsked`
+ * in browser.mjs), and `tests/funnel-harness-guards.test.mjs` fails on a
+ * `policyVersion` key written anywhere else in the harness.
  */
-export async function seedPendingUserDoc(ledger, { uid, email, universityEmail }) {
+export async function seedPendingUserDoc(
+  ledger,
+  { uid, email, universityEmail, legacyConsent = false },
+) {
   if (!isHarnessAccount(email)) {
     throw new Error(
       `REFUSING to write users/${uid}: ${JSON.stringify(email)} is not a harness ` +
         "account. This harness only ever creates documents for accounts it made.",
     );
   }
+  const consent = legacyConsent
+    ? {}
+    : { policyVersion: ACCEPTED_POLICY_VERSION, policyAgreedAt: new Date() };
   await adminDb()
     .collection("users")
     .doc(uid)
@@ -180,8 +198,7 @@ export async function seedPendingUserDoc(ledger, { uid, email, universityEmail }
       displayName: "E2E Harness",
       role: ONLY_ALLOWED_ROLE,
       showOnMembers: false,
-      policyVersion: ACCEPTED_POLICY_VERSION,
-      policyAgreedAt: new Date(),
+      ...consent,
       createdAt: new Date(),
       profile: {
         preferredName: "E2E",
