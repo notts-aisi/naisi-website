@@ -65,7 +65,14 @@ export default function ApprovalsPage() {
             ? (uniEmailIndex.get(uniEmail) ?? []).filter((h) => h.uid !== u.uid)
             : [];
           return (
-            <ApprovalCard key={u.uid} user={u} uniEmailConflicts={conflicts} />
+            <ApprovalCard
+              key={u.uid}
+              user={u}
+              uniEmailConflicts={conflicts}
+              // The list is one-shot, so it only drops a decided application
+              // when it is asked to read again.
+              onResolved={reload}
+            />
           );
         })}
       </div>

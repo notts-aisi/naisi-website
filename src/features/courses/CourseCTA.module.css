@@ -109,6 +109,23 @@
   box-shadow: var(--focus-ring);
 }
 
+/* The hero picker's wrapper, which exists only to carry the anchor the foot
+   placement links to. Full width because the picker inside sizes itself at
+   100% and .cta aligns its items to flex-start: without this the timetable
+   cards would shrink to their own content. scroll-margin clears the sticky
+   public header, so the jump lands on the legend rather than under it. */
+.pickerAnchor {
+  width: 100%;
+  scroll-margin-top: calc(var(--header-height) + var(--space-4));
+}
+
+/* The wrapper is rendered whenever the run is open-mode, and GroupPicker
+   renders nothing for a signed-out visitor on a closed run, so an empty
+   wrapper would otherwise add one gap of dead space under the dates. */
+.pickerAnchor:empty {
+  display: none;
+}
+
 .inlineLink {
   color: var(--color-accent);
   text-decoration: underline;

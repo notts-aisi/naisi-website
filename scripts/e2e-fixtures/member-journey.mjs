@@ -33,30 +33,22 @@
  * The counter therefore moves because somebody signed up, which is the same
  * reason it moves in production, and the "Full" the member meets is real.
  *
- * ## Mail, and why this fixture REFUSES a target whose mail is not caught
+ * ## Mail on this journey
  *
- * Two sends sit on this journey: the application-approved email the Approvals
- * page fires, and the drop-out email the enrol route's DELETE fires.
+ * Two sends sit on it: the application-approved email the Approvals page
+ * fires, and the drop-out email the enrol route's DELETE fires. Both are
+ * stopped by the suppression rows this fixture writes before it seeds:
+ * `sendCourseDroppedOutEmail` returns early on `isSuppressed()`, and the
+ * approval send goes through `sendEmail()`, which drops suppressed recipients
+ * at the send chokepoint.
  *
- *  - The drop-out send goes through `sendCourseDroppedOutEmail`, which returns
- *    early on `isSuppressed()`. Seeding a `suppressedEmails` row for every
- *    fixture address therefore really does stop it.
- *  - The approval send does NOT. `/api/admin/application-emails/send` calls
- *    `sendEmail()` from `src/lib/email/send.ts` directly, and that function
- *    never reads the suppression list (only the per-feature helpers do). So a
- *    run of this spec against a DEPLOYED target would hand a `.invalid`
- *    address to the real sender and log a hard bounce against the sending
- *    domain.
- *
- * The harness's central safety property is "suppress every fixture address
- * first, and then nothing this suite drives can post mail". This journey is
- * the first thing in the suite that property is not true of, and a comment
- * saying so is not a safeguard: `npm run e2e:browser` with no flags runs every
- * spec against the deployed dev site. So `seed()` REFUSES to create anything
- * at all when `suppress` is true, naming the route and the missing
- * `isSuppressed()` call, and it reads the product to decide that rather than
- * trusting this paragraph: see `assertApprovalMailCannotEscape` below, which
- * fails in the other direction too, so the refusal cannot outlive the gap.
+ * That second half is new. Until the check moved into `sendEmail()`, this
+ * fixture REFUSED to seed against any target whose mail was not caught,
+ * because the approval send read no list and a `.invalid` fixture address
+ * would have gone to the real sender and bounced against the sending domain.
+ * The refusal is gone with the gap; the suppressed branch of the spec's mail
+ * step is what runs in its place, and a withheld send now leaves an
+ * `emailSends` row at status `suppressed` rather than nothing at all.
  *
  * Both addresses' `emailSends` rows are counted and drained below either way,
  * so the manifest tells the truth about what this run caused.
@@ -162,15 +154,12 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 /** The product file the grid's channel list is restated from. */
 const NOTIFICATIONS_MODULE = "src/lib/firestore/notifications.ts";
 
-/** The route the Approvals page fires from its Approve handler. */
-const APPROVAL_SEND_ROUTE = "src/app/api/admin/application-emails/send/route.ts";
-
 /**
  * Product source, read at seed time (never at import: the coverage guard
  * imports this module and must stay offline and side-effect free).
  *
- * A missing file is an error rather than a skipped check: these two functions
- * exist to fail, and a check that quietly stops checking when a file moves is
+ * A missing file is an error rather than a skipped check: the function below
+ * exists to fail, and a check that quietly stops checking when a file moves is
  * worse than no check, because the comment above it still claims coverage.
  */
 function productSource(relPath) {
@@ -240,75 +229,6 @@ export function assertGridChannelsMatchProduct() {
           "of a sentence now.",
       );
     }
-  }
-}
-
-/**
- * Every `@/lib/email` helper the approval send goes through that never
- * consults the suppression list.
- *
- * Read off the route rather than assumed, so a send moved behind a different
- * helper is noticed rather than silently trusted. An empty import list is an
- * error: it means the send was refactored and this fixture can no longer tell
- * whether the address it seeds is safe.
- */
-function approvalSendHelpersBlindToSuppression() {
-  const route = productSource(APPROVAL_SEND_ROUTE);
-  const helpers = [
-    ...route.matchAll(/from\s+["']@\/lib\/email\/([A-Za-z0-9_]+)["']/g),
-  ].map((m) => m[1]);
-  if (helpers.length === 0) {
-    throw new Error(
-      `${APPROVAL_SEND_ROUTE} no longer imports a send helper from @/lib/email, so this ` +
-        "fixture can no longer tell whether the approval email consults the suppression " +
-        "list. Read the route and rewrite this check rather than removing it.",
-    );
-  }
-  return helpers.filter(
-    (name) =>
-      !/\b(isSuppressed|filterSuppressed)\(/.test(productSource(`src/lib/email/${name}.ts`)),
-  );
-}
-
-/**
- * REFUSES to seed this journey where the approval email could really be sent.
- *
- * The harness's no-mail promise for a target that can reach a real sender is
- * "every fixture address is on the suppression list before anything runs".
- * That promise only holds while the send helpers look at the list, and the one
- * behind the Approvals page does not. So:
- *
- *  - mail NOT caught, and the gap open: refuse, before a single write, naming
- *    the route and the helper. Nothing is created, so there is nothing to tear
- *    down and no address to bounce.
- *  - the gap CLOSED: refuse too, in the mode that actually runs, because this
- *    whole block is then dead code claiming to protect against something that
- *    has been fixed. A pin that silently stops applying is how a stale
- *    workaround outlives the defect it was written for.
- */
-function assertApprovalMailCannotEscape({ suppress }) {
-  const blind = approvalSendHelpersBlindToSuppression();
-  if (blind.length === 0) {
-    throw new Error(
-      `${APPROVAL_SEND_ROUTE} now sends through a helper that consults the suppression ` +
-        "list, so the gap this fixture refuses to run into has been closed. DELETE " +
-        "assertApprovalMailCannotEscape and its call in seed(), and the paragraph about " +
-        "it in this file's header and in the spec's mail step, so the suite can run " +
-        "against a deployed target again.",
-    );
-  }
-  if (suppress) {
-    throw new Error(
-      "REFUSING to seed the member journey against a target whose mail is not caught.\n" +
-        `  This journey presses Approve on the Approvals page, which fires ${APPROVAL_SEND_ROUTE},\n` +
-        `  and that route sends through src/lib/email/${blind.join(".ts, src/lib/email/")}.ts,\n` +
-        "  which never calls isSuppressed(). The suppressedEmails rows this fixture writes\n" +
-        "  first therefore cannot stop that send: it would hand an @e2e.invalid fixture\n" +
-        "  address to the real sender and log a hard bounce against the sending domain.\n" +
-        "  Run this spec against the harness server, whose mail goes to Mailpit:\n" +
-        "    npm run e2e:browser -- --spec member-journey --local\n" +
-        "  and delete this refusal once that send consults the suppression list.",
-    );
   }
 }
 
@@ -483,11 +403,9 @@ function subscriptionDoc({ email, channel, uid, now, journeyRunId }) {
  */
 async function seed({ runId: journeyRunId, suppress = true, onState } = {}) {
   const target = assertFixtureTarget();
-  // Both refusals come BEFORE the first write and before `onState`, so a run
+  // The refusal comes BEFORE the first write and before `onState`, so a run
   // this fixture will not stand behind creates nothing at all: no account, no
-  // ledger, nothing to tear down. `suppress` defaults to true above, so a
-  // caller that forgets to pass it gets the refusal rather than the risk.
-  assertApprovalMailCannotEscape({ suppress });
+  // ledger, nothing to tear down.
   assertGridChannelsMatchProduct();
   const now = new Date();
 
@@ -858,11 +776,9 @@ export const SPEC = {
    * reading zero afterwards.
    *
    * What that run does NOT cover, stated so the word is not read too widely:
-   * it was a caught-mail run, and that is now the ONLY run this fixture will
-   * seed. `seed()` refuses a target whose mail could really be sent, because
-   * the approval email does not consult the suppression list (see this file's
-   * header), so the suppressed branch of the spec's mail step is unreachable
-   * until that product gap closes.
+   * it was a caught-mail run, so the mail step's suppressed branch was not the
+   * one it took. That branch is reachable again now the approval send consults
+   * the suppression list, and a deployed run is what exercises it.
    */
   status: "verified",
   // The Approvals page is the first thing this spec drives, and only the

@@ -369,19 +369,24 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
 
     await step("taking a pre-course seat", async () => {
       await page.goto(courseUrl, { waitUntil: "domcontentloaded" });
-      // The course page renders its call to action twice (hero and foot), and
-      // each placement mounts its own session picker, so every slot and button
-      // appears twice once both have loaded. This step drives the HERO picker,
-      // the first in document order, and the drop-out step below reads the
-      // consequence for the other one.
-      const slot = page
-        .locator(`input[name="course-session"][value="${state.groupIds[0]}"]`)
-        .first();
+      // The course page renders its call to action twice (hero and foot), but
+      // only the hero mounts the session picker; the foot links up to it. So
+      // there is exactly one control per session and no `.first()` scoping
+      // here. If a second picker ever comes back, these locators fail on
+      // strict mode rather than quietly driving whichever one loaded first.
+      const slot = page.locator(
+        `input[name="course-session"][value="${state.groupIds[0]}"]`,
+      );
       await slot.waitFor({ timeout: WAIT_MS });
+      // The foot placement links up to the hero picker instead of mounting a
+      // second one. Exactly one anchor and exactly one link to it: a missing
+      // anchor would leave a dead in-page link with every other step green.
+      assert.equal(await page.locator("#pick-a-session").count(), 1, "the hero picker anchor is missing or duplicated");
+      assert.equal(await page.locator('a[href="#pick-a-session"]').count(), 1, "the foot's Pick a session link is missing or duplicated");
       // The radio is clipped to 1px by design (the whole card is the label),
       // so the click goes where a person's would: on the card.
-      await page.locator("label").filter({ has: slot }).first().click();
-      await page.getByRole("button", { name: "Take this place" }).first().click();
+      await page.locator("label").filter({ has: slot }).click();
+      await page.getByRole("button", { name: "Take this place" }).click();
       // The confirmation sentence, not the slot name on its own: the slot name
       // is also in the list this branch replaces, so matching it alone would
       // pass against the page that was already on screen.
@@ -410,24 +415,20 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
         0,
         "the drop-out card was still offered after the member had left",
       );
-      // KNOWN DEFECT, pinned so that fixing it fails here and gets this block
-      // deleted. The public course page renders CourseCTA twice (hero and
-      // foot) and each mounts its own GroupPicker with its own state, so the
-      // foot picker never learns about the hero picker's drop-out and goes on
-      // saying "Pick a session" with a live "Take this place" button under a
-      // hero that says signing up again is not possible here. The button
-      // cannot succeed (the route refuses a second create at the same id), so
-      // the harm is a contradiction on the page rather than a rejoin. Found by
-      // the first real run of this file on 6 September 2026. When the two
-      // placements share state (or the foot one reloads), the count below
-      // becomes 0: delete this assertion and its comment, and make the
-      // preceding one read "no picker offers a place".
+      // WHOLE PAGE, not the hero picker's subtree. This assertion used to pin
+      // a defect: the page mounted a CourseCTA at the hero and another at the
+      // foot, each with its own GroupPicker and its own state, so the foot one
+      // never heard about the drop-out and went on offering "Take this place"
+      // under a hero saying signing up again is not possible here. The fix
+      // mounts one picker, in the hero, and gives the foot a link up to it, so
+      // the count that used to be 1 is the count that must now be 0. Reading
+      // the whole page is what makes that fix stick.
       assert.equal(
         await page.getByRole("button", { name: "Take this place" }).count(),
-        1,
-        "the foot placement no longer offers a place after a drop-out. The " +
-          "defect this pins (two independent GroupPicker instances on the course " +
-          "page) appears to be fixed: delete this pin.",
+        0,
+        "somewhere on the page still offered a place after the member had left. " +
+          "The course page must mount exactly one session picker (the hero's): a " +
+          "second one keeps its own state and contradicts the first.",
       );
     });
   } finally {

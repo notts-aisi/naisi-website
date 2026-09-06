@@ -63,7 +63,7 @@ rather than the record.
 | Spec | What it protects | Verified | Modes |
 | --- | --- | --- | --- |
 | `applicant-funnel` | The applicant's whole path: the public course page, the sign-in gate on an apply link, a draft that saves and survives a reload, the availability grid under a real drag, submit, withdraw, pick it back up, the status hub, taking a pre-course seat and leaving it again. | Yes | Both; against dev its 8 reCAPTCHA-dependent steps run only with the bypass secret, otherwise they are skipped and reported |
-| `applicant-signup` | Registration end to end: the reCAPTCHA-gated `/api/register`, the emailed magic link driven out of Mailpit, the password set, the university-email verification and the profile completion. | Yes | Local mode only in practice: 8 of its 9 steps are behind the captcha |
+| `applicant-signup` | Registration end to end: the reCAPTCHA-gated `/api/register`, the emailed magic link driven out of Mailpit, the password set, the university-email verification and the profile completion. | Yes | Caught-mail modes only: it declares `requiresCaughtMail`, because it clicks links it reads out of the local inbox, and the runner skips it anywhere else |
 | `round-authoring` | An admission round built through the console as the owner: create, stages, roles, status, and the applicant-facing apply page that results. | Yes | Both |
 | `appointment-queue` | The decision queue: an application decided by the owner and what the applicant is told afterwards. | Yes | Both |
 | `membership-console` | The membership year: periods, the current-period pointer, the roster and a grant. | Yes | Both |
@@ -303,6 +303,7 @@ export const SPEC = {
   steps: [...],                             // the spec's step() calls, in order
   recaptchaDependentSteps: [...],           // skipped against a deployed target
   needs: { admin: false },                  // true when it signs in as the owner
+  requiresCaughtMail: true,                 // optional; skipped where mail is not caught
   covers: { routes: [...], pages: [...] },  // src/app keys, minus /route.ts or /page.tsx
   status: "verified",                       // "unverified" until it has passed once
   seed: async ({ runId, suppress, options, onState }) => state,
@@ -323,6 +324,17 @@ from `core.mjs`, never with wording of its own: the runner accepts a skip only
 when the step is on that spec's `recaptchaDependentSteps` **and** the marker
 carries that exact reason, so a gated step that timed out is a shortfall rather
 than an accepted gap.
+
+`requiresCaughtMail` is the whole-spec version of that, and it is optional: a
+spec declares it when the journey has to READ its own mail, and the runner
+skips the spec entirely (printing why, exit code unaffected) wherever
+`mailIsCaught()` says the messages could really be sent. The applicant sign-up
+is the one that declares it: its confirmation link makes the account and its
+verification link proves the university address, so against a deployed backend
+there is no inbox to read either out of, and driving it would send for real and
+then stall. Until the reCAPTCHA bypass landed, that spec was protected only by
+every step but its first being reCAPTCHA-dependent, which was a side effect
+rather than a safeguard.
 
 `core.mjs` holds what they share: the collection allowlist and its chokepoint,
 `fixtureDoc` / `fixtureQuery` / `fixtureSubcollection` / `membershipConfigDoc`
@@ -432,15 +444,19 @@ outside `.next/` by the same guard) before the failure is reported. That, the
 step recording and the marker all live in `createStepRecorder`, so every spec
 gets them without reimplementing any of it.
 
-**One known defect is pinned rather than papered over.** The public course
-page renders `CourseCTA` twice (hero and foot) and each placement mounts its
-own `GroupPicker` with its own state. The spec drives the hero picker (first
-in document order, `.first()`), and after the drop-out step asserts that the
-foot picker *still* offers "Take this place" (it never learns the hero one
-left; the button cannot succeed, the route refuses a second create, so the
-harm is a contradiction on the page). The assertion is written so that fixing
-the defect fails the step with the instruction to delete the pin, the same
-shape as `KNOWN_MISSING_INDEXES` in the index guard.
+**A defect the suite found is pinned rather than papered over, and the pin
+comes out with the fix.** The public course page rendered `CourseCTA` twice
+(hero and foot) and each placement mounted its own `GroupPicker` with its own
+state, so the foot one never learnt that the member had left through the hero
+and went on offering "Take this place" under a hero saying signing up again is
+not possible here. The funnel spec pinned that: it asserted the broken count
+and told the fixer to delete the assertion. The fix landed (one picker, in the
+hero; the foot links up to it with "Pick a session"), the pin came out with it,
+and the same line now asserts the correct behaviour, that no control anywhere
+on the page offers a place after a drop-out. That is the pattern to copy: a
+real defect a spec finds is written down as an assertion that fails the moment
+somebody fixes it, the same shape as `KNOWN_MISSING_INDEXES` in the index
+guard, and the fix deletes its own pin.
 
 ### The fixture, and why teardown is the headline
 
@@ -552,17 +568,27 @@ on those is the safe answer, so `mailIsCaught()` is a small exported function
 with the guard test pinning both answers rather than an inline `isLoopback`
 test that reads right and is wrong.
 
-Be precise about what that buys, because the suppression check is **not**
-universal. `sendEmail()` in `src/lib/email/send.ts` does not consult the list
-at all; the per-feature helpers do, individually. On the paths this run drives,
-`sendCourseDroppedOutEmail()` in `courseEnrolmentEmails.ts` returns early on
-`isSuppressed()` before it builds a message, and `courseFacilitatorEmails.ts`
-drops suppressed addresses through `filterSuppressed()`. So the guarantee holds
-for the routes the funnel touches, and `tests/funnel-harness-guards.test.mjs`
-keeps it holding: it reads the `@/lib/email/*` imports of every route the spec
-drives and fails if one of those helpers stops checking the list. That check
-arms itself for new helpers automatically, which is what matters as the submit
-route grows an `admissionEmails.ts`.
+That suppression is now worth what it reads like it is worth, which was not
+true when this suite landed. `sendEmail()` in `src/lib/email/send.ts` consulted
+no list at all: the per-feature helpers each did, individually, and the twenty
+or so routes that call `sendEmail()` directly did not. The check moved into
+`sendEmail()`, so every message this product posts passes the list once, on the
+way out, and a suppressed recipient is dropped and left an `emailSends` row at
+status `suppressed` saying what was withheld. The member journey's fixture used
+to refuse a deployed target because of that gap; the refusal went with it.
+
+Two guards hold the property, on purpose:
+
+- **`tests/email-suppression-chokepoint.test.mjs`** is the door. It reads
+  `send.ts` for the check happening before anything is rendered or posted,
+  walks `src` for a file building a mail transport of its own (there must be
+  exactly one), and EXECUTES the decision against a fake Firestore so a check
+  that runs and ignores its own answer fails too.
+- **`tests/funnel-harness-guards.test.mjs`** keeps the per-feature helpers
+  honest. Their checks are duplicates now, and worth keeping: an early return
+  in `sendCourseDroppedOutEmail()` saves reading a template and rendering an
+  email nobody will see. That check reads the `@/lib/email/*` imports of every
+  route the spec drives and arms itself for new helpers automatically.
 
 ### It cannot be pointed at production, including "just once before launch"
 

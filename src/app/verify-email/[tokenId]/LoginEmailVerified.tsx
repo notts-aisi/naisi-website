@@ -45,9 +45,11 @@ async function refreshSession(email: string | null, password: string): Promise<b
 export default function LoginEmailVerified({
   customToken,
   audience,
+  next,
 }: {
   customToken: string;
   audience: "member" | "collaborator";
+  next: string | null;
 }) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("signing-in");
@@ -57,8 +59,16 @@ export default function LoginEmailVerified({
   // an address to use (the user never types their email on this screen).
   const [email, setEmail] = useState<string | null>(null);
 
-  const continueUrl =
+  // Where the register form sends them when it is finished. `next` rode here on
+  // the verification token (the server validated it against the funnel
+  // allowlist), so somebody who opened the email on their phone, or an hour
+  // after the `__auth_next` cookie lapsed, still lands back on the application
+  // they were halfway through instead of on /pending-approval.
+  const base =
     audience === "collaborator" ? "/register?type=collaborator" : "/register";
+  const continueUrl = next
+    ? `${base}${base.includes("?") ? "&" : "?"}next=${encodeURIComponent(next)}`
+    : base;
 
   // Sign in with the custom token + establish the session, then ask for a password.
   useEffect(() => {

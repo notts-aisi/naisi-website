@@ -9,7 +9,12 @@ type SearchParams = { t?: string | string[] };
 
 type Result =
   | { status: "ok"; email: string }
-  | { status: "login"; customToken: string; audience: "member" | "collaborator" }
+  | {
+      status: "login";
+      customToken: string;
+      audience: "member" | "collaborator";
+      next: string | null;
+    }
   | { status: "error"; message: string };
 
 /**
@@ -52,7 +57,12 @@ export default async function VerifyEmailLandingPage({
       // Login-email magic link (registration v3): verify + sign in (option A).
       const r = await confirmLoginEmailVerification(db, signed);
       result = r.ok
-        ? { status: "login", customToken: r.customToken, audience: r.audience }
+        ? {
+            status: "login",
+            customToken: r.customToken,
+            audience: r.audience,
+            next: r.next,
+          }
         : { status: "error", message: r.error };
     } else {
       const r = await confirmUniEmailVerification(db, signed);
@@ -86,6 +96,7 @@ export default async function VerifyEmailLandingPage({
           <LoginEmailVerified
             customToken={result.customToken}
             audience={result.audience}
+            next={result.next}
           />
         ) : result.status === "ok" ? (
           <>

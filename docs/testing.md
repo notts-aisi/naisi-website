@@ -277,13 +277,27 @@ around what it may touch and the hand-driven fixture CLI are in
   acting identity is a harness address; a token that is present is always
   verified with Google, and `tests/recaptcha-bypass.test.mjs` keeps the
   variable out of `apphosting.yaml` and the bypass out of the verifier.
-- **A pinned defect is a defect, not a passing feature.** The funnel asserts
-  that the public course page's second `CourseCTA` still offers "Take this
-  place" after a member has left the course: the hero and foot placements each
-  mount their own `GroupPicker` with their own state, so the foot one never
-  learns about the drop-out. The assertion says to delete itself when the two
-  share state. The rule generalises: a real defect a spec finds is pinned with
-  the fix's own instructions, never silently fixed or silently worked around.
+- **A pinned defect is a defect, not a passing feature.** The funnel pinned
+  one: the public course page's second `CourseCTA` went on offering "Take this
+  place" after a member had left the course, because the hero and foot
+  placements each mounted their own `GroupPicker` with their own state and the
+  foot one never learnt about the drop-out. The assertion said to delete itself
+  once the page mounted one picker, that fix landed (the foot now links up to
+  the hero's picker), and the same line asserts the corrected behaviour. The
+  rule generalises: a real defect a spec finds is pinned with the fix's own
+  instructions, never silently fixed or silently worked around, and the fix
+  deletes the pin in the same change.
+- **A spec that reads its own mail runs only where the mail is caught.** The
+  suite's no-real-mail promise is that every fixture address is suppressed
+  before anything is seeded, which is a promise because `sendEmail()` consults
+  the suppression list for every caller and logs an `emailSends` row at status
+  `suppressed` for each address it drops. It did not, until the sign-up spec's
+  fixture said so out loud and the check moved into the one send function;
+  `tests/email-suppression-chokepoint.test.mjs` is the guard that keeps it
+  there and proves it by execution as well as by source. Suppression is the
+  wrong instrument for a journey that has to CLICK an emailed link, though, so
+  such a spec declares `requiresCaughtMail: true` and the runner skips it,
+  saying why, wherever `mailIsCaught()` is false.
 - **Nothing here proves infrastructure or `firestore.rules`.** The harness
   seeds through the Admin SDK, which bypasses rules entirely; rules belong to
   the emulator suite in `scripts/rules-tests/`.
@@ -298,6 +312,7 @@ nothing else has to be edited.
 export const SPEC = {
   name, specFile, steps, recaptchaDependentSteps,
   needs: { admin },                        // true when it signs in as the owner
+  requiresCaughtMail: true,                // optional; skipped where mail is not caught
   covers: { routes: [...], pages: [...] }, // src/app keys, minus /route.ts or /page.tsx
   status: "verified" | "unverified",       // see below
   seed: async ({ runId, suppress, options, onState }) => state,

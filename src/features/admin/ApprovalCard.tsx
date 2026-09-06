@@ -50,14 +50,32 @@ function formatNewsletter(prefs: NewsletterPrefs): string {
 export default function ApprovalCard({
   user,
   uniEmailConflicts = [],
+  onResolved,
 }: {
   user: UserDoc;
   /** Other accounts already holding this applicant's university email. */
   uniEmailConflicts?: UniEmailHolder[];
+  /**
+   * Re-reads the queue once this application has been decided. The queue is a
+   * one-shot `getDocs` list rather than a listener, so without it a decided
+   * card sits on screen under a stuck "Approving…" button and the admin has to
+   * press Refresh to find out whether the write landed.
+   */
+  onResolved?: () => void | Promise<void>;
 }) {
   const [busy, setBusy] = useState<"approve" | "reject" | "delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showRejectPicker, setShowRejectPicker] = useState(false);
+
+  /**
+   * The re-read normally drops this row and unmounts the card, so clearing
+   * `busy` afterwards only matters when it does not: a re-read that failed
+   * has to leave working buttons behind rather than a disabled card.
+   */
+  async function refreshQueue() {
+    await onResolved?.();
+    setBusy(null);
+  }
 
   async function handleApprove() {
     setBusy("approve");
@@ -69,7 +87,9 @@ export default function ApprovalCard({
       console.error(err);
       setError("Failed to approve — try again.");
       setBusy(null);
+      return;
     }
+    await refreshQueue();
   }
 
   async function handleConfirmReject(
@@ -90,7 +110,9 @@ export default function ApprovalCard({
       console.error(err);
       setError("Failed to reject — try again.");
       setBusy(null);
+      return;
     }
+    await refreshQueue();
   }
 
   async function handleDelete() {
@@ -109,7 +131,9 @@ export default function ApprovalCard({
       console.error(err);
       setError(err instanceof Error ? err.message : "Delete failed");
       setBusy(null);
+      return;
     }
+    await refreshQueue();
   }
 
   const signedUp = user.createdAt

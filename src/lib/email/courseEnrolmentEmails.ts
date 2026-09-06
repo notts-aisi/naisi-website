@@ -35,7 +35,8 @@ import { sendEmail } from "./send";
  * conditionally true.
  *
  * ── SUPPRESSION IS CHECKED HERE, NOT LEFT TO THE TRANSPORT ──────────────────
- * `sendEmail` logs a send; it does not consult the suppression list. This mail
+ * `sendEmail` now consults the suppression list itself, so this is belt and
+ * braces that also skips the render. This mail
  * is transactional and the recipient is owed it, but "owed" does not survive a
  * hard bounce or a spam complaint: continuing to mail a suppressed address is
  * how a sending domain's reputation goes, and the drop-out has already

@@ -20,9 +20,21 @@
  * Every `.mjs` under `scripts/e2e-fixtures/` except `core.mjs` exports one
  * `SPEC` object: its name, its spec file, its ordered step names, the subset
  * of those that cannot run against a deployed target, whether it needs the
- * owner's admin account, what it covers, and seed / countRows / teardown.
- * This file walks the directory and validates the shape, so a new spec is
- * covered by adding a file rather than by remembering to edit a runner.
+ * owner's admin account, whether it needs this run's mail CAUGHT, what it
+ * covers, and seed / countRows / teardown. This file walks the directory and
+ * validates the shape, so a new spec is covered by adding a file rather than
+ * by remembering to edit a runner.
+ *
+ * ## A spec that must read its own mail says so, and is skipped rather than run
+ *
+ * `requiresCaughtMail: true` means the journey cannot be driven at all unless
+ * the messages it causes land in the local Mailpit: the applicant sign-up
+ * reads its confirmation and verification links OUT of the inbox, so against a
+ * deployed backend there is no link to click and the run would only prove that
+ * a page renders. Such a spec is SKIPPED where mail is not caught, with the
+ * reason printed, and that is an accepted outcome rather than a shortfall.
+ * Until now the sign-up spec was protected only by every step of it being
+ * reCAPTCHA-dependent, which the harness bypass has since removed.
  *
  * ## Teardown is unconditional, and the manifest is the proof
  *
@@ -132,6 +144,12 @@ function validateSpec(spec, rel) {
     bad("every step is reCAPTCHA-dependent, so a run against a deployed target would prove nothing");
   }
   if (!spec.needs || typeof spec.needs.admin !== "boolean") bad("SPEC.needs.admin must be a boolean");
+  // Optional, and checked when present: a truthy value of the wrong type would
+  // read as "declared" here and as nothing at all in the guard test, which is
+  // how a spec that must never send ends up running against a real sender.
+  if (spec.requiresCaughtMail !== undefined && typeof spec.requiresCaughtMail !== "boolean") {
+    bad("SPEC.requiresCaughtMail must be a boolean when it is present");
+  }
   if (!spec.covers || !Array.isArray(spec.covers.routes) || !Array.isArray(spec.covers.pages)) {
     bad("SPEC.covers must be { routes: [...], pages: [...] }");
   }
@@ -322,7 +340,8 @@ async function main() {
   if (argv.list) {
     for (const { rel, spec } of specs) {
       console.log(
-        `${spec.name}\t${spec.steps.length} step(s)\tadmin: ${spec.needs.admin ? "yes" : "no"}\t${rel}`,
+        `${spec.name}\t${spec.steps.length} step(s)\tadmin: ${spec.needs.admin ? "yes" : "no"}` +
+          `\tcaught mail: ${spec.requiresCaughtMail ? "required" : "no"}\t${rel}`,
       );
     }
     return 0;
@@ -404,6 +423,25 @@ async function main() {
       : "Fixture addresses are suppressed before anything is seeded: this target's " +
           "server can hand a message to a real sender.",
   );
+  // A spec that has to READ its mail cannot run where the mail is not caught.
+  // Dropped here, before Playwright and before a single write, so nothing is
+  // seeded for a journey that could not be driven.
+  const needsMailCaught = selected.filter(({ spec }) => spec.requiresCaughtMail);
+  if (!mailCaught && needsMailCaught.length > 0) {
+    for (const { spec } of needsMailCaught) {
+      log(
+        `SKIPPING ${spec.name}: it declares requiresCaughtMail, and this target's mail is ` +
+          "not caught, so the links its journey has to click never reach an inbox this " +
+          "run can read.",
+      );
+    }
+    selected = selected.filter(({ spec }) => !spec.requiresCaughtMail);
+    if (selected.length === 0) {
+      log("Every selected spec needs caught mail, so there is nothing to run here.");
+      return 0;
+    }
+  }
+
   log(`Running: ${selected.map((s) => s.spec.name).join(", ")}.`);
 
   if (!playwrightPresent()) {

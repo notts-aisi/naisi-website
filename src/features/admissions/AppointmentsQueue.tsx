@@ -60,6 +60,18 @@ type Props = {
   roundLabel: string;
   rows: AppointmentQueueRow[];
   runs: AppointmentRunOption[];
+  /**
+   * The runs the ROUND names, straight off `admissionRounds.outcomeRunIds`.
+   *
+   * Read for one thing only: whether the round names exactly one run this
+   * queue could appoint onto, which is the only case where the picker may
+   * open on a run rather than on its placeholder. Today's write path refuses
+   * to put a run here on an appointment round (the PATCH route in
+   * `api/admissions/rounds/[roundId]`), so in practice the list is empty and
+   * the decider chooses. It is honoured rather than assumed away because the
+   * document, not the route, is what this page renders.
+   */
+  outcomeRunIds: string[];
   /** What the applications cap left out, or null when it left nothing out. */
   rowsTruncated: QueueTruncation;
   /** What the runs cap left out, or null. */
@@ -81,6 +93,7 @@ export default function AppointmentsQueue({
   roundLabel,
   rows,
   runs,
+  outcomeRunIds,
   rowsTruncated,
   runsTruncated,
   canDecide,
@@ -151,6 +164,7 @@ export default function AppointmentsQueue({
                 roundId={roundId}
                 row={row}
                 runs={runs}
+                outcomeRunIds={outcomeRunIds}
                 canDecide={deciding}
               />
             </li>
@@ -165,20 +179,28 @@ function ApplicantCard({
   roundId,
   row,
   runs,
+  outcomeRunIds,
   canDecide,
 }: {
   roundId: string;
   row: AppointmentQueueRow;
   runs: AppointmentRunOption[];
+  outcomeRunIds: string[];
   canDecide: boolean;
 }) {
   const router = useRouter();
-  // OPENS ON A RUN THAT CAN ACTUALLY TAKE SOMEBODY. A run with no start date
-  // is refused by the route, so it must not be the default; when every run
-  // lacks one, the first is still selected so the Select and the sentence
-  // below it are talking about the same run.
+  // OPENS ON NOTHING, BECAUSE NOBODY MEANT THE FIRST ONE. This used to
+  // default to the first appointable run in the whole project, which on a
+  // shared project is another round's run and in production is whichever
+  // sorts first: a decider who never looked at this select would appoint
+  // somebody onto a run nobody chose, and the email goes out on the press.
+  // The one exception is a round that names exactly one run this queue could
+  // appoint onto, where there is nothing to choose between.
   const appointable = runs.filter((run) => run.startDate !== "");
-  const [runId, setRunId] = useState(appointable[0]?.id ?? runs[0]?.id ?? "");
+  const named = outcomeRunIds.filter((id) =>
+    appointable.some((run) => run.id === id),
+  );
+  const [runId, setRunId] = useState(named.length === 1 ? named[0] : "");
   const [note, setNote] = useState("");
   const [shareReason, setShareReason] = useState(false);
   const [confirm, setConfirm] = useState<"appoint" | "decline" | null>(null);
@@ -188,6 +210,24 @@ function ApplicantCard({
   const decided = row.outcome;
   const chosen = runs.find((run) => run.id === runId) ?? null;
   const canAppoint = chosen !== null && chosen.startDate !== "";
+  // WHY APPOINT IS OUT OF REACH, in the decider's terms. Three different
+  // situations reach the same disabled button and they are not the same
+  // problem: a run picked that has no first day, a list where none of them
+  // has one, and a picker nobody has answered yet.
+  //
+  // The first of those cannot be reached from this page as it stands: a
+  // dateless run renders as a disabled option and the pre-fill only ever takes
+  // a dated one. It is kept because it is the arm that stops being unreachable
+  // the moment a dateless option becomes pickable, and "Pick the run first" is
+  // the wrong sentence to show somebody who has already picked one.
+  const appointBlock =
+    canAppoint || runs.length === 0
+      ? null
+      : chosen !== null
+        ? "That run has no start date yet. The appointment email names the first day, so give the run a date before appointing anybody onto it."
+        : appointable.length === 0
+          ? "No run in the list has a start date yet. The appointment email names the first day, so give one a date before appointing anybody onto it."
+          : "Pick the run first. An appointment emails the person straight away, and the email names the run they are joining.";
 
   async function decide(decision: "appoint" | "decline") {
     setBusy(decision);
@@ -313,17 +353,22 @@ function ApplicantCard({
               {runs.length === 0 ? (
                 <option value="">No run can take a facilitator</option>
               ) : (
-                runs.map((run) => (
-                  // A DATELESS RUN IS LISTED BUT UNPICKABLE. The appointment
-                  // email names the first day, so the route refuses one, and
-                  // hiding the run entirely would leave somebody hunting for
-                  // a run they can see in the console. Named, greyed, with
-                  // the reason on it.
-                  <option key={run.id} value={run.id} disabled={run.startDate === ""}>
-                    {run.courseTitle} · {run.label}
-                    {run.startDate === "" ? " (no start date yet)" : ""}
-                  </option>
-                ))
+                <>
+                  {/* The placeholder is a real option rather than an absence,
+                      so a picker that has not been answered reads as one. */}
+                  <option value="">Choose a run</option>
+                  {runs.map((run) => (
+                    // A DATELESS RUN IS LISTED BUT UNPICKABLE. The appointment
+                    // email names the first day, so the route refuses one, and
+                    // hiding the run entirely would leave somebody hunting for
+                    // a run they can see in the console. Named, greyed, with
+                    // the reason on it.
+                    <option key={run.id} value={run.id} disabled={run.startDate === ""}>
+                      {run.courseTitle} · {run.label}
+                      {run.startDate === "" ? " (no start date yet)" : ""}
+                    </option>
+                  ))}
+                </>
               )}
             </Select>
           </label>
@@ -350,12 +395,7 @@ function ApplicantCard({
             />
           </div>
 
-          {!canAppoint && runs.length > 0 && (
-            <p className={styles.hint}>
-              That run has no start date yet. The appointment email names the first
-              day, so give the run a date before appointing anybody onto it.
-            </p>
-          )}
+          {appointBlock && <p className={styles.hint}>{appointBlock}</p>}
 
           {error && <p className={styles.error}>{error}</p>}
 

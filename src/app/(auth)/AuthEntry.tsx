@@ -23,6 +23,7 @@ import {
   signInWithEmailPassword,
 } from "@/auth/signInWithEmailPassword";
 import { useAuth } from "@/auth/AuthProvider";
+import { useHydrated } from "@/hooks/useHydrated";
 import { isFunnelReturn } from "@/lib/authReturn";
 import { hardNavigate } from "@/lib/navigation/hardNavigate";
 import { claimSelfHealAttempt } from "@/lib/navigation/selfHealGuard";
@@ -71,7 +72,11 @@ const TAGLINE: Record<RegisterAudience, string> = {
 export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get("next") ?? "/dashboard";
+  // Latched at mount: `switchMode` rewrites the URL in place to /login or
+  // /register, `useSearchParams` follows that rewrite, and the address
+  // somebody arrived with is gone by the time they press anything. Pressing
+  // "Create account" on an apply-funnel /login used to throw the funnel away.
+  const [next] = useState(() => params.get("next") ?? "/dashboard");
   // Guard every post-auth redirect against open-redirect: only ever navigate to a
   // same-origin path, never an absolute URL or a protocol-relative //evil.com.
   const safeNext = next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
@@ -117,8 +122,29 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
   const handledNavRef = useRef(false);
   const mintingRef = useRef(false);
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  // The two credential boxes are UNCONTROLLED and read out of the DOM when
+  // they are needed. Controlled ones lost anything that reached them before
+  // hydration. A password manager fills on load, so somebody on a slow
+  // connection watched React's first render wipe both fields. The drafts
+  // below are what each box was last seen holding, so a remount (the mode
+  // switch collapses the password block; the check-inbox screen replaces the
+  // whole card) restores it the way state used to.
+  const formRef = useRef<HTMLFormElement>(null);
+  const emailDraftRef = useRef("");
+  const passwordDraftRef = useRef("");
+  /**
+   * The box's live value, remembered on the way past. Falls back to the draft
+   * while the box is unmounted, which is the register leg for the password.
+   */
+  const readField = useCallback((id: string, draft: { current: string }) => {
+    const box = formRef.current?.querySelector<HTMLInputElement>(`#${id}`);
+    if (box) draft.current = box.value;
+    return draft.current;
+  }, []);
+  // Disables the submit until React is listening, so a press before then does
+  // nothing rather than running the browser's own submission (which reloaded
+  // /login with both fields blank and no message anywhere).
+  const hydrated = useHydrated();
   const [busy, setBusy] = useState(false);
   // Google credential exchange in flight — greys the GIS button, blocks a
   // second click, and shows the ring beside it.
@@ -128,6 +154,23 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
   const [sentEmail, setSentEmail] = useState<string | null>(null);
   // reCAPTCHA v2 Invisible — driven imperatively on submit (no visible widget).
   const recaptchaRef = useRef<RecaptchaHandle>(null);
+
+  // Put a draft back when its box comes back. An uncontrolled box has no
+  // memory across an unmount, and both legs that unmount one are round trips a
+  // person makes by hand: register → sign in returns to the password field,
+  // and the check-inbox screen returns to the whole form. Only ever into an
+  // empty box, so a value typed before hydration is never overwritten.
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form) return;
+    for (const [id, draft] of [
+      ["auth-email", emailDraftRef],
+      ["auth-password", passwordDraftRef],
+    ] as const) {
+      const box = form.querySelector<HTMLInputElement>(`#${id}`);
+      if (box && !box.value) box.value = draft.current;
+    }
+  }, [mode, sentEmail]);
 
   // Reveal fallback if GIS never reports ready.
   useEffect(() => {
@@ -446,7 +489,8 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
       e.preventDefault();
       setFormError(null);
       setResetNote(null);
-      const trimmed = email.trim().toLowerCase();
+      const trimmed = readField("auth-email", emailDraftRef).trim().toLowerCase();
+      const password = readField("auth-password", passwordDraftRef);
 
       if (mode === "signin") {
         if (!trimmed || !password) {
@@ -511,7 +555,7 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
         const res = await fetch("/api/register", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email: trimmed, audience, recaptchaToken }),
+          body: JSON.stringify({ email: trimmed, audience, recaptchaToken, next: safeNext }),
         });
         const data = (await res.json().catch(() => null)) as
           | { ok?: boolean; error?: string }
@@ -530,25 +574,26 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
         setBusy(false);
       }
     },
-    [mode, email, password, audience, safeNext, router, startSurge],
+    [mode, audience, safeNext, router, startSurge, readField],
   );
 
   const handleReset = useCallback(async () => {
     setFormError(null);
     setResetNote(null);
-    if (!email.trim()) {
+    const typed = readField("auth-email", emailDraftRef).trim();
+    if (!typed) {
       setFormError("Enter your email above first, then tap reset.");
       return;
     }
     try {
-      await resetCollaboratorPassword(email.trim());
+      await resetCollaboratorPassword(typed);
       setResetNote(
         "If an account exists for that email, a password reset link is on its way.",
       );
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Couldn't send a reset email.");
     }
-  }, [email]);
+  }, [readField]);
 
   // The ambient "active inference" surge runs only while a field is focused:
   // focusing a field surges it, blurring calms it back to idle — unless a submit
@@ -745,14 +790,15 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
           <span style={{ flex: 1, height: 1, background: "var(--color-border)" }} />
         </div>
 
-        <form id="auth-form" className={styles.authForm} onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+        <form ref={formRef} id="auth-form" className={styles.authForm} onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
           <div>
             <Field id="auth-email" label="Email">
               <Input
                 id="auth-email"
                 type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  emailDraftRef.current = e.target.value;
+                }}
                 onFocus={startSurge}
                 onMouseDown={startSurge}
                 onBlur={onFieldBlur}
@@ -798,8 +844,9 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
                 <Field id="auth-password" label="Password">
                   <PasswordInput
                     id="auth-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      passwordDraftRef.current = e.target.value;
+                    }}
                     onFocus={startSurge}
                     onMouseDown={startSurge}
                     onBlur={onFieldBlur}
@@ -897,13 +944,17 @@ export default function AuthEntry({ initialMode }: { initialMode: Mode }) {
               </motion.div>
             )}
           </AnimatePresence>
+          {/* Disabled until React is listening. It is the form's default
+              button, so while it carries `disabled` an Enter press in either
+              field submits nothing either, which is the press a password
+              manager sets up on a slow connection. */}
           <Button
             data-testid="auth-submit"
             type="submit"
             form="auth-form"
             fullWidth
             size="lg"
-            disabled={busy}
+            disabled={busy || !hydrated}
           >
             {mode === "register"
               ? busy

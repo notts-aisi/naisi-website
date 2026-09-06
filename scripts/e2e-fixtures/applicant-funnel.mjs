@@ -32,14 +32,15 @@
  * fixture address FIRST, unless the runner says this run's mail is caught by
  * Mailpit.
  *
- * Be precise about what that buys, because the check is NOT universal:
- * `sendEmail()` in `src/lib/email/send.ts` does not consult the suppression
- * list at all. The helpers do. `sendCourseDroppedOutEmail()` in
+ * The check is universal since the September fix: `sendEmail()` in
+ * `src/lib/email/send.ts` consults the suppression list for every send and
+ * holds a suppressed recipient (tests/email-suppression-chokepoint.test.mjs).
+ * The per-feature helpers still check too: `sendCourseDroppedOutEmail()` in
  * `courseEnrolmentEmails.ts` returns early on `isSuppressed()` before it builds
  * a message, and `courseFacilitatorEmails.ts` drops suppressed addresses
- * through `filterSuppressed()`. So the property holds for the routes this run
- * drives, and `tests/funnel-harness-guards.test.mjs` keeps it holding: it reads
- * the email helpers those routes import and fails if one of them stops
+ * through `filterSuppressed()`, and `tests/funnel-harness-guards.test.mjs`
+ * keeps that second layer: it reads the email helpers the funnel's routes
+ * import and fails if one of them stops
  * checking. The rows are self-identifying, ledgered, and removed by teardown
  * like everything else.
  *

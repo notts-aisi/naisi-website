@@ -23,19 +23,24 @@
  * ## Why there are no `suppressedEmails` rows here, and what stands in
  *
  * Every other fixture writes a suppression row per address before it seeds, so
- * a run against the deployed dev backend cannot hand a message to Resend. That
- * protection does NOT work on this journey and pretending otherwise would be
- * worse than not having it: `/api/register` and `/api/verify-email/send` call
- * `sendEmail()` in src/lib/email/send.ts DIRECTLY, and that function does not
- * consult the suppression list at all (only the per-feature helpers do). A
- * suppression row would therefore stop nothing while reading, to the next
- * person, like it stopped everything.
+ * a run against the deployed dev backend cannot hand a message to Resend.
+ * Suppression is the wrong instrument HERE, and would be worse than nothing:
+ * this journey has to READ its own mail. The confirmation link makes the
+ * account and the verification link proves the university address, so a
+ * suppressed send is a spec with no link to click, and a suppression row would
+ * read, to the next person, like the protection the other fixtures have.
  *
- * What actually keeps this spec off a real sender is the shape of the run:
+ * What keeps this spec off a real sender is that it declares
+ * `requiresCaughtMail: true`, and the runner SKIPS it, with the reason
+ * printed, wherever `mailIsCaught()` says the messages could really go. That
+ * is the whole protection and it is one line, which is the point: it used to
+ * rest on every step but the first being on `RECAPTCHA_DEPENDENT_STEPS`, so
+ * the registration leg was skipped against a deployed target as a side effect
+ * of the captcha. The harness bypass (#282) drives those steps now, and a
+ * side effect that has been removed is not a safeguard.
  *
- *  - Every step except the first is on `RECAPTCHA_DEPENDENT_STEPS`, so against
- *    a deployed target the whole registration leg is skipped and no route that
- *    sends is ever reached. The one step that does run is a page read.
+ * Two things still stand behind it, both belt and braces:
+ *
  *  - The spec refuses to press the register button at all unless the runner
  *    said this run's mail is CAUGHT (`state.suppress === false`, which
  *    `mailIsCaught()` only answers for a server this harness started or the
@@ -526,6 +531,14 @@ export const SPEC = {
   specFile: "tests/e2e/applicant-signup.spec.mjs",
   steps: SIGNUP_STEPS,
   recaptchaDependentSteps: RECAPTCHA_DEPENDENT_STEPS,
+  /**
+   * This journey reads its own mail: the confirmation link creates the account
+   * and the verification link proves the university address. Where the mail is
+   * not caught there is no inbox to read them out of, so the runner skips this
+   * spec entirely rather than driving a leg that would send for real and then
+   * stall on a link that never arrives. See this file's header.
+   */
+  requiresCaughtMail: true,
   // Nobody privileged appears in this journey: the account it creates ends at
   // role `pending`, which is where the story stops. Approving it is the
   // membership spec's business, not this one's.

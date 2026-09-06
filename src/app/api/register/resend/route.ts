@@ -8,7 +8,8 @@ import { recordRegistrationResend } from "@/lib/firestore/registrationWrites";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 
 const COOLDOWN_SECONDS = 60;
-const TOKEN_TTL_SECONDS = 60 * 30;
+/** Mirrors TOKEN_TTL_SECONDS in ../route.ts, whose comment says why it is ten. */
+const TOKEN_TTL_SECONDS = 60 * 10;
 
 // Abuse throttle (see lib/rateLimit). Generous per-IP for shared campus NAT.
 const RL_WINDOW_MS = 10 * 60 * 1000;
@@ -65,14 +66,27 @@ export async function POST(req: Request) {
     const data = doc.data();
     const now = Timestamp.now();
 
-    const expiresAt = data.expiresAt as Timestamp | undefined;
-    if (expiresAt && expiresAt.toMillis() <= now.toMillis()) return uniform; // expired
-
+    // An EXPIRED token is the ordinary reason somebody presses this button, so
+    // it must not be a reason to refuse: the expired-link page sends the reader
+    // straight here ("head back to your registration tab and click Resend"),
+    // and at a ten-minute life that page is where most slow readers land. The
+    // send below revives the document the way the register route's own resend
+    // branch already does; what is never revivable is a REDEEMED token, and the
+    // `verifiedAt == null` filter on the query above is what excludes those.
     const lastSent = data.lastSentAt as Timestamp | undefined;
     const elapsed = lastSent ? (now.toMillis() - lastSent.toMillis()) / 1000 : Infinity;
     if (elapsed < COOLDOWN_SECONDS) return uniform; // still cooling down → don't spam
 
-    await doc.ref.update({ lastSentAt: now, sendCount: FieldValue.increment(1) });
+    // The document's own expiry moves with the send, the way the register
+    // route's resend branch already moves it. Without this the fresh link
+    // inherits the original window while its copy promises a full one, so a
+    // resend near the end of that window hands the reader a link that dies
+    // minutes after it says it will.
+    await doc.ref.update({
+      lastSentAt: now,
+      sendCount: FieldValue.increment(1),
+      expiresAt: Timestamp.fromMillis(now.toMillis() + TOKEN_TTL_SECONDS * 1000),
+    });
 
     const signed = signToken({ s: "verify-login-email", v: doc.id }, TOKEN_TTL_SECONDS);
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
