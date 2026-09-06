@@ -257,7 +257,7 @@ test(
     await stubRecaptchaOnLoopback(memberPage, origin);
     await stubRecaptchaOnLoopback(otherPage, origin);
     console.log(
-      `[journey-spec] reCAPTCHA: ${recaptchaStubbed ? "stubbed (loopback server)" : "real widget (deployed target)"}`,
+      `[journey-spec] reCAPTCHA: ${recaptchaStubbed ? `armed (${recaptchaStubbed})` : "real widget (deployed target)"}`,
     );
     if (!recaptchaStubbed) {
       skipReasonFor = (name) =>

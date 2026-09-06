@@ -202,7 +202,7 @@ test(
     // widget a token to send.
     const recaptchaStubbed = await stubRecaptchaOnLoopback(page, origin);
     console.log(
-      `[signup-spec] reCAPTCHA: ${recaptchaStubbed ? "stubbed (loopback server)" : "real widget (deployed target)"}`,
+      `[signup-spec] reCAPTCHA: ${recaptchaStubbed ? `armed (${recaptchaStubbed})` : "real widget (deployed target)"}`,
     );
     if (!recaptchaStubbed) {
       skipReasonFor = (name) =>

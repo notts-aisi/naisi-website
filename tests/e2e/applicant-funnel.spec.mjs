@@ -182,7 +182,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
   // a token to send. Against dev the real widget runs against the real secret.
   const recaptchaStubbed = await stubRecaptchaOnLoopback(page, origin);
   console.log(
-    `[funnel-spec] reCAPTCHA: ${recaptchaStubbed ? "stubbed (loopback server)" : "real widget (deployed target)"}`,
+    `[funnel-spec] reCAPTCHA: ${recaptchaStubbed ? `armed (${recaptchaStubbed})` : "real widget (deployed target)"}`,
   );
   if (!recaptchaStubbed) {
     skipReasonFor = (name) =>

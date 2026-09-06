@@ -32,7 +32,7 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { isLoopbackOrigin } from "./env.mjs";
+import { isLoopbackOrigin, loadSecrets } from "./env.mjs";
 
 /** Every locator in these helpers waits at most this long. Generous: a
  *  deployed dev backend is a cold Cloud Run. */
@@ -70,8 +70,15 @@ export const DEFAULT_VIEWPORT = { width: 1280, height: 900 };
 /** The URL the widget loads. Pinned to what `RecaptchaInvisible` appends. */
 export const RECAPTCHA_SCRIPT_URL = "https://www.google.com/recaptcha/api.js";
 
-/** What the stub hands back. Any string passes under the always-pass secret. */
+/** What the stub hands back on loopback. Any string passes under the always-pass secret. */
 export const LOOPBACK_RECAPTCHA_TOKEN = "e2e-loopback-recaptcha-token";
+
+/**
+ * The header the dev backend's harness bypass reads. Pinned to
+ * `RECAPTCHA_BYPASS_HEADER` in src/lib/recaptcha/bypass.ts; the guard in
+ * tests/funnel-harness-guards.test.mjs compares the two.
+ */
+export const RECAPTCHA_BYPASS_HEADER = "x-e2e-recaptcha-bypass";
 
 /**
  * The class the REAL invisible widget gives the element it injects into its
@@ -87,7 +94,8 @@ export const RECAPTCHA_BADGE_SELECTOR = ".grecaptcha-badge";
  * (the real widget is async, and the component sets its pending resolver
  * before calling execute); `reset` is a no-op.
  */
-const RECAPTCHA_STUB = `
+function recaptchaStub(token) {
+  return `
 (() => {
   const widgets = [];
   window.grecaptcha = {
@@ -104,30 +112,63 @@ const RECAPTCHA_STUB = `
     execute(id) {
       const widget = widgets[id ?? 0];
       if (widget && typeof widget.callback === "function") {
-        setTimeout(() => widget.callback(${JSON.stringify(LOOPBACK_RECAPTCHA_TOKEN)}), 0);
+        setTimeout(() => widget.callback(${JSON.stringify(token)}), 0);
       }
     },
     reset() {},
   };
 })();
 `;
+}
 
 /**
- * Serves the stub in place of Google's script for every request the page
- * makes, when and only when `origin` is loopback. Returns true when armed so
- * a spec can say which mode it ran in.
+ * Arms whatever lets this page through the reCAPTCHA gate on this target, and
+ * says which. Returns one of:
+ *
+ *  - "stubbed": the target is loopback. The stub above is served in place of
+ *    Google's script and hands back a fixed token, which the always-pass
+ *    secret the local server runs with accepts. Nothing else is needed.
+ *  - "bypass": the target is deployed and `.env.e2e.secrets.local` (or the
+ *    environment) carries E2E_RECAPTCHA_BYPASS_SECRET. Every request from
+ *    this page's context carries the bypass header, and the stub hands the
+ *    widget an EMPTY token, so the request that reaches the gate is
+ *    tokenless: the gate consults the bypass only for a tokenless request
+ *    (src/lib/recaptcha/bypass.ts), and it grants only when the header
+ *    matches the dev backend's own variable and the acting identity is inside
+ *    the harness namespace. A human on dev keeps the real widget.
+ *  - false: the target is deployed and there is no secret. The real widget
+ *    runs, which challenges headless Chromium with images, so the spec skips
+ *    its reCAPTCHA-dependent steps and the runner reports them.
+ *
+ * Truthy in the two armed cases, which is what every spec branches on. The
+ * old name is kept as an alias so the eight specs read the same.
  */
-export async function stubRecaptchaOnLoopback(page, origin) {
-  if (!isLoopbackOrigin(origin)) return false;
+export async function armRecaptcha(page, origin) {
+  if (isLoopbackOrigin(origin)) {
+    await page.route(`${RECAPTCHA_SCRIPT_URL}**`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/javascript",
+        body: recaptchaStub(LOOPBACK_RECAPTCHA_TOKEN),
+      }),
+    );
+    return "stubbed";
+  }
+  const { recaptchaBypassSecret } = loadSecrets();
+  if (!recaptchaBypassSecret) return false;
+  await page.context().setExtraHTTPHeaders({ [RECAPTCHA_BYPASS_HEADER]: recaptchaBypassSecret });
   await page.route(`${RECAPTCHA_SCRIPT_URL}**`, (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/javascript",
-      body: RECAPTCHA_STUB,
+      body: recaptchaStub(""),
     }),
   );
-  return true;
+  return "bypass";
 }
+
+/** The name the specs use; see armRecaptcha. */
+export const stubRecaptchaOnLoopback = armRecaptcha;
 
 /**
  * Waits until a reCAPTCHA widget is mounted on the page, stub or real.

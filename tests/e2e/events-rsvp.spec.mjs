@@ -333,7 +333,7 @@ test("events RSVP: a signed-out guest books a place and the page fits a phone", 
   // its mode the same way and the answer is printed either way.
   const recaptchaStubbed = await stubRecaptchaOnLoopback(page, origin);
   console.log(
-    `[events-rsvp-spec] reCAPTCHA: ${recaptchaStubbed ? "stubbed (loopback server)" : "real widget (deployed target)"}; ` +
+    `[events-rsvp-spec] reCAPTCHA: ${recaptchaStubbed ? `armed (${recaptchaStubbed})` : "real widget (deployed target)"}; ` +
       `${RECAPTCHA_DEPENDENT_STEPS.length} step(s) depend on it.`,
   );
   if (!recaptchaStubbed) {

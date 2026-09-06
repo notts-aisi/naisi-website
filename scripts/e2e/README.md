@@ -62,7 +62,7 @@ rather than the record.
 
 | Spec | What it protects | Verified | Modes |
 | --- | --- | --- | --- |
-| `applicant-funnel` | The applicant's whole path: the public course page, the sign-in gate on an apply link, a draft that saves and survives a reload, the availability grid under a real drag, submit, withdraw, pick it back up, the status hub, taking a pre-course seat and leaving it again. | Yes | Both, but 8 of its 13 steps are reCAPTCHA-dependent and run in local mode only |
+| `applicant-funnel` | The applicant's whole path: the public course page, the sign-in gate on an apply link, a draft that saves and survives a reload, the availability grid under a real drag, submit, withdraw, pick it back up, the status hub, taking a pre-course seat and leaving it again. | Yes | Both; against dev its 8 reCAPTCHA-dependent steps run only with the bypass secret, otherwise they are skipped and reported |
 | `applicant-signup` | Registration end to end: the reCAPTCHA-gated `/api/register`, the emailed magic link driven out of Mailpit, the password set, the university-email verification and the profile completion. | Yes | Local mode only in practice: 8 of its 9 steps are behind the captcha |
 | `round-authoring` | An admission round built through the console as the owner: create, stages, roles, status, and the applicant-facing apply page that results. | Yes | Both |
 | `appointment-queue` | The decision queue: an application decided by the owner and what the applicant is told afterwards. | Yes | Both |
@@ -651,12 +651,23 @@ Read this before trusting a passing run.
 - **`/api/register` is covered in local mode only.** Against dev it stays
   behind the reCAPTCHA gate on purpose (that gate being closed is itself
   asserted by `recaptcha-gate`, on dev *and* production).
-- **Every browser-driven press behind reCAPTCHA is local mode only**, for the
-  same reason from the other side: against dev the real widget challenges
-  headless Chromium with images. Today that is the funnel's apply leg
-  (`RECAPTCHA_DEPENDENT_STEPS`), skipped and reported in dev mode. Any future
-  spec that drives `/register` or the admissions apply routes in a browser
-  inherits the split.
+- **A browser-driven press behind reCAPTCHA runs against dev only through
+  the harness bypass.** Google's real widget challenges headless Chromium
+  with images, so without the bypass the specs skip their reCAPTCHA-dependent
+  steps (`recaptchaDependentSteps`) and the runner reports them. The bypass
+  (`src/lib/recaptcha/bypass.ts`) lets a TOKENLESS request through the gate
+  only when three things hold at once: the dev backend's process has
+  `E2E_RECAPTCHA_BYPASS_SECRET` (a console environment variable on the dev
+  backend, never in `apphosting.yaml`; `tests/recaptcha-bypass.test.mjs`
+  fails if it appears there), the request carries `x-e2e-recaptcha-bypass`
+  equal to it, and the acting identity is inside the harness namespace
+  `e2e-<alnum>@e2e.invalid`. A token that is present is always verified for
+  real, so a human on dev is never bypassed. On the harness side the same
+  value goes in `.env.e2e.secrets.local` (or the `E2E_RECAPTCHA_BYPASS_SECRET`
+  environment variable in CI); `armRecaptcha` then sends the header from the
+  page's context and hands the widget an empty token, and the runner stops
+  accepting skips. Without the secret the old split stands: those steps are
+  proven in local mode only.
 - **Email coverage is the three auth templates only** — `VerifyLoginEmail`,
   `VerifyUniEmail`, `AlreadyRegisteredEmail`, exercised through their real
   routes. The other `src/emails/` templates (newsletter, RSVP, task,
