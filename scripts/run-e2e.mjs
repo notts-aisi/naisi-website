@@ -9,6 +9,8 @@
  *   node scripts/run-e2e.mjs --local --skip-build  reuse the previous build
  *   node scripts/run-e2e.mjs --spec applicant-funnel,events-rsvp
  *   node scripts/run-e2e.mjs --list                what it can run
+ *   node scripts/run-e2e.mjs --teardown            tear down whatever the ledgers name, nothing else
+ *   node scripts/run-e2e.mjs --sweep <runId,...>   remove a run's rows and accounts WITHOUT a ledger
  *
  *   E2E_TARGET=http://127.0.0.1:3100 node scripts/run-e2e.mjs --spec x
  *     against a loopback server ALREADY RUNNING (one somebody else started
@@ -95,10 +97,17 @@ const log = (msg) => console.log(`[e2e:browser] ${msg}`);
 function parseArgs(raw) {
   const applicantsAt = raw.indexOf("--applicants");
   const specAt = raw.indexOf("--spec");
+  const sweepAt = raw.indexOf("--sweep");
   return {
     local: raw.includes("--local"),
     skipBuild: raw.includes("--skip-build"),
     list: raw.includes("--list"),
+    // Teardown-only: a CI step that runs `if: always()` after the specs, so a
+    // runner cancelled between seed and teardown still clears what its
+    // ledgers name before the machine is thrown away.
+    teardown: raw.includes("--teardown"),
+    // Sweep by run id, for the case the ledgers are gone too (see lib/sweep.mjs).
+    sweep: sweepAt === -1 ? null : String(raw[sweepAt + 1] ?? "").split(",").map((id) => id.trim()).filter(Boolean),
     // Undefined when the flag is absent, so each spec's own default applies
     // rather than this file holding a second opinion about one spec's shape.
     applicants: applicantsAt === -1 ? undefined : Number(raw[applicantsAt + 1]),
@@ -325,6 +334,56 @@ function markerShortfall(spec, { acceptRecaptchaSkips }) {
 }
 
 // ---------------------------------------------------------------------------
+// Teardown only
+// ---------------------------------------------------------------------------
+
+/**
+ * Tears down every fixture the ledgers in `.e2e-state/` still name, and
+ * nothing else: no build, no server, no seeding, no browser, no admin
+ * credentials. Exit 0 when every manifest reads zero or there was nothing to
+ * do; 1 when any row is left behind, so a CI step that runs this `if:
+ * always()` turns a cancelled run into a red step rather than a silent leak.
+ *
+ * WHY THIS EXISTS. The `finally` in `runSelected` already tears down on a
+ * crash, and the start of a run clears a stale ledger on the same machine.
+ * Neither covers a CI runner that is CANCELLED: the step is killed before the
+ * `finally` finishes, the machine is discarded, and the ledger with it. On
+ * 6 September 2026 that left seven fixtures on dev. A step after the specs
+ * with `if: always()` does run on cancellation, and this is what it runs.
+ */
+async function teardownFromLedgers(specs) {
+  const target = assertFixtureTarget();
+  const pending = specs
+    .map(({ spec }) => ({ spec, state: readState(spec.name) }))
+    .filter((entry) => entry.state);
+  if (pending.length === 0) {
+    log(`No ledger names a fixture on ${target.projectId}. Nothing to tear down.`);
+    return 0;
+  }
+  let remaining = 0;
+  for (const { spec, state } of pending) {
+    try {
+      const before = await spec.countRows(state);
+      log(`${spec.name} before teardown: ${JSON.stringify(before)}`);
+      const counts = await spec.teardown(state);
+      if (counts.total === 0) clearState(spec.name);
+      remaining += counts.total;
+      log(
+        counts.total === 0
+          ? `${spec.name}: teardown complete, the fixture manifest reads zero.`
+          : `${spec.name}: TEARDOWN LEFT ${counts.total} ROW(S) BEHIND on ${target.projectId}.`,
+      );
+    } catch (err) {
+      console.error(err);
+      remaining += 1;
+      log(`${spec.name}: teardown FAILED. The fixture is still on ${target.projectId}; its ledger is at ${stateDir()}.`);
+    }
+  }
+  log(`Total rows left behind across every ledgered fixture: ${remaining}.`);
+  return remaining === 0 ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -346,6 +405,18 @@ async function main() {
     }
     return 0;
   }
+
+  if (argv.sweep) {
+    if (argv.sweep.length === 0) {
+      console.error("[e2e:browser] --sweep needs at least one run id, comma-separated.");
+      return 1;
+    }
+    const { sweepRunIds } = await import("./e2e/lib/sweep.mjs");
+    await sweepRunIds(argv.sweep, { log });
+    return 0;
+  }
+
+  if (argv.teardown) return teardownFromLedgers(specs);
 
   let selected = specs;
   if (argv.only) {

@@ -38,6 +38,22 @@ import assert from "node:assert/strict";
 import { loadEnv, runId } from "../lib/env.mjs";
 import { anonFetch, authedFetch, withHarnessSession } from "../lib/session.mjs";
 
+/** `auth_time` (whole seconds) out of a `__session=<jwt>` cookie, no verification. */
+function sessionAuthTime(cookie) {
+  const jwt = cookie.replace(/^__session=/, "").split(";")[0];
+  const payload = JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString("utf8"));
+  if (typeof payload.auth_time !== "number") {
+    throw new Error("the harness session cookie carries no auth_time claim");
+  }
+  return payload.auth_time;
+}
+
+function sleepUntil(epochMs) {
+  const wait = epochMs - Date.now();
+  return wait > 0 ? new Promise((resolve) => setTimeout(resolve, wait)) : Promise.resolve();
+}
+
+
 /** Mirrors PROTECTED_PREFIXES in src/proxy.ts. Keep the two in step. */
 const PROTECTED = [
   "/dashboard",
@@ -115,6 +131,18 @@ describe("protected-route gate (the contract the client nav fix relies on)", () 
   });
 
   it("closes the gate again after DELETE /api/auth/session", async () => {
+    // Firebase decides "revoked" by comparing the cookie's auth_time with
+    // the account's tokensValidAfterTime in WHOLE seconds, and only a strictly
+    // earlier auth_time counts. A sign-in and a sign-out inside the same
+    // second therefore leave a REPLAYED cookie valid. A browser never meets
+    // this (the sign-out response clears the cookie too), but this battery
+    // replays on purpose to prove the revocation, so it has to let the clock
+    // reach the second after the cookie was minted before revoking. On a Mac
+    // the two calls happened to straddle a second; on the GitHub runner they
+    // did not, and the replay landed on /pending-approval (6 September 2026).
+    const authTime = sessionAuthTime(session.cookie);
+    await sleepUntil((authTime + 1) * 1000 + 50);
+
     const del = await authedFetch(session.cookie, "/api/auth/session", {
       method: "DELETE",
     });
