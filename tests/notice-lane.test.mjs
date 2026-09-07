@@ -1238,6 +1238,28 @@ describe("the event announcement: the events row's own sender", () => {
     const result = await sendEventAnnouncement(globalThis.__db, input);
     assert.equal(result.pushed, 0);
     assert.equal(result.sent, 2);
+    assert.equal(
+      result.pushRefusal,
+      null,
+      "an unprovisioned backend is silence by design, and a publisher must not be " +
+        "told the announcement was refused when it was not",
+    );
+  });
+
+  test("the two legs refuse independently, and both refusals reach the publisher", async () => {
+    // The email leg is over its row ceiling and the push leg is fine. One
+    // refusal must not stand in for the other: a publisher told "the events
+    // list is too large" has learnt nothing about whether the phones buzzed.
+    const input = world();
+    globalThis.__channelRows = Array.from({ length: 501 }, (_, i) => ({
+      email: `guest${i}@e2e.invalid`,
+      audience: "guest",
+      audienceId: `guest${i}@e2e.invalid`,
+    }));
+    const result = await sendEventAnnouncement(globalThis.__db, input);
+    assert.match(result.refusal ?? "", /larger than a single announcement/);
+    assert.equal(result.pushRefusal, null);
+    assert.equal(result.pushed, 1, "the push audience is told even when the list is not");
   });
 });
 

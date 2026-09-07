@@ -34,6 +34,13 @@ export type NewsletterDraft = {
    * which is why the editor shows the phrase only when there is one.
    */
   pushedCount?: number | null;
+  /**
+   * The send claim. Stamped in one transaction before the first message goes
+   * out and deleted by the write that sets `sent`, so a draft still carrying it
+   * is a send that started and never finished. Nothing expires it: an admin
+   * clears the field once they know from the send log who already has the mail.
+   */
+  sendClaimedAt?: Date | null;
   createdAt?: Date | null;
   updatedAt?: Date | null;
 };
@@ -71,6 +78,7 @@ export function normalizeDraft(id: string, data: Raw): NewsletterDraft {
         ? (data.subscribersReached as number)
         : null,
     pushedCount: typeof data.pushedCount === "number" ? (data.pushedCount as number) : null,
+    sendClaimedAt: tsToDate(data.sendClaimedAt),
     createdAt: tsToDate(data.createdAt),
     updatedAt: tsToDate(data.updatedAt),
   };

@@ -38,7 +38,19 @@
  *     collection leaves a delivered newsletter answering 200. A newsletter that
  *     has reached four hundred inboxes and then 500s is an invitation to send
  *     it again.
- *  7. **The test send stays transactional**, pinned from its source: it must
+ *  7. **The send claim, under a race.** Two POSTs are fired at once and exactly
+ *     one of them sends: the status check at the top of the route cannot
+ *     separate them, because both read the draft before either wrote to it, so
+ *     only the transaction can. Executed rather than reasoned about, since the
+ *     route's comment claimed this property for a week before it held it. The
+ *     interrupted case is here too: a standing claim refuses the retry and
+ *     changes nothing.
+ *  8. **The unsubscribe link reaches both cells of a subscription row.** The
+ *     footer link and Gmail's one-click button are a refusal of the ROW, and a
+ *     member who clicks one must stop getting the notification as well as the
+ *     email. `courses` is the deliberate exception, because its two cells gate
+ *     different messages: executed per row rather than asserted once.
+ *  9. **The test send stays transactional**, pinned from its source: it must
  *     reach neither the shared enumeration nor a push preference.
  *
  * ## The fakes
@@ -116,7 +128,42 @@ function makeDb(store = {}) {
   const write = (ref, patch, merge) => {
     data[ref.__collection] ??= {};
     const current = merge ? (data[ref.__collection][ref.__id] ?? {}) : {};
-    data[ref.__collection][ref.__id] = { ...current, ...patch };
+    const next = { ...current, ...patch };
+    // `FieldValue.delete()` REMOVES the field rather than storing a marker. A
+    // store that kept the marker would answer truthy for a field the real
+    // Firestore had dropped, which is exactly the question a released send
+    // claim turns on.
+    for (const [key, value] of Object.entries(next)) {
+      if (value && typeof value === "object" && value.__op === "delete") delete next[key];
+    }
+    data[ref.__collection][ref.__id] = next;
+  };
+
+  /**
+   * TRANSACTIONS RUN ONE AT A TIME, which is the property the send claim is
+   * built on and the only thing that makes the concurrency test mean anything.
+   * A fake that just called `fn` would let two racing requests both await their
+   * `tx.get` before either wrote, so both would read an unclaimed draft and
+   * both would send: the fake would report a bug the real Firestore does not
+   * have, since it aborts and retries a transaction whose read set changed
+   * underneath it. Serialising is the cheapest honest model of that.
+   */
+  let transactions = Promise.resolve();
+  const runTransaction = (fn) => {
+    const result = transactions.then(() =>
+      fn({
+        get: async (ref) => snapOf(ref.__collection, ref.__id),
+        set: (ref, patch) => write(ref, patch, false),
+        update: (ref, patch) => write(ref, patch, true),
+      }),
+    );
+    // The queue must survive a transaction body that throws, or one failure
+    // would wedge every later transaction in the same test.
+    transactions = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   };
 
   function collectionRef(name, filters = [], limit) {
@@ -150,6 +197,7 @@ function makeDb(store = {}) {
     async getAll(...refs) {
       return refs.map((ref) => snapOf(ref.__collection, ref.__id));
     },
+    runTransaction,
   };
 }
 
@@ -182,7 +230,10 @@ const FIRESTORE_STUB =
   "  constructor(ms) { this.ms = ms; }\n" +
   "  toDate() { return new Date(this.ms); }\n" +
   "}\n" +
-  "export const FieldValue = { serverTimestamp: () => ({ __op: 'serverTimestamp' }) };";
+  "export const FieldValue = {\n" +
+  "  serverTimestamp: () => ({ __op: 'serverTimestamp' }),\n" +
+  "  delete: () => ({ __op: 'delete' }),\n" +
+  "};";
 
 const NEXT_RESPONSE_STUB =
   "export const NextResponse = {\n" +
@@ -291,11 +342,11 @@ describe("the row audience: every account with a device whose cell is on", () =>
 
   test("one row's audience is not another's, from the same world", async () => {
     const db = world();
-    const pushedNewsletter = await sendPushToRowAudience(db, "newsletter", NOTIFICATION, LOG);
+    const newsletter = await sendPushToRowAudience(db, "newsletter", NOTIFICATION, LOG);
     const newsletterEndpoints = globalThis.__pushes.map((p) => p.endpoint).sort();
 
     globalThis.__pushes = [];
-    const pushedEvents = await sendPushToRowAudience(
+    const events = await sendPushToRowAudience(
       db,
       "events",
       { title: "New NAISI event", body: "Reading group", url: "/events/e1" },
@@ -305,8 +356,10 @@ describe("the row audience: every account with a device whose cell is on", () =>
 
     // Two accounts each, and only `on-2` is in both. The row travelled from the
     // call site to the answer; it is not a label on one fixed audience.
-    assert.equal(pushedNewsletter, 2);
-    assert.equal(pushedEvents, 2);
+    assert.equal(newsletter.pushed, 2);
+    assert.equal(events.pushed, 2);
+    assert.equal(newsletter.refusal, null, "nobody being missed is not a refusal");
+    assert.equal(events.refusal, null);
     assert.deepEqual(newsletterEndpoints, [
       "https://push.test/on-1-1",
       "https://push.test/on-2-1",
@@ -321,10 +374,10 @@ describe("the row audience: every account with a device whose cell is on", () =>
 
   test("distinct owners are deduped: two devices are one account notified", async () => {
     const db = world();
-    const pushed = await sendPushToRowAudience(db, "newsletter", NOTIFICATION, LOG);
+    const result = await sendPushToRowAudience(db, "newsletter", NOTIFICATION, LOG);
     const forOn2 = globalThis.__pushes.filter((p) => p.endpoint.startsWith("https://push.test/on-2"));
     assert.equal(forOn2.length, 2, "both of that member's devices get the notification");
-    assert.equal(pushed, 2, "and the count is accounts, not devices");
+    assert.equal(result.pushed, 2, "and the count is accounts, not devices");
   });
 
   test("a stored false is a refusal and an absent cell is not an answer", async () => {
@@ -372,9 +425,14 @@ describe("the row audience: every account with a device whose cell is on", () =>
     const over = Array.from({ length: MAX_PUSH_ROWS + 1 }, (_, i) => device("on-1", i));
     globalThis.__db = makeDb({ users: seedWorld().users, pushSubscriptions: subsById(over) });
 
-    const pushed = await sendPushToRowAudience(globalThis.__db, "newsletter", NOTIFICATION, LOG);
-    assert.equal(pushed, 0);
+    const result = await sendPushToRowAudience(globalThis.__db, "newsletter", NOTIFICATION, LOG);
+    assert.equal(result.pushed, 0);
     assert.equal(globalThis.__pushes.length, 0, "a partial fan-out looks like a whole one");
+    assert.match(
+      result.refusal ?? "",
+      /more registered devices than one request can notify/,
+      "a zero the sender can do something about must not look like nobody opting in",
+    );
     assert.equal(errors.mock.calls.length, 1);
     assert.match(errors.mock.calls[0].arguments[0], /exceeds ceiling, not pushing/);
     assert.match(errors.mock.calls[0].arguments[0], /newsletter send/);
@@ -384,9 +442,14 @@ describe("the row audience: every account with a device whose cell is on", () =>
     world();
     disarmPush();
     const db = makeDb(seedWorld());
-    const pushed = await sendPushToRowAudience(db, "newsletter", NOTIFICATION, LOG);
-    assert.equal(pushed, 0);
+    const result = await sendPushToRowAudience(db, "newsletter", NOTIFICATION, LOG);
+    assert.equal(result.pushed, 0);
     assert.equal(globalThis.__pushes.length, 0);
+    assert.equal(
+      result.refusal,
+      null,
+      "an unprovisioned backend is silence by design, not something to report on every send",
+    );
     assert.deepEqual(
       db.reads,
       [],
@@ -400,8 +463,8 @@ describe("the row audience: every account with a device whose cell is on", () =>
     // 410 is the push service saying the subscription is gone. `on-1` has one
     // device and it has been forgotten; `on-2` has two and keeps them.
     globalThis.__pushStatus = { "https://push.test/on-1-1": 410 };
-    const pushed = await sendPushToRowAudience(db, "newsletter", NOTIFICATION, LOG);
-    assert.equal(pushed, 1, "an account whose only device is gone was not told");
+    const result = await sendPushToRowAudience(db, "newsletter", NOTIFICATION, LOG);
+    assert.equal(result.pushed, 1, "an account whose only device is gone was not told");
     assert.equal(
       db.data.pushSubscriptions[subscriptionDocId("https://push.test/on-1-1")],
       undefined,
@@ -413,8 +476,9 @@ describe("the row audience: every account with a device whose cell is on", () =>
     t.mock.method(console, "warn", () => {});
     const db = world();
     globalThis.__subReadThrowsFor = "on-1";
-    const pushed = await sendPushToRowAudience(db, "newsletter", NOTIFICATION, LOG);
-    assert.equal(pushed, 1, "best effort per account, never a failed audience");
+    const result = await sendPushToRowAudience(db, "newsletter", NOTIFICATION, LOG);
+    assert.equal(result.pushed, 1, "best effort per account, never a failed audience");
+    assert.equal(result.refusal, null, "one member's bad luck is not the audience refused");
     assert.deepEqual(
       globalThis.__pushes.map((p) => p.endpoint).sort(),
       ["https://push.test/on-2-1", "https://push.test/on-2-2"],
@@ -504,24 +568,72 @@ describe("the newsletter send pushes its row once, and never fails because it di
     assert.equal(globalThis.__pushes[0].payload.notification.navigate, "/dashboard");
   });
 
-  test("the draft records the push beside the emails", async () => {
+  test("the draft records the push beside the emails, and releases the claim", async () => {
     seed();
     await sendRoute.POST({}, ctxFor("draft-1"));
     const stored = globalThis.__db.data.newsletterDrafts["draft-1"];
     assert.equal(stored.status, "sent");
     assert.equal(stored.sentCount, 1);
     assert.equal(stored.pushedCount, 2);
+    assert.equal(
+      stored.sendClaimedAt,
+      undefined,
+      "a finished send leaves no claim, so a draft still carrying one is a send that " +
+        "did not finish and the only case an admin has to decide about",
+    );
   });
 
-  test("a second send is refused, so the push cannot happen twice", async () => {
-    // The push rides the send's own claim rather than carrying one: the status
-    // gate that stops a newsletter being mailed twice stops this too.
+  test("two sends at once: one mails and pushes, the other is refused", async () => {
+    // The failure the claim exists for. Both requests pass the status check at
+    // the top of the route, because both read the draft before either wrote to
+    // it; only the transaction can separate them, and it is asserted here
+    // rather than reasoned about, because the route's own comment used to claim
+    // this property without holding it.
+    seed();
+    const [first, second] = await Promise.all([
+      sendRoute.POST({}, ctxFor("draft-1")),
+      sendRoute.POST({}, ctxFor("draft-1")),
+    ]);
+    const statuses = [first.status, second.status].sort();
+    assert.deepEqual(statuses, [200, 409], "exactly one request may send");
+    const refused = first.status === 409 ? first : second;
+    assert.match(refused.body.error, /already started, or was interrupted/);
+    assert.equal(globalThis.__sent.length, 1, "one email, not two");
+    assert.equal(
+      globalThis.__pushes.length,
+      3,
+      "one push leg: two accounts, three devices, and no second fan-out",
+    );
+  });
+
+  test("a claim left by an interrupted send refuses the retry, sending nothing", async () => {
+    // Deliberately sticky: nothing expires the claim, because a rule that
+    // released it after N minutes would re-mail the list on the day a send took
+    // longer than N. An admin clears the field once they know from the send log
+    // who already has the mail.
+    seed();
+    globalThis.__db.data.newsletterDrafts["draft-1"].sendClaimedAt = { seconds: 1 };
+    const res = await sendRoute.POST({}, ctxFor("draft-1"));
+    assert.equal(res.status, 409);
+    assert.match(res.body.error, /Ask an admin before trying again/);
+    assert.equal(globalThis.__sent.length, 0);
+    assert.equal(globalThis.__pushes.length, 0);
+    assert.equal(
+      globalThis.__db.data.newsletterDrafts["draft-1"].status,
+      "approved",
+      "a refused send changes nothing at all",
+    );
+  });
+
+  test("a sent draft cannot be sent again", async () => {
     seed();
     await sendRoute.POST({}, ctxFor("draft-1"));
     globalThis.__pushes = [];
+    globalThis.__sent = [];
     const again = await sendRoute.POST({}, ctxFor("draft-1"));
     assert.equal(again.status, 400);
     assert.match(again.body.error, /Only approved drafts/);
+    assert.equal(globalThis.__sent.length, 0);
     assert.equal(globalThis.__pushes.length, 0);
   });
 
@@ -533,22 +645,171 @@ describe("the newsletter send pushes its row once, and never fails because it di
     assert.equal(res.status, 200, "a delivered newsletter must not answer 500");
     assert.equal(res.body.sentCount, 1);
     assert.equal(res.body.pushed, 0);
+    assert.match(
+      res.body.pushRefusal ?? "",
+      /could not be read/,
+      "the sender is told why nobody was notified, rather than reading a bare zero",
+    );
     assert.equal(globalThis.__db.data.newsletterDrafts["draft-1"].status, "sent");
   });
 
-  test("with push dormant the newsletter still goes out", async () => {
+  test("with push dormant the newsletter still goes out, and says nothing about it", async () => {
     seed();
     disarmPush();
     const res = await sendRoute.POST({}, ctxFor("draft-1"));
     assert.equal(res.status, 200);
     assert.equal(res.body.sentCount, 1);
     assert.equal(res.body.pushed, 0);
+    assert.equal(
+      res.body.pushRefusal,
+      null,
+      "an unprovisioned backend is not a refusal to report to a drafter",
+    );
     armPush();
+  });
+
+  test("an empty mailing list refuses before either leg, and says which list", async () => {
+    seed();
+    globalThis.__channelRows = [];
+    const res = await sendRoute.POST({}, ctxFor("draft-1"));
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /No email subscribers/);
+    assert.equal(globalThis.__pushes.length, 0, "the push leg runs only alongside an email leg");
+    assert.equal(
+      globalThis.__db.data.newsletterDrafts["draft-1"].sendClaimedAt,
+      undefined,
+      "and nothing was claimed, so the draft can still be sent once the list is fixed",
+    );
   });
 });
 
 // ===========================================================================
-// 3. The test send is transactional, and stays that way
+// 3. The unsubscribe link, which now has a notification to switch off
+// ===========================================================================
+
+const unsubLoader = createLoader({
+  stubs: new Map([
+    ["server-only", "export {};"],
+    ["next/server", NEXT_RESPONSE_STUB],
+    ["@/lib/firebase/admin", "export const getAdminDb = () => globalThis.__db ?? null;"],
+    [
+      "@/lib/signedTokens",
+      "export const verifyToken = () => globalThis.__token ?? null;",
+    ],
+    [
+      "@/lib/firestore/subscriptions",
+      "export const isValidChannel = (c) => typeof c === 'string' && c.length > 0;\n" +
+        "export const channelLabel = (c) => c;\n" +
+        "export const unsubscribe = async (db, args) => {\n" +
+        "  (globalThis.__dropped ||= []).push(args);\n" +
+        "};\n" +
+        "export const unsubscribeAll = async (db, email) => {\n" +
+        "  (globalThis.__dropped ||= []).push({ email, channel: 'all' });\n" +
+        "};",
+    ],
+  ]),
+});
+
+const unsubRoute = await unsubLoader.loadTs("app/api/unsubscribe/route.ts");
+
+describe("the unsubscribe link refuses the row, not the email column", () => {
+  function seedMember() {
+    globalThis.__dropped = [];
+    globalThis.__db = makeDb({
+      users: {
+        "member-1": {
+          email: "member@e2e.invalid",
+          profile: {
+            notifications: {
+              categories: { newsletter: true, events: true, courses: true },
+              push: { newsletter: true, events: true, courses: true },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  const post = async (payload) => {
+    globalThis.__token = payload;
+    return unsubRoute.POST(new Request("https://naisi.test/api/unsubscribe?t=tok", {
+      method: "POST",
+    }));
+  };
+
+  const patchOf = () => globalThis.__db.data.users["member-1"];
+
+  test("a newsletter token switches off both cells of that row", async () => {
+    // The regression this closes: before the newsletter had a producer the
+    // email cell was the whole row, and flipping it was the whole unsubscribe.
+    // From the producer on, a member who clicked the footer link kept getting
+    // the notification from the very message they unsubscribed from.
+    seedMember();
+    const res = await post({ s: "unsubscribe", uid: "member-1", c: "newsletter" });
+    assert.equal(res.status, 200);
+    const stored = patchOf();
+    assert.equal(stored["profile.notifications.categories.newsletter"], false);
+    assert.equal(stored["profile.notifications.push.newsletter"], false);
+  });
+
+  test("a courses token switches off the email cell and leaves the push cell alone", async () => {
+    // The two cells of the courses row gate different messages: the email cell
+    // gates cohort announcements and session nudges, the push cell gates an
+    // admissions decision, a stage release and a placement. A click at the foot
+    // of a cohort email is not a refusal of a decision about somebody's own
+    // application.
+    seedMember();
+    const res = await post({ s: "unsubscribe", uid: "member-1", c: "courses" });
+    assert.equal(res.status, 200);
+    const stored = patchOf();
+    assert.equal(stored["profile.notifications.categories.courses"], false);
+    assert.equal(
+      stored["profile.notifications.push.courses"],
+      undefined,
+      "a cohort-mail unsubscribe must not silence a decision notification",
+    );
+  });
+
+  test("an `all` token reaches both subscription rows, on both columns", async () => {
+    seedMember();
+    const res = await post({ s: "unsubscribe", uid: "member-1", c: "all" });
+    assert.equal(res.status, 200);
+    const stored = patchOf();
+    for (const row of ["newsletter", "events"]) {
+      assert.equal(stored[`profile.notifications.categories.${row}`], false);
+      assert.equal(stored[`profile.notifications.push.${row}`], false);
+    }
+    assert.equal(stored["profile.notifications.categories.courses"], false);
+    assert.equal(stored["profile.notifications.push.courses"], undefined);
+    assert.equal(
+      stored["profile.notifications.categories.tasks"],
+      undefined,
+      "tasks is outside UNSUBSCRIBABLE_CATEGORIES and stays outside it",
+    );
+    assert.equal(stored["profile.notifications.push.tasks"], undefined);
+  });
+
+  test("it still writes leaves only, never the whole map", async () => {
+    // The rule the previous fix established, restated as an executed one: a
+    // whole-map write collapses ABSENT into false on every row, which is how an
+    // unsubscribe click once stamped a course-mail refusal nobody made. Adding
+    // a second column to this route is exactly the change that could undo it.
+    seedMember();
+    await post({ s: "unsubscribe", uid: "member-1", c: "newsletter" });
+    const written = Object.keys(patchOf()).filter((k) => k.startsWith("profile."));
+    assert.ok(written.length > 0, "the route wrote nothing at all");
+    for (const key of written) {
+      assert.match(
+        key,
+        /^profile\.(notifications\.(categories|push)\.[a-z]+|newsletter\.subscribed)$/,
+        `${key} is not a leaf: a whole-map write invents refusals nobody made`,
+      );
+    }
+  });
+});
+
+// ===========================================================================
+// 4. The test send is transactional, and stays that way
 // ===========================================================================
 
 describe("the test send reaches its own sender and consults nothing", () => {

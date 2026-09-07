@@ -71,6 +71,8 @@ type PublishResponse = {
     pushed?: number;
     failed?: number;
     refusal?: string | null;
+    /** The push leg's own refusal. The two legs fail independently. */
+    pushRefusal?: string | null;
   };
 };
 
@@ -94,8 +96,15 @@ function announcementLine(body: PublishResponse): string | null {
     );
   }
   const refusal = body.announcement?.refusal ?? null;
+  // The push leg's refusal is reported wherever the email leg's is, and never
+  // folded into it. The legs fail independently, so "the list is over the
+  // ceiling" and "nobody could be notified" are two different sentences and a
+  // publisher who is shown one of them has not been told the other.
+  const pushRefusal = body.announcement?.pushRefusal ?? null;
+  const trailer = [refusal, pushRefusal].filter(Boolean).join(" ");
   if (body.announcementRefused) {
-    return `The event is published. ${refusal ?? "The announcement was not sent."}`;
+    const said = trailer || "The announcement was not sent.";
+    return `The event is published. ${said}`;
   }
   if (!body.announced) return null;
   const sent = body.announcement?.sent ?? 0;
@@ -105,7 +114,7 @@ function announcementLine(body: PublishResponse): string | null {
     parts.push(`${pushed} ${pushed === 1 ? "notification" : "notifications"}`);
   }
   const line = `Published, and announced to the events list: ${parts.join(" and ")}.`;
-  return refusal ? `${line} ${refusal}` : line;
+  return trailer ? `${line} ${trailer}` : line;
 }
 
 function statusTone(status: EventStatus): "neutral" | "accent" | "success" | "danger" | "warning" {

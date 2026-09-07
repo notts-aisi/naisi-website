@@ -714,6 +714,11 @@ describe("every send in the tree declares its class", () => {
         for (const row of rows) {
           assert.ok(ROWS.includes(row), `${key} is grid but names no row`);
         }
+        assert.equal(
+          new Set(rows).size,
+          rows.length,
+          `${key} names the same row twice, which is a typo wearing a two-row entry's clothes`,
+        );
       } else {
         assert.equal(entry.row, undefined, `${key} is ${entry.class} and must take no row`);
       }
@@ -791,6 +796,49 @@ describe("a class is a claim about the code, and the code is read", () => {
       );
     });
   }
+
+  test("a two-row entry names exactly the rows its helper's type allows", () => {
+    /*
+     * The array form exists for ONE shape: a helper parametrised on the row,
+     * whose type says which rows it may be handed. Left to prose, an entry
+     * could name any two rows and the guard would nod. So the declared rows are
+     * read back out of the type: `PushBroadcastRow` in
+     * `src/lib/push/rowAudience.ts` is an `Extract` over the four, and the
+     * entry for that helper's send must equal it exactly. Narrow the type and
+     * this fails until the registry agrees; widen the registry and it fails
+     * until the type does.
+     */
+    const HELPER = "src/lib/push/rowAudience.ts";
+    const source = SOURCE_BY_FILE.get(HELPER);
+    assert.ok(source, `${HELPER} is gone: the array-valued entry describes nothing`);
+    const union = /export type PushBroadcastRow = Extract<\s*PushNotificationKey,\s*([^>]+)>/.exec(
+      source,
+    );
+    assert.ok(union, "PushBroadcastRow moved or changed shape: re-read that file");
+    const allowed = [...union[1].matchAll(/"([a-zA-Z]+)"/g)].map((m) => m[1]).sort();
+    assert.ok(allowed.length >= 2, "a one-row helper does not need the array form");
+
+    const entry = REGISTRY[`${HELPER}#sendPushToUid`];
+    assert.ok(entry, `${HELPER}#sendPushToUid is not registered`);
+    assert.deepEqual(
+      rowsOf(entry).slice().sort(),
+      allowed,
+      "the rows this entry declares and the rows its helper's type permits have " +
+        "drifted apart, so one of the two is describing a tree that does not exist",
+    );
+
+    // Every OTHER grid entry names exactly one row: the array is for a helper
+    // that genuinely serves several, not a way to avoid choosing.
+    for (const [key, other] of Object.entries(REGISTRY)) {
+      if (other.class !== "grid" || key === `${HELPER}#sendPushToUid`) continue;
+      assert.equal(
+        rowsOf(other).length,
+        1,
+        `${key} names several rows. Only a row-parametrised helper may, and this ` +
+          "is not one: say which row this send is.",
+      );
+    }
+  });
 
   test("every marker resolves through the one table of defaults", () => {
     // A sixth way of asking a row is fine; a sixth way that compares a stored

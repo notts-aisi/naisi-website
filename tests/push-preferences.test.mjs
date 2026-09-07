@@ -1332,9 +1332,10 @@ describe("the notification grid draws the shape the senders read", () => {
      * which is a guard failing for the one change it exists to bless. So the
      * second pattern reads the row where it IS a literal, at the call sites
      * that choose it, and the helper takes it as its second argument for
-     * exactly that reason: the two patterns are one shape. The helper's name is
-     * pinned below, so a rename cannot quietly stop the second pattern matching
-     * and leave this guard reading half the tree.
+     * exactly that reason: the two patterns are one shape. Two things stop a
+     * pattern going quiet unnoticed, because their results are unioned and
+     * either could carry the whole answer alone: the helper's name is pinned
+     * below, and each pattern has to match something in `src` by itself.
      */
     const SHARED_ENUMERATION = "sendPushToRowAudience";
     assert.match(
@@ -1348,16 +1349,30 @@ describe("the notification grid draws the shape the senders read", () => {
       new RegExp(`${SHARED_ENUMERATION}\\(\\s*[A-Za-z0-9_.]+\\s*,\\s*"([a-zA-Z]+)"`, "g"),
     ];
     const producers = new Set();
+    const perPattern = PRODUCER_PATTERNS.map(() => new Set());
     for (const file of tsFilesUnder(SRC)) {
       const code = stripComments(readFileSync(file, "utf8"));
-      for (const pattern of PRODUCER_PATTERNS) {
-        for (const m of code.matchAll(pattern)) producers.add(m[1]);
-      }
+      PRODUCER_PATTERNS.forEach((pattern, i) => {
+        for (const m of code.matchAll(pattern)) {
+          producers.add(m[1]);
+          perPattern[i].add(m[1]);
+        }
+      });
     }
-    assert.ok(
-      producers.size > 0,
-      "no push producer was found at all, so this guard is reading the tree wrongly",
-    );
+    // EACH PATTERN ON ITS OWN, which is the thing the loop below cannot say.
+    // The two patterns read the tree in two places, and their results are
+    // unioned: a second regex that had stopped matching (a renamed helper, an
+    // argument order changed, a call reformatted across lines) would leave
+    // every row still covered by the first, and this guard would pass while
+    // reading half the tree. So each must find at least one row by itself.
+    PRODUCER_PATTERNS.forEach((pattern, i) => {
+      assert.ok(
+        perPattern[i].size > 0,
+        `producer pattern ${i + 1} (${pattern.source}) matched nothing in src, so this ` +
+          "guard is reading the tree through one eye. Fix the pattern, or delete it if " +
+          "the shape it looks for is genuinely gone.",
+      );
+    });
     for (const [row, copy] of Object.entries(PUSH_DESCRIPTIONS)) {
       assert.ok(
         producers.has(row),
@@ -1371,11 +1386,6 @@ describe("the notification grid draws the shape the senders read", () => {
           "something in src does. Delete the sentence with the sender.",
       );
     }
-    assert.ok(
-      producers.has("newsletter"),
-      "the newsletter push producer has gone: PUSH_DESCRIPTIONS.newsletter promises a " +
-        "notification nothing sends",
-    );
   });
 });
 

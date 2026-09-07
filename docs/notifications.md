@@ -123,8 +123,10 @@ answered), and it is never written again.
 - `/profile` writes the whole `profile.notifications` map on Save, and the push
   column writes a leaf at `profile.notifications.push` on every toggle. See
   [The profile grid](#the-profile-grid).
-- `/api/unsubscribe` writes only the category keys its token actually names, as
-  dotted field paths, and iterates `UNSUBSCRIBABLE_CATEGORIES`. See below.
+- `/api/unsubscribe` writes only the keys its token actually names, as dotted
+  field paths, and iterates `UNSUBSCRIBABLE_CATEGORIES`: the categories leaf for
+  each row it names, plus the PUSH leaf for the two subscription rows. See
+  below.
 - `/api/admin/migrate-notifications` writes `channels` plus the newsletter and
   events cells and nothing else. Backfilling a `courses` cell from the legacy
   shape would opt every legacy member out of cohort mail, because that shape
@@ -212,9 +214,27 @@ uid instead, by the mirrors beside their emails.
 
 The newsletter notification carries the subject and lands on `/dashboard`. A
 newsletter has no web view at all (the only render of one is
-`POST /api/newsletter/preview`, gated to drafters and approvers), and this
-audience is signed-in accounts with a registered device by construction, so the
-signed-in home is the most useful page every one of them can actually open.
+`POST /api/newsletter/preview`, gated to drafters and approvers), so the
+destination is the member's own home rather than the message. The audience is
+DEVICES whose last claimant holds the cell, not signed-in sessions: a push
+subscription belongs to a browser profile and survives sign-out
+(`src/lib/push/store.ts`), so a signed-out device lands on the sign-in page.
+That is still this app and still the right door, where the marketing homepage
+would say less and the drafter tool would refuse them outright.
+
+**The send is claimed once.** `POST /api/newsletter/[id]/send` stamps
+`sendClaimedAt` on the draft in one transaction that also requires `approved`
+and no standing claim, in the same shape the publish route claims `announcedAt`.
+Two approvers pressing Send at once therefore produce one send and one 409, and
+both legs sit inside that one claim, so a push cannot repeat without an email
+repeating. The write that sets `sent` deletes the field.
+
+Nothing expires a claim, on purpose: a rule that released it after N minutes
+would re-mail the whole list on the day a send took longer than N. So a request
+killed part way through leaves the draft `approved` and carrying
+`sendClaimedAt`, and every retry is refused until an admin deletes that one
+field from the `newsletterDrafts/{id}` document in the Firestore console,
+having read the send log to see who already has the mail.
 
 The `courses` email senders resolve their audience through `resolveCohortAudience`,
 which drops anybody whose row is a stored `false` before a message is rendered.
@@ -249,10 +269,26 @@ worksheet deadlines on the same click would take away mail they need to do the
 thing they volunteered for, without ever telling them. That row is switched off
 on `/profile`, where the copy says what it stops, and nowhere else.
 
+**The link refuses the ROW, not the email column, for the two subscription
+rows.** `newsletter` and `events` both push now, so for each of those the route
+writes `profile.notifications.push.<row> = false` beside the categories leaf. A
+member who clicks the footer link, or Gmail's one-click List-Unsubscribe-Post
+button, has said "stop sending me this"; leaving the push cell on would keep the
+notification arriving from the very message they unsubscribed from, with nothing
+on the page they landed on to suggest they had not finished.
+
+`courses` is the deliberate exception, and its two cells are the reason. The
+EMAIL cell gates cohort announcements and session nudges; the PUSH cell gates an
+admissions decision, a stage release and a course placement. Those are messages
+about somebody's own application and their own place on a run, so a click at the
+foot of a cohort email must not be read as a refusal of them. That cell is
+switched off on `/profile` and nowhere else, exactly as `tasks` is.
+
 The route also writes only the keys its token names. Rebuilding the whole
 `categories` map and writing it back would collapse absent into `false` on every
 row, which once `courses` joined the list meant an unsubscribe click on a
-newsletter stamped a course-mail refusal the member never made.
+newsletter stamped a course-mail refusal the member never made. Adding the push
+column keeps that rule: two dotted leaves per row, never a map.
 
 ## The notice lane
 

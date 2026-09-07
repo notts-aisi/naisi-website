@@ -74,7 +74,13 @@ export default function DraftEditor({ draftId }: Props) {
   const [sendStatus, setSendStatus] = useState<
     | { kind: "idle" }
     | { kind: "sending" }
-    | { kind: "sent"; subscribers: number; emails: number; pushed: number }
+    | {
+        kind: "sent";
+        subscribers: number;
+        emails: number;
+        pushed: number;
+        pushRefusal: string | null;
+      }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
   const [testStatus, setTestStatus] = useState<
@@ -314,11 +320,16 @@ export default function DraftEditor({ draftId }: Props) {
             sentCount?: number;
             subscribersReached?: number;
             pushed?: number;
+            pushRefusal?: string | null;
             failedCount?: number;
             error?: string;
           }
         | null;
       if (!res.ok || !body?.ok) {
+        // The route's own sentence, verbatim, and this is where the 409 from a
+        // send that is already running or was interrupted lands. It names what
+        // to do next (ask an admin), which a generic "Send failed (409)" would
+        // turn into a second press of the button.
         setSendStatus({
           kind: "error",
           message: body?.error ?? `Send failed (${res.status})`,
@@ -330,6 +341,7 @@ export default function DraftEditor({ draftId }: Props) {
         subscribers: body.subscribersReached ?? 0,
         emails: body.sentCount ?? 0,
         pushed: body.pushed ?? 0,
+        pushRefusal: body.pushRefusal ?? null,
       });
     } catch (err) {
       setSendStatus({
@@ -601,6 +613,17 @@ export default function DraftEditor({ draftId }: Props) {
             {sendStatus.pushed > 0 &&
               ` ${sendStatus.pushed} notified by push.`}
           </p>
+          {/*
+            Shown whatever the count is, because it is the case where the count
+            of zero means something went wrong rather than nobody being opted
+            in. Its own line, in the muted colour: the newsletter did go out,
+            and the sender should read this as a note rather than a failure.
+          */}
+          {sendStatus.pushRefusal && (
+            <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-2)" }}>
+              {sendStatus.pushRefusal}
+            </p>
+          )}
         </Card>
       )}
       {sendStatus.kind === "error" && (

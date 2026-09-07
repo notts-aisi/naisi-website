@@ -7,7 +7,7 @@ import {
 } from "@/lib/firestore/notifications";
 import { findRecipientsForChannel } from "@/lib/firestore/subscriptions";
 import { filterSuppressed } from "@/lib/firestore/suppression";
-import { sendPushToRowAudience } from "@/lib/push/rowAudience";
+import { sendPushToRowAudience, type RowPushResult } from "@/lib/push/rowAudience";
 import { signToken } from "@/lib/signedTokens";
 import { dispatchSends } from "./dispatch";
 import { sendEmail } from "./send";
@@ -113,6 +113,13 @@ export type EventAnnouncementResult = {
   pushed: number;
   /** Non-null when nothing was sent because the audience is unreadable. */
   refusal: string | null;
+  /**
+   * The PUSH leg's own refusal, kept separate from the email leg's because the
+   * two legs fail independently: a list too large to mail says nothing about
+   * whether the phones were notified, and reporting one refusal for both would
+   * tell the publisher the wrong thing about half the announcement.
+   */
+  pushRefusal: string | null;
 };
 
 type Recipient = {
@@ -131,7 +138,7 @@ type Recipient = {
 async function announceByEmail(
   db: Firestore,
   input: EventAnnouncementInput,
-): Promise<Omit<EventAnnouncementResult, "pushed">> {
+): Promise<Omit<EventAnnouncementResult, "pushed" | "pushRefusal">> {
   const rows = await findRecipientsForChannel(db, "events");
 
   // REFUSE rather than slice. A `slice()` here would be a silent truncation
@@ -342,7 +349,10 @@ async function announceByEmail(
  * copies would have drifted. What stays here is the part that is about events:
  * which row, what the notification says, and where a tap lands.
  */
-function announceByPush(db: Firestore, input: EventAnnouncementInput): Promise<number> {
+function announceByPush(
+  db: Firestore,
+  input: EventAnnouncementInput,
+): Promise<RowPushResult> {
   return sendPushToRowAudience(
     db,
     "events",
@@ -361,18 +371,20 @@ function announceByPush(db: Firestore, input: EventAnnouncementInput): Promise<n
  * THE TWO LEGS RUN CONCURRENTLY, and that is a budget decision rather than a
  * tidiness one. Both are bounded loops inside the 60s publish request, they
  * share no state, and they answer two different questions to two different
- * audiences; run in series their worst cases ADD (~36s + ~20s) and leave the
- * request nothing for its own reads. Run together the wall clock is the larger
- * of the two. A refusal on one leg says nothing about the other: an events list
- * too large to mail does not stop the push audience being told.
+ * audiences; run in series their worst cases ADD (~36s here plus the ~34s
+ * `rowAudience.ts` sizes for the push leg, which is the authority for that
+ * figure) and leave the request nothing for its own reads. Run together the
+ * wall clock is the larger of the two. A refusal on one leg says nothing about
+ * the other, which is why they are reported separately: an events list too
+ * large to mail does not stop the push audience being told.
  */
 export async function sendEventAnnouncement(
   db: Firestore,
   input: EventAnnouncementInput,
 ): Promise<EventAnnouncementResult> {
-  const [email, pushed] = await Promise.all([
+  const [email, push] = await Promise.all([
     announceByEmail(db, input),
     announceByPush(db, input),
   ]);
-  return { ...email, pushed };
+  return { ...email, pushed: push.pushed, pushRefusal: push.refusal };
 }

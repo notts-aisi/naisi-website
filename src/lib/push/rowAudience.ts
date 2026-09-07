@@ -1,5 +1,12 @@
 import "server-only";
 
+// The sibling imports below go through the `@/lib/push` alias rather than
+// `./send` and `./config`, and that is load-bearing rather than a style choice:
+// `tests/lib/tsLoader.mjs` keys its stubs on the specifier string exactly as
+// written, and `tests/notice-lane.test.mjs` stubs `"./send"` to mean the EMAIL
+// transport in `eventAnnouncement.ts`'s graph. Written relatively here, this
+// module's push transport would silently be replaced by that email fake, which
+// surfaces as a missing export at import time rather than as a failed test.
 import type { Firestore } from "firebase-admin/firestore";
 import { dispatchSends } from "@/lib/email/dispatch";
 import type { PushNotificationKey } from "@/lib/firestore/notifications";
@@ -40,10 +47,18 @@ import { sendPushToUid, type PushNotification } from "@/lib/push/send";
  *
  * BEST EFFORT PER ACCOUNT, AND A REFUSAL WHOLE. A push that throws for one
  * member is logged by uid and costs that member their notification and nobody
- * else theirs. A subscription collection over the ceiling below is refused
- * ENTIRELY, with nothing pushed: a truncation would notify an arbitrary prefix
- * of the audience and report success, which is the one outcome a retry cannot
- * repair.
+ * else theirs. A subscription collection over the ceiling below, or one that
+ * cannot be read at all, is refused ENTIRELY, with nothing pushed: a truncation
+ * would notify an arbitrary prefix of the audience and report success, which is
+ * the one outcome a retry cannot repair.
+ *
+ * A COUNT OF ZERO IS FOUR DIFFERENT ANSWERS, so this returns a REFUSAL beside
+ * it rather than a bare number. Nobody having opted in, the feature being
+ * dormant for want of VAPID keys, an audience over the ceiling and a collection
+ * that cannot be read all notify nobody, and only the last two are something a
+ * sender should be told and could act on. The first two are silence by design
+ * and carry a null refusal, so a screen that shows the refusal does not nag
+ * about a backend where push simply is not provisioned.
  *
  * The caller owns the destination and it must be a same-origin PATH: the
  * service worker hands it to `clients.openWindow` unexamined.
@@ -58,6 +73,13 @@ import { sendPushToUid, type PushNotification } from "@/lib/push/send";
  * cost: an owner costs a preference read, a subscription read and a web-push
  * POST, ~0.4s pessimistically, where an email costs a render and an SMTP
  * connection. 500 owners is ceil(500/6) = 84 rounds x 0.4s = ~34s worst.
+ *
+ * THIS FILE IS THE AUTHORITY FOR THAT FIGURE, and ~34s is the number the three
+ * places that cite it use: `dispatch.ts`, which carries the email side of the
+ * same sum, `eventAnnouncement.ts`, and the newsletter send route. They
+ * disagreed once, two of them saying ~20s from an earlier ceiling, and the way
+ * that stays fixed is one file owning the arithmetic and the rest pointing at
+ * it.
  *
  * That fits ALONGSIDE an email leg rather than after it, and both callers
  * dispatch it that way for exactly this reason: the event announcement runs
@@ -78,32 +100,67 @@ export const MAX_PUSH_ROWS = 500;
  */
 export type PushBroadcastRow = Extract<PushNotificationKey, "newsletter" | "events">;
 
+export type RowPushResult = {
+  /** Accounts handed a notification. See "IT COUNTS NOTIFICATIONS" above. */
+  pushed: number;
+  /**
+   * Why nobody was notified, when that is a fact a sender should be told. Null
+   * for the two silences that are by design: no VAPID keys, and nobody opted in.
+   */
+  refusal: string | null;
+};
+
 /**
  * Push `notification` to every account with a device whose `row` cell is on.
+ *
+ * NEVER THROWS. Every failure it can have comes back as a count and a refusal,
+ * because both callers are reporting something that has already happened by
+ * email and neither may be turned into a 500 by a phone.
  *
  * @param log names the console lines this leg writes. `tag` is the sender's own
  *   bracketed prefix and `reference` the id of the thing being announced, never
  *   an address and never a name.
- * @returns the number of accounts handed a notification.
  */
 export async function sendPushToRowAudience(
   db: Firestore,
   row: PushBroadcastRow,
   notification: PushNotification,
   log: { tag: string; reference: string },
-): Promise<number> {
+): Promise<RowPushResult> {
   // Cheapest gate first: with no VAPID keys nothing pushes anywhere, and there
-  // is no reason to read the collection.
-  if (!isPushConfigured()) return 0;
+  // is no reason to read the collection. Not a refusal: the feature is dormant
+  // until the secrets are provisioned (docs/pwa.md), and saying so on every
+  // send would be noise about a decision nobody made today.
+  if (!isPushConfigured()) return { pushed: 0, refusal: null };
 
-  const snap = await db.collection("pushSubscriptions").limit(MAX_PUSH_ROWS + 1).get();
+  let snap;
+  try {
+    snap = await db.collection("pushSubscriptions").limit(MAX_PUSH_ROWS + 1).get();
+  } catch (err) {
+    // The one read outside the per-account loop, and the one that used to
+    // reject into the caller. Both callers say in their own headers that they
+    // never throw, and this is where that promise is kept.
+    console.error(`[${log.tag}] push subscription read failed`, log.reference, err);
+    return {
+      pushed: 0,
+      refusal:
+        "The notification list could not be read, so nobody was notified by push. " +
+        "The email went out as normal.",
+    };
+  }
+
   if (snap.docs.length > MAX_PUSH_ROWS) {
     console.error(
       `[${log.tag}] push subscription count exceeds ceiling, not pushing`,
       log.reference,
       snap.docs.length,
     );
-    return 0;
+    return {
+      pushed: 0,
+      refusal:
+        "There are more registered devices than one request can notify. " +
+        "Nobody was notified by push: raise it with an admin.",
+    };
   }
 
   const uids = [
@@ -128,5 +185,5 @@ export async function sendPushToRowAudience(
       console.warn(`[${log.tag}] push failed`, log.reference, uid, err);
     }
   });
-  return pushed;
+  return { pushed, refusal: null };
 }

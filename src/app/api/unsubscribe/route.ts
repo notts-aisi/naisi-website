@@ -3,6 +3,7 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { verifyToken } from "@/lib/signedTokens";
 import { obfuscateEmail } from "@/lib/obfuscateEmail";
 import {
+  SUBSCRIPTION_CATEGORIES,
   UNSUBSCRIBABLE_CATEGORIES,
   type NotificationCategory,
 } from "@/lib/firestore/notifications";
@@ -181,9 +182,30 @@ async function performUnsubscribe(signed: string | null): Promise<{
     // Newsletter and events are unaffected by the change: the keys the token
     // names are still set to false, and any category the token does NOT name
     // was already being written back at its own current effective value.
+    //
+    // THE LINK IS A REFUSAL OF THE ROW, NOT OF THE EMAIL COLUMN, for the two
+    // subscription rows. `newsletter` and `events` both push now (the sends go
+    // through `src/lib/push/rowAudience.ts`), and a member who clicks the
+    // footer link, or Gmail's one-click List-Unsubscribe-Post button, has said
+    // "stop sending me this". Flipping only the email cell would keep "New
+    // NAISI newsletter" arriving on their lock screen from the very message
+    // they unsubscribed from, with nothing on the page they landed on to
+    // suggest they had not finished. So both leaves are written.
+    //
+    // `courses` is deliberately NOT flipped on the push column, and the two
+    // cells of that row are the reason: its EMAIL cell gates cohort
+    // announcements and session nudges, while its PUSH cell gates an
+    // admissions decision, a stage release and a course placement. Those are
+    // messages about somebody's own application and their own place on a run,
+    // and a click at the foot of a cohort email must not be read as a refusal
+    // of them. That row's push cell is switched off on /profile, where the copy
+    // says what it stops, and nowhere else.
     const patch: Record<string, unknown> = {};
     for (const c of knownCategoriesToFlip) {
       patch[`profile.notifications.categories.${c}`] = false;
+      if ((SUBSCRIPTION_CATEGORIES as NotificationCategory[]).includes(c)) {
+        patch[`profile.notifications.push.${c}`] = false;
+      }
     }
     // Legacy dual-write, unchanged: always written, so the older single-bool
     // field can't drift out of step with the modern shape.
