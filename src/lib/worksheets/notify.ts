@@ -5,6 +5,7 @@ import TaskMembershipEmail from "@/emails/TaskMembershipEmail";
 import TaskReviewRequestEmail from "@/emails/TaskReviewRequestEmail";
 import WorksheetFeedbackEmail from "@/emails/WorksheetFeedbackEmail";
 import WorksheetUpdatedEmail from "@/emails/WorksheetUpdatedEmail";
+import { wantsEmailForProfile } from "@/lib/email/preferences";
 import { sendEmail } from "@/lib/email/send";
 import { resolveTaskUsers, type ResolvedUser } from "@/lib/email/taskMembership";
 import { isTaskEmailEnabled } from "@/lib/firestore/taskEmailConfig";
@@ -14,23 +15,34 @@ import { mirrorTaskEmailToPush } from "@/lib/push/taskNotifications";
 /**
  * Every message a circulation sends, behind one function.
  *
- * ── THREE GATES, IN THIS ORDER ──────────────────────────────────────────────
+ * ── FOUR GATES, IN THIS ORDER ───────────────────────────────────────────────
  *  1. is there anybody to tell (free);
  *  2. is this circulation's switch for this event on (free, already loaded);
- *  3. is the site-wide task-email kill switch on (one Firestore read).
+ *  3. is the site-wide task-email kill switch on (one Firestore read);
+ *  4. does THIS recipient want task and worksheet EMAIL (free, off the user
+ *     document `resolveTaskUsers` has already read).
  * Cheapest first, so a sender who turned `copyEdited` off does not pay a read
- * every time they fix a typo. All three answer with a NAMED skip rather than a
- * silent zero, because "nobody was emailed" has four different causes and the
- * caller's log line is the only place they can be told apart.
+ * every time they fix a typo. The first three answer with a NAMED skip rather
+ * than a silent zero, because "nobody was emailed" has four different causes
+ * and the caller's log line is the only place they can be told apart. The
+ * fourth is per person rather than per send, so it is counted instead: it
+ * comes back as `optedOut` beside `sent` and `failed`, and it is deliberately
+ * neither of those, because nothing went wrong and nothing went out.
  *
- * ── PUSH MIRRORS EMAIL, NEVER LEADS IT ──────────────────────────────────────
- * The push is sent only after its email has gone, and only when the event's
- * `push` switch is on. That is the task system's existing policy (see
+ * ── THE SENDER'S PUSH FOLLOWS THE SENDER'S EMAIL; THE MEMBER'S DOES NOT ─────
+ * The push is sent only after its email has been ATTEMPTED, and only when the
+ * event's `push` switch is on. That is the task system's existing policy (see
  * `mirrorTaskEmailToPush`) and keeps two useful properties for free: the kill
  * switch covers push as well, and a member's volume is bounded by an email
  * budget that already exists. The consequence is worth stating: turning an
- * event's EMAIL off turns its push off too. A push-only channel would need its
- * own preference axis and its own kill switch, and nobody has asked for one.
+ * event's EMAIL switch off turns its push off too, because that switch belongs
+ * to the SENDER and says what this circulation announces.
+ *
+ * The member's own tasks row is the other way round, and deliberately. It has
+ * two cells, email and push, and they are separate answers: somebody who has
+ * switched the email cell off and left the push cell on has said "on my phone,
+ * not in my inbox", so the push still goes. Only a transport failure stops
+ * both, because then there is nothing to notify anybody about.
  *
  * ── IT NEVER THROWS ─────────────────────────────────────────────────────────
  * A send that fails must not undo a circulation that was created, a response
@@ -71,6 +83,11 @@ export type WorksheetNotifyResult = {
   sent: number;
   /** People who could not be reached: no user document, no address, a throw. */
   failed: number;
+  /**
+   * People who have switched the tasks row of their notification grid off.
+   * Not a failure and not a send: they were found, and they have said no.
+   */
+  optedOut?: number;
   skipped?: WorksheetNotifySkip;
 };
 
@@ -115,7 +132,13 @@ function uniqueUids(uids: string[]): string[] {
 
 /**
  * One message per person, counted. The email is awaited before the push so a
- * transport failure stops both rather than pushing about mail that never went.
+ * transport FAILURE stops both rather than pushing about mail that never went.
+ *
+ * A member who has switched the tasks row's EMAIL cell off is a different case
+ * and still gets the push: the row has two cells, and `mirrorTaskEmailToPush`
+ * reads the push one for itself. What that member has said is "notify me on my
+ * phone, not by email", and honouring half of it would make the push column of
+ * their grid mean nothing on this row.
  */
 async function sendEach(args: {
   recipients: string[];
@@ -132,6 +155,7 @@ async function sendEach(args: {
 }): Promise<WorksheetNotifyResult> {
   let sent = 0;
   let failed = 0;
+  let optedOut = 0;
   for (const uid of args.recipients) {
     const user = args.users.get(uid);
     // No user document, or one with no address on it. Counted rather than
@@ -140,16 +164,23 @@ async function sendEach(args: {
       failed += 1;
       continue;
     }
+    // The fourth gate, per recipient, and it gates EMAIL ONLY. The three
+    // above are the sender's and the site's; this one is the member's, and it
+    // is the email cell of their tasks row. The push cell below is theirs too
+    // and is read separately, inside the mirror.
+    const wantsEmail = wantsEmailForProfile(user.profile, "tasks");
     try {
-      await sendEmail({
-        to: user.email,
-        subject: args.subject,
-        fromName: "NAISI Worksheets",
-        kind: "task",
-        actorUid: args.actorUid,
-        referenceId: args.circulationId,
-        react: args.react(user),
-      });
+      if (wantsEmail) {
+        await sendEmail({
+          to: user.email,
+          subject: args.subject,
+          fromName: "NAISI Worksheets",
+          kind: "task",
+          actorUid: args.actorUid,
+          referenceId: args.circulationId,
+          react: args.react(user),
+        });
+      }
       if (args.push) {
         await mirrorTaskEmailToPush(uid, {
           title: args.subject,
@@ -161,13 +192,14 @@ async function sendEach(args: {
           url: args.path,
         });
       }
-      sent += 1;
+      if (wantsEmail) sent += 1;
+      else optedOut += 1;
     } catch (err) {
       console.error("[worksheets notify] send failed", args.circulationId, uid, err);
       failed += 1;
     }
   }
-  return { sent, failed };
+  return { sent, failed, optedOut };
 }
 
 async function dispatch(

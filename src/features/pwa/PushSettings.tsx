@@ -1,23 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { doc, onSnapshot, updateDoc } from "firebase/firestore";
+import { useCallback, useState } from "react";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
-import Switch from "@/components/ui/Switch";
-import { useAuth } from "@/auth/AuthProvider";
-import { getClientDb } from "@/lib/firebase/client";
-import {
-  ALL_PUSH_KEYS,
-  PUSH_DESCRIPTIONS,
-  PUSH_LABELS,
-  normaliseNotifications,
-  serialisePush,
-  setPushPreference,
-  type NotificationPrefs,
-  type PushNotificationKey,
-} from "@/lib/firestore/notifications";
-import { getInstallPlatform, isStandaloneNow } from "@/lib/pwa/displayMode";
+import { PUSH_DEVICE_CARD_ID, usePushDevice } from "./pushDevice";
 import { mark, warn } from "@/lib/devMonitor";
 import styles from "./PushSettings.module.css";
 
@@ -29,7 +15,8 @@ import styles from "./PushSettings.module.css";
  * It survives sign-out, does not follow the member to their laptop, and on
  * iOS exists only inside the installed app.
  *
- * States, in the order they are checked:
+ * States, in the order they are checked (all of them resolved in
+ * `pushDevice.tsx`, which owns the machine):
  *   - VAPID public key absent from the build: render nothing at all (the
  *     feature is unprovisioned; showing a dead control would be worse).
  *   - Browser has no push APIs: render nothing.
@@ -40,20 +27,19 @@ import styles from "./PushSettings.module.css";
  *     or system settings; we cannot re-ask.
  *   - Otherwise: the enable/disable/test controls.
  *
- * Two rules from the platform findings, both load-bearing:
- *   - subscribe() is called ONLY from the button's tap handler. Safari
- *     silently ignores permission requests that are not inside a genuine
- *     user gesture.
- *   - On mount, an EXISTING subscription is re-synced to the server. Safari
- *     iOS never fires pushsubscriptionchange, so re-asserting on every visit
- *     is the only way the server's record stays honest.
+ * `subscribe()` is called ONLY from the button's tap handler below, and that
+ * is why enabling still lives in this component rather than in the provider:
+ * Safari silently ignores a permission request that is not inside a genuine
+ * user gesture, and a gesture does not survive being handed through a
+ * context. The other platform rule, re-syncing an existing subscription on
+ * mount, is the provider's.
  *
- * The ACCOUNT-LEVEL topic switches (`PushTopics` below) are a SIBLING card,
- * not a section of this one, and /profile renders both. They were nested here
- * once and that was a bug: this card returns null on any environment without a
- * VAPID key and on any browser without push, so nesting them made two account
- * settings unreachable everywhere the feature is not yet provisioned. The two
- * settings answer different questions and only one of them is about hardware.
+ * WHAT THIS CARD NO LONGER HOLDS: the account-level topic switches. They were
+ * a sibling card here (`PushTopics`), one switch per pushing topic; they are
+ * now the PUSH COLUMN of the one notification grid on /profile, beside the
+ * email cell of the same row. A member reading "Tasks and worksheets" now
+ * sees both answers on one line, which is the shape the senders read. This
+ * card keeps what is genuinely about this hardware and nothing else.
  */
 
 const PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
@@ -69,64 +55,9 @@ function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
-type State =
-  | "unsupported"
-  | "needs-install"
-  | "denied"
-  | "off"
-  | "on"
-  | "working";
-
 export function PushSettings() {
-  const [state, setState] = useState<State | null>(null);
+  const { state, cardShown, setState } = usePushDevice();
   const [note, setNote] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!PUBLIC_KEY) return; // renders nothing below
-    let cancelled = false;
-    // Everything, including the synchronous environment checks, runs after a
-    // microtask so the effect body itself never sets state synchronously
-    // (the repo's set-state-in-effect lint). The user cannot perceive one
-    // microtask of extra "render nothing".
-    void (async () => {
-      await Promise.resolve();
-      if (cancelled) return;
-      if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
-        setState("unsupported");
-        return;
-      }
-      if (getInstallPlatform() === "ios" && !isStandaloneNow()) {
-        setState("needs-install");
-        return;
-      }
-      if (Notification.permission === "denied") {
-        setState("denied");
-        return;
-      }
-      try {
-        const reg = await navigator.serviceWorker.ready;
-        const sub = await reg.pushManager.getSubscription();
-        if (cancelled) return;
-        if (sub) {
-          setState("on");
-          // Re-sync: keeps uid + lastSeenAt honest, since iOS never
-          // announces subscription changes. Fire and forget.
-          void fetch("/api/push/subscribe", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ subscription: sub.toJSON() }),
-          }).catch(() => {});
-        } else {
-          setState("off");
-        }
-      } catch {
-        if (!cancelled) setState("unsupported");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const enable = useCallback(async () => {
     setState("working");
@@ -157,7 +88,7 @@ export function PushSettings() {
       setNote("Could not enable notifications. Try again in a moment.");
       setState("off");
     }
-  }, []);
+  }, [setState]);
 
   const disable = useCallback(async () => {
     setState("working");
@@ -179,7 +110,7 @@ export function PushSettings() {
       warn("[push] disable failed", { err });
       setState("on");
     }
-  }, []);
+  }, [setState]);
 
   const sendTest = useCallback(async () => {
     // The route may hold the request for ~12s while it waits out the push
@@ -202,10 +133,10 @@ export function PushSettings() {
     }
   }, []);
 
-  if (!PUBLIC_KEY || state === null || state === "unsupported") return null;
+  if (!cardShown) return null;
 
   return (
-    <Card padding="lg" className={styles.card}>
+    <Card padding="lg" className={styles.card} id={PUSH_DEVICE_CARD_ID}>
       <h2 className={styles.heading}>Notifications on this device</h2>
       {state === "needs-install" && (
         <p className={styles.copy}>
@@ -225,7 +156,8 @@ export function PushSettings() {
           <p className={styles.copy}>
             Notifications are per device: enabling them here covers this
             browser on this hardware only, and they keep arriving even when
-            the app is closed.
+            the app is closed. Which ones arrive is the Push column of the
+            grid above, and that answer follows you to every device.
           </p>
           <div className={styles.actions}>
             {state === "on" ? (
@@ -249,102 +181,6 @@ export function PushSettings() {
         </>
       )}
       {note && <p className={styles.note}>{note}</p>}
-    </Card>
-  );
-}
-
-/**
- * The account-level topic switches, rendered on /profile as their own card.
- *
- * INDEPENDENT OF THIS DEVICE, and therefore of `PushSettings`. The only gates
- * are a signed-in user and a resolved read of their stored preference. A
- * member on a laptop where push is blocked, or on any browser at all before
- * the VAPID secrets are provisioned, is still saying something true about the
- * phone they have enabled, so hiding these behind the per-device card would
- * hide an account setting behind unrelated hardware.
- *
- * SAVED ON TOGGLE, not behind a Save button, and that is the difference
- * between this and the notification preferences on the profile form. The
- * write goes to the same place a profile save goes, `users/{uid}`, under the
- * `profile.notifications.push` field path so it touches neither `channels`
- * nor `categories` (the profile form owns those, and carries this map through
- * untouched when it writes).
- *
- * ABSENT MEANS ON. `normaliseNotifications` resolves an unwritten map to both
- * switches on, which is exactly what the member has already consented to by
- * enabling notifications on a device, so nothing is stored until they turn
- * one off.
- */
-export function PushTopics() {
-  const { user } = useAuth();
-  const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!user) return;
-    const db = getClientDb();
-    return onSnapshot(
-      doc(db, "users", user.uid),
-      (snap) => {
-        const profile = (snap.data()?.profile ?? {}) as {
-          notifications?: unknown;
-          newsletter?: unknown;
-        };
-        setPrefs(normaliseNotifications(profile));
-      },
-      // A read that fails leaves the switches hidden rather than showing a
-      // default that is not the member's stored answer.
-      (err) => {
-        warn("[push] topic preferences unreadable", { err });
-        setPrefs(null);
-      },
-    );
-  }, [user]);
-
-  const onToggle = useCallback(
-    async (key: PushNotificationKey, next: boolean) => {
-      if (!user || !prefs) return;
-      const previous = prefs;
-      // The shared setter, so the "touch one key, leave channels and
-      // categories alone" rule lives in one tested place rather than in an
-      // object spread here.
-      const updated = setPushPreference(prefs, key, next);
-      setPrefs(updated);
-      setError(null);
-      try {
-        await updateDoc(doc(getClientDb(), "users", user.uid), {
-          "profile.notifications.push": serialisePush(updated.push),
-        });
-      } catch (err) {
-        warn("[push] saving topic preference failed", { err });
-        setPrefs(previous);
-        setError("That did not save. Try again in a moment.");
-      }
-    },
-    [prefs, user],
-  );
-
-  if (!user || !prefs) return null;
-
-  return (
-    <Card padding="lg" className={styles.card}>
-      <h2 className={styles.heading}>Notifications</h2>
-      <p className={styles.topicsEyebrow}>All your devices, not just this one</p>
-      <div className={styles.topicsRows}>
-        {ALL_PUSH_KEYS.map((key) => (
-          <Switch
-            key={key}
-            checked={prefs.push[key]}
-            onChange={(next) => void onToggle(key, next)}
-            label={PUSH_LABELS[key]}
-            description={PUSH_DESCRIPTIONS[key]}
-          />
-        ))}
-      </div>
-      <p className={styles.topicsNote}>
-        Turning one off stops the notification, never the email.
-      </p>
-      {error && <p className={styles.topicsError}>{error}</p>}
     </Card>
   );
 }

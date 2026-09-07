@@ -20,8 +20,8 @@
  *
  * The wording is the owner's: it must stay consistent with the "Courses and
  * programmes" section of the CURRENT privacy policy
- * (src/content/legal/privacy/v4.tsx). If one changes, change both, and move
- * this pointer the day a newer version supersedes v4. A published version is
+ * (src/content/legal/privacy/v5.tsx). If one changes, change both, and move
+ * this pointer the day a newer version supersedes v5. A published version is
  * frozen text, so a pointer left aimed at an old one sends the next engineer
  * to edit a policy members have already accepted, which changes what an
  * archive URL shows without moving CURRENT_POLICY_VERSION and so without

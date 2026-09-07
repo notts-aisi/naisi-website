@@ -63,7 +63,7 @@ import { mirrorCourseDecisionToPush } from "@/lib/push/courseNotifications";
  * It is also one of the two moments that PUSH: being placed is an answer the
  * member has been waiting for. The push is mirrored per recipient in a second
  * pass after the email loop, respects their
- * `notifications.push.courseDecisions` switch, names the course and the group
+ * `notifications.push.courses` switch, names the course and the group
  * and nothing else, and cannot fail a publish.
  */
 

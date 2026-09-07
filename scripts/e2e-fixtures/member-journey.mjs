@@ -95,6 +95,9 @@ export const JOURNEY_STEPS = [
   "a legacy account accepts the updated policy once and is not asked again",
   "the profile grid shows the member their own subscriptions",
   "unticking a channel writes it through and survives a reload",
+  "the column masters move every cell, and the locked row moves for nobody",
+  "the notification grid fits its card where the sidebar comes back",
+  "switching task email off writes the cell the task senders read",
   "taking a place on the course confirms the session",
   "the full session cannot be chosen when changing session",
   "leaving the course needs the typed course title",
@@ -140,6 +143,29 @@ export const GRID_CHANNELS = ["newsletter", "events"];
 export const GRID_CHANNEL_LABELS = {
   newsletter: "Newsletter",
   events: "Event announcements",
+};
+
+/**
+ * Every ROW of the grid, in the order it draws them, and what each is called.
+ *
+ * A superset of the two channels above: the grid gained the two account-level
+ * rows (course announcements, tasks and worksheets) and the push column when
+ * the notification grid landed, and the spec drives a cell of each. Neither of
+ * these two mints a subscription row, so nothing is seeded for them; they are
+ * here because the spec locates their cells by label, exactly as it does the
+ * channels.
+ *
+ * Pinned in both directions by `assertGridChannelsMatchProduct()` against
+ * `ALL_CATEGORIES` and `CATEGORY_LABELS` in the product, so a renamed row
+ * fails at the seed with the two strings side by side.
+ */
+export const GRID_ROWS = ["newsletter", "events", "courses", "tasks"];
+
+export const GRID_ROW_LABELS = {
+  newsletter: "Newsletter",
+  events: "Event announcements",
+  courses: "Course announcements",
+  tasks: "Tasks and worksheets",
 };
 
 /** The one the spec unticks. Named here so both sides agree on which. */
@@ -207,6 +233,28 @@ export function assertGridChannelsMatchProduct() {
     );
   }
 
+  const rows = source.match(/export const ALL_CATEGORIES[^=]*=\s*\[([^\]]*)\]/);
+  if (!rows) {
+    throw new Error(
+      `ALL_CATEGORIES could not be read out of ${NOTIFICATIONS_MODULE}. The grid draws one ` +
+        "row per entry and the spec drives a cell of each, so the two lists have to be " +
+        "compared: re-read that file and fix this reader.",
+    );
+  }
+  const rowNames = [...rows[1].matchAll(/["']([^"']+)["']/g)].map((m) => m[1]);
+  const sameRows =
+    rowNames.length === GRID_ROWS.length &&
+    rowNames.every((name, i) => name === GRID_ROWS[i]);
+  if (!sameRows) {
+    throw new Error(
+      `the profile grid's rows have moved. ${NOTIFICATIONS_MODULE} now says ` +
+        `${JSON.stringify(rowNames)} and this fixture says ${JSON.stringify(GRID_ROWS)}. The ` +
+        "spec presses the master switch and then reads a cell of every row, so a row this " +
+        "fixture does not know about is one that step would leave unchecked while still " +
+        "passing. Update GRID_ROWS and GRID_ROW_LABELS together.",
+    );
+  }
+
   const labels = source.match(/export const CATEGORY_LABELS[^=]*=\s*\{([^}]*)\}/);
   if (!labels) {
     throw new Error(
@@ -214,20 +262,27 @@ export function assertGridChannelsMatchProduct() {
         "checkbox labels cannot be checked against the ones the page renders.",
     );
   }
-  for (const channel of GRID_CHANNELS) {
-    const found = labels[1].match(new RegExp(`\\b${channel}\\s*:\\s*["']([^"']+)["']`));
+  for (const row of GRID_ROWS) {
+    const found = labels[1].match(new RegExp(`\\b${row}\\s*:\\s*["']([^"']+)["']`));
     if (!found) {
       throw new Error(
-        `${NOTIFICATIONS_MODULE} has no CATEGORY_LABELS entry for ${channel}, which the ` +
+        `${NOTIFICATIONS_MODULE} has no CATEGORY_LABELS entry for ${row}, which the ` +
           "spec locates its checkbox by.",
       );
     }
-    if (found[1] !== GRID_CHANNEL_LABELS[channel]) {
+    if (found[1] !== GRID_ROW_LABELS[row]) {
       throw new Error(
-        `the ${channel} checkbox is labelled ${JSON.stringify(found[1])} on the page and ` +
-          `${JSON.stringify(GRID_CHANNEL_LABELS[channel])} here. The spec finds each cell ` +
+        `the ${row} row is labelled ${JSON.stringify(found[1])} on the page and ` +
+          `${JSON.stringify(GRID_ROW_LABELS[row])} here. The spec finds each cell ` +
           "by that label, so this is a locator that would time out in 30 seconds instead " +
           "of a sentence now.",
+      );
+    }
+    // The two subscription channels are also seeded, so their labels have to
+    // agree with the shorter list the seed iterates as well.
+    if (GRID_CHANNELS.includes(row) && GRID_CHANNEL_LABELS[row] !== found[1]) {
+      throw new Error(
+        `GRID_CHANNEL_LABELS.${row} has drifted from GRID_ROW_LABELS.${row}.`,
       );
     }
   }

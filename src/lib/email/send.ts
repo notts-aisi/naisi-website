@@ -7,6 +7,7 @@ import {
   logEmailSend,
   logSuppressedSend,
   type EmailSendKind,
+  type EmailSendSurface,
 } from "@/lib/firestore/emailSends";
 import { filterSuppressed } from "@/lib/firestore/suppression";
 import { parseSesMessageId } from "./sesMessageId";
@@ -57,6 +58,13 @@ type SendArgs = {
   fromName?: string;
   /** Category for the deliverability dashboard. Defaults to 'unknown'. */
   kind?: EmailSendKind;
+  /**
+   * Which notice-lane surface this came from. Passed by `sendNotice` only
+   * (`src/lib/email/notice.ts`) and carried onto the receipt so the
+   * deliverability tab can show what bypassed the notification grid and from
+   * where. Nothing else sets it.
+   */
+  surface?: EmailSendSurface;
   /** Uid of the admin / committee member who triggered this send, if any. */
   actorUid?: string;
   /** Related entity id (draft id, event id, RSVP id) for cross-referencing. */
@@ -119,6 +127,7 @@ export async function sendEmail({
   replyTo,
   fromName,
   kind,
+  surface,
   actorUid,
   referenceId,
   listUnsubscribe,
@@ -162,6 +171,7 @@ export async function sendEmail({
           fromEmail,
           fromName: displayName,
           kind: kind ?? "unknown",
+          surface,
           actorUid,
           referenceId,
         }).catch((err) => {
@@ -226,6 +236,7 @@ export async function sendEmail({
           fromEmail,
           fromName: displayName,
           kind: kind ?? "unknown",
+          surface,
           actorUid,
           referenceId,
         }).catch((err) => {

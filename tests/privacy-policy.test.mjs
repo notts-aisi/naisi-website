@@ -4,10 +4,15 @@
  *
  * Run with `npm test`.
  *
- * The current version is v4: v3's text plus one sentence, under "When you join
- * the committee", saying what a circulated worksheet records about the person
- * it was sent to. That sentence was first edited straight into v3, which was
- * the wrong move and is the reason §1b below exists. A version the owner has
+ * The current version is v5 (7 September 2026): v4's text plus the
+ * notification grid's four passages (the four rows and the two choices per
+ * row, a notification chosen separately from its email, important notices
+ * under performance of a contract, and no unsubscribe link on them). v4 is
+ * the wording members accepted at the 6 September 2026 release and is frozen
+ * below. Before that, v4 was v3 plus one sentence, under "When you join the
+ * committee", about what a circulated worksheet records; that sentence was
+ * first edited straight into v3, which was the wrong move and is the reason
+ * §1b below exists. A version the owner has
  * accepted is frozen text. Editing it changes what somebody sees at the
  * archive URL for the wording they agreed to, and it changes it WITHOUT moving
  * CURRENT_POLICY_VERSION, so nobody is ever asked to accept the new sentence.
@@ -125,13 +130,17 @@ const { CURRENT_POLICY_VERSION, POLICIES, currentPolicy } =
   await loadTs("lib/legal/policies.ts");
 
 const read = (path) => readFileSync(join(REPO_ROOT, path), "utf8");
-const V4 = read("src/content/legal/privacy/v4.tsx");
+const CURRENT = read("src/content/legal/privacy/v5.tsx");
 /**
- * v4 with every run of whitespace collapsed to one space. The copy is JSX, so
- * a sentence is wrapped and indented across several lines and no pattern
- * written as a sentence would ever match the raw source. Every content check
- * below runs against this, because v4 is the text the site serves at /privacy.
+ * The current policy with every run of whitespace collapsed to one space. The
+ * copy is JSX, so a sentence is wrapped and indented across several lines and
+ * no pattern written as a sentence would ever match the raw source. Every
+ * content check below runs against this, because v5 is the text the site
+ * serves at /privacy.
  */
+const CURRENT_FLAT = CURRENT.replace(/\s+/g, " ");
+/** v4, frozen: read by §1b and by §2c, which proves the new sentences are not in it. */
+const V4 = read("src/content/legal/privacy/v4.tsx");
 const V4_FLAT = V4.replace(/\s+/g, " ");
 /** v3, read only by §1b, which proves it was left as the owner accepted it. */
 const V3 = read("src/content/legal/privacy/v3.tsx");
@@ -155,9 +164,9 @@ const componentPrefix = (key) => `${key[0].toUpperCase()}${key.slice(1)}Content`
 const POLICY_KEYS = Object.keys(POLICIES);
 
 describe("policy versions", () => {
-  test("privacy v4 is current, and the combined version string moved with it", () => {
-    assert.equal(currentPolicy("privacy").version, 4);
-    assert.equal(CURRENT_POLICY_VERSION, "terms.1+privacy.4");
+  test("privacy v5 is current, and the combined version string moved with it", () => {
+    assert.equal(currentPolicy("privacy").version, 5);
+    assert.equal(CURRENT_POLICY_VERSION, "terms.1+privacy.5");
   });
 
   test("versions are newest first, which entry [0] depends on", () => {
@@ -299,6 +308,13 @@ const FROZEN_VERSIONS = new Map([
     {
       sha256: "7f0ca1ddc292b15311252c8375483e625df4c70c4ae7fcd23025b38e82464adb",
       why: "the version the owner accepted, and the one the worksheet sentence was edited into in place; this digest is the restored, accepted text and the reason the whole file exists",
+    },
+  ],
+  [
+    "privacy/v4",
+    {
+      sha256: "f18edb220a2ce52b873f70ebdf16f79a257e720a78634512191be371eaf0f708",
+      why: "live from the 6 September 2026 release until v5 replaced it the next day; the wording every member re-accepted at that sign-in, frozen when the notification grid moved the version rather than editing it in place",
     },
   ],
 ]);
@@ -547,8 +563,8 @@ const MUST_NAME = [
 
 describe("the courses section", () => {
   test("exists, is in the table of contents, and is linkable from the apply form", () => {
-    assert.match(V4, /id="courses"/);
-    assert.match(V4, /\{ id: "courses", label: "Courses and programmes" \}/);
+    assert.match(CURRENT, /id="courses"/);
+    assert.match(CURRENT, /\{ id: "courses", label: "Courses and programmes" \}/);
     const notice = read("src/features/admissions/ApplicationPrivacyNotice.tsx");
     assert.match(
       notice,
@@ -560,7 +576,7 @@ describe("the courses section", () => {
   for (const [what, pattern] of MUST_NAME) {
     test(`names ${what}`, () => {
       assert.match(
-        V4_FLAT,
+        CURRENT_FLAT,
         pattern,
         `privacy v4's courses section no longer names ${what}. The section is ` +
           "the platform's one statement of what it holds about an applicant; " +
@@ -571,11 +587,11 @@ describe("the courses section", () => {
   }
 
   test("push subscriptions are named too, outside the courses section", () => {
-    assert.match(V4_FLAT, /push subscription from your browser/i);
+    assert.match(CURRENT_FLAT, /push subscription from your browser/i);
   });
 
   test("retention says applications are kept on the account", () => {
-    assert.match(V4_FLAT, /Applications are kept against your account/);
+    assert.match(CURRENT_FLAT, /Applications are kept against your account/);
   });
 
   test("retention says what a deletion removes and what it leaves behind", () => {
@@ -585,22 +601,22 @@ describe("the courses section", () => {
     // tasks, RSVPs, the email log and every Storage object. v3 said deleting
     // the account deleted "all of that" and promised a purge after 30 days
     // that nothing enforces; v4 lists both sides and names no period.
-    assert.match(V4_FLAT, /What a deletion removes/);
-    assert.match(V4_FLAT, /What a deletion leaves behind/);
-    assert.match(V4_FLAT, /scores and notes the reviewers\s+wrote/i);
-    assert.match(V4_FLAT, /Nothing in file storage is removed by an account deletion/);
+    assert.match(CURRENT_FLAT, /What a deletion removes/);
+    assert.match(CURRENT_FLAT, /What a deletion leaves behind/);
+    assert.match(CURRENT_FLAT, /scores and notes the reviewers\s+wrote/i);
+    assert.match(CURRENT_FLAT, /Nothing in file storage is removed by an account deletion/);
     // Narrowly worded: v4 does promise to answer a rights request within 30
     // days, which is the statutory deadline and nothing to do with deletion.
     // What it may not do is promise that data GOES after a period, because no
     // job enforces one.
     assert.ok(
-      !/30 days afterwards/i.test(V4_FLAT) && !/delete or anonymise/i.test(V4_FLAT),
-      "v4 must not promise a deletion period: no job enforces one. Build the " +
+      !/30 days afterwards/i.test(CURRENT_FLAT) && !/delete or anonymise/i.test(CURRENT_FLAT),
+      "v5 must not promise a deletion period: no job enforces one. Build the " +
         "sweep first, then say so.",
     );
     assert.ok(
-      !/Deleting your account deletes/.test(V4_FLAT),
-      "v4 must not say deleting the account deletes everything about you: " +
+      !/Deleting your account deletes/.test(CURRENT_FLAT),
+      "v5 must not say deleting the account deletes everything about you: " +
         "the cascade keeps memberRecords, worksheet answers, tasks and RSVPs.",
     );
   });
@@ -614,14 +630,14 @@ describe("the courses section", () => {
     // below is load-bearing, because the whole justification for a public
     // page that outlives an account deletion is that the person chose to
     // create it.
-    assert.match(V4_FLAT, /able to mint a certificate for yourself/i);
-    assert.match(V4_FLAT, /Nothing is issued unless you choose to/i);
-    assert.match(V4_FLAT, /anyone holding the link can open/i);
-    assert.match(V4_FLAT, /not listed anywhere/i);
-    assert.match(V4_FLAT, /By applying to a programme you\s+agree that we may offer this/i);
+    assert.match(CURRENT_FLAT, /able to mint a certificate for yourself/i);
+    assert.match(CURRENT_FLAT, /Nothing is issued unless you choose to/i);
+    assert.match(CURRENT_FLAT, /anyone holding the link can open/i);
+    assert.match(CURRENT_FLAT, /not listed anywhere/i);
+    assert.match(CURRENT_FLAT, /By applying to a programme you\s+agree that we may offer this/i);
     // And the retention carve-out that follows from it.
-    assert.match(V4_FLAT, /A certificate you minted is a deliberate\s+exception/i);
-    assert.match(V4_FLAT, /Email us and we\s+will withdraw it, account or no account/i);
+    assert.match(CURRENT_FLAT, /A certificate you minted is a deliberate\s+exception/i);
+    assert.match(CURRENT_FLAT, /Email us and we\s+will withdraw it, account or no account/i);
 
     // The cascade check stays, with the opposite message: no sweep exists
     // yet, so the carve-out above is currently a statement about a feature
@@ -642,16 +658,16 @@ describe("the courses section", () => {
     // Both halves are pinned: the sentence that says so, and the absence of
     // the old one, which would otherwise survive a careless merge.
     assert.match(
-      V4_FLAT,
+      CURRENT_FLAT,
       /Turning notifications off deletes it, and so does deleting\s+your account/i,
     );
     assert.ok(
-      !/deleting your account\s+does not/i.test(V4_FLAT),
-      "v4 still says deleting the account keeps the push record; the cascade " +
+      !/deleting your account\s+does not/i.test(CURRENT_FLAT),
+      "v5 still says deleting the account keeps the push record; the cascade " +
         "removes it.",
     );
     assert.ok(
-      !/push notification record for any device/i.test(V4_FLAT),
+      !/push notification record for any device/i.test(CURRENT_FLAT),
       "the push record is still listed among what a deletion leaves behind.",
     );
   });
@@ -660,10 +676,10 @@ describe("the courses section", () => {
     // POST /api/account/delete answers 409 for any account with a users or
     // collaborators document; an admin runs the cascade. v3 read as though
     // the site did it.
-    assert.match(V4_FLAT, /There is no delete button on the site/);
+    assert.match(CURRENT_FLAT, /There is no delete button on the site/);
     // The other end of the same door: declining an updated policy signs you
     // out, and email is then the only way to have the account removed.
-    assert.match(V4_FLAT, /Declining signs you out, and you can then email\s+us to have the account removed/i);
+    assert.match(CURRENT_FLAT, /Declining signs you out, and you can then email\s+us to have the account removed/i);
   });
 
   test("the export sentence is not upgraded to a promise the code cannot keep", () => {
@@ -671,21 +687,21 @@ describe("the courses section", () => {
     // their browser, so "every export is logged" would be false. The wording
     // is deliberately about what the SITE generates.
     assert.ok(
-      !/every export is logged/i.test(V4_FLAT),
-      "v4 must not claim every export is logged: copy and paste from a " +
+      !/every export is logged/i.test(CURRENT_FLAT),
+      "v5 must not claim every export is logged: copy and paste from a " +
         "reviewer's screen is outside the log by construction.",
     );
   });
 
-  test("the OWNER TO CONFIRM block is gone from v4", () => {
+  test("the OWNER TO CONFIRM block is gone from the current policy", () => {
     // The wording of a privacy policy is the owner's. v4 was checked sentence
     // by sentence against the code on 6 September 2026 and its corrections
     // were signed off by the owner in the pull request that landed them, so
     // the block that held the open question is gone. v3 keeps its own list,
     // which §1b checks, because v3 is frozen.
     assert.ok(
-      !/OWNER TO CONFIRM/.test(V4),
-      "v4 carries an OWNER TO CONFIRM block again: resolve it with the owner " +
+      !/OWNER TO CONFIRM/.test(CURRENT),
+      "v5 carries an OWNER TO CONFIRM block again: resolve it with the owner " +
         "before merging, then delete it.",
     );
   });
@@ -720,7 +736,7 @@ describe("the courses section", () => {
       ["the export log names the kinds that exist", /Two\s+kinds are logged today/i],
       ["Google's sign-in script and where it is loaded from", /sign-in script is loaded from/i],
     ]) {
-      assert.match(V4_FLAT, pattern, `v4 no longer says: ${name}`);
+      assert.match(CURRENT_FLAT, pattern, `v5 no longer says: ${name}`);
     }
   });
 });
@@ -746,12 +762,136 @@ describe("the committee tooling passage", () => {
     // somebody spent on a page is the item on this page a member is least
     // likely to guess at, so the sentence has to survive: both the half that
     // says what is recorded and the half that says what never is.
-    assert.match(V4_FLAT, /how many times you moved between its pages/i);
-    assert.match(V4_FLAT, /sampled in half-minute steps/i);
-    assert.match(V4_FLAT, /We do not record which page you were on, what you typed, or when you pasted/i);
+    assert.match(CURRENT_FLAT, /how many times you moved between its pages/i);
+    assert.match(CURRENT_FLAT, /sampled in half-minute steps/i);
+    assert.match(CURRENT_FLAT, /We do not record which page you were on, what you typed, or when you pasted/i);
     assert.ok(
-      !/how many times you opened each page/i.test(V4_FLAT),
-      "v4 claims a per-page open count again; the code keeps one running total.",
+      !/how many times you opened each page/i.test(CURRENT_FLAT),
+      "v5 claims a per-page open count again; the code keeps one running total.",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §2c The notification grid passage
+// ---------------------------------------------------------------------------
+
+/**
+ * What the policy says about notifications, held against what the grid does.
+ *
+ * The notification grid (docs/notifications.md) gives every member four rows
+ * and two columns, and adds a third class of message that reads neither: an
+ * important notice from somebody responsible for an audience, sent under
+ * performance of a contract rather than consent. Two of those three facts were
+ * things the policy actively got WRONG before the grid landed rather than
+ * merely omitted: it described the categories as "newsletter, events" and it
+ * put every push notification under consent, which the notice lane makes
+ * untrue. A page that says a setting switches something off, over a product
+ * where it does not, is the failure this section exists to catch.
+ *
+ * Two of the tests are the two-layer half: the claim "never marketing" is made
+ * to the member twice, once on this page and once in the marker line at the top
+ * of the notice itself, and the promise that the lane carries no unsubscribe
+ * link is held against the door that would have to grow one. Copy on the page
+ * and behaviour in `src` are one promise made in two places, and they have to
+ * move together.
+ */
+describe("the notification grid passage", () => {
+  test("the frozen v4 carries none of these sentences, so the move was a version and not an edit", () => {
+    for (const pattern of [
+      /a separate email choice and notification choice for each/i,
+      /Each category has its own notification choice/i,
+      /sent under performance of a contract rather than consent/i,
+      /Important notices carry no unsubscribe link/i,
+    ]) {
+      assert.ok(
+        !pattern.test(V4_FLAT),
+        `the accepted v4 text matches ${pattern}: the grid's wording was edited into ` +
+          "the frozen version instead of living in v5, which is the in-place edit " +
+          "§1b exists to refuse",
+      );
+    }
+  });
+
+  test("names the four rows and the two choices per row", () => {
+    assert.match(
+      CURRENT_FLAT,
+      /by category, with a separate email choice and notification choice for each/i,
+      "v5 no longer says a category carries an email choice AND a notification " +
+        "choice. The grid stores two parallel maps, and the page is where a " +
+        "member is told that.",
+    );
+    assert.match(
+      CURRENT_FLAT,
+      /the newsletter, event announcements, course announcements, and tasks and worksheets/i,
+      "v5 no longer names the four rows the grid draws.",
+    );
+  });
+
+  test("says the notification choice is separate from the email choice", () => {
+    assert.match(
+      CURRENT_FLAT,
+      /Each category has its own notification choice, set separately from its email choice/i,
+      "v5 still describes push as one blanket choice, or as following the " +
+        "email one. Every row has its own push cell, resolved by " +
+        "src/lib/push/preferences.ts independently of the email cell.",
+    );
+    assert.match(
+      CURRENT_FLAT,
+      /a notification can still arrive for a category whose email you have switched off/i,
+      "v5 no longer states the consequence a member actually meets: the task " +
+        "and worksheet senders mirror to push after an email their row " +
+        "skipped, and the cell copy in src/lib/firestore/notifications.ts " +
+        "promises exactly that.",
+    );
+  });
+
+  test("puts important notices under contract rather than consent", () => {
+    assert.match(
+      CURRENT_FLAT,
+      /sent under performance of a contract rather than consent/i,
+      "v4's Consent basis no longer carves out the notice lane. Without the " +
+        "sentence the page promises that the notification settings switch off " +
+        "every message, and an organiser's room change ignores them by design.",
+    );
+    assert.match(CURRENT_FLAT, /notification settings do not switch them off/i);
+    assert.match(CURRENT_FLAT, /they are never marketing/i);
+  });
+
+  test("carves the notice lane out of the unsubscribe promise as well", () => {
+    // The same defect in a second place. "Unsubscribe from any email through
+    // the link in that email" is a promise the lane cannot keep:
+    // src/lib/email/notice.ts takes no listUnsubscribe and neither notice
+    // template carries a footer, on purpose. The two carve-outs are one
+    // decision and have to move together.
+    assert.match(
+      CURRENT_FLAT,
+      /unsubscribe from any marketing email through the link in that email/i,
+      "v4's rights paragraph promises an unsubscribe link on every email " +
+        "again. Transactional mail and the notice lane both ship without one.",
+    );
+    assert.match(
+      CURRENT_FLAT,
+      /Important notices carry no unsubscribe link/i,
+      "v5 no longer tells a member the notice lane has no unsubscribe link, " +
+        "while src/lib/email/notice.ts still refuses to grow one.",
+    );
+    const notice = read("src/lib/email/notice.ts");
+    assert.ok(
+      !/listUnsubscribe\s*\??\s*:/.test(notice),
+      "sendNotice has grown a listUnsubscribe field, so the sentence the " +
+        "policy now carries about the lane is the wrong shape.",
+    );
+  });
+
+  test("the notice itself makes the same promise to the same person", () => {
+    const marker = read("src/emails/NoticeMarker.tsx");
+    assert.match(
+      marker,
+      /it is never marketing/i,
+      "the marker line above every notice no longer says it is not marketing, " +
+        "which is the claim privacy v4 makes on its behalf. The two are one " +
+        "promise made in two places and have to move together.",
     );
   });
 });
@@ -960,7 +1100,7 @@ describe("the access-requirements read log", () => {
   });
 
   test("the promise is on the page and in the in-form notice", () => {
-    assert.match(V4_FLAT, /every time one of them does we record who read it/i);
+    assert.match(CURRENT_FLAT, /every time one of them does we record who read it/i);
     const notice = read("src/features/admissions/ApplicationPrivacyNotice.tsx");
     assert.match(notice.replace(/\s+/g, " "), /We record each time one of them/i);
   });

@@ -132,7 +132,7 @@ describe("the shared loader reads JSX", () => {
       },
     );
 
-    assert.deepEqual(result, { sent: 1, failed: 0 });
+    assert.deepEqual(result, { sent: 1, failed: 0, optedOut: 0 });
     assert.equal(globalThis.__sent.length, 1);
 
     const html = await render(globalThis.__sent[0].react);
@@ -275,6 +275,12 @@ const USERS = new Map([
       "stub two of those doors, and now only the transport is",
   ],
   [
+    "task-email-routes.test.mjs",
+    "the five task email routes, executed: each one imports one of the four task `.tsx` " +
+      "templates by alias and every one of those imports `./EmailChrome` relatively, which is " +
+      "the two-level JSX graph a hand-copied loader dies on",
+  ],
+  [
     "scheduler-markers.test.mjs",
     "same shape: `registry.ts` is loaded for the caps and windows and drags every job's graph in " +
       "with it, and the stub comments said so in as many words",
@@ -307,6 +313,13 @@ const USERS = new Map([
       "`accountDeletion.ts` plus every collection helper it imports, `memberRecords.ts` among " +
       "them; the Admin SDK is its only stub, because a retention proved against a copy of the " +
       "sweep would say nothing about the sweep that ships",
+  ],
+  [
+    "notice-lane.test.mjs",
+    "the notice lane's marker is a `.tsx` component that `sendNotice` builds and a template " +
+      "renders as a slot, so the suite's graph reaches three email templates and the real " +
+      "`@react-email/render`: what the recipient actually sees is the property under test, and a " +
+      "loader that could not read JSX would have to stub away the very thing being asserted",
   ],
   [
     "member-records.test.mjs",

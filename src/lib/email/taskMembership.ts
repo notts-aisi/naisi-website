@@ -9,7 +9,20 @@ import type { MembershipPreassignment } from "@/emails/TaskMembershipEmail";
  * across both surfaces.
  */
 
-export type ResolvedUser = { email: string; displayName: string };
+export type ResolvedUser = {
+  email: string;
+  displayName: string;
+  /**
+   * The raw stored profile, carried so the caller's send loop can ask
+   * `wantsEmailForProfile` about the tasks row without a second read.
+   *
+   * It is the CALLER that asks, not this resolver. The row check belongs
+   * beside the send it suppresses, where a reader of that loop can see the
+   * three gates in series; a resolver that quietly dropped opted-out members
+   * would leave every one of those loops looking ungated.
+   */
+  profile: unknown;
+};
 
 export async function resolveTaskUsers(
   db: Firestore,
@@ -28,7 +41,7 @@ export async function resolveTaskUsers(
       typeof data.displayName === "string" && data.displayName
         ? data.displayName
         : email.split("@")[0] || "there";
-    if (email) out.set(snap.id, { email, displayName });
+    if (email) out.set(snap.id, { email, displayName, profile: data.profile });
   }
   return out;
 }

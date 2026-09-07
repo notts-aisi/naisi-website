@@ -2,6 +2,7 @@ import "server-only";
 import { Timestamp, type Firestore } from "firebase-admin/firestore";
 import ApplicationEmail from "@/emails/ApplicationEmail";
 import NewsletterEmail from "@/emails/NewsletterEmail";
+import { wantsEmailForProfile } from "@/lib/email/preferences";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser, type SessionUser } from "@/lib/firebase/session";
 import {
@@ -14,8 +15,12 @@ import {
   type CourseRunDoc,
 } from "@/lib/firestore/courses";
 import { newBlockId, type Block } from "@/lib/firestore/newsletterBlocks";
-import { findRecipientsForChannel } from "@/lib/firestore/subscriptions";
+import {
+  findRecipientsForChannel,
+  findUnsubscribedOnChannel,
+} from "@/lib/firestore/subscriptions";
 import { filterSuppressed } from "@/lib/firestore/suppression";
+import { sendNotice } from "./notice";
 import { sendEmail } from "./send";
 
 /**
@@ -235,22 +240,32 @@ export function displayNameOf(data: Record<string, unknown>): string {
 }
 
 /**
- * An EXPLICIT refusal, read off the raw stored prefs — deliberately not
- * `normaliseNotifications`, which collapses "absent" and "false" into the same
- * `false` and would turn every unanswered profile into an opt-out. Only the
- * modern `notifications` shape can carry this refusal; the legacy `newsletter`
- * shape predates the category entirely and never means "no" to it. The
- * subscription row is the opt-IN; this category is the opt-OUT layered on top.
+ * An EXPLICIT refusal of the COURSES row, read off a user document the caller
+ * is already holding.
+ *
+ * Only the modern `notifications` shape can carry this refusal; the legacy
+ * `newsletter` shape predates the category entirely and never means "no" to
+ * it. The subscription row is the opt-IN; this category is the opt-OUT layered
+ * on top.
+ *
+ * IT IS NOW THE RESOLVER, INVERTED, rather than a second reading of the same
+ * field. The hand-written version that used to live here walked
+ * `profile.notifications.categories.courses` and compared it to `false`, which
+ * agreed with `resolveRow("courses", …)` on every input anybody had thought of
+ * and agreed with it BY COINCIDENCE: two implementations of one rule, in two
+ * files, with nothing making them move together. The grid gave the rule a
+ * single home, so this asks it instead. The behaviour is unchanged, which is
+ * the point. `tests/admissions-stage-release.test.mjs` pins the whole input
+ * table and now also pins the two against each other.
+ *
+ * It stays a helper of its own, taking a raw document, because the audience
+ * resolver below and the two admissions jobs hold raw documents in a loop and
+ * "has this person refused?" is the question they are asking.
  */
 export function hasOptedOutOfCourseAnnouncements(
   data: Record<string, unknown>,
 ): boolean {
-  const profile = (data.profile as Record<string, unknown> | undefined) ?? {};
-  const notifications = profile.notifications;
-  if (!notifications || typeof notifications !== "object") return false;
-  const categories = (notifications as Record<string, unknown>).categories;
-  if (!categories || typeof categories !== "object") return false;
-  return (categories as Record<string, unknown>).courses === false;
+  return !wantsEmailForProfile(data.profile, "courses");
 }
 
 /** The sender's own address, for a `testOnly` rehearsal. Never a body field. */
@@ -361,6 +376,22 @@ export type CohortAudienceLane = {
 export type CohortAudienceScope = {
   /** Keep only members whose active enrolment names this group. */
   groupId?: string | null;
+  /**
+   * KEEP THE MEMBERS WHO HAVE TURNED COURSE ANNOUNCEMENTS OFF.
+   *
+   * The `courses` row is the opt-out layered on the cohort subscription, and by
+   * default this resolver honours it: a stored `false` skips a recipient before
+   * a message is rendered. The run composer's NOTICE lane sets this, and it is
+   * the only caller that may: a notice is a person responsible for a cohort
+   * addressing that cohort about something they signed up for, and the whole
+   * point of the class is that it reaches them whatever their grid says.
+   *
+   * It changes ONLY the preference filter. The enrolment re-verification, the
+   * guest-row drop, the recipient cap and the suppression list all still apply,
+   * because none of those is a preference: a notice may bypass what somebody
+   * chose, never who they are or whether their address bounces.
+   */
+  ignoreCategoryOptOut?: boolean;
 };
 
 /** Hard ceiling per request. Beyond this a send FAILS — see below. */
@@ -402,12 +433,12 @@ export const MAX_COHORT_CHANNEL_ROWS = 500;
  * SUPPRESSION IS APPLIED HERE, not at the call site, so a preview's count and
  * the send's count are the same number.
  *
- * `notifications.categories.courses` defaults FALSE like every other category,
- * and requiring it to be true would empty the audience on day one — nothing sets
- * it on placement. That is not what the toggle is for: the OPT-IN is the
- * subscription row (you were placed in a group; you consented by enrolling), and
- * the CATEGORY is the opt-out layered on top. So an explicit `courses === false`
- * skips a recipient and absent means "hasn't answered".
+ * `notifications.categories.courses` is an OPT-OUT row: nothing sets it on
+ * placement, so requiring it to be true would empty the audience on day one.
+ * That is not what the toggle is for: the OPT-IN is the subscription row (you
+ * were placed in a group; you consented by enrolling), and the CATEGORY is the
+ * opt-out layered on top. So an explicit `courses === false` skips a recipient
+ * and absent means "hasn't answered".
  * `DEFAULT_NOTIFICATION_PREFS` in notifications.ts carries the other half of this
  * comment; change neither alone.
  */
@@ -419,6 +450,7 @@ export async function resolveCohortAudience(
 ): Promise<CohortAudience> {
   const channel = courseRunChannel(runId);
   const onlyGroupId = scope.groupId ?? null;
+  const ignoreOptOut = scope.ignoreCategoryOptOut === true;
   let skipped = 0;
   /**
    * Enrolled on the run, active, and in ANOTHER group. Counted apart from
@@ -575,7 +607,7 @@ export async function resolveCohortAudience(
       skipped += 1;
       continue;
     }
-    if (hasOptedOutOfCourseAnnouncements(data)) {
+    if (!ignoreOptOut && hasOptedOutOfCourseAnnouncements(data)) {
       optedOut += 1;
       skipped += 1;
       continue;
@@ -610,6 +642,60 @@ export async function resolveCohortAudience(
     enrolledCount: enrolled.length,
     refusal: null,
   };
+}
+
+/**
+ * HOW MANY OF THIS RUN'S ACTIVE MEMBERS A COHORT SEND CANNOT REACH.
+ *
+ * `resolveCohortAudience` is the subscription channel INTERSECTED with active
+ * enrolments, and that first half is deliberate: the unsubscribe link in an
+ * announcement flips the row, so an enrolment-derived audience would re-mail
+ * everyone who clicked it. The consequence is that a member who unsubscribed is
+ * not in the audience, is not in `skipped`, and leaves no trace in the report at
+ * all: the sender reads "sent to 24" and cannot tell whether the cohort is 24
+ * or 30.
+ *
+ * That is a gap the notice lane feels hardest, because its whole promise is
+ * reach, so this counts the gap and the composer prints it. It does NOT close
+ * it: widening the notice lane's audience past an unsubscribe is a consent
+ * decision, not a defect fix, and it belongs to whoever owns the consent story
+ * rather than to this function.
+ *
+ * TWO READS. The unsubscribed rows on the channel (equality-only, no index
+ * owed), then one addressed `getAll` over their deterministic enrolment ids,
+ * because the rows also include people who LEFT the run (the remove route
+ * unsubscribes them), and reporting those as unreachable members would be a
+ * different wrong number.
+ */
+export async function countCohortUnreachable(
+  db: Firestore,
+  runId: string,
+): Promise<number> {
+  const rows = await findUnsubscribedOnChannel(db, courseRunChannel(runId));
+  const uids = [
+    ...new Set(
+      rows
+        .filter((r) => r.audience === "user" && r.audienceId)
+        .map((r) => r.audienceId),
+    ),
+  ];
+  if (uids.length === 0) return 0;
+  // Bounded by the same ceiling the audience read carries: a count for a report
+  // is not worth an unbounded `getAll`. If it ever bites, the number printed is
+  // a floor, which is the safe direction for "people you did not reach".
+  const capped = uids.slice(0, MAX_COHORT_CHANNEL_ROWS);
+  const docs = await db.getAll(
+    ...capped.map((uid) =>
+      db.collection("courseEnrolments").doc(courseEnrolmentId(runId, uid)),
+    ),
+  );
+  let unreachable = 0;
+  for (const doc of docs) {
+    if (!doc.exists) continue;
+    const enrolment = normalizeCourseEnrolment(doc.id, doc.data() ?? {});
+    if (enrolment.status === "active" && enrolment.runId === runId) unreachable += 1;
+  }
+  return unreachable;
 }
 
 // ---------------------------------------------------------------------------
@@ -707,79 +793,6 @@ export async function reserveSendSlot(
 }
 
 // ---------------------------------------------------------------------------
-// Dispatch pacing
-// ---------------------------------------------------------------------------
-
-/**
- * FITTING A FULL-SIZE SEND INSIDE THE REQUEST TIMEOUT.
- *
- * `apphosting.yaml` sets `runConfig.timeoutSeconds: 60`. That number — not
- * politeness to the relay — is the binding constraint on how a broadcast is
- * dispatched, because `reserveSendSlot` above is RESERVE-BEFORE-SEND. A loop
- * killed at the ceiling is the worst outcome in this feature: the response never
- * lands, the slot is already spent, part of the cohort has the mail, and the
- * sender's only recourse is a retry that re-mails everyone already delivered.
- *
- * THE ARITHMETIC. The newsletter route paces sequentially with a 200ms sleep —
- * at most ONE message in flight. Each send here is a fresh Resend SMTP
- * connection (nodemailer is not pooled), a react-email render and a send-log
- * write: ~0.5s typical, ~1.0s on a bad day. Sequentially that is 0.7-1.2s per
- * recipient, so the run route's own 200-recipient ceiling costs 140-240s — two
- * to four times the timeout, i.e. a full cohort send could not complete at all.
- *
- * So the POSTURE is kept and the MECHANISM is replaced. The point of the 200ms
- * sleep is a bound on how much is in flight at once; a semaphore states that
- * bound explicitly instead of pinning it at one. With `SEND_CONCURRENCY` workers
- * each pausing `PER_SEND_DELAY_MS` after its own send:
- *
- *   run route, full 200:  ceil(200/6) = 34 rounds × 1.05s worst ≈ 36s  (≈19s typical)
- *   group route, full 100: ceil(100/6) = 17 rounds × 1.05s worst ≈ 18s  (≈9s typical)
- *
- * — so a full-size send finishes with ~24s of headroom against the 60s ceiling
- * even pessimistically. RAISING EITHER RECIPIENT CAP MEANS REDOING THIS SUM. A
- * cohort that needs more than one request needs the chunked sender with
- * per-recipient bookkeeping the run route's header already describes; that is a
- * different feature, and this arithmetic is what says when it is due.
- */
-export const SEND_CONCURRENCY = 6;
-export const PER_SEND_DELAY_MS = 50;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-/**
- * Run `send` over `items` with at most `SEND_CONCURRENCY` in flight, pausing
- * `PER_SEND_DELAY_MS` between one worker's consecutive sends. Dispatch order is
- * not guaranteed and does not matter: every recipient gets their own message,
- * addressed only to them.
- *
- * `send` MUST RESOLVE. Both callers catch their own per-recipient failures
- * inside it (a send that throws is counted as skipped, never fatal), so a
- * rejection arriving here is a bug — and is deliberately left to reject the
- * request loudly rather than be swallowed into a partial send that reports
- * success.
- */
-export async function dispatchSends<T>(
-  items: readonly T[],
-  send: (item: T) => Promise<void>,
-): Promise<void> {
-  let cursor = 0;
-  const workers = Math.min(SEND_CONCURRENCY, items.length);
-  await Promise.all(
-    Array.from({ length: workers }, async () => {
-      for (;;) {
-        const index = cursor;
-        cursor += 1;
-        if (index >= items.length) return;
-        await send(items[index]);
-        await sleep(PER_SEND_DELAY_MS);
-      }
-    }),
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Templates
 // ---------------------------------------------------------------------------
 
@@ -861,13 +874,52 @@ type CommonEmailArgs = {
 };
 
 /**
+ * A staff message as blocks: the body, a divider, the provenance line. The
+ * shape every staff lane renders, exported because the run composer's NOTICE
+ * lane builds its own email at the call site (so that the send it makes is a
+ * visible `sendNotice(`, which is what the classification guard reads) and must
+ * not assemble a second, drifting version of the same three blocks.
+ */
+export function staffMessageBlocks(
+  body: string,
+  senderName: string,
+  context: string,
+): Block[] {
+  return [
+    ...bodyToBlocks(body),
+    { id: newBlockId(), type: "divider" },
+    signatureBlock(senderName, context),
+  ];
+}
+
+/** First ~140 characters of a staff body, as the inbox preview line. */
+export function staffPreheader(body: string): string {
+  return preheaderOf(body);
+}
+
+/**
  * OPERATIONAL group mail: "your session moved", "bring the reading". Renders
- * through `ApplicationEmail` — the same transactional chrome the course
- * lifecycle mail uses — and deliberately carries NO unsubscribe affordance,
- * matching every other transactional path in the estate (task membership, RSVP,
- * collaborator lifecycle). Opting out of "your room changed" is not a thing a
- * member of a group can meaningfully do; the run announcement route is the
- * opt-outable lane. See the route's module comment for the full argument.
+ * through `ApplicationEmail`, the same chrome the course lifecycle mail uses,
+ * and deliberately carries NO unsubscribe affordance. Opting out of "your room
+ * changed" is not a thing a member of a group can meaningfully do; the run
+ * announcement route is the opt-outable lane. See the route's module comment
+ * for the full argument.
+ *
+ * ── IT IS A NOTICE NOW, AND THE MESSAGE SAYS SO ─────────────────────────────
+ * The behaviour it has always had (goes out whatever the `courses` row says,
+ * suppression still absolute, no unsubscribe) is exactly the notice class, and
+ * it used to be that class in effect and nowhere in writing. Routing the real
+ * send through `sendNotice` makes it that class on the receipt (`kind:
+ * "notice"`, `surface: "course-group"`) and on the page: the recipient now
+ * reads a line saying why it reached them whatever their settings.
+ *
+ * ── EXCEPT THE REHEARSAL, WHICH IS NOT ONE ──────────────────────────────────
+ * `test: true` reaches the sender's own address and nobody else, which makes it
+ * a diagnostic rather than a notice: nobody's preference was bypassed, and the
+ * deliverability tab has to keep telling a rehearsal apart from the send it
+ * rehearses. So the test lane keeps `sendEmail` and keeps `kind: "course-test"`,
+ * and it renders no marker, because the sentence the marker makes would be
+ * false about it.
  */
 export async function sendCourseGroupEmail(
   args: CommonEmailArgs & {
@@ -885,25 +937,31 @@ export async function sendCourseGroupEmail(
       : null,
   ]
     .filter(Boolean)
-    .join(" — ");
+    .join(" · ");
 
-  const blocks: Block[] = [
-    ...bodyToBlocks(args.body),
-    { id: newBlockId(), type: "divider" },
-    signatureBlock(args.senderName, context),
-  ];
+  const blocks = staffMessageBlocks(args.body, args.senderName, context);
+  const preheader = preheaderOf(args.body);
 
-  await sendEmail({
+  if (args.test) {
+    await sendEmail({
+      to: args.to,
+      subject: envelopeSubject(args.subject, true),
+      react: ApplicationEmail({ subject: args.subject, blocks, preheader }),
+      kind: "course-test",
+      actorUid: args.actorUid,
+      referenceId: args.groupId,
+    });
+    return;
+  }
+
+  await sendNotice({
     to: args.to,
-    subject: envelopeSubject(args.subject, args.test),
-    react: ApplicationEmail({
-      subject: args.subject,
-      blocks,
-      preheader: preheaderOf(args.body),
-    }),
-    kind: args.test ? "course-test" : "course-facilitator",
+    subject: args.subject,
+    surface: "course-group",
     actorUid: args.actorUid,
     referenceId: args.groupId,
+    render: (marker) =>
+      ApplicationEmail({ subject: args.subject, blocks, preheader, notice: marker }),
   });
 }
 

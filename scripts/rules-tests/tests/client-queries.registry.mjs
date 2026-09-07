@@ -684,24 +684,6 @@ export const REGISTRY = [
     run: (db, p) => db.doc(`users/${p.uid}`).get(),
   },
   {
-    id: "push-settings-own-user",
-    file: "src/features/pwa/PushSettings.tsx",
-    path: "users/{uid}",
-    clauses: [],
-    docShape: "The member's own document, for the push preference block.",
-    reason:
-      "The installable app's notification settings live on the member's own user document, read on /profile by the same member. Own-document branch again.",
-    outcomes: {
-      "signed-out": "refused",
-      pending: "allowed",
-      member: "allowed",
-      committee: "allowed",
-      "su-committee": "allowed",
-      admin: "allowed",
-    },
-    run: (db, p) => db.doc(`users/${p.uid}`).get(),
-  },
-  {
     id: "profile-subscriptions-matrix",
     file: "src/features/profile/ProfileForm.tsx",
     path: "subscriptions",

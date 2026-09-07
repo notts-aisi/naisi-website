@@ -120,5 +120,13 @@ export async function POST(
   // `sent` is people actually emailed, so a zero with the switch off and a zero
   // with nobody mid-way are the same number to the caller on purpose: the page
   // reports what happened, and neither is a failure to report as one.
-  return NextResponse.json({ sent: result.sent });
+  //
+  // `optedOut` is the one zero that is NOT interchangeable with those, which is
+  // why it is carried out of the notifier rather than dropped here. The page
+  // says "nobody is part-way through this worksheet right now" on a zero, and
+  // that sentence is a claim about the recipients: it is false when there were
+  // recipients and every one of them has switched the tasks row's email cell
+  // off. A count of one message is not enough to tell those two apart, so the
+  // route hands over both.
+  return NextResponse.json({ sent: result.sent, optedOut: result.optedOut ?? 0 });
 }

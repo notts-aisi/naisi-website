@@ -3,7 +3,9 @@ import { FieldValue, Timestamp, type DocumentData } from "firebase-admin/firesto
 import TaskReviewOutcomeEmail, {
   type ReviewOutcomeSubtask,
 } from "@/emails/TaskReviewOutcomeEmail";
+import { wantsEmailForProfile } from "@/lib/email/preferences";
 import { sendEmail } from "@/lib/email/send";
+import type { ResolvedUser } from "@/lib/email/taskMembership";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isTaskEmailEnabled } from "@/lib/firestore/taskEmailConfig";
 import { getCurrentUser } from "@/lib/firebase/session";
@@ -20,8 +22,8 @@ function truncate(s: string, n: number): string {
 async function resolveUsers(
   db: FirebaseFirestore.Firestore,
   uids: string[],
-): Promise<Map<string, { email: string; displayName: string }>> {
-  const out = new Map<string, { email: string; displayName: string }>();
+): Promise<Map<string, ResolvedUser>> {
+  const out = new Map<string, ResolvedUser>();
   if (uids.length === 0) return out;
   const refs = uids.map((uid) => db.collection("users").doc(uid));
   const snaps = await db.getAll(...refs);
@@ -33,7 +35,7 @@ async function resolveUsers(
       typeof data.displayName === "string" && data.displayName
         ? data.displayName
         : email.split("@")[0] || "there";
-    if (email) out.set(snap.id, { email, displayName });
+    if (email) out.set(snap.id, { email, displayName, profile: data.profile });
   }
   return out;
 }
@@ -311,36 +313,49 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   let sent = 0;
   let failed = 0;
+  let optedOut = 0;
   for (const uid of recipientList) {
     const user = users.get(uid);
     if (!user) {
       failed += 1;
       continue;
     }
+    // THE THIRD GATE, AND IT GATES EMAIL ONLY. The site-wide
+    // `config/taskEmails` kill switch ran at the top of the handler; this is
+    // the member's own tasks row, the EMAIL column of it. The PUSH column is a
+    // separate cell of the same row, and `mirrorTaskEmailToPush` reads it for
+    // itself, so somebody who has said "notify me on my phone, not by email"
+    // gets exactly that. Opted out is neither sent nor failed: nothing went
+    // wrong, and nothing was posted.
+    const wantsEmail = wantsEmailForProfile(user.profile, "tasks");
     try {
-      await sendEmail({
-        to: user.email,
-        subject: `Review outcome: ${block.name} (${taskTitle})`,
-        fromName: "NAISI Tasks",
-        kind: "task",
-        actorUid: viewer.uid,
-        referenceId: taskId,
-        react: TaskReviewOutcomeEmail({
-          recipientName: user.displayName || "there",
-          blockName: block.name,
-          taskTitle,
-          taskLink,
-          approved,
-          questionsResolved,
-          rejected,
-        }),
-      });
+      if (wantsEmail) {
+        await sendEmail({
+          to: user.email,
+          subject: `Review outcome: ${block.name} (${taskTitle})`,
+          fromName: "NAISI Tasks",
+          kind: "task",
+          actorUid: viewer.uid,
+          referenceId: taskId,
+          react: TaskReviewOutcomeEmail({
+            recipientName: user.displayName || "there",
+            blockName: block.name,
+            taskTitle,
+            taskLink,
+            approved,
+            questionsResolved,
+            rejected,
+          }),
+        });
+        sent += 1;
+      } else {
+        optedOut += 1;
+      }
       await mirrorTaskEmailToPush(uid, {
         title: `Review outcome: ${block.name}`,
         body: taskTitle,
         taskId,
       });
-      sent += 1;
     } catch (err) {
       console.error(`[send-review-outcome] send to ${user.email} failed`, err);
       failed += 1;
@@ -384,5 +399,5 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     },
   });
 
-  return NextResponse.json({ ok: true, sent, failed });
+  return NextResponse.json({ ok: true, sent, failed, optedOut });
 }
