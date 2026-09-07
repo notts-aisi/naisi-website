@@ -773,9 +773,12 @@ describe("the committee tooling passage", () => {
  * untrue. A page that says a setting switches something off, over a product
  * where it does not, is the failure this section exists to catch.
  *
- * The last test is the two-layer half: the claim "never marketing" is made to
- * the member twice, once on this page and once in the marker line at the top
- * of the notice itself, and the two have to keep saying it together.
+ * Two of the tests are the two-layer half: the claim "never marketing" is made
+ * to the member twice, once on this page and once in the marker line at the top
+ * of the notice itself, and the promise that the lane carries no unsubscribe
+ * link is held against the door that would have to grow one. Copy on the page
+ * and behaviour in `src` are one promise made in two places, and they have to
+ * move together.
  */
 describe("the notification grid passage", () => {
   test("names the four rows and the two choices per row", () => {
@@ -793,12 +796,21 @@ describe("the notification grid passage", () => {
     );
   });
 
-  test("says push follows the same per-category choices as email", () => {
+  test("says the notification choice is separate from the email choice", () => {
     assert.match(
       V4_FLAT,
-      /Notifications follow the same per-category choices as email/i,
-      "v4 still describes push as one blanket choice. Every row has its own " +
-        "push cell, read by src/lib/push/preferences.ts.",
+      /Each category has its own notification choice, set separately from its email choice/i,
+      "v4 still describes push as one blanket choice, or as following the " +
+        "email one. Every row has its own push cell, resolved by " +
+        "src/lib/push/preferences.ts independently of the email cell.",
+    );
+    assert.match(
+      V4_FLAT,
+      /a notification can still arrive for a category whose email you have switched off/i,
+      "v4 no longer states the consequence a member actually meets: the task " +
+        "and worksheet senders mirror to push after an email their row " +
+        "skipped, and the cell copy in src/lib/firestore/notifications.ts " +
+        "promises exactly that.",
     );
   });
 
@@ -812,6 +824,32 @@ describe("the notification grid passage", () => {
     );
     assert.match(V4_FLAT, /notification settings do not switch them off/i);
     assert.match(V4_FLAT, /they are never marketing/i);
+  });
+
+  test("carves the notice lane out of the unsubscribe promise as well", () => {
+    // The same defect in a second place. "Unsubscribe from any email through
+    // the link in that email" is a promise the lane cannot keep:
+    // src/lib/email/notice.ts takes no listUnsubscribe and neither notice
+    // template carries a footer, on purpose. The two carve-outs are one
+    // decision and have to move together.
+    assert.match(
+      V4_FLAT,
+      /unsubscribe from any marketing email through the link in that email/i,
+      "v4's rights paragraph promises an unsubscribe link on every email " +
+        "again. Transactional mail and the notice lane both ship without one.",
+    );
+    assert.match(
+      V4_FLAT,
+      /Important notices carry no unsubscribe link/i,
+      "v4 no longer tells a member the notice lane has no unsubscribe link, " +
+        "while src/lib/email/notice.ts still refuses to grow one.",
+    );
+    const notice = read("src/lib/email/notice.ts");
+    assert.ok(
+      !/listUnsubscribe\s*\??\s*:/.test(notice),
+      "sendNotice has grown a listUnsubscribe field, so the sentence the " +
+        "policy now carries about the lane is the wrong shape.",
+    );
   });
 
   test("the notice itself makes the same promise to the same person", () => {

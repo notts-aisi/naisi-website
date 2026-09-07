@@ -20,10 +20,16 @@ import {
  * The `newsletter` and `events` rows are opt-in and resolve off, because
  * nothing pushes for them yet and a switch nobody has seen is not consent.
  *
- * A MISSING USER DOC IS ALSO THE DEFAULT. There is no stored preference to
- * honour, and the only people in that state are accounts whose doc has been
- * deleted; their subscriptions go with them, so the send finds no devices
- * anyway.
+ * A MISSING USER DOC ANSWERS YES, on every row, which is the one place this
+ * helper does not resolve the row's default: on `newsletter` and `events` the
+ * default is off. It is a simplification rather than a decision. There is no
+ * stored preference to honour, and the only people in that state are accounts
+ * whose document has been deleted; `deleteAccount` deletes their
+ * `pushSubscriptions` rows in the same pass, so the send finds no device to
+ * post to and the answer never reaches a notification. The day that stops
+ * being true, this line becomes `wantsPush(normaliseNotifications({}), key)`
+ * and the divergence goes. docs/notifications.md records it beside the table
+ * it belongs to.
  *
  * A FAILED READ IS A NO. If Firestore cannot answer, we do not know whether
  * this member opted out, and the cost of the two answers is not symmetric: a

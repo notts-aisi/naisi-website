@@ -21,15 +21,25 @@
  * video thumbnails in email, the export kinds, and Google's sign-in script.
  *
  * Third pass, 7 September 2026, with the notification grid: the collected
- * preferences now name the four rows and say each carries an email choice and
- * a notification choice, the push purpose says notifications follow the same
- * per-category choices as email, and the Consent basis carves out the notice
+ * preferences now name the four rows and say each carries its own email choice
+ * and notification choice, the push purpose says the notification choice is
+ * separate from the email one, and the Consent basis carves out the notice
  * lane, because an important notice about something you signed up for is sent
- * under performance of a contract and the settings do not switch it off. Made
- * in place while v4 is the current version and nothing here narrows what was
- * promised; if the owner decides the change is one to re-consent on, copy this
- * file to v5 and move CURRENT_POLICY_VERSION, which is the only supported way
- * to ask.
+ * under performance of a contract and the settings do not switch it off. The
+ * rights paragraph carries the same carve-out, since the lane ships no
+ * unsubscribe link.
+ *
+ * ONE OF THOSE EDITS NARROWS A PROMISE, and the owner should read this before
+ * deciding it can stand. The accepted v4 text put push notifications under
+ * consent and said consent may be withdrawn through the notification settings.
+ * The notice lane is new in this release (`src/lib/push/noticeNotifications.ts`
+ * is the first push in the estate that reads no preference at all, and the
+ * event broadcast, event cancellation and course run lanes are new surfaces),
+ * and for it that withdrawal right no longer holds. The other edits only
+ * describe what was already true. If the owner judges the narrowing one to
+ * re-consent on, copy this file to v5, freeze v4's digest in
+ * tests/privacy-policy.test.mjs and move CURRENT_POLICY_VERSION: that is the
+ * only supported way to ask.
  *
  * v1, v2 and v3 are FROZEN: they still render unchanged at their archive URLs
  * (/privacy/v/1, /privacy/v/2 and /privacy/v/3), so this file is a
@@ -535,8 +545,10 @@ export default function PrivacyContentV4({
                 </li>
                 <li>
                   Send push notifications to a device where you have turned
-                  them on. Notifications follow the same per-category choices
-                  as email, set separately for each category on your profile.
+                  them on. Each category has its own notification choice, set
+                  separately from its email choice on your profile, so a
+                  notification can still arrive for a category whose email you
+                  have switched off.
                 </li>
                 <li>
                   Operate the committee tooling (tasks, projects, drafts) for
@@ -878,7 +890,9 @@ export default function PrivacyContentV4({
                 Most of these are self-serve. You can edit your profile and
                 notification preferences from{" "}
                 <a href="/profile">your profile page</a>, and unsubscribe from
-                any email through the link in that email. Deleting your account
+                any marketing email through the link in that email. Important
+                notices carry no unsubscribe link, because there is nothing
+                there to switch off. Deleting your account
                 is by request: email{" "}
                 <a href="mailto:ai-safety@uonsu.com">ai-safety@uonsu.com</a>{" "}
                 and we will delete it. There is no delete button on the site,

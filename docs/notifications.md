@@ -149,8 +149,16 @@ Two helpers, one per column, and they differ in exactly one place.
 | --- | --- | --- |
 | Helper | `wantsEmailForProfile(profile, row)` in `src/lib/email/preferences.ts` | `wantsPushFor(uid, row)` in `src/lib/push/preferences.ts` |
 | Takes | the profile the sender is already holding | a uid, and reads the document itself |
-| Absent or junk | the row's default | the row's default |
+| Absent or junk cell | the row's default | the row's default |
+| No user document | the sender has already skipped them: no document, no address | **yes**, on every row |
 | A read that FAILS | **the row's default**, so an opt-out row still sends | **no**, always |
+
+The missing-document answer is the one cell of that table that does not resolve
+the row's default, and it is a simplification rather than a decision: deleting
+an account deletes its `pushSubscriptions` rows in the same pass
+(`src/lib/firestore/accountDeletion.ts`), so the only way to reach the branch at
+all is a deletion whose subscription sweep failed. It costs nothing today and
+would be a one-line change the day it does.
 
 The email helper takes a profile rather than a uid because every grid sender
 already reads `users/{uid}` for the address and the name; a second read per
@@ -193,12 +201,16 @@ which drops anybody whose row is a stored `false` before a message is rendered.
 The two admissions jobs read the row per recipient, off the user document they
 fetch for the name, and carry on with the opt-out unset when that read fails.
 
-The `tasks` senders run **their gates in series, any one a skip**, and the row is
-always the last: the site-wide `config/taskEmails` kill switch, then, on the
-worksheet lane, the circulation's own per-event switch, then the member's row.
-The row gates EMAIL only; the push mirror reads the push cell for itself, which
-is why a member who has switched the email cell off still gets the
-notification.
+The `tasks` senders run **their gates in series, any one a skip**, and the
+member's row is always the last. The order of the gates above it is per lane,
+cheapest read first: the five task routes read the site-wide
+`config/taskEmails` kill switch and then the row; `src/lib/worksheets/notify.ts`
+reads the circulation's own switch for this event first, because it is already
+loaded and costs nothing, then the kill switch, then the row; the due-soon
+reminder job reads the kill switch once per run, then the circulation's
+`dueSoon` toggles, then the row per recipient. The row gates EMAIL only; the
+push mirror reads the push cell for itself, which is why a member who has
+switched the email cell off still gets the notification.
 
 `push.tasks` is read in exactly one place (`src/lib/push/taskNotifications.ts`)
 and `push.courses` in exactly one (`src/lib/push/courseNotifications.ts`).
@@ -240,9 +252,12 @@ preference at all.
 The event broadcast gate is wider than it was, on purpose: until this lane landed
 the committee member who organised an event could not mail its attendees unless
 the SU had separately recognised them. Being named on an event is a
-responsibility rather than a standing credential, so a rejected or demoted
-account fails the approved-account test even while its name is still on the
-event.
+responsibility rather than a standing credential, so the route asks a second
+question of the person holding it: a pending or rejected account fails the
+approved-account test even while its name is still on the event. An organiser
+demoted from committee back to member passes it, and keeps the lane for the
+events they authored: they are still an approved member and still the person
+responsible for that event.
 
 The post-publish change notice `EventEditor` sends after an edit to a published
 event goes through the broadcast route, over the diff `update/route.ts` returns.

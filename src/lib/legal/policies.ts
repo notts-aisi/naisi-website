@@ -33,8 +33,11 @@ export const POLICIES: Record<
   privacy: {
     label: "Privacy Policy",
     href: "/privacy",
-    // v4's date is a placeholder, one day after v3's, because neither version
-    // has reached production yet. The owner sets the real publish date.
+    // v4's date is the real one, not a placeholder: it went out with the
+    // 6 September 2026 release. Members accept the CURRENT version when they
+    // sign in, so v4's text is text people have agreed to, and editing it in
+    // place is only ever for wording that does not change what was promised.
+    // Anything that does is a v5, which is what asks everybody again.
     // Keep this comment ABOVE `versions:`, never between the `[` and the first
     // `{`: tests/funnel-harness-guards.test.mjs reads the current version out
     // of this file with a regex that allows only whitespace across that gap,
