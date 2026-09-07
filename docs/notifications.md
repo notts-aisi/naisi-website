@@ -429,7 +429,7 @@ decide which one this publish takes.
 | | Inline (switch off) | Queued (switch on) |
 | --- | --- | --- |
 | Where the send runs | in the publish request | on a scheduler tick |
-| Ceilings | 500 junction rows, 200 messages, 500 device rows | 5000 junction rows, 5000 device rows, no message ceiling |
+| Ceilings | 500 junction rows, 200 messages, 500 device rows | 5000 junction rows, 5000 device rows, no message ceiling (the list is delivered over as many ticks as it takes) |
 | Exactly once | the `announcedAt` claim | the claim, plus one marker per recipient per leg |
 | What the response says | counts, or a refusal | `announcementQueued: true` |
 | Where the outcome is read | the publish response | the event document, live |
@@ -480,6 +480,22 @@ failure that would become a duplicate, so the stamp is retried once and the
 marker is then settled terminally as `sent-unstamped` rather than left for the
 re-claim rule (`stampSentOrSettle` in `src/lib/scheduler/markers.ts`).
 
+**A tick reads the event's markers in bulk before it walks the list**, in one
+equality-only query on `family` and `eventId`, and skips the recipients whose
+marker is already settled without asking `claim()` about them. That is what
+makes a long list finish rather than stall: every tick starts at the top of the
+audience, and a settled recipient put through `claim()` costs a failed
+`.create()` plus a transaction read for no progress at all, so past roughly 900
+of them a tick spent its whole budget re-checking the same prefix and never
+reached the tail. A marker that is claimed but UNSTAMPED is deliberately not in
+the skip set: the in-flight rule and the re-claim window are `claim()`'s to
+apply, and skipping those would be skipping the retry.
+
+It costs one document read per marker per tick. At the 5000-row ceiling, drained
+200 units at a time, that is 25 ticks over up to 10000 markers, on the order of
+a hundred thousand reads for one announcement. That is the price of resuming
+with no cursor, and a cursor is the fix if it ever matters.
+
 **Nothing claims the EVENT, and three separate things make the overlap safe.**
 Two ticks may both pick up one queued event and walk its audience, which the
 tick's own re-arm makes ordinary. `"sending"` is a progress note, not a lock.
@@ -511,7 +527,10 @@ pushed, refusal, pushRefusal, released, finishedAt }`). The totals are persisted
 at the end of EVERY tick that works on the event, so an announcement that took
 four ticks still reports what all four did.
 
-Two of those fields exist for a reason worth stating. `skipped` counts
+Three of those fields exist for a reason worth stating. `failed` counts
+recipients the announcement GAVE UP on, once each, at the moment the attempt
+budget runs out; the failed attempts before it are retries, and counting them
+made one unreachable address read as four unreached members. `skipped` counts
 recipients the job CLAIMED and consciously did not reach and is incremented;
 `audienceSkipped` counts the rows dropped when the audience was resolved (a
 members-only guest row, an account that is gone) and is a SNAPSHOT, because the

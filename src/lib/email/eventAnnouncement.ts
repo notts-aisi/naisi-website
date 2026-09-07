@@ -94,8 +94,10 @@ export const MAX_ANNOUNCEMENT_SENDS = 200;
  * There is no message ceiling on the job path at all, and that is the whole
  * point of the move: the job's unit of work is one recipient under one marker,
  * it checks the tick's wall clock between units, and it resumes on the next
- * tick with everything already sent stamped. A list of any size therefore goes
- * out; it simply takes more ticks.
+ * tick, reading its markers in bulk so a settled recipient costs a set lookup
+ * rather than three round trips. A list up to THIS ceiling therefore goes out,
+ * over as many ticks as it takes. Not a list of any size: the ceiling below is
+ * the bound, and it is on the READ rather than on the sending.
  *
  * What survives is a sanity ceiling on the junction READ, because that read is
  * NOT paged: `findRecipientsForChannel` fetches every confirmed-and-subscribed

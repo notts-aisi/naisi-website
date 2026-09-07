@@ -65,6 +65,15 @@ export type EventAnnouncementResultDoc = {
    */
   audienceSkipped: number;
   suppressed: number;
+  /**
+   * Recipients this announcement GAVE UP on: the attempt budget spent with no
+   * send, which is the point at which a person really is not going to be told.
+   *
+   * ONE PER RECIPIENT, counted at that transition only. The failed attempts in
+   * between are retries, and counting each of them made one permanently
+   * unreachable address read as four unreached members on the manage screen.
+   * Each attempt is still on its own marker and in the tick's log.
+   */
   failed: number;
   pushed: number;
   refusal: string | null;

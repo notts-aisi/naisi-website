@@ -76,10 +76,13 @@ import "server-only";
  * `hasMore: true`, leaving the event `sending` for the next tick to resume.
  *
  * THE REQUEST PATH'S MESSAGE CEILING DOES NOT APPLY HERE. That is the whole
- * point of the move. What survives is a sanity ceiling on each of the two
- * READS, because neither is paged: `MAX_QUEUED_ANNOUNCEMENT_ROWS` (5000) on
- * the junction and {@link MAX_QUEUED_PUSH_ROWS} (5000) on the devices. Both
- * refuse whole rather than truncating.
+ * point of the move: a list is delivered over as many ticks as it takes rather
+ * than inside one request. What bounds it instead is a sanity ceiling on each
+ * of the two READS, because neither is paged:
+ * `MAX_QUEUED_ANNOUNCEMENT_ROWS` (5000) on the junction and
+ * {@link MAX_QUEUED_PUSH_ROWS} (5000) on the devices, both refused whole
+ * rather than truncated. So "any size" is not the claim and never was the
+ * right one; up to those ceilings is.
  *
  * BOTH READS ARE MADE AGAIN ON EVERY TICK that touches an event, which is the
  * price of holding no cursor and is paid deliberately: a stored copy of the
@@ -91,6 +94,31 @@ import "server-only";
  * until the email leg has finished everything it is going to do this tick, so
  * a tick spent on email does not also pay for a 5000-row read it will not
  * use. PAGING THE JUNCTION READ is the fix if a list ever nears its ceiling.
+ *
+ * ## RESUMING WITHOUT RE-CLAIMING, WHICH IS WHAT MAKES A LONG LIST FINISH
+ *
+ * Every tick starts at the top of the audience, so on a long list most of what
+ * it walks is already done. Asking `claim()` about each of those is not free:
+ * a settled marker costs a failed `.create()` AND a `runTransaction` read
+ * inside the recovery path, roughly three round trips, and it advances no
+ * units. Left like that the run STALLS: past somewhere around 900 settled
+ * recipients a tick spends its whole 28s budget re-checking the same prefix
+ * and never reaches the tail, and the re-arm chain repeats it rather than
+ * rescuing it. `MAX_TICK_DEPTH` bounds that chain; it does not fix it.
+ *
+ * So each tick BULK-READS this event's markers first, in one equality-only
+ * query, and skips the recipients whose marker is already settled (sent,
+ * skipped, or given up on) without asking `claim()` about them at all. A
+ * marker that is CLAIMED BUT UNSTAMPED is deliberately not in that set: those
+ * still go through `claim()`, which is where the in-flight rule and the
+ * re-claim window live.
+ *
+ * WHAT IT COSTS, said plainly: one document read per marker per tick. At the
+ * 5000-row ceiling, drained 200 units at a time, that is 25 ticks over up to
+ * 10000 markers, on the order of a hundred thousand document reads for one
+ * announcement. That is the price of resuming with no cursor, and A CURSOR IS
+ * THE FIX if it ever matters. What the prefilter buys is that the list
+ * actually finishes, which no amount of re-arming did before it.
  *
  * ## STALE IS MEASURED AGAINST THE EVENT, NOT AGAINST THE QUEUE
  *
@@ -153,12 +181,15 @@ import { wantsPushFor } from "@/lib/push/preferences";
 import { rowPushOwners } from "@/lib/push/rowAudience";
 import { sendPushToUid } from "@/lib/push/send";
 import {
+  SCHEDULER_MARKERS_COLLECTION,
   claim,
   errorText,
   eventAnnouncementMarker,
+  normalizeSchedulerMarker,
   stampError,
   stampSentOrSettle,
   stampSkipped,
+  type SchedulerMarkerFamily,
 } from "@/lib/scheduler/markers";
 import type { JobContext, JobRegistration, JobResult } from "../registry";
 
@@ -216,6 +247,25 @@ export const EVENT_SCAN_CAP = 20;
  * for today.
  */
 export const MAX_QUEUED_PUSH_ROWS = 5000;
+
+/**
+ * The family this job's markers carry, as the stored `family` field spells it.
+ *
+ * Typed against `SchedulerMarkerFamily` rather than left a bare string, so
+ * renaming the family in `schedulerMarkers.ts` fails here rather than quietly
+ * turning the prefilter below into a query that matches nothing.
+ */
+const EVENT_ANNOUNCEMENT_FAMILY: SchedulerMarkerFamily = "evannounce";
+
+/**
+ * How many of one event's markers a tick will read to build its skip set.
+ *
+ * Comfortably both legs at both ceilings (5000 recipients plus 5000 push
+ * accounts). Over it the set is a TRUNCATED one, which is safe rather than
+ * wrong: the recipients it does not name simply go through `claim()` the slow
+ * way, exactly as they did before this prefilter existed.
+ */
+export const MAX_MARKER_SCAN = 10_000;
 
 /** The skip reason on a recipient whose only address the platform may not use. */
 export const SUPPRESSED_REASON = "suppressed";
@@ -513,6 +563,74 @@ function outcomeOfRefusedClaim(reason: string): UnitOutcome {
 }
 
 /**
+ * The units of this event that are FINISHED, as `{leg}:{recipientKey}`.
+ *
+ * One query, two equality filters and no ordering, which needs no declared
+ * index: `family` and `eventId` are both stored as fields on every marker this
+ * job writes (the builder's contract is that every component of an id is also
+ * a field), and Firestore merges the automatic single-field indexes for an
+ * equality-only query. `tests/firestore-indexes.test.mjs` is the guard on that
+ * claim.
+ *
+ * SETTLED IS THE SAME THREE FIELDS `decideMarkerClaim` REFUSES ON, and it has
+ * to be: a recipient skipped here who would NOT have been refused by `claim()`
+ * is a recipient who never gets their message. `sentAt`, `failedAt` and
+ * `skippedReason`, read through the same normaliser the claim path uses, so
+ * the two answers cannot drift. A marker that is claimed but unstamped is
+ * deliberately absent from the set: the in-flight rule and the re-claim window
+ * are `claim()`'s to apply, and skipping those would be skipping the retry.
+ *
+ * NEVER THROWS. A read that fails costs speed and nothing else: every
+ * recipient then goes through `claim()`, which is where this job was before
+ * the prefilter.
+ */
+async function settledUnits(
+  db: Firestore,
+  ctx: JobContext,
+  eventId: string,
+): Promise<Set<string>> {
+  const settled = new Set<string>();
+  let snap;
+  try {
+    snap = await db
+      .collection(SCHEDULER_MARKERS_COLLECTION)
+      .where("family", "==", EVENT_ANNOUNCEMENT_FAMILY)
+      .where("eventId", "==", eventId)
+      .limit(MAX_MARKER_SCAN)
+      .get();
+  } catch (err) {
+    ctx.log("could not read this event's markers, so every recipient is claimed", {
+      eventId,
+      error: errorText(err, 200),
+    });
+    return settled;
+  }
+  for (const doc of snap.docs) {
+    const marker = normalizeSchedulerMarker(doc.id, doc.data() as Record<string, unknown>);
+    if (
+      marker.sentAt === null &&
+      marker.failedAt === null &&
+      marker.skippedReason === null
+    ) {
+      continue;
+    }
+    const leg = marker.components.leg;
+    const recipientKey = marker.components.recipientKey;
+    // A marker missing either component cannot be matched to a recipient, so
+    // it is left out and that recipient takes the slow path. Nothing here
+    // guesses at an id.
+    if (leg && recipientKey) settled.add(`${leg}:${recipientKey}`);
+  }
+  if (snap.docs.length >= MAX_MARKER_SCAN) {
+    ctx.log("this event has more markers than one tick reads, so the skip set is partial", {
+      eventId,
+      read: snap.docs.length,
+    });
+  }
+  return settled;
+}
+
+/**
  * One event's announcement, as far as this tick's budget allows.
  *
  * NOTHING IN HERE THROWS for a per-recipient failure. An audience read that
@@ -543,16 +661,21 @@ async function announceOneEvent(
     // worth sending, so handing `announcedAt` back would only invite a
     // republish to queue the same refusal again. `released: false` is what the
     // editor reads to tell an approver that republishing will not help.
-    await settleAnnouncement(db, ctx, event.id, {
+    const refused = await settleAnnouncement(db, ctx, event.id, {
       state: "refused",
       refusal: stale,
       release: false,
     });
-    summary.refused += 1;
-    ctx.log("a queued announcement was refused as stale", {
-      eventId: event.id,
-      startAt: event.startAt?.toISOString() ?? null,
-    });
+    // Only what THIS tick wrote. An overlapping tick may have settled the
+    // event between the scan and here, and reporting its verdict as ours would
+    // put a refusal on the receipt that this run did not make.
+    if (refused.written) {
+      summary.refused += 1;
+      ctx.log("a queued announcement was refused as stale", {
+        eventId: event.id,
+        startAt: event.startAt?.toISOString() ?? null,
+      });
+    }
     return { hasMore: false, units };
   }
   if (event.startAt === null && announcementStaleAnchor(event) === null) {
@@ -580,6 +703,11 @@ async function announceOneEvent(
 
   const input = announcementInputFor(event);
 
+  // WHAT IS ALREADY DONE, in one read, before either audience is walked. See
+  // the header: without this the walk re-asks `claim()` about every settled
+  // recipient and a long list stops making progress altogether.
+  const settled = await settledUnits(db, ctx, event.id);
+
   // THE EMAIL AUDIENCE. Re-read on every tick that touches this event: up to
   // MAX_QUEUED_ANNOUNCEMENT_ROWS junction rows plus one `getAll` over the user
   // documents behind them. That is the cost of holding no cursor, and it is
@@ -602,6 +730,11 @@ async function announceOneEvent(
 
   let stopped = false;
   for (const recipient of audience.recipients) {
+    const recipientKey = announcementRecipientKey(recipient);
+    // BEFORE the budget check, because skipping a finished recipient is an
+    // in-memory set lookup: it costs no round trip, so it must not be able to
+    // consume the tick that the tail of the list is waiting for.
+    if (settled.has(`email:${recipientKey}`)) continue;
     if (ctx.budget.expired() || units >= maxUnits) {
       stopped = true;
       break;
@@ -609,6 +742,7 @@ async function announceOneEvent(
     const outcome = await announceToRecipient(db, ctx, {
       input,
       recipient,
+      recipientKey,
       deltas,
       summary,
     });
@@ -645,6 +779,7 @@ async function announceOneEvent(
   }
 
   for (const uid of owners.uids) {
+    if (settled.has(`push:u${uid}`)) continue;
     if (ctx.budget.expired() || units >= maxUnits) {
       stopped = true;
       break;
@@ -827,19 +962,17 @@ async function announceToRecipient(
   args: {
     input: EventAnnouncementInput;
     recipient: AnnouncementRecipient;
+    /** Minted by the caller, which needs it to consult the skip set anyway. */
+    recipientKey: string;
     deltas: TickDeltas;
     summary: EventAnnouncementsRunSummary;
   },
 ): Promise<UnitOutcome> {
-  const { input, recipient, deltas, summary } = args;
-  const who = recipient.uid || announcementRecipientKey(recipient);
+  const { input, recipient, recipientKey, deltas, summary } = args;
+  const who = recipient.uid || recipientKey;
 
   try {
-    const marker = eventAnnouncementMarker(
-      input.eventId,
-      "email",
-      announcementRecipientKey(recipient),
-    );
+    const marker = eventAnnouncementMarker(input.eventId, "email", recipientKey);
     const claimed = await claim(db, marker, {
       job: EVENT_ANNOUNCEMENTS_JOB_ID,
       policy: ctx.policy,
@@ -880,7 +1013,11 @@ async function announceToRecipient(
     const counts = await sendAnnouncementToRecipient(input, recipient, suppressedSet);
     deltas.sent += counts.sent;
     deltas.suppressed += counts.suppressed;
-    deltas.failed += counts.failed;
+    // NOT `deltas.failed`. A send that failed is about to be retried, and this
+    // counter is what a person reads off the manage screen: counting every
+    // attempt made one unreachable address look like four unreached members.
+    // The failure is on the marker, in the tick log and in `summary.failures`;
+    // the count moves once, at the give-up above.
 
     if (counts.sent === 0 && counts.failed === 0) {
       // Every address suppressed. Seen, claimed, and consciously not sent: the

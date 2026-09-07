@@ -389,6 +389,10 @@ function seedWorld({ event = {}, users, pushSubscriptions, channelRows } = {}) {
   globalThis.__queryHook = null;
   globalThis.__txGetHook = null;
   globalThis.__setHook = null;
+  globalThis.__creates = [];
+  globalThis.__createHook = (path, id) => {
+    if (path === MARKERS) globalThis.__creates.push(id);
+  };
   globalThis.__channelAsked = undefined;
   globalThis.__channelRows = channelRows ?? [
     { email: "member@e2e.invalid", audience: "user", audienceId: "member-1" },
@@ -750,6 +754,91 @@ describe("a run that cannot finish resumes without repeating itself", () => {
     );
   });
 
+  test("a settled recipient costs a set lookup, not a claim, so a long list finishes", async () => {
+    // THE STALL THIS CLOSES. Every tick starts at the top of the audience, and
+    // asking `claim()` about an already-settled recipient costs a failed
+    // `.create()` plus a transaction read and advances nothing. Past roughly
+    // 900 settled recipients that is the whole 28s budget, so the tail is
+    // never reached however many times the tick re-arms. The bulk marker read
+    // turns each of those into an in-memory set lookup.
+    const rows = Array.from({ length: 12 }, (_, i) => ({
+      email: `g${i}@e2e.invalid`,
+      audience: "guest",
+      audienceId: `g${i}@e2e.invalid`,
+    }));
+    const db = seedWorld({ channelRows: rows, users: {}, pushSubscriptions: {} });
+
+    const first = await runEventAnnouncements(context({ maxPerTick: 4 }).ctx);
+    assert.equal(globalThis.__sent.length, 4);
+    assert.equal(first.result.hasMore, true);
+    assert.equal(globalThis.__creates.length, 4, "one claim per unit, and no more");
+    const settledIds = [...globalThis.__creates];
+
+    globalThis.__creates = [];
+    const second = await runEventAnnouncements(context({ maxPerTick: 4 }).ctx);
+    assert.equal(globalThis.__sent.length, 8, "the second tick reached the NEXT four");
+    assert.equal(second.result.hasMore, true);
+    assert.equal(
+      globalThis.__creates.length,
+      4,
+      "a tick that re-claimed the settled prefix would show eight attempts here",
+    );
+    for (const id of settledIds) {
+      assert.ok(
+        !globalThis.__creates.includes(id),
+        `${id} is settled and was asked about again`,
+      );
+    }
+
+    globalThis.__creates = [];
+    const third = await runEventAnnouncements(context({ maxPerTick: 4 }).ctx);
+    assert.equal(globalThis.__sent.length, 12, "the tail is reached, which is the whole point");
+    assert.equal(third.result.hasMore, false);
+    assert.equal(globalThis.__creates.length, 4);
+    assert.equal(db.read("events", EVENT_ID).announcementState, "done");
+    assert.equal(db.read("events", EVENT_ID).announcementResult.sent, 12);
+  });
+
+  test("the skip set is read with one equality-only query on this event's markers", async () => {
+    // The shape matters as much as the read: two equality filters and no
+    // ordering is what `tests/firestore-indexes.test.mjs` resolves to
+    // EQUALITY_ONLY_MERGES, so this costs no declared index.
+    seedWorld();
+    const queries = [];
+    globalThis.__queryHook = (path, filters) => queries.push([path, filters]);
+    await runEventAnnouncements(context().ctx);
+    const markerQueries = queries.filter(([path]) => path === MARKERS);
+    assert.equal(markerQueries.length, 1, "once per event per tick, not once per recipient");
+    assert.deepEqual(markerQueries[0][1], [
+      ["family", "==", "evannounce"],
+      ["eventId", "==", EVENT_ID],
+    ]);
+  });
+
+  test("a claimed but UNSTAMPED marker is not in the skip set, or the retry never happens", async () => {
+    // The line the prefilter must not cross. In flight and reclaimable are
+    // `claim()`'s to decide, and a recipient skipped here on either would be a
+    // recipient nobody ever comes back to.
+    const db = seedWorld();
+    await db
+      .collection(MARKERS)
+      .doc(emailMarkerId(MEMBER))
+      .set({
+        job: "event-announcements",
+        family: "evannounce",
+        eventId: EVENT_ID,
+        leg: "email",
+        recipientKey: announcementRecipientKey(MEMBER),
+        claimedAt: new Date(Date.now() - 60 * 60_000),
+        attempts: 1,
+      });
+    await runEventAnnouncements(context().ctx);
+    assert.ok(
+      globalThis.__sent.some((m) => m.to === "member@e2e.invalid"),
+      "the stale claim was re-claimed and the message went, which is the recovery rule",
+    );
+  });
+
   test("the finish transition re-reads, so a tick cannot finish an event another already did", async () => {
     // The other half of SHOULD-FIX 3. The hook stands in for an overlapping
     // tick committing between this one's last send and its settle.
@@ -870,10 +959,12 @@ describe("one bad recipient costs one recipient, and is not abandoned", () => {
     assert.ok(db.read(MARKERS, emailMarkerId(MEMBER)).failedAt, "and surfaced under Stuck sends");
     assert.equal(run.summary.failures.length, 1);
 
-    // A LATER tick counts it again for nobody: the marker now reads `failed`,
-    // which is somebody else's business.
+    // A LATER tick counts it again for nobody, and no longer even asks: the
+    // marker reads `failed`, so the skip set holds it.
+    globalThis.__creates = [];
     await runEventAnnouncements(context().ctx);
     assert.equal(db.read("events", EVENT_ID).announcementResult.failed, 1);
+    assert.deepEqual(globalThis.__creates, []);
   });
 
   test("a send that goes out but cannot be stamped is settled, never re-sent", async (t) => {
@@ -908,6 +999,40 @@ describe("one bad recipient costs one recipient, and is not abandoned", () => {
       [],
       "the re-claim rule refuses a settled marker, which is the whole point of settling it",
     );
+  });
+
+  test("one unreachable recipient is counted as ONE failure, not one per attempt", async (t) => {
+    // `failed` is what a person reads off the manage screen. Counting each
+    // retry made one bad address look like four unreached members: three
+    // attempts plus the give-up. The attempts are still on the marker and in
+    // the tick log; the counter moves once, at the give-up.
+    t.mock.method(console, "error", () => {});
+    const db = seedWorld();
+    globalThis.__sendHook = (opts) => {
+      if (opts.to === "member@e2e.invalid") throw new Error("relay refused");
+    };
+
+    // Three attempts and then the give-up, which is `maxAttempts`. Each tick
+    // needs the claim aged past the re-claim window to get its turn.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const run = await runEventAnnouncements(context().ctx);
+      if (attempt < 3) {
+        assert.equal(run.result.hasMore, true, `attempt ${attempt + 1} is still owed`);
+        await ageMarker(db, emailMarkerId(MEMBER), 60);
+      } else {
+        assert.equal(run.result.hasMore, false, "a marker out of attempts is settled");
+      }
+    }
+
+    const stored = db.read("events", EVENT_ID);
+    assert.equal(stored.announcementState, "done");
+    assert.equal(
+      stored.announcementResult.failed,
+      1,
+      "four attempts against one address is one member who was not reached",
+    );
+    assert.ok(db.read(MARKERS, emailMarkerId(MEMBER)).failedAt);
+    assert.equal(stored.announcementResult.sent, 1, "the guest was mailed on the first tick");
   });
 
   test("a suppressed address is settled, not retried", async () => {
