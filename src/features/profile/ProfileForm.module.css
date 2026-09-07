@@ -116,6 +116,9 @@
   grid-template-columns: minmax(10rem, 2.2fr) minmax(7rem, 1fr) minmax(8rem, 1.1fr);
   column-gap: var(--space-5);
   align-items: start;
+  /* The grid is a size container so the push note can move on the GRID'S
+     width rather than the window's (see the @container block below). */
+  container-type: inline-size;
 }
 
 .notifHead,
@@ -232,6 +235,25 @@
   color: var(--color-text-subtle);
 }
 
+/* The push note's second home: under the row description, in the label
+   column. Hidden unless the @container block below turns it on, so on a wide
+   grid there is one copy of the sentence and it sits in the Push cell. */
+.notifRowPushNote {
+  display: none;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--color-text-subtle);
+}
+
+.notifRowPushNoteLabel {
+  margin-right: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
 /* The locked row. It has to read as locked without relying on colour: the
    word "Locked" beside the row title, "Always on" beside each cell, the
    disabled controls themselves, and a dashed edge rather than a tint alone. */
@@ -265,6 +287,33 @@
   margin: var(--space-2) 0 0;
   font-size: var(--text-sm);
   color: var(--color-danger);
+}
+
+/* === A narrow grid: the push note moves under the row description ===
+   The three-column layout fits everywhere it is drawn (the track minimums are
+   sized for the 561px card interior at a 961px window, above), but fitting is
+   not reading: in that band the Push track is 133 to 155px, and a 12px
+   sentence of 170 characters wraps there into eight lines of two or three
+   words, with the row growing to 240px to hold it. So when the GRID is narrow
+   the note leaves the Push cell, which keeps only its switch, and is drawn
+   under the row description in the label column, which is twice as wide.
+
+   A CONTAINER query, not a media query, because the variable is the grid's
+   width and not the window's. The sidebar collapses per user, so a 961px
+   window can hold a 561px grid or an 817px one, and a media query would move
+   the note in the wide case for nothing. 48rem is the same value as --bp-md,
+   chosen so the codebase keeps its four numbers: the grid is 48rem wide at a
+   1168px window with the sidebar open, and 878px at 1280px, which stays on
+   the wide layout. The stacked layout below 60rem puts the note back in the
+   Push cell; its block comes after this one, so its rule wins there. */
+@container (max-width: 48rem) {
+  .notifCellNote {
+    display: none;
+  }
+
+  .notifRowPushNote {
+    display: block;
+  }
 }
 
 /* === Mobile: the grid stacks into one card per row === */
@@ -321,6 +370,17 @@
 
   .notifCellName {
     display: block;
+  }
+
+  /* On a stacked card each cell is full width, so the note belongs with its
+     switch again. The container rule above also matches a phone (a 390px
+     card is a narrow grid); this block is later in the file, so it wins. */
+  .notifCellNote {
+    display: block;
+  }
+
+  .notifRowPushNote {
+    display: none;
   }
 
   /* The touch floor, on the controls a member actually presses. The master is

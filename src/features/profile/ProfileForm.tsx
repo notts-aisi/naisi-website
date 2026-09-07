@@ -736,6 +736,14 @@ export default function ProfileForm() {
                     <span className={styles.notifRowDescription}>
                       {CATEGORY_DESCRIPTIONS[row]}
                     </span>
+                    {/* The push note's second home, drawn by CSS only when the
+                        grid is narrow (see the @container block in the
+                        stylesheet); the copy in the Push cell is hidden then,
+                        so one sentence is on screen at a time. */}
+                    <span className={styles.notifRowPushNote}>
+                      <span className={styles.notifRowPushNoteLabel}>Push</span>
+                      {PUSH_DESCRIPTIONS[row]}
+                    </span>
                   </div>
                   <div className={styles.notifCell}>
                     <span className={styles.notifCellName}>Email</span>
