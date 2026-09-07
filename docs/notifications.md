@@ -193,7 +193,7 @@ is that helper inverted, for the loops that hold a raw document and are asking
 | Row | Email | Push |
 | --- | --- | --- |
 | `newsletter` | `POST /api/newsletter/[id]/send`, the only sender that addresses this row | the same send, alongside its email loop |
-| `events` | the new-event announcement, on publish | the same announcement |
+| `events` | the new-event announcement, on publish, inline or queued to the `event-announcements` job | the same announcement |
 | `courses` | the cohort announcement composer, the weekly session nudge, the run catch-up nudge, the admissions deadline reminder job, the admissions stage-release job | an admissions decision, an allocation publish, the stage release |
 | `tasks` | the five `/api/tasks/[id]/*` senders, the four worksheet circulation messages, the worksheet due-soon reminder | a mirror beside each of those |
 
@@ -419,26 +419,95 @@ concurrently.
 - An event with `visibility: "members"` drops GUEST rows (an address with no
   account) and counts them. The push audience is accounts by construction.
 
-**Once per event, under a claim.** `announcedAt` is stamped on the event document
-inside the transaction that publishes it, so two racing publishes cannot both
-come out holding the announcement, and a later republish is not news twice. The
-claim is made before the send: an announcement that fails after the stamp is not
-retried, which is the better failure, because the other way round mails the whole
-list twice.
+**The two paths, and the switch that chooses between them.** The send used to
+run only inside the publish request, against App Hosting's 60s timeout, which
+is where its three ceilings come from and what this file called "the known
+limit". It now has a second path, and `POST /api/events/[id]/publish` reads the
+`event-announcements` scheduler job's switch ONCE, before its transaction, to
+decide which one this publish takes.
+
+| | Inline (switch off) | Queued (switch on) |
+| --- | --- | --- |
+| Where the send runs | in the publish request | on a scheduler tick |
+| Ceilings | 500 junction rows, 200 messages, 500 device rows | 5000 junction rows, 5000 device rows, no message ceiling |
+| Exactly once | the `announcedAt` claim | the claim, plus one marker per recipient per leg |
+| What the response says | counts, or a refusal | `announcementQueued: true` |
+| Where the outcome is read | the publish response | the event document, live |
+
+**Switch off is the shipped default, and it is prod's state.** The job
+registers with `enabledByDefault: false`, so with nothing stored the route
+behaves exactly as it always has and nothing changes for anybody. Only switch it
+on where the scheduler tick is actually armed: dev has a `SCHEDULER_SECRET` and
+a caller, prod has neither, and turning it on there would queue announcements
+nobody ever delivers. The switch is on the Site status page, under Jobs, as
+"Queued event announcements".
+
+**Once per event, under a claim, on both paths.** `announcedAt` is stamped on
+the event document inside the transaction that publishes it, so two racing
+publishes cannot both come out holding the announcement, and a later republish
+is not news twice. On the queued path that same transaction also writes
+`announcementState: "queued"` and `announcementQueuedAt`, so the hand-off cannot
+survive a claim that did not. On the inline path the claim is made before the
+send: an announcement that fails after the stamp is not retried, which is the
+better failure, because the other way round mails the whole list twice.
+
+**Exactly once per recipient, on the queued path, through markers.** One
+`schedulerMarkers` document per recipient per leg,
+`evannounce__{eventId}__{email|push}__{recipientKey}`, claimed before the send
+and stamped after it. That is what makes the job resumable with no cursor of its
+own: a tick that runs out of budget half way down the list leaves what it sent
+stamped, and the next tick's claim on those fails with ALREADY_EXISTS. Two ticks
+overlapping (which the re-arm makes ordinary) is harmless for the same reason,
+which is why nothing claims the EVENT: `"sending"` is a progress note, not a
+lock. The recipient key is `u{uid}` for a member and `g{hash}` for a guest row,
+never an address: a marker is kept for 180 days in a collection whose whole
+purpose is to say "this was sent", which is no place to accumulate a mailing
+list.
+
+**The state fields, server-written only.** `announcementState` (`queued` |
+`sending` | `done` | `refused`, absent on an event announced inline or never
+announced), `announcementQueuedAt`, `announcementStartedAt`, and
+`announcementResult` (`{ sent, skipped, suppressed, failed, pushed, refusal,
+pushRefusal, finishedAt }`). The totals are persisted at the end of EVERY tick
+that works on the event, so an announcement that took four ticks still reports
+what all four did. `firestore.rules` pins all four against client writes, which
+is a sharper rule than `announcedAt` gets: the job scans for `queued` and
+`sending`, so a drafter who could write that state onto their own unpublished
+draft would have the platform announce it to everybody with no approver
+involved.
 
 **A pure refusal hands the claim back.** If the announcement refuses
 deterministically before dispatching anything and nothing was sent, failed or
-pushed, `announcedAt` is cleared and the response says so, because otherwise the
-claim is spent and no supported action gets the announcement out. A throw is not
-released: the dispatcher can reject after other workers have delivered.
+pushed, `announcedAt` is cleared and the fact is reported, because otherwise the
+claim is spent and no supported action gets the announcement out. The queued
+path applies the same rule, judged on the ACCUMULATED totals: an event that
+mailed forty people on Monday and hit a refusal on Tuesday keeps its claim. A
+throw is not released on either path: the dispatcher can reject after other
+workers have delivered.
 
-**The known limit: it runs inside the publish request**, against App Hosting's
-60s timeout, so it carries three ceilings. 500 junction rows read, 200 messages
-sent (counted on addresses, because a member with two verified addresses is two
-sends) and 500 device rows. A list that outgrows them needs the send taken off
-the request path, which is a scheduler job and a different feature; raising the
-numbers means redoing the wall-clock arithmetic in `src/lib/email/dispatch.ts`.
-Publishing itself never fails because the announcement did.
+**The stale rule is about the EVENT, not the queue.** A queued announcement that
+is a day late is still worth sending, because an event page that went live stays
+news until the event happens; so there is no lateness bound on the queue at all.
+What is refused is an announcement for an event whose `startAt` has passed, and
+that refusal RELEASES NOTHING, because there is no later moment at which
+announcing a past event becomes right. The job's `maxLateHours` (72) is the
+fallback for an event with no start time at all, which nothing else could rule
+on.
+
+**What the publisher sees.** Inline, the publish response carries the counts or
+the refusal and `EventEditor` renders them. Queued, the response can only say
+"Published. The announcement is queued and goes out with the next scheduler run,
+usually within fifteen minutes", and everything after that is read off the event
+document by the listener the editor already holds: queued, in progress with the
+running totals, announced with the counts, or refused with the reason and
+whether the claim came back. The Publish confirm says which path it will take,
+from a flag the manage page reads server-side (`config/scheduler` is closed to
+every client).
+
+Publishing itself never fails because the announcement did, on either path.
+Raising the inline path's numbers means redoing the wall-clock arithmetic in
+`src/lib/email/dispatch.ts`; the queued path's two ceilings bound unpaged READS
+rather than sends, and paging either is the fix if one is ever approached.
 
 ## The profile grid
 

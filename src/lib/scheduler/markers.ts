@@ -42,6 +42,7 @@ export {
   SCHEDULER_MARKER_RETENTION_DAYS,
   breakReturnMarker,
   decideMarkerClaim,
+  eventAnnouncementMarker,
   isStaleWork,
   markerFamilyOf,
   normalizeSchedulerMarker,
@@ -53,6 +54,7 @@ export {
   worksheetReminderMarker,
 } from "@/lib/firestore/schedulerMarkers";
 export type {
+  EventAnnouncementLeg,
   MarkerDecision,
   MarkerPolicy,
   SchedulerMarker,

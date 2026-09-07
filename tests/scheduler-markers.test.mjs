@@ -121,7 +121,39 @@ const STUBS = new Map([
     "export const mirrorCourseDecisionToPush = async () => {};",
   ],
   ["@/lib/firebase/admin", "export const getAdminDb = () => null;"],
-  ["@/lib/firestore/suppression", "export const isSuppressed = async () => false;"],
+  [
+    "@/lib/firestore/suppression",
+    "export const isSuppressed = async () => false;\n" +
+      // The announcement job asks about one recipient's whole address list
+      // in one read, so the plural door is in the graph too.
+      "export const filterSuppressed = async (db, addrs) => ({ allowed: addrs, suppressed: [] });",
+  ],
+  // The queued event announcement's doors. Nothing here runs that job either,
+  // but the registry imports every job by value, so its email sender, its
+  // device enumeration and its push transport are all in this suite's graph,
+  // and `push/store.ts` behind the last of them imports `Timestamp` as a
+  // value, which is a link error rather than a runtime one.
+  [
+    "@/lib/email/eventAnnouncement",
+    "export const MAX_QUEUED_ANNOUNCEMENT_ROWS = 5000;\n" +
+      "export const announcementRecipientKey = (r) => `u${r.uid}`;\n" +
+      "export const resolveAnnouncementAudience = async () => ({\n" +
+      "  recipients: [], skipped: 0, refusal: null,\n" +
+      "});\n" +
+      "export const sendAnnouncementToRecipient = async () => ({\n" +
+      "  sent: 0, suppressed: 0, failed: 0,\n" +
+      "});",
+  ],
+  [
+    "@/lib/push/rowAudience",
+    "export const rowPushOwners = async () => ({ uids: [], refusal: null });",
+  ],
+  [
+    "@/lib/push/send",
+    "export const sendPushToUid = async () => ({\n" +
+      "  sent: 0, pruned: 0, deferred: 0, failed: 0, retried: 0,\n" +
+      "});",
+  ],
 ]);
 
 const { loadTs } = createLoader({ stubs: STUBS });

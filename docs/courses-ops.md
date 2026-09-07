@@ -173,10 +173,19 @@ a later PR is never silently off on an environment nobody has touched the panel
 on.
 
 The exception is declared in the registry as `enabledByDefault: false` and is
-set on three jobs: `admissions-deadline-reminders`, `admissions-stage-release`
-and `worksheet-due-reminders`. A job that emails a live audience must not arm
-itself the moment it deploys, so each ships dark and the owner switches it on
-from the panel, per environment. The panel says so on the job's row.
+set on four jobs: `admissions-deadline-reminders`, `admissions-stage-release`,
+`worksheet-due-reminders` and `event-announcements`. A job that emails a live
+audience must not arm itself the moment it deploys, so each ships dark and the
+owner switches it on from the panel, per environment. The panel says so on the
+job's row.
+
+`event-announcements` carries one extra condition, and it is the only job whose
+switch changes what a REQUEST does: `POST /api/events/[id]/publish` reads it to
+decide whether to send the new-event announcement inline or queue it (see
+docs/notifications.md). So it may only be armed where the tick is actually
+armed. On a backend with a `SCHEDULER_SECRET` and nothing calling it, turning
+this on would take every publish off the inline path and queue announcements
+nobody ever delivers.
 `courses-unmarked-registers` is NOT on that list (it raises tasks rather than
 mail), so it must be switched off on the panel before a deploy reaches an
 environment with real facilitators and re-armed only once dev has shown it
@@ -232,6 +241,7 @@ Marker families and where they live:
 | `unmarked__` | `{groupId}__{sessionKey}` | unmarked-register follow-ups |
 | `breakret__` | `{runId}__{groupId}__{slotStartKey}` | back-after-the-break notices |
 | `wsremind__` | `{circulationId}__{uid}__{dueKey}` | worksheet due-soon reminders (not a courses job, but it shares this collection, so an operator sweeping markers meets it here) |
+| `evannounce__` | `{eventId}__{email\|push}__{recipientKey}` | queued new-event announcements (not a courses job either; one marker per recipient per leg, and `recipientKey` is `u{uid}` for a member or `g{hash}` for a guest row, never an address) |
 
 House rule: **scheduler-tick markers live in `schedulerMarkers`; human-triggered
 course send markers stay in `courseNudges`.** The facilitator's attendance push

@@ -180,6 +180,7 @@ const TRACKED = [
   "sendCourseGroupEmail",
   "sendCourseRunEmail",
   "sendEventAnnouncement",
+  "sendAnnouncementToRecipient",
   "sendPushToRowAudience",
 ];
 
@@ -593,8 +594,21 @@ const REGISTRY = {
   ),
   "src/app/api/events/[id]/publish/route.ts#sendEventAnnouncement": G(
     "events",
-    "Publishing an event, which is the one moment the events row sends anything. Stamped `announcedAt` under the same claim that publishes, so it happens once.",
+    "Publishing an event, which is the one moment the events row sends anything. Stamped `announcedAt` under the same claim that publishes, so it happens once. This is the INLINE path, taken while the `event-announcements` job is switched off.",
     "src/lib/email/eventAnnouncement.ts",
+  ),
+  "src/lib/email/eventAnnouncement.ts#sendAnnouncementToRecipient": G(
+    "events",
+    "One recipient's copy of the announcement, factored out so the inline path and the queued job send the same message. The row is consulted upstream of it, in the audience resolver in this same file, which is where `addressesForSend` applies the events email cell.",
+  ),
+  "src/lib/scheduler/jobs/eventAnnouncements.ts#sendAnnouncementToRecipient": G(
+    "events",
+    "The queued announcement's email leg: the same per-recipient sender the publish request calls, one recipient per marker so the run survives a tick boundary. The audience it walks came from `resolveAnnouncementAudience`, which applied the events email cell.",
+    "src/lib/email/eventAnnouncement.ts",
+  ),
+  "src/lib/scheduler/jobs/eventAnnouncements.ts#sendPushToUid": G(
+    "events",
+    "The queued announcement's push leg. It cannot reuse `sendPushToRowAudience`, whose dispatch loop is request-shaped, so it enumerates the owners through the shared `rowPushOwners` and reads the events push cell itself, per account, with `wantsPushFor`.",
   ),
 
   // -- The notice lane -----------------------------------------------------

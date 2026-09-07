@@ -110,6 +110,89 @@ export type RowPushResult = {
   refusal: string | null;
 };
 
+export type RowPushOwners = {
+  /** Distinct accounts with at least one registered device. */
+  uids: string[];
+  /** Why the enumeration answered nobody. Null for the two silences by design. */
+  refusal: string | null;
+};
+
+/**
+ * THE ENUMERATION ON ITS OWN: every account with at least one registered
+ * device, deduped, with no send attached.
+ *
+ * Split out of {@link sendPushToRowAudience} when the event announcement grew a
+ * SECOND caller with a different shape. That helper's loop is request-shaped:
+ * it dispatches every owner inside one bounded pass and counts what got
+ * through. The `event-announcements` scheduler job cannot use it, because its
+ * unit of work is one owner under one marker, checked against the tick's
+ * budget and resumed on the next tick. What the two genuinely share is the
+ * scan and the ceiling reasoning, so that is what lives here and nothing else.
+ *
+ * NOT ROW-AWARE, deliberately. `pushSubscriptions` is one row per DEVICE with
+ * the owning uid on it and nothing about preferences, so the row's cell is a
+ * per-owner question the caller asks with `wantsPushFor`. Answering it here
+ * would mean reading every owner's user document inside a function whose
+ * callers then read them again.
+ *
+ * NEVER THROWS: a read that fails and a collection over the ceiling both come
+ * back as a refusal, for the reason the header gives.
+ */
+export async function rowPushOwners(
+  db: Firestore,
+  log: { tag: string; reference: string },
+  opts: { maxRows?: number } = {},
+): Promise<RowPushOwners> {
+  const maxRows = opts.maxRows ?? MAX_PUSH_ROWS;
+
+  // Cheapest gate first: with no VAPID keys nothing pushes anywhere, and there
+  // is no reason to read the collection. Not a refusal: the feature is dormant
+  // until the secrets are provisioned (docs/pwa.md), and saying so on every
+  // send would be noise about a decision nobody made today.
+  if (!isPushConfigured()) return { uids: [], refusal: null };
+
+  let snap;
+  try {
+    snap = await db.collection("pushSubscriptions").limit(maxRows + 1).get();
+  } catch (err) {
+    // The one read outside any per-account loop, and the one that used to
+    // reject into the caller. Every caller says in its own header that it
+    // never throws, and this is where that promise is kept.
+    console.error(`[${log.tag}] push subscription read failed`, log.reference, err);
+    return {
+      uids: [],
+      refusal:
+        "The notification list could not be read, so nobody was notified by push. " +
+        "The email went out as normal.",
+    };
+  }
+
+  if (snap.docs.length > maxRows) {
+    console.error(
+      `[${log.tag}] push subscription count exceeds ceiling, not pushing`,
+      log.reference,
+      snap.docs.length,
+    );
+    return {
+      uids: [],
+      refusal:
+        "There are more registered devices than one request can notify. " +
+        "Nobody was notified by push: raise it with an admin.",
+    };
+  }
+
+  return {
+    uids: [
+      ...new Set(
+        snap.docs
+          .map((d) => d.data()?.uid)
+          .filter((uid): uid is string => typeof uid === "string" && uid.length > 0),
+      ),
+    ],
+    refusal: null,
+  };
+}
+
 /**
  * Push `notification` to every account with a device whose `row` cell is on.
  *
@@ -127,49 +210,9 @@ export async function sendPushToRowAudience(
   notification: PushNotification,
   log: { tag: string; reference: string },
 ): Promise<RowPushResult> {
-  // Cheapest gate first: with no VAPID keys nothing pushes anywhere, and there
-  // is no reason to read the collection. Not a refusal: the feature is dormant
-  // until the secrets are provisioned (docs/pwa.md), and saying so on every
-  // send would be noise about a decision nobody made today.
-  if (!isPushConfigured()) return { pushed: 0, refusal: null };
-
-  let snap;
-  try {
-    snap = await db.collection("pushSubscriptions").limit(MAX_PUSH_ROWS + 1).get();
-  } catch (err) {
-    // The one read outside the per-account loop, and the one that used to
-    // reject into the caller. Both callers say in their own headers that they
-    // never throw, and this is where that promise is kept.
-    console.error(`[${log.tag}] push subscription read failed`, log.reference, err);
-    return {
-      pushed: 0,
-      refusal:
-        "The notification list could not be read, so nobody was notified by push. " +
-        "The email went out as normal.",
-    };
-  }
-
-  if (snap.docs.length > MAX_PUSH_ROWS) {
-    console.error(
-      `[${log.tag}] push subscription count exceeds ceiling, not pushing`,
-      log.reference,
-      snap.docs.length,
-    );
-    return {
-      pushed: 0,
-      refusal:
-        "There are more registered devices than one request can notify. " +
-        "Nobody was notified by push: raise it with an admin.",
-    };
-  }
-
-  const uids = [
-    ...new Set(
-      snap.docs
-        .map((d) => d.data()?.uid)
-        .filter((uid): uid is string => typeof uid === "string" && uid.length > 0),
-    ),
-  ];
+  const owners = await rowPushOwners(db, log);
+  if (owners.refusal !== null) return { pushed: 0, refusal: owners.refusal };
+  const uids = owners.uids;
 
   let pushed = 0;
   await dispatchSends(uids, async (uid) => {

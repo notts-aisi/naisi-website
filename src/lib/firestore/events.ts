@@ -26,6 +26,32 @@ export const EVENT_STATUS_LABEL: Record<EventStatus, string> = {
 export type EventVisibility = "public" | "members";
 
 /**
+ * Where a QUEUED new-event announcement has got to. Absent on an event that
+ * was announced inline (the shipped path) or never announced at all.
+ *
+ * There is deliberately no `failed`: a send that throws leaves the event
+ * `sending`, its recipients' markers unstamped, and the next tick picking up
+ * where it stopped. A terminal failure state would be a claim nothing could
+ * ever release. `refused` is different and is terminal: the audience could not
+ * be read at all, or the event has already started, so there is nothing left
+ * for a later tick to do.
+ */
+export type EventAnnouncementState = "queued" | "sending" | "done" | "refused";
+
+/** Counts as the announcement job stores them. See `announcementResult`. */
+export type EventAnnouncementResultDoc = {
+  sent: number;
+  skipped: number;
+  suppressed: number;
+  failed: number;
+  pushed: number;
+  refusal: string | null;
+  pushRefusal: string | null;
+  /** Null while the job is still working through the list. */
+  finishedAt: Date | null;
+};
+
+/**
  * How the NAISI emblem is composited onto an event's cover image on the
  * detail page. Chosen per event by the organiser, in a popup shown after they
  * crop the cover. `none` leaves the cover untouched.
@@ -505,6 +531,34 @@ export type EventDoc = {
    * pin would be a rules deploy for nothing.
    */
   announcedAt?: Date | null;
+  /**
+   * Where the QUEUED announcement has got to, absent on an event announced
+   * inline and on one never announced at all.
+   *
+   * The queue exists only while the `event-announcements` scheduler job is
+   * switched on: with it off (the shipped default, and prod's state today) the
+   * publish route sends inline exactly as it always has and writes none of
+   * these three fields. See docs/notifications.md.
+   *
+   * `queued` is the publish route's hand-off, `sending` the job's first touch,
+   * `done` every recipient stamped, `refused` an announcement that reached
+   * nobody and said why. Server-written only, and pinned in `firestore.rules`:
+   * a committee client can otherwise write any field it likes on its own
+   * draft, and a hand-written `queued` on an unpublished event would have the
+   * job announce it to the whole list.
+   */
+  announcementState?: EventAnnouncementState | null;
+  /** When the publish route handed the announcement to the queue. */
+  announcementQueuedAt?: Date | null;
+  /** When the job first claimed it. Null until a tick has picked it up. */
+  announcementStartedAt?: Date | null;
+  /**
+   * The running totals, updated at the end of every tick that works on this
+   * event and finished with a `finishedAt` when the last recipient is stamped.
+   * Persisted per tick rather than only at the end, so a result is never lost
+   * to a tick boundary.
+   */
+  announcementResult?: EventAnnouncementResultDoc | null;
   rsvpCountPending?: number | null;
   rsvpCountConfirmed?: number | null;
   rsvpCountWaitlisted?: number | null;
@@ -603,6 +657,50 @@ export function asUidList(v: unknown): string[] {
   return Array.from(seen);
 }
 
+const ANNOUNCEMENT_STATES: readonly EventAnnouncementState[] = [
+  "queued",
+  "sending",
+  "done",
+  "refused",
+];
+
+function asAnnouncementState(v: unknown): EventAnnouncementState | null {
+  return ANNOUNCEMENT_STATES.includes(v as EventAnnouncementState)
+    ? (v as EventAnnouncementState)
+    : null;
+}
+
+/** A stored count, or 0. Absent is 0 because a total nobody wrote is nothing. */
+function asCount(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+function asRefusal(v: unknown): string | null {
+  return typeof v === "string" && v !== "" ? v : null;
+}
+
+/**
+ * The announcement's running totals, or null when the job has written none.
+ *
+ * Null rather than a zeroed object for an absent field: "the job has not
+ * reported yet" and "the job reported nothing sent" are different sentences,
+ * and the editor says different things about them.
+ */
+function asAnnouncementResult(v: unknown): EventAnnouncementResultDoc | null {
+  if (v === null || typeof v !== "object") return null;
+  const raw = v as Record<string, unknown>;
+  return {
+    sent: asCount(raw.sent),
+    skipped: asCount(raw.skipped),
+    suppressed: asCount(raw.suppressed),
+    failed: asCount(raw.failed),
+    pushed: asCount(raw.pushed),
+    refusal: asRefusal(raw.refusal),
+    pushRefusal: asRefusal(raw.pushRefusal),
+    finishedAt: tsToDate(raw.finishedAt),
+  };
+}
+
 function asFoodTags(v: unknown): FoodTag[] {
   if (!Array.isArray(v)) return [];
   const seen = new Set<FoodTag>();
@@ -656,6 +754,10 @@ export function normalizeEvent(id: string, data: Raw): EventDoc {
     approvedAt: tsToDate(data.approvedAt),
     publishedAt: tsToDate(data.publishedAt),
     announcedAt: tsToDate(data.announcedAt),
+    announcementState: asAnnouncementState(data.announcementState),
+    announcementQueuedAt: tsToDate(data.announcementQueuedAt),
+    announcementStartedAt: tsToDate(data.announcementStartedAt),
+    announcementResult: asAnnouncementResult(data.announcementResult),
     rsvpCountPending:
       typeof data.rsvpCountPending === "number"
         ? (data.rsvpCountPending as number)
