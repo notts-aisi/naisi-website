@@ -20,6 +20,17 @@
  * automated decisions, children, event dietary answers, the Google avatar,
  * video thumbnails in email, the export kinds, and Google's sign-in script.
  *
+ * Third pass, 7 September 2026, with the notification grid: the collected
+ * preferences now name the four rows and say each carries an email choice and
+ * a notification choice, the push purpose says notifications follow the same
+ * per-category choices as email, and the Consent basis carves out the notice
+ * lane, because an important notice about something you signed up for is sent
+ * under performance of a contract and the settings do not switch it off. Made
+ * in place while v4 is the current version and nothing here narrows what was
+ * promised; if the owner decides the change is one to re-consent on, copy this
+ * file to v5 and move CURRENT_POLICY_VERSION, which is the only supported way
+ * to ask.
+ *
  * v1, v2 and v3 are FROZEN: they still render unchanged at their archive URLs
  * (/privacy/v/1, /privacy/v/2 and /privacy/v/3), so this file is a
  * copy-and-edit of v3 rather than a refactor of it. Never reach into an older
@@ -162,7 +173,10 @@ export default function PrivacyContentV4({
                 </li>
                 <li>
                   Your notification preferences, broken down by channel (Google
-                  inbox, university inbox) and category (newsletter, events).
+                  inbox, university inbox) and by category, with a separate
+                  email choice and notification choice for each: the
+                  newsletter, event announcements, course announcements, and
+                  tasks and worksheets.
                 </li>
               </ul>
 
@@ -521,7 +535,8 @@ export default function PrivacyContentV4({
                 </li>
                 <li>
                   Send push notifications to a device where you have turned
-                  them on, for the categories you chose.
+                  them on. Notifications follow the same per-category choices
+                  as email, set separately for each category on your profile.
                 </li>
                 <li>
                   Operate the committee tooling (tasks, projects, drafts) for
@@ -545,7 +560,12 @@ export default function PrivacyContentV4({
                   any other marketing-style communication, and for push
                   notifications. You can withdraw consent at any time using the
                   unsubscribe link in any such email, the notification settings
-                  on your profile, or by emailing us.
+                  on your profile, or by emailing us. Important notices about
+                  something you have signed up for, such as an event you are
+                  attending or a course group you are in, are sent under
+                  performance of a contract rather than consent, so your
+                  notification settings do not switch them off, and they are
+                  never marketing.
                 </li>
                 <li>
                   <strong>Performance of a contract</strong> (the membership

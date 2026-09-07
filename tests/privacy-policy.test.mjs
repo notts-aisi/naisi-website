@@ -757,6 +757,76 @@ describe("the committee tooling passage", () => {
 });
 
 // ---------------------------------------------------------------------------
+// §2c The notification grid passage
+// ---------------------------------------------------------------------------
+
+/**
+ * What the policy says about notifications, held against what the grid does.
+ *
+ * The notification grid (docs/notifications.md) gives every member four rows
+ * and two columns, and adds a third class of message that reads neither: an
+ * important notice from somebody responsible for an audience, sent under
+ * performance of a contract rather than consent. Two of those three facts were
+ * things the policy actively got WRONG before the grid landed rather than
+ * merely omitted: it described the categories as "newsletter, events" and it
+ * put every push notification under consent, which the notice lane makes
+ * untrue. A page that says a setting switches something off, over a product
+ * where it does not, is the failure this section exists to catch.
+ *
+ * The last test is the two-layer half: the claim "never marketing" is made to
+ * the member twice, once on this page and once in the marker line at the top
+ * of the notice itself, and the two have to keep saying it together.
+ */
+describe("the notification grid passage", () => {
+  test("names the four rows and the two choices per row", () => {
+    assert.match(
+      V4_FLAT,
+      /by category, with a separate email choice and notification choice for each/i,
+      "v4 no longer says a category carries an email choice AND a notification " +
+        "choice. The grid stores two parallel maps, and the page is where a " +
+        "member is told that.",
+    );
+    assert.match(
+      V4_FLAT,
+      /the newsletter, event announcements, course announcements, and tasks and worksheets/i,
+      "v4 no longer names the four rows the grid draws.",
+    );
+  });
+
+  test("says push follows the same per-category choices as email", () => {
+    assert.match(
+      V4_FLAT,
+      /Notifications follow the same per-category choices as email/i,
+      "v4 still describes push as one blanket choice. Every row has its own " +
+        "push cell, read by src/lib/push/preferences.ts.",
+    );
+  });
+
+  test("puts important notices under contract rather than consent", () => {
+    assert.match(
+      V4_FLAT,
+      /sent under performance of a contract rather than consent/i,
+      "v4's Consent basis no longer carves out the notice lane. Without the " +
+        "sentence the page promises that the notification settings switch off " +
+        "every message, and an organiser's room change ignores them by design.",
+    );
+    assert.match(V4_FLAT, /notification settings do not switch them off/i);
+    assert.match(V4_FLAT, /they are never marketing/i);
+  });
+
+  test("the notice itself makes the same promise to the same person", () => {
+    const marker = read("src/emails/NoticeMarker.tsx");
+    assert.match(
+      marker,
+      /it is never marketing/i,
+      "the marker line above every notice no longer says it is not marketing, " +
+        "which is the claim privacy v4 makes on its behalf. The two are one " +
+        "promise made in two places and have to move together.",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // §3 The re-consent gate
 // ---------------------------------------------------------------------------
 

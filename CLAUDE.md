@@ -96,7 +96,11 @@ users/{uid}             { uid, email, displayName, photoURL, role, profile,
                           notifications?, uniEmailVerifiedAt?,
                           universityEmailWasSuppressed?, universityEmailLockUntil? }
   .notifications        { channels: { gmail, uniEmail },
-                          categories: { newsletter, events } }
+                          categories: { newsletter, events, courses, tasks },
+                          push: { newsletter, events, courses, tasks } }
+                        Two parallel maps: `categories` is the email column,
+                        `push` the push column, four rows each. See
+                        docs/notifications.md.
   .permissions          { draftNewsletter?, approveNewsletter?,
                           draftEvent?, approveEvent? }     (admin-granted)
   .tracks               ("technical" | "governance")[]     (admin-set tags)
@@ -158,8 +162,11 @@ events/{id}             { title, blocks[], startAt, endAt, location,
                           coverLogoY, coverLogoBackdrop, coverLogoShadow,
                           archived, status (draft|pending|approved|
                           published|rejected|cancelled), authorUid,
-                          collaboratorUids[],
+                          collaboratorUids[], announcedAt?,
                           rsvpCount{Pending,Confirmed,Waitlisted}, … }
+                        `announcedAt` is the once-per-event claim the publish
+                        route stamps before it sends the new-event
+                        announcement.
 
 eventRsvps/{id}         { eventId, uid?, name, email, answers, status
                           (pending|confirmed|waitlisted|denied|cancelled),
@@ -189,6 +196,8 @@ emailVerifications/{tokenId}     One doc per outstanding uni-email magic-link.
 Server-only collections (Admin SDK writes, client rules fully locked):
 ```
 emailSends/{id}         Append-only delivery log (powers the deliverability tab).
+                        Rows carry `kind`, plus `surface` on `notice` rows
+                        (which notice lane the send came from).
 suppressedEmails/{id}   Bounce + complaint suppression list.
 config/{doc}            Runtime config — task-email copy lives here.
 impersonations/{id}     Audit log of admin "view as" sessions:
@@ -487,6 +496,7 @@ Two separate Firebase projects, each with its own App Hosting backend. The backe
 - **Admin dashboard tabs**: Approvals, Members (role / title / bio / `suRecognised` / `permissions` / `tracks` edit + full profile edit + hard delete + "View as" debug impersonation), Projects (CRUD + archive), Newsletter, Subscriptions, Email designs (application email templates), Deliverability (send log + suppression list), Task templates, Danger zone.
 - **Admin "view as" debug tool**: per-member "View as" button on the admin Members page does a full impersonation (Firebase custom token → target session cookie) so the admin sees exactly what the member sees, with a sticky banner and audit log (`impersonations` collection). See Roles and access → Admin "view as" for trust properties and operational caveats.
 - **Email infrastructure**: Resend send pipeline, deliverability dashboard, bounce/complaint webhook, application lifecycle emails, transactional emails as JSX templates in `src/emails/`.
+- **Notifications**: one grid on `/profile`, four rows (newsletter, events, courses, tasks) by two columns (email, push), stored as two parallel maps with per-row defaults (the two subscription rows opt-in, the other two opt-out). Every send declares one of three classes and a guard walks the tree to enforce it: grid (consults the row), transactional (never does), notice (deliberately ignores it, for an organiser or facilitator addressing their own audience, with a visible marker, a `kind: "notice"` receipt and durable caps). Publishing a public event announces it to the events row on both columns. Reference: [docs/notifications.md](docs/notifications.md).
 - **Users-collection lockdown**: member PII is readable only by SU-recognised committee + admins (and each user's own doc); `suRecognised` enforced as a trust boundary in Firestore rules.
 - **Brand**: real NAISI emblem integrated across the site, favicon, and email logo.
 - **Worksheets** (`/worksheets`, `/worksheets/respond/[circulationId]`): a library with folders of question documents (short and long text, single and multiple choice, polls, rating scales, image-upload answers, rich bodies with images and YouTube or Loom embeds, section headings, page breaks), circulated to committee members as one `assignees-only` task each with the sender as reviewer; a circulation page with per-recipient progress, state and coarse activity (first open, page opens, active time); a mobile-first respond page with autosave and a Save button; review with per-question feedback and reviewer-only scores, returned feedback, admin unfreeze; aggregate views, logged CSV export, per-circulation notification toggles, and a due-soon reminder job that ships dark. Contract and decisions: [docs/worksheets.md](docs/worksheets.md).
