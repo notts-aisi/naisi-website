@@ -94,6 +94,9 @@ const STUBS = new Map([
   ],
   // The real one is a `getAll` over `users`; the fake reads the same store so
   // a recipient with no address is still resolved the same way (not at all).
+  // It carries `profile` through for the same reason the real one does: the
+  // notifier asks it about the member's tasks row at the send seam, and a fake
+  // that dropped it would report every recipient as never having answered.
   [
     "@/lib/email/taskMembership",
     "export async function resolveTaskUsers(db, uids) {\n" +
@@ -103,7 +106,11 @@ const STUBS = new Map([
       "    if (!snap.exists) continue;\n" +
       "    const data = snap.data() || {};\n" +
       "    if (!data.email) continue;\n" +
-      "    out.set(uid, { email: data.email, displayName: data.displayName || 'there' });\n" +
+      "    out.set(uid, {\n" +
+      "      email: data.email,\n" +
+      "      displayName: data.displayName || 'there',\n" +
+      "      profile: data.profile,\n" +
+      "    });\n" +
       "  }\n  return out;\n}",
   ],
 ]);
@@ -722,6 +729,82 @@ test("the per-circulation switch and the site-wide kill switch each silence the 
     killed.docs.get(`circulations/${circulationId}/responses/recip1`),
     "the work still exists; only the message was suppressed",
   );
+});
+
+test("a recipient who has switched the tasks row off gets no email, and still gets the push", async () => {
+  // THE FOURTH GATE, per recipient. The three above it belong to the sender
+  // and to the site; this one belongs to the member, and it is the EMAIL cell
+  // of their tasks row. The push cell is a separate answer, so somebody who
+  // has said "on my phone, not in my inbox" is told on their phone.
+  const db = seedWorld();
+  db.docs.get("users/recip1").profile = {
+    notifications: { categories: { tasks: false } },
+  };
+  const { circulationId } = await sendWorksheet(db, {
+    recipientUids: ["recip1", "recip2"],
+  });
+
+  assert.deepEqual(
+    globalThis.__sent.map((mail) => mail.to),
+    ["recip2@example.com"],
+    "only the recipient who has not refused is emailed",
+  );
+  assert.deepEqual(
+    globalThis.__pushed.map((push) => push.uid),
+    ["recip1", "recip2"],
+    "the push cell is its own switch and `mirrorTaskEmailToPush` reads it",
+  );
+  assert.ok(
+    db.docs.get(`circulations/${circulationId}/responses/recip1`),
+    "they are still a recipient: the worksheet is theirs to answer, only the mail stopped",
+  );
+});
+
+test("an unanswered tasks row is not a refusal, at any depth", async () => {
+  // The row is OPT-OUT: only a stored `false` stops the send. Every other
+  // shape is somebody who has not been asked yet, and silencing them would
+  // take away mail they already receive.
+  for (const profile of [
+    undefined,
+    {},
+    { notifications: {} },
+    { notifications: { categories: {} } },
+    { notifications: { categories: { tasks: true } } },
+    // A string where a boolean should be is junk, not an answer.
+    { notifications: { categories: { tasks: "false" } } },
+    // The legacy shape cannot express a refusal of this row at all.
+    { newsletter: { subscribed: false } },
+  ]) {
+    globalThis.__sent = [];
+    globalThis.__pushed = [];
+    const db = seedWorld();
+    if (profile !== undefined) db.docs.get("users/recip1").profile = profile;
+    await sendWorksheet(db);
+    assert.equal(
+      globalThis.__sent.length,
+      1,
+      `${JSON.stringify(profile)} was read as a refusal`,
+    );
+  }
+});
+
+test("the sender's switch and the kill switch still win over a member who wants the mail", async () => {
+  // Three gates in series, any one a skip, and the row is the last of them.
+  // A member with the row explicitly ON must not be able to reach past a
+  // sender who turned the message off or an admin who pulled the kill switch.
+  const on = { notifications: { categories: { tasks: true } } };
+
+  const off = seedWorld();
+  off.docs.get("users/recip1").profile = on;
+  await sendWorksheet(off, { notifications: { assigned: { email: false, push: false } } });
+  assert.equal(globalThis.__sent.length, 0, "the sender turned this message off");
+
+  globalThis.__sent = [];
+  globalThis.__taskEmails = false;
+  const killed = seedWorld();
+  killed.docs.get("users/recip1").profile = on;
+  await sendWorksheet(killed);
+  assert.equal(globalThis.__sent.length, 0, "the kill switch outranks the row");
 });
 
 test("a transport failure is counted, not thrown: the circulation still lands", async () => {

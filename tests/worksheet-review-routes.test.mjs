@@ -92,6 +92,10 @@ const STUBS = new Map([
     "export async function isTaskEmailEnabled() {\n" +
       "  return globalThis.__taskEmails !== false;\n}",
   ],
+  // `profile` is carried through for the same reason the real resolver carries
+  // it: the notifier asks it about the member's tasks row at the send seam, and
+  // a fake that dropped it would report every recipient as never having
+  // answered, which is the shape that hides an opt-out.
   [
     "@/lib/email/taskMembership",
     "export async function resolveTaskUsers(db, uids) {\n" +
@@ -101,7 +105,11 @@ const STUBS = new Map([
       "    if (!snap.exists) continue;\n" +
       "    const data = snap.data() || {};\n" +
       "    if (!data.email) continue;\n" +
-      "    out.set(uid, { email: data.email, displayName: data.displayName || 'there' });\n" +
+      "    out.set(uid, {\n" +
+      "      email: data.email,\n" +
+      "      displayName: data.displayName || 'there',\n" +
+      "      profile: data.profile,\n" +
+      "    });\n" +
       "  }\n  return out;\n}",
   ],
 ]);
@@ -827,7 +835,7 @@ test("only the people part-way through are told the questions changed", async ()
 
   const res = await notifyCopyEdited({}, ctx(circulationId));
   assert.equal(res.status, 200);
-  assert.deepEqual(res.body, { sent: 1 });
+  assert.deepEqual(res.body, { sent: 1, optedOut: 0 });
 
   assert.equal(globalThis.__sent.length, 1);
   const mail = globalThis.__sent[0];
@@ -856,7 +864,7 @@ test("with the questions-edited switch off, the button reaches nobody", async ()
 
   const res = await notifyCopyEdited({}, ctx(circulationId));
   assert.equal(res.status, 200);
-  assert.deepEqual(res.body, { sent: 0 });
+  assert.deepEqual(res.body, { sent: 0, optedOut: 0 });
   assert.equal(globalThis.__sent.length, 0);
 });
 
@@ -867,8 +875,31 @@ test("the site-wide task-email kill switch covers the copy-edited message too", 
 
   const res = await notifyCopyEdited({}, ctx(circulationId));
   assert.equal(res.status, 200);
-  assert.deepEqual(res.body, { sent: 0 });
+  assert.deepEqual(res.body, { sent: 0, optedOut: 0 });
   assert.equal(globalThis.__sent.length, 0);
+});
+
+test("the zero that is about the people, not the worksheet, is told apart", async () => {
+  // The page renders a sentence on a zero, and that sentence is a CLAIM about
+  // the recipients: "nobody is part-way through this worksheet right now". It
+  // is false when somebody is part-way through and has switched the tasks
+  // row's email cell off, so the count that separates the two leaves the
+  // route instead of being dropped at its edge.
+  const db = seedWorld();
+  db.docs.get("users/recip1").profile = {
+    notifications: { categories: { tasks: false } },
+  };
+  const circulationId = await threeStates(db, COPY_EDITED_ON);
+
+  const res = await notifyCopyEdited({}, ctx(circulationId));
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, { sent: 0, optedOut: 1 });
+  assert.equal(globalThis.__sent.length, 0, "the one person part-way through refused the mail");
+  assert.deepEqual(
+    globalThis.__pushed.map((push) => push.uid),
+    ["recip1"],
+    "the push cell is a separate answer, so they were still told",
+  );
 });
 
 test("a closed circulation tells nobody the questions changed", async () => {

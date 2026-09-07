@@ -132,7 +132,7 @@ describe("the shared loader reads JSX", () => {
       },
     );
 
-    assert.deepEqual(result, { sent: 1, failed: 0 });
+    assert.deepEqual(result, { sent: 1, failed: 0, optedOut: 0 });
     assert.equal(globalThis.__sent.length, 1);
 
     const html = await render(globalThis.__sent[0].react);
@@ -273,6 +273,12 @@ const USERS = new Map([
     "it loads `registry.ts` for `policyFor`, and the registry imports every job by value, so every " +
       "job's send path is in its graph; its comments named the missing JSX option as a reason to " +
       "stub two of those doors, and now only the transport is",
+  ],
+  [
+    "task-email-routes.test.mjs",
+    "the five task email routes, executed: each one imports one of the four task `.tsx` " +
+      "templates by alias and every one of those imports `./EmailChrome` relatively, which is " +
+      "the two-level JSX graph a hand-copied loader dies on",
   ],
   [
     "scheduler-markers.test.mjs",

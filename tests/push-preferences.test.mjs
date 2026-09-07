@@ -1054,7 +1054,9 @@ describe("the stage-release announcement pushes, through the shared mirror", () 
     const claim = body.indexOf("await claim(");
     const send = body.indexOf("await sendAdmissionEmail(");
     const sent = body.indexOf('if (outcome === "sent")');
-    const push = body.indexOf("await pushCandidate(");
+    // The LAST handoff. The first belongs to the push-only lane below, which
+    // runs before any email precisely because its email is not going.
+    const push = body.lastIndexOf("await pushCandidate(");
     const stamp = body.indexOf("await stampSentOrSettle(");
     for (const [what, at] of [
       ["claim", claim],
@@ -1068,6 +1070,29 @@ describe("the stage-release announcement pushes, through the shared mirror", () 
     assert.ok(claim < send, "the send runs before the claim");
     assert.ok(send < sent && sent < push, "the push does not ride a successful send");
     assert.ok(push < stamp, "the marker is stamped before the push");
+  });
+
+  test("the EMAIL cell does not gate the push: an opted-out applicant is still pushed", () => {
+    // Two cells, two answers. `hasOptedOutOfCourseAnnouncements` is the
+    // courses row's EMAIL cell inverted, so reading it as a refusal of both
+    // would silence a push whose switch reads on, and the push cell would mean
+    // nothing on the one row that has a scheduled sender behind it.
+    const body = code.slice(
+      code.indexOf("async function mailCandidate("),
+      code.indexOf("async function pushCandidate("),
+    );
+    const branch = body.indexOf("if (resolved.skip === OPTED_OUT_REASON) {");
+    assert.ok(branch !== -1, "the opted-out skip has no lane of its own");
+    const push = body.indexOf("await pushCandidate(", branch);
+    const skipStamp = body.indexOf("await stampSkipped(", branch);
+    assert.ok(push !== -1 && push < skipStamp, "the opted-out lane pushes after it settles");
+    // And the mailbox skips are NOT in that lane: a suppressed address or a
+    // missing one is a fact rather than an answer, and stops the announcement
+    // whole. The runtime proof of both is in tests/admissions-stage-release.
+    assert.ok(
+      !/resolved\.skip === "suppressed"/.test(body),
+      "a suppressed mailbox has grown a push lane without a decision to give it one",
+    );
   });
 
   test("a push failure is counted and logged, never thrown, never a failed send", () => {

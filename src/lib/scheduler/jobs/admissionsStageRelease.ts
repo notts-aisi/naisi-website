@@ -101,19 +101,22 @@ import "server-only";
  *
  * Four consequences worth naming:
  *
- *  - **One push per email, never more.** The per-recipient marker is claimed
- *    before both legs and stamped after both, so a retried tick that finds a
- *    stamped marker sends neither. Nobody is pushed on a stage twice.
+ *  - **One push per announcement, never more.** The per-recipient marker is
+ *    claimed before both legs and stamped after both, so a retried tick that
+ *    finds a settled marker sends neither. Nobody is pushed on a stage twice.
  *  - **A push failure costs the push.** The mirror is documented never to
  *    throw; the call is wrapped anyway, counted in `pushFailed` and logged.
  *    It is never added to `summary.failures`, which is the EMAIL accounting
  *    the release receipt renders, and it never leaves a marker unstamped:
  *    re-mailing a whole round because a push service was down is the trade
  *    nobody would take.
- *  - **A recipient with no device costs one query and nothing else**, and a
- *    recipient the email skipped (opted out, suppressed, no address) is not
- *    pushed at all. Push volume is therefore bounded by the send ceiling that
- *    already exists rather than by a new one.
+ *  - **A recipient with no device costs one query and nothing else.** A
+ *    recipient whose MAILBOX stopped the email (suppressed, no address) is not
+ *    pushed either, so push volume stays bounded by the audience the email
+ *    already has rather than by a new one. A recipient who switched the
+ *    courses EMAIL cell off is the one skip that still pushes, because that
+ *    cell is one of the row's two and reading it as a refusal of both would
+ *    make the push cell mean nothing. See {@link mailCandidate}.
  *  - **It lands where the email lands**, on the form the new questions are
  *    answered on, by the same `admissionApplicationPath` the email's button
  *    is built from.
@@ -186,6 +189,16 @@ export const SENT_UNSTAMPED_REASON = "sent-unstamped";
 export const SUPPRESSION_UNREADABLE_REASON = "suppression-unreadable";
 
 /**
+ * The member switched the courses row's EMAIL cell off.
+ *
+ * Named because it is the ONE skip that is a preference rather than a fact
+ * about a mailbox, and the one that {@link mailCandidate} treats differently:
+ * the email stops and the push leg still runs. Comparing a bare string in two
+ * places is how that distinction would quietly stop being made.
+ */
+export const OPTED_OUT_REASON = "opted-out";
+
+/**
  * WHY one stage's announcement did or did not go out on this run.
  *
  * The manual release lane renders one sentence per value, so every reason a
@@ -217,9 +230,15 @@ export type StageReleaseRunSummary = {
   /**
    * Announcements ALSO handed to the push pipeline, which is never the same
    * claim as "a phone buzzed": the mirror returns having sent nothing when
-   * push is unprovisioned, when the member switched the category off, and
-   * when they have no device enabled. It never exceeds `sent`, because the
-   * push rides a send this job counted.
+   * push is unprovisioned, when the member switched the push cell off, and
+   * when they have no device enabled.
+   *
+   * It is NOT bounded by `sent`. A member who switched the courses EMAIL cell
+   * off is counted in `skipped` and still handed to the push pipeline, so a
+   * stage whose whole audience reads on their phones can report `sent: 0` and
+   * `pushed: 12`. `sent` remains the email accounting the release receipt
+   * renders, and that is the number an admin reading "how many were emailed"
+   * needs it to be.
    */
   pushed: number;
   /**
@@ -377,12 +396,17 @@ export function stageAnnouncedAt(
 }
 
 /**
- * Everything one applicant's note needs, or a reason not to send it.
+ * Everything one applicant's EMAIL needs, or a reason not to send it.
  *
  * Identical posture to the reminders job: a users read that fails falls back
  * to what the application recorded, an explicit courses opt-out is a refusal,
  * an unanswered preference is not, and a suppression list that will not read
  * fails CLOSED.
+ *
+ * It answers for the EMAIL leg alone. `hasOptedOutOfCourseAnnouncements` is
+ * `wantsEmailForProfile(profile, "courses")` inverted, which is one cell of a
+ * two-cell row, so {@link mailCandidate} reads an `opted-out` skip as "not by
+ * email" rather than "not at all". The push cell is read by the mirror.
  */
 async function resolveRecipient(
   db: Firestore,
@@ -403,7 +427,7 @@ async function resolveRecipient(
   } catch {
     // Not a reason to refuse somebody a note about their own application.
   }
-  if (optedOut) return { skip: "opted-out" };
+  if (optedOut) return { skip: OPTED_OUT_REASON };
   const to = candidate.email ?? accountEmail;
   if (!to) return { skip: "no-address" };
   let suppressed: boolean;
@@ -721,7 +745,30 @@ async function mailCandidate(
 
   const resolved = await resolveRecipient(db, candidate);
   if ("skip" in resolved) {
+    // ONE OF THESE SKIPS IS A PREFERENCE, AND IT IS ABOUT ONE COLUMN.
+    //
+    // `opted-out` is the courses row's EMAIL cell, and that row has a second
+    // cell the member sets separately. Somebody who switched the email off and
+    // left the push on has said "on my phone, not in my inbox"; letting one
+    // cell answer for both would silence a push whose switch reads on, which
+    // is the exact thing the grid exists to stop. So the email stops here and
+    // the push leg still runs, where `mirrorCourseDecisionToPush` reads the
+    // push cell for itself.
+    //
+    // `suppressed`, `suppression-unreadable` and `no-address` are facts about
+    // a mailbox rather than answers to a question, and they stop the
+    // announcement whole: this job's push volume stays bounded by the audience
+    // its email already has.
+    //
+    // Before the stamp, and inside this person's claim, exactly as the sent
+    // path is: the one marker settles both channels, so a retried tick finds
+    // it settled and repeats neither.
+    if (resolved.skip === OPTED_OUT_REASON) {
+      await pushCandidate(ctx, { round, stage, candidate, summary });
+    }
     await stampSkipped(db, marker.id, resolved.skip, ctx.now);
+    // The EMAIL accounting, which is what the release receipt renders: this
+    // person was not mailed. A push that went instead is counted in `pushed`.
     summary.skipped += 1;
     ctx.log("a stage announcement was not sent", {
       roundId: round.id,

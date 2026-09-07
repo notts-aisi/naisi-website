@@ -1082,23 +1082,77 @@ describe("the announcement also pushes", () => {
     assert.equal(globalThis.__sends.length, 0, "a deviceless recipient was re-mailed");
   });
 
-  test("nobody the email skipped is pushed", async () => {
-    // Suppressed, opted out, or a send that failed: the push rides a send this
-    // job counted, so a person with no email has no push either.
-    const rows = applications(3);
+  test("a mailbox that stopped the email stops the push too", async () => {
+    // Suppressed, or a send that failed: neither is a preference, and this
+    // job's push volume stays bounded by the audience its email already has.
+    const rows = applications(2);
     const db = makeDb(world({ apps: rows }));
     reset(db);
     globalThis.__suppressed = new Set(["uid001@example.com"]);
-    db.patch("users", "uid002", {
-      profile: { notifications: { categories: { courses: false } } },
-    });
-    globalThis.__sendHook = (opts) => (opts.uid === "uid003" ? "failed" : "sent");
+    globalThis.__sendHook = (opts) => (opts.uid === "uid002" ? "failed" : "sent");
 
     const { summary } = await runAdmissionsStageRelease(context().ctx);
 
     assert.equal(summary.sent, 0);
-    assert.equal(summary.skipped, 2);
+    assert.equal(summary.skipped, 1);
+    assert.equal(summary.pushed, 0);
     assert.deepEqual(globalThis.__pushes, []);
+  });
+
+  test("the EMAIL cell is not the push cell: an opted-out applicant is still pushed", async () => {
+    // The courses row has two cells and they are two answers. Somebody who
+    // switched the email off and left the push on has said "on my phone, not
+    // in my inbox", so the announcement goes by push alone. Reading one cell
+    // as a refusal of both would silence a push whose switch reads on, which
+    // is what the grid exists to stop.
+    const db = makeDb(world({ apps: 2 }));
+    reset(db);
+    db.patch("users", "uid001", {
+      profile: { notifications: { categories: { courses: false } } },
+    });
+
+    const { summary } = await runAdmissionsStageRelease(context().ctx);
+
+    assert.deepEqual(uidsSent(), ["uid002"], "the opted-out applicant was mailed");
+    assert.deepEqual(uidsPushed(), ["uid001", "uid002"], "the push cell was not read");
+    // `sent` stays the EMAIL accounting the release receipt renders, so the
+    // person who was pushed instead is counted as skipped and `pushed` is not
+    // bounded by `sent`.
+    assert.equal(summary.sent, 1);
+    assert.equal(summary.skipped, 1);
+    assert.equal(summary.pushed, 2);
+
+    // Settled, not left reclaimable: the one marker covers both channels, so a
+    // retried tick pushes them a second time no more than it mails them one.
+    assert.equal(
+      db.read("schedulerMarkers", markerFor("uid001")).skippedReason,
+      "opted-out",
+    );
+    await runAdmissionsStageRelease(
+      context({ now: new Date("2026-10-05T11:00:00.000Z") }).ctx,
+    );
+    assert.equal(globalThis.__pushes.length, 2, "a retried tick pushed them again");
+  });
+
+  test("a push to an opted-out applicant that throws still settles their marker", async () => {
+    // The push-only lane has the same failure posture as the mirrored one: an
+    // unstamped marker is a re-claim, and a re-claim on this lane would be a
+    // second push rather than a second email.
+    const db = makeDb(world({ apps: 1 }));
+    reset(db);
+    db.patch("users", "uid001", {
+      profile: { notifications: { categories: { courses: false } } },
+    });
+    globalThis.__pushThrows = "the push service refused";
+
+    const { summary } = await runAdmissionsStageRelease(context().ctx);
+
+    assert.equal(summary.pushFailed, 1);
+    assert.deepEqual(summary.failures, [], "a push failure reached the email accounting");
+    assert.equal(
+      db.read("schedulerMarkers", markerFor("uid001")).skippedReason,
+      "opted-out",
+    );
   });
 });
 
@@ -1319,11 +1373,33 @@ describe("the handler's own ordering", () => {
     );
     assert.ok(body.length > 500, "could not slice mailCandidate out of the source");
     const sendAt = body.indexOf("await sendAdmissionEmail(");
-    const pushAt = body.indexOf("await pushCandidate(");
+    // The LAST handoff: the first belongs to the push-only lane below, which
+    // runs before any email because its email is the one that is not going.
+    const pushAt = body.lastIndexOf("await pushCandidate(");
     const stampAt = body.indexOf("await stampSentOrSettle(");
     assert.ok(pushAt !== -1, "the handler no longer pushes");
     assert.ok(sendAt < pushAt, "the push runs before the email it mirrors");
     assert.ok(pushAt < stampAt, "the marker is stamped before the push");
+  });
+
+  test("the opted-out lane pushes, and pushes before it settles the marker", () => {
+    // The EMAIL cell is one of the courses row's two, so an `opted-out` skip
+    // stops the mail and not the announcement. Same ordering argument as the
+    // mirrored lane: handed off inside the claim, settled after.
+    const body = src.slice(
+      src.indexOf("async function mailCandidate("),
+      src.indexOf("async function pushCandidate("),
+    );
+    const branchAt = body.indexOf("if (resolved.skip === OPTED_OUT_REASON) {");
+    assert.ok(branchAt !== -1, "the opted-out skip no longer has a lane of its own");
+    const pushAt = body.indexOf("await pushCandidate(", branchAt);
+    const skipStampAt = body.indexOf("await stampSkipped(", branchAt);
+    assert.ok(pushAt !== -1, "the opted-out lane pushes nothing");
+    assert.ok(pushAt < skipStampAt, "the marker is settled before the push");
+    // And the reason it settles with is the named one, so the branch and the
+    // resolver cannot drift apart on a bare string.
+    assert.match(src, /export const OPTED_OUT_REASON = "opted-out";/);
+    assert.match(src, /return \{ skip: OPTED_OUT_REASON \};/);
   });
 
   test("a push failure is counted and logged, never thrown and never a send failure", () => {
@@ -1652,6 +1728,9 @@ describe("a stage announcement with no deadline behind it", () => {
  * those three doors stubbed by specifier, and asked the questions that matter.
  */
 const prefs = await loadTs("lib/email/courseFacilitatorEmails.ts");
+const { wantsCategory, normaliseNotifications } = await loadTs(
+  "lib/firestore/notifications.ts",
+);
 
 describe("the courses opt-out, on the real predicate", () => {
   const optOut = prefs.hasOptedOutOfCourseAnnouncements;
@@ -1694,6 +1773,71 @@ describe("the courses opt-out, on the real predicate", () => {
       optOut({ profile: { notifications: { categories: { courses: "false" } } } }),
       false,
     );
+  });
+
+  test("it IS the grid's resolver, inverted, on every shape either can see", () => {
+    // The predicate used to walk `categories.courses` by hand and compare it
+    // to `false`. That agreed with the row resolver on every input anybody had
+    // thought of, and agreed with it by coincidence: two readings of one rule,
+    // in two files, with nothing making them move together. It now asks the
+    // resolver. This is the assertion that keeps it asking, so a future edit
+    // to the defaults table cannot leave a second answer behind in an email
+    // module.
+    for (const profile of [
+      undefined,
+      null,
+      "not a profile",
+      {},
+      { notifications: {} },
+      { notifications: { categories: {} } },
+      { notifications: { categories: { courses: false } } },
+      { notifications: { categories: { courses: true } } },
+      { notifications: { categories: { courses: "false" } } },
+      { notifications: { categories: { courses: 0 } } },
+      { notifications: { channels: { gmail: true } } },
+      { notifications: { push: { courses: false } } },
+      { newsletter: { subscribed: true } },
+      { newsletter: { subscribed: false } },
+    ]) {
+      const viaResolver = wantsCategory(
+        normaliseNotifications(profile && typeof profile === "object" ? profile : {}),
+        "courses",
+      );
+      assert.equal(
+        optOut({ profile }),
+        !viaResolver,
+        `${JSON.stringify(profile)} is read differently by the two`,
+      );
+    }
+  });
+
+  test("a users read that fails leaves the opt-out unset, so the mail still goes", () => {
+    // THE FAILED-READ RULE for an opt-out row's email, pinned in both jobs
+    // that can hit it. `wantsPushFor` fails CLOSED because a dropped push
+    // loses nothing; email is not a mirror of anything, so refusing it on a
+    // transient Firestore error would silence a message nobody refused, and
+    // nobody would ever see that it had happened. The default is a send.
+    for (const file of [
+      "src/lib/scheduler/jobs/admissionsStageRelease.ts",
+      "src/lib/scheduler/jobs/admissionsReminders.ts",
+    ]) {
+      const body = source(file);
+      const start = body.indexOf("async function resolveRecipient(");
+      assert.ok(start > 0, `${file} has no resolveRecipient`);
+      const slice = body.slice(start, start + 1600);
+      assert.match(
+        slice,
+        /let optedOut = false;/,
+        `${file} must start from "not refused" so a failed read cannot invent one`,
+      );
+      assert.match(slice, /catch \{/, `${file} must survive a failed users read`);
+      const catchAt = slice.indexOf("} catch {");
+      const untilOptOut = slice.slice(catchAt, slice.indexOf("if (optedOut)"));
+      assert.ok(
+        !/optedOut\s*=/.test(untilOptOut),
+        `${file} sets optedOut inside its catch: a failed read must not be a refusal`,
+      );
+    }
   });
 
   test("the stub the job tests use agrees with it", () => {

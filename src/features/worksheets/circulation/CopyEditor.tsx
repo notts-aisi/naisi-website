@@ -223,20 +223,30 @@ export default function CopyEditor({ circulation }: Props) {
         },
       );
       const body = (await res.json().catch(() => null)) as
-        | { sent?: number; error?: string }
+        | { sent?: number; optedOut?: number; error?: string }
         | null;
       if (!res.ok) {
         setNotice(body?.error ?? `Couldn't send that message (${res.status}).`);
         return;
       }
       const sent = body?.sent ?? 0;
-      // Retired either way: a zero means the message reached nobody, and
-      // pressing it again a second later would reach nobody a second time.
+      const optedOut = body?.optedOut ?? 0;
+      // Retired either way: a zero means the message reached nobody by email,
+      // and pressing it again a second later would reach nobody a second time.
       setTold(true);
+      // TWO DIFFERENT ZEROES, and only one of them is about the worksheet.
+      // Nobody part-way through is a fact about the circulation. Everybody
+      // part-way through having switched worksheet email off is a fact about
+      // the people, and saying the first when the second is true tells a
+      // staff member something false about their own recipients.
       setNotice(
-        sent === 0
-          ? "Nobody was told: nobody is part-way through this worksheet right now."
-          : `Told ${sent} ${sent === 1 ? "person" : "people"}.`,
+        sent > 0
+          ? `Told ${sent} ${sent === 1 ? "person" : "people"}.`
+          : optedOut === 0
+            ? "Nobody was told: nobody is part-way through this worksheet right now."
+            : optedOut === 1
+              ? "Nobody was emailed: the one person part-way through has turned worksheet email off."
+              : `Nobody was emailed: all ${optedOut} people part-way through have turned worksheet email off.`,
       );
     } catch (err) {
       setNotice(err instanceof Error ? err.message : "Couldn't send that message.");
