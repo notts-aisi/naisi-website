@@ -47,6 +47,17 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLoader } from "./lib/tsLoader.mjs";
 
+/**
+ * The failure-path cases below drive a catch block in the code under test,
+ * which logs the error with its stack. Under the test loader a stack frame is a
+ * `data:` URL carrying a whole module graph, so that one log line runs to
+ * 440 KB and GitHub's runner stalls on it for minutes; `tests/lib/outputGuard.mjs`
+ * fails the file on any line over 20 KB. The message is right in production
+ * and expected here, so those cases mute it for their own duration. The mock
+ * is restored when the test ends.
+ */
+const muteExpectedError = (t) => t.mock.method(console, "error", () => {});
+
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const { loadTs } = createLoader({
@@ -360,7 +371,8 @@ test("an account with no device subscribed reports zero and still tears down", a
   assert.ok(db.has("pushSubscriptions/99zzsomeone-else"));
 });
 
-test("a push sweep that fails keeps the registration row for a retry", async () => {
+test("a push sweep that fails keeps the registration row for a retry", async (t) => {
+  muteExpectedError(t);
   // Best-effort, not fatal: the rest of the teardown must still happen, and
   // the tracker row must stay so the sweep is run again. A stranded row is a
   // live channel to a lock screen, so a quiet success over one would be the
@@ -464,7 +476,8 @@ test("the tasks that index the responses survive, so the count stays re-derivabl
 // The warning, when the counts and something real both fail
 // ---------------------------------------------------------------------------
 
-test("a failed count never swallows the sentence about data left behind", async () => {
+test("a failed count never swallows the sentence about data left behind", async (t) => {
+  muteExpectedError(t);
   // THE CO-FAILURE, which is the likely one: a count is a Firestore call in the
   // same request as every best-effort sweep, so it fails for the same transient
   // causes (deadline exceeded, unavailable, quota) and the two arrive together.

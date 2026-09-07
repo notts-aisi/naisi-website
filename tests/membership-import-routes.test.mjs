@@ -36,6 +36,17 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/**
+ * The failure-path cases below drive a catch block in the code under test,
+ * which logs the error with its stack. Under the test loader a stack frame is a
+ * `data:` URL carrying a whole module graph, so that one log line runs to
+ * 440 KB and GitHub's runner stalls on it for minutes; `tests/lib/outputGuard.mjs`
+ * fails the file on any line over 20 KB. The message is right in production
+ * and expected here, so those cases mute it for their own duration. The mock
+ * is restored when the test ends.
+ */
+const muteExpectedError = (t) => t.mock.method(console, "error", () => {});
+
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(REPO_ROOT, "src");
 
@@ -882,7 +893,8 @@ test("six name matches with three ticked leaves three waiting, not finished", as
   assert.equal(db.docs.get("membershipPeriods/2026-27").totals.paid, 6);
 });
 
-test("a count that cannot be read is unknown, so the batch is not stamped finished", async () => {
+test("a count that cannot be read is unknown, so the batch is not stamped finished", async (t) => {
+  muteExpectedError(t);
   const { db, csv } = sixNameWorld();
   globalThis.__fakeDb = db;
   const { batchId } = (await dryRun(csv)).body;
@@ -1030,7 +1042,8 @@ test("a finished import cannot be relabelled abandoned", async () => {
   assert.equal(db.docs.get(`membershipImports/${batchId}`).status, "committed");
 });
 
-test("a commit whose totals update fails says so, and Recount repairs it", async () => {
+test("a commit whose totals update fails says so, and Recount repairs it", async (t) => {
+  muteExpectedError(t);
   const { db, csv } = world(4);
   globalThis.__fakeDb = db;
   const { batchId } = (await dryRun(csv)).body;
@@ -1249,7 +1262,8 @@ test("the export writes the dataExports row BEFORE the body", async () => {
   );
 });
 
-test("the export REFUSES when the log write fails, and hands over no file", async () => {
+test("the export REFUSES when the log write fails, and hands over no file", async (t) => {
+  muteExpectedError(t);
   const { db, csv } = world(2);
   globalThis.__fakeDb = db;
   const { batchId } = (await dryRun(csv)).body;

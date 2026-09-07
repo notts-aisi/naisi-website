@@ -668,7 +668,13 @@ describe("wantsPushFor", () => {
     assert.equal(await wantsPushFor("ghost", "courses"), true);
   });
 
-  test("a FAILED read is a no, because we cannot know", async () => {
+  test("a FAILED read is a no, because we cannot know", async (t) => {
+    // The helper logs the failure with the error's stack, whose frames under
+    // this loader are data: URLs carrying whole modules (one line, 34 KB), and
+    // tests/lib/outputGuard.mjs fails the file on a line over 20 KB. The
+    // warning is right in production and expected here, so it is muted for
+    // this case only; the mock is restored when the test ends.
+    t.mock.method(console, "warn", () => {});
     reset({ users: { u1: { profile: {} } } });
     globalThis.__userReadThrows = "firestore is down";
     assert.equal(await wantsPushFor("u1", "tasks"), false);
