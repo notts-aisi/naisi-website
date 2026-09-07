@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   collection,
   deleteField,
@@ -14,7 +14,6 @@ import {
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
-import Switch from "@/components/ui/Switch";
 import { Field, Input } from "@/components/ui/Input";
 import { useAuth } from "@/auth/AuthProvider";
 import { getClientDb } from "@/lib/firebase/client";
@@ -30,12 +29,27 @@ import {
   getVerifiedEmails,
   isSubscriptionCategory,
   normaliseNotifications,
+  PUSH_DESCRIPTIONS,
   serialiseNotifications,
-  SUBSCRIPTION_CATEGORIES,
+  serialisePush,
   type NotificationPrefs,
   type SubscriptionCategory,
   type VerifiedEmail,
 } from "@/lib/firestore/notifications";
+import { PUSH_DEVICE_CARD_ID, usePushDevice } from "@/features/pwa/pushDevice";
+import {
+  columnIsOn,
+  emailColumnCells,
+  emptyCell,
+  GRID_ROWS,
+  NOTICE_ROW,
+  PUSH_DISABLED_HINT,
+  pushColumnCells,
+  pushColumnDisabled,
+  setColumn,
+  setEmailColumn,
+  type Matrix,
+} from "./notificationGrid";
 import MembershipBadge from "./MembershipBadge";
 import styles from "./ProfileForm.module.css";
 
@@ -48,18 +62,6 @@ const KIND_LABEL: Record<VerifiedEmail["kind"], string> = {
   google: "Google",
   uni: "Uni",
 };
-
-/**
- * The per-address matrix covers only the categories that ARE subscription
- * channels. `courses` is account-level (one opt-out, not one row per address)
- * and rides the standalone switch below the matrix — see
- * `SUBSCRIPTION_CATEGORIES` in notifications.ts.
- */
-type Matrix = Record<string, Record<SubscriptionCategory, boolean>>;
-
-function emptyCell(): Record<SubscriptionCategory, boolean> {
-  return { newsletter: false, events: false };
-}
 
 /**
  * Read the stored `courses` opt-out RAW, off the untouched document data.
@@ -81,16 +83,16 @@ function readCourseAnnouncements(data: Record<string, unknown> | undefined): boo
 }
 
 /**
- * The cells this form writes but does not draw.
+ * The stored cells this form reads off the live document rather than deriving.
  *
- * The push column is NOT on this form: it lives on the push card, beside the
- * per-device opt-in it qualifies. The `tasks` email cell has no control here
- * yet either (the grid that draws it is the follow-up PR). This form still has
- * to READ both, because its save writes the whole `profile.notifications` map
- * and would otherwise reset them to the default every time somebody changed
- * their preferred name, which for `tasks` would silently un-refuse a member
- * who had switched task mail off. Read through `normaliseNotifications` so
- * "absent" resolves to the same default every other reader sees.
+ * The grid draws all of them now, but the reason for reading them here has not
+ * changed: the Save button writes the WHOLE `profile.notifications` map, so a
+ * cell this form did not know about would be reset to its default every time
+ * somebody changed their preferred name. That is also why the push map is read
+ * even though the push column saves itself on toggle: a save that ran a moment
+ * after a toggle must write the toggled value, not the one this form started
+ * with. Read through `normaliseNotifications` so "absent" resolves to the same
+ * default every other reader sees.
  */
 function readCarriedPrefs(data: Record<string, unknown> | undefined): {
   push: NotificationPrefs["push"];
@@ -146,16 +148,17 @@ function legacyPrefsFromMatrix(
     ? Boolean(matrix[uni.email]?.newsletter || matrix[uni.email]?.events)
     : false;
   return {
-    // `courses` comes from the standalone switch and `tasks` from the stored
-    // document, neither from the matrix. Both MUST be carried through:
-    // `serialiseNotifications` writes all four booleans, so dropping either
-    // would store a `false` on every save that the run email route and the
-    // task senders read as an explicit refusal.
+    // `courses` and `tasks` come from their own cells of the grid, not from
+    // the matrix: neither is a per-address subscription. Both MUST be carried
+    // through: `serialiseNotifications` writes all four booleans, so dropping
+    // either would store a `false` on every save that the run email route and
+    // the task senders read as an explicit refusal.
     categories: { newsletter, events, courses: courseAnnouncements, tasks: taskEmails },
     channels: { gmail: gmailGetsAnything, uniEmail: uniEmailGetsAnything },
-    // Passed straight through from the stored document, never derived here.
-    // This form does not own the push switches; it only has to avoid
-    // trampling them. See readCarriedPrefs.
+    // Passed straight through from state, which the push column keeps in step
+    // with the document by writing its own leaf on every toggle. This save
+    // must not be the thing that decides the push column, only the thing that
+    // avoids trampling it. See readCarriedPrefs.
     push,
   };
 }
@@ -171,20 +174,43 @@ export default function ProfileForm() {
   // Account-level, not per-address. Starts ON: absent = "hasn't answered",
   // and cohort mail is an opt-out. See readCourseAnnouncements.
   const [courseAnnouncements, setCourseAnnouncements] = useState(true);
-  // Read-only here: the push column is edited on the push card and the task
-  // email cell has no control on this form yet. Both are held in state purely
-  // so the save below can write them back unchanged. See readCarriedPrefs.
+  // The push column. Held in state like the email cells, but SAVED ON TOGGLE
+  // through a leaf write rather than by the Save button: the two columns of
+  // one row are edited on one line, and a member who flips a notification
+  // must not have their unsaved email edits written with it.
   const [pushPrefs, setPushPrefs] = useState<NotificationPrefs["push"]>({
     newsletter: false,
     events: false,
     courses: true,
     tasks: true,
   });
+  const [pushError, setPushError] = useState<string | null>(null);
   const [taskEmails, setTaskEmails] = useState(true);
 
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Whether this browser can receive a notification at all. Shared with the
+  // device card below the form (src/features/pwa/pushDevice.tsx) so the two
+  // cannot disagree, and so the environment is probed once.
+  const { state: pushDeviceState, cardShown: pushCardShown } = usePushDevice();
+  const pushDisabled = pushColumnDisabled(pushDeviceState);
+
+  /**
+   * Whether the fields the SAVE BUTTON owns have been filled in from the
+   * document yet.
+   *
+   * They are filled in ONCE, and that became load-bearing when the push
+   * column moved into this form: a push cell saves itself the moment it is
+   * flipped, that write changes `users/{uid}`, and the listener below fires
+   * with it. Re-filling every field on each snapshot would then throw away a
+   * half-typed preferred name, or an email cell the member had unticked and
+   * not yet saved, because they flipped an unrelated notification. The push
+   * map itself is still taken from every snapshot, since the document is
+   * where it lives and nothing here edits it without writing it.
+   */
+  const hydrated = useRef(false);
 
   // User doc snapshot. Drives identity (name, uni email, verified
   // status). The matrix reads from the subscriptions collection
@@ -199,14 +225,18 @@ export default function ProfileForm() {
       }
       const normalized = normalizeUser(snap.id, snap.data());
       setMe(normalized);
-      setPreferredName(normalized.profile?.preferredName ?? "");
-      setUniversityEmail(normalized.profile?.universityEmail ?? "");
-      // Raw data, not the normalized doc: `UserProfile.notifications` is typed
-      // as the full shape, so a missing `courses` reads as `false` through it.
-      setCourseAnnouncements(readCourseAnnouncements(snap.data()));
       const carried = readCarriedPrefs(snap.data());
       setPushPrefs(carried.push);
-      setTaskEmails(carried.taskEmails);
+      if (!hydrated.current) {
+        hydrated.current = true;
+        setPreferredName(normalized.profile?.preferredName ?? "");
+        setUniversityEmail(normalized.profile?.universityEmail ?? "");
+        // Raw data, not the normalized doc: `UserProfile.notifications` is
+        // typed as the full shape, so a missing `courses` reads as `false`
+        // through it.
+        setCourseAnnouncements(readCourseAnnouncements(snap.data()));
+        setTaskEmails(carried.taskEmails);
+      }
       setLoading(false);
     });
     return unsub;
@@ -261,16 +291,21 @@ export default function ProfileForm() {
     });
   }, [me]);
 
+  const addresses = useMemo(
+    () => verifiedEmails.map((ve) => ve.email),
+    [verifiedEmails],
+  );
+
   /**
    * Any SUBSCRIPTION at all, across every address — the matrix only.
    *
-   * Deliberately not counting `courses`: that switch is an opt-out on mail a
-   * cohort sends its own members, not a list anyone subscribed to, so a badge
-   * reading "subscribed" off it would be claiming something the member never
-   * did. It is also why the badge says "no subscriptions" rather than "no
-   * emails": a member with an empty matrix still gets their group's practical
-   * email and everything else transactional, and a badge promising silence
-   * would be a lie the first time a session moved.
+   * Deliberately not counting `courses` or `tasks`: neither is a list anyone
+   * subscribed to, so a badge reading "subscribed" off them would be claiming
+   * something the member never did. It is also why the badge says "no
+   * subscriptions" rather than "no emails": a member with an empty matrix
+   * still gets their group's practical email and everything else
+   * transactional, and a badge promising silence would be a lie the first
+   * time a session moved.
    */
   const anyChecked = useMemo(
     () =>
@@ -279,6 +314,18 @@ export default function ProfileForm() {
       ),
     [matrix],
   );
+
+  // The two column masters. Each reads ON only when every cell under it is
+  // on, and writes the same per-row booleans the cells write: a master is a
+  // convenience over the column, never a third stored value. See
+  // notificationGrid.ts, where both rules are unit-tested.
+  const emailAllOn = columnIsOn(
+    emailColumnCells(
+      { matrix, courses: courseAnnouncements, tasks: taskEmails },
+      addresses,
+    ),
+  );
+  const pushAllOn = columnIsOn(pushColumnCells(pushPrefs));
 
   const hasUniEmail = universityEmail.trim().length > 0;
   const uniEmailVerified = Boolean(
@@ -295,6 +342,41 @@ export default function ProfileForm() {
       const cur = prev[email] ?? emptyCell();
       return { ...prev, [email]: { ...cur, [cat]: next } };
     });
+  }
+
+  function setEmailAll(next: boolean) {
+    const updated = setEmailColumn(
+      { matrix, courses: courseAnnouncements, tasks: taskEmails },
+      addresses,
+      next,
+    );
+    setMatrix(updated.matrix);
+    setCourseAnnouncements(updated.courses);
+    setTaskEmails(updated.tasks);
+  }
+
+  /**
+   * The push column's write: a LEAF at `profile.notifications.push`.
+   *
+   * Not the whole map, because the email half of that map is mid-edit in this
+   * form and a whole-map write here would save it early. The Save button
+   * carries this map back untouched (`legacyPrefsFromMatrix`), so the two
+   * writers cannot invent a value for each other's half.
+   */
+  async function writePush(next: NotificationPrefs["push"]) {
+    if (!user) return;
+    const previous = pushPrefs;
+    setPushPrefs(next);
+    setPushError(null);
+    try {
+      await updateDoc(doc(getClientDb(), "users", user.uid), {
+        "profile.notifications.push": serialisePush(next),
+      });
+    } catch (err) {
+      console.warn("[profile notifications] saving a notification setting failed", err);
+      setPushPrefs(previous);
+      setPushError("That notification setting did not save. Try again in a moment.");
+    }
   }
 
   async function onSave(e: React.FormEvent) {
@@ -509,10 +591,10 @@ export default function ProfileForm() {
 
       <Card padding="lg">
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-1)" }}>
-          <h2 style={{ fontSize: "var(--text-xl)" }}>Email preferences</h2>
+          <h2 style={{ fontSize: "var(--text-xl)" }}>Email and notifications</h2>
           {/* Addressed by the browser end-to-end suite: the badge is how a
-              member is told, in one word, whether the grid below it holds
-              anything at all. */}
+              member is told, in one word, whether they are on any of our
+              lists at all. It counts the two subscription rows only. */}
           <Badge
             tone={anyChecked ? "success" : "neutral"}
             data-testid="profile-subscriptions-badge"
@@ -521,11 +603,11 @@ export default function ProfileForm() {
           </Badge>
         </div>
         <p style={{ color: "var(--color-text-muted)", fontSize: "var(--text-sm)", marginBottom: "var(--space-5)" }}>
-          Pick which inbox should receive the newsletter and event announcements —
-          every one of those carries a one-click unsubscribe link. Email about
-          something you are already part of — your reading group&apos;s session
-          moving, an RSVP confirmation — is not a subscription and reaches you
-          either way.
+          One row per kind of message, one column per way of reaching you. The
+          newsletter and event announcements carry a one-click unsubscribe link
+          and can go to whichever inbox you like. Email about something you are
+          already part of (your reading group&apos;s session moving, an RSVP
+          confirmation) is not a subscription and reaches you either way.
         </p>
 
         {verifiedEmails.length === 0 ? (
@@ -534,107 +616,202 @@ export default function ProfileForm() {
             should always provide one — try signing out and back in.
           </div>
         ) : (
-          <div className={styles.matrix}>
-            {/* Addressed by the browser end-to-end suite, which asserts a
-                member sees their OWN subscription rows here (the query-shape
-                regression). The wide grid and the stacked mobile list below
-                give their checkboxes the same accessible label, so a spec
-                scopes to this element and finds each cell by that label
-                rather than adding a test id per channel and per address. */}
-            <div
-              className={styles.matrixGrid}
-              data-testid="profile-subscriptions-grid"
-              style={{
-                gridTemplateColumns: `minmax(10rem, 1fr) repeat(${verifiedEmails.length}, minmax(8rem, auto))`,
-              }}
-            >
-              <div />
-              {verifiedEmails.map((ve) => (
-                <div key={ve.email} className={styles.matrixHeaderEmail}>
-                  <span className={styles.matrixHeaderEmailAddress}>{ve.email}</span>
-                  <span className={styles.matrixHeaderEmailMeta}>
-                    <span className={styles.matrixHeaderKindLabel}>
-                      {KIND_LABEL[ve.kind]}
-                    </span>
-                    <span className={styles.matrixVerifiedTick} aria-label="Verified">
+          <>
+            <p className={styles.addressLine}>
+              {verifiedEmails.length === 1 ? "Delivering to " : "Delivering to your "}
+              {verifiedEmails.map((ve, i) => (
+                <span key={ve.email} className={styles.addressChip}>
+                  {i > 0 && <span aria-hidden> and </span>}
+                  <span className={styles.addressText}>{ve.email}</span>
+                  <span className={styles.addressMeta}>
+                    {KIND_LABEL[ve.kind]}
+                    <span className={styles.addressVerified} aria-label="Verified">
                       <span aria-hidden>✓</span> Verified
                     </span>
                   </span>
+                </span>
+              ))}
+            </p>
+
+            {/* ONE GRID, rows against two columns, and the same element the
+                browser suite has always driven (`profile-subscriptions-grid`).
+                It is a real CSS grid on a wide screen and a stack of per-row
+                cards on a narrow one, from ONE set of nodes: a second copy of
+                the rows for small screens would put two controls under every
+                accessible label, and the suite finds each cell by its label. */}
+            <div className={styles.notifGrid} data-testid="profile-subscriptions-grid">
+              <div className={styles.notifHead}>
+                <div className={styles.notifHeadCorner}>
+                  <span className={styles.notifHeadCornerTitle}>What we send</span>
+                </div>
+                <div className={styles.notifHeadCell}>
+                  <span className={styles.notifHeadTitle}>Email</span>
+                  <label
+                    className={styles.notifMaster}
+                    data-testid="profile-notifications-master-email"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={emailAllOn}
+                      onChange={(e) => setEmailAll(e.target.checked)}
+                      aria-label="All email on or off"
+                    />
+                    <span>All</span>
+                  </label>
+                </div>
+                <div className={styles.notifHeadCell}>
+                  <span className={styles.notifHeadTitle}>Push</span>
+                  <label
+                    className={styles.notifMaster}
+                    data-testid="profile-notifications-master-push"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={pushAllOn}
+                      disabled={pushDisabled}
+                      onChange={(e) => void writePush(setColumn(pushPrefs, e.target.checked))}
+                      aria-label="All notifications on or off"
+                    />
+                    <span>All</span>
+                  </label>
+                  {pushDisabled && (
+                    <p className={styles.notifHint}>
+                      {PUSH_DISABLED_HINT}
+                      {pushCardShown && (
+                        <>
+                          {" "}
+                          <a href={`#${PUSH_DEVICE_CARD_ID}`}>
+                            Turn them on for this browser.
+                          </a>
+                        </>
+                      )}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {GRID_ROWS.map((row) => (
+                <div key={row} className={styles.notifRow}>
+                  <div className={styles.notifRowLabel}>
+                    <span className={styles.notifRowTitle}>{CATEGORY_LABELS[row]}</span>
+                    <span className={styles.notifRowDescription}>
+                      {CATEGORY_DESCRIPTIONS[row]}
+                    </span>
+                  </div>
+                  <div className={styles.notifCell}>
+                    <span className={styles.notifCellName}>Email</span>
+                    {isSubscriptionCategory(row) ? (
+                      // The per-address matrix, kept: these two rows mint a
+                      // `subscriptions` row per (address, channel), so the
+                      // member picks the inbox as well as the answer. With one
+                      // verified address it is one plain box writing that
+                      // address, and the label is the same either way because
+                      // the suite locates it by that label.
+                      verifiedEmails.map((ve) => (
+                        <label key={ve.email} className={styles.notifCheck}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(matrix[ve.email]?.[row])}
+                            onChange={(e) => setCell(ve.email, row, e.target.checked)}
+                            aria-label={`${CATEGORY_LABELS[row]} to ${ve.email}`}
+                          />
+                          <span className={styles.notifCheckText}>
+                            {verifiedEmails.length === 1 ? "Email me" : ve.email}
+                          </span>
+                        </label>
+                      ))
+                    ) : (
+                      <label className={styles.notifCheck}>
+                        <input
+                          type="checkbox"
+                          checked={row === "courses" ? courseAnnouncements : taskEmails}
+                          onChange={(e) =>
+                            row === "courses"
+                              ? setCourseAnnouncements(e.target.checked)
+                              : setTaskEmails(e.target.checked)
+                          }
+                          aria-label={`${CATEGORY_LABELS[row]} email`}
+                        />
+                        <span className={styles.notifCheckText}>Email me</span>
+                      </label>
+                    )}
+                  </div>
+                  <div className={styles.notifCell}>
+                    <span className={styles.notifCellName}>Push</span>
+                    <label className={styles.notifCheck}>
+                      <input
+                        type="checkbox"
+                        checked={pushPrefs[row]}
+                        disabled={pushDisabled}
+                        onChange={(e) =>
+                          void writePush({ ...pushPrefs, [row]: e.target.checked })
+                        }
+                        aria-label={`${CATEGORY_LABELS[row]} notifications`}
+                      />
+                      <span className={styles.notifCheckText}>Notify me</span>
+                    </label>
+                    <span className={styles.notifCellNote}>{PUSH_DESCRIPTIONS[row]}</span>
+                  </div>
                 </div>
               ))}
 
-              {SUBSCRIPTION_CATEGORIES.map((cat) => (
-                <MatrixChannelRow
-                  key={cat}
-                  cat={cat}
-                  emails={verifiedEmails}
-                  matrix={matrix}
-                  onChange={setCell}
-                />
-              ))}
+              {/* LOCKED, and drawn rather than left out. A member switching
+                  everything else off should be told here that an organiser can
+                  still reach them about a change to something they signed up
+                  for, instead of finding out the first time one does. Both
+                  cells are on, disabled, and say so in words as well as in
+                  colour; nothing in this component writes them. */}
+              <div
+                className={`${styles.notifRow} ${styles.notifRowLocked}`}
+                data-testid="profile-notifications-important-row"
+              >
+                <div className={styles.notifRowLabel}>
+                  <span className={styles.notifRowTitle}>
+                    {NOTICE_ROW.label}
+                    <span className={styles.notifLockPill}>Locked</span>
+                  </span>
+                  <span className={styles.notifRowDescription}>
+                    {NOTICE_ROW.description}
+                  </span>
+                </div>
+                <div className={styles.notifCell}>
+                  <span className={styles.notifCellName}>Email</span>
+                  <label className={styles.notifCheck}>
+                    <input
+                      type="checkbox"
+                      checked
+                      readOnly
+                      disabled
+                      aria-disabled="true"
+                      aria-label="Important notices by email"
+                    />
+                    <span className={styles.notifCheckText}>{NOTICE_ROW.cellText}</span>
+                  </label>
+                </div>
+                <div className={styles.notifCell}>
+                  <span className={styles.notifCellName}>Push</span>
+                  <label className={styles.notifCheck}>
+                    <input
+                      type="checkbox"
+                      checked
+                      readOnly
+                      disabled
+                      aria-disabled="true"
+                      aria-label="Important notices by notification"
+                    />
+                    <span className={styles.notifCheckText}>{NOTICE_ROW.cellText}</span>
+                  </label>
+                </div>
+              </div>
             </div>
 
-            <div className={styles.matrixStacked}>
-              {SUBSCRIPTION_CATEGORIES.map((cat) => (
-                <section key={cat} className={styles.matrixStackedSection}>
-                  <div className={styles.matrixChannelTitle}>{CATEGORY_LABELS[cat]}</div>
-                  <div className={styles.matrixChannelDescription}>
-                    {CATEGORY_DESCRIPTIONS[cat]}
-                  </div>
-                  <div className={styles.matrixStackedRows}>
-                    {verifiedEmails.map((ve) => (
-                      <label key={ve.email} className={styles.matrixStackedRow}>
-                        <span className={styles.matrixStackedEmail}>
-                          <span className={styles.matrixStackedEmailAddress}>{ve.email}</span>
-                          <span className={styles.matrixStackedEmailMeta}>
-                            {KIND_LABEL[ve.kind]} · Verified
-                          </span>
-                        </span>
-                        <input
-                          type="checkbox"
-                          checked={Boolean(matrix[ve.email]?.[cat])}
-                          onChange={(e) => setCell(ve.email, cat, e.target.checked)}
-                          aria-label={`${CATEGORY_LABELS[cat]} to ${ve.email}`}
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </section>
-              ))}
-            </div>
-          </div>
+            <p className={styles.notifFootnote}>
+              The Push column saves as you switch it, on every device you are
+              signed in on. The Email column saves with the button below.
+            </p>
+            {pushError && <p className={styles.notifError}>{pushError}</p>}
+          </>
         )}
-
-        {/*
-          Account-level, so it sits outside the per-address matrix: cohort mail
-          is addressed by the `cohort:<runId>` subscription written to the one
-          proven address at allocation, and a per-address checkbox here could
-          not move it. Rendered for everyone, not just enrolled members — it is
-          the switch that makes an unticked box mean a refusal the member
-          actually made, which is the whole premise of the opt-out.
-
-          The eyebrow is not decoration. Directly under a grid of per-address
-          checkboxes, a lone switch reads as another row of that grid; this
-          says what it actually is before the label does, and names the one
-          thing it explicitly does NOT reach.
-        */}
-        <div className={styles.accountToggle}>
-          <p className={styles.accountToggleEyebrow}>
-            One setting for the whole account
-          </p>
-          <Switch
-            checked={courseAnnouncements}
-            onChange={setCourseAnnouncements}
-            label={CATEGORY_LABELS.courses}
-            description={CATEGORY_DESCRIPTIONS.courses}
-          />
-          <p className={styles.accountToggleNote}>
-            Not a subscription and not per-inbox: a cohort emails whichever
-            address the course has already proven for you. Leaving it on is not
-            a promise of mail — it just means you have not asked your cohorts to
-            stop.
-          </p>
-        </div>
       </Card>
 
       {error && <p style={{ color: "var(--color-danger)" }}>{error}</p>}
@@ -648,41 +825,5 @@ export default function ProfileForm() {
         </Button>
       </div>
     </form>
-  );
-}
-
-function MatrixChannelRow({
-  cat,
-  emails,
-  matrix,
-  onChange,
-}: {
-  cat: SubscriptionCategory;
-  emails: VerifiedEmail[];
-  matrix: Matrix;
-  onChange: (email: string, cat: SubscriptionCategory, next: boolean) => void;
-}) {
-  return (
-    <>
-      <div className={styles.matrixChannelLabel}>
-        <span className={styles.matrixChannelTitle}>{CATEGORY_LABELS[cat]}</span>
-        <span className={styles.matrixChannelDescription}>
-          {CATEGORY_DESCRIPTIONS[cat]}
-        </span>
-      </div>
-      {emails.map((ve) => (
-        <div key={ve.email} className={styles.matrixCell}>
-          <label className={styles.matrixCheckboxLabel}>
-            <input
-              type="checkbox"
-              checked={Boolean(matrix[ve.email]?.[cat])}
-              onChange={(e) => onChange(ve.email, cat, e.target.checked)}
-              aria-label={`${CATEGORY_LABELS[cat]} to ${ve.email}`}
-            />
-            <span>Deliver here</span>
-          </label>
-        </div>
-      ))}
-    </>
   );
 }

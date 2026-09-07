@@ -4,7 +4,9 @@
  * The admin approves a waiting applicant on the real Approvals page -> a
  * second account takes the last place in the one-place session -> the new
  * member signs in -> reads their own subscription grid on /profile -> unticks
- * a channel and watches it stick -> takes a place on the course -> meets the
+ * a channel and watches it stick -> drives the notification grid's column
+ * master and its locked notices row -> switches task email off and reads the
+ * cell back off their document -> takes a place on the course -> meets the
  * full session when they try to move -> leaves the course -> and the two
  * emails the journey caused turn up in the send log.
  *
@@ -94,6 +96,7 @@ import {
 import {
   GRID_CHANNELS,
   GRID_CHANNEL_LABELS,
+  GRID_ROW_LABELS,
   RECAPTCHA_DEPENDENT_STEPS,
   SPEC,
   TOGGLED_CHANNEL,
@@ -575,6 +578,159 @@ test(
           "the badge read as unsubscribed while a channel was still ticked",
         );
       });
+
+      await step(
+        "the column masters move every cell, and the locked row moves for nobody",
+        async () => {
+          activePage = memberPage;
+          const grid = memberPage.getByTestId("profile-subscriptions-grid");
+          await grid.waitFor({ timeout: WAIT_MS });
+          const addressBox = (row) =>
+            grid.getByLabel(`${GRID_ROW_LABELS[row]} to ${member.email}`);
+          const emailMaster = memberPage
+            .getByTestId("profile-notifications-master-email")
+            .locator("input");
+
+          // The step above unticked one channel and left it unticked, so the
+          // master has to be reading the CELLS: a master that stored an answer
+          // of its own would still be on here.
+          assert.equal(
+            await emailMaster.isChecked(),
+            false,
+            "the email master read as on while one of its cells was off. It is a " +
+              "convenience over the column, not a third stored value, so it may only be " +
+              "on when every cell under it is.",
+          );
+
+          await emailMaster.check();
+          for (const channel of GRID_CHANNELS) {
+            assert.equal(
+              await addressBox(channel).isChecked(),
+              true,
+              `the email master was switched on and the ${channel} box for ` +
+                `${member.email} did not follow`,
+            );
+          }
+          for (const row of ["courses", "tasks"]) {
+            assert.equal(
+              await grid.getByLabel(`${GRID_ROW_LABELS[row]} email`).isChecked(),
+              true,
+              `the email master was switched on and the ${row} cell did not follow`,
+            );
+          }
+
+          await emailMaster.uncheck();
+          for (const channel of GRID_CHANNELS) {
+            assert.equal(
+              await addressBox(channel).isChecked(),
+              false,
+              `the email master was switched off and the ${channel} box for ` +
+                `${member.email} did not follow`,
+            );
+          }
+
+          // The push column is an ACCOUNT setting behind a per-device
+          // subscription. Headless Chromium has none, so the column is
+          // disabled here in every mode, and the interesting half is that it
+          // still shows the stored answer rather than hiding it behind the
+          // hardware: `tasks` defaults on and must read on.
+          const pushMaster = memberPage
+            .getByTestId("profile-notifications-master-push")
+            .locator("input");
+          assert.equal(
+            await pushMaster.isDisabled(),
+            true,
+            "the push column was live on a browser with no push subscription",
+          );
+          assert.equal(
+            await grid.getByLabel(`${GRID_ROW_LABELS.tasks} notifications`).isChecked(),
+            true,
+            "a disabled push cell showed a default instead of the member's stored answer",
+          );
+
+          // The one row nobody can move. Both cells on, both disabled: an
+          // organiser can reach a member about a change to something they
+          // signed up for whatever else is switched off, and this row is where
+          // that is said out loud.
+          const locked = memberPage.getByTestId("profile-notifications-important-row");
+          await locked.waitFor({ timeout: WAIT_MS });
+          const lockedBoxes = locked.locator('input[type="checkbox"]');
+          assert.equal(
+            await lockedBoxes.count(),
+            2,
+            "the Important notices row must draw a cell in each column",
+          );
+          for (const index of [0, 1]) {
+            assert.equal(
+              await lockedBoxes.nth(index).isChecked(),
+              true,
+              "a locked notices cell was drawn off, which promises silence nothing delivers",
+            );
+            assert.equal(
+              await lockedBoxes.nth(index).isDisabled(),
+              true,
+              "a locked notices cell was live, so the page offers a preference the notice " +
+                "lane does not read",
+            );
+          }
+
+          // Nothing above was saved. The reload puts the form back on the
+          // stored answers so the next step starts from the document.
+          await memberPage.reload({ waitUntil: "domcontentloaded" });
+        },
+      );
+
+      await step(
+        "switching task email off writes the cell the task senders read",
+        async () => {
+          activePage = memberPage;
+          const grid = memberPage.getByTestId("profile-subscriptions-grid");
+          await grid.waitFor({ timeout: WAIT_MS });
+          const tasks = grid.getByLabel(`${GRID_ROW_LABELS.tasks} email`);
+          await tasks.waitFor({ timeout: WAIT_MS });
+          // Absent is not a refusal on this row: it defaults on, and only a
+          // stored `false` silences task mail.
+          assert.equal(
+            await tasks.isChecked(),
+            true,
+            "the tasks row came up off for a member who has never answered it, so task " +
+              "and worksheet email would be silenced by a default rather than a choice",
+          );
+
+          await tasks.uncheck();
+          await memberPage.getByRole("button", { name: "Save changes" }).click();
+          await memberPage.getByText("Saved.", { exact: true }).waitFor({ timeout: WAIT_MS });
+
+          // Read the DOCUMENT, not the page: this cell has no subscription row
+          // behind it, and what the senders consult is
+          // `profile.notifications.categories.tasks`.
+          const stored = await waitFor(
+            "the tasks refusal to reach the member's document",
+            async () => {
+              const doc = await readUserDoc(member.uid);
+              const categories = doc?.profile?.notifications?.categories;
+              return categories && categories.tasks === false ? categories : null;
+            },
+          );
+          assert.equal(
+            stored.courses,
+            true,
+            "switching task email off also switched off course announcements. The whole " +
+              "map is written on every save, so a cell the form does not carry through is " +
+              "a refusal nobody made.",
+          );
+
+          await memberPage.reload({ waitUntil: "domcontentloaded" });
+          assert.equal(
+            await memberPage
+              .getByTestId("profile-subscriptions-grid")
+              .getByLabel(`${GRID_ROW_LABELS.tasks} email`)
+              .isChecked(),
+            false,
+            "the tasks cell came back ticked after a reload",
+          );
+        },
+      );
 
       await step("taking a place on the course confirms the session", async () => {
         activePage = memberPage;
