@@ -195,16 +195,24 @@ export const LEGACY_PUSH_KEY = "courseDecisions";
  * a difference between the columns belongs.
  */
 
+/*
+ * EVERY STRING IN THIS MAP DESCRIBES A NOTIFICATION SOMETHING IN `src`
+ * ACTUALLY SENDS, and that is now true in both directions rather than as a
+ * habit. All four rows have a producer: the newsletter send and the event
+ * announcement enumerate their row's devices through
+ * `src/lib/push/rowAudience.ts`, and the task and course mirrors read theirs
+ * per uid. `tests/push-preferences.test.mjs` walks the tree for the row each
+ * producer names and fails on a row described here that nothing produces, and
+ * on copy still carrying a not-yet caveat.
+ *
+ * The `newsletter` row held such a caveat until its producer landed, because a
+ * description promising a notification nothing sends is the one thing a
+ * settable cell must not say. The cell was drawn and stored before the sender
+ * so that nobody had to be asked twice; the answers members gave it are the
+ * audience the sender now reads.
+ */
 export const PUSH_DESCRIPTIONS: Record<PushNotificationKey, string> = {
-  // NOT BUILT, and the copy says so. Every other string in this map describes
-  // a notification something in `src` actually sends: only `courses`, `tasks`
-  // and (with the event announcement) `events` call `wantsPushFor`. The row
-  // exists because the grid draws all four, and the cell has to be settable
-  // now so a member is not asked again the day the sender lands, but a
-  // description promising a notification nothing produces is the one thing it
-  // must not say. Delete this sentence with the producer.
-  newsletter:
-    "A notification when a new newsletter goes out. We don't send this one yet, so your answer here waits until we do.",
+  newsletter: "A notification when we send a new newsletter.",
   events: "A notification when we publish a new event.",
   // This copy is exhaustive TODAY, and only because the three moments named
   // are the only ones that push. It names the stage announcement as well as

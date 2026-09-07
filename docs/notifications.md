@@ -190,16 +190,31 @@ is that helper inverted, for the loops that hold a raw document and are asking
 
 | Row | Email | Push |
 | --- | --- | --- |
-| `newsletter` | `POST /api/newsletter/[id]/send`, the only sender that addresses this row | **nothing yet** |
+| `newsletter` | `POST /api/newsletter/[id]/send`, the only sender that addresses this row | the same send, alongside its email loop |
 | `events` | the new-event announcement, on publish | the same announcement |
 | `courses` | the cohort announcement composer, the weekly session nudge, the run catch-up nudge, the admissions deadline reminder job, the admissions stage-release job | an admissions decision, an allocation publish, the stage release |
 | `tasks` | the five `/api/tasks/[id]/*` senders, the four worksheet circulation messages, the worksheet due-soon reminder | a mirror beside each of those |
 
-**Nothing pushes for the newsletter row**, and the copy on the cell says so:
-"We don't send this one yet, so your answer here waits until we do." The row is
-drawn and settable now so a member is not asked again the day a sender lands, but
-a description promising a notification nothing produces is the one thing it must
-not say. Delete that sentence with the producer.
+**The two opt-in rows share one push audience shape**, in
+`sendPushToRowAudience` (`src/lib/push/rowAudience.ts`): every account with a
+device whose cell for that row is on, enumerated from `pushSubscriptions`,
+deduped by owner, one preference read each, refused whole over 500 device rows.
+The newsletter send and the event announcement both call it, each naming its own
+row, and each dispatches it CONCURRENTLY with its email leg because two bounded
+loops in one request cost the larger rather than the sum.
+
+Only `newsletter` and `events` may be addressed that way, which is why the
+helper's row parameter is narrower than the four. Their cells resolve OFF when
+absent, so a scan of every device reaches only the accounts that answered yes.
+On `courses` and `tasks` an absent cell resolves ON, so the same scan would
+notify every account that has ever enabled a device; those rows are addressed by
+uid instead, by the mirrors beside their emails.
+
+The newsletter notification carries the subject and lands on `/dashboard`. A
+newsletter has no web view at all (the only render of one is
+`POST /api/newsletter/preview`, gated to drafters and approvers), and this
+audience is signed-in accounts with a registered device by construction, so the
+signed-in home is the most useful page every one of them can actually open.
 
 The `courses` email senders resolve their audience through `resolveCohortAudience`,
 which drops anybody whose row is a stored `false` before a message is rendered.
@@ -217,8 +232,11 @@ reminder job reads the kill switch once per run, then the circulation's
 push mirror reads the push cell for itself, which is why a member who has
 switched the email cell off still gets the notification.
 
-`push.tasks` is read in exactly one place (`src/lib/push/taskNotifications.ts`)
-and `push.courses` in exactly one (`src/lib/push/courseNotifications.ts`).
+Every push cell is read in exactly one place: `push.tasks` in
+`src/lib/push/taskNotifications.ts`, `push.courses` in
+`src/lib/push/courseNotifications.ts`, and `push.newsletter` and `push.events`
+in `src/lib/push/rowAudience.ts`, which reads whichever of the two its caller
+names.
 
 ## The marketing unsubscribe link's reach
 
@@ -352,8 +370,10 @@ concurrently.
   applies the events cell and the per-address routing in one answer. The junction
   row IS the opt-in.
 - **Push** goes to every account with a device whose `push.events` cell is on,
-  enumerated from `pushSubscriptions` and deduped by owner. A different question,
-  asked separately: a member can hold the email row and refuse the notification.
+  through the shared `sendPushToRowAudience` the newsletter send also uses
+  (`src/lib/push/rowAudience.ts`): enumerated from `pushSubscriptions`, deduped
+  by owner. A different question, asked separately: a member can hold the email
+  row and refuse the notification.
 - An event with `visibility: "members"` drops GUEST rows (an address with no
   account) and counts them. The push audience is accounts by construction.
 
@@ -458,8 +478,6 @@ hardware's controls. The card and the column read one state machine
 
 ## Deliberately not built
 
-- **Newsletter push.** The cell exists and stores an answer; no producer reads
-  it. The copy on the cell says so.
 - **A members-only announcement to members who are not on the events list.** The
   announcement's audience is the `subscriptions` junction, so a member who never
   opted in hears nothing, including about a members-only event. Reaching them

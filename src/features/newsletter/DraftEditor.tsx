@@ -74,7 +74,7 @@ export default function DraftEditor({ draftId }: Props) {
   const [sendStatus, setSendStatus] = useState<
     | { kind: "idle" }
     | { kind: "sending" }
-    | { kind: "sent"; subscribers: number; emails: number }
+    | { kind: "sent"; subscribers: number; emails: number; pushed: number }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
   const [testStatus, setTestStatus] = useState<
@@ -313,6 +313,7 @@ export default function DraftEditor({ draftId }: Props) {
             ok?: true;
             sentCount?: number;
             subscribersReached?: number;
+            pushed?: number;
             failedCount?: number;
             error?: string;
           }
@@ -328,6 +329,7 @@ export default function DraftEditor({ draftId }: Props) {
         kind: "sent",
         subscribers: body.subscribersReached ?? 0,
         emails: body.sentCount ?? 0,
+        pushed: body.pushed ?? 0,
       });
     } catch (err) {
       setSendStatus({
@@ -379,6 +381,18 @@ export default function DraftEditor({ draftId }: Props) {
                 {draft.subscribersReached != null
                   ? `${draft.subscribersReached} subscriber${draft.subscribersReached === 1 ? "" : "s"} (${draft.sentCount} email${draft.sentCount === 1 ? "" : "s"})`
                   : `${draft.sentCount} email${draft.sentCount === 1 ? "" : "s"}`}
+              </span>
+            )}
+            {/*
+              Shown only when somebody was actually notified. Every draft sent
+              before the push producer existed has no `pushedCount` at all, and
+              a send where nobody has the cell on has a real zero: either way
+              "0 by push" would sit beside a successful send reading as a
+              failure of something the sender never asked for.
+            */}
+            {draft.pushedCount != null && draft.pushedCount > 0 && (
+              <span className={styles.saveHint}>
+                · {draft.pushedCount} notified by push
               </span>
             )}
           </div>
@@ -584,6 +598,8 @@ export default function DraftEditor({ draftId }: Props) {
             Sent to {sendStatus.subscribers} subscriber
             {sendStatus.subscribers === 1 ? "" : "s"} across {sendStatus.emails} email
             address{sendStatus.emails === 1 ? "" : "es"}.
+            {sendStatus.pushed > 0 &&
+              ` ${sendStatus.pushed} notified by push.`}
           </p>
         </Card>
       )}

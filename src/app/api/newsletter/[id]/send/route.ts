@@ -15,6 +15,7 @@ import {
   normaliseNotifications,
 } from "@/lib/firestore/notifications";
 import { findRecipientsForChannel } from "@/lib/firestore/subscriptions";
+import { sendPushToRowAudience } from "@/lib/push/rowAudience";
 import { signToken } from "@/lib/signedTokens";
 
 type Ctx = RouteContext<"/api/newsletter/[id]/send">;
@@ -176,65 +177,122 @@ export async function POST(_req: Request, ctx: Ctx) {
   const reachedUids = new Set<string>();
   const failures: Array<{ uid: string; address: string; error: string }> = [];
 
-  for (const sub of subscribers) {
-    const personalisedBlocks = personaliseBlocks(blocks, {
-      preferredName: sub.preferredName,
-    });
+  /*
+   * THE PUSH LEG: the newsletter row's other column, and the notification the
+   * cell on /profile has been storing an answer for since the grid landed.
+   *
+   * IT RUNS CONCURRENTLY WITH THE EMAIL LOOP, NOT AFTER IT, and that is a
+   * budget decision rather than a tidiness one. The loop below is sequential
+   * with a 200ms pause after every message, so it IS this request's wall
+   * clock, and it already runs against App Hosting's `timeoutSeconds: 60`. A
+   * push leg bolted on after it adds its own worst case (~34s at
+   * `MAX_PUSH_ROWS`, sized in `rowAudience.ts`) to the tightest number in the
+   * estate; dispatched alongside, the request costs the larger of the two
+   * rather than their sum. The event announcement runs its two legs together
+   * for the same reason, and `dispatch.ts` carries the arithmetic.
+   *
+   * ONCE PER SEND, on the send's own claim rather than a new one. This route
+   * refuses a draft that is not `approved` and flips it to `sent` at the end,
+   * so anything that could push twice is something that would mail the whole
+   * list twice. The push adds no retry path of its own.
+   *
+   * A PUSH FAILURE MUST NEVER FAIL THE SEND. Per-account failures are already
+   * swallowed inside the helper; this catch covers the leg itself, an
+   * unreadable `pushSubscriptions` collection being the way that happens. A
+   * newsletter that has reached four hundred inboxes must not answer 500 and
+   * invite somebody to send it again.
+   */
+  const pushLeg = sendPushToRowAudience(
+    db,
+    "newsletter",
+    {
+      title: "New NAISI newsletter",
+      body: subject,
+      // A newsletter has no web view: the only render of one is
+      // `POST /api/newsletter/preview`, which is gated to drafters and
+      // approvers, and /newsletter redirects a plain member to the dashboard.
+      // This audience is signed-in accounts with a registered device by
+      // construction, so the signed-in home is a page every one of them can
+      // actually open. The marketing homepage would say less, and the drafter
+      // tool would refuse them.
+      url: "/dashboard",
+    },
+    { tag: "newsletter send", reference: id },
+  ).catch((err) => {
+    console.error("[newsletter send] push leg failed", id, err);
+    return 0;
+  });
 
-    // Members: token targets the user — flips the newsletter row(s) for both
-    // their google email and uni email when they click. Guests: token
-    // targets the email, flipping just their single newsletter row.
-    const unsubToken =
-      sub.audience === "user"
-        ? signToken(
-            { s: "unsubscribe", uid: sub.uid, c: "newsletter" },
-            UNSUB_TOKEN_TTL_SECONDS,
-          )
-        : signToken(
-            { s: "unsubscribe", email: sub.primaryEmail, c: "newsletter" },
-            UNSUB_TOKEN_TTL_SECONDS,
-          );
-    const unsubscribeUrl = `${appUrl}/api/unsubscribe?t=${encodeURIComponent(unsubToken)}`;
+  /**
+   * The email leg, sequential and paced, exactly as it has always been.
+   *
+   * An arrow expression rather than a `function` declaration: a declaration is
+   * hoisted, so TypeScript cannot know it runs after the sign-in check above
+   * and `actor` reads as possibly null inside it.
+   */
+  const sendAllEmails = async (): Promise<void> => {
+    for (const sub of subscribers) {
+      const personalisedBlocks = personaliseBlocks(blocks, {
+        preferredName: sub.preferredName,
+      });
 
-    const reachKey = sub.audience === "user" ? sub.uid : `guest:${sub.primaryEmail}`;
+      // Members: token targets the user, so one click flips the newsletter
+      // row(s) for both their google email and uni email. Guests: token targets
+      // the email, flipping just their single newsletter row.
+      const unsubToken =
+        sub.audience === "user"
+          ? signToken(
+              { s: "unsubscribe", uid: sub.uid, c: "newsletter" },
+              UNSUB_TOKEN_TTL_SECONDS,
+            )
+          : signToken(
+              { s: "unsubscribe", email: sub.primaryEmail, c: "newsletter" },
+              UNSUB_TOKEN_TTL_SECONDS,
+            );
+      const unsubscribeUrl = `${appUrl}/api/unsubscribe?t=${encodeURIComponent(unsubToken)}`;
 
-    for (const address of sub.addresses) {
-      if (suppressedSet.has(address.toLowerCase())) {
-        suppressedCount += 1;
-        console.log("[newsletter send] suppressed:", reachKey, address);
-        continue;
-      }
-      try {
-        await sendEmail({
-          to: address,
-          subject,
-          react: NewsletterEmail({
+      const reachKey = sub.audience === "user" ? sub.uid : `guest:${sub.primaryEmail}`;
+
+      for (const address of sub.addresses) {
+        if (suppressedSet.has(address.toLowerCase())) {
+          suppressedCount += 1;
+          console.log("[newsletter send] suppressed:", reachKey, address);
+          continue;
+        }
+        try {
+          await sendEmail({
+            to: address,
             subject,
-            blocks: personalisedBlocks,
-            recipientName: sub.preferredName,
-            unsubscribeUrl,
-          }),
-          kind: "newsletter",
-          actorUid: actor.uid,
-          referenceId: id,
-          listUnsubscribe: {
-            url: unsubscribeUrl,
-            mailto: process.env.EMAIL_DEFAULT_REPLY_TO,
-          },
-        });
-        sentCount += 1;
-        reachedUids.add(reachKey);
-        await sleep(200);
-      } catch (err) {
-        console.error("[newsletter send]", reachKey, address, err);
-        failures.push({
-          uid: reachKey,
-          address,
-          error: err instanceof Error ? err.message : "unknown",
-        });
+            react: NewsletterEmail({
+              subject,
+              blocks: personalisedBlocks,
+              recipientName: sub.preferredName,
+              unsubscribeUrl,
+            }),
+            kind: "newsletter",
+            actorUid: actor.uid,
+            referenceId: id,
+            listUnsubscribe: {
+              url: unsubscribeUrl,
+              mailto: process.env.EMAIL_DEFAULT_REPLY_TO,
+            },
+          });
+          sentCount += 1;
+          reachedUids.add(reachKey);
+          await sleep(200);
+        } catch (err) {
+          console.error("[newsletter send]", reachKey, address, err);
+          failures.push({
+            uid: reachKey,
+            address,
+            error: err instanceof Error ? err.message : "unknown",
+          });
+        }
       }
     }
-  }
+  };
+
+  const [, pushed] = await Promise.all([sendAllEmails(), pushLeg]);
 
   const subscribersReached = reachedUids.size;
 
@@ -243,6 +301,12 @@ export async function POST(_req: Request, ctx: Ctx) {
     sentAt: new Date(),
     sentCount,
     subscribersReached,
+    // `pushedCount` beside `sentCount` on the draft and `pushed` in the
+    // response body: each name matches the shape it sits in. Every counter
+    // stored on a draft ends in `Count`, and `pushed` is what a push count is
+    // called everywhere it is answered (`EventAnnouncementResult.pushed`,
+    // which the publish route hands back verbatim).
+    pushedCount: pushed,
     failedCount: failures.length,
     suppressedCount,
     gmailOnlyMode: gmailOnly,
@@ -253,6 +317,7 @@ export async function POST(_req: Request, ctx: Ctx) {
     ok: true,
     sentCount,
     subscribersReached,
+    pushed,
     failedCount: failures.length,
     suppressedCount,
     gmailOnlyMode: gmailOnly,

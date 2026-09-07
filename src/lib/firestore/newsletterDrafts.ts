@@ -28,6 +28,12 @@ export type NewsletterDraft = {
   sentCount?: number | null;
   /** Distinct subscribers who received at least one email. */
   subscribersReached?: number | null;
+  /**
+   * Accounts handed a push notification for this send: the newsletter row's
+   * other column. Absent on every draft sent before the producer existed,
+   * which is why the editor shows the phrase only when there is one.
+   */
+  pushedCount?: number | null;
   createdAt?: Date | null;
   updatedAt?: Date | null;
 };
@@ -64,6 +70,7 @@ export function normalizeDraft(id: string, data: Raw): NewsletterDraft {
       typeof data.subscribersReached === "number"
         ? (data.subscribersReached as number)
         : null,
+    pushedCount: typeof data.pushedCount === "number" ? (data.pushedCount as number) : null,
     createdAt: tsToDate(data.createdAt),
     updatedAt: tsToDate(data.updatedAt),
   };

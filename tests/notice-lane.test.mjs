@@ -1047,8 +1047,12 @@ const announceLoader = createLoader({
   ]),
 });
 
-const { sendEventAnnouncement, MAX_ANNOUNCEMENT_SENDS, MAX_PUSH_ROWS } =
+const { sendEventAnnouncement, MAX_ANNOUNCEMENT_SENDS } =
   await announceLoader.loadTs("lib/email/eventAnnouncement.ts");
+// The push ceiling moved out with the enumeration it bounds: the newsletter
+// send pushes through the same helper, and two copies of one figure would have
+// drifted. `tests/newsletter-push.test.mjs` executes the helper itself.
+const { MAX_PUSH_ROWS } = await announceLoader.loadTs("lib/push/rowAudience.ts");
 
 const ANNOUNCEMENT = {
   eventId: "event-1",
