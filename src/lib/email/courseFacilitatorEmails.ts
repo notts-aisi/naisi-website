@@ -2,6 +2,7 @@ import "server-only";
 import { Timestamp, type Firestore } from "firebase-admin/firestore";
 import ApplicationEmail from "@/emails/ApplicationEmail";
 import NewsletterEmail from "@/emails/NewsletterEmail";
+import { wantsEmailForProfile } from "@/lib/email/preferences";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser, type SessionUser } from "@/lib/firebase/session";
 import {
@@ -235,26 +236,32 @@ export function displayNameOf(data: Record<string, unknown>): string {
 }
 
 /**
- * An EXPLICIT refusal, read off the raw stored prefs. Only the modern
- * `notifications` shape can carry this refusal; the legacy `newsletter` shape
- * predates the category entirely and never means "no" to it. The subscription
- * row is the opt-IN; this category is the opt-OUT layered on top.
+ * An EXPLICIT refusal of the COURSES row, read off a user document the caller
+ * is already holding.
  *
- * `normaliseNotifications` now resolves this row the same way (`courses` is an
- * OPT_OUT row: absent reads as on, only a stored `false` is a refusal), so this
- * reader agrees with it rather than working around it. It stays a raw read
- * because the audience resolver holds raw documents and has no reason to
- * normalise a whole prefs object per recipient.
+ * Only the modern `notifications` shape can carry this refusal; the legacy
+ * `newsletter` shape predates the category entirely and never means "no" to
+ * it. The subscription row is the opt-IN; this category is the opt-OUT layered
+ * on top.
+ *
+ * IT IS NOW THE RESOLVER, INVERTED, rather than a second reading of the same
+ * field. The hand-written version that used to live here walked
+ * `profile.notifications.categories.courses` and compared it to `false`, which
+ * agreed with `resolveRow("courses", …)` on every input anybody had thought of
+ * and agreed with it BY COINCIDENCE: two implementations of one rule, in two
+ * files, with nothing making them move together. The grid gave the rule a
+ * single home, so this asks it instead. The behaviour is unchanged, which is
+ * the point. `tests/admissions-stage-release.test.mjs` pins the whole input
+ * table and now also pins the two against each other.
+ *
+ * It stays a helper of its own, taking a raw document, because the audience
+ * resolver below and the two admissions jobs hold raw documents in a loop and
+ * "has this person refused?" is the question they are asking.
  */
 export function hasOptedOutOfCourseAnnouncements(
   data: Record<string, unknown>,
 ): boolean {
-  const profile = (data.profile as Record<string, unknown> | undefined) ?? {};
-  const notifications = profile.notifications;
-  if (!notifications || typeof notifications !== "object") return false;
-  const categories = (notifications as Record<string, unknown>).categories;
-  if (!categories || typeof categories !== "object") return false;
-  return (categories as Record<string, unknown>).courses === false;
+  return !wantsEmailForProfile(data.profile, "courses");
 }
 
 /** The sender's own address, for a `testOnly` rehearsal. Never a body field. */
