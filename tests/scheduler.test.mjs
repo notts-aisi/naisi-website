@@ -106,6 +106,7 @@ const {
   MARKER_FAMILIES,
   breakReturnMarker,
   decideMarkerClaim,
+  eventAnnouncementMarker,
   isStaleWork,
   markerFamilyOf,
   normalizeSchedulerMarker,
@@ -334,6 +335,7 @@ const FAMILY_SAMPLES = {
     breakReturnMarker("incubator-autumn__ff00ee11", "tuesdays-1800__aa11bb22", "20270201"),
   wsremind: () =>
     worksheetReminderMarker("week-3-reading__c7d2e9f0", "uid1", "2026-10-11T1000"),
+  evannounce: () => eventAnnouncementMarker("reading-group__b8c1d0e2", "email", "uid1"),
 };
 
 describe("marker ids", () => {
@@ -435,6 +437,23 @@ describe("marker ids", () => {
     // stored as a field.
     assert.notEqual(perPerson.id, stagerel.id);
 
+    // THE ANNOUNCEMENT'S TWO LEGS, which is the only family whose id carries a
+    // discriminator that is not an id at all. Email and push are two messages
+    // to one person under one event, so they are two markers, and `leg` is
+    // what keeps them apart. A key rather than a doc id, so it carries no
+    // `__`: the recipient key is the last component and the id still has
+    // exactly one valid reading.
+    const evEmail = eventAnnouncementMarker("reading-group__b8c1d0e2", "email", "uuid1");
+    const evPush = eventAnnouncementMarker("reading-group__b8c1d0e2", "push", "uuid1");
+    assert.equal(evEmail.id, "evannounce__reading-group__b8c1d0e2__email__uuid1");
+    assert.equal(evPush.id, "evannounce__reading-group__b8c1d0e2__push__uuid1");
+    assert.notEqual(evEmail.id, evPush.id);
+    assert.deepEqual(evEmail.fields, {
+      eventId: "reading-group__b8c1d0e2",
+      leg: "email",
+      recipientKey: "uuid1",
+    });
+
     const unmarked = unmarkedRegisterMarker("tuesdays-1800__aa11bb22", "w03-1");
     assert.equal(unmarked.id, "unmarked__tuesdays-1800__aa11bb22__w03-1");
     assert.deepEqual(unmarked.fields, {
@@ -487,6 +506,15 @@ describe("marker ids", () => {
     assert.doesNotThrow(() =>
       worksheetReminderMarker("week-3-reading__c7d2e9f0", "uid1", "2026-10-11T1000"),
     );
+    // The announcement's recipient key is ours to compose (`u{uid}` or a
+    // `g{hash}`), so it belongs in the strict bucket: a `__` in it would give
+    // the id a second reading and could collapse two people onto one marker.
+    assert.throws(
+      () => eventAnnouncementMarker("e1", "email", "u__uid1"),
+      /recipientKey/,
+    );
+    assert.throws(() => eventAnnouncementMarker("e/1", "email", "uuid1"), /eventId/);
+    assert.throws(() => eventAnnouncementMarker("e1", "email", ""), /recipientKey/);
   });
 
   test("family is recoverable from a stored id", () => {
@@ -504,6 +532,10 @@ describe("marker ids", () => {
     assert.equal(
       markerFamilyOf(worksheetReminderMarker("c1", "uid1", "20261011").id),
       "wsremind",
+    );
+    assert.equal(
+      markerFamilyOf(eventAnnouncementMarker("e1", "push", "uuid1").id),
+      "evannounce",
     );
     assert.equal(markerFamilyOf("gnudge__run1__g1__x"), null);
     assert.equal(markerFamilyOf("anything-else"), null);

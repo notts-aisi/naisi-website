@@ -51,6 +51,7 @@ export const MARKER_FAMILIES = [
   "unmarked",
   "breakret",
   "wsremind",
+  "evannounce",
 ] as const;
 
 export type SchedulerMarkerFamily = (typeof MARKER_FAMILIES)[number];
@@ -238,6 +239,54 @@ export function worksheetReminderMarker(
   };
 }
 
+/**
+ * The two legs of a queued event announcement. Each recipient is claimed once
+ * per leg, because a member can be on the email list and hold a device, and
+ * those are two messages that fail independently.
+ */
+export type EventAnnouncementLeg = "email" | "push";
+
+/**
+ * `evannounce__{eventId}__{leg}__{recipientKey}`, one recipient's copy of the
+ * "we have published a new event" announcement when it is sent by the
+ * `event-announcements` scheduler job rather than inside the publish request.
+ *
+ * Per recipient and per leg, exactly like {@link stageRecipientMarker}: the
+ * unit of work that can fail on its own is one person's message, so one
+ * person's message gets its own attempt budget, its own skip reason and its
+ * own stamp. That is also what makes the job RESUMABLE across ticks with no
+ * cursor of its own: a tick that runs out of budget half way down the list
+ * leaves every message it sent stamped, and the next tick's claim on those
+ * fails with ALREADY_EXISTS and moves on.
+ *
+ * `recipientKey` is NOT an email address, and that is deliberate on two
+ * counts. Firestore rejects a `/` in a doc id and this module rejects a `.`,
+ * so an address could not be a component without mangling; and a marker is
+ * kept for {@link SCHEDULER_MARKER_RETENTION_DAYS} days in a collection whose
+ * whole purpose is to say "this was sent", which is no place to accumulate a
+ * mailing list. The caller passes `u{uid}` for a member and `g{hash}` for a
+ * guest row (`announcementRecipientKey` in
+ * `src/lib/email/eventAnnouncement.ts` mints both), so a member's marker is
+ * legible and a guest's is derivable from their address when somebody has one
+ * in hand to check.
+ */
+export function eventAnnouncementMarker(
+  eventId: string,
+  leg: EventAnnouncementLeg,
+  recipientKey: string,
+): SchedulerMarkerRef {
+  const fields = {
+    eventId: assertDocIdComponent("eventId", eventId),
+    leg: assertKeyComponent("leg", leg),
+    recipientKey: assertKeyComponent("recipientKey", recipientKey),
+  };
+  return {
+    id: `evannounce__${fields.eventId}__${fields.leg}__${fields.recipientKey}`,
+    family: "evannounce",
+    fields,
+  };
+}
+
 /** `unmarked__{groupId}__{sessionKey}`, an unmarked-register follow-up. */
 export function unmarkedRegisterMarker(
   groupId: string,
@@ -344,6 +393,13 @@ const COMPONENT_KEYS = [
   // which is the exact thing the header forbids.
   "circulationId",
   "dueKey",
+  // The queued event announcement's three. `leg` is here because the email and
+  // the push are two units of work under one event id, so a sweep that could
+  // not read it back could not tell which of a member's two markers it was
+  // looking at.
+  "eventId",
+  "leg",
+  "recipientKey",
 ] as const;
 
 export function normalizeSchedulerMarker(

@@ -36,6 +36,7 @@ import {
 } from "@/lib/firestore/schedulerMarkers";
 import { admissionsRemindersJob } from "./jobs/admissionsReminders";
 import { admissionsStageReleaseJob } from "./jobs/admissionsStageRelease";
+import { eventAnnouncementsJob } from "./jobs/eventAnnouncements";
 import { heartbeatJob } from "./jobs/heartbeat";
 import { unmarkedRegistersJob } from "./jobs/unmarkedRegisters";
 import { worksheetDueRemindersJob } from "./jobs/worksheetDueReminders";
@@ -54,6 +55,11 @@ export const SCHEDULER_JOB_IDS = [
   "admissions-stage-release",
   "courses-unmarked-registers",
   "courses-break-return",
+  // The queued new-event announcement (docs/notifications.md). Publishing
+  // consults THIS switch to decide between sending inline and queueing, so
+  // the id is load-bearing in two places rather than one: rename it after it
+  // has shipped and the publish route starts reading a switch nobody set.
+  "event-announcements",
   "newsletter-drain",
   // Worksheet due-soon reminders (docs/worksheets.md). The id was reserved
   // here ahead of its handler for the reason the header gives: the panel and
@@ -207,6 +213,7 @@ export const JOBS: readonly JobRegistration[] = [
   admissionsRemindersJob,
   admissionsStageReleaseJob,
   unmarkedRegistersJob,
+  eventAnnouncementsJob,
   heartbeatJob,
   worksheetDueRemindersJob,
 ];

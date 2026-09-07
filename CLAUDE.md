@@ -163,10 +163,16 @@ events/{id}             { title, blocks[], startAt, endAt, location,
                           archived, status (draft|pending|approved|
                           published|rejected|cancelled), authorUid,
                           collaboratorUids[], announcedAt?,
+                          announcementState?, announcementQueuedAt?,
+                          announcementStartedAt?, announcementResult?,
                           rsvpCount{Pending,Confirmed,Waitlisted}, … }
                         `announcedAt` is the once-per-event claim the publish
                         route stamps before it sends the new-event
-                        announcement.
+                        announcement. The four `announcement*` fields are the
+                        QUEUED announcement's state, written only by the
+                        `event-announcements` scheduler job and pinned against
+                        client writes in firestore.rules; they are absent on an
+                        event announced inline. See docs/notifications.md.
 
 eventRsvps/{id}         { eventId, uid?, name, email, answers, status
                           (pending|confirmed|waitlisted|denied|cancelled),
@@ -496,7 +502,7 @@ Two separate Firebase projects, each with its own App Hosting backend. The backe
 - **Admin dashboard tabs**: Approvals, Members (role / title / bio / `suRecognised` / `permissions` / `tracks` edit + full profile edit + hard delete + "View as" debug impersonation), Projects (CRUD + archive), Newsletter, Subscriptions, Email designs (application email templates), Deliverability (send log + suppression list), Task templates, Danger zone.
 - **Admin "view as" debug tool**: per-member "View as" button on the admin Members page does a full impersonation (Firebase custom token → target session cookie) so the admin sees exactly what the member sees, with a sticky banner and audit log (`impersonations` collection). See Roles and access → Admin "view as" for trust properties and operational caveats.
 - **Email infrastructure**: Resend send pipeline, deliverability dashboard, bounce/complaint webhook, application lifecycle emails, transactional emails as JSX templates in `src/emails/`.
-- **Notifications**: one grid on `/profile`, four rows (newsletter, events, courses, tasks) by two columns (email, push), stored as two parallel maps with per-row defaults (the two subscription rows opt-in, the other two opt-out). Every send declares one of three classes and a guard walks the tree to enforce it: grid (consults the row), transactional (never does), notice (deliberately ignores it, for an organiser or facilitator addressing their own audience, with a visible marker, a `kind: "notice"` receipt and durable caps). Publishing an event announces it to the events row on both columns (a members-only event drops guest addresses, nothing else), and sending a newsletter pushes to the newsletter row beside its email loop, through the device enumeration the two opt-in rows share. Reference: [docs/notifications.md](docs/notifications.md).
+- **Notifications**: one grid on `/profile`, four rows (newsletter, events, courses, tasks) by two columns (email, push), stored as two parallel maps with per-row defaults (the two subscription rows opt-in, the other two opt-out). Every send declares one of three classes and a guard walks the tree to enforce it: grid (consults the row), transactional (never does), notice (deliberately ignores it, for an organiser or facilitator addressing their own audience, with a visible marker, a `kind: "notice"` receipt and durable caps). Publishing an event announces it to the events row on both columns (a members-only event drops guest addresses, nothing else), and sending a newsletter pushes to the newsletter row beside its email loop, through the device enumeration the two opt-in rows share. The event announcement has a second path off the request: with the `event-announcements` scheduler job switched on, publishing queues it and the job delivers it one marker-claimed recipient at a time, resuming across ticks. That job ships dark and belongs only where the tick is armed. Reference: [docs/notifications.md](docs/notifications.md).
 - **Users-collection lockdown**: member PII is readable only by SU-recognised committee + admins (and each user's own doc); `suRecognised` enforced as a trust boundary in Firestore rules.
 - **Brand**: real NAISI emblem integrated across the site, favicon, and email logo.
 - **Worksheets** (`/worksheets`, `/worksheets/respond/[circulationId]`): a library with folders of question documents (short and long text, single and multiple choice, polls, rating scales, image-upload answers, rich bodies with images and YouTube or Loom embeds, section headings, page breaks), circulated to committee members as one `assignees-only` task each with the sender as reviewer; a circulation page with per-recipient progress, state and coarse activity (first open, page opens, active time); a mobile-first respond page with autosave and a Save button; review with per-question feedback and reviewer-only scores, returned feedback, admin unfreeze; aggregate views, logged CSV export, per-circulation notification toggles, and a due-soon reminder job that ships dark. Contract and decisions: [docs/worksheets.md](docs/worksheets.md).
