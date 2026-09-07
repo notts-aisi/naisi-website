@@ -126,17 +126,57 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
 
+      # CLOUD-SIDE CONFIGURATION DRIFT, which nothing else in this repository
+      # can see. `npm test` is offline by contract, so it guards
+      # firestore.rules and firestore.indexes.json and stops there; an API
+      # key's restrictions live only in the project. On the night of
+      # 2026-05-25 the dev web key's restrictions were cleared to unblock the
+      # Google Identity Services sign-in rework and never restored, prod kept
+      # the corrected list, and the asymmetry survived three and a half months
+      # until Google's abuse scanner surfaced it by accident. Guarding the
+      # class rather than fixing the instance is the rule here, so this runs
+      # every time.
+      #
+      # Needs roles/serviceusage.apiKeysViewer on the dev project for the
+      # GCP_E2E_SERVICE_ACCOUNT identity, and apikeys.googleapis.com enabled
+      # there. Read-only: `keys.list` never returns key material. Both are
+      # written up in scripts/e2e/README.md under "In CI".
+      - name: Check the dev project's API key restrictions
+        run: node scripts/check-api-key-restrictions.mjs --project naisi-website-dev
+
       # The harness's own config. No secrets: the project id is a name and the
       # web API key is public by definition (Next inlines it into the client
       # bundle, so it ships to every browser that opens the dev site). That is
       # the same argument checks.yml makes for its build placeholders.
+      #
+      # It is nonetheless read from a repository VARIABLE rather than written
+      # here, and the reason is noise, not secrecy. Google's abuse scanner
+      # crawls public repositories for anything key-shaped, cannot tell a
+      # public-by-design Firebase web key from a billable Maps key, and mailed
+      # the owner about this line on 6 September 2026. A recurring alert that
+      # is always a false positive is how a real one gets ignored, so the
+      # string lives outside the repository and the scanner has nothing to
+      # find. Still a variable and not a secret: it ships to every browser
+      # anyway, and pretending otherwise would be theatre.
+      #
+      # Passed through `env` rather than interpolated into the script, because
+      # a `${{ }}` expression expanded straight into `run` is the standard
+      # shell-injection shape and this file is not going to model it.
       - name: Write .env.e2e.local
+        env:
+          FIREBASE_WEB_API_KEY: ${{ vars.NEXT_PUBLIC_FIREBASE_API_KEY }}
         run: |
+          set -euo pipefail
+          if [ -z "${FIREBASE_WEB_API_KEY}" ]; then
+            echo "::error::Repository variable NEXT_PUBLIC_FIREBASE_API_KEY is not set."
+            echo "It is the DEV project's public Firebase web key. See scripts/e2e/README.md, 'In CI'."
+            exit 1
+          fi
           cat > .env.e2e.local <<'EOF'
           E2E_TARGET=http://127.0.0.1:3100
           FIREBASE_ADMIN_PROJECT_ID=naisi-website-dev
-          NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyD2zW_GcbT3hsYnFS8Zl9vKkvNFRcbfvHs
           EOF
+          echo "NEXT_PUBLIC_FIREBASE_API_KEY=${FIREBASE_WEB_API_KEY}" >> .env.e2e.local
 
       # The app the local server builds needs the dev project's PUBLIC Firebase
       # config to inline. Only these values: everything else in a developer's
@@ -145,9 +185,11 @@ jobs:
       # scripts/e2e/run.mjs anyway, which forces the SMTP onto Mailpit, mints a
       # fresh token secret per run and swaps in the always-pass captcha secret.
       - name: Write .env.local
+        env:
+          FIREBASE_WEB_API_KEY: ${{ vars.NEXT_PUBLIC_FIREBASE_API_KEY }}
         run: |
+          set -euo pipefail
           cat > .env.local <<'EOF'
-          NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyD2zW_GcbT3hsYnFS8Zl9vKkvNFRcbfvHs
           NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=naisi-website-dev.firebaseapp.com
           NEXT_PUBLIC_FIREBASE_PROJECT_ID=naisi-website-dev
           NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=naisi-website-dev.firebasestorage.app
@@ -155,6 +197,7 @@ jobs:
           NEXT_PUBLIC_FIREBASE_APP_ID=1:958148488135:web:c030db12ef5ee9e6eb47e2
           FIREBASE_ADMIN_PROJECT_ID=naisi-website-dev
           EOF
+          echo "NEXT_PUBLIC_FIREBASE_API_KEY=${FIREBASE_WEB_API_KEY}" >> .env.local
 
       # The nine fetch batteries under scripts/e2e/tests/ FIRST, because the
       # coverage map credits them with the registration and magic-link routes
@@ -276,13 +319,41 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
 
+      # CLOUD-SIDE CONFIGURATION DRIFT, which nothing else in this repository
+      # can see. `npm test` is offline by contract, so it guards
+      # firestore.rules and firestore.indexes.json and stops there; an API
+      # key's restrictions live only in the project. On the night of
+      # 2026-05-25 the dev web key's restrictions were cleared to unblock the
+      # Google Identity Services sign-in rework and never restored, prod kept
+      # the corrected list, and the asymmetry survived three and a half months
+      # until Google's abuse scanner surfaced it by accident. Guarding the
+      # class rather than fixing the instance is the rule here, so this runs
+      # every time.
+      #
+      # Needs roles/serviceusage.apiKeysViewer on the dev project for the
+      # GCP_E2E_SERVICE_ACCOUNT identity, and apikeys.googleapis.com enabled
+      # there. Read-only: `keys.list` never returns key material. Both are
+      # written up in scripts/e2e/README.md under "In CI".
+      - name: Check the dev project's API key restrictions
+        run: node scripts/check-api-key-restrictions.mjs --project naisi-website-dev
+
+      # Same repository variable as the local job, for the same reason: see the
+      # note on that step.
       - name: Write .env.e2e.local
+        env:
+          FIREBASE_WEB_API_KEY: ${{ vars.NEXT_PUBLIC_FIREBASE_API_KEY }}
         run: |
+          set -euo pipefail
+          if [ -z "${FIREBASE_WEB_API_KEY}" ]; then
+            echo "::error::Repository variable NEXT_PUBLIC_FIREBASE_API_KEY is not set."
+            echo "It is the DEV project's public Firebase web key. See scripts/e2e/README.md, 'In CI'."
+            exit 1
+          fi
           cat > .env.e2e.local <<'EOF'
           E2E_TARGET=https://dev.naisi.uk
           FIREBASE_ADMIN_PROJECT_ID=naisi-website-dev
-          NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyD2zW_GcbT3hsYnFS8Zl9vKkvNFRcbfvHs
           EOF
+          echo "NEXT_PUBLIC_FIREBASE_API_KEY=${FIREBASE_WEB_API_KEY}" >> .env.e2e.local
 
       # The same nine batteries, against the deployed backend. The three that
       # need a relaxed captcha or a readable inbox skip themselves here and say

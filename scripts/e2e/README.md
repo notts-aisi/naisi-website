@@ -787,6 +787,39 @@ gcloud iam service-accounts add-iam-policy-binding "$SA" \
   --project=naisi-website-dev
 ```
 
+**A second grant, for the API key guard.** Both jobs run
+`scripts/check-api-key-restrictions.mjs` straight after authenticating. It
+reads the dev project's API key restrictions and fails when they drift from the
+allowlist the script carries, so it needs `apikeys.googleapis.com` enabled on
+the project and `roles/serviceusage.apiKeysViewer` for the CI identity. It is
+read-only: `keys.list` does not return key material, and the script never calls
+`getKeyString`.
+
+```sh
+SA=<the GCP_E2E_SERVICE_ACCOUNT address>
+gcloud services enable apikeys.googleapis.com --project=naisi-website-dev
+gcloud projects add-iam-policy-binding naisi-website-dev \
+  --member="serviceAccount:$SA" \
+  --role="roles/serviceusage.apiKeysViewer"
+```
+
+Why it exists at all: `npm test` is offline by contract, so it guards
+`firestore.rules` and `firestore.indexes.json` and can see nothing that lives
+only in the cloud project. On the night of 2026-05-25, during the Google
+Identity Services sign-in rework, the dev web key's restrictions were set at
+21:42 UTC, prod's were set at 22:45 UTC, and dev's were cleared again at 23:50
+UTC to unblock that flow. The corrected configuration went to prod, the
+rollback went to dev, and dev sat completely unrestricted for three and a half
+months until Google's abuse scanner surfaced it by accident while flagging
+something else. That is the drift class the guard closes: dev is the
+environment that gets broken and unbroken while iterating, so dev is where
+temporary loosenings accumulate. Run it against production by hand, with your
+own credentials, since CI is scoped to dev on purpose:
+
+```sh
+node scripts/check-api-key-restrictions.mjs --project naisi-website
+```
+
 **It is `pull_request`, never `pull_request_target`.** `pull_request_target`
 would run the base branch's workflow with secrets available while a fork's code
 is checked out, which is the standard way to hand a stranger's branch your
@@ -804,6 +837,7 @@ they skip cleanly rather than going red:
 | `GCP_E2E_SERVICE_ACCOUNT` | repository variable | The dedicated dev-project service account the workflow impersonates and signs tokens as |
 | `E2E_ADMIN_EMAIL` | repository secret | The owner's admin account, for the specs that drive an admin-only screen |
 | `E2E_ADMIN_PASSWORD` | repository secret | Its password |
+| `NEXT_PUBLIC_FIREBASE_API_KEY` | repository variable | The DEV project's Firebase web key. Public by construction (Next inlines it into the client bundle), so a variable and not a secret. It lives outside the repository only so Google's abuse scanner stops flagging it, see below |
 | `E2E_UPLOAD_SCREENSHOTS` | repository variable, optional | Set it to `true` while chasing a failure to have the failing step's screenshots uploaded. Off by default, for the reason below |
 
 Neither address is a secret, which is why they are variables: seeing in the log
