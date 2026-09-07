@@ -130,12 +130,14 @@ export async function POST(
     : [];
   // AN APPROVED ACCOUNT ONLY. `getCurrentUser` hands back a session for every
   // role, `pending` and `rejected` included, and an account's name stays on
-  // every event it ever authored. Without this test a member who was rejected,
-  // or demoted off the committee, would keep the right to mail the attendee
-  // lists of their old events: addresses they can no longer so much as read,
-  // since `firestore.rules` restricts `eventRsvps` to SU-recognised committee
-  // and admins. Being named on an event is a responsibility, not a standing
-  // credential.
+  // every event it ever authored. Without this test an account that was
+  // rejected, or that never got past `pending`, would keep the right to mail
+  // the attendee lists of its old events: addresses it can no longer so much
+  // as read, since `firestore.rules` restricts `eventRsvps` to SU-recognised
+  // committee and admins. Being named on an event is a responsibility, not a
+  // standing credential. A member demoted off the committee still passes,
+  // deliberately: they are still an approved member and still the person
+  // responsible for the event their name is on.
   const approvedAccount =
     viewer.role === "member" || viewer.role === "committee" || viewer.role === "admin";
   const responsibleForEvent =
