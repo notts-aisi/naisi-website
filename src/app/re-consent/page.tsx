@@ -101,20 +101,14 @@ export default async function ReConsentPage() {
         </p>
         <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-4)", lineHeight: 1.6 }}>
           <strong style={{ color: "var(--color-text)" }}>What changed:</strong>{" "}
-          we&apos;ve added a section covering our courses and programmes. It
-          lists everything we hold if you apply to one or take part in one: your
-          application answers and drafts, your availability, anything you tell
-          us about access requirements (kept apart from the rest and never
-          scored), reviewer scores and notes, attendance registers, notes a
-          facilitator writes about a participant, your written work and the
-          feedback on it, your membership tier, and who can see each of those.
-          We&apos;ve also checked every sentence against what the site does:
-          what a circulated worksheet records about you, that deleting an
-          account is by email rather than a button and what a deletion leaves
-          behind, collaborator applications, accounts made with an email
-          address, the membership list the Students&apos; Union gives us,
-          Google reCAPTCHA on two forms, the full list of cookies, and that
-          admins can view the site as you to reproduce a problem.
+          your notification preferences are now a grid of four categories (the
+          newsletter, event announcements, course announcements, and tasks and
+          worksheets), each with a separate email choice and notification
+          choice. One kind of message sits outside that grid: an important
+          notice from the organiser of an event you are attending, or the
+          facilitator of the group you are in, reaches you whatever your
+          switches say and carries no unsubscribe link, because it is about
+          something you signed up for and is never marketing.
         </p>
         <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-4)", lineHeight: 1.6 }}>
           Read the full{" "}

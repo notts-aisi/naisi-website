@@ -193,7 +193,8 @@ while the tab is visible and the person has moved or typed in the last
 minute. No keystrokes, no paste events, no per-question timing. Shown to
 staff on the circulation page and to the recipient on their own task and
 respond page ("You first opened this on ..."). The privacy notice carries a
-line for it; see the OWNER TO CONFIRM item in `src/content/legal/privacy/v4.tsx`.
+line for it, under "When you join the committee" in the current policy
+(`src/content/legal/privacy/v5.tsx`).
 
 ## Firestore rules
 

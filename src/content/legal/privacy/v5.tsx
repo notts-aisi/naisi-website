@@ -1,30 +1,49 @@
 /**
- * Version 4 of the Privacy Policy, checked sentence by sentence against the
- * code on 6 September 2026.
+ * Version 5 of the Privacy Policy, published 7 September 2026 with the
+ * notification grid.
  *
- * What changed from v3: the worksheet activity sentence, and the corrections
- * that check turned up (deletion by email rather than a button, what a
- * deletion removes and what it keeps, no 30-day purge, only the two exports
- * that are logged, collaborator applications, email-and-password signups, the
- * SU membership file, reCAPTCHA, the full cookie and local storage list,
- * per-round blind settings, the star rating in place of anonymous surveys,
- * what other participants see, the push record, view-as, and the worksheet
- * recipient picker).
+ * What changed from v4, in the words a member would use:
  *
- * Second pass, on the owner's decisions: certificates described as the
- * participant minting their own, opt-in, with the retention carve-out that
- * follows; who is name-blind and who is deliberately not; anonymous feedback
- * as a thing we would announce before building; the push record going with
- * the account; re-consent replacing the promise of an email; a 30-day
- * response time; and the standard lines this policy had never carried, on
- * automated decisions, children, event dietary answers, the Google avatar,
- * video thumbnails in email, the export kinds, and Google's sign-in script.
+ *  1. **Your preferences are a grid, and the page says so.** v4 described
+ *     notification preferences as a channel (Google inbox, university inbox)
+ *     crossed with a category, and named the categories as "newsletter,
+ *     events". The grid gives every member four rows, the newsletter, event
+ *     announcements, course announcements, and tasks and worksheets, and this
+ *     version names all four.
+ *  2. **A notification is chosen per category, separately from the email.**
+ *     v4 read as though push followed "the categories you chose", one
+ *     decision covering both. Every row now has its own notification cell,
+ *     resolved independently of its email cell, so a notification can arrive
+ *     for a category whose email is switched off. That is a thing a member
+ *     meets in practice, and the page has to say it before they meet it.
+ *  3. **Important notices are sent under performance of a contract.** This is
+ *     the material change, and the reason this is a new version rather than an
+ *     edit. v4 put every push notification and every announcement under
+ *     consent, and told the member they could withdraw that consent through
+ *     the notification settings on their profile. The notice lane makes that
+ *     untrue for one class of message: an organiser of an event you are
+ *     attending, or the facilitator of the group you are in, can reach you
+ *     about that thing whatever your switches say. Those notices are never
+ *     marketing, and they are only ever about something you signed up for.
+ *  4. **The notice lane carries no unsubscribe link.** The same decision in a
+ *     second place. v4's rights paragraph promised an unsubscribe link in any
+ *     email; `src/lib/email/notice.ts` deliberately refuses to grow one,
+ *     because there is nothing behind the link to switch off. The promise is
+ *     now about marketing email, with the lane carved out beside it.
  *
- * v1, v2 and v3 are FROZEN: they still render unchanged at their archive URLs
- * (/privacy/v/1, /privacy/v/2 and /privacy/v/3), so this file is a
- * copy-and-edit of v3 rather than a refactor of it. Never reach into an older
- * version to share markup with this one. The date on this version (see
- * POLICIES in src/lib/legal/policies.ts) is the owner's to set.
+ * v4 IS FROZEN AS ACCEPTED. It went out with the 6 September 2026 release and
+ * is the wording members agreed to at that sign-in, so it is a digest in
+ * `tests/privacy-policy.test.mjs` and it renders unchanged at /privacy/v/4.
+ * Item 3 above narrows a promise v4 made, which is precisely the kind of
+ * change nobody may make in place: editing v4 would have altered what an
+ * archive URL shows without moving CURRENT_POLICY_VERSION, so no member would
+ * ever have been asked about a new legal basis for a class of message that can
+ * reach them past their own settings. A new version is what asks.
+ *
+ * v1 to v4 are FROZEN: they still render unchanged at their archive URLs
+ * (/privacy/v/1 through /privacy/v/4), so this file is a copy-and-edit of v4
+ * rather than a refactor of it. Never reach into an older version to share
+ * markup with this one.
  */
 import type { ReactNode } from "react";
 import Badge from "@/components/ui/Badge";
@@ -47,7 +66,7 @@ const SECTIONS = [
   { id: "changes", label: "Changes to this policy" },
 ];
 
-export default function PrivacyContentV4({
+export default function PrivacyContentV5({
   meta,
   banner,
 }: {
@@ -162,7 +181,10 @@ export default function PrivacyContentV4({
                 </li>
                 <li>
                   Your notification preferences, broken down by channel (Google
-                  inbox, university inbox) and category (newsletter, events).
+                  inbox, university inbox) and by category, with a separate
+                  email choice and notification choice for each: the
+                  newsletter, event announcements, course announcements, and
+                  tasks and worksheets.
                 </li>
               </ul>
 
@@ -521,7 +543,10 @@ export default function PrivacyContentV4({
                 </li>
                 <li>
                   Send push notifications to a device where you have turned
-                  them on, for the categories you chose.
+                  them on. Each category has its own notification choice, set
+                  separately from its email choice on your profile, so a
+                  notification can still arrive for a category whose email you
+                  have switched off.
                 </li>
                 <li>
                   Operate the committee tooling (tasks, projects, drafts) for
@@ -545,7 +570,12 @@ export default function PrivacyContentV4({
                   any other marketing-style communication, and for push
                   notifications. You can withdraw consent at any time using the
                   unsubscribe link in any such email, the notification settings
-                  on your profile, or by emailing us.
+                  on your profile, or by emailing us. Important notices about
+                  something you have signed up for, such as an event you are
+                  attending or a course group you are in, are sent under
+                  performance of a contract rather than consent, so your
+                  notification settings do not switch them off, and they are
+                  never marketing.
                 </li>
                 <li>
                   <strong>Performance of a contract</strong> (the membership
@@ -858,7 +888,9 @@ export default function PrivacyContentV4({
                 Most of these are self-serve. You can edit your profile and
                 notification preferences from{" "}
                 <a href="/profile">your profile page</a>, and unsubscribe from
-                any email through the link in that email. Deleting your account
+                any marketing email through the link in that email. Important
+                notices carry no unsubscribe link, because there is nothing
+                there to switch off. Deleting your account
                 is by request: email{" "}
                 <a href="mailto:ai-safety@uonsu.com">ai-safety@uonsu.com</a>{" "}
                 and we will delete it. There is no delete button on the site,
