@@ -34,13 +34,15 @@ jobs:
       - run: npx next typegen
       - run: npx tsc --noEmit
       - run: npm run lint
-      # The suite prints a handful of stack traces whose frames are the
-      # loader's data: URLs, each carrying a whole module source, so one line
-      # can run to 440 KB. The runner handles output a line at a time and
-      # stalls for minutes on each such line: 30 of this job's 33 minutes on
-      # 2026-09-06, against 10 seconds for the same command on a laptop.
-      # Chopping every line before the runner reads it loses nothing anyone
-      # reads. pipefail keeps the tests' exit status rather than cut's.
+      # Every line is chopped before the runner reads it. The runner handles
+      # output a line at a time and stalled for minutes on a single line: a
+      # stack trace whose frames were the test loader's data: URLs, each
+      # carrying a whole module source, 440 KB per line, 30 of this job's 33
+      # minutes on 2026-09-06 against 10 seconds for the same command on a
+      # laptop. tests/lib/outputGuard.mjs now fails any test file that prints
+      # a line over 20 KB, so the suite should never produce one again; the
+      # cut stays as the backstop for a line the guard does not see. pipefail
+      # keeps the tests' exit status rather than cut's.
       - name: Tests
         run: |
           set -o pipefail

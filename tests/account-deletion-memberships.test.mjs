@@ -25,6 +25,17 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/**
+ * The failure-path cases below drive a catch block in the code under test,
+ * which logs the error with its stack. Under the test loader a stack frame is a
+ * `data:` URL carrying a whole module graph, so that one log line runs to
+ * 440 KB and GitHub's runner stalls on it for minutes; `tests/lib/outputGuard.mjs`
+ * fails the file on any line over 20 KB. The message is right in production
+ * and expected here, so those cases mute it for their own duration. The mock
+ * is restored when the test ends.
+ */
+const muteExpectedError = (t) => t.mock.method(console, "error", () => {});
+
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(REPO_ROOT, "src");
 
@@ -316,7 +327,8 @@ test("an account with no memberships writes nothing at all", async () => {
   assert.equal(db.updates.length, 0);
 });
 
-test("a period that is no longer there does not fail the teardown", async () => {
+test("a period that is no longer there does not fail the teardown", async (t) => {
+  muteExpectedError(t);
   const db = makeDb({
     memberships: { "gone__2019-20": { uid: "gone", periodId: "2019-20", tier: "paid" } },
     periods: {},

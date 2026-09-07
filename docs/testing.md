@@ -167,6 +167,16 @@ The same shape, older:
   pass.
 - `tests/pwa-offline-assets.test.mjs`: the service worker's write-nothing
   contract.
+- `tests/lib/outputGuard.mjs`, loaded into every `npm test` process by the
+  `--import` flag on the test script and proved by
+  `tests/output-lines.test.mjs`: no test process may print a line over 20 KB.
+  The loader turns every module under test into a `data:` URL, so a stack
+  frame printed by code under test carries a whole module graph and one line
+  runs to 440 KB, which GitHub's runner handles a line at a time and stalls
+  on for minutes (30 of a 33-minute job on 2026-09-06). A test that drives a
+  failure path the code is expected to log mutes that method for its own
+  duration with `t.mock.method(console, "error", () => {})` (or `"warn"`); the
+  CI job keeps its `cut` as the backstop.
 
 ### What every registry and allowlist has in common
 
