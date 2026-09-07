@@ -860,6 +860,19 @@ dev project and its ledger in a workspace that is about to be deleted. Hence
 `.e2e-state`: the ledger is what a person needs to tear a stranded fixture down
 by hand.
 
+A red teardown step therefore has to keep meaning one thing: rows were left on
+dev. It skips, with a line saying so, when `.env.e2e.local` was never written,
+because the harness has no project to write to until that step runs and a job
+that died before it cannot have seeded anything. On 7 September 2026 a 504
+downloading Mailpit ended a job at step 6 and the teardown then failed on the
+missing file, which read exactly like a leak on a run that had created nothing.
+Everything from that step onward tears down as before.
+
+The Mailpit download itself is retried now (`--retry 5 --retry-all-errors`),
+for the same incident: it is a third-party CDN on the critical path of every
+run including the nightly, and retrying it blindly is safe because the download
+is pinned to a version and checked against its published SHA256.
+
 **A green CI run still does not replace the manual dev smoke pass**, for every
 reason in "Known holes" above: Chromium only, no Google sign-in, no rules, and
 no infrastructure beyond what the specs happen to touch.

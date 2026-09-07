@@ -108,7 +108,17 @@ jobs:
           MAILPIT_SHA256: 87d2652abd7c17dc99029147ff62ac671afdf7fd76630f7faf5b14125211c709
         run: |
           set -euo pipefail
-          curl -fsSL -o mailpit.tar.gz \
+          # Retried, because this is a third-party CDN on the critical path of
+          # every run including the nightly. On 7 September 2026 GitHub's
+          # release endpoint answered 504 and took the whole suite down at
+          # step 6, before a single spec ran. curl's own --retry already covers
+          # the transient HTTP codes (408, 429, 500, 502, 503, 504);
+          # --retry-all-errors extends it to connection resets and DNS blips.
+          # Safe to retry blindly: the download is pinned to a version and
+          # checked against its published SHA256 on the next line, so a
+          # corrupt or substituted body still fails hard.
+          curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --retry-max-time 180 \
+            -o mailpit.tar.gz \
             "https://github.com/axllent/mailpit/releases/download/${MAILPIT_VERSION}/mailpit-linux-amd64.tar.gz"
           echo "${MAILPIT_SHA256}  mailpit.tar.gz" | sha256sum -c -
           tar -xzf mailpit.tar.gz mailpit
@@ -241,7 +251,21 @@ jobs:
         if: always()
         env:
           E2E_SIGNING_SERVICE_ACCOUNT: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
-        run: node scripts/run-e2e.mjs --teardown
+        run: |
+          # The harness has no project to write to until "Write .env.e2e.local"
+          # has run, so a job that died before that step cannot have seeded
+          # anything. Say so and stop, rather than failing on the missing file:
+          # a red teardown means "rows were left on dev", and it has to keep
+          # meaning that. On 7 September 2026 a 504 downloading Mailpit ended
+          # the job at step 6 and this step then reported an error that read
+          # exactly like a leak, on a run that had created nothing at all.
+          # Everything from that step onward still tears down as before, and
+          # still goes red when a row survives it.
+          if [ ! -f .env.e2e.local ]; then
+            echo "No .env.e2e.local: the job ended before the harness was configured, so nothing was seeded and there is nothing to tear down."
+            exit 0
+          fi
+          node scripts/run-e2e.mjs --teardown
 
       # The ledgers, always on a failure. They matter most on a failure that
       # also failed to tear down: they name the rows still sitting on the dev
@@ -392,7 +416,21 @@ jobs:
         if: always()
         env:
           E2E_SIGNING_SERVICE_ACCOUNT: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
-        run: node scripts/run-e2e.mjs --teardown
+        run: |
+          # The harness has no project to write to until "Write .env.e2e.local"
+          # has run, so a job that died before that step cannot have seeded
+          # anything. Say so and stop, rather than failing on the missing file:
+          # a red teardown means "rows were left on dev", and it has to keep
+          # meaning that. On 7 September 2026 a 504 downloading Mailpit ended
+          # the job at step 6 and this step then reported an error that read
+          # exactly like a leak, on a run that had created nothing at all.
+          # Everything from that step onward still tears down as before, and
+          # still goes red when a row survives it.
+          if [ ! -f .env.e2e.local ]; then
+            echo "No .env.e2e.local: the job ended before the harness was configured, so nothing was seeded and there is nothing to tear down."
+            exit 0
+          fi
+          node scripts/run-e2e.mjs --teardown
 
       - name: Upload the fixture ledgers
         if: failure()
