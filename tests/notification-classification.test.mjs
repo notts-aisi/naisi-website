@@ -57,18 +57,39 @@
  * The assertion then runs against that file, and the delegation is written
  * down rather than assumed.
  *
- * ## The one thing this guard cannot do at file granularity
+ * ## Counting, and what file granularity still cannot do
  *
- * The registry is keyed `file#symbol`, so a file that calls one symbol on two
- * different lanes collapses into one entry. That is real today in exactly one
- * place: `courseFacilitatorEmails.ts` calls `sendEmail` twice, once for the
- * cohort announcement (grid, courses) and once for the group composer (which
- * becomes a notice in the notice-lane PR). The entry is classified by the lane
- * that consults a row, and each lane's own CALL SITE carries its own entry
- * further up, which is where the classification is legible. The class
+ * The registry is keyed `file#symbol`, and a key that only had to EXIST would
+ * leave the most likely place a new send lands uncovered: a second call
+ * dropped into a file whose key is already registered, which the scanner would
+ * fold into the entry above it and pass in silence. So every entry also
+ * carries `calls`, the number of times that file calls that symbol, and a
+ * count that has moved fails naming both numbers. Adding a send to a
+ * registered sender module is therefore the same conversation as adding a new
+ * one: somebody says which class it is.
+ *
+ * What remains, and it is narrower: two calls of one symbol in one file share
+ * one CLASS line. Five entries carry `calls: 2` today, four of them two
+ * messages on one lane (the two verification variants, the confirm and
+ * welcome pair, appoint and decline, the attendee and organiser cancellations)
+ * and one genuinely two lanes: `courseFacilitatorEmails.ts` calls `sendEmail`
+ * for the cohort announcement (grid, courses) and for the group composer
+ * (which becomes a notice in the notice-lane PR). That entry is classified by
+ * the lane that consults a row, and each lane's own CALL SITE carries its own
+ * entry further up, which is where the classification is legible. The class
  * assertions are therefore per FILE and not per entry: a file with any grid
  * entry must reference a marker; only a file whose entries are ALL
  * transactional is required to reference none.
+ *
+ * ## The tracked symbols are checked, not remembered
+ *
+ * `TRACKED` is the scanner's whole reach, so a wrapper missing from it takes
+ * every call of that wrapper out of the registry silently. It is therefore
+ * derived-checked rather than hand-kept: section 7 walks `src` for exported
+ * `send*`/`notify*`/`mirror*` functions in files that reach a send primitive,
+ * and fails on one that something else in `src` calls and this list does not
+ * name. The other direction too: a tracked name the tree defines nowhere must
+ * carry its reason in `NOT_BUILT_YET`.
  *
  * ## Not built yet, listed anyway
  *
@@ -92,12 +113,19 @@ const SRC = join(REPO_ROOT, "src");
 /**
  * Every symbol whose call is a send, or a decision to send.
  *
- * The primitives first, then the named wrappers, enumerated off the tree
- * rather than remembered: each one is a function that ends in `sendEmail` or
- * in a push, and each one is called from somewhere that has to declare a
- * class. A wrapper's own body is registered too, keyed by its module, which is
- * why `src/lib/events/sendRsvpEmail.ts#sendEmail` and the four routes that call
- * `sendRsvpEmail` all appear below.
+ * The primitives first, then the named wrappers: each one is a function that
+ * ends in `sendEmail` or in a push, and each one is called from somewhere that
+ * has to declare a class. A wrapper's own body is registered too, keyed by its
+ * module, which is why `src/lib/events/sendRsvpEmail.ts#sendEmail` and the four
+ * routes that call `sendRsvpEmail` all appear below.
+ *
+ * THIS LIST IS THE SCANNER'S WHOLE REACH, so a wrapper missing from it takes
+ * every call of that wrapper out of the registry without a word. It is
+ * therefore checked against the tree in both directions, in section 7: every
+ * exported `send*`/`notify*`/`mirror*` function in a file that reaches a send
+ * primitive, and that anything else in `src` refers to, must appear here; and
+ * every name here must either be one of those or carry a written reason in
+ * {@link NOT_BUILT_YET}.
  */
 const TRACKED = [
   // Primitives.
@@ -143,17 +171,18 @@ function callRegex(symbol) {
   return new RegExp(`(^|[^\\w$.])${symbol}\\s*\\(`, "g");
 }
 
-/** Every `file#symbol` this source calls, as a Set. */
+/** Every `file#symbol` this source calls, to HOW MANY TIMES it calls it. */
 function callSitesIn(relPath, source) {
   const code = stripComments(source);
-  const out = new Set();
+  const out = new Map();
   for (const symbol of TRACKED) {
     const re = callRegex(symbol);
     let match;
     while ((match = re.exec(code)) !== null) {
       const before = code.slice(Math.max(0, match.index - 40), match.index + match[1].length);
       if (/\bfunction\s+$/.test(before)) continue;
-      out.add(`${relPath}#${symbol}`);
+      const key = `${relPath}#${symbol}`;
+      out.set(key, (out.get(key) ?? 0) + 1);
     }
   }
   return out;
@@ -173,12 +202,15 @@ function tsFilesUnder(dir) {
 const relPathOf = (file) => relative(REPO_ROOT, file).split(sep).join("/");
 
 const SOURCE_BY_FILE = new Map();
-const FOUND = new Set();
+/** `file#symbol` to the number of calls the tree has of it. */
+const FOUND = new Map();
 for (const file of tsFilesUnder(SRC)) {
   const rel = relPathOf(file);
   const source = readFileSync(file, "utf8");
   SOURCE_BY_FILE.set(rel, source);
-  for (const key of callSitesIn(rel, source)) FOUND.add(key);
+  for (const [key, count] of callSitesIn(rel, source)) {
+    FOUND.set(key, (FOUND.get(key) ?? 0) + count);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -215,8 +247,15 @@ const referencesAny = (rel, needles) => {
 // 3. The registry
 // ---------------------------------------------------------------------------
 
-const G = (row, reason, via) => ({ class: "grid", row, reason, via });
-const T = (reason) => ({ class: "transactional", reason });
+/**
+ * `calls` is how many times that file calls that symbol, and it defaults to
+ * one because that is what almost every entry is. It is pinned rather than
+ * counted so a SECOND send in a file the registry already names has to be
+ * declared: without it the scanner folds the new call into the entry above and
+ * the guard passes on a send nobody classified.
+ */
+const G = (row, reason, via, calls = 1) => ({ class: "grid", row, reason, via, calls });
+const T = (reason, calls = 1) => ({ class: "transactional", reason, calls });
 
 /**
  * Every send in the tree, with the class it belongs to and why.
@@ -331,6 +370,8 @@ const REGISTRY = {
   "src/lib/email/courseFacilitatorEmails.ts#sendEmail": G(
     "courses",
     "Two calls in one file: `sendCourseRunEmail` (the cohort announcement, gated by `resolveCohortAudience` in this same file) and `sendCourseGroupEmail` (the group composer, which the notice-lane PR moves to the notice class). Classified by the lane that reads a row; each lane's call site carries its own entry.",
+    undefined,
+    2,
   ),
   "src/app/api/courses/runs/[runId]/email/route.ts#sendCourseRunEmail": G(
     "courses",
@@ -354,7 +395,7 @@ const REGISTRY = {
   ),
   "src/lib/scheduler/jobs/admissionsReminders.ts#sendAdmissionEmail": G(
     "courses",
-    "The admissions deadline reminder. A scheduled nag about a draft, so the courses row is its off switch; `resolveRecipient` reads it off the user document it fetches for the name.",
+    "The admissions deadline reminder. A scheduled nag about a draft, so the courses row is its off switch; `resolveRecipient` reads it off the user document it fetches for the name. Email only: this job has no push leg, so the cell it reads gates the only channel it has.",
   ),
   "src/lib/scheduler/jobs/admissionsStageRelease.ts#sendAdmissionEmail": G(
     "courses",
@@ -364,7 +405,7 @@ const REGISTRY = {
   // -- Courses row: push ---------------------------------------------------
   "src/lib/scheduler/jobs/admissionsStageRelease.ts#mirrorCourseDecisionToPush": G(
     "courses",
-    "The stage announcement's push leg. The email is sent whatever the push cell says.",
+    "The stage announcement's push leg, and the one place both directions of the row are live at once: the email is sent whatever the push cell says, and the push is handed off whatever the EMAIL cell says (`mailCandidate` gives an `opted-out` skip a push-only lane). Two cells, two answers.",
     "src/lib/push/courseNotifications.ts",
   ),
   "src/app/api/admissions/rounds/[roundId]/decide/route.ts#mirrorCourseDecisionToPush": G(
@@ -397,6 +438,7 @@ const REGISTRY = {
   ),
   "src/app/api/verify-email/send/route.ts#sendEmail": T(
     "The verification link from /profile, and the already-registered variant that goes to the address instead of telling the browser who owns it.",
+    2,
   ),
 
   // -- Transactional: applications and decisions ---------------------------
@@ -440,7 +482,8 @@ const REGISTRY = {
     "The receipt for submitting one, sent as the applicant presses submit.",
   ),
   "src/app/api/admissions/rounds/[roundId]/decide/route.ts#sendAdmissionEmail": T(
-    "Appoint and decline: the decision on somebody's own application.",
+    "Appoint and decline: the decision on somebody's own application. One call each, on one lane.",
+    2,
   ),
 
   // -- Transactional: things the person asked for by acting -----------------
@@ -458,9 +501,11 @@ const REGISTRY = {
   ),
   "src/app/api/events/[id]/rsvp/[rsvpId]/cancel/route.ts#sendRsvpEmail": T(
     "The two cancellation notes, one for the attendee cancelling and one for the organiser cancelling on their behalf.",
+    2,
   ),
   "src/app/api/subscriptions/route.ts#sendEmail": T(
     "The confirmation link and the welcome that follows it. These CREATE the preference; gating them on it would make a subscription unconfirmable.",
+    2,
   ),
   "src/app/api/subscriptions/confirm/route.ts#sendEmail": T(
     "The welcome sent when a confirmation link is followed. Same argument.",
@@ -510,13 +555,36 @@ describe("every send in the tree declares its class", () => {
   });
 
   test("no call site is unregistered", () => {
-    const missing = [...FOUND].filter((key) => !(key in REGISTRY)).sort();
+    const missing = [...FOUND.keys()].filter((key) => !(key in REGISTRY)).sort();
     assert.deepEqual(
       missing,
       [],
       "these sends do not say which class they are. Add each to REGISTRY in " +
         "tests/notification-classification.test.mjs with a class and a reason:\n" +
         missing.map((key) => `  ${key}`).join("\n"),
+    );
+  });
+
+  test("no registered file has grown a send nobody classified", () => {
+    // The direction a Set could not see. A key that only has to EXIST covers
+    // the first send in a file and nothing after it, and a sender module is
+    // the likeliest place the second one lands.
+    const moved = [];
+    for (const [key, found] of FOUND) {
+      const entry = REGISTRY[key];
+      if (!entry) continue;
+      const expected = entry.calls ?? 1;
+      if (found !== expected) moved.push({ key, expected, found });
+    }
+    assert.deepEqual(
+      moved,
+      [],
+      "these files call a tracked send a different number of times than the " +
+        "registry says. If the new call is a new message, say which class it " +
+        "is in its entry's reason; then update `calls`:\n" +
+        moved
+          .map(({ key, expected, found }) => `  ${key}: registered ${expected}, found ${found}`)
+          .join("\n"),
     );
   });
 
@@ -540,6 +608,10 @@ describe("every send in the tree declares its class", () => {
       );
       assert.equal(typeof entry.reason, "string", `${key} has no reason`);
       assert.ok(entry.reason.length > 40, `${key}'s reason is too short to be one`);
+      assert.ok(
+        Number.isInteger(entry.calls) && entry.calls >= 1,
+        `${key} has no call count`,
+      );
       if (entry.class === "grid") {
         assert.ok(ROWS.includes(entry.row), `${key} is grid but names no row`);
       } else {
@@ -629,7 +701,23 @@ describe("a class is a claim about the code, and the code is read", () => {
 // ---------------------------------------------------------------------------
 
 describe("the scanner would catch a new send", () => {
-  const sitesOf = (source) => [...callSitesIn("x.ts", source)].map((k) => k.split("#")[1]).sort();
+  const sitesOf = (source) =>
+    [...callSitesIn("x.ts", source).keys()].map((k) => k.split("#")[1]).sort();
+  const countsOf = (source) =>
+    Object.fromEntries(
+      [...callSitesIn("x.ts", source)].map(([k, n]) => [k.split("#")[1], n]),
+    );
+
+  test("a second call in one file is counted rather than folded away", () => {
+    // The direction a Set could not see: two sends in one file looked exactly
+    // like one, so a send added to a registered module shipped unclassified.
+    assert.deepEqual(countsOf("await sendEmail(a);\nawait sendEmail(b);"), { sendEmail: 2 });
+    assert.deepEqual(countsOf("await sendEmail(a);"), { sendEmail: 1 });
+    assert.deepEqual(countsOf("await sendEmail(a);\nawait sendRsvpEmail(b);"), {
+      sendEmail: 1,
+      sendRsvpEmail: 1,
+    });
+  });
 
   test("a plain call, an awaited call and a voided call all register", () => {
     assert.deepEqual(sitesOf("sendEmail({ to });"), ["sendEmail"]);
@@ -645,7 +733,8 @@ describe("the scanner would catch a new send", () => {
     assert.deepEqual(sitesOf("await sendNotice(args);"), ["sendNotice"]);
     assert.deepEqual(sitesOf("await sendNoticePush(uid, p);"), ["sendNoticePush"]);
     assert.equal(
-      [...FOUND].filter((k) => k.endsWith("#sendNotice") || k.endsWith("#sendNoticePush")).length,
+      [...FOUND.keys()].filter((k) => k.endsWith("#sendNotice") || k.endsWith("#sendNoticePush"))
+        .length,
       0,
       "the notice helpers exist now: register their call sites",
     );
@@ -672,6 +761,112 @@ describe("the scanner would catch a new send", () => {
       assert.equal(referencesAny(rel, GRID_MARKERS), false);
     } finally {
       SOURCE_BY_FILE.set(rel, saved);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. The scanner's reach, derived from the tree
+// ---------------------------------------------------------------------------
+
+/**
+ * The doors a wrapper is a wrapper AROUND. A file that reaches one of these is
+ * a file that can send, so an exported sender in it is a symbol somebody else
+ * calls to make a message happen.
+ */
+const SEND_PRIMITIVES = ["sendEmail(", "sendPushToUid(", "sendNotice(", "sendNoticePush("];
+
+/**
+ * Names in {@link TRACKED} that the tree does not define yet, each with the
+ * reason it is listed anyway. Both halves of the derivation check consult
+ * this, so a door that later gets built is not silently excused twice.
+ */
+const NOT_BUILT_YET = {
+  sendNotice:
+    "The notice lane's email door. Tracked before it exists so the notice-lane PR adds registry rows rather than editing this scanner.",
+  sendNoticePush:
+    "The notice lane's push door, listed for the same reason and asserted to match nothing until it is built.",
+};
+
+/** `export function send…` / `export const notify… =`, name only. */
+const EXPORTED_SENDER =
+  /export\s+(?:async\s+)?function\s+((?:send|notify|mirror)\w*)\s*\(|export\s+const\s+((?:send|notify|mirror)\w*)\s*[:=]/g;
+
+/** Every exported sender the tree defines, to the file that defines it. */
+function exportedSenders() {
+  const found = new Map();
+  for (const [rel, source] of SOURCE_BY_FILE) {
+    const code = stripComments(source);
+    if (!SEND_PRIMITIVES.some((primitive) => code.includes(primitive))) continue;
+    EXPORTED_SENDER.lastIndex = 0;
+    let match;
+    while ((match = EXPORTED_SENDER.exec(code)) !== null) {
+      const name = match[1] ?? match[2];
+      if (!found.has(name)) found.set(name, rel);
+    }
+  }
+  return found;
+}
+
+/** True when some OTHER file in `src` names this symbol, so it has callers. */
+function usedOutside(name, definedIn) {
+  const word = new RegExp(`\\b${name}\\b`);
+  for (const [rel, source] of SOURCE_BY_FILE) {
+    if (rel === definedIn) continue;
+    if (word.test(stripComments(source))) return true;
+  }
+  return false;
+}
+
+describe("the scanner's reach is derived from the tree, not remembered", () => {
+  const SENDERS = exportedSenders();
+
+  test("the derivation found the wrappers it should", () => {
+    // A derivation that silently matched nothing would excuse every name.
+    assert.ok(SENDERS.size >= 10, `only ${SENDERS.size} exported senders derived`);
+    for (const anchor of ["sendEmail", "sendRsvpEmail", "notifyWorksheetEvent"]) {
+      assert.ok(SENDERS.has(anchor), `the derivation missed ${anchor}`);
+    }
+  });
+
+  test("every exported sender with callers is tracked", () => {
+    // The hole this closes: a new `sendEventAnnouncementEmail` in a new module
+    // gets its OWN `sendEmail` call classified, and every route that calls the
+    // wrapper escapes the registry, because the scanner never looks for a
+    // symbol nobody added to TRACKED.
+    const untracked = [];
+    for (const [name, definedIn] of SENDERS) {
+      if (TRACKED.includes(name)) continue;
+      if (!usedOutside(name, definedIn)) continue;
+      untracked.push(`  ${name} (${definedIn})`);
+    }
+    assert.deepEqual(
+      untracked.sort(),
+      [],
+      "these exported senders are called from elsewhere in src and the scanner " +
+        "does not look for them, so their call sites are unclassified. Add each " +
+        "to TRACKED and register its call sites:\n" +
+        untracked.join("\n"),
+    );
+  });
+
+  test("every tracked name is one the tree defines, or says why not", () => {
+    const orphans = TRACKED.filter(
+      (name) => !SENDERS.has(name) && !(name in NOT_BUILT_YET),
+    ).sort();
+    assert.deepEqual(
+      orphans,
+      [],
+      "these tracked symbols are defined nowhere in src. Delete them, or give " +
+        "each a reason in NOT_BUILT_YET:\n" + orphans.map((name) => `  ${name}`).join("\n"),
+    );
+    for (const [name, reason] of Object.entries(NOT_BUILT_YET)) {
+      assert.ok(TRACKED.includes(name), `${name} is excused but not tracked`);
+      assert.ok(reason.length > 40, `${name}'s reason is too short to be one`);
+      assert.ok(
+        !SENDERS.has(name),
+        `${name} is built now: drop it from NOT_BUILT_YET and register its call sites`,
+      );
     }
   });
 });

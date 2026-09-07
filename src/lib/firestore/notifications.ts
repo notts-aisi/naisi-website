@@ -215,6 +215,14 @@ export const PUSH_DESCRIPTIONS: Record<PushNotificationKey, string> = {
   // this string as well.
   courses:
     "A notification when a decision on your application lands, when a new part of an application form opens, or when you're placed in a course group. The email is sent either way.",
+  // "ALONGSIDE" HOLDS ONLY WHILE NOTHING WRITES `categories.tasks`. Every task
+  // and worksheet sender now reads that cell, so a member with the email cell
+  // off and this one on would get a notification with no email beside it.
+  // Nothing can set it yet (/profile carries the stored value through without
+  // drawing a switch, and /api/unsubscribe deliberately skips this row), so the
+  // sentence is still true. The grid PR draws the row and owns this string with
+  // the label rename above: it becomes a notification for task and worksheet
+  // activity, whether or not the email cell is on.
   tasks:
     "A notification alongside each task and worksheet email: added to a task, a comment, a mention, a review request, a review outcome.",
 };
