@@ -150,13 +150,21 @@ function makeDb(store = {}) {
    */
   let transactions = Promise.resolve();
   const runTransaction = (fn) => {
-    const result = transactions.then(() =>
-      fn({
+    const result = transactions.then(() => {
+      // The window a test cannot otherwise reach: the route reads the draft,
+      // resolves a mailing list, then claims. An author saving in between is a
+      // real sequence, and the only way to see WHICH read is mailed.
+      if (typeof globalThis.__beforeTransaction === "function") {
+        const hook = globalThis.__beforeTransaction;
+        globalThis.__beforeTransaction = null;
+        hook(data);
+      }
+      return fn({
         get: async (ref) => snapOf(ref.__collection, ref.__id),
         set: (ref, patch) => write(ref, patch, false),
         update: (ref, patch) => write(ref, patch, true),
-      }),
-    );
+      });
+    });
     // The queue must survive a transaction body that throws, or one failure
     // would wedge every later transaction in the same test.
     transactions = result.then(
@@ -529,6 +537,7 @@ describe("the newsletter send pushes its row once, and never fails because it di
     globalThis.__pushStatus = {};
     globalThis.__pushScanThrows = false;
     globalThis.__subReadThrowsFor = null;
+    globalThis.__beforeTransaction = null;
     globalThis.__user = { uid: "approver-1", role: "admin", permissions: {} };
     globalThis.__channelRows = [
       { email: "on1@e2e.invalid", audience: "user", audienceId: "on-1" },
@@ -623,6 +632,46 @@ describe("the newsletter send pushes its row once, and never fails because it di
       "approved",
       "a refused send changes nothing at all",
     );
+  });
+
+  test("the body that goes out is the one the claim was taken over", async () => {
+    // An approved draft is still editable. A correction saved while an approver
+    // is pressing Send would otherwise be mailed to nobody and the stale text
+    // mailed to everybody, with nothing in the report to say the two differed.
+    seed();
+    globalThis.__beforeTransaction = (data) => {
+      data.newsletterDrafts["draft-1"].subject = "What we did in September (corrected)";
+      data.newsletterDrafts["draft-1"].blocks = [
+        { id: "b2", type: "richText", html: "<p>Corrected</p>" },
+      ];
+    };
+    const res = await sendRoute.POST({}, ctxFor("draft-1"));
+    assert.equal(res.status, 200);
+    assert.equal(globalThis.__sent[0].subject, "What we did in September (corrected)");
+    assert.equal(
+      globalThis.__pushes[0].payload.notification.body,
+      "What we did in September (corrected)",
+      "the notification carries the subject, so it reads from the same snapshot",
+    );
+  });
+
+  test("a draft emptied in that window sends nothing and hands the claim back", async () => {
+    seed();
+    globalThis.__beforeTransaction = (data) => {
+      data.newsletterDrafts["draft-1"].subject = "";
+      data.newsletterDrafts["draft-1"].blocks = [];
+    };
+    const res = await sendRoute.POST({}, ctxFor("draft-1"));
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /missing subject or body/);
+    assert.equal(globalThis.__sent.length, 0);
+    assert.equal(globalThis.__pushes.length, 0);
+    assert.equal(
+      globalThis.__db.data.newsletterDrafts["draft-1"].sendClaimedAt,
+      undefined,
+      "nothing was sent, so the claim is worth nothing and must not strand the draft",
+    );
+    assert.equal(globalThis.__db.data.newsletterDrafts["draft-1"].status, "approved");
   });
 
   test("a sent draft cannot be sent again", async () => {
@@ -811,6 +860,29 @@ describe("the unsubscribe link refuses the row, not the email column", () => {
 // ===========================================================================
 // 4. The test send is transactional, and stays that way
 // ===========================================================================
+
+describe("a standing claim is visible before the Send button is pressed", () => {
+  test("the editor renders sendClaimedAt on an approved draft", () => {
+    // The claim is deliberately sticky and there is no button here to clear it,
+    // so the only thing that keeps it from being invisible is this line. Without
+    // it the 409 is the first anybody hears of a send that stopped half way.
+    const editor = readFileSync(
+      join(REPO_ROOT, "src", "features", "newsletter", "DraftEditor.tsx"),
+      "utf8",
+    );
+    assert.match(
+      editor,
+      /status === "approved" && draft\.sendClaimedAt/,
+      "an approved draft carrying a claim must say so where the Send button is",
+    );
+    assert.match(editor, /did not finish/);
+    assert.match(
+      editor,
+      /An admin can clear it/,
+      "the line has to name the recovery, because there is no control here that performs it",
+    );
+  });
+});
 
 describe("the test send reaches its own sender and consults nothing", () => {
   test("it references neither the shared enumeration nor a push preference", () => {

@@ -229,6 +229,12 @@ Two approvers pressing Send at once therefore produce one send and one 409, and
 both legs sit inside that one claim, so a push cannot repeat without an email
 repeating. The write that sets `sent` deletes the field.
 
+The subject and blocks that go out are re-derived from the snapshot that
+transaction read, not from the read at the top of the route: an approved draft
+is still editable, so a correction saved in that window is what gets mailed. A
+draft emptied in the same window answers 400 and hands the claim straight back,
+because nothing was sent.
+
 Nothing expires a claim, on purpose: a rule that released it after N minutes
 would re-mail the whole list on the day a send took longer than N. So a request
 killed part way through leaves the draft `approved` and carrying

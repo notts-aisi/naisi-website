@@ -106,7 +106,16 @@ function announcementLine(body: PublishResponse): string | null {
     const said = trailer || "The announcement was not sent.";
     return `The event is published. ${said}`;
   }
-  if (!body.announced) return null;
+  if (!body.announced) {
+    // NOTHING WAS ANNOUNCED, AND A LEG STILL HAS SOMETHING TO SAY. A publish
+    // whose events list is empty announces nothing and refuses nothing, which
+    // is a silence worth no words; but the push leg can refuse (over the device
+    // ceiling, or a collection it could not read) while the email leg simply
+    // had nobody to write to, and that publisher would otherwise be shown
+    // nothing at all about a leg that failed. The trailer is checked BEFORE
+    // this return for exactly that case.
+    return trailer ? `The event is published. ${trailer}` : null;
+  }
   const sent = body.announcement?.sent ?? 0;
   const pushed = body.announcement?.pushed ?? 0;
   const parts = [`${sent} ${sent === 1 ? "email" : "emails"}`];

@@ -463,6 +463,29 @@ export default function DraftEditor({ draftId }: Props) {
         {dirty && editable && <span className={styles.saveHint}>Unsaved changes</span>}
       </div>
 
+      {/*
+        A STANDING SEND CLAIM, SHOWN WHERE THE SEND BUTTON IS. The route stamps
+        `sendClaimedAt` before the first message and deletes it with the write
+        that sets `sent`, so an approved draft still carrying it is a send that
+        started and stopped half way. Nothing expires it and there is no button
+        here to clear it, deliberately: releasing it is a decision somebody
+        makes after reading the send log to see who already has the mail. What
+        this line does is make the state legible before the Send button is
+        pressed, rather than leaving the 409 to be the first anybody hears of it.
+      */}
+      {status === "approved" && draft.sendClaimedAt && (
+        <p className={styles.saveHint} style={{ margin: 0 }}>
+          A send of this draft started at{" "}
+          {draft.sendClaimedAt.toLocaleString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}{" "}
+          and did not finish. An admin can clear it once the send log has been read.
+        </p>
+      )}
+
       {status === "rejected" && draft.reviewerNotes && (
         <Card padding="md">
           <strong style={{ color: "var(--color-danger)" }}>Returned for revisions</strong>

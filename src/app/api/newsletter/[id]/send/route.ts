@@ -77,12 +77,23 @@ export async function POST(_req: Request, ctx: Ctx) {
     );
   }
 
-  const subject = (draft.subject as string)?.trim() ?? "";
-  let blocks: Block[] = sanitizeBlocks(draft.blocks);
-  if (blocks.length === 0) {
-    const legacyMarkdown = (draft.bodyMarkdown as string) ?? "";
-    blocks = bodyMarkdownToBlocks(legacyMarkdown);
-  }
+  /**
+   * The body, from whichever read of the draft is current. Called twice: once
+   * here, to refuse an empty draft before a mailing list is resolved, and again
+   * on the snapshot the claim transaction read, which is the one that is
+   * actually sent. Between those two reads an author can save the draft, and
+   * the message that goes out has to be the one the claim was taken over.
+   */
+  const bodyOf = (doc: FirebaseFirestore.DocumentData) => {
+    const nextSubject = (doc.subject as string)?.trim() ?? "";
+    let nextBlocks: Block[] = sanitizeBlocks(doc.blocks);
+    if (nextBlocks.length === 0) {
+      nextBlocks = bodyMarkdownToBlocks((doc.bodyMarkdown as string) ?? "");
+    }
+    return { subject: nextSubject, blocks: nextBlocks };
+  };
+
+  let { subject, blocks } = bodyOf(draft);
   if (!subject || blocks.length === 0) {
     return NextResponse.json(
       { error: "Draft is missing subject or body." },
@@ -227,10 +238,33 @@ export async function POST(_req: Request, ctx: Ctx) {
       };
     }
     tx.update(draftRef, { sendClaimedAt: FieldValue.serverTimestamp() });
-    return { ok: true as const };
+    return { ok: true as const, draft: current };
   });
   if (!claim.ok) {
     return NextResponse.json({ error: claim.error }, { status: claim.status });
+  }
+
+  // THE BODY THAT GOES OUT IS THE ONE THE CLAIM WAS TAKEN OVER, not the one
+  // read at the top of this route. An approved draft is still editable, so an
+  // author saving a correction while an approver is pressing Send would
+  // otherwise have their fix mailed to nobody and the stale text mailed to
+  // everybody, with no sign in the report that the two differed.
+  ({ subject, blocks } = bodyOf(claim.draft));
+  if (!subject || blocks.length === 0) {
+    // Emptied in that window. Nothing has been sent, so the claim is worth
+    // nothing and is handed back: the same trade the publish route makes for
+    // an announcement refused before it dispatched anything.
+    try {
+      await draftRef.update({ sendClaimedAt: FieldValue.delete() });
+    } catch (err) {
+      // The send did not happen either way. A claim that could not be released
+      // costs an admin one field deletion, which is the documented recovery.
+      console.error("[newsletter send] could not release the claim", id, err);
+    }
+    return NextResponse.json(
+      { error: "Draft is missing subject or body." },
+      { status: 400 },
+    );
   }
 
   const planned = subscribers.flatMap((s) => s.addresses);
