@@ -123,8 +123,10 @@ answered), and it is never written again.
 - `/profile` writes the whole `profile.notifications` map on Save, and the push
   column writes a leaf at `profile.notifications.push` on every toggle. See
   [The profile grid](#the-profile-grid).
-- `/api/unsubscribe` writes only the category keys its token actually names, as
-  dotted field paths, and iterates `UNSUBSCRIBABLE_CATEGORIES`. See below.
+- `/api/unsubscribe` writes only the keys its token actually names, as dotted
+  field paths, and iterates `UNSUBSCRIBABLE_CATEGORIES`: the categories leaf for
+  each row it names, plus the PUSH leaf for the two subscription rows. See
+  below.
 - `/api/admin/migrate-notifications` writes `channels` plus the newsletter and
   events cells and nothing else. Backfilling a `courses` cell from the legacy
   shape would opt every legacy member out of cohort mail, because that shape
@@ -190,16 +192,55 @@ is that helper inverted, for the loops that hold a raw document and are asking
 
 | Row | Email | Push |
 | --- | --- | --- |
-| `newsletter` | `POST /api/newsletter/[id]/send`, the only sender that addresses this row | **nothing yet** |
+| `newsletter` | `POST /api/newsletter/[id]/send`, the only sender that addresses this row | the same send, alongside its email loop |
 | `events` | the new-event announcement, on publish | the same announcement |
 | `courses` | the cohort announcement composer, the weekly session nudge, the run catch-up nudge, the admissions deadline reminder job, the admissions stage-release job | an admissions decision, an allocation publish, the stage release |
 | `tasks` | the five `/api/tasks/[id]/*` senders, the four worksheet circulation messages, the worksheet due-soon reminder | a mirror beside each of those |
 
-**Nothing pushes for the newsletter row**, and the copy on the cell says so:
-"We don't send this one yet, so your answer here waits until we do." The row is
-drawn and settable now so a member is not asked again the day a sender lands, but
-a description promising a notification nothing produces is the one thing it must
-not say. Delete that sentence with the producer.
+**The two opt-in rows share one push audience shape**, in
+`sendPushToRowAudience` (`src/lib/push/rowAudience.ts`): every account with a
+device whose cell for that row is on, enumerated from `pushSubscriptions`,
+deduped by owner, one preference read each, refused whole over 500 device rows.
+The newsletter send and the event announcement both call it, each naming its own
+row, and each dispatches it CONCURRENTLY with its email leg because two bounded
+loops in one request cost the larger rather than the sum.
+
+Only `newsletter` and `events` may be addressed that way, which is why the
+helper's row parameter is narrower than the four. Their cells resolve OFF when
+absent, so a scan of every device reaches only the accounts that answered yes.
+On `courses` and `tasks` an absent cell resolves ON, so the same scan would
+notify every account that has ever enabled a device; those rows are addressed by
+uid instead, by the mirrors beside their emails.
+
+The newsletter notification carries the subject and lands on `/dashboard`. A
+newsletter has no web view at all (the only render of one is
+`POST /api/newsletter/preview`, gated to drafters and approvers), so the
+destination is the member's own home rather than the message. The audience is
+DEVICES whose last claimant holds the cell, not signed-in sessions: a push
+subscription belongs to a browser profile and survives sign-out
+(`src/lib/push/store.ts`), so a signed-out device lands on the sign-in page.
+That is still this app and still the right door, where the marketing homepage
+would say less and the drafter tool would refuse them outright.
+
+**The send is claimed once.** `POST /api/newsletter/[id]/send` stamps
+`sendClaimedAt` on the draft in one transaction that also requires `approved`
+and no standing claim, in the same shape the publish route claims `announcedAt`.
+Two approvers pressing Send at once therefore produce one send and one 409, and
+both legs sit inside that one claim, so a push cannot repeat without an email
+repeating. The write that sets `sent` deletes the field.
+
+The subject and blocks that go out are re-derived from the snapshot that
+transaction read, not from the read at the top of the route: an approved draft
+is still editable, so a correction saved in that window is what gets mailed. A
+draft emptied in the same window answers 400 and hands the claim straight back,
+because nothing was sent.
+
+Nothing expires a claim, on purpose: a rule that released it after N minutes
+would re-mail the whole list on the day a send took longer than N. So a request
+killed part way through leaves the draft `approved` and carrying
+`sendClaimedAt`, and every retry is refused until an admin deletes that one
+field from the `newsletterDrafts/{id}` document in the Firestore console,
+having read the send log to see who already has the mail.
 
 The `courses` email senders resolve their audience through `resolveCohortAudience`,
 which drops anybody whose row is a stored `false` before a message is rendered.
@@ -217,8 +258,11 @@ reminder job reads the kill switch once per run, then the circulation's
 push mirror reads the push cell for itself, which is why a member who has
 switched the email cell off still gets the notification.
 
-`push.tasks` is read in exactly one place (`src/lib/push/taskNotifications.ts`)
-and `push.courses` in exactly one (`src/lib/push/courseNotifications.ts`).
+Every push cell is read in exactly one place: `push.tasks` in
+`src/lib/push/taskNotifications.ts`, `push.courses` in
+`src/lib/push/courseNotifications.ts`, and `push.newsletter` and `push.events`
+in `src/lib/push/rowAudience.ts`, which reads whichever of the two its caller
+names.
 
 ## The marketing unsubscribe link's reach
 
@@ -231,10 +275,26 @@ worksheet deadlines on the same click would take away mail they need to do the
 thing they volunteered for, without ever telling them. That row is switched off
 on `/profile`, where the copy says what it stops, and nowhere else.
 
+**The link refuses the ROW, not the email column, for the two subscription
+rows.** `newsletter` and `events` both push now, so for each of those the route
+writes `profile.notifications.push.<row> = false` beside the categories leaf. A
+member who clicks the footer link, or Gmail's one-click List-Unsubscribe-Post
+button, has said "stop sending me this"; leaving the push cell on would keep the
+notification arriving from the very message they unsubscribed from, with nothing
+on the page they landed on to suggest they had not finished.
+
+`courses` is the deliberate exception, and its two cells are the reason. The
+EMAIL cell gates cohort announcements and session nudges; the PUSH cell gates an
+admissions decision, a stage release and a course placement. Those are messages
+about somebody's own application and their own place on a run, so a click at the
+foot of a cohort email must not be read as a refusal of them. That cell is
+switched off on `/profile` and nowhere else, exactly as `tasks` is.
+
 The route also writes only the keys its token names. Rebuilding the whole
 `categories` map and writing it back would collapse absent into `false` on every
 row, which once `courses` joined the list meant an unsubscribe click on a
-newsletter stamped a course-mail refusal the member never made.
+newsletter stamped a course-mail refusal the member never made. Adding the push
+column keeps that rule: two dotted leaves per row, never a map.
 
 ## The notice lane
 
@@ -352,8 +412,10 @@ concurrently.
   applies the events cell and the per-address routing in one answer. The junction
   row IS the opt-in.
 - **Push** goes to every account with a device whose `push.events` cell is on,
-  enumerated from `pushSubscriptions` and deduped by owner. A different question,
-  asked separately: a member can hold the email row and refuse the notification.
+  through the shared `sendPushToRowAudience` the newsletter send also uses
+  (`src/lib/push/rowAudience.ts`): enumerated from `pushSubscriptions`, deduped
+  by owner. A different question, asked separately: a member can hold the email
+  row and refuse the notification.
 - An event with `visibility: "members"` drops GUEST rows (an address with no
   account) and counts them. The push audience is accounts by construction.
 
@@ -458,8 +520,6 @@ hardware's controls. The card and the column read one state machine
 
 ## Deliberately not built
 
-- **Newsletter push.** The cell exists and stores an answer; no producer reads
-  it. The copy on the cell says so.
 - **A members-only announcement to members who are not on the events list.** The
   announcement's audience is the `subscriptions` junction, so a member who never
   opted in hears nothing, including about a members-only event. Reaching them

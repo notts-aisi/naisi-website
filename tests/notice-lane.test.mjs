@@ -1047,8 +1047,12 @@ const announceLoader = createLoader({
   ]),
 });
 
-const { sendEventAnnouncement, MAX_ANNOUNCEMENT_SENDS, MAX_PUSH_ROWS } =
+const { sendEventAnnouncement, MAX_ANNOUNCEMENT_SENDS } =
   await announceLoader.loadTs("lib/email/eventAnnouncement.ts");
+// The push ceiling moved out with the enumeration it bounds: the newsletter
+// send pushes through the same helper, and two copies of one figure would have
+// drifted. `tests/newsletter-push.test.mjs` executes the helper itself.
+const { MAX_PUSH_ROWS } = await announceLoader.loadTs("lib/push/rowAudience.ts");
 
 const ANNOUNCEMENT = {
   eventId: "event-1",
@@ -1234,6 +1238,28 @@ describe("the event announcement: the events row's own sender", () => {
     const result = await sendEventAnnouncement(globalThis.__db, input);
     assert.equal(result.pushed, 0);
     assert.equal(result.sent, 2);
+    assert.equal(
+      result.pushRefusal,
+      null,
+      "an unprovisioned backend is silence by design, and a publisher must not be " +
+        "told the announcement was refused when it was not",
+    );
+  });
+
+  test("the two legs refuse independently, and both refusals reach the publisher", async () => {
+    // The email leg is over its row ceiling and the push leg is fine. One
+    // refusal must not stand in for the other: a publisher told "the events
+    // list is too large" has learnt nothing about whether the phones buzzed.
+    const input = world();
+    globalThis.__channelRows = Array.from({ length: 501 }, (_, i) => ({
+      email: `guest${i}@e2e.invalid`,
+      audience: "guest",
+      audienceId: `guest${i}@e2e.invalid`,
+    }));
+    const result = await sendEventAnnouncement(globalThis.__db, input);
+    assert.match(result.refusal ?? "", /larger than a single announcement/);
+    assert.equal(result.pushRefusal, null);
+    assert.equal(result.pushed, 1, "the push audience is told even when the list is not");
   });
 });
 
@@ -1409,6 +1435,28 @@ describe("publishing announces once, and never fails because the announcement di
     assert.match(editor, /body\.announcementRefused/);
     // And the confirm says what pressing Publish does.
     assert.match(editor, /subscribed[\s\S]{0,40}to event announcements is emailed/);
+
+    // ORDER MATTERS INSIDE `announcementLine`, and it is the one thing a
+    // reader of that function cannot see at a glance. The two legs fail
+    // independently, so an empty events list (announced false, no refusal)
+    // can sit beside a push leg that refused. If the `!body.announced` return
+    // came first, that publisher would be shown nothing at all about the leg
+    // that failed, which is the same silence the whole function exists to
+    // end. So the trailer is built, and consulted, above it.
+    const trailerAt = editor.indexOf("const trailer = [refusal, pushRefusal]");
+    const notAnnouncedAt = editor.indexOf("if (!body.announced)");
+    assert.ok(trailerAt > 0, "the push refusal trailer has moved: re-read announcementLine");
+    assert.ok(notAnnouncedAt > 0, "the not-announced branch has moved: re-read announcementLine");
+    assert.ok(
+      trailerAt < notAnnouncedAt,
+      "the not-announced branch returns before the push refusal is used, so a publish " +
+        "that told nobody by email and could not notify anybody either says nothing",
+    );
+    assert.match(
+      editor.slice(notAnnouncedAt, notAnnouncedAt + 1200),
+      /return trailer \? `The event is published\. \$\{trailer\}` : null;/,
+      "the not-announced branch must still report a refusal when there is one",
+    );
   });
 
   test("a member with no approve permission cannot publish at all", async () => {

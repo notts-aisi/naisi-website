@@ -28,6 +28,19 @@ export type NewsletterDraft = {
   sentCount?: number | null;
   /** Distinct subscribers who received at least one email. */
   subscribersReached?: number | null;
+  /**
+   * Accounts handed a push notification for this send: the newsletter row's
+   * other column. Absent on every draft sent before the producer existed,
+   * which is why the editor shows the phrase only when there is one.
+   */
+  pushedCount?: number | null;
+  /**
+   * The send claim. Stamped in one transaction before the first message goes
+   * out and deleted by the write that sets `sent`, so a draft still carrying it
+   * is a send that started and never finished. Nothing expires it: an admin
+   * clears the field once they know from the send log who already has the mail.
+   */
+  sendClaimedAt?: Date | null;
   createdAt?: Date | null;
   updatedAt?: Date | null;
 };
@@ -64,6 +77,8 @@ export function normalizeDraft(id: string, data: Raw): NewsletterDraft {
       typeof data.subscribersReached === "number"
         ? (data.subscribersReached as number)
         : null,
+    pushedCount: typeof data.pushedCount === "number" ? (data.pushedCount as number) : null,
+    sendClaimedAt: tsToDate(data.sendClaimedAt),
     createdAt: tsToDate(data.createdAt),
     updatedAt: tsToDate(data.updatedAt),
   };

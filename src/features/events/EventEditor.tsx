@@ -71,6 +71,8 @@ type PublishResponse = {
     pushed?: number;
     failed?: number;
     refusal?: string | null;
+    /** The push leg's own refusal. The two legs fail independently. */
+    pushRefusal?: string | null;
   };
 };
 
@@ -94,10 +96,26 @@ function announcementLine(body: PublishResponse): string | null {
     );
   }
   const refusal = body.announcement?.refusal ?? null;
+  // The push leg's refusal is reported wherever the email leg's is, and never
+  // folded into it. The legs fail independently, so "the list is over the
+  // ceiling" and "nobody could be notified" are two different sentences and a
+  // publisher who is shown one of them has not been told the other.
+  const pushRefusal = body.announcement?.pushRefusal ?? null;
+  const trailer = [refusal, pushRefusal].filter(Boolean).join(" ");
   if (body.announcementRefused) {
-    return `The event is published. ${refusal ?? "The announcement was not sent."}`;
+    const said = trailer || "The announcement was not sent.";
+    return `The event is published. ${said}`;
   }
-  if (!body.announced) return null;
+  if (!body.announced) {
+    // NOTHING WAS ANNOUNCED, AND A LEG STILL HAS SOMETHING TO SAY. A publish
+    // whose events list is empty announces nothing and refuses nothing, which
+    // is a silence worth no words; but the push leg can refuse (over the device
+    // ceiling, or a collection it could not read) while the email leg simply
+    // had nobody to write to, and that publisher would otherwise be shown
+    // nothing at all about a leg that failed. The trailer is checked BEFORE
+    // this return for exactly that case.
+    return trailer ? `The event is published. ${trailer}` : null;
+  }
   const sent = body.announcement?.sent ?? 0;
   const pushed = body.announcement?.pushed ?? 0;
   const parts = [`${sent} ${sent === 1 ? "email" : "emails"}`];
@@ -105,7 +123,7 @@ function announcementLine(body: PublishResponse): string | null {
     parts.push(`${pushed} ${pushed === 1 ? "notification" : "notifications"}`);
   }
   const line = `Published, and announced to the events list: ${parts.join(" and ")}.`;
-  return refusal ? `${line} ${refusal}` : line;
+  return trailer ? `${line} ${trailer}` : line;
 }
 
 function statusTone(status: EventStatus): "neutral" | "accent" | "success" | "danger" | "warning" {

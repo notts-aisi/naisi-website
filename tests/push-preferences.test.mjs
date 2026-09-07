@@ -1313,45 +1313,79 @@ describe("the notification grid draws the shape the senders read", () => {
     );
   });
 
-  test("a row whose copy says the notification is not built yet really has no sender", () => {
+  test("every row's copy describes a notification something in src produces", () => {
     /*
-     * The grid draws a Push cell for all four rows, and `newsletter` has no
-     * producer: nothing in `src` calls `wantsPushFor(uid, "newsletter")`. So
-     * its description says so rather than promising a notification that never
-     * arrives, and this is the guard on the day somebody builds the sender and
-     * leaves the sentence behind, which would be the same lie the other way
-     * round.
+     * BOTH DIRECTIONS, since the newsletter producer landed. Until then this
+     * guard could only run one way: `events` had no sender on the branch where
+     * it was written and one on dev, so "a row with no producer must carry a
+     * not-yet caveat" would have been rewritten by a merge. Every row has a
+     * producer now, so the pair is stable and both halves are asserted: each
+     * row in `PUSH_DESCRIPTIONS` is produced somewhere in `src`, and no row's
+     * copy still tells the member we do not send it.
      *
-     * ONE DIRECTION ONLY, deliberately. The mirror ("a row with no producer
-     * must carry the caveat") cannot be asserted from this branch: the events
-     * announcement sender lands in the notice-lane PR, so `events` is
-     * producerless here and has one on dev, and a guard that has to be
-     * rewritten by a merge is worse than the half that is true on both sides.
+     * READING THE TREE HONESTLY TAKES TWO PATTERNS, because there are two
+     * shapes of producer. A mirror asks for its row by name
+     * (`wantsPushFor(uid, "tasks")`). The two OPT-IN rows share one device
+     * enumeration, `sendPushToRowAudience`, which asks `wantsPushFor(uid, row)`
+     * through a variable: a scan for the literal alone would report `events`
+     * and `newsletter` as producerless the moment their producer was shared,
+     * which is a guard failing for the one change it exists to bless. So the
+     * second pattern reads the row where it IS a literal, at the call sites
+     * that choose it, and the helper takes it as its second argument for
+     * exactly that reason: the two patterns are one shape. Two things stop a
+     * pattern going quiet unnoticed, because their results are unioned and
+     * either could carry the whole answer alone: the helper's name is pinned
+     * below, and each pattern has to match something in `src` by itself.
      */
+    const SHARED_ENUMERATION = "sendPushToRowAudience";
+    assert.match(
+      source("src/lib/push/rowAudience.ts"),
+      new RegExp(`export async function ${SHARED_ENUMERATION}\\(`),
+      `${SHARED_ENUMERATION} is how the two opt-in rows are produced; if it has been ` +
+        "renamed, rename it in this guard too or the rows it serves read as producerless",
+    );
+    const PRODUCER_PATTERNS = [
+      new RegExp(`wantsPushFor\\(\\s*[A-Za-z0-9_.]+\\s*,\\s*"([a-zA-Z]+)"`, "g"),
+      new RegExp(`${SHARED_ENUMERATION}\\(\\s*[A-Za-z0-9_.]+\\s*,\\s*"([a-zA-Z]+)"`, "g"),
+    ];
     const producers = new Set();
+    const perPattern = PRODUCER_PATTERNS.map(() => new Set());
     for (const file of tsFilesUnder(SRC)) {
       const code = stripComments(readFileSync(file, "utf8"));
-      for (const m of code.matchAll(/wantsPushFor\(\s*[A-Za-z0-9_.]+\s*,\s*"([a-zA-Z]+)"/g)) {
-        producers.add(m[1]);
-      }
+      PRODUCER_PATTERNS.forEach((pattern, i) => {
+        for (const m of code.matchAll(pattern)) {
+          producers.add(m[1]);
+          perPattern[i].add(m[1]);
+        }
+      });
     }
-    assert.ok(
-      producers.size > 0,
-      "no push producer was found at all, so this guard is reading the tree wrongly",
-    );
-    for (const [row, copy] of Object.entries(PUSH_DESCRIPTIONS)) {
-      if (!/don't send this one yet|not built|does not exist yet/i.test(copy)) continue;
+    // EACH PATTERN ON ITS OWN, which is the thing the loop below cannot say.
+    // The two patterns read the tree in two places, and their results are
+    // unioned: a second regex that had stopped matching (a renamed helper, an
+    // argument order changed, a call reformatted across lines) would leave
+    // every row still covered by the first, and this guard would pass while
+    // reading half the tree. So each must find at least one row by itself.
+    PRODUCER_PATTERNS.forEach((pattern, i) => {
       assert.ok(
-        !producers.has(row),
+        perPattern[i].size > 0,
+        `producer pattern ${i + 1} (${pattern.source}) matched nothing in src, so this ` +
+          "guard is reading the tree through one eye. Fix the pattern, or delete it if " +
+          "the shape it looks for is genuinely gone.",
+      );
+    });
+    for (const [row, copy] of Object.entries(PUSH_DESCRIPTIONS)) {
+      assert.ok(
+        producers.has(row),
+        `PUSH_DESCRIPTIONS.${row} describes a notification, and nothing in src produces ` +
+          "that row. Either the sender has gone or the copy is promising something " +
+          "that never arrives.",
+      );
+      assert.ok(
+        !/don't send this one yet|not built|does not exist yet/i.test(copy),
         `PUSH_DESCRIPTIONS.${row} tells the member we do not send this notification, and ` +
-          "something in src now does. Delete the sentence with the sender.",
+          "something in src does. Delete the sentence with the sender.",
       );
     }
-    assert.ok(
-      !producers.has("newsletter"),
-      "the newsletter push producer exists now: PUSH_DESCRIPTIONS.newsletter must stop " +
-        "saying it does not",
-    );
   });
 });
 

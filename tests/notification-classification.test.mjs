@@ -57,6 +57,19 @@
  * The assertion then runs against that file, and the delegation is written
  * down rather than assumed.
  *
+ * ## One entry, two rows
+ *
+ * A grid entry's `row` is normally one of the four. `sendPushToRowAudience` in
+ * `src/lib/push/rowAudience.ts` is the exception: it enumerates the devices
+ * whose cell for a row it is HANDED is on, and both the newsletter send and the
+ * event announcement call it. Its own `sendPushToUid` is therefore one call
+ * site serving two rows, and neither of the two answers "which row is this" on
+ * its own. So `row` may be an ARRAY, checked element by element, and the entry
+ * names both. The alternative was filing a two-row helper under one row, which
+ * is the registry describing the tree wrongly in order to fit its own shape.
+ * The rows the helper's CALLERS choose are declared as usual, one row each, at
+ * the call sites that choose them.
+ *
  * ## Counting, and what file granularity still cannot do
  *
  * The registry is keyed `file#symbol`, and a key that only had to EXIST would
@@ -167,6 +180,7 @@ const TRACKED = [
   "sendCourseGroupEmail",
   "sendCourseRunEmail",
   "sendEventAnnouncement",
+  "sendPushToRowAudience",
 ];
 
 /**
@@ -276,6 +290,8 @@ const referencesAny = (rel, needles) => {
  * the guard passes on a send nobody classified.
  */
 const G = (row, reason, via, calls = 1) => ({ class: "grid", row, reason, via, calls });
+/** Every row an entry serves, as a list. One row is the normal case. */
+const rowsOf = (entry) => (Array.isArray(entry.row) ? entry.row : [entry.row]);
 const T = (reason, calls = 1) => ({ class: "transactional", reason, calls });
 /** The notice lane. Takes no row: it consults none, which is the point. */
 const N = (reason, calls = 1) => ({ class: "notice", reason, calls });
@@ -452,7 +468,18 @@ const REGISTRY = {
   // -- Newsletter row ------------------------------------------------------
   "src/app/api/newsletter/[id]/send/route.ts#sendEmail": G(
     "newsletter",
-    "The only sender that addresses the newsletter row. `addressesForSend` returns an empty list for anybody who has not opted in, which is also how the per-address matrix is honoured.",
+    "The only sender that addresses the newsletter row by email. `addressesForSend` returns an empty list for anybody who has not opted in, which is also how the per-address matrix is honoured.",
+  ),
+  "src/app/api/newsletter/[id]/send/route.ts#sendPushToRowAudience": G(
+    "newsletter",
+    "The same send's push leg, dispatched alongside the email loop. The push cell is a second answer to a second question: a member can take the newsletter on their phone and not in their inbox, and the two columns are read separately.",
+    "src/lib/push/rowAudience.ts",
+  ),
+
+  // -- The shared device enumeration ---------------------------------------
+  "src/lib/push/rowAudience.ts#sendPushToUid": G(
+    ["newsletter", "events"],
+    "ONE CALL SITE, TWO ROWS: it pushes to every account with a device whose cell for the row it is handed is on, and it reads that row through `wantsPushFor`. Only the two OPT-IN rows may be addressed this way, because an absent cell on `courses` or `tasks` reads as yes and the same scan would notify every account that has ever enabled a device.",
   ),
 
   // -- Transactional: account and identity ---------------------------------
@@ -559,9 +586,10 @@ const REGISTRY = {
     "events",
     "The `we have published a new event` announcement. `addressesForSend` applies the events email cell and the per-address routing in one answer, and the junction row is the opt-in that put the recipient on the list.",
   ),
-  "src/lib/email/eventAnnouncement.ts#sendPushToUid": G(
+  "src/lib/email/eventAnnouncement.ts#sendPushToRowAudience": G(
     "events",
-    "The same announcement's push leg, and the one place `push.events` is read. Opt-in on both columns and asked separately: a member can hold the email row and refuse the notification.",
+    "The same announcement's push leg. Opt-in on both columns and asked separately: a member can hold the email row and refuse the notification. The enumeration is shared with the newsletter's, so the row is read inside the helper.",
+    "src/lib/push/rowAudience.ts",
   ),
   "src/app/api/events/[id]/publish/route.ts#sendEventAnnouncement": G(
     "events",
@@ -678,7 +706,19 @@ describe("every send in the tree declares its class", () => {
         `${key} has no call count`,
       );
       if (entry.class === "grid") {
-        assert.ok(ROWS.includes(entry.row), `${key} is grid but names no row`);
+        // A list, checked element by element: see "One entry, two rows" in the
+        // header for the one entry that needs it and why filing it under a
+        // single row would have been the registry lying about the tree.
+        const rows = rowsOf(entry);
+        assert.ok(rows.length > 0, `${key} is grid but names no row`);
+        for (const row of rows) {
+          assert.ok(ROWS.includes(row), `${key} is grid but names no row`);
+        }
+        assert.equal(
+          new Set(rows).size,
+          rows.length,
+          `${key} names the same row twice, which is a typo wearing a two-row entry's clothes`,
+        );
       } else {
         assert.equal(entry.row, undefined, `${key} is ${entry.class} and must take no row`);
       }
@@ -710,7 +750,7 @@ describe("a class is a claim about the code, and the code is read", () => {
     if (entry.class !== "grid") continue;
     const file = key.slice(0, key.lastIndexOf("#"));
     const where = entry.via ?? file;
-    test(`${key} consults the ${entry.row} row in ${where}`, () => {
+    test(`${key} consults the ${rowsOf(entry).join(" and ")} row in ${where}`, () => {
       assert.ok(
         referencesAny(where, GRID_MARKERS),
         `${where} references none of ${GRID_MARKERS.join(", ")}, so nothing there reads a row`,
@@ -756,6 +796,49 @@ describe("a class is a claim about the code, and the code is read", () => {
       );
     });
   }
+
+  test("a two-row entry names exactly the rows its helper's type allows", () => {
+    /*
+     * The array form exists for ONE shape: a helper parametrised on the row,
+     * whose type says which rows it may be handed. Left to prose, an entry
+     * could name any two rows and the guard would nod. So the declared rows are
+     * read back out of the type: `PushBroadcastRow` in
+     * `src/lib/push/rowAudience.ts` is an `Extract` over the four, and the
+     * entry for that helper's send must equal it exactly. Narrow the type and
+     * this fails until the registry agrees; widen the registry and it fails
+     * until the type does.
+     */
+    const HELPER = "src/lib/push/rowAudience.ts";
+    const source = SOURCE_BY_FILE.get(HELPER);
+    assert.ok(source, `${HELPER} is gone: the array-valued entry describes nothing`);
+    const union = /export type PushBroadcastRow = Extract<\s*PushNotificationKey,\s*([^>]+)>/.exec(
+      source,
+    );
+    assert.ok(union, "PushBroadcastRow moved or changed shape: re-read that file");
+    const allowed = [...union[1].matchAll(/"([a-zA-Z]+)"/g)].map((m) => m[1]).sort();
+    assert.ok(allowed.length >= 2, "a one-row helper does not need the array form");
+
+    const entry = REGISTRY[`${HELPER}#sendPushToUid`];
+    assert.ok(entry, `${HELPER}#sendPushToUid is not registered`);
+    assert.deepEqual(
+      rowsOf(entry).slice().sort(),
+      allowed,
+      "the rows this entry declares and the rows its helper's type permits have " +
+        "drifted apart, so one of the two is describing a tree that does not exist",
+    );
+
+    // Every OTHER grid entry names exactly one row: the array is for a helper
+    // that genuinely serves several, not a way to avoid choosing.
+    for (const [key, other] of Object.entries(REGISTRY)) {
+      if (other.class !== "grid" || key === `${HELPER}#sendPushToUid`) continue;
+      assert.equal(
+        rowsOf(other).length,
+        1,
+        `${key} names several rows. Only a row-parametrised helper may, and this ` +
+          "is not one: say which row this send is.",
+      );
+    }
+  });
 
   test("every marker resolves through the one table of defaults", () => {
     // A sixth way of asking a row is fine; a sixth way that compares a stored

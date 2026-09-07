@@ -74,7 +74,13 @@ export default function DraftEditor({ draftId }: Props) {
   const [sendStatus, setSendStatus] = useState<
     | { kind: "idle" }
     | { kind: "sending" }
-    | { kind: "sent"; subscribers: number; emails: number }
+    | {
+        kind: "sent";
+        subscribers: number;
+        emails: number;
+        pushed: number;
+        pushRefusal: string | null;
+      }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
   const [testStatus, setTestStatus] = useState<
@@ -313,11 +319,17 @@ export default function DraftEditor({ draftId }: Props) {
             ok?: true;
             sentCount?: number;
             subscribersReached?: number;
+            pushed?: number;
+            pushRefusal?: string | null;
             failedCount?: number;
             error?: string;
           }
         | null;
       if (!res.ok || !body?.ok) {
+        // The route's own sentence, verbatim, and this is where the 409 from a
+        // send that is already running or was interrupted lands. It names what
+        // to do next (ask an admin), which a generic "Send failed (409)" would
+        // turn into a second press of the button.
         setSendStatus({
           kind: "error",
           message: body?.error ?? `Send failed (${res.status})`,
@@ -328,6 +340,8 @@ export default function DraftEditor({ draftId }: Props) {
         kind: "sent",
         subscribers: body.subscribersReached ?? 0,
         emails: body.sentCount ?? 0,
+        pushed: body.pushed ?? 0,
+        pushRefusal: body.pushRefusal ?? null,
       });
     } catch (err) {
       setSendStatus({
@@ -379,6 +393,18 @@ export default function DraftEditor({ draftId }: Props) {
                 {draft.subscribersReached != null
                   ? `${draft.subscribersReached} subscriber${draft.subscribersReached === 1 ? "" : "s"} (${draft.sentCount} email${draft.sentCount === 1 ? "" : "s"})`
                   : `${draft.sentCount} email${draft.sentCount === 1 ? "" : "s"}`}
+              </span>
+            )}
+            {/*
+              Shown only when somebody was actually notified. Every draft sent
+              before the push producer existed has no `pushedCount` at all, and
+              a send where nobody has the cell on has a real zero: either way
+              "0 by push" would sit beside a successful send reading as a
+              failure of something the sender never asked for.
+            */}
+            {draft.pushedCount != null && draft.pushedCount > 0 && (
+              <span className={styles.saveHint}>
+                · {draft.pushedCount} notified by push
               </span>
             )}
           </div>
@@ -436,6 +462,29 @@ export default function DraftEditor({ draftId }: Props) {
         <div className={styles.spacer} />
         {dirty && editable && <span className={styles.saveHint}>Unsaved changes</span>}
       </div>
+
+      {/*
+        A STANDING SEND CLAIM, SHOWN WHERE THE SEND BUTTON IS. The route stamps
+        `sendClaimedAt` before the first message and deletes it with the write
+        that sets `sent`, so an approved draft still carrying it is a send that
+        started and stopped half way. Nothing expires it and there is no button
+        here to clear it, deliberately: releasing it is a decision somebody
+        makes after reading the send log to see who already has the mail. What
+        this line does is make the state legible before the Send button is
+        pressed, rather than leaving the 409 to be the first anybody hears of it.
+      */}
+      {status === "approved" && draft.sendClaimedAt && (
+        <p className={styles.saveHint} style={{ margin: 0 }}>
+          A send of this draft started at{" "}
+          {draft.sendClaimedAt.toLocaleString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}{" "}
+          and did not finish. An admin can clear it once the send log has been read.
+        </p>
+      )}
 
       {status === "rejected" && draft.reviewerNotes && (
         <Card padding="md">
@@ -584,7 +633,20 @@ export default function DraftEditor({ draftId }: Props) {
             Sent to {sendStatus.subscribers} subscriber
             {sendStatus.subscribers === 1 ? "" : "s"} across {sendStatus.emails} email
             address{sendStatus.emails === 1 ? "" : "es"}.
+            {sendStatus.pushed > 0 &&
+              ` ${sendStatus.pushed} notified by push.`}
           </p>
+          {/*
+            Shown whatever the count is, because it is the case where the count
+            of zero means something went wrong rather than nobody being opted
+            in. Its own line, in the muted colour: the newsletter did go out,
+            and the sender should read this as a note rather than a failure.
+          */}
+          {sendStatus.pushRefusal && (
+            <p style={{ color: "var(--color-text-muted)", marginTop: "var(--space-2)" }}>
+              {sendStatus.pushRefusal}
+            </p>
+          )}
         </Card>
       )}
       {sendStatus.kind === "error" && (

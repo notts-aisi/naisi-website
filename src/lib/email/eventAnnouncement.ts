@@ -7,9 +7,7 @@ import {
 } from "@/lib/firestore/notifications";
 import { findRecipientsForChannel } from "@/lib/firestore/subscriptions";
 import { filterSuppressed } from "@/lib/firestore/suppression";
-import { sendPushToUid } from "@/lib/push/send";
-import { isPushConfigured } from "@/lib/push/config";
-import { wantsPushFor } from "@/lib/push/preferences";
+import { sendPushToRowAudience, type RowPushResult } from "@/lib/push/rowAudience";
 import { signToken } from "@/lib/signedTokens";
 import { dispatchSends } from "./dispatch";
 import { sendEmail } from "./send";
@@ -86,22 +84,6 @@ export const MAX_ANNOUNCEMENT_ROWS = 500;
  */
 export const MAX_ANNOUNCEMENT_SENDS = 200;
 
-/**
- * Sanity ceiling on the push fan-out. `pushSubscriptions` holds one row per
- * DEVICE, so this is devices and not people; the loop below runs once per
- * distinct OWNER, which is at most that many.
- *
- * Sized against the same 60s budget, on its own per-item cost: an owner costs a
- * preference read, a subscription read and a web-push POST, ~0.4s
- * pessimistically, where an email costs a render and an SMTP connection. 500
- * owners is ceil(500/6) = 84 rounds x 0.4s = ~34s worst, which fits ALONGSIDE
- * the email leg's ~36s because the two are dispatched CONCURRENTLY (see
- * `sendEventAnnouncement`): the request's wall clock is the larger of the two
- * rather than their sum. Over the ceiling the push leg goes quiet and says so
- * in the log; the email still goes.
- */
-export const MAX_PUSH_ROWS = 500;
-
 /** Same lifetime the newsletter gives its unsubscribe links. */
 const UNSUB_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 365;
 
@@ -131,6 +113,13 @@ export type EventAnnouncementResult = {
   pushed: number;
   /** Non-null when nothing was sent because the audience is unreadable. */
   refusal: string | null;
+  /**
+   * The PUSH leg's own refusal, kept separate from the email leg's because the
+   * two legs fail independently: a list too large to mail says nothing about
+   * whether the phones were notified, and reporting one refusal for both would
+   * tell the publisher the wrong thing about half the announcement.
+   */
+  pushRefusal: string | null;
 };
 
 type Recipient = {
@@ -149,7 +138,7 @@ type Recipient = {
 async function announceByEmail(
   db: Firestore,
   input: EventAnnouncementInput,
-): Promise<Omit<EventAnnouncementResult, "pushed">> {
+): Promise<Omit<EventAnnouncementResult, "pushed" | "pushRefusal">> {
   const rows = await findRecipientsForChannel(db, "events");
 
   // REFUSE rather than slice. A `slice()` here would be a silent truncation
@@ -355,61 +344,25 @@ async function announceByEmail(
 /**
  * The push half: every account with a device whose events push cell is on.
  *
- * `pushSubscriptions` is one row per DEVICE with the owning uid on it, and
- * there is no "members who want event pushes" index to read, so the cheapest
- * correct enumeration is the collection's uids, deduped, then one preference
- * read each. That is one collection scan plus one document read per distinct
- * account with a device, which for a society of this size is tens of reads;
- * anything cheaper would mean denormalising the cell onto the subscription row
- * and keeping two copies of one answer in step.
+ * The enumeration itself lives in `src/lib/push/rowAudience.ts`, because the
+ * newsletter send asks the same question of a different row and one of the two
+ * copies would have drifted. What stays here is the part that is about events:
+ * which row, what the notification says, and where a tap lands.
  */
-async function announceByPush(
+function announceByPush(
   db: Firestore,
   input: EventAnnouncementInput,
-): Promise<number> {
-  // Cheapest gate first: with no VAPID keys nothing pushes anywhere, and there
-  // is no reason to read the collection.
-  if (!isPushConfigured()) return 0;
-
-  const snap = await db.collection("pushSubscriptions").limit(MAX_PUSH_ROWS + 1).get();
-  if (snap.docs.length > MAX_PUSH_ROWS) {
-    console.error(
-      "[event announcement] push subscription count exceeds ceiling, not pushing",
-      input.eventId,
-      snap.docs.length,
-    );
-    return 0;
-  }
-
-  const uids = [
-    ...new Set(
-      snap.docs
-        .map((d) => d.data()?.uid)
-        .filter((uid): uid is string => typeof uid === "string" && uid.length > 0),
-    ),
-  ];
-
-  const path = `/events/${encodeURIComponent(input.eventId)}`;
-  let pushed = 0;
-  await dispatchSends(uids, async (uid) => {
-    try {
-      // The events PUSH cell, which is opt-in: absent resolves OFF, so nobody
-      // is pushed for having an account.
-      if (!(await wantsPushFor(uid, "events"))) return;
-      const counts = await sendPushToUid(uid, {
-        title: "New NAISI event",
-        body: input.title,
-        url: path,
-      });
-      // Notifications, not calls: an account whose cell is on but whose only
-      // device has since been pruned is not somebody who was told.
-      if (counts.sent > 0) pushed += 1;
-    } catch (err) {
-      // Best effort, always. Uid only.
-      console.warn("[event announcement] push failed", input.eventId, uid, err);
-    }
-  });
-  return pushed;
+): Promise<RowPushResult> {
+  return sendPushToRowAudience(
+    db,
+    "events",
+    {
+      title: "New NAISI event",
+      body: input.title,
+      url: `/events/${encodeURIComponent(input.eventId)}`,
+    },
+    { tag: "event announcement", reference: input.eventId },
+  );
 }
 
 /**
@@ -418,18 +371,20 @@ async function announceByPush(
  * THE TWO LEGS RUN CONCURRENTLY, and that is a budget decision rather than a
  * tidiness one. Both are bounded loops inside the 60s publish request, they
  * share no state, and they answer two different questions to two different
- * audiences; run in series their worst cases ADD (~36s + ~20s) and leave the
- * request nothing for its own reads. Run together the wall clock is the larger
- * of the two. A refusal on one leg says nothing about the other: an events list
- * too large to mail does not stop the push audience being told.
+ * audiences; run in series their worst cases ADD (~36s here plus the ~34s
+ * `rowAudience.ts` sizes for the push leg, which is the authority for that
+ * figure) and leave the request nothing for its own reads. Run together the
+ * wall clock is the larger of the two. A refusal on one leg says nothing about
+ * the other, which is why they are reported separately: an events list too
+ * large to mail does not stop the push audience being told.
  */
 export async function sendEventAnnouncement(
   db: Firestore,
   input: EventAnnouncementInput,
 ): Promise<EventAnnouncementResult> {
-  const [email, pushed] = await Promise.all([
+  const [email, push] = await Promise.all([
     announceByEmail(db, input),
     announceByPush(db, input),
   ]);
-  return { ...email, pushed };
+  return { ...email, pushed: push.pushed, pushRefusal: push.refusal };
 }

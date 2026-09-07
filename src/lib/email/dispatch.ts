@@ -52,10 +52,11 @@ import "server-only";
  * first was, that lane was a ~1000-message loop billed against this 60s budget
  * on a request that had already committed its once-per-event claim.
  *
- * THE ANNOUNCEMENT ALSO RUNS A SECOND LEG (push, ~20s worst at its own
- * ceiling), and runs it CONCURRENTLY with the email leg for that reason: two
- * bounded loops in one request cost the larger, not the sum. Anything that adds
- * a third serial leg to a request owes this sum again.
+ * THE ANNOUNCEMENT AND THE NEWSLETTER SEND EACH RUN A SECOND LEG (push, ~34s
+ * worst at its own ceiling: `src/lib/push/rowAudience.ts` owns that figure and
+ * is where it is derived), and each runs it CONCURRENTLY with its email leg for
+ * that reason: two bounded loops in one request cost the larger, not the sum.
+ * Anything that adds a third serial leg to a request owes this sum again.
  *
  * RAISING ANY RECIPIENT CAP MEANS REDOING THIS SUM. An audience that needs more
  * than one request needs a chunked sender with per-recipient bookkeeping; that

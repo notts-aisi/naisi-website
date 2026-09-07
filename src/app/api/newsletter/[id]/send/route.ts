@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { FieldValue } from "firebase-admin/firestore";
 import { sendEmail } from "@/lib/email/send";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
@@ -15,6 +16,7 @@ import {
   normaliseNotifications,
 } from "@/lib/firestore/notifications";
 import { findRecipientsForChannel } from "@/lib/firestore/subscriptions";
+import { sendPushToRowAudience } from "@/lib/push/rowAudience";
 import { signToken } from "@/lib/signedTokens";
 
 type Ctx = RouteContext<"/api/newsletter/[id]/send">;
@@ -65,6 +67,9 @@ export async function POST(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Draft not found" }, { status: 404 });
   }
   const draft = draftSnap.data()!;
+  // An early exit, not the gate: it saves resolving a whole mailing list for a
+  // draft that cannot be sent. The claim transaction below re-reads the status
+  // and is the only thing that decides whether this request sends.
   if (draft.status !== "approved") {
     return NextResponse.json(
       { error: `Only approved drafts can be sent (current status: ${draft.status}).` },
@@ -72,12 +77,23 @@ export async function POST(_req: Request, ctx: Ctx) {
     );
   }
 
-  const subject = (draft.subject as string)?.trim() ?? "";
-  let blocks: Block[] = sanitizeBlocks(draft.blocks);
-  if (blocks.length === 0) {
-    const legacyMarkdown = (draft.bodyMarkdown as string) ?? "";
-    blocks = bodyMarkdownToBlocks(legacyMarkdown);
-  }
+  /**
+   * The body, from whichever read of the draft is current. Called twice: once
+   * here, to refuse an empty draft before a mailing list is resolved, and again
+   * on the snapshot the claim transaction read, which is the one that is
+   * actually sent. Between those two reads an author can save the draft, and
+   * the message that goes out has to be the one the claim was taken over.
+   */
+  const bodyOf = (doc: FirebaseFirestore.DocumentData) => {
+    const nextSubject = (doc.subject as string)?.trim() ?? "";
+    let nextBlocks: Block[] = sanitizeBlocks(doc.blocks);
+    if (nextBlocks.length === 0) {
+      nextBlocks = bodyMarkdownToBlocks((doc.bodyMarkdown as string) ?? "");
+    }
+    return { subject: nextSubject, blocks: nextBlocks };
+  };
+
+  let { subject, blocks } = bodyOf(draft);
   if (!subject || blocks.length === 0) {
     return NextResponse.json(
       { error: "Draft is missing subject or body." },
@@ -160,9 +176,93 @@ export async function POST(_req: Request, ctx: Ctx) {
     }
   }
 
+  // A newsletter with nobody on its email list is a configuration error rather
+  // than a send, so this stays a refusal. It does mean the PUSH leg never runs
+  // on its own: the push audience is a different set of people, and there may
+  // well be members holding the push cell while the mailing list is empty, but
+  // a send that mailed nobody and notified forty phones would be reported as a
+  // sent newsletter that most of its audience cannot read.
   if (subscribers.length === 0) {
     return NextResponse.json(
-      { error: "No subscribers to send to." },
+      { error: "No email subscribers to send to." },
+      { status: 400 },
+    );
+  }
+
+  /*
+   * THE SEND CLAIM, and it is a claim rather than a check.
+   *
+   * The status gate at the top of this route reads `approved` and the write at
+   * the bottom sets `sent`, with a send loop between them that takes minutes
+   * and runs against App Hosting's 60s ceiling. Nothing joined those two, so
+   * two approvers pressing Send at once both passed the gate and both mailed
+   * the whole list, and a request killed part way through left the draft
+   * `approved` with half the list already mailed, ready for a retry that
+   * mailed them again. The push leg inherited both.
+   *
+   * So the draft is claimed the way `POST /api/events/[id]/publish` claims
+   * `announcedAt`: one transaction re-reads it, requires `approved` and no
+   * standing claim, and stamps `sendClaimedAt`. A second request loses that
+   * race and is refused, whether it arrived a millisecond or an hour later.
+   *
+   * NO NEW STATUS. A `sending` state would have to be taught to
+   * `firestore.rules`, the status union, the editor's badge and every list that
+   * groups by status, for a window that lasts one request. A timestamp field is
+   * invisible to all of them.
+   *
+   * A CLAIM THAT OUTLIVES ITS REQUEST IS DELIBERATELY STICKY. An interrupted
+   * send leaves the field set and every retry refused, because the alternative
+   * (expiring it after N minutes) is a rule that re-mails the list on the day a
+   * send is slower than N. Clearing `sendClaimedAt` on the draft document is an
+   * admin's decision, made once somebody has read the send log and knows who
+   * already has the mail.
+   */
+  const claim = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(draftRef);
+    if (!snap.exists) return { ok: false as const, status: 404, error: "Draft not found" };
+    const current = snap.data() ?? {};
+    if (current.status !== "approved") {
+      return {
+        ok: false as const,
+        status: 400,
+        error: `Only approved drafts can be sent (current status: ${current.status}).`,
+      };
+    }
+    if (current.sendClaimedAt) {
+      return {
+        ok: false as const,
+        status: 409,
+        error:
+          "A send of this draft has already started, or was interrupted before it " +
+          "finished. Ask an admin before trying again.",
+      };
+    }
+    tx.update(draftRef, { sendClaimedAt: FieldValue.serverTimestamp() });
+    return { ok: true as const, draft: current };
+  });
+  if (!claim.ok) {
+    return NextResponse.json({ error: claim.error }, { status: claim.status });
+  }
+
+  // THE BODY THAT GOES OUT IS THE ONE THE CLAIM WAS TAKEN OVER, not the one
+  // read at the top of this route. An approved draft is still editable, so an
+  // author saving a correction while an approver is pressing Send would
+  // otherwise have their fix mailed to nobody and the stale text mailed to
+  // everybody, with no sign in the report that the two differed.
+  ({ subject, blocks } = bodyOf(claim.draft));
+  if (!subject || blocks.length === 0) {
+    // Emptied in that window. Nothing has been sent, so the claim is worth
+    // nothing and is handed back: the same trade the publish route makes for
+    // an announcement refused before it dispatched anything.
+    try {
+      await draftRef.update({ sendClaimedAt: FieldValue.delete() });
+    } catch (err) {
+      // The send did not happen either way. A claim that could not be released
+      // costs an admin one field deletion, which is the documented recovery.
+      console.error("[newsletter send] could not release the claim", id, err);
+    }
+    return NextResponse.json(
+      { error: "Draft is missing subject or body." },
       { status: 400 },
     );
   }
@@ -176,65 +276,126 @@ export async function POST(_req: Request, ctx: Ctx) {
   const reachedUids = new Set<string>();
   const failures: Array<{ uid: string; address: string; error: string }> = [];
 
-  for (const sub of subscribers) {
-    const personalisedBlocks = personaliseBlocks(blocks, {
-      preferredName: sub.preferredName,
-    });
+  /*
+   * THE PUSH LEG: the newsletter row's other column, and the notification the
+   * cell on /profile has been storing an answer for since the grid landed.
+   *
+   * IT RUNS CONCURRENTLY WITH THE EMAIL LOOP, NOT AFTER IT, and that is a
+   * budget decision rather than a tidiness one. The loop below is sequential
+   * with a 200ms pause after every message, so it IS this request's wall
+   * clock, and it already runs against App Hosting's `timeoutSeconds: 60`. A
+   * push leg bolted on after it adds its own worst case (~34s at
+   * `MAX_PUSH_ROWS`; `src/lib/push/rowAudience.ts` derives that figure and is
+   * the authority for it) to the tightest number in the estate. Dispatched
+   * alongside, the request costs the larger of the two rather than their sum.
+   * The event announcement runs its two legs together for the same reason.
+   *
+   * ONCE PER SEND, UNDER THE CLAIM ABOVE. The push is inside the same claimed
+   * window as the email, so the request that loses the race is refused before
+   * either leg starts and an interrupted send's retry is refused with them.
+   * The push has no claim and no retry path of its own, because it must not be
+   * possible to re-notify without re-mailing or the other way round.
+   *
+   * A PUSH FAILURE MUST NEVER FAIL THE SEND. The helper swallows per-account
+   * failures and now answers an unreadable collection with a refusal rather
+   * than a rejection, so this catch is belt and braces: it costs one line and
+   * it is what stands between an unforeseen throw and a delivered newsletter
+   * reported as a 500 that invites somebody to send it again.
+   */
+  const pushLeg = sendPushToRowAudience(
+    db,
+    "newsletter",
+    {
+      title: "New NAISI newsletter",
+      body: subject,
+      // A newsletter has no web view: the only render of one is
+      // `POST /api/newsletter/preview`, which is gated to drafters and
+      // approvers, and /newsletter redirects a plain member to the dashboard.
+      // So the destination is the member's own home rather than the message.
+      // A subscription belongs to a browser profile and survives sign-out
+      // (`lib/push/store.ts`), so the audience is devices whose last claimant
+      // holds the cell, not signed-in sessions: a signed-out device lands on
+      // the sign-in page. That is still this app and still the right door,
+      // where the marketing homepage would say less and the drafter tool would
+      // refuse them outright.
+      url: "/dashboard",
+    },
+    { tag: "newsletter send", reference: id },
+  ).catch((err) => {
+    console.error("[newsletter send] push leg failed", id, err);
+    return { pushed: 0, refusal: "The push notifications could not be sent." };
+  });
 
-    // Members: token targets the user — flips the newsletter row(s) for both
-    // their google email and uni email when they click. Guests: token
-    // targets the email, flipping just their single newsletter row.
-    const unsubToken =
-      sub.audience === "user"
-        ? signToken(
-            { s: "unsubscribe", uid: sub.uid, c: "newsletter" },
-            UNSUB_TOKEN_TTL_SECONDS,
-          )
-        : signToken(
-            { s: "unsubscribe", email: sub.primaryEmail, c: "newsletter" },
-            UNSUB_TOKEN_TTL_SECONDS,
-          );
-    const unsubscribeUrl = `${appUrl}/api/unsubscribe?t=${encodeURIComponent(unsubToken)}`;
+  /**
+   * The email leg, sequential and paced, exactly as it has always been.
+   *
+   * An arrow expression rather than a `function` declaration: a declaration is
+   * hoisted, so TypeScript cannot know it runs after the sign-in check above
+   * and `actor` reads as possibly null inside it.
+   */
+  const sendAllEmails = async (): Promise<void> => {
+    for (const sub of subscribers) {
+      const personalisedBlocks = personaliseBlocks(blocks, {
+        preferredName: sub.preferredName,
+      });
 
-    const reachKey = sub.audience === "user" ? sub.uid : `guest:${sub.primaryEmail}`;
+      // Members: token targets the user, so one click flips the newsletter
+      // row(s) for both their google email and uni email. Guests: token targets
+      // the email, flipping just their single newsletter row.
+      const unsubToken =
+        sub.audience === "user"
+          ? signToken(
+              { s: "unsubscribe", uid: sub.uid, c: "newsletter" },
+              UNSUB_TOKEN_TTL_SECONDS,
+            )
+          : signToken(
+              { s: "unsubscribe", email: sub.primaryEmail, c: "newsletter" },
+              UNSUB_TOKEN_TTL_SECONDS,
+            );
+      const unsubscribeUrl = `${appUrl}/api/unsubscribe?t=${encodeURIComponent(unsubToken)}`;
 
-    for (const address of sub.addresses) {
-      if (suppressedSet.has(address.toLowerCase())) {
-        suppressedCount += 1;
-        console.log("[newsletter send] suppressed:", reachKey, address);
-        continue;
-      }
-      try {
-        await sendEmail({
-          to: address,
-          subject,
-          react: NewsletterEmail({
+      const reachKey = sub.audience === "user" ? sub.uid : `guest:${sub.primaryEmail}`;
+
+      for (const address of sub.addresses) {
+        if (suppressedSet.has(address.toLowerCase())) {
+          suppressedCount += 1;
+          console.log("[newsletter send] suppressed:", reachKey, address);
+          continue;
+        }
+        try {
+          await sendEmail({
+            to: address,
             subject,
-            blocks: personalisedBlocks,
-            recipientName: sub.preferredName,
-            unsubscribeUrl,
-          }),
-          kind: "newsletter",
-          actorUid: actor.uid,
-          referenceId: id,
-          listUnsubscribe: {
-            url: unsubscribeUrl,
-            mailto: process.env.EMAIL_DEFAULT_REPLY_TO,
-          },
-        });
-        sentCount += 1;
-        reachedUids.add(reachKey);
-        await sleep(200);
-      } catch (err) {
-        console.error("[newsletter send]", reachKey, address, err);
-        failures.push({
-          uid: reachKey,
-          address,
-          error: err instanceof Error ? err.message : "unknown",
-        });
+            react: NewsletterEmail({
+              subject,
+              blocks: personalisedBlocks,
+              recipientName: sub.preferredName,
+              unsubscribeUrl,
+            }),
+            kind: "newsletter",
+            actorUid: actor.uid,
+            referenceId: id,
+            listUnsubscribe: {
+              url: unsubscribeUrl,
+              mailto: process.env.EMAIL_DEFAULT_REPLY_TO,
+            },
+          });
+          sentCount += 1;
+          reachedUids.add(reachKey);
+          await sleep(200);
+        } catch (err) {
+          console.error("[newsletter send]", reachKey, address, err);
+          failures.push({
+            uid: reachKey,
+            address,
+            error: err instanceof Error ? err.message : "unknown",
+          });
+        }
       }
     }
-  }
+  };
+
+  const [, push] = await Promise.all([sendAllEmails(), pushLeg]);
 
   const subscribersReached = reachedUids.size;
 
@@ -243,9 +404,21 @@ export async function POST(_req: Request, ctx: Ctx) {
     sentAt: new Date(),
     sentCount,
     subscribersReached,
+    // `pushedCount` beside `sentCount` on the draft and `pushed` in the
+    // response body: each name matches the shape it sits in. Every counter
+    // stored on a draft ends in `Count`, and `pushed` is what a push count is
+    // called everywhere it is answered (`EventAnnouncementResult.pushed`,
+    // which the publish route hands back verbatim).
+    pushedCount: push.pushed,
     failedCount: failures.length,
     suppressedCount,
     gmailOnlyMode: gmailOnly,
+    // The claim is spent the moment the status says `sent`, and `sent` is a
+    // terminal state this route will not send from again. Deleting the field
+    // rather than leaving the timestamp keeps one question answerable by
+    // looking at the document: a draft carrying `sendClaimedAt` is a send that
+    // never finished, and is the only case an admin has to decide about.
+    sendClaimedAt: FieldValue.delete(),
     updatedAt: new Date(),
   });
 
@@ -253,6 +426,11 @@ export async function POST(_req: Request, ctx: Ctx) {
     ok: true,
     sentCount,
     subscribersReached,
+    pushed: push.pushed,
+    // Zero pushed has four meanings and only two of them are worth showing
+    // (see `rowAudience.ts`), so the reason travels with the count instead of
+    // the editor guessing from it.
+    pushRefusal: push.refusal,
     failedCount: failures.length,
     suppressedCount,
     gmailOnlyMode: gmailOnly,
