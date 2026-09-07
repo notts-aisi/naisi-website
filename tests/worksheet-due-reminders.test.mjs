@@ -813,6 +813,77 @@ describe("the skips", () => {
     assert.equal(summary.sent, 1);
   });
 
+  test("a member who has switched the tasks row off is skipped, and the marker says why", async () => {
+    // The row is the member's own, and it is the last of three gates. The
+    // reason lands on the marker verbatim rather than as a generic
+    // "not-sent", because a deliverability review has to tell somebody who
+    // said no from somebody nobody could reach.
+    const db = world({
+      count: 2,
+      userOverrides: (uid) =>
+        uid === "uid001"
+          ? { profile: { notifications: { categories: { tasks: false } } } }
+          : {},
+    });
+    reset(db);
+
+    const { summary } = await runWorksheetDueReminders(context().ctx);
+
+    assert.deepEqual(
+      globalThis.__sends.map((send) => send.to),
+      ["uid002@example.com"],
+    );
+    assert.equal(summary.sent, 1);
+    assert.equal(summary.skipped, 1);
+    assert.equal(db.read("schedulerMarkers", markerId("uid001")).skippedReason, "opted-out");
+  });
+
+  test("an unanswered tasks row is not a refusal", async () => {
+    // OPT-OUT row: only a stored `false` stops the send. Every other shape is
+    // somebody who has not been asked yet.
+    for (const profile of [
+      undefined,
+      {},
+      { notifications: {} },
+      { notifications: { categories: { tasks: true } } },
+      { notifications: { categories: { tasks: "false" } } },
+      { newsletter: { subscribed: false } },
+    ]) {
+      const db = world({
+        count: 1,
+        userOverrides: () => (profile === undefined ? {} : { profile }),
+      });
+      reset(db);
+
+      await runWorksheetDueReminders(context().ctx);
+
+      assert.equal(
+        globalThis.__sends.length,
+        1,
+        `${JSON.stringify(profile)} was read as a refusal`,
+      );
+    }
+  });
+
+  test("switching the email cell off still leaves the push cell alone", async () => {
+    // Two cells, two answers. `mirrorTaskEmailToPush` reads the push one for
+    // itself, so this run reaches the member on the channel they kept and the
+    // send is recorded as push-only with the reason beside it.
+    const db = world({
+      count: 1,
+      circulationOverrides: { notifications: dueSoon({ email: true, push: true }) },
+      userOverrides: () => ({ profile: { notifications: { categories: { tasks: false } } } }),
+    });
+    reset(db);
+
+    const { summary } = await runWorksheetDueReminders(context().ctx);
+
+    assert.equal(globalThis.__sends.length, 0);
+    assert.equal(globalThis.__pushes.length, 1);
+    assert.equal(summary.sent, 1);
+    assert.deepEqual(summary.pushOnly, [{ uid: "uid001", reason: "opted-out" }]);
+  });
+
   test("the site-wide task-email switch stops the run before anything is claimed", async () => {
     const db = makeDb({
       circulations: { [CIRCULATION_ID]: circulation() },

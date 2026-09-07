@@ -157,6 +157,7 @@ import {
   formatWorksheetDue,
   type WorksheetSendOutcome,
 } from "@/lib/email/worksheetReminderEmails";
+import { wantsEmailForProfile } from "@/lib/email/preferences";
 import { getAdminDb } from "@/lib/firebase/admin";
 import {
   CIRCULATIONS_COLLECTION,
@@ -380,6 +381,14 @@ async function dueCirculations(db: Firestore, ctx: JobContext): Promise<Circulat
  *
  * Called only when the email switch is on, so a push-only circulation costs no
  * users read and no suppression read at all.
+ *
+ * THREE REASONS NOT TO SEND, and they are not interchangeable. `opted-out` is
+ * the member's own tasks row, read off the document this function has already
+ * fetched for the address; it is a preference and it applies to EMAIL ONLY,
+ * because the push column is a separate cell that `mirrorTaskEmailToPush`
+ * reads for itself. `no-address` and `suppressed` are facts about the mailbox.
+ * Each lands on the marker verbatim, so a deliverability review can tell a
+ * member who said no from a member nobody could reach.
  */
 async function resolveRecipient(
   db: Firestore,
@@ -398,6 +407,9 @@ async function resolveRecipient(
   // No fallback address to try: a worksheet recipient is a member with an
   // account, and their account is the only place an address for them exists.
   if (!email) return { skip: "no-address" };
+  // The member's own tasks row, before the suppression read rather than after
+  // it: a person who has switched worksheet mail off costs no second read.
+  if (!wantsEmailForProfile(profile, "tasks")) return { skip: "opted-out" };
   let suppressed: boolean;
   try {
     suppressed = await isSuppressed(db, email);

@@ -138,6 +138,22 @@ The same shape, older:
   `tests/funnel-harness-guards.test.mjs`: the two end-to-end harnesses can
   never be aimed at production, never grant a role or permission, and only
   address the Firestore collections on their own declared lists.
+- `tests/notification-classification.test.mjs`: every send in `src` declares
+  which of the three notification classes it belongs to. The scanner walks the
+  tree for calls to `sendEmail`, the two push mirrors and every named wrapper
+  (`sendRsvpEmail`, `notifyWorksheetEvent`, the admission and nudge wrappers,
+  and the rest, enumerated rather than remembered); `REGISTRY` maps each
+  `file#symbol` to `grid` with its row, `transactional`, or `notice`, with a
+  written reason. Both directions, and the class is read out of the source
+  rather than believed: a `grid` entry's file (or the file its `via` names,
+  for a sender that delegates) must reference one of the five markers that
+  resolve a row, a file whose entries are all `transactional` must reference
+  none of them, and a `notice` entry must call the notice helper and must not
+  consult the grid. The markers are themselves checked to reach `resolveRow`,
+  so a sixth way of reading a preference cannot appear that compares a stored
+  value to `false` by hand, and the scanner's own regex is exercised on
+  synthetic call sites, definitions, comments and property accesses so a guard
+  that had quietly stopped matching would fail rather than pass.
 - `tests/pwa-offline-assets.test.mjs`: the service worker's write-nothing
   contract.
 

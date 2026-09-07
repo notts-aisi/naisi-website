@@ -1652,6 +1652,9 @@ describe("a stage announcement with no deadline behind it", () => {
  * those three doors stubbed by specifier, and asked the questions that matter.
  */
 const prefs = await loadTs("lib/email/courseFacilitatorEmails.ts");
+const { wantsCategory, normaliseNotifications } = await loadTs(
+  "lib/firestore/notifications.ts",
+);
 
 describe("the courses opt-out, on the real predicate", () => {
   const optOut = prefs.hasOptedOutOfCourseAnnouncements;
@@ -1694,6 +1697,71 @@ describe("the courses opt-out, on the real predicate", () => {
       optOut({ profile: { notifications: { categories: { courses: "false" } } } }),
       false,
     );
+  });
+
+  test("it IS the grid's resolver, inverted, on every shape either can see", () => {
+    // The predicate used to walk `categories.courses` by hand and compare it
+    // to `false`. That agreed with the row resolver on every input anybody had
+    // thought of, and agreed with it by coincidence: two readings of one rule,
+    // in two files, with nothing making them move together. It now asks the
+    // resolver. This is the assertion that keeps it asking, so a future edit
+    // to the defaults table cannot leave a second answer behind in an email
+    // module.
+    for (const profile of [
+      undefined,
+      null,
+      "not a profile",
+      {},
+      { notifications: {} },
+      { notifications: { categories: {} } },
+      { notifications: { categories: { courses: false } } },
+      { notifications: { categories: { courses: true } } },
+      { notifications: { categories: { courses: "false" } } },
+      { notifications: { categories: { courses: 0 } } },
+      { notifications: { channels: { gmail: true } } },
+      { notifications: { push: { courses: false } } },
+      { newsletter: { subscribed: true } },
+      { newsletter: { subscribed: false } },
+    ]) {
+      const viaResolver = wantsCategory(
+        normaliseNotifications(profile && typeof profile === "object" ? profile : {}),
+        "courses",
+      );
+      assert.equal(
+        optOut({ profile }),
+        !viaResolver,
+        `${JSON.stringify(profile)} is read differently by the two`,
+      );
+    }
+  });
+
+  test("a users read that fails leaves the opt-out unset, so the mail still goes", () => {
+    // THE FAILED-READ RULE for an opt-out row's email, pinned in both jobs
+    // that can hit it. `wantsPushFor` fails CLOSED because a dropped push
+    // loses nothing; email is not a mirror of anything, so refusing it on a
+    // transient Firestore error would silence a message nobody refused, and
+    // nobody would ever see that it had happened. The default is a send.
+    for (const file of [
+      "src/lib/scheduler/jobs/admissionsStageRelease.ts",
+      "src/lib/scheduler/jobs/admissionsReminders.ts",
+    ]) {
+      const body = source(file);
+      const start = body.indexOf("async function resolveRecipient(");
+      assert.ok(start > 0, `${file} has no resolveRecipient`);
+      const slice = body.slice(start, start + 1600);
+      assert.match(
+        slice,
+        /let optedOut = false;/,
+        `${file} must start from "not refused" so a failed read cannot invent one`,
+      );
+      assert.match(slice, /catch \{/, `${file} must survive a failed users read`);
+      const catchAt = slice.indexOf("} catch {");
+      const untilOptOut = slice.slice(catchAt, slice.indexOf("if (optedOut)"));
+      assert.ok(
+        !/optedOut\s*=/.test(untilOptOut),
+        `${file} sets optedOut inside its catch: a failed read must not be a refusal`,
+      );
+    }
   });
 
   test("the stub the job tests use agrees with it", () => {

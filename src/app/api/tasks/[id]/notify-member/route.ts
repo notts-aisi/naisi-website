@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import TaskMembershipEmail from "@/emails/TaskMembershipEmail";
+import { wantsEmailForProfile } from "@/lib/email/preferences";
 import { sendEmail } from "@/lib/email/send";
 import {
   buildMembershipEmailPayload,
@@ -129,32 +130,47 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     users,
   });
 
+  // THE THIRD GATE, AND IT GATES EMAIL ONLY. The site-wide
+  // `config/taskEmails` kill switch ran above; this is the member's own tasks
+  // row, the EMAIL column of it. The PUSH column is a separate cell of the
+  // same row and `mirrorTaskEmailToPush` reads it for itself, so somebody who
+  // has said "notify me on my phone, not by email" gets exactly that. The
+  // pending entry is cleared either way, for the reason `clearPending` already
+  // gives: pressing Notify is the sender's declaration that this person has
+  // been dealt with.
+  const wantsEmail = wantsEmailForProfile(recipient.profile, "tasks");
+
   let sent = 0;
+  let optedOut = 0;
   try {
-    await sendEmail({
-      to: recipient.email,
-      subject: `You've been added to "${taskTitle}"`,
-      fromName: "NAISI Tasks",
-      kind: "task",
-      actorUid: viewer.uid,
-      referenceId: taskId,
-      react: TaskMembershipEmail({
-        recipientName: recipient.displayName || "there",
-        taskTitle,
-        taskLink,
-        preassignments: slice.preassignments,
-        otherCompleterNames: slice.otherCompleterNames,
-      }),
-    });
+    if (wantsEmail) {
+      await sendEmail({
+        to: recipient.email,
+        subject: `You've been added to "${taskTitle}"`,
+        fromName: "NAISI Tasks",
+        kind: "task",
+        actorUid: viewer.uid,
+        referenceId: taskId,
+        react: TaskMembershipEmail({
+          recipientName: recipient.displayName || "there",
+          taskTitle,
+          taskLink,
+          preassignments: slice.preassignments,
+          otherCompleterNames: slice.otherCompleterNames,
+        }),
+      });
+      sent = 1;
+    } else {
+      optedOut = 1;
+    }
     await mirrorTaskEmailToPush(target, {
       title: `You've been added to "${taskTitle}"`,
       body: "Open the task to see your part.",
       taskId,
     });
-    sent = 1;
   } catch (err) {
     console.error(`[notify-member] send to ${recipient.email} failed`, err);
   }
   await clearPending();
-  return NextResponse.json({ ok: true, sent });
+  return NextResponse.json({ ok: true, sent, optedOut });
 }
