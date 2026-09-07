@@ -7,6 +7,8 @@ type SerialisedSend = {
   to: string;
   subject: string;
   kind: string;
+  /** Only ever set on `notice` rows: which surface bypassed the grid. */
+  surface?: string;
   status: string;
   statusReason?: string;
   sentAt: string | null;
@@ -60,6 +62,7 @@ export async function GET(req: Request) {
       to: (data.to as string | undefined) ?? "",
       subject: (data.subject as string | undefined) ?? "",
       kind: (data.kind as string | undefined) ?? "unknown",
+      surface: data.surface as string | undefined,
       status: (data.status as string | undefined) ?? "sent",
       statusReason: data.statusReason as string | undefined,
       sentAt: toIso(data.sentAt),

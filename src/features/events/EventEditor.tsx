@@ -56,6 +56,58 @@ import styles from "./EventEditor.module.css";
 
 type Props = { eventId: string };
 
+/** What `POST /api/events/[id]/publish` answers. Counts only, never addresses. */
+type PublishResponse = {
+  ok?: true;
+  error?: string;
+  /** Whether anybody was actually told, not whether the attempt ran. */
+  announced?: boolean;
+  /** The send threw. The event is published; nobody was told. */
+  announcementFailed?: boolean;
+  /** The send refused before dispatching. The claim was handed back. */
+  announcementRefused?: boolean;
+  announcement?: {
+    sent?: number;
+    pushed?: number;
+    failed?: number;
+    refusal?: string | null;
+  };
+};
+
+/**
+ * WHAT THE PUBLISHER IS TOLD ABOUT THE ANNOUNCEMENT, or null when there is
+ * nothing to say (a republish, or an empty list).
+ *
+ * Publishing an event for the first time mails everyone subscribed to event
+ * announcements, from inside the publish request, so it has three outcomes the
+ * publisher cannot see anywhere else: it reached N people, it was refused
+ * because the list is over the ceiling, or it failed outright. In each of the
+ * last two the event IS live and nobody heard about it. A screen that answers
+ * only "published" would leave that invisible until somebody asked why the
+ * event was quiet.
+ */
+function announcementLine(body: PublishResponse): string | null {
+  if (body.announcementFailed) {
+    return (
+      "The event is published, but the announcement did not go out. " +
+      "Ask an admin to check the send log."
+    );
+  }
+  const refusal = body.announcement?.refusal ?? null;
+  if (body.announcementRefused) {
+    return `The event is published. ${refusal ?? "The announcement was not sent."}`;
+  }
+  if (!body.announced) return null;
+  const sent = body.announcement?.sent ?? 0;
+  const pushed = body.announcement?.pushed ?? 0;
+  const parts = [`${sent} ${sent === 1 ? "email" : "emails"}`];
+  if (pushed > 0) {
+    parts.push(`${pushed} ${pushed === 1 ? "notification" : "notifications"}`);
+  }
+  const line = `Published, and announced to the events list: ${parts.join(" and ")}.`;
+  return refusal ? `${line} ${refusal}` : line;
+}
+
 function statusTone(status: EventStatus): "neutral" | "accent" | "success" | "danger" | "warning" {
   switch (status) {
     case "draft":
@@ -157,6 +209,9 @@ export default function EventEditor({ eventId }: Props) {
     | { kind: "idle" }
     | { kind: "publishing" }
     | { kind: "error"; message: string }
+    // The event IS published and the announcement has something to say about
+    // itself: how many it reached, or why it reached nobody. Not an error.
+    | { kind: "announced"; message: string }
   >({ kind: "idle" });
 
   // After editing a published event, offer to email confirmed attendees.
@@ -515,12 +570,22 @@ export default function EventEditor({ eventId }: Props) {
 
   async function onPublish() {
     if (!event) return;
-    if (!window.confirm("Publish this event? It will be visible on the events page.")) return;
+    // PUBLISHING MAILS THE EVENTS LIST, so the confirm says so. It happens on
+    // the FIRST publish only: `announcedAt` is the once-per-event claim the
+    // publish route stamps, and an event pulled back to approved and pushed
+    // live again announces nothing.
+    const willAnnounce = !event.announcedAt;
+    const question = willAnnounce
+      ? "Publish this event? It goes live on the events page, and everyone subscribed " +
+        "to event announcements is emailed about it."
+      : "Publish this event? It goes live on the events page. The announcement has " +
+        "already gone out, so nobody is emailed again.";
+    if (!window.confirm(question)) return;
     setPublishStatus({ kind: "publishing" });
     setError(null);
     try {
       const res = await fetch(`/api/events/${event.id}/publish`, { method: "POST" });
-      const body = (await res.json().catch(() => null)) as { ok?: true; error?: string } | null;
+      const body = (await res.json().catch(() => null)) as PublishResponse | null;
       if (!res.ok || !body?.ok) {
         setPublishStatus({
           kind: "error",
@@ -528,7 +593,8 @@ export default function EventEditor({ eventId }: Props) {
         });
         return;
       }
-      setPublishStatus({ kind: "idle" });
+      const line = announcementLine(body);
+      setPublishStatus(line ? { kind: "announced", message: line } : { kind: "idle" });
     } catch (err) {
       setPublishStatus({
         kind: "error",
@@ -1095,6 +1161,11 @@ export default function EventEditor({ eventId }: Props) {
       {publishStatus.kind === "error" && (
         <Card padding="md">
           <p className={styles.danger}>Publish failed: {publishStatus.message}</p>
+        </Card>
+      )}
+      {publishStatus.kind === "announced" && (
+        <Card padding="md">
+          <p className={styles.muted}>{publishStatus.message}</p>
         </Card>
       )}
 

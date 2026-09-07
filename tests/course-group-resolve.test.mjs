@@ -649,8 +649,11 @@ test("GUARD — the notice route is the decision-8 operational lane: no opt-out,
   assert.match(NOTICE, /key: `groupnotice__\$\{groupId\}`/);
   assert.match(NOTICE, /NOTICES_PER_WINDOW = 10/);
   assert.match(NOTICE, /24 \* 60 \* 60 \* 1000/);
-  // Audited in emailSends under the pinned kind, one message per recipient.
-  assert.match(NOTICE, /"course-notice"/);
+  // Audited in emailSends through the notice lane's door: `sendNotice` stamps
+  // `kind: "notice"` and the surface, so this route names the SURFACE and can
+  // no longer get the kind wrong by writing one. One message per recipient.
+  assert.match(NOTICE, /sendNotice\(\{/);
+  assert.match(NOTICE, /surface: "course-room",/);
   assert.match(NOTICE, /to: recipient\.address/);
   assert.match(NOTICE, /dispatchSends\(deliverable/);
   // Subject is SYNTHESISED — request text never reaches a header.

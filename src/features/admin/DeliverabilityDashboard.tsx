@@ -13,6 +13,8 @@ type Send = {
   to: string;
   subject: string;
   kind: string;
+  /** Only on `notice` rows: which surface bypassed the notification grid. */
+  surface?: string;
   status: SendStatus;
   statusReason?: string;
   sentAt: string | null;
@@ -72,8 +74,51 @@ function statusBadge(status: SendStatus, reason?: string) {
   }
 }
 
-function kindBadge(kind: string) {
-  return <Badge tone="neutral">{kind}</Badge>;
+/**
+ * Kinds whose stored string is not what an operator should have to read.
+ *
+ * Most `EmailSendKind` values are already legible ("newsletter", "rsvp",
+ * "course-nudge") and are shown as they are stored, which keeps this map short
+ * and keeps the badge honest about the field behind it. The two here are the
+ * ones a name alone would under-describe: a `notice` row is mail that IGNORED
+ * the recipient's notification settings, which is the single most important
+ * thing this table can tell an admin, and an `event-announcement` is the events
+ * row's own send rather than a newsletter.
+ */
+const KIND_LABELS: Record<string, string> = {
+  notice: "Important notice",
+  "event-announcement": "Event announcement",
+};
+
+/**
+ * Which notice-lane surface a bypass came from, in the operator's words. The
+ * stored value is the code's (`event-broadcast`); this is the sentence fragment
+ * that answers "who sent it and to whom".
+ */
+const SURFACE_LABELS: Record<string, string> = {
+  "event-broadcast": "event attendees",
+  "event-cancel": "event cancelled",
+  "course-group": "course group",
+  "course-room": "room notice",
+  "course-run": "whole cohort",
+};
+
+function kindBadge(kind: string, surface?: string) {
+  const label = KIND_LABELS[kind] ?? kind;
+  // The surface is shown ONLY where it exists, which is only on notice rows.
+  // It is the second half of what a bypass row has to answer: this message
+  // reached its recipient whatever their settings said, and here is which
+  // surface decided that.
+  const tone = kind === "notice" ? "warning" : "neutral";
+  return (
+    <Badge
+      tone={tone}
+      title={surface ? `Notice lane: ${SURFACE_LABELS[surface] ?? surface}` : undefined}
+    >
+      {label}
+      {surface ? ` · ${SURFACE_LABELS[surface] ?? surface}` : ""}
+    </Badge>
+  );
 }
 
 export default function DeliverabilityDashboard() {
@@ -199,7 +244,7 @@ export default function DeliverabilityDashboard() {
                   {sends.map((s) => (
                     <tr key={s.id} style={{ borderTop: "1px solid var(--color-border)" }}>
                       <td style={{ padding: "var(--space-2)", wordBreak: "break-all" }}>{s.to}</td>
-                      <td style={{ padding: "var(--space-2)" }}>{kindBadge(s.kind)}</td>
+                      <td style={{ padding: "var(--space-2)" }}>{kindBadge(s.kind, s.surface)}</td>
                       <td style={{ padding: "var(--space-2)" }}>{s.subject}</td>
                       <td style={{ padding: "var(--space-2)", whiteSpace: "nowrap" }}>
                         {formatDate(s.sentAt)}

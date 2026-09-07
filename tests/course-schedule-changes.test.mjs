@@ -258,6 +258,8 @@ const ROOM_NOTICE = src("features", "courses", "RoomNoticeComposer.tsx");
 const NUDGE_EMAIL = src("lib", "email", "courseNudgeEmail.ts");
 const FACILITATOR_EMAILS = src("lib", "email", "courseFacilitatorEmails.ts");
 const EMAIL_SENDS = src("lib", "firestore", "emailSends.ts");
+/** The notice lane's email door, which now owns the room notice's audit kind. */
+const NOTICE_DOOR = src("lib", "email", "notice.ts");
 const PROGRESS_BODY = src("app", "(app)", "learn", "[runId]", "progress", "ProgressBody.tsx");
 const LEARN_GROUP = (...parts) =>
   src("app", "(app)", "learn", "[runId]", "group", "[groupId]", ...parts);
@@ -3292,12 +3294,25 @@ test("GUARD — the room-notice cap warning has a number to show", () => {
 });
 
 test("GUARD — the notice lane's audit kind is a real member of EmailSendKind", () => {
-  // Decision 8's audit trail IS the `emailSends` rows, and the kind was cast
-  // past a closed union — which would have kept compiling through a rename or
-  // a re-owning of the union, leaving the one un-opt-out-able course lane
-  // logging under a string nothing recognises.
+  // Decision 8's audit trail IS the `emailSends` rows, and the kind was once
+  // cast past a closed union, which would have kept compiling through a
+  // rename or a re-owning of the union, leaving the one un-opt-out-able course
+  // lane logging under a string nothing recognises.
+  //
+  // The notification grid then generalised that bypass into the NOTICE class,
+  // so the kind no longer lives on this route at all: `sendNotice` stamps
+  // `kind: "notice"` plus a typed `surface`, and neither is a caller's to
+  // choose. That is a STRONGER version of the property this test was written
+  // for (the route cannot get the audit kind wrong because it does not write
+  // one), so the assertions move to the door and to the surface the route asks
+  // for. `course-notice` stays in the union: a year of rows carry it.
   assert.match(EMAIL_SENDS, /\| "course-notice"/);
-  assert.match(NOTICE, /const NOTICE_KIND: EmailSendKind = "course-notice";/);
+  assert.match(EMAIL_SENDS, /\| "notice"/);
+  assert.match(EMAIL_SENDS, /export type EmailSendSurface =/);
+  assert.match(EMAIL_SENDS, /\| "course-room"/);
+  assert.match(NOTICE_DOOR, /kind: "notice",/);
+  assert.match(NOTICE_DOOR, /surface,/);
+  assert.match(NOTICE, /surface: "course-room",/);
   assert.doesNotMatch(NOTICE, /as EmailSendKind/, "the audit kind is cast past the union again");
   // Its own kind, not folded into the facilitator lane — the two answer
   // different questions in the deliverability tab.

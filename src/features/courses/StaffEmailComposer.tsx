@@ -9,6 +9,7 @@ import CountedTextarea from "@/components/ui/CountedTextarea";
 import { Field, Input } from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Skeleton from "@/components/ui/Skeleton";
+import Switch from "@/components/ui/Switch";
 import { useGroupRoster } from "./useGroupRoster";
 import styles from "./StaffEmailComposer.module.css";
 
@@ -151,7 +152,18 @@ const RUN_RECIPIENT_CAP = 200;
 /** What a completed attempt turned out to be. See the header. */
 type SendOutcome =
   | { state: "pending" }
-  | { state: "done"; sent: number; skipped: number }
+  | {
+      state: "done";
+      sent: number;
+      skipped: number;
+      /**
+       * Notice lane only: ACTIVE members of the run who are off the cohort list
+       * because they unsubscribed, so the send could not reach them at all.
+       * They are not in `skipped` (they were never candidates), and without
+       * this number nothing on this screen would say they exist.
+       */
+      unreachable?: number;
+    }
   /** The route answered with a sentence: nothing was sent. */
   | { state: "refused"; message: string }
   /** No usable answer: some, all or none of the list may have it. */
@@ -203,6 +215,8 @@ function laneCopy(
   runId: string,
   audience: StaffEmailAudience,
   count: number | null,
+  /** The run lane's "important notice" tick. See the switch's own copy. */
+  asNotice: boolean,
 ): LaneCopy {
   const runHref = `/learn/${encodeURIComponent(runId)}`;
 
@@ -247,7 +261,21 @@ function laneCopy(
     retryHint: "Reload the page to try the count again.",
     emptyLine: `Nobody is subscribed to ${label}'s cohort channel yet, so there is nobody to email. Members are subscribed when they're placed in a group.`,
     audienceLine: `This goes to everyone subscribed to the cohort channel for ${label}${upTo}.`,
-    audienceNote: (
+    audienceNote: asNotice ? (
+      <>
+        One message each, signed with your name: nobody sees who else it went
+        to. This is an IMPORTANT NOTICE, so it reaches everyone on the cohort
+        list whatever their notification settings say, by email and by
+        notification on any device they have set up, and it carries no
+        unsubscribe link because there is nothing here to switch off. Bounced
+        and spam-marked addresses are still skipped, and the report after the
+        send says how many. One send reaches at most {RUN_RECIPIENT_CAP} people;
+        past that it is refused rather than trimmed.{" "}
+        <Link className={styles.inlineLink} href={runHref}>
+          Back to the course
+        </Link>
+      </>
+    ) : (
       <>
         One message each, signed with your name — nobody sees who else it went
         to. This is an ANNOUNCEMENT: every message carries an unsubscribe link
@@ -265,10 +293,12 @@ function laneCopy(
         </Link>
       </>
     ),
-    sendLabel: "Send to the cohort",
+    sendLabel: asNotice ? "Send as an important notice" : "Send to the cohort",
     confirmAria: `Send this announcement to the ${label} cohort`,
-    confirmTitle: "Send to the cohort?",
-    confirmBody: `This emails everyone subscribed to the cohort channel for ${label}${upTo}, with the subject:`,
+    confirmTitle: asNotice ? "Send as an important notice?" : "Send to the cohort?",
+    confirmBody: asNotice
+      ? `This reaches everyone on the cohort list for ${label}${upTo} whatever their notification settings say, by email and by notification, with the subject:`
+      : `This emails everyone subscribed to the cohort channel for ${label}${upTo}, with the subject:`,
   };
 }
 
@@ -284,6 +314,13 @@ export default function StaffEmailComposer({ runId, audience }: Props) {
 
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  /**
+   * THE NOTICE TICK, run lane only. It changes the CLASS of the send, not the
+   * message: the route reads it and switches from the opt-outable announcement
+   * lane to the notice lane. Off by default and never remembered between sends,
+   * because a class this consequential should be chosen for each message.
+   */
+  const [asNotice, setAsNotice] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   /**
@@ -311,7 +348,7 @@ export default function StaffEmailComposer({ runId, audience }: Props) {
   const countKnown = count !== null;
   const countLoading = audience.kind === "group" ? roster.loading : false;
   const countError = audience.kind === "group" ? (roster.error?.message ?? null) : null;
-  const copy = laneCopy(runId, audience, count);
+  const copy = laneCopy(runId, audience, count, asNotice);
 
   // THE GUARD. An attempt on THIS text blocks a repeat unless it was refused
   // outright (nothing went out) or explicitly cleared for a resend.
@@ -344,6 +381,11 @@ export default function StaffEmailComposer({ runId, audience }: Props) {
               subject: subject.trim(),
               body: body.trim(),
               testOnly,
+              // Only the run lane has a notice lane, and a test send is never
+              // one (it reaches the author's own address, so nobody's settings
+              // were bypassed). The route enforces both; this keeps the payload
+              // honest about what was asked for.
+              asNotice: audience.kind === "run" && asNotice && !testOnly,
             }),
           });
         } catch (err) {
@@ -359,7 +401,13 @@ export default function StaffEmailComposer({ runId, audience }: Props) {
         }
 
         const payload = (await res.json().catch(() => null)) as
-          | { ok?: true; sent?: number; skipped?: number; error?: string }
+          | {
+              ok?: true;
+              sent?: number;
+              skipped?: number;
+              unreachable?: number;
+              error?: string;
+            }
           | null;
 
         if (res.ok && payload?.ok) {
@@ -369,6 +417,8 @@ export default function StaffEmailComposer({ runId, audience }: Props) {
               state: "done",
               sent: payload.sent ?? 0,
               skipped: payload.skipped ?? 0,
+              unreachable:
+                typeof payload.unreachable === "number" ? payload.unreachable : undefined,
             },
           });
           return;
@@ -478,6 +528,27 @@ export default function StaffEmailComposer({ runId, audience }: Props) {
           />
         </Field>
 
+        {/* ---- The class of the send -------------------------------------- */}
+
+        {audience.kind === "run" && (
+          <div className={styles.noticeToggle}>
+            <Switch
+              checked={asNotice}
+              onChange={setAsNotice}
+              disabled={busy}
+              label="Send as an important notice"
+              description={
+                "It reaches everyone on the cohort list whatever their " +
+                "notification settings, by email and by notification. Somebody " +
+                "who unsubscribed from this cohort's emails is not on the list " +
+                "and is not reached; the report after the send says how many " +
+                "that is. Use it for something they need to know, not for a " +
+                "reminder."
+              }
+            />
+          </div>
+        )}
+
         {/* ---- Actions ---------------------------------------------------- */}
 
         <div className={styles.actions}>
@@ -561,6 +632,9 @@ export default function StaffEmailComposer({ runId, audience }: Props) {
                         : ""
                     }, or a send that failed. Nothing reached those people — worth following up another way.`
                   : "Nobody was skipped."}{" "}
+                {sendAttempt.outcome.unreachable
+                  ? `${people(sendAttempt.outcome.unreachable)} on this run could not be reached at all: they have unsubscribed from this cohort's emails, so they are not on the list this send goes to. Reach them another way if it matters. `
+                  : ""}
                 Sending is not the same as arriving: this says what left, not what
                 landed.
               </p>

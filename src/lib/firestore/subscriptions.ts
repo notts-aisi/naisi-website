@@ -743,6 +743,38 @@ export async function findRecipientsForChannel(
 }
 
 /**
+ * The other half of {@link findRecipientsForChannel}: the rows on a channel
+ * that are UNSUBSCRIBED, whether or not they were ever confirmed.
+ *
+ * A sender needs this to answer "who did this not reach", which the subscribed
+ * read cannot: a member who clicked an unsubscribe link is absent from that
+ * result and absent from every count derived from it, so a lane that reports
+ * only `sent` and `skipped` shows a facilitator no trace of them at all.
+ *
+ * Equality-only and unordered, so it needs no declared composite index (see
+ * `tests/firestore-indexes.test.mjs`, EQUALITY_ONLY_MERGES).
+ */
+export async function findUnsubscribedOnChannel(
+  db: Firestore,
+  channel: string,
+): Promise<ChannelRecipient[]> {
+  if (!isValidChannel(channel)) return [];
+  const snap = await db
+    .collection(COLLECTION)
+    .where("channel", "==", channel)
+    .where("subscribed", "==", false)
+    .get();
+  return snap.docs.map((d) => {
+    const data = d.data() as SubscriptionDoc;
+    return {
+      email: data.email,
+      audience: data.audience,
+      audienceId: data.audienceId,
+    };
+  });
+}
+
+/**
  * Convert an old-shape row (one that uses the legacy `status` enum, no
  * `confirmed` / `subscribed` booleans) into the new shape, AND mark the
  * legacy `status` field for deletion. Used by the backfill route to

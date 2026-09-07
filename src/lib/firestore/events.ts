@@ -495,6 +495,16 @@ export type EventDoc = {
   approvedBy?: string | null;
   approvedAt?: Date | null;
   publishedAt?: Date | null;
+  /**
+   * When the "we have published a new event" announcement was claimed, stamped
+   * by `/api/events/[id]/publish` inside the same write that publishes. Its
+   * presence is what stops a republish announcing the event a second time; see
+   * that route's header. Server-written only. It is deliberately NOT pinned in
+   * `firestore.rules`: clearing it on a draft would at worst let an approver
+   * re-announce their own event, which an approver can arrange anyway, and a
+   * pin would be a rules deploy for nothing.
+   */
+  announcedAt?: Date | null;
   rsvpCountPending?: number | null;
   rsvpCountConfirmed?: number | null;
   rsvpCountWaitlisted?: number | null;
@@ -645,6 +655,7 @@ export function normalizeEvent(id: string, data: Raw): EventDoc {
     approvedBy: (data.approvedBy as string | null | undefined) ?? null,
     approvedAt: tsToDate(data.approvedAt),
     publishedAt: tsToDate(data.publishedAt),
+    announcedAt: tsToDate(data.announcedAt),
     rsvpCountPending:
       typeof data.rsvpCountPending === "number"
         ? (data.rsvpCountPending as number)

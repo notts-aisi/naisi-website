@@ -54,6 +54,25 @@ export type EmailSendKind =
   // legacy rows. Its `referenceId` is the ROUND id, not a run id: one round
   // feeds several runs and an appointment round feeds none.
   | "admissions"
+  // The NOTICE LANE (the notification grid's third class). A person
+  // responsible for an audience addressing that audience about something they
+  // signed up for: an event's organiser, a group's facilitator, a run's staff.
+  // It goes out whatever the recipient's notification grid says, so the
+  // deliverability tab has to be able to answer "how much un-switch-off-able
+  // mail did we send, and from which surface" without reading subject lines.
+  // That second half is the `surface` field below, which only this kind
+  // carries. `course-notice` is its ancestor and stays where it is: the room
+  // notice's own audit trail (decision 8) is keyed by group and counted by a
+  // per-group cap, and rewriting a year of rows to a new kind would break the
+  // question it was built to answer.
+  | "notice"
+  // The "we have published a new event" announcement, sent once per event to
+  // the `events` row of the grid. Its own kind rather than `newsletter`
+  // because the two are different lists with different unsubscribe tokens,
+  // and "did the announcement go out for this event" has to be answerable
+  // next to a newsletter that went out the same afternoon. Its `referenceId`
+  // is the EVENT id.
+  | "event-announcement"
   | "course-test"
   | "admin-test"
   | "subscription-confirm"
@@ -74,6 +93,26 @@ export type EmailSendKind =
  */
 export type EmailSendStatus = "sent" | "bounced" | "complained" | "suppressed";
 
+/**
+ * WHICH NOTICE-LANE SURFACE A `notice` ROW CAME FROM.
+ *
+ * The notice lane deliberately ignores the notification grid, so the audit
+ * question is not "was this wanted" (it was sent regardless) but "who sent it,
+ * to which audience, from where". `kind` answers the first two through
+ * `actorUid` and `referenceId`; this answers the third, and it is what lets the
+ * deliverability tab separate an organiser mailing forty attendees from a
+ * facilitator mailing eight people in a room.
+ *
+ * Set by `sendNotice` alone (`src/lib/email/notice.ts`), never by a caller
+ * choosing a string, and absent on every other kind.
+ */
+export type EmailSendSurface =
+  | "event-broadcast"
+  | "event-cancel"
+  | "course-group"
+  | "course-room"
+  | "course-run";
+
 export type EmailSend = {
   messageId: string;
   // Provider message ids — only one is populated per row, depending on which
@@ -87,6 +126,8 @@ export type EmailSend = {
   fromEmail: string;
   fromName: string;
   kind: EmailSendKind;
+  /** Only ever set on `notice` rows. See {@link EmailSendSurface}. */
+  surface?: EmailSendSurface;
   actorUid?: string;
   referenceId?: string;
   status: EmailSendStatus;
@@ -120,6 +161,7 @@ export async function logEmailSend(db: Firestore, entry: LogSendInput): Promise<
     status: "sent",
     sentAt: entry.sentAt ?? new Date(),
   };
+  if (entry.surface) doc.surface = entry.surface;
   if (entry.sesMessageId) doc.sesMessageId = entry.sesMessageId;
   if (entry.resendEmailId) doc.resendEmailId = entry.resendEmailId;
   if (entry.actorUid) doc.actorUid = entry.actorUid;
@@ -130,7 +172,7 @@ export async function logEmailSend(db: Firestore, entry: LogSendInput): Promise<
 /** What a withheld message can say about itself: everything but a provider id. */
 export type LogSuppressedInput = Pick<
   EmailSend,
-  "to" | "subject" | "fromEmail" | "fromName" | "kind"
+  "to" | "subject" | "fromEmail" | "fromName" | "kind" | "surface"
 > & {
   actorUid?: string;
   referenceId?: string;
@@ -161,6 +203,10 @@ export async function logSuppressedSend(db: Firestore, entry: LogSuppressedInput
     sentAt: at,
     statusUpdatedAt: at,
   };
+  // A withheld notice is still a notice: the tab has to show the surface on
+  // the row it held back, or "what bypassed the grid" answers only for the
+  // half that was deliverable.
+  if (entry.surface) doc.surface = entry.surface;
   if (entry.actorUid) doc.actorUid = entry.actorUid;
   if (entry.referenceId) doc.referenceId = entry.referenceId;
   await db.collection("emailSends").add(doc);

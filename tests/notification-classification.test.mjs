@@ -93,9 +93,29 @@
  *
  * ## Not built yet, listed anyway
  *
- * `sendNotice(` and `sendNoticePush(` are tracked before they exist so the
- * notice-lane PR adds registry rows rather than editing the scanner. Until
- * then they match nothing, which is what the scanner's self-test proves.
+ * `NOT_BUILT_YET` is where a tracked symbol the tree does not define yet says
+ * why it is tracked anyway. It is EMPTY today: `sendNotice(` and
+ * `sendNoticePush(` were its two entries, tracked ahead of the notice-lane PR
+ * so that PR could add registry rows rather than edit this scanner, and both
+ * are built now. The list stays because the next door will want it.
+ *
+ * ## The notice class, and what file granularity means for it
+ *
+ * A `notice` entry asserts two things about its file, and they are asserted at
+ * different granularities for the reason the transactional rule already gives:
+ *
+ *  - PER ENTRY, the file must reach a door (`sendNotice(` or `sendNoticePush(`).
+ *    A notice that does not go through a door carries no marker line, no
+ *    `kind: "notice"` receipt and no surface, which is the whole of what makes
+ *    the class visible.
+ *  - PER FILE, and only for a file whose entries are ALL notice, the file must
+ *    reference no grid marker at all. It cannot be per entry, because two files
+ *    genuinely carry both lanes: `courseFacilitatorEmails.ts` renders the run
+ *    announcement (grid, courses) and the group notice, and the run composer
+ *    route sends an announcement or a notice depending on one flag in its body.
+ *    Both are registered twice, once per lane, which is where the honesty lives;
+ *    demanding that either file mention no marker would forbid the grid lane
+ *    they also carry.
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -146,6 +166,7 @@ const TRACKED = [
   "sendWorksheetDueSoonEmail",
   "sendCourseGroupEmail",
   "sendCourseRunEmail",
+  "sendEventAnnouncement",
 ];
 
 /**
@@ -256,6 +277,8 @@ const referencesAny = (rel, needles) => {
  */
 const G = (row, reason, via, calls = 1) => ({ class: "grid", row, reason, via, calls });
 const T = (reason, calls = 1) => ({ class: "transactional", reason, calls });
+/** The notice lane. Takes no row: it consults none, which is the point. */
+const N = (reason, calls = 1) => ({ class: "notice", reason, calls });
 
 /**
  * Every send in the tree, with the class it belongs to and why.
@@ -369,9 +392,12 @@ const REGISTRY = {
   // -- Courses row: email --------------------------------------------------
   "src/lib/email/courseFacilitatorEmails.ts#sendEmail": G(
     "courses",
-    "Two calls in one file: `sendCourseRunEmail` (the cohort announcement, gated by `resolveCohortAudience` in this same file) and `sendCourseGroupEmail` (the group composer, which the notice-lane PR moves to the notice class). Classified by the lane that reads a row; each lane's call site carries its own entry.",
+    "Two calls in one file: `sendCourseRunEmail` (the cohort announcement, gated by `resolveCohortAudience` here) and the group composer's TEST lane, which reaches the sender's own address and stays `course-test`. The group composer's real send moved to `sendNotice`, below. Classified by the lane that reads a row; each lane's call site carries its own entry.",
     undefined,
     2,
+  ),
+  "src/lib/email/courseFacilitatorEmails.ts#sendNotice": N(
+    "The group composer's real send. It always ignored the courses row and never carried an unsubscribe footer, which IS the notice class; it now says so on the receipt and in the message.",
   ),
   "src/app/api/courses/runs/[runId]/email/route.ts#sendCourseRunEmail": G(
     "courses",
@@ -528,18 +554,57 @@ const REGISTRY = {
     "A member pushing to their own devices from the push card, to see whether the browser is really subscribed.",
   ),
 
-  // -- Becomes a notice in the notice-lane PR -------------------------------
-  "src/app/api/events/[id]/broadcast/route.ts#sendEmail": T(
-    "The attendee broadcast. Transactional TODAY because an attendee asked for the event and nothing about the send reads a row; the notice-lane PR moves it to the notice class, with the marker, the receipt kind and the cap it has no cap for today.",
+  // -- Events row ----------------------------------------------------------
+  "src/lib/email/eventAnnouncement.ts#sendEmail": G(
+    "events",
+    "The `we have published a new event` announcement. `addressesForSend` applies the events email cell and the per-address routing in one answer, and the junction row is the opt-in that put the recipient on the list.",
   ),
-  "src/app/api/events/[id]/cancel/route.ts#sendEmail": T(
-    "The cancellation notice to everybody holding an RSVP. Same move to the notice class in the notice-lane PR.",
+  "src/lib/email/eventAnnouncement.ts#sendPushToUid": G(
+    "events",
+    "The same announcement's push leg, and the one place `push.events` is read. Opt-in on both columns and asked separately: a member can hold the email row and refuse the notification.",
   ),
-  "src/app/api/courses/groups/[groupId]/email/route.ts#sendCourseGroupEmail": T(
-    "The group composer: a facilitator writing to their own group. Becomes a notice in the notice-lane PR.",
+  "src/app/api/events/[id]/publish/route.ts#sendEventAnnouncement": G(
+    "events",
+    "Publishing an event, which is the one moment the events row sends anything. Stamped `announcedAt` under the same claim that publishes, so it happens once.",
+    "src/lib/email/eventAnnouncement.ts",
   ),
-  "src/app/api/courses/groups/[groupId]/notice/route.ts#sendEmail": T(
-    "The room-change notice. Becomes a notice in the notice-lane PR, which is where its existing per-audience caps become the shared ones.",
+
+  // -- The notice lane -----------------------------------------------------
+  "src/lib/email/notice.ts#sendEmail": N(
+    "The lane's email door itself: it renders the marker, stamps `kind: \"notice\"` and the surface on the receipt, and passes no unsubscribe option, then hands the message to the one send chokepoint.",
+  ),
+  "src/lib/push/noticeNotifications.ts#sendPushToUid": N(
+    "The lane's push door: the one push in the estate that reads no preference, because a notice reaches its audience on both channels whatever their grid says.",
+  ),
+  "src/app/api/events/[id]/broadcast/route.ts#sendNotice": N(
+    "The attendee broadcast, and the post-publish change notice EventEditor sends through it. An organiser addressing the people who signed up for their event.",
+  ),
+  "src/app/api/events/[id]/broadcast/route.ts#sendNoticePush": N(
+    "The notification beside that broadcast, to every attendee with an account. A member with no device gets the email alone.",
+  ),
+  "src/app/api/events/[id]/cancel/route.ts#sendNotice": N(
+    "The cancellation to everybody holding a place. The clearest case the class has: a preference switch must not be why somebody turns up to an empty room.",
+  ),
+  "src/app/api/events/[id]/cancel/route.ts#sendNoticePush": N(
+    "The notification beside the cancellation, which is the leg most likely to be read in time to matter.",
+  ),
+  "src/app/api/courses/groups/[groupId]/email/route.ts#sendCourseGroupEmail": N(
+    "The group composer: a facilitator writing to their own room. The wrapper picks the lane (a test send stays transactional and marked `course-test`), which is why the class assertion runs against this route rather than the wrapper's module.",
+  ),
+  "src/app/api/courses/groups/[groupId]/email/route.ts#sendNoticePush": N(
+    "The notification beside the group email. Not sent on the test lane: a rehearsal is addressed to its own sender.",
+  ),
+  "src/app/api/courses/groups/[groupId]/notice/route.ts#sendNotice": N(
+    "The room-change notice, the estate's first preference bypass. Its own 10-a-day per-group counter is now claimed through the lane's shared claimer, with no hourly window, because decision 8 requires it to survive a double-change evening.",
+  ),
+  "src/app/api/courses/groups/[groupId]/notice/route.ts#sendNoticePush": N(
+    "The notification beside the room notice. A room change on a lock screen an hour before the session is the whole point of that lane.",
+  ),
+  "src/app/api/courses/runs/[runId]/email/route.ts#sendNotice": N(
+    "The run composer's second lane, taken when the sender ticks `send as an important notice`. Same gate, same enrolment re-verification, same cap; the audience keeps the members whose courses row is a stored false.",
+  ),
+  "src/app/api/courses/runs/[runId]/email/route.ts#sendNoticePush": N(
+    "The notification beside that notice. The ordinary announcement lane has no push leg at all, deliberately: a scheduled cohort mail that also buzzed every phone is how people turn notifications off for good.",
   ),
 };
 
@@ -675,9 +740,19 @@ describe("a class is a claim about the code, and the code is read", () => {
         referencesAny(file, NOTICE_MARKERS),
         `${file} is registered notice but calls neither ${NOTICE_MARKERS.join(" nor ")}`,
       );
+    });
+  }
+
+  for (const [file, classes] of classesByFile) {
+    if (classes.size !== 1 || !classes.has("notice")) continue;
+    test(`${file} is a notice lane and reads no row`, () => {
+      // Per FILE, and only for a file that is nothing but notice: see the
+      // header. A file carrying both lanes is registered twice and its grid
+      // entry is what requires the marker this one forbids.
       assert.ok(
-        !referencesAny(file, ["wantsCategory("]),
-        `${file} is a notice and must not consult the grid`,
+        !referencesAny(file, GRID_MARKERS),
+        `${file} sends only notices and must consult no row, but it references ` +
+          `one of ${GRID_MARKERS.join(", ")}`,
       );
     });
   }
@@ -727,17 +802,20 @@ describe("the scanner would catch a new send", () => {
     assert.deepEqual(sitesOf("await mirrorTaskEmailToPush(uid, p);"), ["mirrorTaskEmailToPush"]);
   });
 
-  test("the notice lane's two doors are tracked before they exist", () => {
-    // The notice-lane PR adds registry rows. It must not have to edit this
-    // scanner as well, or the first notice would ship unclassified.
+  test("the notice lane's two doors are scanned, and the tree really uses them", () => {
+    // They were tracked before they existed so the notice-lane PR could add
+    // registry rows rather than edit this scanner. They exist now, so the
+    // assertion flips: a tree with no call of either door would mean the lane
+    // had been dismantled without anybody noticing, and every notice entry
+    // above would be describing code that no longer runs.
     assert.deepEqual(sitesOf("await sendNotice(args);"), ["sendNotice"]);
     assert.deepEqual(sitesOf("await sendNoticePush(uid, p);"), ["sendNoticePush"]);
-    assert.equal(
-      [...FOUND.keys()].filter((k) => k.endsWith("#sendNotice") || k.endsWith("#sendNoticePush"))
-        .length,
-      0,
-      "the notice helpers exist now: register their call sites",
-    );
+    for (const door of ["#sendNotice", "#sendNoticePush"]) {
+      assert.ok(
+        [...FOUND.keys()].some((k) => k.endsWith(door)),
+        `nothing in src calls ${door.slice(1)}: the notice lane has no callers`,
+      );
+    }
   });
 
   test("a definition, a comment and a property access are not call sites", () => {
@@ -782,10 +860,11 @@ const SEND_PRIMITIVES = ["sendEmail(", "sendPushToUid(", "sendNotice(", "sendNot
  * this, so a door that later gets built is not silently excused twice.
  */
 const NOT_BUILT_YET = {
-  sendNotice:
-    "The notice lane's email door. Tracked before it exists so the notice-lane PR adds registry rows rather than editing this scanner.",
-  sendNoticePush:
-    "The notice lane's push door, listed for the same reason and asserted to match nothing until it is built.",
+  // EMPTY, and that is the state to keep it in. `sendNotice` and
+  // `sendNoticePush` lived here while the notice lane was a contract rather
+  // than code; both are built, so both were removed, which is the removal the
+  // assertion below insists on ("is built now: drop it from NOT_BUILT_YET").
+  // The next door tracked ahead of itself goes here with its reason.
 };
 
 /** `export function send…` / `export const notify… =`, name only. */

@@ -56,6 +56,14 @@ const STUBS = new Map([
     join(SRC, "lib", "email", "send.ts"),
     "export function sendEmail() { throw new Error('sendEmail is stubbed in tests'); }",
   ],
+  // The notice lane's email door, which the group composer now sends through.
+  // Stubbed for the same reason as `send.ts` (it ends in the transport), and
+  // additionally because its own graph reaches a `.tsx` marker component that
+  // this suite's loader predates JSX support for.
+  [
+    join(SRC, "lib", "email", "notice.ts"),
+    "export function sendNotice() { throw new Error('sendNotice is stubbed in tests'); }",
+  ],
 ]);
 
 function resolveLocalTs(specifier, fromFile) {

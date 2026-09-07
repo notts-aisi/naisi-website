@@ -10,10 +10,19 @@ import {
   Section,
   Text,
 } from "@react-email/components";
+import type { ReactNode } from "react";
 import EventChangeSummary from "./EventChangeSummary";
 import type { EventChange } from "@/lib/events/changeSummary";
 
 type Props = {
+  /**
+   * The notice lane's marker, built by `sendNotice` and rendered directly under
+   * the greeting. The template chooses WHERE it sits and never what it says;
+   * see `src/emails/NoticeMarker.tsx`. Absent on nothing today, because every
+   * broadcast is a notice, and optional so the template stays renderable
+   * outside the lane rather than growing a required prop only one caller has.
+   */
+  notice?: ReactNode;
   eventTitle: string;
   recipientName: string;
   whenLine: string;
@@ -39,6 +48,7 @@ type Props = {
  * when/where at the bottom so the recipient doesn't have to hunt for it.
  */
 export default function EventUpdateEmail({
+  notice,
   eventTitle,
   recipientName,
   whenLine,
@@ -65,6 +75,8 @@ export default function EventUpdateEmail({
             <Heading style={style.heading}>{eventTitle}</Heading>
             <Text style={style.greeting}>Hi {recipientName},</Text>
           </Section>
+
+          {notice}
 
           <Section>
             {paragraphs.map((p, i) => (

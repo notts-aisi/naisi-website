@@ -148,8 +148,13 @@ The same shape, older:
   rather than believed: a `grid` entry's file (or the file its `via` names,
   for a sender that delegates) must reference one of the five markers that
   resolve a row, a file whose entries are all `transactional` must reference
-  none of them, and a `notice` entry must call the notice helper and must not
-  consult the grid. Each entry also pins `calls`, how many times that file calls
+  none of them, and a `notice` entry must call one of the lane's two doors. The
+  matching negative for `notice` is per FILE and not per entry, because two
+  files genuinely carry both lanes (`courseFacilitatorEmails.ts`, and the run
+  composer route, whose body flag chooses between an opt-outable announcement
+  and a notice): a file whose entries are ALL notice must reference no marker at
+  all, and a mixed file is registered once per lane instead.
+  Each entry also pins `calls`, how many times that file calls
   that symbol, so a second send dropped into a file the registry already names
   fails instead of folding into the entry above it. The markers are themselves
   checked to reach `resolveRow`, so a sixth way of reading a preference cannot
