@@ -184,47 +184,44 @@ export const ALL_PUSH_KEYS: PushNotificationKey[] = [...ALL_CATEGORIES];
 export const LEGACY_PUSH_KEY = "courseDecisions";
 
 /*
- * TWO OF THESE FOUR ARE DRAWN TODAY, and they keep the names the standalone
- * push card has always given them. `/profile` renders that card alongside the
- * email switches, so naming the push row "Course announcements" would put two
- * rows under one name on one page, one writing `categories.courses` and one
- * writing `push.courses`. It would also promise less than the row delivers:
- * the only producers behind `push.courses` are application decisions, a new
- * part of an application form opening, and a course placement, so a member
- * switching off a row called "Course announcements" would be switching off
- * their decision notifications. The grid PR is where the card is absorbed and
- * a row carries ONE label across both columns; the rename belongs there, with
- * the collision gone.
+ * ONE LABEL PER ROW, ACROSS BOTH COLUMNS. `PUSH_LABELS` used to sit here with
+ * a second name for every row ("Task emails", "Course and application
+ * updates"), because the push switches were a card of their own beside the
+ * email ones and a row called "Course announcements" in two places would have
+ * been two settings under one name. /profile now draws ONE grid, a row per
+ * category and a cell per column, so the second map is gone and
+ * `CATEGORY_LABELS` names the row for both columns. What each column of that
+ * row actually does is said by the two description maps below, which is where
+ * a difference between the columns belongs.
  */
-export const PUSH_LABELS: Record<PushNotificationKey, string> = {
-  newsletter: "Newsletter",
-  events: "Event announcements",
-  courses: "Course and application updates",
-  tasks: "Task emails",
-};
 
 export const PUSH_DESCRIPTIONS: Record<PushNotificationKey, string> = {
-  newsletter: "A notification when a new newsletter goes out.",
+  // NOT BUILT, and the copy says so. Every other string in this map describes
+  // a notification something in `src` actually sends: only `courses`, `tasks`
+  // and (with the event announcement) `events` call `wantsPushFor`. The row
+  // exists because the grid draws all four, and the cell has to be settable
+  // now so a member is not asked again the day the sender lands, but a
+  // description promising a notification nothing produces is the one thing it
+  // must not say. Delete this sentence with the producer.
+  newsletter:
+    "A notification when a new newsletter goes out. We don't send this one yet, so your answer here waits until we do.",
   events: "A notification when we publish a new event.",
   // This copy is exhaustive TODAY, and only because the three moments named
-  // are the only ones that push. The label says "updates" rather than
-  // "decisions" because the owner settled the open question on 6 September
-  // 2026 and put the stage announcement behind this row: a switch promising
-  // only decisions while delivering announcements too is the failure mode the
-  // earlier note here warned about. Anything new put behind this row owns
-  // this string as well.
+  // are the only ones that push. It names the stage announcement as well as
+  // the decision because the owner settled that question on 6 September 2026
+  // and put both behind this row: a switch promising only decisions while
+  // delivering announcements too is the failure mode the earlier note here
+  // warned about. Anything new put behind this row owns this string as well.
   courses:
-    "A notification when a decision on your application lands, when a new part of an application form opens, or when you're placed in a course group. The email is sent either way.",
-  // "ALONGSIDE" HOLDS ONLY WHILE NOTHING WRITES `categories.tasks`. Every task
-  // and worksheet sender now reads that cell, so a member with the email cell
-  // off and this one on would get a notification with no email beside it.
-  // Nothing can set it yet (/profile carries the stored value through without
-  // drawing a switch, and /api/unsubscribe deliberately skips this row), so the
-  // sentence is still true. The grid PR draws the row and owns this string with
-  // the label rename above: it becomes a notification for task and worksheet
-  // activity, whether or not the email cell is on.
+    "A notification when a decision on your application lands, when a new part of an application form opens, or when you're placed in a course group. It arrives whether or not the email cell is on.",
+  // It no longer says "alongside each email", and that word had to go with
+  // this PR rather than after it. Every task and worksheet sender reads the
+  // email cell now, and /profile draws that cell, so a member can switch the
+  // email off and leave this on: the notification would then arrive with no
+  // email beside it, which is precisely what the old sentence promised could
+  // not happen.
   tasks:
-    "A notification alongside each task and worksheet email: added to a task, a comment, a mention, a review request, a review outcome.",
+    "A notification for task and worksheet activity: added to a task, a comment, a mention, a review request, a review outcome. It arrives whether or not the email cell is on.",
 };
 
 export type NotificationPrefs = {
