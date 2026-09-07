@@ -150,15 +150,20 @@ Two helpers, one per column, and they differ in exactly one place.
 | Helper | `wantsEmailForProfile(profile, row)` in `src/lib/email/preferences.ts` | `wantsPushFor(uid, row)` in `src/lib/push/preferences.ts` |
 | Takes | the profile the sender is already holding | a uid, and reads the document itself |
 | Absent or junk cell | the row's default | the row's default |
-| No user document | the sender has already skipped them: no document, no address | **yes**, on every row |
+| No user document | the sender has already skipped them: no document, no address | the row's default |
 | A read that FAILS | **the row's default**, so an opt-out row still sends | **no**, always |
 
-The missing-document answer is the one cell of that table that does not resolve
-the row's default, and it is a simplification rather than a decision: deleting
-an account deletes its `pushSubscriptions` rows in the same pass
-(`src/lib/firestore/accountDeletion.ts`), so the only way to reach the branch at
-all is a deletion whose subscription sweep failed. It costs nothing today and
-would be a one-line change the day it does.
+The missing-document answer used to be the one cell of that table that did not
+resolve the row's default: it answered yes on every row, on the reasoning that
+deleting an account deletes its `pushSubscriptions` rows in the same pass
+(`src/lib/firestore/accountDeletion.ts`), so the branch was reachable only
+through a deletion whose subscription sweep had failed. That held for a sender
+addressing a uid it already knew and not for one that enumerates devices: the
+event announcement reads `pushSubscriptions` and asks the row per distinct
+owner, so a device row whose owner's document was gone would have been pushed an
+opt-in row's notification nobody had asked for. Since 7 September 2026 the
+branch resolves the row's default like an absent cell, and the column has one
+rule.
 
 The email helper takes a profile rather than a uid because every grid sender
 already reads `users/{uid}` for the address and the name; a second read per

@@ -663,9 +663,21 @@ describe("wantsPushFor", () => {
     assert.equal(await wantsPushFor("u1", "courses"), true);
   });
 
-  test("a missing user doc falls back to the default", async () => {
+  test("a missing user doc resolves the ROW'S default, never a flat yes", async () => {
+    // Until 7 September 2026 this branch answered yes on every row. That was
+    // safe for a sender addressing a uid it already held (a deleted account's
+    // devices go in the same pass as its document) and wrong for a sender
+    // that enumerates devices: a `pushSubscriptions` row whose owner's
+    // document is gone would have been pushed an opt-in row's notification
+    // nobody had asked for. One rule for the column now: absent is the
+    // default, and a missing document is the most absent a cell can be.
     reset({ users: {} });
-    assert.equal(await wantsPushFor("ghost", "courses"), true);
+    for (const row of OPT_OUT_ROWS) {
+      assert.equal(await wantsPushFor("ghost", row), true, `${row} defaults on`);
+    }
+    for (const row of OPT_IN_ROWS) {
+      assert.equal(await wantsPushFor("ghost", row), false, `${row} defaults off`);
+    }
   });
 
   test("a FAILED read is a no, because we cannot know", async () => {
