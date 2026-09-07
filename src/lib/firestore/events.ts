@@ -38,15 +38,48 @@ export type EventVisibility = "public" | "members";
  */
 export type EventAnnouncementState = "queued" | "sending" | "done" | "refused";
 
-/** Counts as the announcement job stores them. See `announcementResult`. */
+/**
+ * Counts as the announcement job stores them. See `announcementResult`.
+ *
+ * EVERY NUMBER HERE EXCEPT `audienceSkipped` IS A RUNNING TOTAL, incremented
+ * by each tick's own deltas rather than written as an absolute, because ticks
+ * overlap by design and a tick that wrote back the sum it had read would
+ * discard whatever the other one committed in between.
+ */
 export type EventAnnouncementResultDoc = {
   sent: number;
+  /**
+   * Recipients the job CLAIMED and consciously did not reach: a suppressed
+   * address, a push cell switched off, an account with no device left.
+   * Incremented per recipient.
+   */
   skipped: number;
+  /**
+   * Rows dropped when the audience was resolved: a members-only guest row, a
+   * subscription whose account is gone, a member whose events cell is off.
+   *
+   * A SNAPSHOT of the latest resolution, written absolutely, and that is the
+   * whole reason it is not folded into `skipped`. The audience is re-resolved
+   * on every tick that touches the event, so an incremented version of this
+   * would count the same drops four times over a four-tick run.
+   */
+  audienceSkipped: number;
   suppressed: number;
   failed: number;
   pushed: number;
   refusal: string | null;
   pushRefusal: string | null;
+  /**
+   * Whether the once-per-event `announcedAt` claim was handed back when this
+   * announcement was refused, so publishing again re-queues it.
+   *
+   * Stored rather than derived, because the two refusals that reach nobody are
+   * not distinguishable by their counts: an audience that could not be read
+   * releases the claim, and an event that had already started deliberately
+   * does not. A screen deriving this from "nothing was sent" would tell an
+   * approver to republish a past event and let them watch nothing happen.
+   */
+  released: boolean;
   /** Null while the job is still working through the list. */
   finishedAt: Date | null;
 };
@@ -692,11 +725,13 @@ function asAnnouncementResult(v: unknown): EventAnnouncementResultDoc | null {
   return {
     sent: asCount(raw.sent),
     skipped: asCount(raw.skipped),
+    audienceSkipped: asCount(raw.audienceSkipped),
     suppressed: asCount(raw.suppressed),
     failed: asCount(raw.failed),
     pushed: asCount(raw.pushed),
     refusal: asRefusal(raw.refusal),
     pushRefusal: asRefusal(raw.pushRefusal),
+    released: raw.released === true,
     finishedAt: tsToDate(raw.finishedAt),
   };
 }

@@ -442,6 +442,20 @@ a caller, prod has neither, and turning it on there would queue announcements
 nobody ever delivers. The switch is on the Site status page, under Jobs, as
 "Queued event announcements".
 
+**Recovering an event queued and then stranded.** Switching the job OFF does not
+un-queue what is already in the queue: an event published while it was on sits
+at `announcementState: "queued"` and the editor keeps saying the next run will
+take it. Nothing drains it but the job, on purpose, because the alternative is a
+second sender nobody registered. Two ways out, both an admin's:
+
+1. Turn the job back on and let the next tick deliver it. This is the right
+   answer whenever the announcement is still wanted.
+2. Delete `announcementState`, `announcementQueuedAt` and `announcedAt` from the
+   `events/{id}` document in the Firestore console. That clears the queue entry
+   AND the once-per-event claim, so pulling the event back to approved and
+   publishing it again takes the inline path and sends it there and then. Delete
+   all three: leaving `announcedAt` makes the republish announce nothing at all.
+
 **Once per event, under a claim, on both paths.** `announcedAt` is stamped on
 the event document inside the transaction that publishes it, so two racing
 publishes cannot both come out holding the announcement, and a later republish
@@ -456,21 +470,55 @@ better failure, because the other way round mails the whole list twice.
 `evannounce__{eventId}__{email|push}__{recipientKey}`, claimed before the send
 and stamped after it. That is what makes the job resumable with no cursor of its
 own: a tick that runs out of budget half way down the list leaves what it sent
-stamped, and the next tick's claim on those fails with ALREADY_EXISTS. Two ticks
-overlapping (which the re-arm makes ordinary) is harmless for the same reason,
-which is why nothing claims the EVENT: `"sending"` is a progress note, not a
-lock. The recipient key is `u{uid}` for a member and `g{hash}` for a guest row,
-never an address: a marker is kept for 180 days in a collection whose whole
-purpose is to say "this was sent", which is no place to accumulate a mailing
-list.
+stamped, and the next tick's claim on those fails with ALREADY_EXISTS. The
+recipient key is `u{uid}` for a member and `g{hash}` for a guest row, never an
+address: a marker is kept for 180 days in a collection whose whole purpose is to
+say "this was sent", which is no place to accumulate a mailing list.
+
+A message that goes out but whose marker will not take the stamp is the one
+failure that would become a duplicate, so the stamp is retried once and the
+marker is then settled terminally as `sent-unstamped` rather than left for the
+re-claim rule (`stampSentOrSettle` in `src/lib/scheduler/markers.ts`).
+
+**Nothing claims the EVENT, and three separate things make the overlap safe.**
+Two ticks may both pick up one queued event and walk its audience, which the
+tick's own re-arm makes ordinary. `"sending"` is a progress note, not a lock.
+What holds instead:
+
+- **Sends** are exactly-once, through the per-recipient markers above.
+- **Counts** are increments. Each tick writes its own deltas with
+  `FieldValue.increment` and never the accumulated totals, so a tick that read
+  the totals before another tick committed cannot write that work away. The one
+  absolute is `audienceSkipped`, which is a snapshot of the latest audience
+  resolution rather than a running total.
+- **State transitions are transactional.** `done` and `refused`, and the release
+  of `announcedAt` with them, are decided inside a transaction that re-reads the
+  document and writes only while the announcement is still pending.
+
+**An unsettled unit keeps the event in the queue.** The scan finds `queued` and
+`sending` and nothing else, so an event written `done` is one no later tick will
+ever look at again. A send that failed, a claim another tick is holding in
+flight, or anything that threw therefore leaves the event `"sending"` and
+reports `hasMore`; the ordinary marker rules take it from there, and a marker
+the claim helper gives up on after `maxAttempts` is settled as a failure, which
+is what lets an event whose worst recipient cannot be reached still finish.
 
 **The state fields, server-written only.** `announcementState` (`queued` |
 `sending` | `done` | `refused`, absent on an event announced inline or never
 announced), `announcementQueuedAt`, `announcementStartedAt`, and
-`announcementResult` (`{ sent, skipped, suppressed, failed, pushed, refusal,
-pushRefusal, finishedAt }`). The totals are persisted at the end of EVERY tick
-that works on the event, so an announcement that took four ticks still reports
-what all four did. `firestore.rules` pins all four against client writes, which
+`announcementResult` (`{ sent, skipped, audienceSkipped, suppressed, failed,
+pushed, refusal, pushRefusal, released, finishedAt }`). The totals are persisted
+at the end of EVERY tick that works on the event, so an announcement that took
+four ticks still reports what all four did.
+
+Two of those fields exist for a reason worth stating. `skipped` counts
+recipients the job CLAIMED and consciously did not reach and is incremented;
+`audienceSkipped` counts the rows dropped when the audience was resolved (a
+members-only guest row, an account that is gone) and is a SNAPSHOT, because the
+audience is re-resolved on every tick and an incremented version would count the
+same drops once per tick. `released` records whether the claim was handed back,
+because the two refusals that reach nobody are not distinguishable by their
+counts and only one of them can be retried by republishing. `firestore.rules` pins all four against client writes, which
 is a sharper rule than `announcedAt` gets: the job scans for `queued` and
 `sending`, so a drafter who could write that state onto their own unpublished
 draft would have the platform announce it to everybody with no approver
@@ -498,16 +546,22 @@ on.
 the refusal and `EventEditor` renders them. Queued, the response can only say
 "Published. The announcement is queued and goes out with the next scheduler run,
 usually within fifteen minutes", and everything after that is read off the event
-document by the listener the editor already holds: queued, in progress with the
-running totals, announced with the counts, or refused with the reason and
-whether the claim came back. The Publish confirm says which path it will take,
+document by the listener the editor already holds: queued (naming the job, and
+saying "while that job is switched on"), in progress with the running totals,
+announced with the counts, reached nobody, or refused with the reason and, from
+the stored `released` flag, whether the claim came back. The Publish confirm says which path it will take,
 from a flag the manage page reads server-side (`config/scheduler` is closed to
 every client).
 
 Publishing itself never fails because the announcement did, on either path.
 Raising the inline path's numbers means redoing the wall-clock arithmetic in
 `src/lib/email/dispatch.ts`; the queued path's two ceilings bound unpaged READS
-rather than sends, and paging either is the fix if one is ever approached.
+rather than sends, and paging the junction read is the fix if one is ever
+approached. Both reads are made again on every tick that touches an event,
+which is the price of holding no cursor: the tick's wall clock is checked
+straight after each of them, and the device scan is not made until the email leg
+has finished what it is going to do that tick, so a tick spent on email does not
+also pay for a 5000-row read it will not use.
 
 ## The profile grid
 

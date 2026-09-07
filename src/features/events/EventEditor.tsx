@@ -170,42 +170,61 @@ function queuedAnnouncementLine(event: EventDoc): string | null {
   const result = event.announcementResult ?? null;
   const sent = result?.sent ?? 0;
   const pushed = result?.pushed ?? 0;
-  const counts = `${sent} ${sent === 1 ? "email" : "emails"} and ${pushed} ${
-    pushed === 1 ? "notification" : "notifications"
-  }`;
+  // The audience-level drops and the per-recipient ones are two counters for
+  // two reasons (one is a snapshot, one accumulates); to a reader they are one
+  // number, so they are added here rather than explained on screen.
+  const skipped = (result?.skipped ?? 0) + (result?.audienceSkipped ?? 0);
 
   if (state === "queued") {
-    return "The announcement is queued. It goes out with the next scheduler run.";
+    // NAMES THE CONDITION. The queue only drains while the job is switched on,
+    // and an admin who turns it off leaves this event sitting here; a line
+    // promising "the next scheduler run" with no such run coming would be the
+    // screen lying about a thing only an admin can see.
+    return (
+      "The announcement is queued for the event-announcements scheduler job and " +
+      "goes out on its next run, usually within fifteen minutes, while that job " +
+      "is switched on."
+    );
   }
   if (state === "sending") {
     // The totals are persisted at the end of every tick, so "so far" is
     // literally true rather than a hedge: it is what the last completed tick
     // had done.
+    const counts = `${sent} ${sent === 1 ? "email" : "emails"} and ${pushed} ${
+      pushed === 1 ? "notification" : "notifications"
+    }`;
     return `Announcement in progress: ${counts} so far.`;
   }
   if (state === "refused") {
     const said = result?.refusal ?? "The announcement was not sent.";
-    // The claim is handed back only when the audience could not be read at
-    // all; a stale refusal keeps it, because there is no later moment at which
-    // announcing a past event becomes right. The copy says which happened, so
-    // nobody publishes again expecting a different answer.
-    const releasable = sent === 0 && pushed === 0 && (result?.failed ?? 0) === 0;
-    const after = releasable
+    // READ OFF THE DOCUMENT, never derived from the counts. Both refusals
+    // reach nobody, and only one of them hands the claim back: an audience
+    // that could not be read can be tried again, and an event that has already
+    // started cannot. Deriving this from "nothing was sent" told an approver
+    // to republish a past event and let them watch nothing happen.
+    const after = result?.released
       ? " The claim was released, so publishing this event again re-queues the announcement."
       : "";
     return `${said}${after}`;
   }
   // Done. The same wording the inline path uses, so the two paths do not read
   // as two different features.
+  const trailer = [result?.refusal ?? null, result?.pushRefusal ?? null]
+    .filter(Boolean)
+    .join(" ");
+  const tail = skipped > 0 ? ` ${skipped} skipped.` : "";
+  if (sent === 0 && pushed === 0) {
+    // A run that finished correctly and told nobody: an empty events list, or
+    // every recipient dropped. "0 emails" reads as a fault; this does not.
+    const line = "The announcement reached nobody on the events list.";
+    return trailer ? `${line} ${trailer}${tail}` : `${line}${tail}`;
+  }
   const parts = [`${sent} ${sent === 1 ? "email" : "emails"}`];
   if (pushed > 0) {
     parts.push(`${pushed} ${pushed === 1 ? "notification" : "notifications"}`);
   }
-  const trailer = [result?.refusal ?? null, result?.pushRefusal ?? null]
-    .filter(Boolean)
-    .join(" ");
   const line = `Announced to the events list: ${parts.join(" and ")}.`;
-  return trailer ? `${line} ${trailer}` : line;
+  return trailer ? `${line} ${trailer}${tail}` : `${line}${tail}`;
 }
 
 function statusTone(status: EventStatus): "neutral" | "accent" | "success" | "danger" | "warning" {
