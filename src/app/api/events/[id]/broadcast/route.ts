@@ -65,7 +65,8 @@ const BODY_MAX = 8000;
  * member who organised the event could not mail its attendees unless the SU had
  * separately recognised them. An author and their named collaborators are the
  * people responsible for the event, which is exactly the notice class's
- * predicate.
+ * predicate, as long as they still hold an approved account, which is what
+ * `approvedAccount` below insists on.
  *
  * AUTHORIZATION BEFORE EXISTENCE, in the courses routes' ordering: the event is
  * read first because the gate depends on it, and a caller who is none of the
@@ -127,7 +128,18 @@ export async function POST(
         (uid): uid is string => typeof uid === "string",
       )
     : [];
+  // AN APPROVED ACCOUNT ONLY. `getCurrentUser` hands back a session for every
+  // role, `pending` and `rejected` included, and an account's name stays on
+  // every event it ever authored. Without this test a member who was rejected,
+  // or demoted off the committee, would keep the right to mail the attendee
+  // lists of their old events: addresses they can no longer so much as read,
+  // since `firestore.rules` restricts `eventRsvps` to SU-recognised committee
+  // and admins. Being named on an event is a responsibility, not a standing
+  // credential.
+  const approvedAccount =
+    viewer.role === "member" || viewer.role === "committee" || viewer.role === "admin";
   const responsibleForEvent =
+    approvedAccount &&
     event !== null &&
     Boolean(viewer.uid) &&
     (viewer.uid === authorUid || collaboratorUids.includes(viewer.uid));
@@ -322,9 +334,16 @@ export async function POST(
   let pushed = 0;
   for (const uid of pushUids) {
     // `sendNoticePush` never throws and reads no preference. A member with no
-    // device gets nothing here and the email alone.
-    await sendNoticePush(uid, { title: eventTitle, body: subject, url: eventPath });
-    pushed += 1;
+    // device gets nothing here and the email alone, which is why `pushed`
+    // counts what it ANSWERED rather than what was called: on a backend with no
+    // VAPID keys every call is a silent no-op and a count of calls would report
+    // a whole audience notified.
+    const buzzed = await sendNoticePush(uid, {
+      title: eventTitle,
+      body: subject,
+      url: eventPath,
+    });
+    if (buzzed) pushed += 1;
   }
 
   return NextResponse.json({ ok: true, sent, failed, suppressed, pushed });

@@ -15,7 +15,10 @@ import {
   type CourseRunDoc,
 } from "@/lib/firestore/courses";
 import { newBlockId, type Block } from "@/lib/firestore/newsletterBlocks";
-import { findRecipientsForChannel } from "@/lib/firestore/subscriptions";
+import {
+  findRecipientsForChannel,
+  findUnsubscribedOnChannel,
+} from "@/lib/firestore/subscriptions";
 import { filterSuppressed } from "@/lib/firestore/suppression";
 import { sendNotice } from "./notice";
 import { sendEmail } from "./send";
@@ -639,6 +642,60 @@ export async function resolveCohortAudience(
     enrolledCount: enrolled.length,
     refusal: null,
   };
+}
+
+/**
+ * HOW MANY OF THIS RUN'S ACTIVE MEMBERS A COHORT SEND CANNOT REACH.
+ *
+ * `resolveCohortAudience` is the subscription channel INTERSECTED with active
+ * enrolments, and that first half is deliberate: the unsubscribe link in an
+ * announcement flips the row, so an enrolment-derived audience would re-mail
+ * everyone who clicked it. The consequence is that a member who unsubscribed is
+ * not in the audience, is not in `skipped`, and leaves no trace in the report at
+ * all: the sender reads "sent to 24" and cannot tell whether the cohort is 24
+ * or 30.
+ *
+ * That is a gap the notice lane feels hardest, because its whole promise is
+ * reach, so this counts the gap and the composer prints it. It does NOT close
+ * it: widening the notice lane's audience past an unsubscribe is a consent
+ * decision, not a defect fix, and it belongs to whoever owns the consent story
+ * rather than to this function.
+ *
+ * TWO READS. The unsubscribed rows on the channel (equality-only, no index
+ * owed), then one addressed `getAll` over their deterministic enrolment ids,
+ * because the rows also include people who LEFT the run (the remove route
+ * unsubscribes them), and reporting those as unreachable members would be a
+ * different wrong number.
+ */
+export async function countCohortUnreachable(
+  db: Firestore,
+  runId: string,
+): Promise<number> {
+  const rows = await findUnsubscribedOnChannel(db, courseRunChannel(runId));
+  const uids = [
+    ...new Set(
+      rows
+        .filter((r) => r.audience === "user" && r.audienceId)
+        .map((r) => r.audienceId),
+    ),
+  ];
+  if (uids.length === 0) return 0;
+  // Bounded by the same ceiling the audience read carries: a count for a report
+  // is not worth an unbounded `getAll`. If it ever bites, the number printed is
+  // a floor, which is the safe direction for "people you did not reach".
+  const capped = uids.slice(0, MAX_COHORT_CHANNEL_ROWS);
+  const docs = await db.getAll(
+    ...capped.map((uid) =>
+      db.collection("courseEnrolments").doc(courseEnrolmentId(runId, uid)),
+    ),
+  );
+  let unreachable = 0;
+  for (const doc of docs) {
+    if (!doc.exists) continue;
+    const enrolment = normalizeCourseEnrolment(doc.id, doc.data() ?? {});
+    if (enrolment.status === "active" && enrolment.runId === runId) unreachable += 1;
+  }
+  return unreachable;
 }
 
 // ---------------------------------------------------------------------------

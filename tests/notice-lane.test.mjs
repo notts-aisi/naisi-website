@@ -97,7 +97,15 @@ function makeDb(store = {}) {
   const write = (ref, patch, merge) => {
     data[ref.__collection] ??= {};
     const current = merge ? (data[ref.__collection][ref.__id] ?? {}) : {};
-    data[ref.__collection][ref.__id] = { ...current, ...patch };
+    const next = { ...current, ...patch };
+    // `FieldValue.delete()` REMOVES the field rather than storing a marker. A
+    // store that kept the marker would answer truthy for a field the real
+    // Firestore had dropped, which is the whole question the publish route's
+    // released claim turns on.
+    for (const [key, value] of Object.entries(next)) {
+      if (value && typeof value === "object" && value.__op === "delete") delete next[key];
+    }
+    data[ref.__collection][ref.__id] = next;
   };
 
   function collectionRef(name, filters = [], limit) {
@@ -143,7 +151,10 @@ const FIRESTORE_STUB =
   "  toMillis() { return this.ms; }\n" +
   "  static fromMillis(ms) { return new Timestamp(ms); }\n" +
   "}\n" +
-  "export const FieldValue = { serverTimestamp: () => ({ __op: 'serverTimestamp' }) };";
+  "export const FieldValue = {\n" +
+  "  serverTimestamp: () => ({ __op: 'serverTimestamp' }),\n" +
+  "  delete: () => ({ __op: 'delete' }),\n" +
+  "};";
 
 const NEXT_RESPONSE_STUB =
   "export const NextResponse = {\n" +
@@ -503,7 +514,8 @@ const audienceLoader = createLoader({
     ["./notice", "export const sendNotice = async () => {};"],
     [
       "@/lib/firestore/subscriptions",
-      "export const findRecipientsForChannel = async () => globalThis.__channelRows ?? [];",
+      "export const findRecipientsForChannel = async () => globalThis.__channelRows ?? [];\n" +
+        "export const findUnsubscribedOnChannel = async () => globalThis.__unsubscribedRows ?? [];",
     ],
     [
       "@/lib/firestore/suppression",
@@ -512,7 +524,7 @@ const audienceLoader = createLoader({
   ]),
 });
 
-const { resolveCohortAudience } = await audienceLoader.loadTs(
+const { resolveCohortAudience, countCohortUnreachable } = await audienceLoader.loadTs(
   "lib/email/courseFacilitatorEmails.ts",
 );
 
@@ -576,6 +588,33 @@ describe("the courses row is honoured on the announcement lane and overridden on
   });
 });
 
+describe("what a cohort send could not reach, and says so", () => {
+  test("the run's ACTIVE members who left the list are counted, and nobody else", async () => {
+    globalThis.__unsubscribedRows = [
+      // Clicked the unsubscribe link in an announcement, still on the run.
+      { email: "left@e2e.invalid", audience: "user", audienceId: "quit-the-list" },
+      // Unsubscribed BECAUSE they left the run: not a member this failed to
+      // reach, and counting them would be a different wrong number.
+      { email: "gone@e2e.invalid", audience: "user", audienceId: "left-the-run" },
+      // A guest row cannot hold an enrolment at all.
+      { email: "stranger@e2e.invalid", audience: "guest", audienceId: "stranger@e2e.invalid" },
+    ];
+    globalThis.__db = makeDb({
+      courseEnrolments: {
+        "run-1__quit-the-list": { runId: "run-1", uid: "quit-the-list", status: "active" },
+        "run-1__left-the-run": { runId: "run-1", uid: "left-the-run", status: "withdrawn" },
+      },
+    });
+    assert.equal(await countCohortUnreachable(globalThis.__db, "run-1"), 1);
+  });
+
+  test("nobody unsubscribed is nobody to report, and no second read", async () => {
+    globalThis.__unsubscribedRows = [];
+    globalThis.__db = makeDb({ courseEnrolments: {} });
+    assert.equal(await countCohortUnreachable(globalThis.__db, "run-1"), 0);
+  });
+});
+
 // ===========================================================================
 // 5. The event lanes: gate, audience, counts and caps
 // ===========================================================================
@@ -596,7 +635,12 @@ const eventLoader = createLoader({
     ],
     [
       "@/lib/push/noticeNotifications",
-      "export const sendNoticePush = async (uid, n) => { (globalThis.__pushed ||= []).push({ uid, ...n }); };",
+      // Returns TRUE, like the real door does when a device took the
+      // notification: every route counts the answer rather than the call.
+      "export const sendNoticePush = async (uid, n) => {\n" +
+        "  (globalThis.__pushed ||= []).push({ uid, ...n });\n" +
+        "  return globalThis.__pushLands !== false;\n" +
+        "};",
     ],
     [
       "@/lib/firestore/suppression",
@@ -654,6 +698,7 @@ function seedEvent(extra = {}) {
   globalThis.__notices = [];
   globalThis.__pushed = [];
   globalThis.__suppressed = [];
+  globalThis.__pushLands = true;
   globalThis.__db = makeDb({
     events: {
       "event-1": {
@@ -697,6 +742,21 @@ describe("the event broadcast gate, as each person it now admits", () => {
       allowed: false,
     },
     { who: "a plain member", user: viewer("nobody-1", "member"), allowed: false },
+    // BEING NAMED ON AN EVENT IS NOT A STANDING CREDENTIAL. `getCurrentUser`
+    // hands back a session for every role, and an author's uid stays on the
+    // event after the account is rejected or demoted to waiting-for-approval.
+    // Either would otherwise keep the right to mail an attendee list they
+    // cannot so much as read.
+    {
+      who: "the author of the event, since rejected",
+      user: viewer("author-1", "rejected"),
+      allowed: false,
+    },
+    {
+      who: "a named collaborator who is still pending approval",
+      user: viewer("collab-1", "pending"),
+      allowed: false,
+    },
   ];
 
   for (const { who, user, allowed } of cases) {
@@ -770,6 +830,18 @@ describe("the broadcast's audience and what it hands back", () => {
       /@e2e\.invalid/,
       "the RSVP list is PII this gate now admits people who cannot read it",
     );
+  });
+
+  test("`pushed` counts notifications, not calls", async () => {
+    seedEvent({ attendees: 2 });
+    // The door's silent outcomes: no VAPID keys on this backend, no device on
+    // this account, a subscription pruned since. A count of CALLS would answer
+    // "2 notified" on a backend where the feature is dormant.
+    globalThis.__pushLands = false;
+    globalThis.__user = viewer("admin-1", "admin");
+    const res = await broadcastRoute.POST(message, ctxFor("event-1"));
+    assert.equal(jsonOf(res).pushed, 0);
+    assert.equal(jsonOf(res).sent, 2, "the email is unaffected by a quiet phone");
   });
 
   test("push reaches every attendee with an account, suppressed inbox or not", async () => {
@@ -891,6 +963,31 @@ describe("cancelling an event", () => {
     assert.equal(globalThis.__notices.length, 0);
   });
 
+  test("a cancellation is not rationed by the hour's change notices", async () => {
+    seedEvent({ event: { status: "published" }, attendees: 2 });
+    globalThis.__user = viewer("admin-1", "admin");
+    const change = jsonRequest({ subject: "Room change", body: "We are in B52." });
+    for (let i = 0; i < 3; i += 1) {
+      const ok = await broadcastRoute.POST(change, ctxFor("event-1"));
+      assert.equal(ok.status, 200, `change notice ${i + 1} was refused`);
+    }
+    assert.equal(
+      (await broadcastRoute.POST(change, ctxFor("event-1"))).status,
+      429,
+      "the shared hourly window has to be spent for this test to mean anything",
+    );
+
+    globalThis.__notices = [];
+    const res = await cancelRoute.POST(notify, ctxFor("event-1"));
+    assert.equal(
+      res.status,
+      200,
+      "the most time-critical send in the lane was rationed by the most routine one",
+    );
+    assert.equal(globalThis.__db.data.events["event-1"].status, "cancelled");
+    assert.equal(globalThis.__notices.length, 2);
+  });
+
   test("cancelling without notifying spends no slot and sends nothing", async () => {
     seedEvent({ event: { status: "published" }, attendees: 2 });
     globalThis.__user = viewer("admin-1", "admin");
@@ -920,7 +1017,10 @@ const announceLoader = createLoader({
     ],
     [
       "@/lib/push/send",
-      "export const sendPushToUid = async (uid, n) => { (globalThis.__pushed ||= []).push({ uid, ...n }); };",
+      "export const sendPushToUid = async (uid, n) => {\n" +
+        "  (globalThis.__pushed ||= []).push({ uid, ...n });\n" +
+        "  return globalThis.__pushCounts ?? { sent: 1, pruned: 0, deferred: 0, failed: 0, retried: 0 };\n" +
+        "};",
     ],
     ["@/lib/push/config", "export const isPushConfigured = () => globalThis.__vapid !== false;"],
     [
@@ -947,7 +1047,8 @@ const announceLoader = createLoader({
   ]),
 });
 
-const { sendEventAnnouncement } = await announceLoader.loadTs("lib/email/eventAnnouncement.ts");
+const { sendEventAnnouncement, MAX_ANNOUNCEMENT_SENDS, MAX_PUSH_ROWS } =
+  await announceLoader.loadTs("lib/email/eventAnnouncement.ts");
 
 const ANNOUNCEMENT = {
   eventId: "event-1",
@@ -966,6 +1067,7 @@ describe("the event announcement: the events row's own sender", () => {
     globalThis.__pushed = [];
     globalThis.__suppressed = [];
     globalThis.__vapid = true;
+    globalThis.__pushCounts = undefined;
     globalThis.__channelRows = [
       { email: "member@e2e.invalid", audience: "user", audienceId: "member-1" },
       { email: "guest@e2e.invalid", audience: "guest", audienceId: "guest@e2e.invalid" },
@@ -1061,6 +1163,71 @@ describe("the event announcement: the events row's own sender", () => {
     assert.equal(globalThis.__sent.length, 0);
   });
 
+  test("THE CEILING COUNTS MESSAGES, NOT JUNCTION ROWS", async () => {
+    const input = world();
+    // 120 members, each holding a verified university address on both channels:
+    // 240 messages out of 120 rows. Under the 500-row read ceiling and over the
+    // 200-message send one, which is the case a row count cannot see and the
+    // case that runs the publish request past its 60s budget.
+    const rows = [];
+    const users = {};
+    for (let i = 0; i < 120; i += 1) {
+      rows.push({ email: `both${i}@e2e.invalid`, audience: "user", audienceId: `both-${i}` });
+      users[`both-${i}`] = {
+        email: `both${i}@e2e.invalid`,
+        displayName: `Both ${i}`,
+        profile: {
+          universityEmail: `both${i}@nottingham.ac.uk`,
+          notifications: {
+            channels: { gmail: true, uniEmail: true },
+            categories: { events: true },
+          },
+        },
+      };
+    }
+    globalThis.__channelRows = rows;
+    globalThis.__db.data.users = users;
+
+    const result = await sendEventAnnouncement(globalThis.__db, input);
+    assert.match(
+      result.refusal ?? "",
+      new RegExp(`240 emails, over the ${MAX_ANNOUNCEMENT_SENDS}`),
+    );
+    assert.equal(globalThis.__sent.length, 0, "a partial announcement looks like a whole one");
+  });
+
+  test("both ceilings are sized against the pacer's sum, and the sum names this lane", () => {
+    const source = src("lib", "email", "eventAnnouncement.ts");
+    // Counted on ADDRESSES, after hydration: the only count that is the number
+    // of sends.
+    assert.match(source, /r\.addresses\.length/);
+    // The two legs run together, so the request's budget is the larger rather
+    // than the sum of the two.
+    assert.match(source, /Promise\.all\(\[\s*\n\s*announceByEmail/);
+    // Tripwires, not preferences: these are the figures `dispatch.ts` did the
+    // 60s arithmetic for, at each leg's own per-item cost. Raising either means
+    // redoing that sum, which is the whole point of failing here first.
+    assert.ok(
+      MAX_ANNOUNCEMENT_SENDS <= 300,
+      "the notice lane's 300 messages is the outer bound the sum was redone for",
+    );
+    assert.ok(MAX_PUSH_ROWS <= 500, "the push leg's ~34s worst case is sized at 500 owners");
+    assert.match(
+      src("lib", "email", "dispatch.ts"),
+      /MAX_ANNOUNCEMENT_SENDS/,
+      "a capped `dispatchSends` caller that the wall-clock sum does not name is " +
+        "a cap nobody checked against the request timeout",
+    );
+  });
+
+  test("`pushed` counts notifications: a cell that is on with no device is nobody told", async () => {
+    const input = world();
+    globalThis.__pushCounts = { sent: 0, pruned: 1, deferred: 0, failed: 0, retried: 0 };
+    const result = await sendEventAnnouncement(globalThis.__db, input);
+    assert.equal(result.pushed, 0);
+    assert.equal(result.sent, 2, "the email is unaffected by a quiet phone");
+  });
+
   test("with push dormant nothing is pushed and the email is unaffected", async () => {
     const input = world();
     globalThis.__vapid = false;
@@ -1088,7 +1255,10 @@ const publishLoader = createLoader({
       "export const sendEventAnnouncement = async (db, input) => {\n" +
         "  if (globalThis.__announceThrows) throw new Error('subscriptions unreadable');\n" +
         "  (globalThis.__announcements ||= []).push(input);\n" +
-        "  return { sent: 1, skipped: 0, suppressed: 0, failed: 0, pushed: 1, refusal: null };\n" +
+        "  return (\n" +
+        "    globalThis.__announceResult ??\n" +
+        "    { sent: 1, skipped: 0, suppressed: 0, failed: 0, pushed: 1, refusal: null }\n" +
+        "  );\n" +
         "};",
     ],
   ]),
@@ -1100,6 +1270,7 @@ describe("publishing announces once, and never fails because the announcement di
   function seed(event = {}) {
     globalThis.__announcements = [];
     globalThis.__announceThrows = false;
+    globalThis.__announceResult = undefined;
     globalThis.__user = viewer("approver-1", "member", { permissions: { approveEvent: true } });
     globalThis.__db = makeDb({
       events: {
@@ -1168,12 +1339,123 @@ describe("publishing announces once, and never fails because the announcement di
     assert.equal(globalThis.__db.data.events["event-1"].status, "published");
   });
 
+  test("a REFUSED announcement hands the claim back, so it can go out later", async () => {
+    seed();
+    // The deterministic pre-dispatch refusal: nothing sent, nothing failed,
+    // nothing pushed, and a sentence saying why. The claim bought nothing.
+    globalThis.__announceResult = {
+      sent: 0,
+      skipped: 0,
+      suppressed: 0,
+      failed: 0,
+      pushed: 0,
+      refusal: "The events list is larger than a single announcement can handle.",
+    };
+    const res = await publishRoute.POST({}, ctxFor("event-1"));
+    const payload = jsonOf(res);
+    assert.equal(res.status, 200);
+    assert.equal(payload.announced, false);
+    assert.equal(payload.announcementRefused, true);
+    const stored = globalThis.__db.data.events["event-1"];
+    assert.equal(stored.status, "published", "a refused announcement failed the publish");
+    assert.ok(
+      !stored.announcedAt,
+      "the once-per-event claim stayed spent on a send that never happened, so " +
+        "no republish can ever announce this event",
+    );
+  });
+
+  test("a partly delivered announcement KEEPS its claim, refusal or not", async () => {
+    seed();
+    globalThis.__announceResult = {
+      sent: 4,
+      skipped: 0,
+      suppressed: 0,
+      failed: 1,
+      pushed: 0,
+      refusal: "The push leg was refused.",
+    };
+    const res = await publishRoute.POST({}, ctxFor("event-1"));
+    assert.equal(jsonOf(res).announced, true);
+    assert.ok(
+      globalThis.__db.data.events["event-1"].announcedAt,
+      "releasing here would re-mail the four people who already have it",
+    );
+  });
+
+  test("`announced` is whether anybody was told, not whether the attempt ran", async () => {
+    seed();
+    // Nobody subscribed, or everybody's cell is off: the send ran correctly and
+    // reached nobody. No refusal, so the claim stands.
+    globalThis.__announceResult = {
+      sent: 0,
+      skipped: 4,
+      suppressed: 0,
+      failed: 0,
+      pushed: 0,
+      refusal: null,
+    };
+    const res = await publishRoute.POST({}, ctxFor("event-1"));
+    assert.equal(jsonOf(res).announced, false);
+    assert.ok(globalThis.__db.data.events["event-1"].announcedAt);
+  });
+
+  test("the publisher is told what the announcement did, and warned before it happens", () => {
+    const editor = src("features", "events", "EventEditor.tsx");
+    // The route's three answers all reach a person. A response nobody reads is
+    // the same as no response: the event is live and nobody heard.
+    assert.match(editor, /announcementLine\(body\)/);
+    assert.match(editor, /body\.announcementFailed/);
+    assert.match(editor, /body\.announcementRefused/);
+    // And the confirm says what pressing Publish does.
+    assert.match(editor, /subscribed[\s\S]{0,40}to event announcements is emailed/);
+  });
+
   test("a member with no approve permission cannot publish at all", async () => {
     seed();
     globalThis.__user = viewer("member-1", "member");
     const res = await publishRoute.POST({}, ctxFor("event-1"));
     assert.equal(res.status, 403);
     assert.equal(globalThis.__db.data.events["event-1"].status, "approved");
+  });
+});
+
+describe("the course lanes push to the room, not to the deliverable half of it", () => {
+  const EMAIL = src("app", "api", "courses", "groups", "[groupId]", "email", "route.ts");
+  const NOTICE = src("app", "api", "courses", "groups", "[groupId]", "notice", "route.ts");
+
+  test("both push loops run over the whole audience", () => {
+    // Suppression is a fact about an INBOX and says nothing about a phone:
+    // the rule both event lanes state in their own comments. A push leg over
+    // `deliverable` would silently apply an email fact to a device.
+    for (const [name, source] of [["email", EMAIL], ["notice", NOTICE]]) {
+      assert.match(
+        source,
+        /for \(const recipient of recipients\)/,
+        `the ${name} lane pushes over a filtered list`,
+      );
+      assert.doesNotMatch(source, /for \(const recipient of deliverable\)/);
+    }
+  });
+
+  test("a room whose addresses have all bounced is not an early return", () => {
+    // It still has devices, and a room change on a lock screen an hour before
+    // the session is the whole point of the lane.
+    assert.doesNotMatch(
+      NOTICE,
+      /if \(deliverable\.length === 0\) \{/,
+      "an all-suppressed group sent nothing at all, email or notification",
+    );
+    // The email lane keeps ONE, for the rehearsal: a test send has no push leg,
+    // so an undeliverable one really is nothing to do.
+    assert.match(EMAIL, /if \(testOnly && deliverable\.length === 0\)/);
+    assert.doesNotMatch(EMAIL, /\n  if \(deliverable\.length === 0\) \{/);
+  });
+
+  test("both count notifications rather than calls", () => {
+    for (const source of [EMAIL, NOTICE]) {
+      assert.match(source, /if \(buzzed\) pushed \+= 1;/);
+    }
   });
 });
 
@@ -1206,6 +1488,21 @@ describe("the run composer carries a grid lane and a notice lane, visibly", () =
     // Push is inside the flag, so an opt-outable announcement never buzzes a
     // phone: that is how people learn to switch notifications off for good.
     assert.match(ROUTE, /if \(asNotice\) \{\s*\n\s*for \(const recipient of recipients\)/);
+  });
+
+  test("the notice lane reports the cohort members it could not reach", () => {
+    // `ignoreCategoryOptOut` relaxes the `courses` ROW and nothing else: the
+    // audience is still the subscription channel, so somebody who unsubscribed
+    // from the cohort's emails is not reached and is not in `skipped` either.
+    // Invisible is the one thing that must not be.
+    assert.match(ROUTE, /countCohortUnreachable\(db, runId\)/);
+    assert.match(COMPOSER, /could not be reached at all/);
+    assert.match(COMPOSER, /who unsubscribed from this cohort's emails is not on the list/);
+    assert.doesNotMatch(
+      COMPOSER,
+      /reaches everyone in the cohort whatever/,
+      "the tick promised a reach the lane does not have",
+    );
   });
 
   test("the composer offers the tick, and says what it costs the recipient", () => {

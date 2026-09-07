@@ -321,9 +321,11 @@ export async function POST(
     (r) => !suppressedSet.has(r.address.toLowerCase()),
   );
   skipped += recipients.length - deliverable.length;
-  if (deliverable.length === 0) {
-    return NextResponse.json({ ok: true, sent: 0, skipped });
-  }
+  // NO EARLY RETURN ON AN ALL-SUPPRESSED ROOM. Suppression is a fact about an
+  // inbox and says nothing about a phone: the push leg below runs over
+  // `recipients`, so a group whose addresses have all bounced still gets "we
+  // have moved to B52" on its lock screens. It costs a cap slot, as any other
+  // notice to that room does.
 
   // THE 10/DAY PER-GROUP COUNTER — its own key prefix, so the group email
   // route's 3/hour (sender, group) budget and this one can never starve each
@@ -395,14 +397,17 @@ export async function POST(
   // before the session is the whole point of this lane, and it reads no
   // preference: see `sendNoticePush`.
   const groupPath = `/learn/${encodeURIComponent(group.runId)}/group/${encodeURIComponent(groupId)}`;
+  // OVER `recipients`, NOT `deliverable`: see the suppression note above.
+  // `pushed` counts notifications rather than calls: `sendNoticePush` is
+  // silent with no VAPID keys and for a member with no device.
   let pushed = 0;
-  for (const recipient of deliverable) {
-    await sendNoticePush(recipient.uid, {
+  for (const recipient of recipients) {
+    const buzzed = await sendNoticePush(recipient.uid, {
       title: group.name,
       body: preheader || subject,
       url: groupPath,
     });
-    pushed += 1;
+    if (buzzed) pushed += 1;
   }
 
   // `remaining` is the claim's own answer (see `reserveNoticeSlots`): the slots

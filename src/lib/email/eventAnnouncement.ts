@@ -56,16 +56,51 @@ import { sendEmail } from "./send";
  * failed to save.
  */
 
-/** Sanity ceiling on the channel read. Over it the announcement is REFUSED. */
+/**
+ * Sanity ceiling on the channel READ, which bounds the hydration behind it: one
+ * `getAll` over the user rows. Over it the announcement is REFUSED before a
+ * document is fetched. It is not the send ceiling; that is the next constant,
+ * and it is counted on a different thing.
+ */
 export const MAX_ANNOUNCEMENT_ROWS = 500;
 
 /**
- * Sanity ceiling on the push fan-out. `pushSubscriptions` holds one row per
- * DEVICE, so this is devices and not people, and it is deliberately generous:
- * it exists to stop a runaway collection turning one publish into an unbounded
- * request, not to size a real society.
+ * THE SEND CEILING, COUNTED IN MESSAGES AND NOT IN JUNCTION ROWS.
+ *
+ * A row is not a message. A member with a verified university address on both
+ * channels takes TWO sends, so a 500-row list is up to a thousand `sendEmail`
+ * calls, and this whole announcement runs inside the publish REQUEST, against
+ * `apphosting.yaml`'s `timeoutSeconds: 60`. `dispatch.ts` carries the
+ * arithmetic; the figure it supports is 200 messages, the same number the run
+ * composer's cap was sized to: ceil(200/6) = 34 rounds x 1.05s worst = ~36s,
+ * ~19s typical.
+ *
+ * Counted AFTER hydration, on addresses, because that is the only count that is
+ * the number of sends. A request over it is REFUSED, and refused loudly enough
+ * that the publish route can hand the claim back (see its header): a truncation
+ * would mail an arbitrary prefix of the list and report success, and a timeout
+ * would do the same with no report at all.
+ *
+ * RAISING IT MEANS REDOING THE SUM IN `dispatch.ts`. A list that outgrows it
+ * needs the send taken off the request path, which is a different feature.
  */
-export const MAX_PUSH_ROWS = 2000;
+export const MAX_ANNOUNCEMENT_SENDS = 200;
+
+/**
+ * Sanity ceiling on the push fan-out. `pushSubscriptions` holds one row per
+ * DEVICE, so this is devices and not people; the loop below runs once per
+ * distinct OWNER, which is at most that many.
+ *
+ * Sized against the same 60s budget, on its own per-item cost: an owner costs a
+ * preference read, a subscription read and a web-push POST, ~0.4s
+ * pessimistically, where an email costs a render and an SMTP connection. 500
+ * owners is ceil(500/6) = 84 rounds x 0.4s = ~34s worst, which fits ALONGSIDE
+ * the email leg's ~36s because the two are dispatched CONCURRENTLY (see
+ * `sendEventAnnouncement`): the request's wall clock is the larger of the two
+ * rather than their sum. Over the ceiling the push leg goes quiet and says so
+ * in the log; the email still goes.
+ */
+export const MAX_PUSH_ROWS = 500;
 
 /** Same lifetime the newsletter gives its unsubscribe links. */
 const UNSUB_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 365;
@@ -223,6 +258,30 @@ async function announceByEmail(
     return { sent: 0, skipped, suppressed: 0, failed: 0, refusal: null };
   }
 
+  // THE SEND CEILING, ON ADDRESSES. See `MAX_ANNOUNCEMENT_SENDS`: a recipient
+  // with two verified addresses is two messages, so this is the only count that
+  // can be judged against the request's wall-clock budget. Refused before the
+  // suppression read and before a single send, so nothing has gone out and the
+  // publish route can hand the claim back.
+  const messageCount = recipients.reduce((n, r) => n + r.addresses.length, 0);
+  if (messageCount > MAX_ANNOUNCEMENT_SENDS) {
+    console.error(
+      "[event announcement] message count exceeds ceiling",
+      input.eventId,
+      messageCount,
+    );
+    return {
+      sent: 0,
+      skipped,
+      suppressed: 0,
+      failed: 0,
+      refusal:
+        `This announcement would send ${messageCount} emails, over the ` +
+        `${MAX_ANNOUNCEMENT_SENDS} one publish can deliver inside a single request. ` +
+        "Nothing was sent: raise it with an admin.",
+    };
+  }
+
   const { suppressed: suppressedList } = await filterSuppressed(
     db,
     recipients.flatMap((r) => r.addresses),
@@ -337,12 +396,14 @@ async function announceByPush(
       // The events PUSH cell, which is opt-in: absent resolves OFF, so nobody
       // is pushed for having an account.
       if (!(await wantsPushFor(uid, "events"))) return;
-      await sendPushToUid(uid, {
+      const counts = await sendPushToUid(uid, {
         title: "New NAISI event",
         body: input.title,
         url: path,
       });
-      pushed += 1;
+      // Notifications, not calls: an account whose cell is on but whose only
+      // device has since been pruned is not somebody who was told.
+      if (counts.sent > 0) pushed += 1;
     } catch (err) {
       // Best effort, always. Uid only.
       console.warn("[event announcement] push failed", input.eventId, uid, err);
@@ -353,12 +414,22 @@ async function announceByPush(
 
 /**
  * Announce a published event. Best effort: returns counts, never throws.
+ *
+ * THE TWO LEGS RUN CONCURRENTLY, and that is a budget decision rather than a
+ * tidiness one. Both are bounded loops inside the 60s publish request, they
+ * share no state, and they answer two different questions to two different
+ * audiences; run in series their worst cases ADD (~36s + ~20s) and leave the
+ * request nothing for its own reads. Run together the wall clock is the larger
+ * of the two. A refusal on one leg says nothing about the other: an events list
+ * too large to mail does not stop the push audience being told.
  */
 export async function sendEventAnnouncement(
   db: Firestore,
   input: EventAnnouncementInput,
 ): Promise<EventAnnouncementResult> {
-  const email = await announceByEmail(db, input);
-  const pushed = await announceByPush(db, input);
+  const [email, pushed] = await Promise.all([
+    announceByEmail(db, input),
+    announceByPush(db, input),
+  ]);
   return { ...email, pushed };
 }

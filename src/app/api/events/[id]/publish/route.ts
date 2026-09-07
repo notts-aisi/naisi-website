@@ -33,6 +33,19 @@ import { formatEventWhen } from "@/lib/events/changeSummary";
  * fails in the direction of mailing the whole list twice. The failure is logged
  * and counted in the response so a publisher can see it happened.
  *
+ * ── AND A PURE REFUSAL HANDS THE CLAIM BACK ─────────────────────────────────
+ * There is one outcome where the trade above buys nothing: the announcement
+ * REFUSES, deterministically, before it dispatches anything (the list is over
+ * its ceiling). Nothing was sent, nothing can have been half-sent, and yet the
+ * claim is spent, `announce` can never be true again, and no supported action
+ * gets the announcement out. So that one case clears `announcedAt` and says so
+ * in the response: the ceiling can be raised and the event republished.
+ *
+ * The condition is deliberately narrow: a refusal AND nothing sent, failed or
+ * pushed. A THROW is not released: `dispatchSends` can reject after other
+ * workers have already delivered, so a retry there would re-mail people. A
+ * partial send keeps its claim for the same reason.
+ *
  * ── PUBLISHING NEVER FAILS BECAUSE THE ANNOUNCEMENT FAILED ──────────────────
  * The write is committed first and the send is best effort inside a try/catch,
  * exactly as the stage-release job treats its push. An event that went live
@@ -117,10 +130,42 @@ export async function POST(
       membersOnly,
       actorUid: actor.uid,
     });
-    if (result.refusal) {
+    // Nothing sent, nothing failed, nothing pushed, and a refusal to explain
+    // why: the claim bought nothing, so hand it back. See the header.
+    const nothingWentOut =
+      result.refusal !== null &&
+      result.sent === 0 &&
+      result.failed === 0 &&
+      result.pushed === 0;
+    if (nothingWentOut) {
       console.error("[event publish] announcement refused", id, result.refusal);
+      try {
+        await ref.update({ announcedAt: FieldValue.delete() });
+      } catch (err) {
+        // The event is published either way. A claim that could not be released
+        // is a missing announcement, not a failed publish.
+        console.error("[event publish] could not release the announcement claim", id, err);
+      }
+      return NextResponse.json({
+        ok: true,
+        announced: false,
+        announcementRefused: true,
+        announcement: result,
+      });
     }
-    return NextResponse.json({ ok: true, announced: true, announcement: result });
+    if (result.refusal) {
+      // One leg refused and the other did not: the claim stays spent, because
+      // part of the audience has been told.
+      console.error("[event publish] announcement partly refused", id, result.refusal);
+    }
+    // `announced` is whether anybody was actually told, not whether the attempt
+    // ran. A publisher reading `true` over an empty send would have no way to
+    // learn that nobody heard.
+    return NextResponse.json({
+      ok: true,
+      announced: result.sent > 0 || result.pushed > 0,
+      announcement: result,
+    });
   } catch (err) {
     // The event is published. A failed announcement is logged and reported, and
     // is never allowed to look like a failed publish. See the header.

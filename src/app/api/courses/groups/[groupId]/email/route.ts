@@ -358,7 +358,12 @@ export async function POST(
     (r) => !suppressedSet.has(r.address.toLowerCase()),
   );
   skipped += recipients.length - deliverable.length;
-  if (deliverable.length === 0) {
+  // ONLY THE REHEARSAL BAILS HERE. A member whose address is suppressed still
+  // has a phone, and the push leg below runs over `recipients` rather than
+  // `deliverable`, so a group whose addresses have all bounced still hears the
+  // notice on its devices. A test send has no push leg at all, so an
+  // undeliverable one really is nothing to do.
+  if (testOnly && deliverable.length === 0) {
     return NextResponse.json({ ok: true, sent: 0, skipped });
   }
 
@@ -446,15 +451,20 @@ export async function POST(
   let pushed = 0;
   if (!testOnly) {
     const groupPath = `/learn/${encodeURIComponent(group.runId)}/group/${encodeURIComponent(groupId)}`;
-    for (const recipient of deliverable) {
+    // OVER `recipients`, NOT `deliverable`: suppression is a fact about an
+    // inbox and says nothing about a phone, which is the rule the event lanes
+    // state and this one has to agree with. `pushed` counts notifications
+    // rather than calls, because `sendNoticePush` is silent on a backend with
+    // no VAPID keys and for a member with no device.
+    for (const recipient of recipients) {
       // Reads no preference and never throws. A member with no device gets
       // nothing here and the email alone.
-      await sendNoticePush(recipient.uid, {
+      const buzzed = await sendNoticePush(recipient.uid, {
         title: group.name,
         body: subject,
         url: groupPath,
       });
-      pushed += 1;
+      if (buzzed) pushed += 1;
     }
   }
 

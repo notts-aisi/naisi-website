@@ -152,7 +152,18 @@ const RUN_RECIPIENT_CAP = 200;
 /** What a completed attempt turned out to be. See the header. */
 type SendOutcome =
   | { state: "pending" }
-  | { state: "done"; sent: number; skipped: number }
+  | {
+      state: "done";
+      sent: number;
+      skipped: number;
+      /**
+       * Notice lane only: ACTIVE members of the run who are off the cohort list
+       * because they unsubscribed, so the send could not reach them at all.
+       * They are not in `skipped` (they were never candidates), and without
+       * this number nothing on this screen would say they exist.
+       */
+      unreachable?: number;
+    }
   /** The route answered with a sentence: nothing was sent. */
   | { state: "refused"; message: string }
   /** No usable answer: some, all or none of the list may have it. */
@@ -390,7 +401,13 @@ export default function StaffEmailComposer({ runId, audience }: Props) {
         }
 
         const payload = (await res.json().catch(() => null)) as
-          | { ok?: true; sent?: number; skipped?: number; error?: string }
+          | {
+              ok?: true;
+              sent?: number;
+              skipped?: number;
+              unreachable?: number;
+              error?: string;
+            }
           | null;
 
         if (res.ok && payload?.ok) {
@@ -400,6 +417,8 @@ export default function StaffEmailComposer({ runId, audience }: Props) {
               state: "done",
               sent: payload.sent ?? 0,
               skipped: payload.skipped ?? 0,
+              unreachable:
+                typeof payload.unreachable === "number" ? payload.unreachable : undefined,
             },
           });
           return;
@@ -519,9 +538,12 @@ export default function StaffEmailComposer({ runId, audience }: Props) {
               disabled={busy}
               label="Send as an important notice"
               description={
-                "It reaches everyone in the cohort whatever their notification " +
-                "settings, by email and by notification. Use it for something " +
-                "they need to know, not for a reminder."
+                "It reaches everyone on the cohort list whatever their " +
+                "notification settings, by email and by notification. Somebody " +
+                "who unsubscribed from this cohort's emails is not on the list " +
+                "and is not reached; the report after the send says how many " +
+                "that is. Use it for something they need to know, not for a " +
+                "reminder."
               }
             />
           </div>
@@ -610,6 +632,9 @@ export default function StaffEmailComposer({ runId, audience }: Props) {
                         : ""
                     }, or a send that failed. Nothing reached those people — worth following up another way.`
                   : "Nobody was skipped."}{" "}
+                {sendAttempt.outcome.unreachable
+                  ? `${people(sendAttempt.outcome.unreachable)} on this run could not be reached at all: they have unsubscribed from this cohort's emails, so they are not on the list this send goes to. Reach them another way if it matters. `
+                  : ""}
                 Sending is not the same as arriving: this says what left, not what
                 landed.
               </p>

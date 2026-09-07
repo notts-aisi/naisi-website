@@ -37,6 +37,14 @@ import { sendPushToUid } from "./send";
  * read tonight. A push failure must not turn a delivered broadcast into a 500
  * that reads as "nothing was sent".
  *
+ * IT ANSWERS WHETHER A PHONE ACTUALLY BUZZED, which is the only honest thing a
+ * caller can put in a `pushed` count. Every gate above is silent by design (no
+ * VAPID keys, no uid, no device, a rejected destination), so a caller that
+ * counted CALLS would answer `pushed: 40` on a backend where the feature is
+ * dormant and nobody was notified at all. The boolean is true when at least one
+ * of that member's devices took the notification, and false for every other
+ * outcome including a partial failure across two devices.
+ *
  * No `retryFresh`, for the reason the two mirrors give: a push landing in the
  * first seconds of a subscription's life is dropped rather than held open, and
  * the email has already gone.
@@ -60,6 +68,12 @@ function noticePushPath(url: string): string | null {
   return url;
 }
 
+/**
+ * @returns true when at least one of this member's devices was handed the
+ * notification. False for every silent outcome, so a caller's `pushed` count
+ * is notifications rather than attempts. See "IT ANSWERS WHETHER A PHONE
+ * ACTUALLY BUZZED" above.
+ */
 export async function sendNoticePush(
   uid: string,
   {
@@ -72,20 +86,22 @@ export async function sendNoticePush(
     /** Same-origin PATH. The service worker resolves it against the origin. */
     url: string;
   },
-): Promise<void> {
+): Promise<boolean> {
   try {
     // Cheapest gate first: with no VAPID keys nothing pushes anywhere.
-    if (!isPushConfigured()) return;
-    if (!uid) return;
+    if (!isPushConfigured()) return false;
+    if (!uid) return false;
     const path = noticePushPath(url);
     // A destination this module will not vouch for is a dropped push, not a
     // notification sent somewhere else. The email carries the same message.
     if (!path) {
       console.warn("[push] notice dropped: destination is not a same-origin path");
-      return;
+      return false;
     }
-    await sendPushToUid(uid, { title, body, url: path });
+    const counts = await sendPushToUid(uid, { title, body, url: path });
+    return counts.sent > 0;
   } catch (err) {
     console.warn("[push] notice failed", { uid, err });
+    return false;
   }
 }

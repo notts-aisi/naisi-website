@@ -5,10 +5,8 @@ import { dispatchSends } from "@/lib/email/dispatch";
 import { sendNotice } from "@/lib/email/notice";
 import {
   DAY_MS,
-  HOUR_MS,
   MAX_NOTICE_RECIPIENTS,
   NOTICES_PER_DAY,
-  NOTICES_PER_HOUR,
   noticeRecipientRefusal,
   reserveNoticeSlots,
 } from "@/lib/email/noticeCaps";
@@ -39,13 +37,23 @@ import { sendNoticePush } from "@/lib/push/noticeNotifications";
  *
  * ── THE CAP IS CLAIMED BEFORE THE CANCELLATION, NOT AFTER ───────────────────
  * The notice lane's caps bound how often one audience can be reached, and this
- * lane shares the event broadcast's counters, so an organiser who has already
- * sent today's ten notices can meet a refusal here. That refusal has to arrive
- * BEFORE the status write, or the answer would be "the event is cancelled and
- * nobody was told", which is the one outcome worse than either half. So the
- * slot is claimed first and a refused request changes nothing at all: the
- * organiser can retry, or untick "notify attendees" and cancel without a
- * message. The refusal sentence names the cap.
+ * lane shares the event broadcast's per-audience daily counter, so an organiser
+ * who has already sent today's ten notices can meet a refusal here. That
+ * refusal has to arrive BEFORE the status write, or the answer would be "the
+ * event is cancelled and nobody was told", which is the one outcome worse than
+ * either half. So the slot is claimed first and a refused request changes
+ * nothing at all: the organiser can retry, or untick "notify attendees" and
+ * cancel without a message. The refusal sentence names the cap.
+ *
+ * ── AND IT CLAIMS THE DAILY WINDOW ONLY ─────────────────────────────────────
+ * The room notice's exemption, for the room notice's reason. The hourly window
+ * is per (sender, event) and is SHARED with the broadcast lane, so an organiser
+ * who sent three change notices during a chaotic afternoon would be refused the
+ * one message nobody can be left without, and the most time-critical send in
+ * the lane would be rationed by the most routine one. A cancellation happens
+ * once per event (the already-cancelled check above is what enforces that, not
+ * a throttle), so the per-audience daily cap is the bound that still means
+ * something here, and it is kept.
  */
 
 const NOTE_MAX = 1000;
@@ -153,11 +161,11 @@ export async function POST(
   if (attendees.length > 0) {
     try {
       slot = await reserveNoticeSlots(db, {
-        hour: {
-          key: `eventnotice__${eventId}__${actor.uid}`,
-          limit: NOTICES_PER_HOUR,
-          windowMs: HOUR_MS,
-        },
+        // DAY ONLY. See "AND IT CLAIMS THE DAILY WINDOW ONLY" in the header:
+        // the hourly window belongs to the broadcast lane, and a cancellation
+        // must not be refused because that lane was busy. The key is the
+        // broadcast's own daily one, so the audience's ten-a-day budget covers
+        // both lanes together.
         day: { key: `eventnotice__${eventId}`, limit: NOTICES_PER_DAY, windowMs: DAY_MS },
         noun: "notices",
       });
@@ -259,14 +267,16 @@ export async function POST(
   const pushUids = [
     ...new Set(attendees.map((a) => a.uid).filter((uid): uid is string => Boolean(uid))),
   ];
+  // `pushed` counts notifications, not calls: `sendNoticePush` is a silent
+  // no-op with no VAPID keys and for an attendee with no device.
   let pushed = 0;
   for (const uid of pushUids) {
-    await sendNoticePush(uid, {
+    const buzzed = await sendNoticePush(uid, {
       title: `Cancelled: ${eventTitle}`,
       body: "This event is no longer taking place.",
       url: eventPath,
     });
-    pushed += 1;
+    if (buzzed) pushed += 1;
   }
 
   return NextResponse.json({

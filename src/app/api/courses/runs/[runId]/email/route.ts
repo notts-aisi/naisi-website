@@ -9,6 +9,7 @@ import {
 } from "@/lib/email/noticeCaps";
 import {
   COURSE_MEMBER_PLACEHOLDER,
+  countCohortUnreachable,
   displayNameOf,
   dropSuppressed,
   gateRunStaff,
@@ -69,16 +70,26 @@ import { sendNoticePush } from "@/lib/push/noticeNotifications";
  *    whose row is a stored `false` before a message is rendered, the mail
  *    carries the unsubscribe footer and the RFC 8058 headers, and it does not
  *    push. An announcement is opt-outable and stays so.
- *  - WITH it, this is the NOTICE class. The audience is the whole cohort
- *    whatever the `courses` row says, the send goes through `sendNotice` (so it
- *    carries the marker line and a `kind: "notice"` receipt with `surface:
- *    "course-run"`), there is no unsubscribe affordance because there is
- *    nothing to unsubscribe from, and every recipient with a device is pushed.
+ *  - WITH it, this is the NOTICE class. The audience is everyone on the cohort
+ *    LIST whatever the `courses` row says, the send goes through `sendNotice`
+ *    (so it carries the marker line and a `kind: "notice"` receipt with
+ *    `surface: "course-run"`), there is no unsubscribe affordance because there
+ *    is nothing to unsubscribe from, and every recipient with a device is
+ *    pushed.
  *
  * What does NOT change: the gate (the same run staff), the enrolment
  * re-verification, the guest-row drop, the 200-recipient refusal and the
  * suppression list. A notice may bypass what somebody chose; never who they
  * are, nor whether their address bounces.
+ *
+ * AND IT DOES NOT REACH SOMEBODY WHO LEFT THE COHORT LIST. `ignoreCategoryOptOut`
+ * relaxes the `courses` row and nothing else: the audience is still the
+ * subscription channel, so a member who clicked the unsubscribe link in an
+ * earlier announcement is not in it. That is the audience rule
+ * `resolveCohortAudience` argues for at length and it is not this flag's to
+ * overturn, but it must not be invisible either, so the response carries
+ * `unreachable`: how many ACTIVE members of the run are off the list. The
+ * composer prints it, and the tick's own copy says the list is what it reaches.
  *
  * A TEST SEND IS NEVER A NOTICE. `testOnly` reaches the sender's own address
  * and nobody else, so nobody's preference is bypassed and the marker's sentence
@@ -332,17 +343,38 @@ export async function POST(
   // Push is the notice lane's second channel and the ordinary announcement has
   // none: an opt-outable cohort mail that also buzzed every phone is how people
   // turn notifications off for good.
+  // `pushed` counts notifications, not calls: `sendNoticePush` is a silent
+  // no-op with no VAPID keys and for a member with no device.
   let pushed = 0;
   if (asNotice) {
     for (const recipient of recipients) {
-      await sendNoticePush(recipient.uid, {
+      const buzzed = await sendNoticePush(recipient.uid, {
         title: run.courseTitle || run.label || "Course update",
         body: subject,
         url: runPath,
       });
-      pushed += 1;
+      if (buzzed) pushed += 1;
     }
   }
 
-  return NextResponse.json({ ok: true, sent, skipped, pushed });
+  // WHO THIS COULD NOT REACH. Notice lane only: on the announcement lane an
+  // unsubscribe is the recipient's answer and needs no report. Best effort and
+  // strictly after the send, because a count for a report must never be the
+  // reason a notice did not go out.
+  let unreachable: number | undefined;
+  if (asNotice) {
+    try {
+      unreachable = await countCohortUnreachable(db, runId);
+    } catch (err) {
+      console.error("[courses run notice] unreachable count failed", runId, err);
+    }
+  }
+
+  return NextResponse.json({
+    ok: true,
+    sent,
+    skipped,
+    pushed,
+    ...(unreachable === undefined ? {} : { unreachable }),
+  });
 }
