@@ -9,6 +9,7 @@ import CountedTextarea from "@/components/ui/CountedTextarea";
 import { Field, Input } from "@/components/ui/Input";
 import Modal from "@/components/ui/Modal";
 import Skeleton from "@/components/ui/Skeleton";
+import Switch from "@/components/ui/Switch";
 import { useGroupRoster } from "./useGroupRoster";
 import styles from "./StaffEmailComposer.module.css";
 
@@ -203,6 +204,8 @@ function laneCopy(
   runId: string,
   audience: StaffEmailAudience,
   count: number | null,
+  /** The run lane's "important notice" tick. See the switch's own copy. */
+  asNotice: boolean,
 ): LaneCopy {
   const runHref = `/learn/${encodeURIComponent(runId)}`;
 
@@ -247,7 +250,21 @@ function laneCopy(
     retryHint: "Reload the page to try the count again.",
     emptyLine: `Nobody is subscribed to ${label}'s cohort channel yet, so there is nobody to email. Members are subscribed when they're placed in a group.`,
     audienceLine: `This goes to everyone subscribed to the cohort channel for ${label}${upTo}.`,
-    audienceNote: (
+    audienceNote: asNotice ? (
+      <>
+        One message each, signed with your name: nobody sees who else it went
+        to. This is an IMPORTANT NOTICE, so it reaches everyone on the cohort
+        list whatever their notification settings say, by email and by
+        notification on any device they have set up, and it carries no
+        unsubscribe link because there is nothing here to switch off. Bounced
+        and spam-marked addresses are still skipped, and the report after the
+        send says how many. One send reaches at most {RUN_RECIPIENT_CAP} people;
+        past that it is refused rather than trimmed.{" "}
+        <Link className={styles.inlineLink} href={runHref}>
+          Back to the course
+        </Link>
+      </>
+    ) : (
       <>
         One message each, signed with your name — nobody sees who else it went
         to. This is an ANNOUNCEMENT: every message carries an unsubscribe link
@@ -265,10 +282,12 @@ function laneCopy(
         </Link>
       </>
     ),
-    sendLabel: "Send to the cohort",
+    sendLabel: asNotice ? "Send as an important notice" : "Send to the cohort",
     confirmAria: `Send this announcement to the ${label} cohort`,
-    confirmTitle: "Send to the cohort?",
-    confirmBody: `This emails everyone subscribed to the cohort channel for ${label}${upTo}, with the subject:`,
+    confirmTitle: asNotice ? "Send as an important notice?" : "Send to the cohort?",
+    confirmBody: asNotice
+      ? `This reaches everyone on the cohort list for ${label}${upTo} whatever their notification settings say, by email and by notification, with the subject:`
+      : `This emails everyone subscribed to the cohort channel for ${label}${upTo}, with the subject:`,
   };
 }
 
@@ -284,6 +303,13 @@ export default function StaffEmailComposer({ runId, audience }: Props) {
 
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  /**
+   * THE NOTICE TICK, run lane only. It changes the CLASS of the send, not the
+   * message: the route reads it and switches from the opt-outable announcement
+   * lane to the notice lane. Off by default and never remembered between sends,
+   * because a class this consequential should be chosen for each message.
+   */
+  const [asNotice, setAsNotice] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   /**
@@ -311,7 +337,7 @@ export default function StaffEmailComposer({ runId, audience }: Props) {
   const countKnown = count !== null;
   const countLoading = audience.kind === "group" ? roster.loading : false;
   const countError = audience.kind === "group" ? (roster.error?.message ?? null) : null;
-  const copy = laneCopy(runId, audience, count);
+  const copy = laneCopy(runId, audience, count, asNotice);
 
   // THE GUARD. An attempt on THIS text blocks a repeat unless it was refused
   // outright (nothing went out) or explicitly cleared for a resend.
@@ -344,6 +370,11 @@ export default function StaffEmailComposer({ runId, audience }: Props) {
               subject: subject.trim(),
               body: body.trim(),
               testOnly,
+              // Only the run lane has a notice lane, and a test send is never
+              // one (it reaches the author's own address, so nobody's settings
+              // were bypassed). The route enforces both; this keeps the payload
+              // honest about what was asked for.
+              asNotice: audience.kind === "run" && asNotice && !testOnly,
             }),
           });
         } catch (err) {
@@ -477,6 +508,24 @@ export default function StaffEmailComposer({ runId, audience }: Props) {
             }
           />
         </Field>
+
+        {/* ---- The class of the send -------------------------------------- */}
+
+        {audience.kind === "run" && (
+          <div className={styles.noticeToggle}>
+            <Switch
+              checked={asNotice}
+              onChange={setAsNotice}
+              disabled={busy}
+              label="Send as an important notice"
+              description={
+                "It reaches everyone in the cohort whatever their notification " +
+                "settings, by email and by notification. Use it for something " +
+                "they need to know, not for a reminder."
+              }
+            />
+          </div>
+        )}
 
         {/* ---- Actions ---------------------------------------------------- */}
 

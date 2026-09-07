@@ -1,19 +1,17 @@
 import { NextResponse } from "next/server";
 import ApplicationEmail from "@/emails/ApplicationEmail";
-import {
-  dispatchSends,
-  reserveSendSlot,
-} from "@/lib/email/courseFacilitatorEmails";
-import { sendEmail } from "@/lib/email/send";
+import { dispatchSends } from "@/lib/email/dispatch";
+import { sendNotice } from "@/lib/email/notice";
+import { reserveNoticeSlots } from "@/lib/email/noticeCaps";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { normalizeCourseEnrolment } from "@/lib/firestore/courseEnrolments";
 import { normalizeCourseGroup } from "@/lib/firestore/courseGroups";
 import { normalizeCourseRun } from "@/lib/firestore/courses";
-import type { EmailSendKind } from "@/lib/firestore/emailSends";
 import { newBlockId, type Block } from "@/lib/firestore/newsletterBlocks";
 import { filterSuppressed } from "@/lib/firestore/suppression";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
+import { sendNoticePush } from "@/lib/push/noticeNotifications";
 
 /**
  * ROOM NOTICE — the one-click "we've moved to B52 / we're on Zoom tonight"
@@ -44,7 +42,7 @@ import { assertNotImpersonating } from "@/lib/firebase/impersonation";
  * caller supplies no uids and no addresses, and none come back (counts only).
  *
  * ── THE RATE LIMIT: 10/day PER GROUP, ON ITS OWN DURABLE COUNTER ────────────
- * A SEPARATE `reserveSendSlot` counter from the 3/hour group-email one
+ * A SEPARATE counter from the 3/hour group-email one
  * (different key prefix, so the two can never starve each other): notices
  * must survive the evening where the room changes twice and the mode flips
  * once — three sends inside an hour that the email lane's cap would refuse.
@@ -76,13 +74,22 @@ const WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_MESSAGE = 1000;
 
 /**
- * `emailSends` audit kind for this lane (decision 8's audit trail). A real
- * member of the `EmailSendKind` union now, not an assertion past it: the cast
- * this used to carry would have kept compiling if the kind were ever renamed or
- * the union re-owned, and an audit row is the last thing that should be typed
- * on trust. See `emailSends.ts` for why this lane gets its own kind.
+ * THE AUDIT TRAIL DECISION 8 DEMANDS, NOW ON THE SHARED LANE.
+ *
+ * This route was the estate's first bypass of a notification preference and it
+ * carried its own kind, `course-notice`, so "how much un-opt-out-able mail did
+ * this group send" was answerable without reading subject lines. The
+ * notification grid generalised that bypass into the NOTICE class, so the send
+ * goes through `sendNotice`: the receipt now reads `kind: "notice"` with
+ * `surface: "course-room"`, which answers the same question across every lane
+ * that bypasses rather than this one alone, and the recipient reads a line
+ * saying why it reached them. `referenceId` is still the GROUP id, which is
+ * what the 10-a-day cap is counted against.
+ *
+ * `course-notice` stays in `EmailSendKind` and is not renamed: a year of rows
+ * carry it, and rewriting them to answer a newer question would break the one
+ * they were written to answer.
  */
-const NOTICE_KIND: EmailSendKind = "course-notice";
 
 // ---------------------------------------------------------------------------
 // Helpers (duplicated per route by house convention — no route inherits
@@ -324,10 +331,15 @@ export async function POST(
   // has still spent it (reserve-before-send, fail closed).
   let slot;
   try {
-    slot = await reserveSendSlot(db, {
-      key: `groupnotice__${groupId}`,
-      limit: NOTICES_PER_WINDOW,
-      windowMs: WINDOW_MS,
+    slot = await reserveNoticeSlots(db, {
+      // DAY ONLY, no hourly window. See the header: decision 8's double-change
+      // evening is three sends inside an hour, and this lane must not refuse it.
+      day: {
+        key: `groupnotice__${groupId}`,
+        limit: NOTICES_PER_WINDOW,
+        windowMs: WINDOW_MS,
+      },
+      noun: "notices",
     });
   } catch (err) {
     console.error("[courses group notice] throttle read failed", groupId, err);
@@ -357,31 +369,52 @@ export async function POST(
   const preheader = preheaderOf(message);
 
   let sent = 0;
-  // Bounded concurrency via the shared dispatcher — its wall-clock arithmetic
+  // Bounded concurrency via the shared dispatcher: its wall-clock arithmetic
   // against the 60s request ceiling lives on the helper.
   await dispatchSends(deliverable, async (recipient) => {
     try {
       // ONE address. One message. See the header.
-      await sendEmail({
+      await sendNotice({
         to: recipient.address,
         subject,
-        react: ApplicationEmail({ subject, blocks, preheader }),
-        kind: NOTICE_KIND,
+        surface: "course-room",
         actorUid: actor.uid,
         referenceId: groupId,
+        render: (marker) =>
+          ApplicationEmail({ subject, blocks, preheader, notice: marker }),
       });
       sent += 1;
     } catch (err) {
-      // Uid only — an address must not reach the logs.
+      // Uid only: an address must not reach the logs.
       console.error("[courses group notice] send failed", groupId, recipient.uid, err);
       skipped += 1;
     }
   });
 
-  // `remaining` is the claim's own answer (see `reserveSendSlot`) — the slots
+  // The notification beside it. A room change arriving on a lock screen an hour
+  // before the session is the whole point of this lane, and it reads no
+  // preference: see `sendNoticePush`.
+  const groupPath = `/learn/${encodeURIComponent(group.runId)}/group/${encodeURIComponent(groupId)}`;
+  let pushed = 0;
+  for (const recipient of deliverable) {
+    await sendNoticePush(recipient.uid, {
+      title: group.name,
+      body: preheader || subject,
+      url: groupPath,
+    });
+    pushed += 1;
+  }
+
+  // `remaining` is the claim's own answer (see `reserveNoticeSlots`): the slots
   // left in this group's 10-a-day window after the send that just happened.
   // The composer renders it as the cap warning; it was reading a field this
   // route never returned, so the warning could not appear at all until the day
   // the cap actually bit.
-  return NextResponse.json({ ok: true, sent, skipped, remaining: slot.remaining });
+  return NextResponse.json({
+    ok: true,
+    sent,
+    skipped,
+    pushed,
+    remaining: slot.remaining.day,
+  });
 }

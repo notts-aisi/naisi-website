@@ -10,8 +10,15 @@ import {
   Section,
   Text,
 } from "@react-email/components";
+import type { ReactNode } from "react";
 
 type Props = {
+  /**
+   * The notice lane's marker, built by `sendNotice` and rendered directly under
+   * the greeting. See `src/emails/NoticeMarker.tsx` and the same prop on
+   * `EventUpdateEmail`.
+   */
+  notice?: ReactNode;
   eventTitle: string;
   recipientName: string;
   /** The schedule the event was set to run at, e.g. "Fri 6 June 2026, 18:00". */
@@ -30,6 +37,7 @@ type Props = {
  * RSVP, not the event).
  */
 export default function EventCancelledEmail({
+  notice,
   eventTitle,
   recipientName,
   whenLine,
@@ -52,6 +60,8 @@ export default function EventCancelledEmail({
             <Heading style={style.heading}>{eventTitle}</Heading>
             <Text style={style.greeting}>Hi {recipientName},</Text>
           </Section>
+
+          {notice}
 
           <Section>
             <Text style={style.paragraph}>

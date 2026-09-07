@@ -17,6 +17,7 @@ import {
 import { newBlockId, type Block } from "@/lib/firestore/newsletterBlocks";
 import { findRecipientsForChannel } from "@/lib/firestore/subscriptions";
 import { filterSuppressed } from "@/lib/firestore/suppression";
+import { sendNotice } from "./notice";
 import { sendEmail } from "./send";
 
 /**
@@ -372,6 +373,22 @@ export type CohortAudienceLane = {
 export type CohortAudienceScope = {
   /** Keep only members whose active enrolment names this group. */
   groupId?: string | null;
+  /**
+   * KEEP THE MEMBERS WHO HAVE TURNED COURSE ANNOUNCEMENTS OFF.
+   *
+   * The `courses` row is the opt-out layered on the cohort subscription, and by
+   * default this resolver honours it: a stored `false` skips a recipient before
+   * a message is rendered. The run composer's NOTICE lane sets this, and it is
+   * the only caller that may: a notice is a person responsible for a cohort
+   * addressing that cohort about something they signed up for, and the whole
+   * point of the class is that it reaches them whatever their grid says.
+   *
+   * It changes ONLY the preference filter. The enrolment re-verification, the
+   * guest-row drop, the recipient cap and the suppression list all still apply,
+   * because none of those is a preference: a notice may bypass what somebody
+   * chose, never who they are or whether their address bounces.
+   */
+  ignoreCategoryOptOut?: boolean;
 };
 
 /** Hard ceiling per request. Beyond this a send FAILS — see below. */
@@ -430,6 +447,7 @@ export async function resolveCohortAudience(
 ): Promise<CohortAudience> {
   const channel = courseRunChannel(runId);
   const onlyGroupId = scope.groupId ?? null;
+  const ignoreOptOut = scope.ignoreCategoryOptOut === true;
   let skipped = 0;
   /**
    * Enrolled on the run, active, and in ANOTHER group. Counted apart from
@@ -586,7 +604,7 @@ export async function resolveCohortAudience(
       skipped += 1;
       continue;
     }
-    if (hasOptedOutOfCourseAnnouncements(data)) {
+    if (!ignoreOptOut && hasOptedOutOfCourseAnnouncements(data)) {
       optedOut += 1;
       skipped += 1;
       continue;
@@ -718,79 +736,6 @@ export async function reserveSendSlot(
 }
 
 // ---------------------------------------------------------------------------
-// Dispatch pacing
-// ---------------------------------------------------------------------------
-
-/**
- * FITTING A FULL-SIZE SEND INSIDE THE REQUEST TIMEOUT.
- *
- * `apphosting.yaml` sets `runConfig.timeoutSeconds: 60`. That number — not
- * politeness to the relay — is the binding constraint on how a broadcast is
- * dispatched, because `reserveSendSlot` above is RESERVE-BEFORE-SEND. A loop
- * killed at the ceiling is the worst outcome in this feature: the response never
- * lands, the slot is already spent, part of the cohort has the mail, and the
- * sender's only recourse is a retry that re-mails everyone already delivered.
- *
- * THE ARITHMETIC. The newsletter route paces sequentially with a 200ms sleep —
- * at most ONE message in flight. Each send here is a fresh Resend SMTP
- * connection (nodemailer is not pooled), a react-email render and a send-log
- * write: ~0.5s typical, ~1.0s on a bad day. Sequentially that is 0.7-1.2s per
- * recipient, so the run route's own 200-recipient ceiling costs 140-240s — two
- * to four times the timeout, i.e. a full cohort send could not complete at all.
- *
- * So the POSTURE is kept and the MECHANISM is replaced. The point of the 200ms
- * sleep is a bound on how much is in flight at once; a semaphore states that
- * bound explicitly instead of pinning it at one. With `SEND_CONCURRENCY` workers
- * each pausing `PER_SEND_DELAY_MS` after its own send:
- *
- *   run route, full 200:  ceil(200/6) = 34 rounds × 1.05s worst ≈ 36s  (≈19s typical)
- *   group route, full 100: ceil(100/6) = 17 rounds × 1.05s worst ≈ 18s  (≈9s typical)
- *
- * — so a full-size send finishes with ~24s of headroom against the 60s ceiling
- * even pessimistically. RAISING EITHER RECIPIENT CAP MEANS REDOING THIS SUM. A
- * cohort that needs more than one request needs the chunked sender with
- * per-recipient bookkeeping the run route's header already describes; that is a
- * different feature, and this arithmetic is what says when it is due.
- */
-export const SEND_CONCURRENCY = 6;
-export const PER_SEND_DELAY_MS = 50;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-/**
- * Run `send` over `items` with at most `SEND_CONCURRENCY` in flight, pausing
- * `PER_SEND_DELAY_MS` between one worker's consecutive sends. Dispatch order is
- * not guaranteed and does not matter: every recipient gets their own message,
- * addressed only to them.
- *
- * `send` MUST RESOLVE. Both callers catch their own per-recipient failures
- * inside it (a send that throws is counted as skipped, never fatal), so a
- * rejection arriving here is a bug — and is deliberately left to reject the
- * request loudly rather than be swallowed into a partial send that reports
- * success.
- */
-export async function dispatchSends<T>(
-  items: readonly T[],
-  send: (item: T) => Promise<void>,
-): Promise<void> {
-  let cursor = 0;
-  const workers = Math.min(SEND_CONCURRENCY, items.length);
-  await Promise.all(
-    Array.from({ length: workers }, async () => {
-      for (;;) {
-        const index = cursor;
-        cursor += 1;
-        if (index >= items.length) return;
-        await send(items[index]);
-        await sleep(PER_SEND_DELAY_MS);
-      }
-    }),
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Templates
 // ---------------------------------------------------------------------------
 
@@ -872,13 +817,52 @@ type CommonEmailArgs = {
 };
 
 /**
+ * A staff message as blocks: the body, a divider, the provenance line. The
+ * shape every staff lane renders, exported because the run composer's NOTICE
+ * lane builds its own email at the call site (so that the send it makes is a
+ * visible `sendNotice(`, which is what the classification guard reads) and must
+ * not assemble a second, drifting version of the same three blocks.
+ */
+export function staffMessageBlocks(
+  body: string,
+  senderName: string,
+  context: string,
+): Block[] {
+  return [
+    ...bodyToBlocks(body),
+    { id: newBlockId(), type: "divider" },
+    signatureBlock(senderName, context),
+  ];
+}
+
+/** First ~140 characters of a staff body, as the inbox preview line. */
+export function staffPreheader(body: string): string {
+  return preheaderOf(body);
+}
+
+/**
  * OPERATIONAL group mail: "your session moved", "bring the reading". Renders
- * through `ApplicationEmail` — the same transactional chrome the course
- * lifecycle mail uses — and deliberately carries NO unsubscribe affordance,
- * matching every other transactional path in the estate (task membership, RSVP,
- * collaborator lifecycle). Opting out of "your room changed" is not a thing a
- * member of a group can meaningfully do; the run announcement route is the
- * opt-outable lane. See the route's module comment for the full argument.
+ * through `ApplicationEmail`, the same chrome the course lifecycle mail uses,
+ * and deliberately carries NO unsubscribe affordance. Opting out of "your room
+ * changed" is not a thing a member of a group can meaningfully do; the run
+ * announcement route is the opt-outable lane. See the route's module comment
+ * for the full argument.
+ *
+ * ── IT IS A NOTICE NOW, AND THE MESSAGE SAYS SO ─────────────────────────────
+ * The behaviour it has always had (goes out whatever the `courses` row says,
+ * suppression still absolute, no unsubscribe) is exactly the notice class, and
+ * it used to be that class in effect and nowhere in writing. Routing the real
+ * send through `sendNotice` makes it that class on the receipt (`kind:
+ * "notice"`, `surface: "course-group"`) and on the page: the recipient now
+ * reads a line saying why it reached them whatever their settings.
+ *
+ * ── EXCEPT THE REHEARSAL, WHICH IS NOT ONE ──────────────────────────────────
+ * `test: true` reaches the sender's own address and nobody else, which makes it
+ * a diagnostic rather than a notice: nobody's preference was bypassed, and the
+ * deliverability tab has to keep telling a rehearsal apart from the send it
+ * rehearses. So the test lane keeps `sendEmail` and keeps `kind: "course-test"`,
+ * and it renders no marker, because the sentence the marker makes would be
+ * false about it.
  */
 export async function sendCourseGroupEmail(
   args: CommonEmailArgs & {
@@ -896,25 +880,31 @@ export async function sendCourseGroupEmail(
       : null,
   ]
     .filter(Boolean)
-    .join(" — ");
+    .join(" · ");
 
-  const blocks: Block[] = [
-    ...bodyToBlocks(args.body),
-    { id: newBlockId(), type: "divider" },
-    signatureBlock(args.senderName, context),
-  ];
+  const blocks = staffMessageBlocks(args.body, args.senderName, context);
+  const preheader = preheaderOf(args.body);
 
-  await sendEmail({
+  if (args.test) {
+    await sendEmail({
+      to: args.to,
+      subject: envelopeSubject(args.subject, true),
+      react: ApplicationEmail({ subject: args.subject, blocks, preheader }),
+      kind: "course-test",
+      actorUid: args.actorUid,
+      referenceId: args.groupId,
+    });
+    return;
+  }
+
+  await sendNotice({
     to: args.to,
-    subject: envelopeSubject(args.subject, args.test),
-    react: ApplicationEmail({
-      subject: args.subject,
-      blocks,
-      preheader: preheaderOf(args.body),
-    }),
-    kind: args.test ? "course-test" : "course-facilitator",
+    subject: args.subject,
+    surface: "course-group",
     actorUid: args.actorUid,
     referenceId: args.groupId,
+    render: (marker) =>
+      ApplicationEmail({ subject: args.subject, blocks, preheader, notice: marker }),
   });
 }
 

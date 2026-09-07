@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
+import { dispatchSends } from "@/lib/email/dispatch";
 import {
-  dispatchSends,
   parseStaffMessage,
   reserveSendSlot,
   sendCourseGroupEmail,
 } from "@/lib/email/courseFacilitatorEmails";
+import {
+  DAY_MS,
+  NOTICES_PER_DAY,
+  reserveNoticeSlots,
+} from "@/lib/email/noticeCaps";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { normalizeCourseEnrolment } from "@/lib/firestore/courseEnrolments";
@@ -12,6 +17,7 @@ import { normalizeCourseGroup } from "@/lib/firestore/courseGroups";
 import { normalizeCourseRun } from "@/lib/firestore/courses";
 import { filterSuppressed } from "@/lib/firestore/suppression";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
+import { sendNoticePush } from "@/lib/push/noticeNotifications";
 
 /**
  * EMAIL MY GROUP — the operational lane. "We're in B52 this week", "bring the
@@ -69,12 +75,29 @@ import { assertNotImpersonating } from "@/lib/firebase/impersonation";
  * is a request we are obliged to respect whatever the mail's category. A
  * suppressed address is skipped and counted, never sent to.
  *
+ * ── IT IS THE NOTICE CLASS, AND NOW IT SAYS SO ──────────────────────────────
+ * Everything the two paragraphs above describe (goes out whatever the courses
+ * row says, suppression absolute, no unsubscribe affordance) IS the
+ * notification grid's notice class, and it was that class in effect and nowhere
+ * in writing. The real send now goes through `sendNotice`, so the recipient
+ * reads a line saying why it reached them whatever their settings, and the
+ * receipt carries `kind: "notice"` with `surface: "course-group"` for the
+ * deliverability tab. It also PUSHES: a member of the group with a device gets
+ * a notification beside the email, through `sendNoticePush`, which reads no
+ * preference at all. A member with no device gets the email alone.
+ *
+ * The TEST lane is deliberately not a notice: it reaches the sender's own
+ * address, nobody's preference is bypassed, and the deliverability tab has to
+ * keep telling a rehearsal apart from the send it rehearses. It stays
+ * `course-test`, carries no marker, and pushes nothing.
+ *
  * ── RATE LIMIT ──────────────────────────────────────────────────────────────
- * 3 real sends per hour per (sender, group), plus a separate, looser bucket for
- * test sends so rehearsing a message never eats the budget for sending it.
- * Both counters are Firestore transactions, not `lib/rateLimit`'s in-memory
- * map — see `reserveSendSlot` for why an outbound-mail cap cannot be
- * per-instance.
+ * 3 real sends per hour per (sender, group), plus the notice lane's 10 a day
+ * per group, claimed together in one transaction so a refusal on either spends
+ * neither. Test sends draw on a separate, looser bucket so rehearsing a message
+ * never eats the budget for sending it. Every counter is a Firestore
+ * transaction, not `lib/rateLimit`'s in-memory map: see `reserveSendSlot` for
+ * why an outbound-mail cap cannot be per-instance.
  */
 
 // ---------------------------------------------------------------------------
@@ -341,14 +364,40 @@ export async function POST(
 
   // Claim the slot immediately before dispatch, so a request that dies mid-send
   // has still spent it (see `reserveSendSlot`). Test sends draw on their own
-  // counter, so proofing a message never rations sending it.
-  let slot;
+  // counter, so proofing a message never rations sending it; a real send claims
+  // the hourly (sender, group) budget it always had AND the notice lane's
+  // per-group daily one, in a single transaction.
+  let refusal: { message: string; retryAfterSeconds: number } | null = null;
   try {
-    slot = await reserveSendSlot(db, {
-      key: `group${testOnly ? "test" : ""}__${groupId}__${actor.uid}`,
-      limit: testOnly ? TEST_SENDS_PER_WINDOW : SENDS_PER_WINDOW,
-      windowMs: WINDOW_MS,
-    });
+    if (testOnly) {
+      const slot = await reserveSendSlot(db, {
+        key: `grouptest__${groupId}__${actor.uid}`,
+        limit: TEST_SENDS_PER_WINDOW,
+        windowMs: WINDOW_MS,
+      });
+      if (!slot.ok) {
+        refusal = {
+          message: "Too many test sends for this group in the last hour.",
+          retryAfterSeconds: slot.retryAfterSeconds,
+        };
+      }
+    } else {
+      const slot = await reserveNoticeSlots(db, {
+        hour: {
+          key: `group__${groupId}__${actor.uid}`,
+          limit: SENDS_PER_WINDOW,
+          windowMs: WINDOW_MS,
+        },
+        day: { key: `groupday__${groupId}`, limit: NOTICES_PER_DAY, windowMs: DAY_MS },
+        noun: "emails",
+      });
+      if (!slot.ok) {
+        refusal = {
+          message: slot.refusal ?? "That send was refused.",
+          retryAfterSeconds: slot.retryAfterSeconds,
+        };
+      }
+    }
   } catch (err) {
     // Fail CLOSED. A throttle that can't be read is not a licence to send.
     console.error("[courses group email] throttle read failed", groupId, err);
@@ -357,14 +406,10 @@ export async function POST(
       { status: 500 },
     );
   }
-  if (!slot.ok) {
+  if (refusal) {
     return NextResponse.json(
-      {
-        error: testOnly
-          ? "Too many test sends for this group in the last hour."
-          : `You can send ${SENDS_PER_WINDOW} emails an hour to this group. Try again shortly.`,
-      },
-      { status: 429, headers: { "Retry-After": String(slot.retryAfterSeconds) } },
+      { error: refusal.message },
+      { status: 429, headers: { "Retry-After": String(refusal.retryAfterSeconds) } },
     );
   }
 
@@ -395,5 +440,23 @@ export async function POST(
     }
   });
 
-  return NextResponse.json({ ok: true, sent, skipped });
+  // The notification beside the email. Not on the test lane: a rehearsal is a
+  // diagnostic addressed to its own sender, and buzzing their phone to prove
+  // the transport works is not what they asked for.
+  let pushed = 0;
+  if (!testOnly) {
+    const groupPath = `/learn/${encodeURIComponent(group.runId)}/group/${encodeURIComponent(groupId)}`;
+    for (const recipient of deliverable) {
+      // Reads no preference and never throws. A member with no device gets
+      // nothing here and the email alone.
+      await sendNoticePush(recipient.uid, {
+        title: group.name,
+        body: subject,
+        url: groupPath,
+      });
+      pushed += 1;
+    }
+  }
+
+  return NextResponse.json({ ok: true, sent, skipped, pushed });
 }

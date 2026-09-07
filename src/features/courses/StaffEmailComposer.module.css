@@ -255,6 +255,19 @@
   }
 }
 
+/* === The class of the send =================================
+   The notice tick, run lane only. Set apart from the message fields with the
+   same left rule the recipients block uses, because it answers the same
+   question those do: who this reaches, and on what terms. Warning-toned,
+   because ticking it takes an opt-out away from every recipient. */
+
+.noticeToggle {
+  padding: var(--space-3) var(--space-4);
+  border-left: 2px solid var(--color-warning);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+}
+
 /* === Mobile ================================================
    Below --bp-md the two actions stack and go full width. Order matters more
    than usual here: "send a test" is first in the DOM and stays first on a

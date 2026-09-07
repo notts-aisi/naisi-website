@@ -16,8 +16,8 @@ import {
   followUpDueAt,
   registerFollowUpTaskId,
 } from "@/lib/courses/unmarkedRegisters";
+import { dispatchSends } from "@/lib/email/dispatch";
 import {
-  dispatchSends,
   reserveSendSlot,
   resolveCohortAudience,
   type CohortRecipient,

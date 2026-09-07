@@ -15,8 +15,8 @@ import {
   sendCourseWeekNudgeEmail,
   buildCourseNudgeTokens,
 } from "@/lib/email/courseNudgeEmail";
+import { dispatchSends } from "@/lib/email/dispatch";
 import {
-  dispatchSends,
   dropSuppressed,
   gateRunStaff,
   memberNameOf,

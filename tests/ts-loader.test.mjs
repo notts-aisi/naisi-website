@@ -315,6 +315,13 @@ const USERS = new Map([
       "sweep would say nothing about the sweep that ships",
   ],
   [
+    "notice-lane.test.mjs",
+    "the notice lane's marker is a `.tsx` component that `sendNotice` builds and a template " +
+      "renders as a slot, so the suite's graph reaches three email templates and the real " +
+      "`@react-email/render`: what the recipient actually sees is the property under test, and a " +
+      "loader that could not read JSX would have to stub away the very thing being asserted",
+  ],
+  [
     "member-records.test.mjs",
     "`memberRecords.ts` derives an entry from the round, application and review types, so its " +
       "graph is four admissions modules deep; the Admin SDK is its only stub, because the " +
