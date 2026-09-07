@@ -261,9 +261,10 @@ const EVENT_ANNOUNCEMENT_FAMILY: SchedulerMarkerFamily = "evannounce";
  * How many of one event's markers a tick will read to build its skip set.
  *
  * Comfortably both legs at both ceilings (5000 recipients plus 5000 push
- * accounts). Over it the set is a TRUNCATED one, which is safe rather than
- * wrong: the recipients it does not name simply go through `claim()` the slow
- * way, exactly as they did before this prefilter existed.
+ * accounts). The query asks for one more than this so the cap and an overrun
+ * can be told apart; over it the set is a TRUNCATED one, which is safe rather
+ * than wrong: the recipients it does not name simply go through `claim()` the
+ * slow way, exactly as they did before this prefilter existed.
  */
 export const MAX_MARKER_SCAN = 10_000;
 
@@ -596,7 +597,10 @@ async function settledUnits(
       .collection(SCHEDULER_MARKERS_COLLECTION)
       .where("family", "==", EVENT_ANNOUNCEMENT_FAMILY)
       .where("eventId", "==", eventId)
-      .limit(MAX_MARKER_SCAN)
+      // MAX + 1, and the comparison below is `>`: reading exactly the cap
+      // means the cap was reached, not exceeded, and a set that is complete
+      // must not report itself partial. Same idiom as `rowPushOwners`.
+      .limit(MAX_MARKER_SCAN + 1)
       .get();
   } catch (err) {
     ctx.log("could not read this event's markers, so every recipient is claimed", {
@@ -621,7 +625,7 @@ async function settledUnits(
     // guesses at an id.
     if (leg && recipientKey) settled.add(`${leg}:${recipientKey}`);
   }
-  if (snap.docs.length >= MAX_MARKER_SCAN) {
+  if (snap.docs.length > MAX_MARKER_SCAN) {
     ctx.log("this event has more markers than one tick reads, so the skip set is partial", {
       eventId,
       read: snap.docs.length,

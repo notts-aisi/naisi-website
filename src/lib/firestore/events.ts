@@ -66,13 +66,21 @@ export type EventAnnouncementResultDoc = {
   audienceSkipped: number;
   suppressed: number;
   /**
-   * Recipients this announcement GAVE UP on: the attempt budget spent with no
-   * send, which is the point at which a person really is not going to be told.
+   * RECIPIENTS the announcement gave up on, which is a different unit from
+   * `sent` and deliberately so.
    *
-   * ONE PER RECIPIENT, counted at that transition only. The failed attempts in
-   * between are retries, and counting each of them made one permanently
-   * unreachable address read as four unreached members on the manage screen.
-   * Each attempt is still on its own marker and in the tick's log.
+   * `sent` counts MESSAGES: a member with two verified addresses is two. This
+   * counts PEOPLE, once each, at the moment their attempt budget runs out with
+   * nothing delivered, because that is the point at which somebody really was
+   * not told and is the only thing a reader of the manage screen can act on.
+   * The failed attempts before it are retries; counting each of them made one
+   * unreachable address read as four unreached members.
+   *
+   * So a PARTIAL DELIVERY is not here. A member whose university address
+   * bounced while their Gmail went through counts in `sent` and not in
+   * `failed`, because they were told; the bounce is in the console log and,
+   * once the mailbox reports it, on the suppression list and the
+   * deliverability tab, which is where a per-address failure belongs.
    */
   failed: number;
   pushed: number;

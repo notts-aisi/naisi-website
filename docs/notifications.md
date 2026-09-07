@@ -528,9 +528,14 @@ at the end of EVERY tick that works on the event, so an announcement that took
 four ticks still reports what all four did.
 
 Three of those fields exist for a reason worth stating. `failed` counts
-recipients the announcement GAVE UP on, once each, at the moment the attempt
-budget runs out; the failed attempts before it are retries, and counting them
-made one unreachable address read as four unreached members. `skipped` counts
+RECIPIENTS the announcement gave up on, once each, at the moment their attempt
+budget runs out with nothing delivered; the attempts before it are retries, and
+counting them made one unreachable address read as four unreached members. It is
+a different unit from `sent`, which counts messages, and a partial delivery
+belongs on the `sent` side: a member whose university address bounced while
+their Gmail went through was told, so they count in `sent` and not in `failed`,
+and the bounce shows up in the log and then on the suppression list and the
+deliverability tab, which is where a per-address failure belongs. `skipped` counts
 recipients the job CLAIMED and consciously did not reach and is incremented;
 `audienceSkipped` counts the rows dropped when the audience was resolved (a
 members-only guest row, an account that is gone) and is a SNAPSHOT, because the
