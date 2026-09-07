@@ -418,6 +418,16 @@ a fifth row cannot appear in the model and be missing from the page.
   see a later write from `/api/unsubscribe`, a second tab or an admin route, and
   would revert it on the next Save. So the refill is skipped only while an edit
   is in flight, and every control the Save button owns calls `markDirty`.
+- **A narrow grid moves the push note.** The three columns fit everywhere the
+  wide layout is drawn, but between a 961px and a 1169px window with the
+  sidebar open the Push track is 133 to 186px, and a 12px sentence of 170
+  characters wraps there into two or three words a line, with the row growing
+  to 240px to hold it. So when the GRID is under 48rem wide (the grid, not the
+  window: the sidebar collapses per user, and a media query would move the
+  note in the wide case for nothing) the note leaves the Push cell, which
+  keeps only its switch, and is drawn under the row description with a "Push"
+  eyebrow. One sentence is on screen at a time: the same container query hides
+  the copy in the cell, and the stacked layout below 60rem puts it back there.
 
 The per-device Enable control stays on the push card below
 (`src/features/pwa/PushSettings.tsx`), which now holds nothing but this
