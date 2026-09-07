@@ -5,7 +5,8 @@
  * second account takes the last place in the one-place session -> the new
  * member signs in -> reads their own subscription grid on /profile -> unticks
  * a channel and watches it stick -> drives the notification grid's column
- * master and its locked notices row -> switches task email off and reads the
+ * master and its locked notices row -> measures that grid in the narrow band
+ * where the sidebar comes back -> switches task email off and reads the
  * cell back off their document -> takes a place on the course -> meets the
  * full session when they try to move -> leaves the course -> and the two
  * emails the journey caused turn up in the send log.
@@ -75,6 +76,7 @@ import { readFileSync } from "node:fs";
 import { assertTarget, hasAdminCredentials, loadSecrets } from "../../scripts/e2e/lib/env.mjs";
 import { readUserDoc } from "../../scripts/e2e/lib/firestore.mjs";
 import {
+  DEFAULT_VIEWPORT,
   approvePendingApplicant,
   createStepRecorder,
   newIdentityPage,
@@ -677,6 +679,84 @@ test(
           // Nothing above was saved. The reload puts the form back on the
           // stored answers so the next step starts from the document.
           await memberPage.reload({ waitUntil: "domcontentloaded" });
+        },
+      );
+
+      await step(
+        "the notification grid fits its card where the sidebar comes back",
+        async () => {
+          activePage = memberPage;
+          /*
+           * THE BAND THIS MEASURES, AND WHY THE REST OF THE SUITE CANNOT SEE IT.
+           *
+           * Below --bp-lg (60rem) the grid stacks into one card per row AND
+           * the 16rem sidebar is hidden, so the narrowest window is not the
+           * tightest layout. The tightest is one pixel ABOVE that breakpoint,
+           * where the stack has not taken over and the sidebar is back: at a
+           * 961px window `.main` is 705px, its own padding takes 80 and the
+           * Card another 64, leaving about 561px for a three-track grid. Track
+           * minimums that add up to more than that cannot shrink, so the Push
+           * column is painted past the card's right border and the document
+           * scrolls sideways. Every other step here runs at 1280px, where the
+           * cap hides it. This is the failure CLAUDE.md's "Main-area width"
+           * section describes, on a page that is not allowed the wide cap.
+           */
+          const WIDTHS = [961, 1015];
+          try {
+            for (const width of WIDTHS) {
+              await memberPage.setViewportSize({ width, height: 900 });
+              // Reloaded rather than resized in place: the claim is about the
+              // layout somebody opening /profile at this size gets.
+              await memberPage.reload({ waitUntil: "domcontentloaded" });
+              const grid = memberPage.getByTestId("profile-subscriptions-grid");
+              await grid.waitFor({ timeout: WAIT_MS });
+              const m = await memberPage.evaluate(() => {
+                const el = document.querySelector(
+                  '[data-testid="profile-subscriptions-grid"]',
+                );
+                const root = document.documentElement;
+                return {
+                  gridScroll: el.scrollWidth,
+                  gridClient: el.clientWidth,
+                  tracks: getComputedStyle(el).gridTemplateColumns,
+                  docScroll: root.scrollWidth,
+                  docClient: root.clientWidth,
+                };
+              });
+
+              // First, that the WIDE layout is the one being measured. The
+              // stacked variant would pass everything below it for the wrong
+              // reason, and a breakpoint moved up past these widths would
+              // silence this step instead of failing it.
+              assert.equal(
+                m.tracks.split(" ").length,
+                3,
+                `the grid is not in its three-column layout at ${width}px (tracks: ` +
+                  `${m.tracks}), so this step is measuring the stacked variant and ` +
+                  "proves nothing about the wide one",
+              );
+              assert.ok(
+                m.gridScroll <= m.gridClient + 1,
+                `the notification grid overflows its own box at ${width}px: its tracks ` +
+                  `need ${m.gridScroll}px inside a ${m.gridClient}px box, so the Push ` +
+                  "column is painted over the card's border. Track minimums have to fit " +
+                  "the space left between the sidebar and the card padding, not the " +
+                  "1024px cap a desktop viewport suggests.",
+              );
+              assert.ok(
+                m.docScroll <= m.docClient,
+                `/profile scrolls sideways at ${width}px: the document is ` +
+                  `${m.docScroll}px wide with only ${m.docClient}px to lay out in. ` +
+                  "An authed page must contain its own wide content rather than widen " +
+                  "the shell, which is what orphans the fixed sidebar off the left edge.",
+              );
+            }
+          } finally {
+            // Whatever happened above, the next step gets the viewport every
+            // other step in this file assumes.
+            await memberPage.setViewportSize(DEFAULT_VIEWPORT);
+            await memberPage.reload({ waitUntil: "domcontentloaded" });
+          }
         },
       );
 

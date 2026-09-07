@@ -196,7 +196,15 @@ export const LEGACY_PUSH_KEY = "courseDecisions";
  */
 
 export const PUSH_DESCRIPTIONS: Record<PushNotificationKey, string> = {
-  newsletter: "A notification when a new newsletter goes out.",
+  // NOT BUILT, and the copy says so. Every other string in this map describes
+  // a notification something in `src` actually sends: only `courses`, `tasks`
+  // and (with the event announcement) `events` call `wantsPushFor`. The row
+  // exists because the grid draws all four, and the cell has to be settable
+  // now so a member is not asked again the day the sender lands, but a
+  // description promising a notification nothing produces is the one thing it
+  // must not say. Delete this sentence with the producer.
+  newsletter:
+    "A notification when a new newsletter goes out. We don't send this one yet, so your answer here waits until we do.",
   events: "A notification when we publish a new event.",
   // This copy is exhaustive TODAY, and only because the three moments named
   // are the only ones that push. It names the stage announcement as well as

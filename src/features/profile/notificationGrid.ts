@@ -166,6 +166,58 @@ export function pushColumnDisabled(state: PushDeviceState | null): boolean {
   return state !== "on";
 }
 
-/** Said once, under the Push column header, when that column is disabled. */
-export const PUSH_DISABLED_HINT =
-  "You have not turned notifications on in this browser, so nothing will arrive here. A setting here still applies to your other devices.";
+/**
+ * Said once, under the Push column header, when that column is disabled.
+ *
+ * Per state, because the four states are four different facts and one of them
+ * is the member's own doing. "You have not turned notifications on" is true of
+ * `off` alone: on `unsupported` the browser has no push at all, on
+ * `needs-install` Apple only delivers to the installed app, and on `denied`
+ * the member blocked the site and cannot be re-asked from here. Telling
+ * somebody who blocked notifications that they have not switched them on
+ * sends them looking for a switch that would do nothing.
+ *
+ * Every branch ends with the same sentence, and that half is the load-bearing
+ * one: the switches above it are an ACCOUNT setting, so a disabled column
+ * still means something for the member's phone.
+ */
+export function pushDisabledHint(state: PushDeviceState | null): string {
+  const elsewhere = " A setting here still applies to your other devices.";
+  switch (state) {
+    case "unsupported":
+      return "This browser cannot receive notifications, so nothing will arrive here." + elsewhere;
+    case "needs-install":
+      return "Notifications reach the installed app only, so nothing will arrive in this browser." + elsewhere;
+    case "denied":
+      return "Notifications are blocked for this site, so nothing will arrive here." + elsewhere;
+    case null:
+      return "We are still checking whether this browser can receive notifications." + elsewhere;
+    default:
+      return "You have not turned notifications on in this browser, so nothing will arrive here." + elsewhere;
+  }
+}
+
+/**
+ * The words on the link from the hint down to the device card, or `null` when
+ * there is nothing worth pointing at.
+ *
+ * "Turn them on for this browser" is only honest where the card offers an
+ * Enable button, which is `off` and `working`. On `needs-install` and `denied`
+ * the card explains what has to happen elsewhere first, which is still worth
+ * reaching, so those states link with words that match what they will find.
+ * `unsupported` and `null` draw no card at all (`cardShown`), so they link
+ * nowhere.
+ */
+export function pushDeviceLinkText(state: PushDeviceState | null): string | null {
+  switch (state) {
+    case "off":
+    case "working":
+      return "Turn them on for this browser.";
+    case "needs-install":
+      return "How to get them on this device.";
+    case "denied":
+      return "How to unblock them.";
+    default:
+      return null;
+  }
+}

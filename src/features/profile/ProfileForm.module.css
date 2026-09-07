@@ -95,9 +95,25 @@
   font-weight: 500;
 }
 
+/* THE TIGHTEST THIS GRID IS EVER ASKED TO LAY OUT IS NOT THE NARROWEST WINDOW.
+   Below --bp-lg it stacks (see the media block at the foot of this file) and
+   the sidebar is hidden, which hands the page back 16rem. So the worst case is
+   one pixel ABOVE that breakpoint, where the stack has not taken over and the
+   16rem sidebar is back: at a 961px window `.main` is 705px, its --space-10
+   sides take 80px and the Card's pad-lg another 64px, leaving 561px inside the
+   card. The three track minimums plus the two gaps have to fit THAT, not the
+   1024px cap a desktop viewport suggests.
+
+   10 + 7 + 8rem of minimums and 2 x --space-5 of gap is 27.5rem (440px), so
+   the grid fits its box everywhere the wide layout is drawn. The earlier
+   15/11/12rem added up to 648px, wider than the box, and a grid whose tracks
+   cannot shrink pushes its content past the card and scrolls the document
+   sideways: the failure CLAUDE.md's "Main-area width" section describes, in
+   the same band. tests/e2e/member-journey.spec.mjs measures it at the two
+   window widths where it bit. */
 .notifGrid {
   display: grid;
-  grid-template-columns: minmax(15rem, 2.2fr) minmax(11rem, 1fr) minmax(12rem, 1.1fr);
+  grid-template-columns: minmax(10rem, 2.2fr) minmax(7rem, 1fr) minmax(8rem, 1.1fr);
   column-gap: var(--space-5);
   align-items: start;
 }
@@ -307,8 +323,13 @@
     display: block;
   }
 
-  /* The touch floor, on the controls a member actually presses. */
-  .notifCheck {
+  /* The touch floor, on the controls a member actually presses. The master is
+     a label with `cursor: pointer` like the cells are, and docs/touch-targets
+     lists /profile under Enforced, so it gets the same floor: its own content
+     is a 1.1rem box beside 12px of text, which lands at about 18px without
+     one. */
+  .notifCheck,
+  .notifMaster {
     min-height: 2.75rem;
   }
 }

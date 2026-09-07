@@ -43,9 +43,10 @@ import {
   emptyCell,
   GRID_ROWS,
   NOTICE_ROW,
-  PUSH_DISABLED_HINT,
   pushColumnCells,
   pushColumnDisabled,
+  pushDeviceLinkText,
+  pushDisabledHint,
   setColumn,
   setEmailColumn,
   type Matrix,
@@ -198,19 +199,41 @@ export default function ProfileForm() {
   const pushDisabled = pushColumnDisabled(pushDeviceState);
 
   /**
-   * Whether the fields the SAVE BUTTON owns have been filled in from the
-   * document yet.
+   * Whether the fields the SAVE BUTTON owns are carrying an unsaved edit.
    *
-   * They are filled in ONCE, and that became load-bearing when the push
-   * column moved into this form: a push cell saves itself the moment it is
-   * flipped, that write changes `users/{uid}`, and the listener below fires
-   * with it. Re-filling every field on each snapshot would then throw away a
-   * half-typed preferred name, or an email cell the member had unticked and
-   * not yet saved, because they flipped an unrelated notification. The push
-   * map itself is still taken from every snapshot, since the document is
-   * where it lives and nothing here edits it without writing it.
+   * This matters because the push column moved into this form: a push cell
+   * saves itself the moment it is flipped, that write changes `users/{uid}`,
+   * and the listener below fires with it. Re-filling every field on each
+   * snapshot regardless would throw away a half-typed preferred name, or a
+   * course cell the member had unticked and not yet saved, because they
+   * flipped an unrelated notification.
+   *
+   * A one-shot "hydrated" latch would fix that and break something else: the
+   * form would then never see a later write to those cells at all, so an
+   * `/api/unsubscribe` click, a second tab or an admin route flipping
+   * `categories.courses` while /profile is open would be reverted by the whole
+   * map this form writes on its next Save. That is exactly the stale-state
+   * overwrite the subscriptions listener below refuses to allow, and the same
+   * answer applies here: read the document again whenever there is nothing to
+   * lose by doing so. So the refill is skipped only while the member has an
+   * edit in flight, and `markDirty` is called from every control that makes
+   * one.
+   *
+   * The push map is outside the question entirely: it is taken from every
+   * snapshot, because nothing here edits it without writing it first.
    */
-  const hydrated = useRef(false);
+  const dirty = useRef(false);
+
+  /**
+   * Called by every control the Save button owns, and by nothing else.
+   *
+   * A ref rather than state: this changes no rendering, and the listener has
+   * to read the CURRENT answer rather than the one captured when it was
+   * registered.
+   */
+  function markDirty() {
+    dirty.current = true;
+  }
 
   // User doc snapshot. Drives identity (name, uni email, verified
   // status). The matrix reads from the subscriptions collection
@@ -227,8 +250,7 @@ export default function ProfileForm() {
       setMe(normalized);
       const carried = readCarriedPrefs(snap.data());
       setPushPrefs(carried.push);
-      if (!hydrated.current) {
-        hydrated.current = true;
+      if (!dirty.current) {
         setPreferredName(normalized.profile?.preferredName ?? "");
         setUniversityEmail(normalized.profile?.universityEmail ?? "");
         // Raw data, not the normalized doc: `UserProfile.notifications` is
@@ -345,6 +367,9 @@ export default function ProfileForm() {
   }
 
   function setEmailAll(next: boolean) {
+    // Two of the four cells this moves are save-owned, so the master is an
+    // edit in flight like any other.
+    markDirty();
     const updated = setEmailColumn(
       { matrix, courses: courseAnnouncements, tasks: taskEmails },
       addresses,
@@ -452,6 +477,10 @@ export default function ProfileForm() {
         patch["profile.uniEmailVerifiedAt"] = deleteField();
       }
       await updateDoc(doc(db, "users", user.uid), patch);
+      // Written, so there is nothing left to lose: the listener may fill these
+      // fields from the document again, and pick up anything that landed while
+      // the member was editing.
+      dirty.current = false;
 
       // Subscriptions sync — applies the matrix as deltas onto the
       // junction collection. Fire-and-forget; the user-doc write above
@@ -545,7 +574,10 @@ export default function ProfileForm() {
             <Input
               id="pref-name"
               value={preferredName}
-              onChange={(e) => setPreferredName(e.target.value)}
+              onChange={(e) => {
+                markDirty();
+                setPreferredName(e.target.value);
+              }}
               maxLength={FIELD_LIMITS.preferredName}
             />
           </Field>
@@ -562,7 +594,10 @@ export default function ProfileForm() {
               id="uni-email"
               type="email"
               value={universityEmail}
-              onChange={(e) => setUniversityEmail(e.target.value)}
+              onChange={(e) => {
+                markDirty();
+                setUniversityEmail(e.target.value);
+              }}
               placeholder="you@nottingham.ac.uk"
               maxLength={FIELD_LIMITS.universityEmail}
             />
@@ -676,12 +711,16 @@ export default function ProfileForm() {
                   </label>
                   {pushDisabled && (
                     <p className={styles.notifHint}>
-                      {PUSH_DISABLED_HINT}
-                      {pushCardShown && (
+                      {pushDisabledHint(pushDeviceState)}
+                      {/* Only where the card below has something to offer, and
+                          in the words that match it: linking "turn them on" to
+                          a card that says the site is blocked would send the
+                          member after a switch that is not there. */}
+                      {pushCardShown && pushDeviceLinkText(pushDeviceState) && (
                         <>
                           {" "}
                           <a href={`#${PUSH_DEVICE_CARD_ID}`}>
-                            Turn them on for this browser.
+                            {pushDeviceLinkText(pushDeviceState)}
                           </a>
                         </>
                       )}
@@ -725,11 +764,11 @@ export default function ProfileForm() {
                         <input
                           type="checkbox"
                           checked={row === "courses" ? courseAnnouncements : taskEmails}
-                          onChange={(e) =>
-                            row === "courses"
-                              ? setCourseAnnouncements(e.target.checked)
-                              : setTaskEmails(e.target.checked)
-                          }
+                          onChange={(e) => {
+                            markDirty();
+                            if (row === "courses") setCourseAnnouncements(e.target.checked);
+                            else setTaskEmails(e.target.checked);
+                          }}
                           aria-label={`${CATEGORY_LABELS[row]} email`}
                         />
                         <span className={styles.notifCheckText}>Email me</span>

@@ -96,6 +96,7 @@ export const JOURNEY_STEPS = [
   "the profile grid shows the member their own subscriptions",
   "unticking a channel writes it through and survives a reload",
   "the column masters move every cell, and the locked row moves for nobody",
+  "the notification grid fits its card where the sidebar comes back",
   "switching task email off writes the cell the task senders read",
   "taking a place on the course confirms the session",
   "the full session cannot be chosen when changing session",
