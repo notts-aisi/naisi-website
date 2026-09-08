@@ -391,10 +391,26 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       await page.evaluate(() => {
         const el = document.querySelector('[role="grid"]');
         if (!el) return;
-        const probe = { moves: 0, downs: 0, ups: 0, node: el };
+        const probe = { moves: 0, downs: 0, ups: 0, node: el, seen: [] };
         window.__dragProbe = probe;
+        // Resolve the cell the same way the component does, at the same
+        // instant, so the failure can say what IT saw rather than what the
+        // test intended. `onPointerMove` has three early returns (the drag
+        // guard, an unresolved point, and the same-cell dedupe) and the
+        // painted array cannot tell which one fired.
+        const resolve = (e) => {
+          const t = document.elementFromPoint(e.clientX, e.clientY);
+          const c = t instanceof Element ? t.closest("[data-day][data-slot]") : null;
+          return c
+            ? `${c.getAttribute("data-day")}:${c.getAttribute("data-slot")}`
+            : `<${t?.tagName?.toLowerCase() ?? "nothing"}>`;
+        };
         el.addEventListener("pointerdown", () => (probe.downs += 1));
-        el.addEventListener("pointermove", () => (probe.moves += 1));
+        el.addEventListener("pointermove", (e) => {
+          probe.moves += 1;
+          const at = resolve(e);
+          if (probe.seen[probe.seen.length - 1] !== at) probe.seen.push(at);
+        });
         el.addEventListener("pointerup", () => (probe.ups += 1));
       });
       await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
@@ -420,6 +436,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
           downs: probe.downs,
           moves: probe.moves,
           ups: probe.ups,
+          seen: probe.seen.join(" -> "),
           sameNode: probe.node === document.querySelector('[role="grid"]'),
         };
       });
@@ -432,6 +449,7 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
           .join(", ") || "nothing"}. ` +
           `The grid received ${drag?.downs ?? "?"} pointerdown, ` +
           `${drag?.moves ?? "?"} pointermove, ${drag?.ups ?? "?"} pointerup; ` +
+          `the pointer crossed ${drag?.seen || "?"}; ` +
           `the container is ${drag?.sameNode ? "the same" : "a DIFFERENT"} element ` +
           "than before the drag. Zero moves means they never reached the grid, " +
           "so look at the coordinates and at what is over it. Moves received but " +
