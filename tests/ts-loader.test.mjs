@@ -243,6 +243,11 @@ describe("the shared loader reads JSX", () => {
  */
 const USERS = new Map([
   [
+    "api-addressable-ids.test.mjs",
+    "runs the real `isAddressableId` and `hasEncodedPathSeparator` from src/lib/addressableId.ts, " +
+      "the chokepoint the proxy applies to every /api path",
+  ],
+  [
     "ts-loader.test.mjs",
     "the loader's own suite: it proves the JSX class is closed and walks the tree below",
   ],

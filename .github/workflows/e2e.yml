@@ -124,7 +124,13 @@ jobs:
           tar -xzf mailpit.tar.gz mailpit
           sudo install -m 0755 mailpit /usr/local/bin/mailpit
           rm -f mailpit.tar.gz mailpit
-          mailpit version
+          # NOT `mailpit version`: that subcommand asks api.github.com for the
+          # latest release and exits non-zero when the unauthenticated call is
+          # rate-limited, which took a run down on 8 September 2026 AFTER the
+          # pinned download and its checksum had both succeeded. The binary
+          # has already been proven by the checksum; this only shows it runs.
+          mailpit --help >/dev/null
+          echo "mailpit ${MAILPIT_VERSION} installed"
 
       # Application Default Credentials for the dev project, from the OIDC
       # token above. `vars` rather than `secrets` on purpose: neither the

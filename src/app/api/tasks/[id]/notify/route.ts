@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isAddressableId } from "@/lib/addressableId";
 import TaskCommentEmail from "@/emails/TaskCommentEmail";
 import { wantsEmailForProfile } from "@/lib/email/preferences";
 import { sendEmail } from "@/lib/email/send";
@@ -60,6 +61,11 @@ async function resolveUsers(
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id: taskId } = await ctx.params;
+  // Belt and braces under the proxy's chokepoint (src/lib/addressableId.ts):
+  // a slash in the id would address a subcollection document.
+  if (!isAddressableId(taskId)) {
+    return NextResponse.json({ error: "Task not found" }, { status: 404 });
+  }
 
   const db = getAdminDb();
   if (!db) return NextResponse.json({ error: "Server not configured" }, { status: 500 });

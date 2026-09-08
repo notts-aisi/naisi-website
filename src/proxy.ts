@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { bypass } from "@/lib/devBypass";
 import { SESSION_COOKIE } from "@/lib/firebase/session";
+import { hasEncodedPathSeparator } from "@/lib/addressableId";
 
 /*
   Next 16 renamed middleware → proxy (same behaviour).
@@ -30,6 +31,25 @@ const PROTECTED_PREFIXES = ["/dashboard", "/tasks", "/credentials", "/calendar",
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // Every dynamic segment under /api arrives URL-decoded, so an encoded
+  // separator in the path becomes a real slash inside a route's id, and
+  // `doc(id)` then addresses a document in a subcollection the caller may
+  // control (src/lib/addressableId.ts says why that matters). Refused HERE,
+  // once, for every API route that exists and every one added later, rather
+  // than in each handler: an audit on 8 September 2026 counted 86 dynamic
+  // API routes with no such check. Read off the raw request URL, whose
+  // pathname the URL parser keeps encoded; `nextUrl.pathname` is checked too
+  // in case a Next version hands it over decoded. A 404 rather than a 400,
+  // because the answer to "is there a document at this path" is no.
+  if (pathname.startsWith("/api/")) {
+    const raw = new URL(request.url).pathname;
+    if (hasEncodedPathSeparator(raw) || hasEncodedPathSeparator(pathname)) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    return NextResponse.next();
+  }
+
+
   const needsAuth = PROTECTED_PREFIXES.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
   );
@@ -51,5 +71,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/tasks/:path*", "/credentials/:path*", "/calendar/:path*", "/profile/:path*", "/newsletter/:path*", "/admin/:path*", "/collaborator/:path*", "/learn/:path*", "/applications/:path*"],
+  matcher: ["/api/:path*", "/dashboard/:path*", "/tasks/:path*", "/credentials/:path*", "/calendar/:path*", "/profile/:path*", "/newsletter/:path*", "/admin/:path*", "/collaborator/:path*", "/learn/:path*", "/applications/:path*"],
 };
