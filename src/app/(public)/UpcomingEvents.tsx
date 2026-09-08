@@ -1,6 +1,7 @@
 import Link from "next/link";
 import Reveal from "./Reveal";
 import { listPublishedEvents } from "@/features/events/fetchEvents";
+import { publicLocationText } from "@/lib/events/location";
 import styles from "./UpcomingEvents.module.css";
 
 /*
@@ -47,10 +48,10 @@ export default async function UpcomingEvents() {
         <Reveal variant="tilt-in" staggerChildren staggerMs={110} as="ul" className={styles.list}>
           {upcoming.map((e) => {
             const start = e.startAt!;
-            const locationLine =
-              e.locationHidden && e.locationPublicText
-                ? e.locationPublicText
-                : e.location || "Location TBA";
+            // Through the one module that decides: the inline rule this
+            // replaced fell back to the EXACT location when a hidden event's
+            // public label was empty, on the home page.
+            const locationLine = publicLocationText(e) || "Location TBA";
             return (
               <li key={e.id} className={styles.cardWrap}>
                 <Link href={`/events/${e.id}`} className={styles.card}>

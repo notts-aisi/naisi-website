@@ -13,9 +13,11 @@ import {
   type FoodTag,
   type FormQuestion,
   type RsvpAnswer,
+  type RsvpStatus,
 } from "@/lib/firestore/events";
 import { buildEventIcs, googleCalendarUrl } from "./ics";
 import type { EventChange } from "@/lib/events/changeSummary";
+import { exactLocationFor, holdsPlace, locationForAttendee } from "./location";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isSuppressed } from "@/lib/firestore/suppression";
 import {
@@ -28,6 +30,9 @@ import {
  * Minimal event-shape the email layer needs. Mirrors fields from Firestore;
  * kept loose so callers can pass partially-normalized event data.
  */
+/** The RSVP states that mean an RSVP is on file, and that the `existing` note may name. */
+export type LiveRsvpStatus = Extract<RsvpStatus, "pending" | "confirmed" | "waitlisted">;
+
 type EventLike = {
   id?: string | null;
   title?: string | null;
@@ -78,32 +83,15 @@ function formatWhen(startAt: Date | null | undefined, endAt: Date | null | undef
   return `${base} → ${endFull}`;
 }
 
-function locationFor(
-  variant: EventRsvpEmailVariant,
-  event: EventLike,
-): { line: string; disclosure?: string } {
-  const exact = (event.location ?? "").trim();
-  const fuzzy = (event.locationPublicText ?? "").trim();
-  const givesExactLocation = variant === "approved" || variant === "promoted";
-  if (givesExactLocation) {
-    // Confirmed / promoted attendees always get the real location; if it was
-    // hidden on the public page, flag that so they know not to share.
-    if (event.locationHidden && exact) {
-      return {
-        line: exact,
-        disclosure:
-          "This location was kept off the public event page — please don't share it widely.",
-      };
-    }
-    return { line: exact || "Location to be confirmed" };
-  }
-  // Requested / waitlisted / denied / cancelled: respect the privacy toggle.
-  if (event.locationHidden && fuzzy) {
-    return {
-      line: `${fuzzy} — exact location shared once your RSVP is approved`,
-    };
-  }
-  return { line: exact || "Location to be confirmed" };
+/**
+ * Which variants hold a confirmed place. Approved and promoted do, and they
+ * are the only two that carry the exact location and the calendar file.
+ * Requested, waitlisted, denied, cancelled and the duplicate notice do not,
+ * whatever the event's fields say: the decision itself lives in
+ * `@/lib/events/location`, and this is only the mapping from variant to it.
+ */
+function variantHoldsPlace(variant: EventRsvpEmailVariant): boolean {
+  return holdsPlace(variant === "approved" || variant === "promoted" ? "confirmed" : "pending");
 }
 
 function foodLineFor(event: EventLike): string | undefined {
@@ -136,6 +124,12 @@ type Args = {
   answers?: Record<string, RsvpAnswer> | null;
   /** Schedule/location changes since the attendee signed up (acceptance email). */
   changesSinceSignup?: EventChange[];
+  /**
+   * The state of the RSVP that already exists, for the `existing` variant:
+   * the note a duplicate submission from a signed-out caller earns, sent to
+   * the address rather than answered to the caller.
+   */
+  existingStatus?: LiveRsvpStatus;
 };
 
 function renderAnswerValue(a: RsvpAnswer | undefined): string {
@@ -183,6 +177,7 @@ export async function sendRsvpEmail({
   rsvpId,
   answers,
   changesSinceSignup,
+  existingStatus,
 }: Args): Promise<void> {
   try {
     const db = getAdminDb();
@@ -192,7 +187,8 @@ export async function sendRsvpEmail({
     }
     const title = (event.title ?? "").trim() || "NAISI event";
     const whenLine = formatWhen(event.startAt ?? null, event.endAt ?? null);
-    const { line: locationLine, disclosure } = locationFor(variant, event);
+    const holder = variantHoldsPlace(variant);
+    const { line: locationLine, disclosure } = locationForAttendee(event, { holdsPlace: holder });
     const foodLine = foodLineFor(event);
 
     // Build self-service links when we have the ids + email for the token.
@@ -213,17 +209,17 @@ export async function sendRsvpEmail({
     const answersLine = buildAnswersLine(questions, answers);
 
     // Confirmed / promoted attendees get the event for their calendar: a .ics
-    // attachment plus one-tap "add to calendar" links in the body. These
-    // variants always disclose the exact location, so the .ics carries it too.
+    // attachment plus one-tap "add to calendar" links in the body. These are
+    // the variants that hold a place, so the .ics carries the exact location.
     let attachments:
       | { filename: string; content: string; contentType: string }[]
       | undefined;
     let googleCalUrl: string | undefined;
     let icsUrl: string | undefined;
-    if ((variant === "approved" || variant === "promoted") && event.startAt) {
+    if (holder && event.startAt) {
       const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
       const eventUrl = appUrl && event.id ? `${appUrl}/events/${event.id}` : undefined;
-      const exactLocation = (event.location ?? "").trim() || undefined;
+      const exactLocation = exactLocationFor(event, { holdsPlace: holder });
       const ics = buildEventIcs({
         uid: event.id ?? "event",
         title,
@@ -267,6 +263,7 @@ export async function sendRsvpEmail({
         decisionNote: decisionNote ?? undefined,
         answersLine: answersLine || undefined,
         changesSinceSignup,
+        existingStatus,
         googleCalUrl,
         icsUrl,
         cancelUrl,

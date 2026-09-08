@@ -168,6 +168,7 @@ import {
   type EventAnnouncementInput,
 } from "@/lib/email/eventAnnouncement";
 import { formatEventWhen } from "@/lib/events/changeSummary";
+import { publicLocationLine } from "@/lib/events/location";
 import { baseUrl } from "@/lib/events/rsvpToken";
 import { getAdminDb } from "@/lib/firebase/admin";
 import {
@@ -363,11 +364,9 @@ async function pendingAnnouncements(
 /** Everything the announcement's copy needs, rebuilt from the stored event. */
 function announcementInputFor(event: EventDoc): EventAnnouncementInput {
   // The PUBLIC location: this list is not the attendee list, so a hidden
-  // location shows its placeholder here and the exact room stays behind an
-  // approved RSVP. Same rule the publish route applies inline.
-  const locationLine = event.locationHidden
-    ? (event.locationPublicText ?? "Location shared with attendees")
-    : event.location || "Location to be confirmed";
+  // location shows its placeholder here and the exact room stays behind a
+  // confirmed RSVP. The same call the publish route makes.
+  const locationLine = publicLocationLine(event);
   return {
     eventId: event.id,
     title: event.title || "NAISI event",

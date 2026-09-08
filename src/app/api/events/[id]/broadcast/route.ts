@@ -21,6 +21,7 @@ import {
 } from "@/lib/events/rsvpToken";
 import { filterSuppressed } from "@/lib/firestore/suppression";
 import { formatEventWhen, parseEventChanges } from "@/lib/events/changeSummary";
+import { changesForAttendee, holdsPlace, locationForAttendee } from "@/lib/events/location";
 import { sendNoticePush } from "@/lib/push/noticeNotifications";
 
 type BroadcastPayload = {
@@ -83,6 +84,15 @@ const BODY_MAX = 8000;
  * One `sendNotice` per address, a single string as `to`, no Cc and no Bcc.
  * Batching an event's attendees into one envelope would disclose every
  * attendee's address to every other attendee.
+ *
+ * ── THE LOCATION IS PER RECIPIENT ───────────────────────────────────────────
+ * A confirmed attendee holds a place and gets the exact location; a waitlisted
+ * one does not and gets the public label, and the "Where" line of a change
+ * notice is redacted for them the same way. Both come from
+ * `@/lib/events/location`, the one module that decides this. Until
+ * 8 September 2026 this route used the exact text for the whole audience on
+ * the grounds that everybody in it "already knew" it, which the waitlist never
+ * did: their waitlist email had carried the public label on purpose.
  */
 
 /**
@@ -104,6 +114,8 @@ type Attendee = {
   name: string;
   /** Null for a guest who RSVP'd without an account: email only, no push. */
   uid: string | null;
+  /** Decides what the message may say about the location. */
+  status: string;
 };
 
 export async function POST(
@@ -203,9 +215,16 @@ export async function POST(
     event.startAt?.toDate?.() ?? null,
     event.endAt?.toDate?.() ?? null,
   );
-  // Broadcasts only go to confirmed/waitlisted, who were approved and already
-  // know the exact location, so it is not fuzzed here.
-  const locationLine = (event.location ?? "Location to be confirmed").toString();
+  // Two renderings of the same message: one for a recipient who holds a
+  // place, one for a recipient who does not. Built once each, chosen per row.
+  const forHolders = {
+    locationLine: locationForAttendee(event, { holdsPlace: true }).line,
+    changes: changesForAttendee(changes, event, { holdsPlace: true }),
+  };
+  const forOthers = {
+    locationLine: locationForAttendee(event, { holdsPlace: false }).line,
+    changes: changesForAttendee(changes, event, { holdsPlace: false }),
+  };
   const instagramHandle =
     process.env.NAISI_INSTAGRAM_HANDLE || "notts.ai.safety";
   // Fall back to the monitored Reply-To inbox, never the send-only
@@ -233,6 +252,7 @@ export async function POST(
       address,
       name: typeof rsvp.name === "string" ? rsvp.name : "",
       uid: typeof rsvp.uid === "string" && rsvp.uid ? rsvp.uid : null,
+      status: typeof rsvp.status === "string" ? rsvp.status : "",
     });
   }
 
@@ -298,6 +318,7 @@ export async function POST(
     } catch {
       /* token secret missing: skip the self-service links */
     }
+    const view = holdsPlace(attendee.status) ? forHolders : forOthers;
     try {
       // ONE address. One message. See the module comment.
       await sendNotice({
@@ -313,10 +334,10 @@ export async function POST(
             eventTitle,
             recipientName: attendee.name || "there",
             whenLine,
-            locationLine,
+            locationLine: view.locationLine,
             subject,
             body,
-            changes,
+            changes: view.changes,
             descriptionChanged,
             eventUrl,
             cancelUrl,

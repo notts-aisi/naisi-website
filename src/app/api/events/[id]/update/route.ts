@@ -18,6 +18,7 @@ import {
   validateQuestionLimits,
 } from "@/lib/firestore/events";
 import { formatEventWhen, type EventChange } from "@/lib/events/changeSummary";
+import { hiddenLocationLacksLabel } from "@/lib/events/location";
 
 /**
  * Server-side edit of an event. Firestore rules block client writes once an
@@ -105,6 +106,19 @@ export async function POST(
   const locationHidden = body.locationHidden === true;
   const locationPublicText =
     typeof body.locationPublicText === "string" ? body.locationPublicText.trim() : "";
+  // The editor refuses this pairing before review; the live-save path came
+  // here without it, and every surface that shows a hidden location then had
+  // no label to show. The surfaces fail closed to a placeholder now, but the
+  // organiser deserves the same sentence the review path gives them.
+  if (hiddenLocationLacksLabel({ locationHidden, locationPublicText })) {
+    return NextResponse.json(
+      {
+        error:
+          "You've hidden the exact location. Add a fuzzy label to show publicly (e.g. 'somewhere on campus').",
+      },
+      { status: 400 },
+    );
+  }
   const visibility = body.visibility === "members" ? "members" : "public";
 
   const capacityRaw = body.capacity;
