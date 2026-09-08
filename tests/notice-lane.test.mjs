@@ -1417,7 +1417,10 @@ describe("publishing announces once, and never fails because the announcement di
     );
   });
 
-  test("a failed announcement leaves the event published and says so", async () => {
+  test("a failed announcement leaves the event published and says so", async (t) => {
+    // The route logs the failure with its stack, and under this loader a
+    // stack frame is a whole module as a data: URL. See tests/lib/outputGuard.mjs.
+    t.mock.method(console, "error", () => {});
     seed();
     globalThis.__announceThrows = true;
     const res = await publishRoute.POST({}, ctxFor("event-1"));

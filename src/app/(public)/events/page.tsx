@@ -3,6 +3,7 @@ import Link from "next/link";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import { listPublishedEvents } from "@/features/events/fetchEvents";
+import { publicLocationText } from "@/lib/events/location";
 
 export const metadata: Metadata = {
   title: "Events",
@@ -121,13 +122,13 @@ function EventRow({
           {event.startAt && (
             <time dateTime={event.startAt.toISOString()}>{formatWhen(event.startAt)}</time>
           )}
-          {/* Honour locationHidden, exactly as UpcomingEvents and calendar.ics
-              do. This page reads through the Admin SDK, so Firestore rules
-              provide no defence — printing event.location raw published the
+          {/* The public location text, the same call UpcomingEvents and calendar.ics
+              make. This page reads through the Admin SDK, so Firestore rules
+              provide no defence: printing event.location raw published the
               exact venue of a hidden-location event to anonymous visitors. */}
-          {(event.locationHidden ? event.locationPublicText : event.location) && (
+          {publicLocationText(event) && (
             <span>
-              · {event.locationHidden ? event.locationPublicText : event.location}
+              · {publicLocationText(event)}
             </span>
           )}
           {event.visibility === "members" && <Badge tone="neutral">Members only</Badge>}

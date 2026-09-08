@@ -522,6 +522,67 @@ test("events RSVP: a signed-out guest books a place and the page fits a phone", 
       );
     });
 
+    await step("a second submission from the same address is answered the same way and files nothing new", async () => {
+      // The route must not tell a signed-out caller that an address already
+      // holds an RSVP: the same page, the same sentence, and nothing filed. The
+      // truth goes to the inbox instead, which is the last assertion here.
+      await page.goto(eventUrl, { waitUntil: "domcontentloaded" });
+      await page.locator("#rsvp-name").fill(state.guestName);
+      await page.locator("#rsvp-email").fill(state.guestEmail);
+      await waitForHydration(page, "rsvp-form");
+      await page.locator(`#${state.questionId}-input`).fill(`${answer} Again.`);
+      await page.getByTestId("rsvp-submit").click();
+      const navFailure = await page
+        .waitForURL(
+          (url) => url.pathname.endsWith(`/events/${state.eventId}/rsvp/submitted`),
+          { timeout: NAV_MS },
+        )
+        .then(() => null)
+        .catch((err) => err.message);
+      if (navFailure !== null) {
+        const refusal = page.getByTestId("rsvp-error");
+        const said = (await refusal.count()) > 0 ? (await refusal.innerText()).trim() : null;
+        assert.fail(
+          said
+            ? `the repeat was refused in place, which tells a stranger the address is attending: ${said}`
+            : `the browser never reached the confirmation page on the repeat: ${navFailure}`,
+        );
+      }
+      await page.getByTestId("rsvp-submitted").waitFor({ timeout: WAIT_MS });
+
+      const snap = await fixtureQuery("eventRsvps")
+        .where("eventId", "==", state.eventId)
+        .get();
+      assert.equal(snap.size, 1, `the repeat filed a second row: ${snap.size} rows for ${state.eventId}`);
+      assert.equal(snap.docs[0].id, rsvpId, "the repeat replaced the original row");
+      assert.equal(
+        snap.docs[0].data().answers?.[state.questionId],
+        answer,
+        "the repeat overwrote the original answer",
+      );
+      const eventSnap = await fixtureDoc("events", state.eventId).get();
+      assert.equal(eventSnap.data()?.rsvpCountPending, 1, "the repeat moved the pending count");
+
+      if (state.suppress) {
+        const rows = await waitForSendRows(state.guestEmail, { timeout: 5_000 });
+        assert.equal(rows.length, 0, "the repeat mailed a suppressed address");
+        return;
+      }
+      // Caught mail: the address is told, the caller was not. Two rows now,
+      // the acknowledgement and the note.
+      const deadline = Date.now() + WAIT_MS;
+      let rows = [];
+      while (Date.now() < deadline) {
+        rows = await waitForSendRows(state.guestEmail, { timeout: 1_000 });
+        if (rows.length >= 2) break;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      assert.equal(rows.length, 2, `expected the acknowledgement and the already-on-file note, found ${rows.length}`);
+      const note = rows.find((r) => String(r.subject ?? "").includes("already have an RSVP"));
+      assert.ok(note, `no already-on-file note among: ${rows.map((r) => r.subject).join(" | ")}`);
+      assert.equal(note.referenceId, rsvpId, "the note is not cross-referenced to the RSVP it is about");
+    });
+
     /**
      * One phone viewport, walked and measured.
      *

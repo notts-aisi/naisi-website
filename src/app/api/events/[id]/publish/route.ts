@@ -5,6 +5,7 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { baseUrl } from "@/lib/events/rsvpToken";
 import { formatEventWhen } from "@/lib/events/changeSummary";
+import { publicLocationLine } from "@/lib/events/location";
 import { announcementQueueEnabled } from "@/lib/scheduler/announcementQueue";
 
 /**
@@ -161,12 +162,9 @@ export async function POST(
   const event = claim.event;
   const membersOnly = event.visibility === "members";
   // The PUBLIC location: this list is not the attendee list, so a hidden
-  // location shows its placeholder here and the exact room stays behind an
-  // approved RSVP.
-  const locationLine = event.locationHidden
-    ? ((event.locationPublicText as string | null | undefined) ??
-      "Location shared with attendees")
-    : ((event.location as string | null | undefined) || "Location to be confirmed");
+  // location shows its placeholder here and the exact room stays behind a
+  // confirmed RSVP. `@/lib/events/location` is the one place that decides.
+  const locationLine = publicLocationLine(event);
 
   try {
     const result = await sendEventAnnouncement(db, {

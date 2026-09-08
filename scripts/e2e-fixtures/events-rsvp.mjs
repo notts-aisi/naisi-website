@@ -65,6 +65,7 @@ export const RSVP_STEPS = [
   "a guest fills the form and lands on the confirmation page",
   "the RSVP row carries the guest's answer and the event's pending count moved",
   "the confirmation email is accounted for",
+  "a second submission from the same address is answered the same way and files nothing new",
   "the event page fits a 375 by 667 phone with its submit button reachable",
   "the event page fits a 414 by 896 phone with its submit button reachable",
 ];
@@ -74,8 +75,8 @@ export const RSVP_STEPS = [
  *
  * Nothing on this journey presses a reCAPTCHA-gated control: the public event
  * page mounts no widget and `POST /api/events/[id]/rsvp` does not ask for a
- * token (it is rate-limited by the duplicate-RSVP refusal in its transaction
- * rather than by a captcha). So every step here runs against a deployed target
+ * token (a repeat from the same address files nothing and is answered as if it
+ * had, inside its transaction). So every step here runs against a deployed target
  * as well as a local one, and the list stays empty rather than being deleted:
  * the runner and the guard both read it, and the spec's skip wiring is the
  * same shape as every other spec so a future gated step is one entry away.
@@ -415,6 +416,8 @@ export const SPEC = {
   },
   // Verified: run against the shared harness server on 6 September 2026, all
   // six steps completed, three rows before teardown and a zero manifest after.
+  // The duplicate-submission step was added and the spec re-run against a
+  // local server on 8 September 2026.
   status: "verified",
   seed,
   countRows,

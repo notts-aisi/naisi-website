@@ -10,6 +10,7 @@ import {
   type EventDoc,
 } from "@/lib/firestore/events";
 import { googleCalendarUrl } from "@/lib/events/ics";
+import { locationWithheld, publicLocationText } from "@/lib/events/location";
 import styles from "./EventDetailView.module.css";
 
 /**
@@ -28,7 +29,7 @@ export default function EventDetailView({
   const isCancelled = event.status === "cancelled";
   const dietaryTags = event.dietaryTags ?? [];
   const foodDisplay = event.foodText?.trim() || legacyFoodLine(event);
-  const whereText = event.locationHidden ? event.locationPublicText : event.location;
+  const whereText = publicLocationText(event);
   const calendarStart = isCancelled ? null : event.startAt;
 
   return (
@@ -103,9 +104,9 @@ export default function EventDetailView({
                   <span className={styles.factBody}>
                     <span className={styles.factLabel}>Where</span>
                     <span className={styles.factValue}>{whereText}</span>
-                    {event.locationHidden && (
+                    {locationWithheld(event) && (
                       <span className={styles.factNote}>
-                        Exact location shared once your RSVP is approved.
+                        Exact location shared once your RSVP is confirmed.
                       </span>
                     )}
                   </span>

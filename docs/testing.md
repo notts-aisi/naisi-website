@@ -167,6 +167,26 @@ The same shape, older:
   pass.
 - `tests/pwa-offline-assets.test.mjs`: the service worker's write-nothing
   contract.
+- `tests/event-location-disclosure.test.mjs`: an event's exact location
+  reaches a person only through `src/lib/events/location.ts`, and only when
+  they hold a confirmed place. The helper is executed (a hidden location with
+  an empty public label yields a placeholder, never the exact text), the RSVP,
+  approve, cancel, broadcast and update routes are executed with the real
+  templates rendered to HTML, and every file under `src` that touches the
+  three location fields is registered in `SITES` with a role and a reason,
+  both directions: a renderer imports the helper and reads none of the fields
+  raw, a relay may pass them along but may not branch on `locationHidden`,
+  a template takes a finished line, and exactly one file branches.
+- `tests/event-rsvp-identity.test.mjs`: the public RSVP route executed as a
+  guest, a member, a pending and a rejected account. A signed-out submission
+  is answered identically whether or not the address already holds an RSVP,
+  files nothing on a duplicate and mails the address instead; a member's
+  submission is keyed on the account, so a guest row under their address
+  blocks nothing; a decided row is never reset. The tree half:
+  `EMAIL_KEYED_DOCS` lists every document id under `src` built from an
+  address with the reason a caller cannot turn it into a question, and
+  `HASHING_ROUTES` every route handler that hashes anything with what it
+  hashes, both checked in both directions with per-file counts.
 - `tests/lib/outputGuard.mjs`, loaded into every `npm test` process by the
   `--import` flag on the test script and proved by
   `tests/output-lines.test.mjs`: no test process may print a line over 20 KB.
