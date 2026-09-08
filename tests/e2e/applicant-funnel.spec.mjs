@@ -273,47 +273,26 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       // resolves cells with `elementFromPoint`, so whatever is painted on top
       // of a cell wins, and the check below says WHAT is on top rather than
       // leaving a bare false to be reproduced on another machine.
-      // ...and then WAIT FOR THAT SCROLL TO COMMIT. `scrollIntoView` returns
-      // before the browser has laid the new offset out, so measuring straight
-      // after it reads coordinates from where the grid USED to be, and the
-      // pointer is then put somewhere the grid no longer is. Against a
-      // loopback server the window is too small to lose; against the deployed
-      // backend the nightly lost it twice, on 7 September 2026 as a run that
-      // painted slots 0 to 1 of 0 to 7, and on 8 September 2026 with both ends
-      // resolving to nothing at all, which is what `elementFromPoint` returns
-      // for a point outside the viewport. Settling on three consecutive frames
-      // at one offset rather than sleeping a fixed span: a sleep long enough
-      // for the slowest runner is dead time on every other one, and a sleep
-      // tuned to a fast one is this bug again.
-      await page.evaluate(async () => {
-        document
-          .querySelector('[data-day="1"][data-slot="4"]')
-          ?.scrollIntoView({ block: "center" });
-        await new Promise((resolve) => {
-          let last = null;
-          let stable = 0;
-          let frames = 0;
-          const tick = () => {
-            const y = window.scrollY;
-            if (y === last) stable += 1;
-            else stable = 0;
-            last = y;
-            // The frame cap is a backstop, not the mechanism: if something on
-            // the page scrolls forever we would rather measure and let the
-            // assertion below say what was under the pointer than hang here
-            // until the spec times out with nothing to show for it.
-            if (stable >= 3 || (frames += 1) > 180) resolve();
-            else requestAnimationFrame(tick);
-          };
-          requestAnimationFrame(tick);
-        });
-      });
-      // Measure AND probe inside one evaluate. As two round trips they could
-      // straddle a reflow, and the assertion would then be judging points that
-      // are not the ones the drag goes on to use.
-      const ends = await page.evaluate(() =>
-        [0, 7].map((slot) => {
-          const cell = document.querySelector(`[data-day="1"][data-slot="${slot}"]`);
+      // ...and then KEEP ADJUSTING UNTIL BOTH ENDS ARE REALLY IN THE VIEWPORT,
+      // rather than scrolling once and hoping. Two things defeat a single
+      // `scrollIntoView` here. It returns before the browser has laid the new
+      // offset out, so measuring straight after it reads the old position. And
+      // the cells sit inside `.cells`, whose `overflow-x: auto` makes
+      // overflow-y compute to `auto` as well, nested in `.board`, which is
+      // `overflow: hidden`: the scroll can be taken up by those containers and
+      // leave the PAGE where it was. On the Linux runner the taller text above
+      // the grid puts it below the fold, so that is the difference between a
+      // Mac passing and the nightly failing on 7 and 8 September 2026, once
+      // with a half-painted run and once with both ends outside the viewport.
+      //
+      // So move the WINDOW by the measured shortfall, re-measure, repeat. The
+      // postcondition is the thing worth waiting on, and polling it does not
+      // care which container actually moved.
+      const probe = await page.evaluate(async () => {
+        const cellFor = (slot) =>
+          document.querySelector(`[data-day="1"][data-slot="${slot}"]`);
+        const read = (slot) => {
+          const cell = cellFor(slot);
           if (!cell) return { slot, box: null, under: "<missing>" };
           const r = cell.getBoundingClientRect();
           const box = { x: r.x, y: r.y, width: r.width, height: r.height };
@@ -331,8 +310,41 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
               ? `slot ${hit.getAttribute("data-slot")}`
               : `<${el?.tagName?.toLowerCase() ?? "nothing"}>`,
           };
-        }),
-      );
+        };
+        // Two frames per attempt: one for the scroll to commit, one for the
+        // layout that follows it.
+        const frame = () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          );
+        const landed = (ends) => ends.every((e) => e.under === `slot ${e.slot}`);
+        cellFor(4)?.scrollIntoView({ block: "center" });
+        await frame();
+        let ends = [read(0), read(7)];
+        for (let attempt = 0; attempt < 20 && !landed(ends); attempt += 1) {
+          if (ends.every((e) => e.box)) {
+            const top = Math.min(ends[0].box.y, ends[1].box.y);
+            const bottom = Math.max(
+              ends[0].box.y + ends[0].box.height,
+              ends[1].box.y + ends[1].box.height,
+            );
+            window.scrollBy(0, (top + bottom) / 2 - window.innerHeight / 2);
+          } else {
+            cellFor(4)?.scrollIntoView({ block: "center" });
+          }
+          await frame();
+          ends = [read(0), read(7)];
+        }
+        return {
+          ends,
+          geometry: {
+            viewport: `${window.innerWidth}x${window.innerHeight}`,
+            scrollY: Math.round(window.scrollY),
+            pageHeight: document.documentElement.scrollHeight,
+          },
+        };
+      });
+      const ends = probe.ends;
       assert.ok(
         ends.every((e) => e.box),
         "the availability grid did not lay out",
@@ -341,12 +353,19 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
         ends.map((e) => e.under),
         ["slot 0", "slot 7"],
         "the two ends of the drag are not the cells the pointer will land on: " +
-          `${ends.map((e) => `slot ${e.slot} -> ${e.under}`).join(", ")}. ` +
-          "<offscreen> means the centring scroll did not leave both ends inside " +
-          "the viewport, so centre a different cell or give the window more " +
-          "height. A tag name means something is painted over the grid there " +
-          "(the sticky save bar, a header) and the drag would paint up to the " +
-          "covered cell and stop.",
+          `${ends
+            .map(
+              (e) =>
+                `slot ${e.slot} -> ${e.under} (y ${Math.round(e.box?.y ?? NaN)}, ` +
+                `h ${Math.round(e.box?.height ?? NaN)})`,
+            )
+            .join(", ")}. ` +
+          `viewport ${probe.geometry.viewport}, scrollY ${probe.geometry.scrollY}, ` +
+          `page ${probe.geometry.pageHeight}. ` +
+          "<offscreen> after twenty attempts means the run does not fit the " +
+          "viewport at all, so the drag needs chunking or the window needs to be " +
+          "taller. A tag name means something is painted over the grid there (the " +
+          "sticky save bar, a header) and the drag would paint up to it and stop.",
       );
       const a = ends[0].box;
       // A real pointer drag rather than eight clicks: the drag is the gesture
