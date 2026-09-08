@@ -379,6 +379,24 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       // 6 September 2026), while a hand moving across eight rows takes the
       // best part of a second. Each row's centre is measured as the pointer
       // gets there, so a layout that shifts under the drag cannot fool it.
+      // Instrument the container BEFORE the drag, with listeners outside React.
+      // "slot 0 painted and nothing else" has two very different causes: the
+      // moves never reached the element (wrong coordinates, something over the
+      // grid, capture retargeting them elsewhere), or they reached it and the
+      // component ignored them (its `dragging` guard is React state, and a
+      // remount between pointerdown and the first move would reset it). The
+      // painted array cannot tell those apart, and guessing wrong sends you
+      // into the wrong file. `sameNode` catches the remount: a fresh element
+      // does not carry the property we stamp here.
+      await page.evaluate(() => {
+        const el = document.querySelector('[role="grid"]');
+        if (!el) return;
+        const probe = { moves: 0, downs: 0, ups: 0, node: el };
+        window.__dragProbe = probe;
+        el.addEventListener("pointerdown", () => (probe.downs += 1));
+        el.addEventListener("pointermove", () => (probe.moves += 1));
+        el.addEventListener("pointerup", () => (probe.ups += 1));
+      });
       await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
       await page.mouse.down();
       for (let slot = 1; slot <= 7; slot += 1) {
@@ -395,13 +413,31 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
             ?.getAttribute("data-on") === "true",
         ),
       );
+      const drag = await page.evaluate(() => {
+        const probe = window.__dragProbe;
+        if (!probe) return null;
+        return {
+          downs: probe.downs,
+          moves: probe.moves,
+          ups: probe.ups,
+          sameNode: probe.node === document.querySelector('[role="grid"]'),
+        };
+      });
       assert.deepEqual(
         painted,
         new Array(8).fill(true),
         `the drag was meant to paint Monday slots 0 to 7 and painted ${painted
           .map((on, slot) => (on ? slot : null))
           .filter((slot) => slot !== null)
-          .join(", ") || "nothing"}`,
+          .join(", ") || "nothing"}. ` +
+          `The grid received ${drag?.downs ?? "?"} pointerdown, ` +
+          `${drag?.moves ?? "?"} pointermove, ${drag?.ups ?? "?"} pointerup; ` +
+          `the container is ${drag?.sameNode ? "the same" : "a DIFFERENT"} element ` +
+          "than before the drag. Zero moves means they never reached the grid, " +
+          "so look at the coordinates and at what is over it. Moves received but " +
+          "nothing painted means the component dropped them, so look at the " +
+          "guard in AvailabilityGrid.onPointerMove. A different element means it " +
+          "remounted mid-drag, which resets that guard and drops the capture.",
       );
 
       await page.getByRole("button", { name: "Save draft" }).click();
