@@ -202,6 +202,10 @@ const { loadTs } = createLoader({
     ],
     ["@/lib/events/rsvpToken", TOKEN_STUB],
     ["./rsvpToken", TOKEN_STUB],
+    // The publish route's two doors, closed: this suite asks it only whether
+    // it refuses a hidden location with no label before it writes anything.
+    ["@/lib/email/eventAnnouncement", "export const sendEventAnnouncement = async () => ({ sent: 0, skipped: 0, suppressed: 0, failed: 0, pushed: 0 });"],
+    ["@/lib/scheduler/announcementQueue", "export const announcementQueueEnabled = async () => false;"],
   ]),
 });
 
@@ -211,6 +215,7 @@ const approveRoute = await loadTs("app/api/events/[id]/rsvp/[rsvpId]/approve/rou
 const cancelRsvpRoute = await loadTs("app/api/events/[id]/rsvp/[rsvpId]/cancel/route.ts");
 const broadcastRoute = await loadTs("app/api/events/[id]/broadcast/route.ts");
 const updateRoute = await loadTs("app/api/events/[id]/update/route.ts");
+const publishRoute = await loadTs("app/api/events/[id]/publish/route.ts");
 
 const jsonRequest = (body) => ({ json: async () => body });
 const ctxFor = (params) => ({ params: Promise.resolve(params) });
@@ -313,22 +318,40 @@ describe("the location helper decides, and fails closed", () => {
     assert.equal(location.exactLocationFor({ location: " " }, { holdsPlace: true }), undefined);
   });
 
-  test("a change summary is redacted for a non-holder at a hidden event, by label and by content", () => {
+  test("a change summary for a non-holder at a hidden event is an allowlist: When passes, Where is redacted, the rest is dropped", () => {
     const changes = [
       { label: "When", from: "Fri 18:00", to: "Fri 19:00" },
       { label: "Where", from: "Old room", to: EXACT },
       { label: "Note", from: "x", to: `Now at ${EXACT.toLowerCase()}` },
+      // A caller's entry carrying the PREVIOUS exact address, which this
+      // module cannot recognise by content: it must not be shown.
+      { label: "Venue", from: "Flat 9, 1 Old Street", to: "elsewhere" },
     ];
     const holder = location.changesForAttendee(changes, hidden, { holdsPlace: true });
     assert.deepEqual(holder, changes);
     const other = location.changesForAttendee(changes, hidden, { holdsPlace: false });
+    assert.equal(other.length, 2, "only When and Where survive for a non-holder");
     assert.deepEqual(other[0], changes[0]);
     assert.equal(other[1].label, "Where");
     assert.ok(!other[1].to.includes(EXACT) && !other[1].from.includes(EXACT));
     assert.ok(other[1].to.startsWith(LABEL));
-    assert.ok(!other[2].to.toLowerCase().includes(EXACT.toLowerCase()), "an entry quoting the exact text under another label");
+    assert.ok(!JSON.stringify(other).includes("Old Street"), "an unrecognised entry reached a non-holder");
+    // A When entry that quotes the exact text is dropped rather than shown.
+    const dirtyWhen = location.changesForAttendee(
+      [{ label: "When", from: "x", to: `Fri 19:00 at ${EXACT}` }],
+      hidden,
+      { holdsPlace: false },
+    );
+    assert.deepEqual(dirtyWhen, []);
     // An open event's diff is everybody's.
     assert.deepEqual(location.changesForAttendee(changes, open, { holdsPlace: false }), changes);
+  });
+
+  test("the pairing predicate names the state the write paths refuse", () => {
+    assert.equal(location.hiddenLocationLacksLabel(hiddenNoLabel), true);
+    assert.equal(location.hiddenLocationLacksLabel({ locationHidden: true, locationPublicText: "  " }), true);
+    assert.equal(location.hiddenLocationLacksLabel(hidden), false);
+    assert.equal(location.hiddenLocationLacksLabel(open), false);
   });
 });
 
@@ -499,6 +522,14 @@ describe("the live-save route", () => {
     assert.equal(refused.status, 400);
     assert.match(refused.body.error, /hidden the exact location/);
     assert.equal(globalThis.__db.data.events["event-1"].locationPublicText, LABEL, "the refusal wrote anyway");
+    // The publish route refuses the same state, so a draft written
+    // client-direct without a label cannot go live.
+    globalThis.__db = makeDb({ events: { "event-1": hiddenEvent({ status: "approved", locationPublicText: "" }) } });
+    globalThis.__user = { ...approver, role: "admin" };
+    const publish = await publishRoute.POST({}, ctxFor({ id: "event-1" }));
+    assert.equal(publish.status, 400, JSON.stringify(publish.body));
+    assert.match(publish.body.error, /hidden the exact location/);
+    assert.equal(globalThis.__db.data.events["event-1"].status, "approved", "the refusal published anyway");
     const accepted = await updateRoute.POST(
       jsonRequest({ ...body, locationPublicText: "Somewhere on campus" }),
       ctxFor({ id: "event-1" }),

@@ -42,6 +42,12 @@ import { formatEventWhen } from "@/lib/events/changeSummary";
  * caller asking about their own account still gets the 409, because that is
  * their own row. `tests/event-rsvp-identity.test.mjs` executes both.
  *
+ * Not closed, and said so rather than pretended: the three outcomes commit a
+ * different number of writes (none for a repeat inside the hour, one for a
+ * repeat that earns the note, two for a fresh row), so the response times
+ * differ structurally. The register route documents the same timing channel
+ * for the same reason.
+ *
  * ── AN APPROVED ACCOUNT FOR A MEMBERS-ONLY EVENT ────────────────────────────
  * `getCurrentUser` hands back a session for every role, `pending` and
  * `rejected` included, so "signed in" was never "a member". A members-only

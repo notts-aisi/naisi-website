@@ -20,8 +20,26 @@ import {
 import FormRenderer from "./FormRenderer";
 import styles from "./RsvpForm.module.css";
 
+/**
+ * The five facts the form needs, and NOT the event document.
+ *
+ * This is a client component rendered by a Server Component on the public
+ * event page, and React serialises every prop a client component receives
+ * into the page's HTML for the browser to hydrate from. Until 8 September
+ * 2026 the prop was the whole `EventDoc`, so an anonymous visitor's view
+ * source carried the exact location of a hidden-location event, the
+ * reviewer's notes, the pending and waitlisted counts and the author's uid,
+ * none of which the page rendered. `tests/public-client-props.test.mjs` walks
+ * every anonymous-reachable Server Component for a document handed to a
+ * client component, so the shape here is enforced rather than remembered.
+ */
 type Props = {
-  event: EventDoc;
+  eventId: string;
+  signupForm: FormQuestion[];
+  visibility: EventDoc["visibility"];
+  capacity: number | null;
+  /** Confirmed places taken, for the "full" state. Pending is not shown and not passed. */
+  rsvpCountConfirmed: number;
   /** When true, renders a banner indicating test mode (still saves real RSVPs). */
   previewMode?: boolean;
 };
@@ -32,7 +50,14 @@ type SubmitState =
   | { kind: "success" }
   | { kind: "error"; message: string };
 
-export default function RsvpForm({ event, previewMode }: Props) {
+export default function RsvpForm({
+  eventId,
+  signupForm,
+  visibility,
+  capacity,
+  rsvpCountConfirmed,
+  previewMode,
+}: Props) {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   // The name and email boxes are UNCONTROLLED and read out of the DOM when the
@@ -60,10 +85,9 @@ export default function RsvpForm({ event, previewMode }: Props) {
   const siteNotice = useSiteNotice();
   const signupsPaused = isSurfacePaused(siteNotice, "eventSignups");
 
-  const questions: FormQuestion[] = event.signupForm;
-  const needsLogin = event.visibility === "members" && !user && !authLoading;
-  const confirmedCount = event.rsvpCountConfirmed ?? 0;
-  const full = event.capacity !== null && confirmedCount >= event.capacity;
+  const questions: FormQuestion[] = signupForm;
+  const needsLogin = visibility === "members" && !user && !authLoading;
+  const full = capacity !== null && rsvpCountConfirmed >= capacity;
 
   // Signed-in users have their identity locked to the session. Anonymous users
   // type their own name + email (public events only). If the session is missing
@@ -99,7 +123,7 @@ export default function RsvpForm({ event, previewMode }: Props) {
     }
     setState({ kind: "submitting" });
     try {
-      const res = await fetch(`/api/events/${event.id}/rsvp`, {
+      const res = await fetch(`/api/events/${eventId}/rsvp`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name, email, answers }),
@@ -133,7 +157,7 @@ export default function RsvpForm({ event, previewMode }: Props) {
       if (previewMode) {
         setState({ kind: "success" });
       } else {
-        router.push(`/events/${event.id}/rsvp/submitted`);
+        router.push(`/events/${eventId}/rsvp/submitted`);
       }
     } catch (err) {
       setState({
@@ -150,7 +174,7 @@ export default function RsvpForm({ event, previewMode }: Props) {
         <p className={styles.hint}>
           This event is for signed-in NAISI members. Sign in to RSVP.
         </p>
-        <a href={`/login?redirect=/events/${event.id}`}>
+        <a href={`/login?redirect=/events/${eventId}`}>
           <Button>Sign in</Button>
         </a>
       </Card>

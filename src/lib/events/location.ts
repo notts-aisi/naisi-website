@@ -64,6 +64,15 @@ export function locationWithheld(event: EventLocationFields): boolean {
 }
 
 /**
+ * A hidden location with no public label: the state every surface now fails
+ * closed on, and the state the update and publish routes refuse to create,
+ * because an organiser gets no other signal that the label is missing.
+ */
+export function hiddenLocationLacksLabel(event: EventLocationFields): boolean {
+  return locationWithheld(event) && trimmed(event.locationPublicText) === "";
+}
+
+/**
  * The text a public surface may print, possibly empty, never the exact
  * location of a hidden event. Callers that want a placeholder for the empty
  * case use `publicLocationLine`.
@@ -124,12 +133,15 @@ export function exactLocationFor(
 }
 
 /**
- * A change summary as an attendee may see it. The "Where" line of a change
- * notice carries the exact old and new location, so for a recipient who does
- * not hold a place at a hidden-location event it is replaced by the public
- * line. Two tests pick the entry out: its label, which is what the update
- * route writes, and its content, so an entry under any other label that
- * quotes the exact text is redacted too.
+ * A change summary as an attendee may see it. A holder, or anybody at an
+ * event whose location is public, sees the diff as written. For a recipient
+ * who does not hold a place at a hidden-location event the list is an
+ * ALLOWLIST: the "When" entry passes as long as it does not quote the exact
+ * location, the "Where" entry is replaced by the public line, and any other
+ * entry is dropped. Those two labels are the only ones the update route
+ * writes; anything else came from the caller, and a caller's entry may carry
+ * the previous exact address under a label this module cannot recognise, so
+ * it is not shown rather than checked.
  */
 export function changesForAttendee(
   changes: EventChange[],
@@ -140,9 +152,10 @@ export function changesForAttendee(
   const exact = trimmed(event.location).toLowerCase();
   const quotesExact = (text: string) => exact !== "" && text.toLowerCase().includes(exact);
   const { line } = locationForAttendee(event, { holdsPlace: false });
-  return changes.map((change) =>
-    change.label.trim().toLowerCase() === "where" || quotesExact(change.from) || quotesExact(change.to)
-      ? { label: change.label, from: "the previous location", to: line }
-      : change,
-  );
+  return changes.flatMap((change) => {
+    const label = change.label.trim().toLowerCase();
+    if (label === "when" && !quotesExact(change.from) && !quotesExact(change.to)) return [change];
+    if (label === "where") return [{ label: change.label, from: "the previous location", to: line }];
+    return [];
+  });
 }

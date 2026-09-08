@@ -18,6 +18,7 @@ import {
   validateQuestionLimits,
 } from "@/lib/firestore/events";
 import { formatEventWhen, type EventChange } from "@/lib/events/changeSummary";
+import { hiddenLocationLacksLabel } from "@/lib/events/location";
 
 /**
  * Server-side edit of an event. Firestore rules block client writes once an
@@ -109,7 +110,7 @@ export async function POST(
   // here without it, and every surface that shows a hidden location then had
   // no label to show. The surfaces fail closed to a placeholder now, but the
   // organiser deserves the same sentence the review path gives them.
-  if (locationHidden && !locationPublicText) {
+  if (hiddenLocationLacksLabel({ locationHidden, locationPublicText })) {
     return NextResponse.json(
       {
         error:

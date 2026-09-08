@@ -185,7 +185,16 @@ export default function EventDetailView({
               </p>
             </Card>
           ) : (
-            <RsvpForm event={event} previewMode={previewMode} />
+            // The facts the form uses, never the document: a client
+            // component's props are serialised into the public HTML.
+            <RsvpForm
+              eventId={event.id}
+              signupForm={event.signupForm}
+              visibility={event.visibility}
+              capacity={event.capacity}
+              rsvpCountConfirmed={event.rsvpCountConfirmed ?? 0}
+              previewMode={previewMode}
+            />
           )}
         </div>
       </div>

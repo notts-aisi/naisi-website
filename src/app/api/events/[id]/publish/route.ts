@@ -5,7 +5,7 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { baseUrl } from "@/lib/events/rsvpToken";
 import { formatEventWhen } from "@/lib/events/changeSummary";
-import { publicLocationLine } from "@/lib/events/location";
+import { hiddenLocationLacksLabel, publicLocationLine } from "@/lib/events/location";
 import { announcementQueueEnabled } from "@/lib/scheduler/announcementQueue";
 
 /**
@@ -122,6 +122,18 @@ export async function POST(
         ok: false as const,
         status: 400,
         error: `Can only publish from "approved", not "${current.status}"`,
+      };
+    }
+    // The editor checks this before review and the update route refuses it on
+    // a live event, but a draft is written client-direct and can reach
+    // approval without a label. Every surface fails closed on the state; this
+    // is what stops it going live at all.
+    if (hiddenLocationLacksLabel(current)) {
+      return {
+        ok: false as const,
+        status: 400,
+        error:
+          "You've hidden the exact location. Add a fuzzy label to show publicly (e.g. 'somewhere on campus') before publishing.",
       };
     }
     const announce = !current.announcedAt;

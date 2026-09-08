@@ -187,6 +187,17 @@ The same shape, older:
   address with the reason a caller cannot turn it into a question, and
   `HASHING_ROUTES` every route handler that hashes anything with what it
   hashes, both checked in both directions with per-file counts.
+- `tests/public-client-props.test.mjs`: no Server Component an anonymous
+  visitor can render hands a whole document to a client component, because
+  React serialises every prop a client component receives into the page's
+  HTML whether or not the component renders it. It walks every page and
+  layout outside `(app)` and `api`, then every Server Component they reach,
+  and fails on a client-component attribute whose value is an identifier the
+  file declares as a document (a `…Doc` annotation or an `await get…()`),
+  unless the site is in `ALLOWED` with the reason the whole document is
+  public. Found on 8 September 2026 on the public event page, where the RSVP
+  form received the whole event and the page's HTML carried the exact
+  location of a hidden-location event to anybody.
 - `tests/lib/outputGuard.mjs`, loaded into every `npm test` process by the
   `--import` flag on the test script and proved by
   `tests/output-lines.test.mjs`: no test process may print a line over 20 KB.
