@@ -873,6 +873,30 @@ for the same incident: it is a third-party CDN on the critical path of every
 run including the nightly, and retrying it blindly is safe because the download
 is pinned to a version and checked against its published SHA256.
 
+**Every run writes a job summary, and a failing spec writes an annotation.**
+`writeJobSummary` in `scripts/run-e2e.mjs` puts a spec-by-spec table on the
+run page (verdict, steps completed, steps skipped, and the sentence saying
+where it stopped) and emits one `::error` per failing spec, anchored to that
+spec's file so it surfaces at the top of the run and in the pull request's
+checks. It writes only when `GITHUB_STEP_SUMMARY` is set, so a laptop run is
+unaffected, and it is wrapped so a summary that cannot be written never fails
+a run.
+
+The verdict in that table comes from `markerShortfall` and is never
+recomputed. That function is the guard: it knows a spec which wrote no marker
+never ran, and that a skip for the wrong reason is not a pass. A table that
+worked the verdict out for itself could disagree with the exit code, and a
+green table over a red run is worse than no table. The step counts beside it
+are presentation only.
+
+**If you add a spec, you get a row for free**; the table is built from the same
+`selected` list the runner drives. What needs maintaining is the shortfall
+sentence: it is the whole content of the "Stopped at" column, so a new kind of
+failure should say where it stopped in that sentence rather than only in the
+log. The annotation is one per SPEC and not per step, on purpose: eight
+annotations for one broken page is the noise that teaches people to scroll
+past annotations.
+
 **A green CI run still does not replace the manual dev smoke pass**, for every
 reason in "Known holes" above: Chromium only, no Google sign-in, no rules, and
 no infrastructure beyond what the specs happen to touch.
