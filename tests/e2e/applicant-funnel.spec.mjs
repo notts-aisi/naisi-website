@@ -376,7 +376,6 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
           "taller. A tag name means something is painted over the grid there (the " +
           "sticky save bar, a header) and the drag would paint up to it and stop.",
       );
-      const a = ends[0].box;
       // A real pointer drag rather than eight clicks: the drag is the gesture
       // the component is built around (pointer capture, run filling), and
       // clicking each cell would leave that path untested. PACED, one row at
@@ -422,24 +421,18 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
         });
         el.addEventListener("pointerup", () => (probe.ups += 1));
       });
-      // Last look before committing the gesture. Everything above can be true
-      // and stop being true while the harness makes its next round trip, and a
-      // drag that starts off the grid paints nothing and blames the component.
-      const stillThere = await page.evaluate(
-        ([x, y]) => {
-          const el = document.elementFromPoint(x, y);
-          const cell = el instanceof Element ? el.closest("[data-day][data-slot]") : null;
-          return cell ? `${cell.getAttribute("data-day")}:${cell.getAttribute("data-slot")}` : "<none>";
-        },
-        [a.x + a.width / 2, a.y + a.height / 2],
-      );
-      assert.equal(
-        stillThere,
-        "1:0",
-        "the grid moved between measuring it and putting the pointer down: the " +
-          `start of the drag is now ${stillThere} rather than Monday slot 0.`,
-      );
-      await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+      // Playwright's own actionability check does what the hand-rolled
+      // measure-then-verify dance was reaching for, and unlike it, RETRIES.
+      // `hover()` scrolls the cell in, waits for it to stop moving, and
+      // confirms the cell is the hit target at the point it is about to use,
+      // repeating until it is or the timeout runs out. Measuring and then
+      // acting can always be overtaken by a reflow in between: on
+      // 8 September 2026 a Linux run verified Monday slot 0 under the pointer
+      // and still put the button down on a `<span>` one round trip later, so
+      // the grid saw 0 pointerdown, ignored the 21 moves that followed and
+      // painted nothing. Reduced motion made that rarer and did not remove
+      // it, because the race is in the harness rather than in the page.
+      await from.hover();
       await page.mouse.down();
       // Each row is brought back into view immediately before the pointer
       // reaches it. Painting re-renders the page, the layout shifts under the
