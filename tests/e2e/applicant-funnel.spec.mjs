@@ -441,8 +441,26 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       );
       await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
       await page.mouse.down();
+      // Each row is brought back into view immediately before the pointer
+      // reaches it. Painting re-renders the page, the layout shifts under the
+      // drag, and rows that were on screen when the run started are not on
+      // screen by the time the pointer gets to them. `elementFromPoint`
+      // returns null outside the viewport, so the component correctly ignores
+      // those moves and the run stops dead where the fold now is. Three Linux
+      // failures on 8 September 2026 were all this: the pointer crossed
+      // `1:0 -> 1:1 -> <nothing>` and painted slots 0 and 1 of 0 to 7.
       for (let slot = 1; slot <= 7; slot += 1) {
-        const cell = await page.locator(`[data-day="1"][data-slot="${slot}"]`).boundingBox();
+        const cell = await page.evaluate((s) => {
+          const el = document.querySelector(`[data-day="1"][data-slot="${s}"]`);
+          if (!el) return null;
+          let r = el.getBoundingClientRect();
+          const centreY = r.y + r.height / 2;
+          if (centreY < 0 || centreY > window.innerHeight) {
+            window.scrollBy(0, centreY - window.innerHeight / 2);
+            r = el.getBoundingClientRect();
+          }
+          return { x: r.x, y: r.y, width: r.width, height: r.height };
+        }, slot);
         assert.ok(cell, `slot ${slot} of the availability grid did not lay out`);
         await page.mouse.move(cell.x + cell.width / 2, cell.y + cell.height / 2, { steps: 3 });
         await page.waitForTimeout(60);
