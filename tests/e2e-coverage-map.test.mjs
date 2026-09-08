@@ -1083,12 +1083,6 @@ const NOT_COVERED = {
     coverWhen:
       "When the provider changes its event shape and the parse has to be proven against a real delivery.",
   },
-  "/api/webhooks/ses-events": {
-    reason:
-      "Webhooks: /api/webhooks/ses-events is driven by the provider rather than by a person, and its parsing is covered by the deliverability unit tests.",
-    coverWhen:
-      "When the provider changes its event shape and the parse has to be proven against a real delivery.",
-  },
   "/(app)/admin/(admin-only)/collaborators": {
     reason:
       "Admin CRUD: /(app)/admin/(admin-only)/collaborators is used by one admin, fails loudly on the screen of the person who pressed the button, and nothing member-facing waits on it.",
