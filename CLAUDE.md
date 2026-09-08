@@ -54,7 +54,7 @@ src/
 ├── lib/
 │   ├── firebase/                     # client.ts, admin.ts, session.ts
 │   ├── firestore/                    # typed per-collection helpers (one file per collection)
-│   ├── email/  events/  sns/         # send helpers, ICS, RSVP tokens, SNS verify
+│   ├── email/  events/               # send helpers, ICS, RSVP tokens
 │   └── csv.ts, signedTokens.ts, obfuscateEmail.ts, …
 ├── theme/                            # tokens.css, typography.css
 └── content/                          # static data (socials, resources, readingLists)

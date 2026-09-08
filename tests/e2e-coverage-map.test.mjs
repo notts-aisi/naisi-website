@@ -106,6 +106,15 @@ const ALL_KEYS = new Map([...ROUTE_KEYS, ...PAGE_KEYS]);
  * move is to say so here rather than to keep counting these routes.
  */
 const AUTH_BATTERIES = {
+  "api-path-separators.test.mjs": {
+    why:
+      "The proxy chokepoint: an encoded slash in any /api path is answered 404 before a " +
+      "handler runs, and the same path with a plain id reaches the handler (401).",
+    // Requests /api/tasks/[id]/notify, but only to prove the proxy answers first and that
+    // a plain id gets through to the handler. The handler itself is not exercised, so
+    // that key stays in NOT_COVERED.
+    drives: [],
+  },
   "password-set.test.mjs": {
     why: "The throwaway password is really replaced and the old session really revoked.",
     drives: ["/api/register/password-set", "/api/verify-email/reconcile"],
@@ -1080,12 +1089,6 @@ const NOT_COVERED = {
   "/api/webhooks/resend-events": {
     reason:
       "Webhooks: /api/webhooks/resend-events is driven by the provider rather than by a person, and its parsing is covered by the deliverability unit tests.",
-    coverWhen:
-      "When the provider changes its event shape and the parse has to be proven against a real delivery.",
-  },
-  "/api/webhooks/ses-events": {
-    reason:
-      "Webhooks: /api/webhooks/ses-events is driven by the provider rather than by a person, and its parsing is covered by the deliverability unit tests.",
     coverWhen:
       "When the provider changes its event shape and the parse has to be proven against a real delivery.",
   },
