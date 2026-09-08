@@ -248,10 +248,26 @@ export async function waitForHydration(page, selector, { timeout = WAIT_MS } = {
  * plus a downloaded Chromium has no business there. A static import here would
  * break `npm test`, which imports this module through the spec files.
  */
+/**
+ * Every context asks for reduced motion, and that is a correctness decision
+ * rather than a speed one. The app honours `prefers-reduced-motion` in over a
+ * hundred stylesheets, so with it set the page reaches its final layout and
+ * STAYS there. Without it a spec races whatever is still moving: on
+ * 8 September 2026 the availability drag failed three different ways on the
+ * Linux runner (no pointerdown at all, every move ignored, and a run that
+ * painted two cells of eight), and the trace showed the pointer landing on a
+ * `<span>` a single round trip after the grid had been verified under it. The
+ * admissions path animates its sticky save bar, which is exactly the element
+ * those comments kept blaming.
+ *
+ * It also matches how a real person with that preference uses the site, so it
+ * is a configuration worth covering rather than a thumb on the scale.
+ */
+const CONTEXT_OPTIONS = { reducedMotion: "reduce" };
 export async function openBrowser({ viewport = DEFAULT_VIEWPORT } = {}) {
   const playwright = await import("playwright");
   const browser = await playwright.chromium.launch();
-  const context = await browser.newContext({ viewport });
+  const context = await browser.newContext({ viewport, ...CONTEXT_OPTIONS });
   const page = await context.newPage();
   return { browser, context, page };
 }
@@ -266,7 +282,7 @@ export async function openBrowser({ viewport = DEFAULT_VIEWPORT } = {}) {
  * seeing what the other just did.
  */
 export async function newIdentityPage(browser, { viewport = DEFAULT_VIEWPORT } = {}) {
-  const context = await browser.newContext({ viewport });
+  const context = await browser.newContext({ viewport, ...CONTEXT_OPTIONS });
   const page = await context.newPage();
   return { context, page };
 }

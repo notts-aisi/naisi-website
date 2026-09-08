@@ -255,7 +255,6 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
     await step("the availability grid paints and the marks persist", async () => {
       // Monday (weekday 1), the first eight quarter hours: 09:00 to 11:00.
       const from = page.locator('[data-day="1"][data-slot="0"]');
-      const to = page.locator('[data-day="1"][data-slot="7"]');
       await from.waitFor({ timeout: WAIT_MS });
       // The step before this one reloaded the page, and the grid is in the
       // server markup a good while before React attaches to it on a dev
@@ -274,33 +273,110 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       // resolves cells with `elementFromPoint`, so whatever is painted on top
       // of a cell wins, and the check below says WHAT is on top rather than
       // leaving a bare false to be reproduced on another machine.
-      await page
-        .locator('[data-day="1"][data-slot="4"]')
-        .evaluate((el) => el.scrollIntoView({ block: "center" }));
-      const a = await from.boundingBox();
-      const b = await to.boundingBox();
-      assert.ok(a && b, "the availability grid did not lay out");
-      const under = await page.evaluate(
-        ([points]) =>
-          points.map(([x, y]) => {
-            const el = document.elementFromPoint(x, y);
-            const cell = el instanceof Element ? el.closest("[data-day][data-slot]") : null;
-            return cell ? `slot ${cell.getAttribute("data-slot")}` : `<${el?.tagName?.toLowerCase() ?? "nothing"}>`;
-          }),
-        [
-          [
-            [a.x + a.width / 2, a.y + a.height / 2],
-            [b.x + b.width / 2, b.y + b.height / 2],
-          ],
-        ],
+      // ...and then KEEP ADJUSTING UNTIL BOTH ENDS ARE REALLY IN THE VIEWPORT,
+      // rather than scrolling once and hoping. Two things defeat a single
+      // `scrollIntoView` here. It returns before the browser has laid the new
+      // offset out, so measuring straight after it reads the old position. And
+      // the cells sit inside `.cells`, whose `overflow-x: auto` makes
+      // overflow-y compute to `auto` as well, nested in `.board`, which is
+      // `overflow: hidden`: the scroll can be taken up by those containers and
+      // leave the PAGE where it was. On the Linux runner the taller text above
+      // the grid puts it below the fold, so that is the difference between a
+      // Mac passing and the nightly failing on 7 and 8 September 2026, once
+      // with a half-painted run and once with both ends outside the viewport.
+      //
+      // So move the WINDOW by the measured shortfall, re-measure, repeat. The
+      // postcondition is the thing worth waiting on, and polling it does not
+      // care which container actually moved.
+      const probe = await page.evaluate(async () => {
+        const cellFor = (slot) =>
+          document.querySelector(`[data-day="1"][data-slot="${slot}"]`);
+        const read = (slot) => {
+          const cell = cellFor(slot);
+          if (!cell) return { slot, box: null, under: "<missing>" };
+          const r = cell.getBoundingClientRect();
+          const box = { x: r.x, y: r.y, width: r.width, height: r.height };
+          const x = r.x + r.width / 2;
+          const y = r.y + r.height / 2;
+          if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) {
+            return { slot, box, under: "<offscreen>" };
+          }
+          const el = document.elementFromPoint(x, y);
+          const hit = el instanceof Element ? el.closest("[data-day][data-slot]") : null;
+          return {
+            slot,
+            box,
+            under: hit
+              ? `slot ${hit.getAttribute("data-slot")}`
+              : `<${el?.tagName?.toLowerCase() ?? "nothing"}>`,
+          };
+        };
+        // Two frames per attempt: one for the scroll to commit, one for the
+        // layout that follows it.
+        const frame = () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          );
+        // BOTH ends right, TWICE RUNNING. Holding once is not being settled:
+        // waitForHydration returns as soon as a React fiber key exists on the
+        // node, which is the first instant React touched it, not the instant
+        // the page stopped moving. On 8 September 2026 a Linux run measured a
+        // good position and the layout shifted before the pointer went down:
+        // the grid saw 0 pointerdown, 0 pointermove, 0 pointerup, and nothing
+        // painted at all.
+        const landed = (ends) => ends.every((e) => e.under === `slot ${e.slot}`);
+        cellFor(4)?.scrollIntoView({ block: "center" });
+        await frame();
+        let ends = [read(0), read(7)];
+        let held = landed(ends) ? 1 : 0;
+        for (let attempt = 0; attempt < 30 && held < 2; attempt += 1) {
+          if (ends.every((e) => e.box)) {
+            const top = Math.min(ends[0].box.y, ends[1].box.y);
+            const bottom = Math.max(
+              ends[0].box.y + ends[0].box.height,
+              ends[1].box.y + ends[1].box.height,
+            );
+            window.scrollBy(0, (top + bottom) / 2 - window.innerHeight / 2);
+          } else {
+            cellFor(4)?.scrollIntoView({ block: "center" });
+          }
+          await frame();
+          ends = [read(0), read(7)];
+          held = landed(ends) ? held + 1 : 0;
+        }
+        return {
+          ends,
+          geometry: {
+            viewport: `${window.innerWidth}x${window.innerHeight}`,
+            scrollY: Math.round(window.scrollY),
+            pageHeight: document.documentElement.scrollHeight,
+          },
+        };
+      });
+      const ends = probe.ends;
+      assert.ok(
+        ends.every((e) => e.box),
+        "the availability grid did not lay out",
       );
       assert.deepEqual(
-        under,
+        ends.map((e) => e.under),
         ["slot 0", "slot 7"],
-        `the two ends of the drag are not the cells the pointer will land on: ${under.join(", ")}. ` +
-          "Something is painted over the grid there (the sticky save bar, a header), so a " +
-          "drag would paint up to the covered cell and stop.",
+        "the two ends of the drag are not the cells the pointer will land on: " +
+          `${ends
+            .map(
+              (e) =>
+                `slot ${e.slot} -> ${e.under} (y ${Math.round(e.box?.y ?? NaN)}, ` +
+                `h ${Math.round(e.box?.height ?? NaN)})`,
+            )
+            .join(", ")}. ` +
+          `viewport ${probe.geometry.viewport}, scrollY ${probe.geometry.scrollY}, ` +
+          `page ${probe.geometry.pageHeight}. ` +
+          "<offscreen> after twenty attempts means the run does not fit the " +
+          "viewport at all, so the drag needs chunking or the window needs to be " +
+          "taller. A tag name means something is painted over the grid there (the " +
+          "sticky save bar, a header) and the drag would paint up to it and stop.",
       );
+      const a = ends[0].box;
       // A real pointer drag rather than eight clicks: the drag is the gesture
       // the component is built around (pointer capture, run filling), and
       // clicking each cell would leave that path untested. PACED, one row at
@@ -312,10 +388,79 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       // 6 September 2026), while a hand moving across eight rows takes the
       // best part of a second. Each row's centre is measured as the pointer
       // gets there, so a layout that shifts under the drag cannot fool it.
+      // Instrument the container BEFORE the drag, with listeners outside React.
+      // "slot 0 painted and nothing else" has two very different causes: the
+      // moves never reached the element (wrong coordinates, something over the
+      // grid, capture retargeting them elsewhere), or they reached it and the
+      // component ignored them (its `dragging` guard is React state, and a
+      // remount between pointerdown and the first move would reset it). The
+      // painted array cannot tell those apart, and guessing wrong sends you
+      // into the wrong file. `sameNode` catches the remount: a fresh element
+      // does not carry the property we stamp here.
+      await page.evaluate(() => {
+        const el = document.querySelector('[role="grid"]');
+        if (!el) return;
+        const probe = { moves: 0, downs: 0, ups: 0, node: el, seen: [] };
+        window.__dragProbe = probe;
+        // Resolve the cell the same way the component does, at the same
+        // instant, so the failure can say what IT saw rather than what the
+        // test intended. `onPointerMove` has three early returns (the drag
+        // guard, an unresolved point, and the same-cell dedupe) and the
+        // painted array cannot tell which one fired.
+        const resolve = (e) => {
+          const t = document.elementFromPoint(e.clientX, e.clientY);
+          const c = t instanceof Element ? t.closest("[data-day][data-slot]") : null;
+          return c
+            ? `${c.getAttribute("data-day")}:${c.getAttribute("data-slot")}`
+            : `<${t?.tagName?.toLowerCase() ?? "nothing"}>`;
+        };
+        el.addEventListener("pointerdown", () => (probe.downs += 1));
+        el.addEventListener("pointermove", (e) => {
+          probe.moves += 1;
+          const at = resolve(e);
+          if (probe.seen[probe.seen.length - 1] !== at) probe.seen.push(at);
+        });
+        el.addEventListener("pointerup", () => (probe.ups += 1));
+      });
+      // Last look before committing the gesture. Everything above can be true
+      // and stop being true while the harness makes its next round trip, and a
+      // drag that starts off the grid paints nothing and blames the component.
+      const stillThere = await page.evaluate(
+        ([x, y]) => {
+          const el = document.elementFromPoint(x, y);
+          const cell = el instanceof Element ? el.closest("[data-day][data-slot]") : null;
+          return cell ? `${cell.getAttribute("data-day")}:${cell.getAttribute("data-slot")}` : "<none>";
+        },
+        [a.x + a.width / 2, a.y + a.height / 2],
+      );
+      assert.equal(
+        stillThere,
+        "1:0",
+        "the grid moved between measuring it and putting the pointer down: the " +
+          `start of the drag is now ${stillThere} rather than Monday slot 0.`,
+      );
       await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
       await page.mouse.down();
+      // Each row is brought back into view immediately before the pointer
+      // reaches it. Painting re-renders the page, the layout shifts under the
+      // drag, and rows that were on screen when the run started are not on
+      // screen by the time the pointer gets to them. `elementFromPoint`
+      // returns null outside the viewport, so the component correctly ignores
+      // those moves and the run stops dead where the fold now is. Three Linux
+      // failures on 8 September 2026 were all this: the pointer crossed
+      // `1:0 -> 1:1 -> <nothing>` and painted slots 0 and 1 of 0 to 7.
       for (let slot = 1; slot <= 7; slot += 1) {
-        const cell = await page.locator(`[data-day="1"][data-slot="${slot}"]`).boundingBox();
+        const cell = await page.evaluate((s) => {
+          const el = document.querySelector(`[data-day="1"][data-slot="${s}"]`);
+          if (!el) return null;
+          let r = el.getBoundingClientRect();
+          const centreY = r.y + r.height / 2;
+          if (centreY < 0 || centreY > window.innerHeight) {
+            window.scrollBy(0, centreY - window.innerHeight / 2);
+            r = el.getBoundingClientRect();
+          }
+          return { x: r.x, y: r.y, width: r.width, height: r.height };
+        }, slot);
         assert.ok(cell, `slot ${slot} of the availability grid did not lay out`);
         await page.mouse.move(cell.x + cell.width / 2, cell.y + cell.height / 2, { steps: 3 });
         await page.waitForTimeout(60);
@@ -328,13 +473,33 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
             ?.getAttribute("data-on") === "true",
         ),
       );
+      const drag = await page.evaluate(() => {
+        const probe = window.__dragProbe;
+        if (!probe) return null;
+        return {
+          downs: probe.downs,
+          moves: probe.moves,
+          ups: probe.ups,
+          seen: probe.seen.join(" -> "),
+          sameNode: probe.node === document.querySelector('[role="grid"]'),
+        };
+      });
       assert.deepEqual(
         painted,
         new Array(8).fill(true),
         `the drag was meant to paint Monday slots 0 to 7 and painted ${painted
           .map((on, slot) => (on ? slot : null))
           .filter((slot) => slot !== null)
-          .join(", ") || "nothing"}`,
+          .join(", ") || "nothing"}. ` +
+          `The grid received ${drag?.downs ?? "?"} pointerdown, ` +
+          `${drag?.moves ?? "?"} pointermove, ${drag?.ups ?? "?"} pointerup; ` +
+          `the pointer crossed ${drag?.seen || "?"}; ` +
+          `the container is ${drag?.sameNode ? "the same" : "a DIFFERENT"} element ` +
+          "than before the drag. Zero moves means they never reached the grid, " +
+          "so look at the coordinates and at what is over it. Moves received but " +
+          "nothing painted means the component dropped them, so look at the " +
+          "guard in AvailabilityGrid.onPointerMove. A different element means it " +
+          "remounted mid-drag, which resets that guard and drops the capture.",
       );
 
       await page.getByRole("button", { name: "Save draft" }).click();
