@@ -264,10 +264,26 @@ export async function waitForHydration(page, selector, { timeout = WAIT_MS } = {
  * is a configuration worth covering rather than a thumb on the scale.
  */
 const CONTEXT_OPTIONS = { reducedMotion: "reduce" };
+/**
+ * Every context records a Playwright trace from the moment it opens: a DOM
+ * snapshot before and after each action, a screencast, the console and the
+ * network. Nothing is written unless a step fails, when the recorder saves
+ * it beside the screenshot (see `createStepRecorder`); a run that passes
+ * discards it with the browser.
+ *
+ * This is the diagnostic the availability-grid drag never had. Between 6 and
+ * 8 September 2026 that step failed one deployed run in four, and each
+ * failure could only say what the spec had INTENDED (a pointer over slot 0)
+ * and never what the browser had on screen when the button went down. Each
+ * hypothesis cost a CI run and a quarter chance of reproducing. The trace
+ * viewer answers "what was under the pointer" from one failing run.
+ */
+const TRACE_OPTIONS = { screenshots: true, snapshots: true };
 export async function openBrowser({ viewport = DEFAULT_VIEWPORT } = {}) {
   const playwright = await import("playwright");
   const browser = await playwright.chromium.launch();
   const context = await browser.newContext({ viewport, ...CONTEXT_OPTIONS });
+  await context.tracing.start(TRACE_OPTIONS);
   const page = await context.newPage();
   return { browser, context, page };
 }
@@ -283,6 +299,7 @@ export async function openBrowser({ viewport = DEFAULT_VIEWPORT } = {}) {
  */
 export async function newIdentityPage(browser, { viewport = DEFAULT_VIEWPORT } = {}) {
   const context = await browser.newContext({ viewport, ...CONTEXT_OPTIONS });
+  await context.tracing.start(TRACE_OPTIONS);
   const page = await context.newPage();
   return { context, page };
 }
@@ -311,10 +328,14 @@ export async function newIdentityPage(browser, { viewport = DEFAULT_VIEWPORT } =
  *    nothing about what the page showed instead. On the funnel's first real
  *    run that difference was an afternoon: the apply form never appeared, and
  *    the reason (the route had refused the reCAPTCHA token) was only in the
- *    server log. So a step that throws leaves a screenshot and the page's text
- *    under `artifactsDir`, named after the step, before the failure is
- *    reported. Best effort: a browser that has already gone must not turn one
- *    failure into two.
+ *    server log. So a step that throws leaves a screenshot, the page's text
+ *    and the context's trace under `artifactsDir`, named after the step,
+ *    before the failure is reported. Open the trace with
+ *    `npx playwright show-trace <file>.trace.zip`: it holds a DOM snapshot
+ *    before and after every action, so "what was under the pointer" and "what
+ *    had the page done since the last step" are read off it rather than
+ *    reproduced. Best effort: a browser that has already gone must not turn
+ *    one failure into two.
  */
 export function createStepRecorder({ t, page, markerPath, artifactsDir, skipReasonFor }) {
   const completed = [];
@@ -330,7 +351,22 @@ export function createStepRecorder({ t, page, markerPath, artifactsDir, skipReas
       await page.screenshot({ path: png, fullPage: true });
       const body = await page.locator("body").innerText().catch(() => "");
       writeFileSync(txt, `${page.url()}\n\n${body}\n`, "utf8");
-      console.error(`[e2e-spec] step failed: "${name}". Page kept at ${png} and ${txt}.`);
+      // The trace of THIS page's context. A spec with a second identity has a
+      // second context whose trace is discarded with the browser; the failing
+      // step's page is the one the recorder was given.
+      const trace = join(artifactsDir, `${slug}.trace.zip`);
+      const traced = await page
+        .context()
+        .tracing.stop({ path: trace })
+        .then(() => true)
+        .catch((err) => {
+          console.error(`[e2e-spec] could not save the trace: ${err.message}`);
+          return false;
+        });
+      console.error(
+        `[e2e-spec] step failed: "${name}". Page kept at ${png} and ${txt}` +
+          `${traced ? `; trace at ${trace} (npx playwright show-trace)` : ""}.`,
+      );
     } catch (err) {
       console.error(`[e2e-spec] could not capture the failed page: ${err.message}`);
     }
@@ -675,4 +711,79 @@ export async function approvePendingApplicant(page, origin, { email }) {
         `approval has landed, so both failures look the same from here. ${err.message}`,
     );
   });
+}
+
+// ---------------------------------------------------------------------------
+// Pointer probe: what a pointer-driven component actually received
+// ---------------------------------------------------------------------------
+
+/**
+ * Counts the pointer events one element receives and records what was under
+ * the pointer at each move, with listeners OUTSIDE React, installed
+ * immediately before a drag and read back immediately after it.
+ *
+ * A painted array cannot tell "the moves never reached the element" (wrong
+ * coordinates, something over it, capture sending them elsewhere) from "they
+ * reached it and the component dropped them" (a state guard, a remount
+ * between the button going down and the first move). The two send you into
+ * different files, and guessing wrong on the availability grid cost most of
+ * 8 September 2026. So the probe resolves the cell the same way the component
+ * does, `elementFromPoint` at the event's coordinates, at the same instant,
+ * and `sameNode` says whether the element the drag ended on is the one it
+ * started on.
+ *
+ * `cell` is the selector a hit resolves up to, and `keys` the data attributes
+ * that name one (`["day", "slot"]` prints `1:7`). A hit outside any cell
+ * prints the tag it landed on instead, which is the whole point: `<span>`
+ * names the column head that had moved under the pointer.
+ *
+ * This is a DIAGNOSTIC. It does not make a drag more reliable, and the
+ * interaction guard (`tests/e2e-interaction-guard.test.mjs`) is why a spec
+ * reaches for this rather than measuring coordinates of its own.
+ */
+export async function installPointerProbe(page, { target, cell, keys }) {
+  await page.evaluate(
+    ({ target, cell, keys }) => {
+      const el = document.querySelector(target);
+      if (!el) return;
+      const probe = { downs: 0, moves: 0, ups: 0, node: el, seen: [] };
+      window.__pointerProbe = probe;
+      const resolve = (e) => {
+        const t = document.elementFromPoint(e.clientX, e.clientY);
+        const c = t instanceof Element ? t.closest(cell) : null;
+        return c
+          ? keys.map((k) => c.getAttribute(`data-${k}`)).join(":")
+          : `<${t?.tagName?.toLowerCase() ?? "nothing"}>`;
+      };
+      el.addEventListener("pointerdown", () => (probe.downs += 1));
+      el.addEventListener("pointermove", (e) => {
+        probe.moves += 1;
+        const at = resolve(e);
+        if (probe.seen[probe.seen.length - 1] !== at) probe.seen.push(at);
+      });
+      el.addEventListener("pointerup", () => (probe.ups += 1));
+    },
+    { target, cell, keys },
+  );
+}
+
+/** The probe's counts, as one sentence a failure message can carry. */
+export async function readPointerProbe(page, { target }) {
+  const probe = await page.evaluate((target) => {
+    const p = window.__pointerProbe;
+    if (!p) return null;
+    return {
+      downs: p.downs,
+      moves: p.moves,
+      ups: p.ups,
+      seen: p.seen.join(" -> "),
+      sameNode: p.node === document.querySelector(target),
+    };
+  }, target);
+  if (!probe) return "the probe was never installed (the target was not in the DOM)";
+  return (
+    `the element received ${probe.downs} pointerdown, ${probe.moves} pointermove, ` +
+    `${probe.ups} pointerup; the pointer crossed ${probe.seen || "nothing"}; ` +
+    `the element is ${probe.sameNode ? "the same" : "a DIFFERENT"} node than before`
+  );
 }

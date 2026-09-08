@@ -295,7 +295,7 @@ jobs:
       # retention is one day rather than seven. Without it a failure still
       # gives the step name, the runner's log and the ledger, which is usually
       # where the answer is anyway.
-      - name: Upload the failing step's screenshots
+      - name: Upload the failing step's screenshots and traces
         if: failure() && vars.E2E_UPLOAD_SCREENSHOTS == 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -320,6 +320,17 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The nightly checks out the branch the target DEPLOYS FROM. A
+          # scheduled run always starts on the default branch, main, but
+          # dev.naisi.uk is built from `dev`, so without this line the 03:00
+          # run drives dev's app with main's specs, and the two disagree
+          # whenever dev is ahead of main. A dispatch keeps the ref it was
+          # given (`gh workflow run "End to end" --ref <branch>`). The workflow
+          # FILE still comes from main on a schedule, because GitHub reads a
+          # scheduled workflow's definition from the default branch, so a
+          # change to this file reaches the nightly only once it is promoted.
+          ref: ${{ github.event_name == 'schedule' && 'dev' || github.ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -447,7 +458,7 @@ jobs:
 
       # Opt-in for the same reason as the local job: these screenshots are of
       # the dev project's real screens, and this repository is public.
-      - name: Upload the failing step's screenshots
+      - name: Upload the failing step's screenshots and traces
         if: failure() && vars.E2E_UPLOAD_SCREENSHOTS == 'true'
         uses: actions/upload-artifact@v4
         with:

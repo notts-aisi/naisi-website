@@ -405,9 +405,22 @@ The rules the guards enforce, each because of a way a run can lie:
   still appear literally somewhere in the same spec file. The guard reads the
   wrapper's own call sites too, so an id handed to it that the entry does not
   declare fails here rather than as a locator timeout in a browser run.
-- **The two guards run under `npm test`**, with no browser and no credentials:
-  `tests/funnel-harness-guards.test.mjs` (the fence and the SPEC contract) and
-  `tests/e2e-coverage-map.test.mjs` (the map below).
+- **A spec acts through Playwright's actionable methods and never through
+  coordinates it measured.** `click`, `fill`, `press`, `hover`, `dragTo` and
+  `scrollIntoViewIfNeeded` check that the target is what the pointer will hit
+  immediately before acting, and retry; a spec that reads a box and moves the
+  mouse itself is racing the page between the two. `tests/e2e-interaction-guard.test.mjs`
+  fails raw mouse coordinates, `elementFromPoint`, `getBoundingClientRect`,
+  hand scrolling, `dispatchEvent` and fixed sleeps in a spec; measurement that
+  only asserts is allowlisted with its reason. Anything geometric a spec
+  really needs is a helper in `scripts/e2e/lib/browser.mjs` with its own
+  diagnostics. A failing step saves a trace beside its screenshot, so read
+  the trace before adding a wait: see "Diagnosing a failing step" in
+  `scripts/e2e/README.md`.
+- **The guards run under `npm test`**, with no browser and no credentials:
+  `tests/funnel-harness-guards.test.mjs` (the fence and the SPEC contract),
+  `tests/e2e-coverage-map.test.mjs` (the map below) and
+  `tests/e2e-interaction-guard.test.mjs` (the rule above).
 
 ### The status field, and burning down the allowlist
 
@@ -443,7 +456,9 @@ every pull request from a branch in this repository (the fetch batteries, then
 the browser specs, against a server the job builds and boots with the captcha
 relaxed and mail caught by Mailpit), and a `dev` job nightly at 03:00 UTC and
 on demand (both halves against the deployed dev backend, with the
-reCAPTCHA-dependent legs skipped and reported). Credentials come from Workload
+reCAPTCHA-dependent legs skipped and reported). The nightly checks out `dev`,
+the branch that target deploys from, rather than the default branch a schedule
+starts on; a dispatch keeps the ref it is given. Credentials come from Workload
 Identity Federation rather than a stored key, the trigger is `pull_request` and
 never `pull_request_target`, both jobs skip cleanly until the federation
 variables exist, and every run of the workflow queues behind the last because

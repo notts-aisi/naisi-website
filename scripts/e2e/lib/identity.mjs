@@ -4,6 +4,7 @@
  * The Admin SDK can set a password but cannot verify one.
  */
 import { loadEnv } from "./env.mjs";
+import { fetchOrExplain } from "./net.mjs";
 
 const IDENTITY_TOOLKIT = "https://identitytoolkit.googleapis.com/v1";
 
@@ -15,7 +16,7 @@ const IDENTITY_TOOLKIT = "https://identitytoolkit.googleapis.com/v1";
  */
 export async function trySignInWithPassword(email, password) {
   const env = loadEnv();
-  const res = await fetch(
+  const res = await fetchOrExplain(
     `${IDENTITY_TOOLKIT}/accounts:signInWithPassword?key=${encodeURIComponent(env.webApiKey)}`,
     {
       method: "POST",

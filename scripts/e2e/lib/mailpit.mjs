@@ -11,6 +11,7 @@
  * leftovers from a crashed run) can never satisfy each other's waits. The only
  * global wipe is run.mjs's, once, before any test starts.
  */
+import { fetchOrExplain } from "./net.mjs";
 const DEFAULT_URL = "http://127.0.0.1:8025";
 
 function apiBase() {
@@ -33,7 +34,7 @@ function apiBase() {
 }
 
 async function api(path, init = {}) {
-  const res = await fetch(`${apiBase()}${path}`, init);
+  const res = await fetchOrExplain(`${apiBase()}${path}`, init);
   if (!res.ok) {
     throw new Error(`Mailpit ${init.method ?? "GET"} ${path} failed (${res.status})`);
   }
