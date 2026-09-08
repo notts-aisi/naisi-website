@@ -24,11 +24,12 @@ import {
   isHarnessAccount,
 } from "./admin.mjs";
 import { loadEnv } from "./env.mjs";
+import { fetchOrExplain } from "./net.mjs";
 
 const IDENTITY_TOOLKIT = "https://identitytoolkit.googleapis.com/v1";
 
 async function exchangeCustomToken(customToken, webApiKey) {
-  const res = await fetch(
+  const res = await fetchOrExplain(
     `${IDENTITY_TOOLKIT}/accounts:signInWithCustomToken?key=${encodeURIComponent(webApiKey)}`,
     {
       method: "POST",
@@ -76,7 +77,7 @@ export async function withHarnessSession(id, options = {}) {
   try {
     const customToken = await adminAuth().createCustomToken(uid);
     const idToken = await exchangeCustomToken(customToken, env.webApiKey);
-    const res = await fetch(`${env.origin}/api/auth/session`, {
+    const res = await fetchOrExplain(`${env.origin}/api/auth/session`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ idToken }),
@@ -107,7 +108,7 @@ export async function withHarnessSession(id, options = {}) {
  */
 export async function sessionCookieFromIdToken(idToken) {
   const env = loadEnv();
-  const res = await fetch(`${env.origin}/api/auth/session`, {
+  const res = await fetchOrExplain(`${env.origin}/api/auth/session`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ idToken }),
@@ -145,14 +146,17 @@ export async function sessionCookieForUid(uid) {
 /** fetch() against the target with the harness session attached. */
 export function authedFetch(cookie, path, init = {}) {
   const env = loadEnv();
-  return fetch(`${env.origin}${path}`, {
+  // NO retry: a battery asserts on this response, and a POST the server had
+  // processed before the socket dropped must not be sent twice. The wrapper
+  // still names the socket error's code instead of undici's bare message.
+  return fetchOrExplain(`${env.origin}${path}`, {
     ...init,
     headers: { ...(init.headers ?? {}), cookie },
-  });
+  }, { retries: 0 });
 }
 
 /** fetch() against the target with no credentials. */
 export function anonFetch(path, init = {}) {
   const env = loadEnv();
-  return fetch(`${env.origin}${path}`, init);
+  return fetchOrExplain(`${env.origin}${path}`, init, { retries: 0 });
 }

@@ -679,6 +679,14 @@ a new spec gets them without asking:
   pointer at each move, with listeners outside React, so a failure can say
   whether the moves never arrived or arrived and were dropped. Those are
   different files to open.
+- **Setup calls retry once on a socket failure and name the cause.** Every
+  `fetch` under `scripts/e2e/lib/` (the token exchange, the session cookie,
+  Mailpit) goes through `fetchOrExplain` in `scripts/e2e/lib/net.mjs`, which
+  retries once when no HTTP response arrived at all and otherwise fails with
+  the socket error's code rather than undici's bare `fetch failed`. A response
+  of any status comes back untouched. The batteries' own fetches are the thing
+  under test and are deliberately not wrapped;
+  `tests/e2e-harness-fetch-guard.test.mjs` keeps the split.
 
 ## The coverage map
 
