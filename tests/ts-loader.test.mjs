@@ -322,6 +322,20 @@ const USERS = new Map([
       "loader that could not read JSX would have to stub away the very thing being asserted",
   ],
   [
+    "event-announcements-job.test.mjs",
+    "the queued announcement job, executed: its graph is the audience resolver, the real " +
+      "`EventAnnouncementEmail` behind it, the marker layer and `registry.ts`, which drags every " +
+      "other job in with it; the two transports and the junction read are its doors, so the " +
+      "audience arithmetic under test is the shipping arithmetic",
+  ],
+  [
+    "newsletter-push.test.mjs",
+    "the newsletter send route is the module under test and it imports `NewsletterEmail`, a " +
+      "`.tsx` that imports the rest of the template tree, so the route cannot be executed at " +
+      "all by a loader that cannot read JSX; the graph behind it reaches the real push " +
+      "pipeline and the real preference read, which are what the suite measures",
+  ],
+  [
     "member-records.test.mjs",
     "`memberRecords.ts` derives an entry from the round, application and review types, so its " +
       "graph is four admissions modules deep; the Admin SDK is its only stub, because the " +

@@ -1047,8 +1047,12 @@ const announceLoader = createLoader({
   ]),
 });
 
-const { sendEventAnnouncement, MAX_ANNOUNCEMENT_SENDS, MAX_PUSH_ROWS } =
+const { sendEventAnnouncement, MAX_ANNOUNCEMENT_SENDS } =
   await announceLoader.loadTs("lib/email/eventAnnouncement.ts");
+// The push ceiling moved out with the enumeration it bounds: the newsletter
+// send pushes through the same helper, and two copies of one figure would have
+// drifted. `tests/newsletter-push.test.mjs` executes the helper itself.
+const { MAX_PUSH_ROWS } = await announceLoader.loadTs("lib/push/rowAudience.ts");
 
 const ANNOUNCEMENT = {
   eventId: "event-1",
@@ -1234,6 +1238,28 @@ describe("the event announcement: the events row's own sender", () => {
     const result = await sendEventAnnouncement(globalThis.__db, input);
     assert.equal(result.pushed, 0);
     assert.equal(result.sent, 2);
+    assert.equal(
+      result.pushRefusal,
+      null,
+      "an unprovisioned backend is silence by design, and a publisher must not be " +
+        "told the announcement was refused when it was not",
+    );
+  });
+
+  test("the two legs refuse independently, and both refusals reach the publisher", async () => {
+    // The email leg is over its row ceiling and the push leg is fine. One
+    // refusal must not stand in for the other: a publisher told "the events
+    // list is too large" has learnt nothing about whether the phones buzzed.
+    const input = world();
+    globalThis.__channelRows = Array.from({ length: 501 }, (_, i) => ({
+      email: `guest${i}@e2e.invalid`,
+      audience: "guest",
+      audienceId: `guest${i}@e2e.invalid`,
+    }));
+    const result = await sendEventAnnouncement(globalThis.__db, input);
+    assert.match(result.refusal ?? "", /larger than a single announcement/);
+    assert.equal(result.pushRefusal, null);
+    assert.equal(result.pushed, 1, "the push audience is told even when the list is not");
   });
 });
 
@@ -1250,6 +1276,15 @@ const publishLoader = createLoader({
     ["@/lib/firebase/session", "export const getCurrentUser = async () => globalThis.__user ?? null;"],
     ["@/lib/events/rsvpToken", "export const baseUrl = () => 'https://naisi.test';"],
     ["@/lib/events/changeSummary", "export const formatEventWhen = () => 'Fri 6 June, 18:00';"],
+    // THE SWITCH, AS A DOOR. The real helper reads `config/scheduler` through
+    // the registry, which would pull every registered job into this suite's
+    // graph for one boolean. It is exercised for real in
+    // `tests/event-announcements-job.test.mjs`, against a fake config
+    // document; here it is the knob that says which path a publish takes.
+    [
+      "@/lib/scheduler/announcementQueue",
+      "export const announcementQueueEnabled = async () => globalThis.__queueAnnouncements === true;",
+    ],
     [
       "@/lib/email/eventAnnouncement",
       "export const sendEventAnnouncement = async (db, input) => {\n" +
@@ -1271,6 +1306,9 @@ describe("publishing announces once, and never fails because the announcement di
     globalThis.__announcements = [];
     globalThis.__announceThrows = false;
     globalThis.__announceResult = undefined;
+    // OFF by default, which is the shipped default and the state every
+    // assertion below the queued pair describes.
+    globalThis.__queueAnnouncements = false;
     globalThis.__user = viewer("approver-1", "member", { permissions: { approveEvent: true } });
     globalThis.__db = makeDb({
       events: {
@@ -1295,6 +1333,56 @@ describe("publishing announces once, and never fails because the announcement di
     assert.ok(stored.announcedAt, "the claim is stamped inside the write that publishes");
     assert.equal(globalThis.__announcements.length, 1);
     assert.equal(globalThis.__announcements[0].membersOnly, false);
+  });
+
+  test("with the queue switched ON it queues and sends nothing", async () => {
+    seed();
+    globalThis.__queueAnnouncements = true;
+    const res = await publishRoute.POST({}, ctxFor("event-1"));
+    assert.equal(res.status, 200);
+    const payload = jsonOf(res);
+    assert.equal(payload.announcementQueued, true);
+    assert.equal(
+      payload.announced,
+      false,
+      "`announced` has always meant somebody was told, and on this path nobody has been yet",
+    );
+    assert.equal(
+      globalThis.__announcements.length,
+      0,
+      "the request sent the announcement itself, which is the whole thing the queue exists to stop",
+    );
+    const stored = globalThis.__db.data.events["event-1"];
+    assert.equal(stored.status, "published");
+    assert.ok(
+      stored.announcedAt,
+      "the once-per-event claim is stamped on both paths: queueing is not announcing twice",
+    );
+    assert.equal(stored.announcementState, "queued");
+    assert.ok(stored.announcementQueuedAt, "the job orders its backlog by this");
+  });
+
+  test("a republish with the queue ON re-queues nothing either", async () => {
+    // The claim is what stops a second announcement, and it stops the QUEUED
+    // one for the same reason it stops the inline one: an event pulled back to
+    // approved and pushed live again is not news twice.
+    seed({ announcedAt: { __op: "serverTimestamp" } });
+    globalThis.__queueAnnouncements = true;
+    const res = await publishRoute.POST({}, ctxFor("event-1"));
+    assert.equal(jsonOf(res).announced, false);
+    assert.equal(jsonOf(res).announcementQueued, undefined);
+    assert.equal(globalThis.__db.data.events["event-1"].announcementState, undefined);
+  });
+
+  test("with the queue switched OFF the inline path writes no queue state", async () => {
+    // The shipped default, said out loud: an environment nobody has flipped
+    // the switch on sees exactly what it saw before this feature landed.
+    seed();
+    await publishRoute.POST({}, ctxFor("event-1"));
+    const stored = globalThis.__db.data.events["event-1"];
+    assert.equal(stored.announcementState, undefined);
+    assert.equal(stored.announcementQueuedAt, undefined);
+    assert.equal(globalThis.__announcements.length, 1);
   });
 
   test("a republish announces nothing, because the claim is already stamped", async () => {
@@ -1407,8 +1495,36 @@ describe("publishing announces once, and never fails because the announcement di
     assert.match(editor, /announcementLine\(body\)/);
     assert.match(editor, /body\.announcementFailed/);
     assert.match(editor, /body\.announcementRefused/);
+    // The fourth answer, which is the queued path's only one: the request can
+    // say nothing more than "it is queued", and everything after that is read
+    // off the event document by `queuedAnnouncementLine`.
+    assert.match(editor, /body\.announcementQueued/);
+    assert.match(editor, /queuedAnnouncementLine\(event\)/);
+    assert.match(editor, /goes out with the next\s*\+?\s*"?scheduler run/);
     // And the confirm says what pressing Publish does.
     assert.match(editor, /subscribed[\s\S]{0,40}to event announcements is emailed/);
+
+    // ORDER MATTERS INSIDE `announcementLine`, and it is the one thing a
+    // reader of that function cannot see at a glance. The two legs fail
+    // independently, so an empty events list (announced false, no refusal)
+    // can sit beside a push leg that refused. If the `!body.announced` return
+    // came first, that publisher would be shown nothing at all about the leg
+    // that failed, which is the same silence the whole function exists to
+    // end. So the trailer is built, and consulted, above it.
+    const trailerAt = editor.indexOf("const trailer = [refusal, pushRefusal]");
+    const notAnnouncedAt = editor.indexOf("if (!body.announced)");
+    assert.ok(trailerAt > 0, "the push refusal trailer has moved: re-read announcementLine");
+    assert.ok(notAnnouncedAt > 0, "the not-announced branch has moved: re-read announcementLine");
+    assert.ok(
+      trailerAt < notAnnouncedAt,
+      "the not-announced branch returns before the push refusal is used, so a publish " +
+        "that told nobody by email and could not notify anybody either says nothing",
+    );
+    assert.match(
+      editor.slice(notAnnouncedAt, notAnnouncedAt + 1200),
+      /return trailer \? `The event is published\. \$\{trailer\}` : null;/,
+      "the not-announced branch must still report a refusal when there is one",
+    );
   });
 
   test("a member with no approve permission cannot publish at all", async () => {

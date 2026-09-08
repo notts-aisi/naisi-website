@@ -68,7 +68,7 @@
  * Playwright and REFUSES to run without it, printing the one-line install.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -387,6 +387,128 @@ async function teardownFromLedgers(specs) {
 // Main
 // ---------------------------------------------------------------------------
 
+/**
+ * The run's outcome as a table on the GitHub Actions run page, plus one
+ * annotation per spec that fell short.
+ *
+ * WHY. A failing run otherwise costs a scroll through about fifteen hundred
+ * lines of TAP to learn which of eight specs stopped, and where. Chasing the
+ * availability-grid race on 8 September 2026 took several CI rounds largely
+ * for that reason. The table answers it at a glance, and the annotations put
+ * the same sentence at the top of the run and into the pull request's checks,
+ * so the common case needs no log at all.
+ *
+ * PASS AND FAIL COME FROM `markerShortfall`, never from counting here. That
+ * function is the guard: it already knows that a spec which wrote no marker
+ * never ran, and that a skip for the wrong reason is not a pass. A summary
+ * that recomputed the verdict could disagree with the exit code, and a green
+ * table over a red run is worse than no table at all. The step counts below
+ * are presentation, and nothing reads them back.
+ *
+ * Writes nothing outside GitHub Actions: `GITHUB_STEP_SUMMARY` is absent on a
+ * laptop, so this returns immediately there.
+ */
+function writeJobSummary({
+  selected,
+  shortfallByName,
+  testCode,
+  teardownCode,
+  remaining,
+  target,
+  origin,
+}) {
+  const file = process.env.GITHUB_STEP_SUMMARY;
+  if (!file) return;
+
+  const counts = (spec) => {
+    try {
+      const marker = JSON.parse(readFileSync(markerPath(spec.name), "utf8"));
+      return {
+        done: Array.isArray(marker.steps) ? marker.steps.length : 0,
+        skipped: Array.isArray(marker.skipped) ? marker.skipped.length : 0,
+      };
+    } catch {
+      // No marker at all is itself a shortfall, and markerShortfall says so in
+      // the row's last column. Zeroes here keep the table honest meanwhile.
+      return { done: 0, skipped: 0 };
+    }
+  };
+
+  const rows = selected.map(({ spec }) => ({
+    spec,
+    shortfall: shortfallByName.get(spec.name) ?? null,
+    ...counts(spec),
+  }));
+  const failed = rows.filter((r) => r.shortfall);
+  // Annotations are plain text and a pipe means nothing in one; a table cell
+  // would be split in two by the same character. Two escapes, deliberately.
+  const oneLine = (text) => String(text).replace(/\r?\n/g, " ");
+  const cell = (text) => oneLine(text).replace(/\|/g, "\\|");
+
+  const out = [
+    `## End to end: ${
+      failed.length === 0
+        ? `all ${rows.length} spec${rows.length === 1 ? "" : "s"} passed`
+        : `${failed.length} of ${rows.length} specs did not pass`
+    }`,
+    "",
+    `Target \`${origin}\` on project \`${target.projectId}\`.`,
+    "",
+    "| | Spec | Steps | Skipped | Stopped at |",
+    "| --- | --- | --- | --- | --- |",
+  ];
+  for (const { spec, shortfall, done, skipped } of rows) {
+    // The shortfall sentence already opens with the spec name, which would
+    // repeat the second column on every failing row.
+    const why = shortfall ? cell(shortfall.replace(`${spec.name}: `, "")) : "";
+    out.push(
+      `| ${shortfall ? "**FAIL**" : "pass"} | \`${cell(spec.name)}\` | ` +
+        `${done}/${spec.steps.length} | ${skipped || ""} | ${why} |`,
+    );
+  }
+  out.push("");
+  out.push(
+    remaining === 0
+      ? `Teardown left nothing behind on \`${target.projectId}\`.`
+      : `**Teardown left ${remaining} row(s) behind on \`${target.projectId}\`.** ` +
+          "The fixture ledgers are uploaded as an artifact on this run, and they " +
+          "name the rows to remove.",
+  );
+  if (testCode !== 0 && failed.length === 0) {
+    // Said out loud rather than showing an all-pass table over a red run: a
+    // spec can complete every declared step and the process still exit
+    // non-zero, and somebody reading only the table would look in the wrong
+    // place for the reason.
+    out.push("");
+    out.push(
+      "Every spec completed its steps, but the test process still exited " +
+        "non-zero. The reason is in the log rather than in this table.",
+    );
+  }
+  if (teardownCode !== 0) {
+    out.push("");
+    out.push(
+      "Teardown failed. Read the ledgers before re-running: a second run tears " +
+        "down its own fixture, not the one this run stranded.",
+    );
+  }
+
+  try {
+    appendFileSync(file, `${out.join("\n")}\n`);
+  } catch (err) {
+    // Never fail a run over its own summary.
+    console.error(`[e2e:browser] could not write the job summary: ${err.message}`);
+  }
+
+  // One annotation per failing SPEC, anchored to its file so it surfaces at
+  // the top of the run and in the pull request without opening a log. Not one
+  // per step: eight annotations for one broken page is the noise that teaches
+  // people to scroll past annotations.
+  for (const { spec, shortfall } of failed) {
+    console.log(`::error file=${spec.specFile},title=e2e ${spec.name}::${oneLine(shortfall)}`);
+  }
+}
+
 async function main() {
   let specs;
   try {
@@ -557,6 +679,10 @@ async function main() {
 
   let testCode = 1;
   let teardownCode = 1;
+  /** Per spec, the guard's verdict: a sentence when it fell short, else null. */
+  let shortfallByName = new Map();
+  /** Rows the teardown could not remove, for the summary. */
+  let rowsLeft = 0;
   /** Specs that really got seeded, so the finally tears down exactly those. */
   const seeded = [];
 
@@ -646,9 +772,10 @@ async function main() {
       ? await runLocal(specFiles)
       : await runAgainstTarget(origin, specFiles);
 
-    const shortfalls = selected
-      .map(({ spec }) => markerShortfall(spec, { acceptRecaptchaSkips }))
-      .filter(Boolean);
+    shortfallByName = new Map(
+      selected.map(({ spec }) => [spec.name, markerShortfall(spec, { acceptRecaptchaSkips })]),
+    );
+    const shortfalls = [...shortfallByName.values()].filter(Boolean);
     if (shortfalls.length > 0) {
       for (const line of shortfalls) console.error(`[e2e:browser] NOT A PASS: ${line}`);
       testCode = 1;
@@ -698,10 +825,20 @@ async function main() {
         }
       }
       teardownCode = remaining === 0 ? 0 : 1;
+      rowsLeft = remaining;
       log(`Total rows left behind across every fixture: ${remaining}.`);
     }
   }
 
+  writeJobSummary({
+    selected,
+    shortfallByName,
+    testCode,
+    teardownCode,
+    remaining: rowsLeft,
+    target,
+    origin,
+  });
   return testCode === 0 && teardownCode === 0 ? 0 : 1;
 }
 

@@ -60,7 +60,9 @@ import { readFileSync } from "node:fs";
 import { assertTarget } from "../../scripts/e2e/lib/env.mjs";
 import {
   createStepRecorder,
+  installPointerProbe,
   openBrowser,
+  readPointerProbe,
   signInWithPassword,
   stubRecaptchaOnLoopback,
   waitForHydration,
@@ -252,99 +254,125 @@ test("applicant funnel: apply, withdraw, re-apply, enrol, drop out", { skip: ski
       );
     });
 
-    await step("the availability grid paints and the marks persist", async () => {
+    await step("a pointer drag paints a run", async () => {
       // Monday (weekday 1), the first eight quarter hours: 09:00 to 11:00.
       const from = page.locator('[data-day="1"][data-slot="0"]');
       const to = page.locator('[data-day="1"][data-slot="7"]');
       await from.waitFor({ timeout: WAIT_MS });
       // The step before this one reloaded the page, and the grid is in the
-      // server markup a good while before React attaches to it on a dev
-      // server. A drag in that window paints NOTHING and says nothing about
-      // why: the run reads back `data-on="false"` on a cell it just dragged
-      // across. Same race the sign-in helper waits out, one component along.
+      // server markup a good while before React attaches to it. A drag in that
+      // window paints NOTHING and says nothing about why: the run reads back
+      // `data-on="false"` on a cell it just dragged across. Same race the
+      // sign-in helper waits out, one component along.
       await waitForHydration(page, '[data-day="1"][data-slot="0"]', { timeout: WAIT_MS });
-      // Put the MIDDLE of the run in the middle of the viewport first, so both
-      // ends of the drag sit well inside it. Fresh from a reload the grid's
-      // first row is at the bottom edge of a 900px window, under the sticky
-      // draft save bar, and a pointer put down there lands on the bar: nothing
-      // paints and the drag selects text down the page. Centring the FIRST
-      // cell was enough on a Mac and not on the Linux runner, whose taller
-      // rows put the eighth cell back under the bar (6 September 2026: "the
-      // drag did not fill through to the last cell", every run). The grid
-      // resolves cells with `elementFromPoint`, so whatever is painted on top
-      // of a cell wins, and the check below says WHAT is on top rather than
-      // leaving a bare false to be reproduced on another machine.
-      await page
-        .locator('[data-day="1"][data-slot="4"]')
-        .evaluate((el) => el.scrollIntoView({ block: "center" }));
-      const a = await from.boundingBox();
-      const b = await to.boundingBox();
-      assert.ok(a && b, "the availability grid did not lay out");
-      const under = await page.evaluate(
-        ([points]) =>
-          points.map(([x, y]) => {
-            const el = document.elementFromPoint(x, y);
-            const cell = el instanceof Element ? el.closest("[data-day][data-slot]") : null;
-            return cell ? `slot ${cell.getAttribute("data-slot")}` : `<${el?.tagName?.toLowerCase() ?? "nothing"}>`;
-          }),
-        [
-          [
-            [a.x + a.width / 2, a.y + a.height / 2],
-            [b.x + b.width / 2, b.y + b.height / 2],
-          ],
-        ],
-      );
-      assert.deepEqual(
-        under,
-        ["slot 0", "slot 7"],
-        `the two ends of the drag are not the cells the pointer will land on: ${under.join(", ")}. ` +
-          "Something is painted over the grid there (the sticky save bar, a header), so a " +
-          "drag would paint up to the covered cell and stop.",
-      );
-      // A real pointer drag rather than eight clicks: the drag is the gesture
-      // the component is built around (pointer capture, run filling), and
-      // clicking each cell would leave that path untested. PACED, one row at
-      // a time with a pause between rows, because the grid paints on every
-      // move it receives and hands each paint to the parent, and a synthetic
-      // drag that fires its moves back to back gives the page no time to
-      // commit between them: on the Linux runner a single 24-step sweep
-      // painted the first two cells and dropped the rest (screenshot from
-      // 6 September 2026), while a hand moving across eight rows takes the
-      // best part of a second. Each row's centre is measured as the pointer
-      // gets there, so a layout that shifts under the drag cannot fool it.
-      await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
-      await page.mouse.down();
-      for (let slot = 1; slot <= 7; slot += 1) {
-        const cell = await page.locator(`[data-day="1"][data-slot="${slot}"]`).boundingBox();
-        assert.ok(cell, `slot ${slot} of the availability grid did not lay out`);
-        await page.mouse.move(cell.x + cell.width / 2, cell.y + cell.height / 2, { steps: 3 });
-        await page.waitForTimeout(60);
-      }
-      await page.mouse.up();
-      const painted = await page.evaluate(() =>
-        Array.from({ length: 8 }, (_, slot) =>
-          document
-            .querySelector(`[data-day="1"][data-slot="${slot}"]`)
-            ?.getAttribute("data-on") === "true",
-        ),
-      );
-      assert.deepEqual(
-        painted,
-        new Array(8).fill(true),
-        `the drag was meant to paint Monday slots 0 to 7 and painted ${painted
+
+      // ONE real drag, and it is Playwright's own. The drag is the gesture the
+      // component is built around (pointer capture, filling the run between
+      // two moves), so it stays; `dragTo` scrolls each end into view, waits
+      // for it to hold still, checks that the cell is what the pointer will
+      // hit, and only then moves. Between 6 and 8 September 2026 this step
+      // measured the cell centres itself, scrolled the window by the
+      // shortfall, re-checked twice running, and re-anchored every row as the
+      // pointer reached it, and still failed one deployed run in four: a
+      // measurement taken in one round trip and acted on in the next can
+      // always be overtaken by a reflow, and on the last such failure the
+      // button went down on the column head's `<span>` where slot 0 had been
+      // a moment earlier. The tool's actionability check is the same
+      // measurement taken immediately before the act, with retry, and it is
+      // not this spec's to reimplement. If it ever proves insufficient the
+      // answer is a trace (every failing step now saves one), not a fifth
+      // hand-rolled wait.
+      //
+      // ONE retry, out loud. The page can still move in the round trip between
+      // the hover and the button going down, and a person whose drag caught
+      // nothing simply drags again. A component regression fails both
+      // attempts identically, and the first attempt's diagnostics are printed
+      // so the retry is never silent: a run that needed it says so in the log.
+      const paintedSlots = () =>
+        page.evaluate(() =>
+          Array.from({ length: 8 }, (_, slot) =>
+            document
+              .querySelector(`[data-day="1"][data-slot="${slot}"]`)
+              ?.getAttribute("data-on") === "true",
+          ),
+        );
+      const probe = { target: '[role="grid"]', cell: "[data-day][data-slot]", keys: ["day", "slot"] };
+      const describe = (painted, received) =>
+        `painted ${painted
           .map((on, slot) => (on ? slot : null))
           .filter((slot) => slot !== null)
-          .join(", ") || "nothing"}`,
+          .join(", ") || "nothing"}; ${received}. ` +
+        "Zero pointerdown means the button went down on something over the grid, " +
+        "and the crossed list names it. Moves received but nothing painted means " +
+        "the component dropped them, so look at the guard in " +
+        "AvailabilityGrid.onPointerMove. A different node means the grid remounted " +
+        "mid-drag, which resets that guard and drops the capture.";
+      let painted = [];
+      let received = "";
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        await installPointerProbe(page, probe);
+        await from.dragTo(to);
+        painted = await paintedSlots();
+        received = await readPointerProbe(page, probe);
+        if (painted.every(Boolean)) break;
+        if (attempt === 1) {
+          console.warn(
+            `[funnel-spec] the first drag ${describe(painted, received)} ` +
+              "Clearing Monday and dragging once more.",
+          );
+          // Clear rather than drag again over a half-painted run: a drag
+          // INVERTS whatever its first cell was, so a second drag over a
+          // painted slot 0 would erase.
+          await page.getByRole("button", { name: "Clear Monday" }).click();
+          await page.locator('[data-day="1"][data-slot="0"][data-on="false"]').waitFor({ timeout: WAIT_MS });
+        }
+      }
+      assert.ok(
+        painted.every(Boolean),
+        `the drag was meant to paint Monday slots 0 to 7 twice over and ${describe(painted, received)}`,
       );
+    });
 
+    await step("the availability grid marks persist", async () => {
+      // Wednesday (weekday 3), the same eight quarter hours, through the
+      // OTHER pointer path: a click marks one cell, and a Shift-click fills
+      // the run from the last cell touched to this one. Two actionable
+      // clicks, each retried by Playwright until the cell is what the pointer
+      // hits, so what this step saves never depends on the drag above.
+      // Persisting is the thing this step is for; the gesture was the step
+      // before.
+      const first = page.locator('[data-day="3"][data-slot="0"]');
+      const last = page.locator('[data-day="3"][data-slot="7"]');
+      await first.click();
+      await last.click({ modifiers: ["Shift"] });
+      const full = new Array(8).fill(true);
+      const marks = () =>
+        page.evaluate(() =>
+          [1, 3].map((day) =>
+            Array.from({ length: 8 }, (_, slot) =>
+              document
+                .querySelector(`[data-day="${day}"][data-slot="${slot}"]`)
+                ?.getAttribute("data-on") === "true",
+            ),
+          ),
+        );
+      assert.deepEqual(
+        await marks(),
+        [full, full],
+        "a click and a Shift-click were meant to fill Wednesday slots 0 to 7 beside the dragged Monday run",
+      );
       await page.getByRole("button", { name: "Save draft" }).click();
       await page.getByText(/Saved at /).waitFor({ timeout: WAIT_MS });
       await page.reload({ waitUntil: "domcontentloaded" });
-      await page.locator('[data-day="1"][data-slot="0"]').waitFor({ timeout: WAIT_MS });
-      assert.equal(
-        await page.locator('[data-day="1"][data-slot="0"]').getAttribute("data-on"),
-        "true",
-        "the painted availability did not come back after a reload",
+      // The last cell painted, back from the server. Waited for rather than
+      // read once: the grid is in the markup before the draft is.
+      await page
+        .locator('[data-day="3"][data-slot="7"][data-on="true"]')
+        .waitFor({ timeout: WAIT_MS });
+      assert.deepEqual(
+        await marks(),
+        [full, full],
+        "the painted availability did not all come back after a reload",
       );
     });
 

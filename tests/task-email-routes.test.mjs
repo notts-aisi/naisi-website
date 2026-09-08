@@ -462,7 +462,13 @@ describe("the three gates, in series", () => {
     assert.equal(reads, 0, "the kill switch paid for a roster read it never used");
   });
 
-  test("a transport failure is still a failure, not an opt-out", async () => {
+  test("a transport failure is still a failure, not an opt-out", async (t) => {
+    // The route logs each failed send with the error's stack, whose frames
+    // under this loader are data: URLs carrying whole modules (three lines of
+    // 74 KB here), and tests/lib/outputGuard.mjs fails the file on a line over
+    // 20 KB. The log line is right in production and expected here, so it is
+    // muted for this case only; the mock is restored when the test ends.
+    t.mock.method(console, "error", () => {});
     // The two must not blur: `failed` is the number an admin reads as "somebody
     // was not told and should have been", and a preference is not that.
     globalThis.__sendThrows = true;

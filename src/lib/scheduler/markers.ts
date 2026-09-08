@@ -42,6 +42,7 @@ export {
   SCHEDULER_MARKER_RETENTION_DAYS,
   breakReturnMarker,
   decideMarkerClaim,
+  eventAnnouncementMarker,
   isStaleWork,
   markerFamilyOf,
   normalizeSchedulerMarker,
@@ -53,6 +54,7 @@ export {
   worksheetReminderMarker,
 } from "@/lib/firestore/schedulerMarkers";
 export type {
+  EventAnnouncementLeg,
   MarkerDecision,
   MarkerPolicy,
   SchedulerMarker,
@@ -225,6 +227,79 @@ export async function stampSkipped(
       },
       { merge: true },
     );
+}
+
+/**
+ * The skip reason on a marker whose work WENT OUT but whose `sentAt` stamp
+ * could not be written, even on a retry.
+ *
+ * Terminal on purpose: `stampError` writes only `lastError`, which leaves the
+ * marker reclaimable, and a later tick would then send the same person a
+ * second copy. An oddly-worded marker is cheaper than that.
+ */
+export const SENT_UNSTAMPED_REASON = "sent-unstamped";
+
+/**
+ * Stamp a marker whose work HAS gone out, and make sure it stays stamped.
+ *
+ * The stamp is the only thing between a delivered message and a second copy of
+ * it: `decideMarkerClaim` refuses a marker with `sentAt`, `failedAt` or
+ * `skippedReason` set and nothing else, so a claimed marker left unstamped is
+ * reclaimable by a later tick. A single `stampSent()` inside a try/catch that
+ * only logs is therefore a duplicate send waiting on the re-claim window. So
+ * the stamp gets a second attempt, and if that fails too the marker is settled
+ * a way the re-claim rule will not touch. See {@link SENT_UNSTAMPED_REASON}.
+ *
+ * NEVER THROWS: every caller is past the point of no return, and a rejection
+ * here would be reported as a failed send that in fact succeeded.
+ *
+ * `admissionsReminders.ts` and `worksheetDueReminders.ts` each still carry
+ * their own copy of this, pinned by name inside their own suites. They migrate
+ * to this one when they are next touched; two copies of a rule is exactly what
+ * this module exists to stop, and moving them under an unrelated pull request
+ * would put a duplicate-send guard's rewrite where nobody is looking for it.
+ */
+export async function stampSentOrSettle(
+  db: Firestore,
+  markerId: string,
+  at: Date = new Date(),
+): Promise<void> {
+  try {
+    await stampSent(db, markerId);
+    return;
+  } catch (first) {
+    // Marker id only: it carries no address by construction, which is why the
+    // builders hash a guest's.
+    console.warn(
+      "[scheduler] a sent message could not be stamped, retrying once",
+      markerId,
+      errorText(first, 200),
+    );
+  }
+
+  try {
+    await stampSent(db, markerId);
+    return;
+  } catch (second) {
+    const error =
+      "The message WAS sent. Its marker could not be stamped, so it is settled " +
+      `as ${SENT_UNSTAMPED_REASON} to stop a later tick sending it again: ` +
+      errorText(second, 120);
+    try {
+      // Terminal write first: it is the one that prevents the duplicate.
+      await stampSkipped(db, markerId, SENT_UNSTAMPED_REASON, at);
+      await stampError(db, markerId, error);
+    } catch (third) {
+      // Three failed writes to one document is a database this job cannot fix.
+      // Logged and swallowed: the caller's send has already happened.
+      console.error(
+        "[scheduler] a sent message could not be settled either",
+        markerId,
+        errorText(third, 200),
+      );
+    }
+    console.error("[scheduler] a sent message could not be stamped", markerId, error);
+  }
 }
 
 /**

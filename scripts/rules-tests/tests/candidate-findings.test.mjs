@@ -181,6 +181,109 @@ describe("FINDING 1 (FIXED) — events update is scoped per document and per sta
   });
 });
 
+describe("THE ANNOUNCEMENT QUEUE: its state fields are the server's alone", () => {
+  /*
+   * Not a finding that reached production: a hole the queued event
+   * announcement WOULD have opened, closed in the same pull request that
+   * opened it. It belongs beside FINDING 1 because it is the same class of
+   * mistake, one layer along: that finding pinned WHO may edit an event and in
+   * WHICH states, and left WHAT they may write to `pinnedFieldsUnchanged()`.
+   *
+   * The `event-announcements` scheduler job scans for events whose
+   * `announcementState` is 'queued' or 'sending' and mails the whole events
+   * list about each one. Without a pin, a drafter could write that state onto
+   * their own unpublished draft and have the platform announce it, to
+   * everybody, with no approver anywhere near it. `announcedAt` is deliberately
+   * NOT pinned (clearing it only lets an approver re-announce their own event,
+   * which they can arrange anyway); this is a different power, and it is the
+   * server's.
+   */
+  it("refuses an AUTHOR queueing their own draft for announcement", async () => {
+    await seedUser("author", { role: "member", permissions: { draftEvent: true } });
+    await seed(async (db) => {
+      await db.collection("events").doc("q1").set({
+        title: "Not reviewed by anybody",
+        authorUid: "author",
+        status: "draft",
+        collaboratorUids: [],
+      });
+    });
+    const db = await asUser("author");
+    await assertFails(
+      db.collection("events").doc("q1").update({ announcementState: "queued" }),
+    );
+    await assertFails(
+      db.collection("events").doc("q1").update({ announcementQueuedAt: new Date() }),
+    );
+  });
+
+  it("refuses a COLLABORATOR, who may hold no permission at all", async () => {
+    // `isCollaborator()` tests membership of `collaboratorUids` and nothing
+    // else, so this is the weakest writer the event rules admit.
+    await seedUser("collab", { role: "member" });
+    await seed(async (db) => {
+      await db.collection("events").doc("q2").set({
+        title: "Someone else's draft",
+        authorUid: "another-person",
+        status: "draft",
+        collaboratorUids: ["collab"],
+      });
+    });
+    const db = await asUser("collab");
+    await assertFails(
+      db.collection("events").doc("q2").update({ announcementState: "sending" }),
+    );
+  });
+
+  it("refuses an APPROVER rewriting a finished announcement's result", async () => {
+    // The counters an approver reads off the manage screen are a record of
+    // what actually went out, in the same way `rsvpCount*` is: a writable one
+    // is a record of nothing.
+    await seedUser("approver3", { role: "member", permissions: { approveEvent: true } });
+    await seed(async (db) => {
+      await db.collection("events").doc("q3").set({
+        title: "Reviewed",
+        authorUid: "another-person",
+        status: "pending",
+        collaboratorUids: [],
+        announcementState: "done",
+        announcementResult: { sent: 2, pushed: 1 },
+      });
+    });
+    const db = await asUser("approver3");
+    await assertFails(
+      db
+        .collection("events")
+        .doc("q3")
+        .update({ announcementResult: { sent: 999, pushed: 999 } }),
+    );
+    await assertFails(
+      db.collection("events").doc("q3").update({ announcementState: "queued" }),
+    );
+  });
+
+  it("still lets an ordinary edit through on an event that carries the fields", async () => {
+    // The pin is an equality test, not a ban on documents that hold the
+    // fields: an approver editing the title of an event whose announcement has
+    // already gone must still be able to save.
+    await seedUser("approver4", { role: "member", permissions: { approveEvent: true } });
+    await seed(async (db) => {
+      await db.collection("events").doc("q4").set({
+        title: "Reviewed",
+        authorUid: "another-person",
+        status: "pending",
+        collaboratorUids: [],
+        announcementState: "done",
+        announcementResult: { sent: 2, pushed: 1 },
+      });
+    });
+    const db = await asUser("approver4");
+    await assertSucceeds(
+      db.collection("events").doc("q4").update({ title: "Reviewed, retitled" }),
+    );
+  });
+});
+
 describe("FINDING 2 (FIXED) — activity-log create gates on the parent task", () => {
   it("refuses a signed-in stranger writing into a task they cannot read", async () => {
     // `pending` is what every brand-new Google account starts as, so this is

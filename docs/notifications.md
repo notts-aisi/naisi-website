@@ -123,8 +123,10 @@ answered), and it is never written again.
 - `/profile` writes the whole `profile.notifications` map on Save, and the push
   column writes a leaf at `profile.notifications.push` on every toggle. See
   [The profile grid](#the-profile-grid).
-- `/api/unsubscribe` writes only the category keys its token actually names, as
-  dotted field paths, and iterates `UNSUBSCRIBABLE_CATEGORIES`. See below.
+- `/api/unsubscribe` writes only the keys its token actually names, as dotted
+  field paths, and iterates `UNSUBSCRIBABLE_CATEGORIES`: the categories leaf for
+  each row it names, plus the PUSH leaf for the two subscription rows. See
+  below.
 - `/api/admin/migrate-notifications` writes `channels` plus the newsletter and
   events cells and nothing else. Backfilling a `courses` cell from the legacy
   shape would opt every legacy member out of cohort mail, because that shape
@@ -150,15 +152,20 @@ Two helpers, one per column, and they differ in exactly one place.
 | Helper | `wantsEmailForProfile(profile, row)` in `src/lib/email/preferences.ts` | `wantsPushFor(uid, row)` in `src/lib/push/preferences.ts` |
 | Takes | the profile the sender is already holding | a uid, and reads the document itself |
 | Absent or junk cell | the row's default | the row's default |
-| No user document | the sender has already skipped them: no document, no address | **yes**, on every row |
+| No user document | the sender has already skipped them: no document, no address | the row's default |
 | A read that FAILS | **the row's default**, so an opt-out row still sends | **no**, always |
 
-The missing-document answer is the one cell of that table that does not resolve
-the row's default, and it is a simplification rather than a decision: deleting
-an account deletes its `pushSubscriptions` rows in the same pass
-(`src/lib/firestore/accountDeletion.ts`), so the only way to reach the branch at
-all is a deletion whose subscription sweep failed. It costs nothing today and
-would be a one-line change the day it does.
+The missing-document answer used to be the one cell of that table that did not
+resolve the row's default: it answered yes on every row, on the reasoning that
+deleting an account deletes its `pushSubscriptions` rows in the same pass
+(`src/lib/firestore/accountDeletion.ts`), so the branch was reachable only
+through a deletion whose subscription sweep had failed. That held for a sender
+addressing a uid it already knew and not for one that enumerates devices: the
+event announcement reads `pushSubscriptions` and asks the row per distinct
+owner, so a device row whose owner's document was gone would have been pushed an
+opt-in row's notification nobody had asked for. Since 7 September 2026 the
+branch resolves the row's default like an absent cell, and the column has one
+rule.
 
 The email helper takes a profile rather than a uid because every grid sender
 already reads `users/{uid}` for the address and the name; a second read per
@@ -185,16 +192,55 @@ is that helper inverted, for the loops that hold a raw document and are asking
 
 | Row | Email | Push |
 | --- | --- | --- |
-| `newsletter` | `POST /api/newsletter/[id]/send`, the only sender that addresses this row | **nothing yet** |
-| `events` | the new-event announcement, on publish | the same announcement |
+| `newsletter` | `POST /api/newsletter/[id]/send`, the only sender that addresses this row | the same send, alongside its email loop |
+| `events` | the new-event announcement, on publish, inline or queued to the `event-announcements` job | the same announcement |
 | `courses` | the cohort announcement composer, the weekly session nudge, the run catch-up nudge, the admissions deadline reminder job, the admissions stage-release job | an admissions decision, an allocation publish, the stage release |
 | `tasks` | the five `/api/tasks/[id]/*` senders, the four worksheet circulation messages, the worksheet due-soon reminder | a mirror beside each of those |
 
-**Nothing pushes for the newsletter row**, and the copy on the cell says so:
-"We don't send this one yet, so your answer here waits until we do." The row is
-drawn and settable now so a member is not asked again the day a sender lands, but
-a description promising a notification nothing produces is the one thing it must
-not say. Delete that sentence with the producer.
+**The two opt-in rows share one push audience shape**, in
+`sendPushToRowAudience` (`src/lib/push/rowAudience.ts`): every account with a
+device whose cell for that row is on, enumerated from `pushSubscriptions`,
+deduped by owner, one preference read each, refused whole over 500 device rows.
+The newsletter send and the event announcement both call it, each naming its own
+row, and each dispatches it CONCURRENTLY with its email leg because two bounded
+loops in one request cost the larger rather than the sum.
+
+Only `newsletter` and `events` may be addressed that way, which is why the
+helper's row parameter is narrower than the four. Their cells resolve OFF when
+absent, so a scan of every device reaches only the accounts that answered yes.
+On `courses` and `tasks` an absent cell resolves ON, so the same scan would
+notify every account that has ever enabled a device; those rows are addressed by
+uid instead, by the mirrors beside their emails.
+
+The newsletter notification carries the subject and lands on `/dashboard`. A
+newsletter has no web view at all (the only render of one is
+`POST /api/newsletter/preview`, gated to drafters and approvers), so the
+destination is the member's own home rather than the message. The audience is
+DEVICES whose last claimant holds the cell, not signed-in sessions: a push
+subscription belongs to a browser profile and survives sign-out
+(`src/lib/push/store.ts`), so a signed-out device lands on the sign-in page.
+That is still this app and still the right door, where the marketing homepage
+would say less and the drafter tool would refuse them outright.
+
+**The send is claimed once.** `POST /api/newsletter/[id]/send` stamps
+`sendClaimedAt` on the draft in one transaction that also requires `approved`
+and no standing claim, in the same shape the publish route claims `announcedAt`.
+Two approvers pressing Send at once therefore produce one send and one 409, and
+both legs sit inside that one claim, so a push cannot repeat without an email
+repeating. The write that sets `sent` deletes the field.
+
+The subject and blocks that go out are re-derived from the snapshot that
+transaction read, not from the read at the top of the route: an approved draft
+is still editable, so a correction saved in that window is what gets mailed. A
+draft emptied in the same window answers 400 and hands the claim straight back,
+because nothing was sent.
+
+Nothing expires a claim, on purpose: a rule that released it after N minutes
+would re-mail the whole list on the day a send took longer than N. So a request
+killed part way through leaves the draft `approved` and carrying
+`sendClaimedAt`, and every retry is refused until an admin deletes that one
+field from the `newsletterDrafts/{id}` document in the Firestore console,
+having read the send log to see who already has the mail.
 
 The `courses` email senders resolve their audience through `resolveCohortAudience`,
 which drops anybody whose row is a stored `false` before a message is rendered.
@@ -212,8 +258,11 @@ reminder job reads the kill switch once per run, then the circulation's
 push mirror reads the push cell for itself, which is why a member who has
 switched the email cell off still gets the notification.
 
-`push.tasks` is read in exactly one place (`src/lib/push/taskNotifications.ts`)
-and `push.courses` in exactly one (`src/lib/push/courseNotifications.ts`).
+Every push cell is read in exactly one place: `push.tasks` in
+`src/lib/push/taskNotifications.ts`, `push.courses` in
+`src/lib/push/courseNotifications.ts`, and `push.newsletter` and `push.events`
+in `src/lib/push/rowAudience.ts`, which reads whichever of the two its caller
+names.
 
 ## The marketing unsubscribe link's reach
 
@@ -226,10 +275,26 @@ worksheet deadlines on the same click would take away mail they need to do the
 thing they volunteered for, without ever telling them. That row is switched off
 on `/profile`, where the copy says what it stops, and nowhere else.
 
+**The link refuses the ROW, not the email column, for the two subscription
+rows.** `newsletter` and `events` both push now, so for each of those the route
+writes `profile.notifications.push.<row> = false` beside the categories leaf. A
+member who clicks the footer link, or Gmail's one-click List-Unsubscribe-Post
+button, has said "stop sending me this"; leaving the push cell on would keep the
+notification arriving from the very message they unsubscribed from, with nothing
+on the page they landed on to suggest they had not finished.
+
+`courses` is the deliberate exception, and its two cells are the reason. The
+EMAIL cell gates cohort announcements and session nudges; the PUSH cell gates an
+admissions decision, a stage release and a course placement. Those are messages
+about somebody's own application and their own place on a run, so a click at the
+foot of a cohort email must not be read as a refusal of them. That cell is
+switched off on `/profile` and nowhere else, exactly as `tasks` is.
+
 The route also writes only the keys its token names. Rebuilding the whole
 `categories` map and writing it back would collapse absent into `false` on every
 row, which once `courses` joined the list meant an unsubscribe click on a
-newsletter stamped a course-mail refusal the member never made.
+newsletter stamped a course-mail refusal the member never made. Adding the push
+column keeps that rule: two dotted leaves per row, never a map.
 
 ## The notice lane
 
@@ -347,31 +412,180 @@ concurrently.
   applies the events cell and the per-address routing in one answer. The junction
   row IS the opt-in.
 - **Push** goes to every account with a device whose `push.events` cell is on,
-  enumerated from `pushSubscriptions` and deduped by owner. A different question,
-  asked separately: a member can hold the email row and refuse the notification.
+  through the shared `sendPushToRowAudience` the newsletter send also uses
+  (`src/lib/push/rowAudience.ts`): enumerated from `pushSubscriptions`, deduped
+  by owner. A different question, asked separately: a member can hold the email
+  row and refuse the notification.
 - An event with `visibility: "members"` drops GUEST rows (an address with no
   account) and counts them. The push audience is accounts by construction.
 
-**Once per event, under a claim.** `announcedAt` is stamped on the event document
-inside the transaction that publishes it, so two racing publishes cannot both
-come out holding the announcement, and a later republish is not news twice. The
-claim is made before the send: an announcement that fails after the stamp is not
-retried, which is the better failure, because the other way round mails the whole
-list twice.
+**The two paths, and the switch that chooses between them.** The send used to
+run only inside the publish request, against App Hosting's 60s timeout, which
+is where its three ceilings come from and what this file called "the known
+limit". It now has a second path, and `POST /api/events/[id]/publish` reads the
+`event-announcements` scheduler job's switch ONCE, before its transaction, to
+decide which one this publish takes.
+
+| | Inline (switch off) | Queued (switch on) |
+| --- | --- | --- |
+| Where the send runs | in the publish request | on a scheduler tick |
+| Ceilings | 500 junction rows, 200 messages, 500 device rows | 5000 junction rows, 5000 device rows, no message ceiling (the list is delivered over as many ticks as it takes) |
+| Exactly once | the `announcedAt` claim | the claim, plus one marker per recipient per leg |
+| What the response says | counts, or a refusal | `announcementQueued: true` |
+| Where the outcome is read | the publish response | the event document, live |
+
+**Switch off is the shipped default, and it is prod's state.** The job
+registers with `enabledByDefault: false`, so with nothing stored the route
+behaves exactly as it always has and nothing changes for anybody. Only switch it
+on where the scheduler tick is actually armed: dev has a `SCHEDULER_SECRET` and
+a caller, prod has neither, and turning it on there would queue announcements
+nobody ever delivers. The switch is on the Site status page, under Jobs, as
+"Queued event announcements".
+
+**Recovering an event queued and then stranded.** Switching the job OFF does not
+un-queue what is already in the queue: an event published while it was on sits
+at `announcementState: "queued"` and the editor keeps saying the next run will
+take it. Nothing drains it but the job, on purpose, because the alternative is a
+second sender nobody registered. Two ways out, both an admin's:
+
+1. Turn the job back on and let the next tick deliver it. This is the right
+   answer whenever the announcement is still wanted.
+2. Delete `announcementState`, `announcementQueuedAt` and `announcedAt` from the
+   `events/{id}` document in the Firestore console. That clears the queue entry
+   AND the once-per-event claim, so pulling the event back to approved and
+   publishing it again takes the inline path and sends it there and then. Delete
+   all three: leaving `announcedAt` makes the republish announce nothing at all.
+
+**Once per event, under a claim, on both paths.** `announcedAt` is stamped on
+the event document inside the transaction that publishes it, so two racing
+publishes cannot both come out holding the announcement, and a later republish
+is not news twice. On the queued path that same transaction also writes
+`announcementState: "queued"` and `announcementQueuedAt`, so the hand-off cannot
+survive a claim that did not. On the inline path the claim is made before the
+send: an announcement that fails after the stamp is not retried, which is the
+better failure, because the other way round mails the whole list twice.
+
+**Exactly once per recipient, on the queued path, through markers.** One
+`schedulerMarkers` document per recipient per leg,
+`evannounce__{eventId}__{email|push}__{recipientKey}`, claimed before the send
+and stamped after it. That is what makes the job resumable with no cursor of its
+own: a tick that runs out of budget half way down the list leaves what it sent
+stamped, and the next tick's claim on those fails with ALREADY_EXISTS. The
+recipient key is `u{uid}` for a member and `g{hash}` for a guest row, never an
+address: a marker is kept for 180 days in a collection whose whole purpose is to
+say "this was sent", which is no place to accumulate a mailing list.
+
+A message that goes out but whose marker will not take the stamp is the one
+failure that would become a duplicate, so the stamp is retried once and the
+marker is then settled terminally as `sent-unstamped` rather than left for the
+re-claim rule (`stampSentOrSettle` in `src/lib/scheduler/markers.ts`).
+
+**A tick reads the event's markers in bulk before it walks the list**, in one
+equality-only query on `family` and `eventId`, and skips the recipients whose
+marker is already settled without asking `claim()` about them. That is what
+makes a long list finish rather than stall: every tick starts at the top of the
+audience, and a settled recipient put through `claim()` costs a failed
+`.create()` plus a transaction read for no progress at all, so past roughly 900
+of them a tick spent its whole budget re-checking the same prefix and never
+reached the tail. A marker that is claimed but UNSTAMPED is deliberately not in
+the skip set: the in-flight rule and the re-claim window are `claim()`'s to
+apply, and skipping those would be skipping the retry.
+
+It costs one document read per marker per tick. At the 5000-row ceiling, drained
+200 units at a time, that is 25 ticks over up to 10000 markers, on the order of
+a hundred thousand reads for one announcement. That is the price of resuming
+with no cursor, and a cursor is the fix if it ever matters.
+
+**Nothing claims the EVENT, and three separate things make the overlap safe.**
+Two ticks may both pick up one queued event and walk its audience, which the
+tick's own re-arm makes ordinary. `"sending"` is a progress note, not a lock.
+What holds instead:
+
+- **Sends** are exactly-once, through the per-recipient markers above.
+- **Counts** are increments. Each tick writes its own deltas with
+  `FieldValue.increment` and never the accumulated totals, so a tick that read
+  the totals before another tick committed cannot write that work away. The one
+  absolute is `audienceSkipped`, which is a snapshot of the latest audience
+  resolution rather than a running total.
+- **State transitions are transactional.** `done` and `refused`, and the release
+  of `announcedAt` with them, are decided inside a transaction that re-reads the
+  document and writes only while the announcement is still pending.
+
+**An unsettled unit keeps the event in the queue.** The scan finds `queued` and
+`sending` and nothing else, so an event written `done` is one no later tick will
+ever look at again. A send that failed, a claim another tick is holding in
+flight, or anything that threw therefore leaves the event `"sending"` and
+reports `hasMore`; the ordinary marker rules take it from there, and a marker
+the claim helper gives up on after `maxAttempts` is settled as a failure, which
+is what lets an event whose worst recipient cannot be reached still finish.
+
+**The state fields, server-written only.** `announcementState` (`queued` |
+`sending` | `done` | `refused`, absent on an event announced inline or never
+announced), `announcementQueuedAt`, `announcementStartedAt`, and
+`announcementResult` (`{ sent, skipped, audienceSkipped, suppressed, failed,
+pushed, refusal, pushRefusal, released, finishedAt }`). The totals are persisted
+at the end of EVERY tick that works on the event, so an announcement that took
+four ticks still reports what all four did.
+
+Three of those fields exist for a reason worth stating. `failed` counts
+RECIPIENTS the announcement gave up on, once each, at the moment their attempt
+budget runs out with nothing delivered; the attempts before it are retries, and
+counting them made one unreachable address read as four unreached members. It is
+a different unit from `sent`, which counts messages, and a partial delivery
+belongs on the `sent` side: a member whose university address bounced while
+their Gmail went through was told, so they count in `sent` and not in `failed`,
+and the bounce shows up in the log and then on the suppression list and the
+deliverability tab, which is where a per-address failure belongs. `skipped` counts
+recipients the job CLAIMED and consciously did not reach and is incremented;
+`audienceSkipped` counts the rows dropped when the audience was resolved (a
+members-only guest row, an account that is gone) and is a SNAPSHOT, because the
+audience is re-resolved on every tick and an incremented version would count the
+same drops once per tick. `released` records whether the claim was handed back,
+because the two refusals that reach nobody are not distinguishable by their
+counts and only one of them can be retried by republishing. `firestore.rules` pins all four against client writes, which
+is a sharper rule than `announcedAt` gets: the job scans for `queued` and
+`sending`, so a drafter who could write that state onto their own unpublished
+draft would have the platform announce it to everybody with no approver
+involved.
 
 **A pure refusal hands the claim back.** If the announcement refuses
 deterministically before dispatching anything and nothing was sent, failed or
-pushed, `announcedAt` is cleared and the response says so, because otherwise the
-claim is spent and no supported action gets the announcement out. A throw is not
-released: the dispatcher can reject after other workers have delivered.
+pushed, `announcedAt` is cleared and the fact is reported, because otherwise the
+claim is spent and no supported action gets the announcement out. The queued
+path applies the same rule, judged on the ACCUMULATED totals: an event that
+mailed forty people on Monday and hit a refusal on Tuesday keeps its claim. A
+throw is not released on either path: the dispatcher can reject after other
+workers have delivered.
 
-**The known limit: it runs inside the publish request**, against App Hosting's
-60s timeout, so it carries three ceilings. 500 junction rows read, 200 messages
-sent (counted on addresses, because a member with two verified addresses is two
-sends) and 500 device rows. A list that outgrows them needs the send taken off
-the request path, which is a scheduler job and a different feature; raising the
-numbers means redoing the wall-clock arithmetic in `src/lib/email/dispatch.ts`.
-Publishing itself never fails because the announcement did.
+**The stale rule is about the EVENT, not the queue.** A queued announcement that
+is a day late is still worth sending, because an event page that went live stays
+news until the event happens; so there is no lateness bound on the queue at all.
+What is refused is an announcement for an event whose `startAt` has passed, and
+that refusal RELEASES NOTHING, because there is no later moment at which
+announcing a past event becomes right. The job's `maxLateHours` (72) is the
+fallback for an event with no start time at all, which nothing else could rule
+on.
+
+**What the publisher sees.** Inline, the publish response carries the counts or
+the refusal and `EventEditor` renders them. Queued, the response can only say
+"Published. The announcement is queued and goes out with the next scheduler run,
+usually within fifteen minutes", and everything after that is read off the event
+document by the listener the editor already holds: queued (naming the job, and
+saying "while that job is switched on"), in progress with the running totals,
+announced with the counts, reached nobody, or refused with the reason and, from
+the stored `released` flag, whether the claim came back. The Publish confirm says which path it will take,
+from a flag the manage page reads server-side (`config/scheduler` is closed to
+every client).
+
+Publishing itself never fails because the announcement did, on either path.
+Raising the inline path's numbers means redoing the wall-clock arithmetic in
+`src/lib/email/dispatch.ts`; the queued path's two ceilings bound unpaged READS
+rather than sends, and paging the junction read is the fix if one is ever
+approached. Both reads are made again on every tick that touches an event,
+which is the price of holding no cursor: the tick's wall clock is checked
+straight after each of them, and the device scan is not made until the email leg
+has finished what it is going to do that tick, so a tick spent on email does not
+also pay for a 5000-row read it will not use.
 
 ## The profile grid
 
@@ -413,6 +627,16 @@ a fifth row cannot appear in the model and be missing from the page.
   see a later write from `/api/unsubscribe`, a second tab or an admin route, and
   would revert it on the next Save. So the refill is skipped only while an edit
   is in flight, and every control the Save button owns calls `markDirty`.
+- **A narrow grid moves the push note.** The three columns fit everywhere the
+  wide layout is drawn, but between a 961px and a 1169px window with the
+  sidebar open the Push track is 133 to 186px, and a 12px sentence of 170
+  characters wraps there into two or three words a line, with the row growing
+  to 240px to hold it. So when the GRID is under 48rem wide (the grid, not the
+  window: the sidebar collapses per user, and a media query would move the
+  note in the wide case for nothing) the note leaves the Push cell, which
+  keeps only its switch, and is drawn under the row description with a "Push"
+  eyebrow. One sentence is on screen at a time: the same container query hides
+  the copy in the cell, and the stacked layout below 60rem puts it back there.
 
 The per-device Enable control stays on the push card below
 (`src/features/pwa/PushSettings.tsx`), which now holds nothing but this
@@ -443,8 +667,6 @@ hardware's controls. The card and the column read one state machine
 
 ## Deliberately not built
 
-- **Newsletter push.** The cell exists and stores an answer; no producer reads
-  it. The copy on the cell says so.
 - **A members-only announcement to members who are not on the events list.** The
   announcement's audience is the `subscriptions` junction, so a member who never
   opted in hears nothing, including about a members-only event. Reaching them

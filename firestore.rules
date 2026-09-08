@@ -1062,6 +1062,18 @@ service cloud.firestore {
       // or cancelled — so a members-only event cannot be flipped public while
       // it is actually live. Pinning it would break a real flow to prevent
       // nothing.
+      //
+      // The four `announcement*` fields below are the QUEUED announcement's
+      // state, and they are pinned for a sharper reason than the rest. When
+      // the `event-announcements` scheduler job is switched on, that job scans
+      // for events whose `announcementState` is 'queued' or 'sending' and
+      // mails the whole events list about each one. `announcedAt` is not
+      // pinned (see events.ts: clearing it only lets an approver re-announce
+      // their own event, which they can arrange anyway) but THIS is a
+      // different power: a drafter who could write `announcementState:
+      // 'queued'` on their own unpublished draft would have the platform
+      // announce it, to everybody, without ever going through review. Both
+      // the state and the result are the server's to write.
       function pinnedFieldsUnchanged() {
         return request.resource.data.get('authorUid', '') == resource.data.get('authorUid', '')
           && request.resource.data.get('collaboratorUids', [])
@@ -1071,7 +1083,15 @@ service cloud.firestore {
           && request.resource.data.get('rsvpCountConfirmed', 0)
                == resource.data.get('rsvpCountConfirmed', 0)
           && request.resource.data.get('rsvpCountWaitlisted', 0)
-               == resource.data.get('rsvpCountWaitlisted', 0);
+               == resource.data.get('rsvpCountWaitlisted', 0)
+          && request.resource.data.get('announcementState', '')
+               == resource.data.get('announcementState', '')
+          && request.resource.data.get('announcementQueuedAt', null)
+               == resource.data.get('announcementQueuedAt', null)
+          && request.resource.data.get('announcementStartedAt', null)
+               == resource.data.get('announcementStartedAt', null)
+          && request.resource.data.get('announcementResult', {})
+               == resource.data.get('announcementResult', {});
       }
       allow update: if isAdmin()
         || (

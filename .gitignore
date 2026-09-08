@@ -80,3 +80,10 @@ src/app/(public)/HeroField*.tsx
 # .claude/ directory so a shared .claude/settings.json stays possible later.
 # Claude's memory lives in ~/.claude/, outside this working tree entirely.
 .claude/settings.local.json
+
+# Playwright MCP debug output. Currently excluded only in .git/info/exclude,
+# which is per-clone and per-machine, so a fresh checkout would happily commit
+# it. These logs capture whatever was on screen and in flight while somebody
+# drove a browser at the dev project: request URLs with the web API key, and
+# admin screens rendering real names and addresses. This repository is public.
+.playwright-mcp/

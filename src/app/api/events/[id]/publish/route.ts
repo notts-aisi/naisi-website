@@ -5,6 +5,7 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { baseUrl } from "@/lib/events/rsvpToken";
 import { formatEventWhen } from "@/lib/events/changeSummary";
+import { announcementQueueEnabled } from "@/lib/scheduler/announcementQueue";
 
 /**
  * Server-only transition from "approved" to "published". Firestore rules block
@@ -33,13 +34,35 @@ import { formatEventWhen } from "@/lib/events/changeSummary";
  * fails in the direction of mailing the whole list twice. The failure is logged
  * and counted in the response so a publisher can see it happened.
  *
+ * ── TWO PATHS OUT OF THAT CLAIM, AND A SWITCH DECIDES WHICH ────────────────
+ * The send itself runs inside this request, against `apphosting.yaml`'s
+ * `timeoutSeconds: 60`, which is why it carries three ceilings and why
+ * docs/notifications.md called that "the known limit". The answer written down
+ * there is the `event-announcements` scheduler job, and this route is where
+ * the two paths part.
+ *
+ * The job's switch is read ONCE, before the transaction. A switch flipped
+ * during a request is not a case worth a read inside it: the announcement is
+ * claimed either way, and whichever path this request chose is the path that
+ * delivers it.
+ *
+ *  - SWITCH OFF (the shipped default, and prod's state, since prod has no
+ *    `SCHEDULER_SECRET` and therefore no tick): everything below runs exactly
+ *    as it always has. Nothing changes for anybody until an admin flips it.
+ *  - SWITCH ON: the same transaction that stamps `announcedAt` also writes
+ *    `announcementState: "queued"` and `announcementQueuedAt`, and this route
+ *    sends nothing at all. The job picks the event up on the next tick, one
+ *    marker per recipient, and writes the result back onto the document for
+ *    the editor to read.
+ *
  * ── AND A PURE REFUSAL HANDS THE CLAIM BACK ─────────────────────────────────
  * There is one outcome where the trade above buys nothing: the announcement
  * REFUSES, deterministically, before it dispatches anything (the list is over
  * its ceiling). Nothing was sent, nothing can have been half-sent, and yet the
  * claim is spent, `announce` can never be true again, and no supported action
  * gets the announcement out. So that one case clears `announcedAt` and says so
- * in the response: the ceiling can be raised and the event republished.
+ * in the response: the ceiling can be raised and the event republished. The
+ * job applies the same rule to its own refusals.
  *
  * The condition is deliberately narrow: a refusal AND nothing sent, failed or
  * pushed. A THROW is not released: `dispatchSends` can reject after other
@@ -73,6 +96,18 @@ export async function POST(
 
   const ref = db.collection("events").doc(id);
 
+  // WHICH PATH THIS PUBLISH TAKES, decided once and before the transaction.
+  // Through the same helper and the same `enabledByDefault` the tick uses, so
+  // the panel's switch and this branch can never mean two different things. A
+  // read that fails falls back to the INLINE path, which is the direction that
+  // still delivers the announcement.
+  let queueIt = false;
+  try {
+    queueIt = await announcementQueueEnabled(db);
+  } catch (err) {
+    console.error("[event publish] scheduler switch unreadable, sending inline", id, err);
+  }
+
   // The status transition and the announcement claim in ONE write. See the
   // header: the claim is what makes the announcement once-per-event.
   const claim = await db.runTransaction(async (tx) => {
@@ -94,6 +129,14 @@ export async function POST(
       publishedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
       ...(announce ? { announcedAt: FieldValue.serverTimestamp() } : {}),
+      // The hand-off, inside the same write as the claim it belongs to. A
+      // queue state written afterwards could survive a claim that did not.
+      ...(announce && queueIt
+        ? {
+            announcementState: "queued",
+            announcementQueuedAt: FieldValue.serverTimestamp(),
+          }
+        : {}),
     });
     return { ok: true as const, announce, event: current };
   });
@@ -104,6 +147,15 @@ export async function POST(
   if (!claim.announce) {
     // Already announced on an earlier publish. The event is live either way.
     return NextResponse.json({ ok: true, announced: false });
+  }
+  if (queueIt) {
+    // Queued, and this request is done. `announced` is false because nobody
+    // has been told yet, which is the same word it has always meant here.
+    return NextResponse.json({
+      ok: true,
+      announced: false,
+      announcementQueued: true,
+    });
   }
 
   const event = claim.event;

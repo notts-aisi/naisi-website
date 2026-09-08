@@ -73,7 +73,10 @@ const STUBS = new Map([
     "export const isSuppressed = async (db, to) => {\n" +
       "  if (globalThis.__suppressionError) throw new Error(globalThis.__suppressionError);\n" +
       "  return (globalThis.__suppressed ?? new Set()).has(to);\n" +
-      "};",
+      "};\n" +
+      // The announcement job asks about one recipient's whole address list in
+      // one read, so the plural door is in the graph too.
+      "export const filterSuppressed = async (db, addrs) => ({ allowed: addrs, suppressed: [] });",
   ],
   [
     "@/lib/email/courseFacilitatorEmails",
@@ -112,6 +115,32 @@ const STUBS = new Map([
   [
     "@/lib/push/courseNotifications",
     "export const mirrorCourseDecisionToPush = async () => {};",
+  ],
+  // The queued event announcement's doors. Nothing here runs that job either,
+  // but the registry imports every job by value, so its email sender, its
+  // device enumeration and its push transport are all in this suite's graph,
+  // and `push/store.ts` behind the last of them imports `Timestamp` as a
+  // value, which is a link error rather than a runtime one.
+  [
+    "@/lib/email/eventAnnouncement",
+    "export const MAX_QUEUED_ANNOUNCEMENT_ROWS = 5000;\n" +
+      "export const announcementRecipientKey = (r) => `u${r.uid}`;\n" +
+      "export const resolveAnnouncementAudience = async () => ({\n" +
+      "  recipients: [], skipped: 0, refusal: null,\n" +
+      "});\n" +
+      "export const sendAnnouncementToRecipient = async () => ({\n" +
+      "  sent: 0, suppressed: 0, failed: 0,\n" +
+      "});",
+  ],
+  [
+    "@/lib/push/rowAudience",
+    "export const rowPushOwners = async () => ({ uids: [], refusal: null });",
+  ],
+  [
+    "@/lib/push/send",
+    "export const sendPushToUid = async () => ({\n" +
+      "  sent: 0, pruned: 0, deferred: 0, failed: 0, retried: 0,\n" +
+      "});",
   ],
 ]);
 

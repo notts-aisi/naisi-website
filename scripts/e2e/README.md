@@ -62,7 +62,7 @@ rather than the record.
 
 | Spec | What it protects | Verified | Modes |
 | --- | --- | --- | --- |
-| `applicant-funnel` | The applicant's whole path: the public course page, the sign-in gate on an apply link, a draft that saves and survives a reload, the availability grid under a real drag, submit, withdraw, pick it back up, the status hub, taking a pre-course seat and leaving it again. | Yes | Both; against dev its 8 reCAPTCHA-dependent steps run only with the bypass secret, otherwise they are skipped and reported |
+| `applicant-funnel` | The applicant's whole path: the public course page, the sign-in gate on an apply link, a draft that saves and survives a reload, the availability grid under one real drag and under a click and a Shift-click, with every mark surviving a save and a reload, submit, withdraw, pick it back up, the status hub, taking a pre-course seat and leaving it again. | Yes | Both; against dev its 9 reCAPTCHA-dependent steps run only with the bypass secret, otherwise they are skipped and reported |
 | `applicant-signup` | Registration end to end: the reCAPTCHA-gated `/api/register`, the emailed magic link driven out of Mailpit, the password set, the university-email verification and the profile completion. | Yes | Caught-mail modes only: it declares `requiresCaughtMail`, because it clicks links it reads out of the local inbox, and the runner skips it anywhere else |
 | `round-authoring` | An admission round built through the console as the owner: create, stages, roles, status, and the applicant-facing apply page that results. | Yes | Both |
 | `appointment-queue` | The decision queue: an application decided by the owner and what the applicant is told afterwards. | Yes | Both |
@@ -401,15 +401,18 @@ as itself. It must belong to the dev project, or `env.mjs` throws.
 4. starting an application opens an editable draft;
 5. the draft saves, and the save bar says so;
 6. a reload brings the answer back off the server;
-7. the availability grid paints under a real pointer drag, and the marks
-   survive a save and a reload;
-8. submitting moves the application to view-only, with the controls gone
+7. one real pointer drag paints a run on the availability grid: Playwright's
+   own `dragTo`, retried once out loud, with a probe that says what the grid
+   received if it did not;
+8. a click and a Shift-click fill a second run, and all sixteen marks survive
+   a save and a reload;
+9. submitting moves the application to view-only, with the controls gone
    rather than disabled;
-9. withdrawing is refused until the confirmation word is typed;
-10. picking it back up restores every answer, and it submits again;
-11. the status hub at `/applications` lists the round;
-12. taking a place in a pre-course session;
-13. leaving the course, behind the typed course title.
+10. withdrawing is refused until the confirmation word is typed;
+11. picking it back up restores every answer, and it submits again;
+12. the status hub at `/applications` lists the round;
+13. taking a place in a pre-course session;
+14. leaving the course, behind the typed course title.
 
 Step 11 used to skip while `/applications` 404ed. The status hub has landed,
 the step ran for real on 6 September 2026, and a 404 there now fails the run:
@@ -645,6 +648,46 @@ up. That is how several people (or several agents) share one built server
 without each rebuilding `.next`, and the reCAPTCHA stub still arms, because it
 keys off the origin rather than off the flag.
 
+## Diagnosing a failing step
+
+Three things exist so that a failing step is read rather than reproduced, and
+a new spec gets them without asking:
+
+- **A trace.** Every browser context records a Playwright trace from the
+  moment it opens, and a step that throws saves it beside the screenshot and
+  the page text, as `.e2e-artifacts/<step>.trace.zip`. Open it with `npx
+  playwright show-trace <file>`: a DOM snapshot before and after every action,
+  the screencast, the console and the network, so "what was under the pointer
+  when the button went down" is a click in the viewer, not a hypothesis and a
+  CI run. In CI the artifact is behind the same opt-in as the screenshots
+  (`E2E_UPLOAD_SCREENSHOTS`), for the same reason.
+- **Actionable actions, never measured coordinates.** A spec drives the page
+  through Playwright's locator actions (`click`, `fill`, `press`, `hover`,
+  `dragTo`, `selectOption`, `scrollIntoViewIfNeeded`), which scroll the target
+  in, wait for it to hold still, check that it is what the pointer will hit,
+  and retry until it is. A spec that measures a box, scrolls by the shortfall
+  and moves the mouse itself is racing the page in every round trip between
+  measuring and acting, which is how the availability-grid drag came to carry
+  four stacked waits and still fail a deployed run in four (6 to 8 September
+  2026). `tests/e2e-interaction-guard.test.mjs` fails a spec that reaches for
+  raw mouse coordinates, `elementFromPoint`, `getBoundingClientRect`,
+  `scrollIntoView`, `dispatchEvent` or a fixed sleep; measurement that ASSERTS
+  (the events mobile baseline) is allowlisted with its reason.
+- **A pointer probe.** For a component that paints under the pointer,
+  `installPointerProbe` and `readPointerProbe` in `scripts/e2e/lib/browser.mjs`
+  count the pointer events the element received and record what was under the
+  pointer at each move, with listeners outside React, so a failure can say
+  whether the moves never arrived or arrived and were dropped. Those are
+  different files to open.
+- **Setup calls retry once on a socket failure and name the cause.** Every
+  `fetch` under `scripts/e2e/lib/` (the token exchange, the session cookie,
+  Mailpit) goes through `fetchOrExplain` in `scripts/e2e/lib/net.mjs`, which
+  retries once when no HTTP response arrived at all and otherwise fails with
+  the socket error's code rather than undici's bare `fetch failed`. A response
+  of any status comes back untouched. The batteries' own fetches are the thing
+  under test and are deliberately not wrapped;
+  `tests/e2e-harness-fetch-guard.test.mjs` keeps the split.
+
 ## The coverage map
 
 Two guards, both under `npm test`, both offline:
@@ -744,7 +787,7 @@ real build.
 | Job | Trigger | Mode |
 | --- | --- | --- |
 | `local` | every `pull_request` from a branch in this repository | `npm run e2e:local` (the nine fetch batteries) then `node scripts/run-e2e.mjs --local --skip-build` (the browser specs): builds the app once, boots it on loopback with the always-pass captcha secret and Mailpit, so the reCAPTCHA-dependent legs really run |
-| `dev` | nightly at 03:00 UTC, and `workflow_dispatch` | `npm run e2e` then `node scripts/run-e2e.mjs`, both against `https://dev.naisi.uk`: the deployed backend, real secret resolution, real SMTP, real reCAPTCHA, with the gated legs skipped and reported |
+| `dev` | nightly at 03:00 UTC (checking out `dev`, the branch the target deploys from), and `workflow_dispatch` (the ref it is given) | `npm run e2e` then `node scripts/run-e2e.mjs`, both against `https://dev.naisi.uk`: the deployed backend, real secret resolution, real SMTP, real reCAPTCHA, with the gated legs skipped and reported |
 
 **Both halves run, and that is deliberate.** The coverage map credits the fetch
 batteries with the registration and magic-link routes (`AUTH_BATTERIES` in
@@ -763,6 +806,15 @@ restore a pointer to a period the other has already deleted, and both manifests
 would still read zero, so the corruption would be invisible to the thing meant
 to catch it. That is also why a pull request run and the 03:00 nightly cannot
 overlap.
+
+**The nightly checks out `dev`, not the default branch.** A scheduled run
+starts on `main`, and `dev.naisi.uk` deploys from `dev`, so a nightly that took
+the default would drive one branch's app with another branch's specs and be
+red or green for reasons nothing in either branch explains. The `dev` job
+therefore checks out `dev` when the trigger is the schedule and keeps the ref
+it was given when dispatched. The workflow file itself still comes from `main`
+on a schedule, so a change to `e2e.yml` reaches the nightly only once it is
+promoted.
 
 **Credentials are federated, never stored.** GitHub mints an OIDC token for the
 workflow, Google exchanges it for one on a dedicated service account bound to
@@ -787,6 +839,39 @@ gcloud iam service-accounts add-iam-policy-binding "$SA" \
   --project=naisi-website-dev
 ```
 
+**A second grant, for the API key guard.** Both jobs run
+`scripts/check-api-key-restrictions.mjs` straight after authenticating. It
+reads the dev project's API key restrictions and fails when they drift from the
+allowlist the script carries, so it needs `apikeys.googleapis.com` enabled on
+the project and `roles/serviceusage.apiKeysViewer` for the CI identity. It is
+read-only: `keys.list` does not return key material, and the script never calls
+`getKeyString`.
+
+```sh
+SA=<the GCP_E2E_SERVICE_ACCOUNT address>
+gcloud services enable apikeys.googleapis.com --project=naisi-website-dev
+gcloud projects add-iam-policy-binding naisi-website-dev \
+  --member="serviceAccount:$SA" \
+  --role="roles/serviceusage.apiKeysViewer"
+```
+
+Why it exists at all: `npm test` is offline by contract, so it guards
+`firestore.rules` and `firestore.indexes.json` and can see nothing that lives
+only in the cloud project. On the night of 2026-05-25, during the Google
+Identity Services sign-in rework, the dev web key's restrictions were set at
+21:42 UTC, prod's were set at 22:45 UTC, and dev's were cleared again at 23:50
+UTC to unblock that flow. The corrected configuration went to prod, the
+rollback went to dev, and dev sat completely unrestricted for three and a half
+months until Google's abuse scanner surfaced it by accident while flagging
+something else. That is the drift class the guard closes: dev is the
+environment that gets broken and unbroken while iterating, so dev is where
+temporary loosenings accumulate. Run it against production by hand, with your
+own credentials, since CI is scoped to dev on purpose:
+
+```sh
+node scripts/check-api-key-restrictions.mjs --project naisi-website
+```
+
 **It is `pull_request`, never `pull_request_target`.** `pull_request_target`
 would run the base branch's workflow with secrets available while a fork's code
 is checked out, which is the standard way to hand a stranger's branch your
@@ -804,6 +889,7 @@ they skip cleanly rather than going red:
 | `GCP_E2E_SERVICE_ACCOUNT` | repository variable | The dedicated dev-project service account the workflow impersonates and signs tokens as |
 | `E2E_ADMIN_EMAIL` | repository secret | The owner's admin account, for the specs that drive an admin-only screen |
 | `E2E_ADMIN_PASSWORD` | repository secret | Its password |
+| `NEXT_PUBLIC_FIREBASE_API_KEY` | repository variable | The DEV project's Firebase web key. Public by construction (Next inlines it into the client bundle), so a variable and not a secret. It lives outside the repository only so Google's abuse scanner stops flagging it, see below |
 | `E2E_UPLOAD_SCREENSHOTS` | repository variable, optional | Set it to `true` while chasing a failure to have the failing step's screenshots uploaded. Off by default, for the reason below |
 
 Neither address is a secret, which is why they are variables: seeing in the log
@@ -825,6 +911,43 @@ dev project and its ledger in a workspace that is about to be deleted. Hence
 `cancel-in-progress: false`, and hence the failure path always uploads
 `.e2e-state`: the ledger is what a person needs to tear a stranded fixture down
 by hand.
+
+A red teardown step therefore has to keep meaning one thing: rows were left on
+dev. It skips, with a line saying so, when `.env.e2e.local` was never written,
+because the harness has no project to write to until that step runs and a job
+that died before it cannot have seeded anything. On 7 September 2026 a 504
+downloading Mailpit ended a job at step 6 and the teardown then failed on the
+missing file, which read exactly like a leak on a run that had created nothing.
+Everything from that step onward tears down as before.
+
+The Mailpit download itself is retried now (`--retry 5 --retry-all-errors`),
+for the same incident: it is a third-party CDN on the critical path of every
+run including the nightly, and retrying it blindly is safe because the download
+is pinned to a version and checked against its published SHA256.
+
+**Every run writes a job summary, and a failing spec writes an annotation.**
+`writeJobSummary` in `scripts/run-e2e.mjs` puts a spec-by-spec table on the
+run page (verdict, steps completed, steps skipped, and the sentence saying
+where it stopped) and emits one `::error` per failing spec, anchored to that
+spec's file so it surfaces at the top of the run and in the pull request's
+checks. It writes only when `GITHUB_STEP_SUMMARY` is set, so a laptop run is
+unaffected, and it is wrapped so a summary that cannot be written never fails
+a run.
+
+The verdict in that table comes from `markerShortfall` and is never
+recomputed. That function is the guard: it knows a spec which wrote no marker
+never ran, and that a skip for the wrong reason is not a pass. A table that
+worked the verdict out for itself could disagree with the exit code, and a
+green table over a red run is worse than no table. The step counts beside it
+are presentation only.
+
+**If you add a spec, you get a row for free**; the table is built from the same
+`selected` list the runner drives. What needs maintaining is the shortfall
+sentence: it is the whole content of the "Stopped at" column, so a new kind of
+failure should say where it stopped in that sentence rather than only in the
+log. The annotation is one per SPEC and not per step, on purpose: eight
+annotations for one broken page is the noise that teaches people to scroll
+past annotations.
 
 **A green CI run still does not replace the manual dev smoke pass**, for every
 reason in "Known holes" above: Chromium only, no Google sign-in, no rules, and

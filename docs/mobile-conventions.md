@@ -60,6 +60,10 @@ const mq = window.matchMedia(maxWidth("md"));
 
 The canonical set is defined in [src/theme/breakpoints.ts](../src/theme/breakpoints.ts) and mirrored as a comment block at the top of [src/theme/tokens.css](../src/theme/tokens.css).
 
+### Container queries, when the variable is the component's width
+
+A layout that depends on the width of a component rather than of the window uses a container query, and keeps its threshold to one of the four values above so the set of numbers in the codebase does not grow. The notification grid on `/profile` is the worked example ([src/features/profile/ProfileForm.module.css](../src/features/profile/ProfileForm.module.css)): the authed shell's sidebar collapses per user, so a 961px window can hold a 561px grid or an 817px one, and a media query on the window would move the grid's push note in the wide case for nothing. `container-type: inline-size` on the grid and `@container (max-width: 48rem)` ask the question the layout actually depends on. The component's mobile `@media` block still comes last in the file, and because it is later it still wins below 60rem.
+
 ### Why not CSS custom properties for breakpoints
 
 CSS custom properties (`var(--bp-md)`) do not work inside `@media` query conditions. The spec resolves custom properties at computed-value time — after media has already been matched. `@media (max-width: var(--bp-md))` silently does nothing and breaks layout with no error.

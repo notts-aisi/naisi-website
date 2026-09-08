@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import type { Firestore } from "firebase-admin/firestore";
 import EventAnnouncementEmail from "@/emails/EventAnnouncementEmail";
 import {
@@ -7,9 +8,7 @@ import {
 } from "@/lib/firestore/notifications";
 import { findRecipientsForChannel } from "@/lib/firestore/subscriptions";
 import { filterSuppressed } from "@/lib/firestore/suppression";
-import { sendPushToUid } from "@/lib/push/send";
-import { isPushConfigured } from "@/lib/push/config";
-import { wantsPushFor } from "@/lib/push/preferences";
+import { sendPushToRowAudience, type RowPushResult } from "@/lib/push/rowAudience";
 import { signToken } from "@/lib/signedTokens";
 import { dispatchSends } from "./dispatch";
 import { sendEmail } from "./send";
@@ -82,25 +81,36 @@ export const MAX_ANNOUNCEMENT_ROWS = 500;
  * would do the same with no report at all.
  *
  * RAISING IT MEANS REDOING THE SUM IN `dispatch.ts`. A list that outgrows it
- * needs the send taken off the request path, which is a different feature.
+ * is sent by the `event-announcements` scheduler job instead, which is the
+ * feature that took the send off the request path; see
+ * {@link MAX_QUEUED_ANNOUNCEMENT_ROWS}.
  */
 export const MAX_ANNOUNCEMENT_SENDS = 200;
 
 /**
- * Sanity ceiling on the push fan-out. `pushSubscriptions` holds one row per
- * DEVICE, so this is devices and not people; the loop below runs once per
- * distinct OWNER, which is at most that many.
+ * The JOB PATH's ceiling on the same channel read, and the reason it is ten
+ * times the request path's.
  *
- * Sized against the same 60s budget, on its own per-item cost: an owner costs a
- * preference read, a subscription read and a web-push POST, ~0.4s
- * pessimistically, where an email costs a render and an SMTP connection. 500
- * owners is ceil(500/6) = 84 rounds x 0.4s = ~34s worst, which fits ALONGSIDE
- * the email leg's ~36s because the two are dispatched CONCURRENTLY (see
- * `sendEventAnnouncement`): the request's wall clock is the larger of the two
- * rather than their sum. Over the ceiling the push leg goes quiet and says so
- * in the log; the email still goes.
+ * There is no message ceiling on the job path at all, and that is the whole
+ * point of the move: the job's unit of work is one recipient under one marker,
+ * it checks the tick's wall clock between units, and it resumes on the next
+ * tick, reading its markers in bulk so a settled recipient costs a set lookup
+ * rather than three round trips. A list up to THIS ceiling therefore goes out,
+ * over as many ticks as it takes. Not a list of any size: the ceiling below is
+ * the bound, and it is on the READ rather than on the sending.
+ *
+ * What survives is a sanity ceiling on the junction READ, because that read is
+ * NOT paged: `findRecipientsForChannel` fetches every confirmed-and-subscribed
+ * row on the channel in one go, and the `getAll` over the user rows behind it
+ * is proportional to the result. 5000 rows is far above any shape this society
+ * plans and comfortably inside one Firestore read, and a list past it is
+ * REFUSED whole rather than truncated, exactly as the request path refuses:
+ * an arbitrary prefix that reports success is the one outcome a retry cannot
+ * repair. Paging the read is the fix if the list ever genuinely approaches it,
+ * and it would need a stable order to page on, which the junction has no index
+ * for today.
  */
-export const MAX_PUSH_ROWS = 500;
+export const MAX_QUEUED_ANNOUNCEMENT_ROWS = 5000;
 
 /** Same lifetime the newsletter gives its unsubscribe links. */
 const UNSUB_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 365;
@@ -131,9 +141,16 @@ export type EventAnnouncementResult = {
   pushed: number;
   /** Non-null when nothing was sent because the audience is unreadable. */
   refusal: string | null;
+  /**
+   * The PUSH leg's own refusal, kept separate from the email leg's because the
+   * two legs fail independently: a list too large to mail says nothing about
+   * whether the phones were notified, and reporting one refusal for both would
+   * tell the publisher the wrong thing about half the announcement.
+   */
+  pushRefusal: string | null;
 };
 
-type Recipient = {
+export type AnnouncementRecipient = {
   /** Uid for a member row, "" for a guest row. Decides the unsubscribe token. */
   uid: string;
   audience: "user" | "guest";
@@ -143,13 +160,66 @@ type Recipient = {
   addresses: string[];
 };
 
+/** What the audience read found, or the reason it found nothing. */
+export type AnnouncementAudience = {
+  recipients: AnnouncementRecipient[];
+  /** Rows dropped: no address, an account gone, a members-only guest row. */
+  skipped: number;
+  /** Non-null when the list could not be resolved. Nothing was sent. */
+  refusal: string | null;
+};
+
 /**
- * The email half. Returns counts and never throws for a per-recipient failure.
+ * ONE RECIPIENT'S STABLE KEY, for the scheduler job's per-recipient marker.
+ *
+ * A member is their uid, prefixed `u` so the two namespaces cannot collide. A
+ * guest has no id, only an address, and an address cannot be the key: a marker
+ * id may carry no `.` (see `assertDocIdComponent`), and a marker lives for six
+ * months in a collection whose whole purpose is to say "this was sent", which
+ * is no place to accumulate a mailing list. So a guest is `g` plus the first
+ * 16 hex characters of the SHA-256 of their normalised address: stable across
+ * ticks, derivable by anybody holding the address, and not a mailing list.
+ *
+ * Sixteen hex characters is 64 bits. The birthday bound on that is around four
+ * billion keys, against an audience the ceiling above caps at five thousand,
+ * so a collision here is not a risk being accepted; it is a number that cannot
+ * be reached.
  */
-async function announceByEmail(
+export function announcementRecipientKey(recipient: AnnouncementRecipient): string {
+  if (recipient.audience === "user") return `u${recipient.uid}`;
+  const digest = createHash("sha256")
+    .update(recipient.primaryEmail.trim().toLowerCase(), "utf8")
+    .digest("hex");
+  return `g${digest.slice(0, 16)}`;
+}
+
+/**
+ * THE AUDIENCE, RESOLVED ONCE AND SHARED BY BOTH PATHS.
+ *
+ * The junction read, the row ceiling, the per-uid hydration through
+ * `addressesForSend`, the recipient-level dedupe and the members-only drop.
+ * Every one of those is a fact about WHO the events row is, and none of them is
+ * a fact about whether the send is happening inside the publish request or on a
+ * scheduler tick. Two copies of this would be two answers to "who is on the
+ * events list", which is the drift the whole grid exists to end.
+ *
+ * `maxRows` is the ONE thing the two paths disagree about, and they disagree
+ * about it honestly: the request path is bounded by a 60s timeout it cannot
+ * exceed, the job path by a tick's budget it can simply resume from. See
+ * {@link MAX_ANNOUNCEMENT_ROWS} and {@link MAX_QUEUED_ANNOUNCEMENT_ROWS}.
+ *
+ * NEVER THROWS for anything it can decide: a list over the ceiling comes back
+ * as a refusal with an empty audience. A Firestore read that rejects DOES
+ * propagate, because a caller that cannot tell "nobody is subscribed" from
+ * "the database is down" would report a successful announcement to an empty
+ * room, and both callers catch it.
+ */
+export async function resolveAnnouncementAudience(
   db: Firestore,
   input: EventAnnouncementInput,
-): Promise<Omit<EventAnnouncementResult, "pushed">> {
+  opts: { maxRows?: number } = {},
+): Promise<AnnouncementAudience> {
+  const maxRows = opts.maxRows ?? MAX_ANNOUNCEMENT_ROWS;
   const rows = await findRecipientsForChannel(db, "events");
 
   // REFUSE rather than slice. A `slice()` here would be a silent truncation
@@ -157,17 +227,15 @@ async function announceByEmail(
   // second-address rows could fall under the cap having already lost people and
   // the send would look complete. The cohort resolver makes the same call for
   // the same reason.
-  if (rows.length > MAX_ANNOUNCEMENT_ROWS) {
+  if (rows.length > maxRows) {
     console.error(
       "[event announcement] channel row count exceeds ceiling",
       input.eventId,
       rows.length,
     );
     return {
-      sent: 0,
+      recipients: [],
       skipped: 0,
-      suppressed: 0,
-      failed: 0,
       refusal:
         "The events list is larger than a single announcement can handle. " +
         "Nothing was sent: raise it with an admin.",
@@ -175,7 +243,6 @@ async function announceByEmail(
   }
 
   const gmailOnly = process.env.EMAIL_GMAIL_ONLY_MODE === "true";
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
 
   let skipped = 0;
 
@@ -195,7 +262,7 @@ async function announceByEmail(
   // Dedupe at the RECIPIENT level, not the address level: a member holding both
   // a user row and a stale guest row must get one email, not two.
   const seen = new Set<string>();
-  const recipients: Recipient[] = [];
+  const recipients: AnnouncementRecipient[] = [];
   for (const row of rows) {
     const dedupKey = `${row.audience}:${row.audienceId}`;
     if (seen.has(dedupKey)) continue;
@@ -254,6 +321,110 @@ async function announceByEmail(
     });
   }
 
+  return { recipients, skipped, refusal: null };
+}
+
+/**
+ * ONE RECIPIENT'S ANNOUNCEMENT, on every address they take, and the whole of
+ * what "sending the announcement" means to a person.
+ *
+ * Shared by both paths for the reason the resolver above is: the unsubscribe
+ * token's shape (uid for a member so one click drops both their addresses, the
+ * address for a guest because it is the only handle they have), the subject,
+ * the template and the receipt's `kind` are all facts about the MESSAGE rather
+ * than about which side of the request boundary it left from.
+ *
+ * NEVER THROWS. A send that fails is counted and logged by uid or audience,
+ * never by address, so a whole audience is not lost to one bad mailbox.
+ *
+ * `suppressed` is handed in rather than read here, and that is a real
+ * difference between the two callers rather than an oversight: the request
+ * path reads the suppression list ONCE for the whole audience (one `getAll`,
+ * inside its wall-clock sum), while the job reads it per recipient, because
+ * its recipient is its unit of work and a list-wide read would be work thrown
+ * away the moment the tick's budget ran out.
+ */
+export async function sendAnnouncementToRecipient(
+  input: EventAnnouncementInput,
+  recipient: AnnouncementRecipient,
+  suppressed: ReadonlySet<string>,
+): Promise<{ sent: number; suppressed: number; failed: number }> {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
+  // Members: the token addresses the UID, so one click flips the events rows
+  // for both of their addresses. Guests: it addresses the email, flipping
+  // their single row.
+  const token =
+    recipient.audience === "user"
+      ? signToken({ s: "unsubscribe", uid: recipient.uid, c: "events" }, UNSUB_TOKEN_TTL_SECONDS)
+      : signToken(
+          { s: "unsubscribe", email: recipient.primaryEmail, c: "events" },
+          UNSUB_TOKEN_TTL_SECONDS,
+        );
+  const unsubscribeUrl = `${appUrl}/api/unsubscribe?t=${encodeURIComponent(token)}`;
+
+  const counts = { sent: 0, suppressed: 0, failed: 0 };
+  for (const address of recipient.addresses) {
+    if (suppressed.has(address.toLowerCase())) {
+      counts.suppressed += 1;
+      continue;
+    }
+    try {
+      await sendEmail({
+        to: address,
+        subject: `New event: ${input.title}`,
+        fromName: "NAISI Events",
+        react: EventAnnouncementEmail({
+          eventTitle: input.title,
+          recipientName: recipient.recipientName,
+          whenLine: input.whenLine,
+          locationLine: input.locationLine,
+          eventUrl: input.eventUrl,
+          coverImageUrl: input.coverImageUrl,
+          unsubscribeUrl,
+        }),
+        kind: "event-announcement",
+        actorUid: input.actorUid,
+        referenceId: input.eventId,
+        listUnsubscribe: {
+          url: unsubscribeUrl,
+          mailto: process.env.EMAIL_DEFAULT_REPLY_TO,
+        },
+      });
+      counts.sent += 1;
+    } catch (err) {
+      // Uid or audience only: an address must not reach the logs.
+      console.error(
+        "[event announcement] send failed",
+        input.eventId,
+        recipient.uid || recipient.audience,
+        err,
+      );
+      counts.failed += 1;
+    }
+  }
+  return counts;
+}
+
+/**
+ * The email half of the INLINE path. Returns counts and never throws for a
+ * per-recipient failure.
+ */
+async function announceByEmail(
+  db: Firestore,
+  input: EventAnnouncementInput,
+): Promise<Omit<EventAnnouncementResult, "pushed" | "pushRefusal">> {
+  const audience = await resolveAnnouncementAudience(db, input);
+  if (audience.refusal !== null) {
+    return {
+      sent: 0,
+      skipped: audience.skipped,
+      suppressed: 0,
+      failed: 0,
+      refusal: audience.refusal,
+    };
+  }
+  const { recipients, skipped } = audience;
+
   if (recipients.length === 0) {
     return { sent: 0, skipped, suppressed: 0, failed: 0, refusal: null };
   }
@@ -296,57 +467,10 @@ async function announceByEmail(
   // against App Hosting's 60s request ceiling, and this runs inside the publish
   // request.
   await dispatchSends(recipients, async (recipient) => {
-    // Members: the token addresses the UID, so one click flips the events rows
-    // for both of their addresses. Guests: it addresses the email, flipping
-    // their single row.
-    const token =
-      recipient.audience === "user"
-        ? signToken({ s: "unsubscribe", uid: recipient.uid, c: "events" }, UNSUB_TOKEN_TTL_SECONDS)
-        : signToken(
-            { s: "unsubscribe", email: recipient.primaryEmail, c: "events" },
-            UNSUB_TOKEN_TTL_SECONDS,
-          );
-    const unsubscribeUrl = `${appUrl}/api/unsubscribe?t=${encodeURIComponent(token)}`;
-
-    for (const address of recipient.addresses) {
-      if (suppressedSet.has(address.toLowerCase())) {
-        suppressed += 1;
-        continue;
-      }
-      try {
-        await sendEmail({
-          to: address,
-          subject: `New event: ${input.title}`,
-          fromName: "NAISI Events",
-          react: EventAnnouncementEmail({
-            eventTitle: input.title,
-            recipientName: recipient.recipientName,
-            whenLine: input.whenLine,
-            locationLine: input.locationLine,
-            eventUrl: input.eventUrl,
-            coverImageUrl: input.coverImageUrl,
-            unsubscribeUrl,
-          }),
-          kind: "event-announcement",
-          actorUid: input.actorUid,
-          referenceId: input.eventId,
-          listUnsubscribe: {
-            url: unsubscribeUrl,
-            mailto: process.env.EMAIL_DEFAULT_REPLY_TO,
-          },
-        });
-        sent += 1;
-      } catch (err) {
-        // Uid or audience only: an address must not reach the logs.
-        console.error(
-          "[event announcement] send failed",
-          input.eventId,
-          recipient.uid || recipient.audience,
-          err,
-        );
-        failed += 1;
-      }
-    }
+    const counts = await sendAnnouncementToRecipient(input, recipient, suppressedSet);
+    sent += counts.sent;
+    suppressed += counts.suppressed;
+    failed += counts.failed;
   });
 
   return { sent, skipped, suppressed, failed, refusal: null };
@@ -355,61 +479,25 @@ async function announceByEmail(
 /**
  * The push half: every account with a device whose events push cell is on.
  *
- * `pushSubscriptions` is one row per DEVICE with the owning uid on it, and
- * there is no "members who want event pushes" index to read, so the cheapest
- * correct enumeration is the collection's uids, deduped, then one preference
- * read each. That is one collection scan plus one document read per distinct
- * account with a device, which for a society of this size is tens of reads;
- * anything cheaper would mean denormalising the cell onto the subscription row
- * and keeping two copies of one answer in step.
+ * The enumeration itself lives in `src/lib/push/rowAudience.ts`, because the
+ * newsletter send asks the same question of a different row and one of the two
+ * copies would have drifted. What stays here is the part that is about events:
+ * which row, what the notification says, and where a tap lands.
  */
-async function announceByPush(
+function announceByPush(
   db: Firestore,
   input: EventAnnouncementInput,
-): Promise<number> {
-  // Cheapest gate first: with no VAPID keys nothing pushes anywhere, and there
-  // is no reason to read the collection.
-  if (!isPushConfigured()) return 0;
-
-  const snap = await db.collection("pushSubscriptions").limit(MAX_PUSH_ROWS + 1).get();
-  if (snap.docs.length > MAX_PUSH_ROWS) {
-    console.error(
-      "[event announcement] push subscription count exceeds ceiling, not pushing",
-      input.eventId,
-      snap.docs.length,
-    );
-    return 0;
-  }
-
-  const uids = [
-    ...new Set(
-      snap.docs
-        .map((d) => d.data()?.uid)
-        .filter((uid): uid is string => typeof uid === "string" && uid.length > 0),
-    ),
-  ];
-
-  const path = `/events/${encodeURIComponent(input.eventId)}`;
-  let pushed = 0;
-  await dispatchSends(uids, async (uid) => {
-    try {
-      // The events PUSH cell, which is opt-in: absent resolves OFF, so nobody
-      // is pushed for having an account.
-      if (!(await wantsPushFor(uid, "events"))) return;
-      const counts = await sendPushToUid(uid, {
-        title: "New NAISI event",
-        body: input.title,
-        url: path,
-      });
-      // Notifications, not calls: an account whose cell is on but whose only
-      // device has since been pruned is not somebody who was told.
-      if (counts.sent > 0) pushed += 1;
-    } catch (err) {
-      // Best effort, always. Uid only.
-      console.warn("[event announcement] push failed", input.eventId, uid, err);
-    }
-  });
-  return pushed;
+): Promise<RowPushResult> {
+  return sendPushToRowAudience(
+    db,
+    "events",
+    {
+      title: "New NAISI event",
+      body: input.title,
+      url: `/events/${encodeURIComponent(input.eventId)}`,
+    },
+    { tag: "event announcement", reference: input.eventId },
+  );
 }
 
 /**
@@ -418,18 +506,20 @@ async function announceByPush(
  * THE TWO LEGS RUN CONCURRENTLY, and that is a budget decision rather than a
  * tidiness one. Both are bounded loops inside the 60s publish request, they
  * share no state, and they answer two different questions to two different
- * audiences; run in series their worst cases ADD (~36s + ~20s) and leave the
- * request nothing for its own reads. Run together the wall clock is the larger
- * of the two. A refusal on one leg says nothing about the other: an events list
- * too large to mail does not stop the push audience being told.
+ * audiences; run in series their worst cases ADD (~36s here plus the ~34s
+ * `rowAudience.ts` sizes for the push leg, which is the authority for that
+ * figure) and leave the request nothing for its own reads. Run together the
+ * wall clock is the larger of the two. A refusal on one leg says nothing about
+ * the other, which is why they are reported separately: an events list too
+ * large to mail does not stop the push audience being told.
  */
 export async function sendEventAnnouncement(
   db: Firestore,
   input: EventAnnouncementInput,
 ): Promise<EventAnnouncementResult> {
-  const [email, pushed] = await Promise.all([
+  const [email, push] = await Promise.all([
     announceByEmail(db, input),
     announceByPush(db, input),
   ]);
-  return { ...email, pushed };
+  return { ...email, pushed: push.pushed, pushRefusal: push.refusal };
 }

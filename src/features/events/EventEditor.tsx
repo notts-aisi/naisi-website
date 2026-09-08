@@ -54,7 +54,17 @@ import CoverBrandingModal from "./CoverBrandingModal";
 import FormBuilder from "./FormBuilder";
 import styles from "./EventEditor.module.css";
 
-type Props = { eventId: string };
+type Props = {
+  eventId: string;
+  /**
+   * Whether publishing QUEUES the announcement rather than sending it inside
+   * the request. Read from `config/scheduler` by the page above, because that
+   * document is closed to every client; see
+   * `src/lib/scheduler/announcementQueue.ts`. It changes one sentence of the
+   * Publish confirm and nothing else: the server decides the path either way.
+   */
+  announcementsQueued?: boolean;
+};
 
 /** What `POST /api/events/[id]/publish` answers. Counts only, never addresses. */
 type PublishResponse = {
@@ -66,11 +76,20 @@ type PublishResponse = {
   announcementFailed?: boolean;
   /** The send refused before dispatching. The claim was handed back. */
   announcementRefused?: boolean;
+  /**
+   * The `event-announcements` job is switched on, so nothing was sent inside
+   * the request: the announcement is queued and the next scheduler run
+   * delivers it. From then on the event DOCUMENT is what says how it went, and
+   * this editor reads it through the listener it already has.
+   */
+  announcementQueued?: boolean;
   announcement?: {
     sent?: number;
     pushed?: number;
     failed?: number;
     refusal?: string | null;
+    /** The push leg's own refusal. The two legs fail independently. */
+    pushRefusal?: string | null;
   };
 };
 
@@ -87,6 +106,14 @@ type PublishResponse = {
  * event was quiet.
  */
 function announcementLine(body: PublishResponse): string | null {
+  if (body.announcementQueued) {
+    // NOT an outcome, and worded so it does not read as one. Nobody has been
+    // told yet; the announcement card below reports what the job then does.
+    return (
+      "Published. The announcement is queued and goes out with the next " +
+      "scheduler run, usually within fifteen minutes."
+    );
+  }
   if (body.announcementFailed) {
     return (
       "The event is published, but the announcement did not go out. " +
@@ -94,10 +121,26 @@ function announcementLine(body: PublishResponse): string | null {
     );
   }
   const refusal = body.announcement?.refusal ?? null;
+  // The push leg's refusal is reported wherever the email leg's is, and never
+  // folded into it. The legs fail independently, so "the list is over the
+  // ceiling" and "nobody could be notified" are two different sentences and a
+  // publisher who is shown one of them has not been told the other.
+  const pushRefusal = body.announcement?.pushRefusal ?? null;
+  const trailer = [refusal, pushRefusal].filter(Boolean).join(" ");
   if (body.announcementRefused) {
-    return `The event is published. ${refusal ?? "The announcement was not sent."}`;
+    const said = trailer || "The announcement was not sent.";
+    return `The event is published. ${said}`;
   }
-  if (!body.announced) return null;
+  if (!body.announced) {
+    // NOTHING WAS ANNOUNCED, AND A LEG STILL HAS SOMETHING TO SAY. A publish
+    // whose events list is empty announces nothing and refuses nothing, which
+    // is a silence worth no words; but the push leg can refuse (over the device
+    // ceiling, or a collection it could not read) while the email leg simply
+    // had nobody to write to, and that publisher would otherwise be shown
+    // nothing at all about a leg that failed. The trailer is checked BEFORE
+    // this return for exactly that case.
+    return trailer ? `The event is published. ${trailer}` : null;
+  }
   const sent = body.announcement?.sent ?? 0;
   const pushed = body.announcement?.pushed ?? 0;
   const parts = [`${sent} ${sent === 1 ? "email" : "emails"}`];
@@ -105,7 +148,83 @@ function announcementLine(body: PublishResponse): string | null {
     parts.push(`${pushed} ${pushed === 1 ? "notification" : "notifications"}`);
   }
   const line = `Published, and announced to the events list: ${parts.join(" and ")}.`;
-  return refusal ? `${line} ${refusal}` : line;
+  return trailer ? `${line} ${trailer}` : line;
+}
+
+/**
+ * WHAT THE QUEUED ANNOUNCEMENT IS DOING, read off the event document.
+ *
+ * The publish response can only ever say "queued": everything after that
+ * happens on a scheduler tick, minutes later, with nobody's browser watching.
+ * So the job writes its state and its running totals back onto the event, and
+ * this reads them. No new listener is needed and none is added: the editor
+ * already holds an `onSnapshot` on this document for every other field, so the
+ * card updates itself as the job works through the list.
+ *
+ * Returns null for an event announced inline or never announced, which is
+ * every event on an environment where the job is switched off.
+ */
+function queuedAnnouncementLine(event: EventDoc): string | null {
+  const state = event.announcementState ?? null;
+  if (state === null) return null;
+  const result = event.announcementResult ?? null;
+  const sent = result?.sent ?? 0;
+  const pushed = result?.pushed ?? 0;
+  // The audience-level drops and the per-recipient ones are two counters for
+  // two reasons (one is a snapshot, one accumulates); to a reader they are one
+  // number, so they are added here rather than explained on screen.
+  const skipped = (result?.skipped ?? 0) + (result?.audienceSkipped ?? 0);
+
+  if (state === "queued") {
+    // NAMES THE CONDITION. The queue only drains while the job is switched on,
+    // and an admin who turns it off leaves this event sitting here; a line
+    // promising "the next scheduler run" with no such run coming would be the
+    // screen lying about a thing only an admin can see.
+    return (
+      "The announcement is queued for the event-announcements scheduler job and " +
+      "goes out on its next run, usually within fifteen minutes, while that job " +
+      "is switched on."
+    );
+  }
+  if (state === "sending") {
+    // The totals are persisted at the end of every tick, so "so far" is
+    // literally true rather than a hedge: it is what the last completed tick
+    // had done.
+    const counts = `${sent} ${sent === 1 ? "email" : "emails"} and ${pushed} ${
+      pushed === 1 ? "notification" : "notifications"
+    }`;
+    return `Announcement in progress: ${counts} so far.`;
+  }
+  if (state === "refused") {
+    const said = result?.refusal ?? "The announcement was not sent.";
+    // READ OFF THE DOCUMENT, never derived from the counts. Both refusals
+    // reach nobody, and only one of them hands the claim back: an audience
+    // that could not be read can be tried again, and an event that has already
+    // started cannot. Deriving this from "nothing was sent" told an approver
+    // to republish a past event and let them watch nothing happen.
+    const after = result?.released
+      ? " The claim was released, so publishing this event again re-queues the announcement."
+      : "";
+    return `${said}${after}`;
+  }
+  // Done. The same wording the inline path uses, so the two paths do not read
+  // as two different features.
+  const trailer = [result?.refusal ?? null, result?.pushRefusal ?? null]
+    .filter(Boolean)
+    .join(" ");
+  const tail = skipped > 0 ? ` ${skipped} skipped.` : "";
+  if (sent === 0 && pushed === 0) {
+    // A run that finished correctly and told nobody: an empty events list, or
+    // every recipient dropped. "0 emails" reads as a fault; this does not.
+    const line = "The announcement reached nobody on the events list.";
+    return trailer ? `${line} ${trailer}${tail}` : `${line}${tail}`;
+  }
+  const parts = [`${sent} ${sent === 1 ? "email" : "emails"}`];
+  if (pushed > 0) {
+    parts.push(`${pushed} ${pushed === 1 ? "notification" : "notifications"}`);
+  }
+  const line = `Announced to the events list: ${parts.join(" and ")}.`;
+  return trailer ? `${line} ${trailer}${tail}` : `${line}${tail}`;
 }
 
 function statusTone(status: EventStatus): "neutral" | "accent" | "success" | "danger" | "warning" {
@@ -167,7 +286,7 @@ function buildNotifyDraft(
   return { subject, body };
 }
 
-export default function EventEditor({ eventId }: Props) {
+export default function EventEditor({ eventId, announcementsQueued = false }: Props) {
   const router = useRouter();
   const { user, role, permissions, suRecognised } = useAuth();
 
@@ -307,6 +426,9 @@ export default function EventEditor({ eventId }: Props) {
   const canSeeAttendees =
     role === "admin" || (role === "committee" && suRecognised);
   const status = event?.status ?? "draft";
+  // Null on every event the queue has never touched, which is all of them
+  // wherever the `event-announcements` job is switched off.
+  const queuedAnnouncement = event === null ? null : queuedAnnouncementLine(event);
   const editable = useMemo(() => {
     if (!event) return false;
     if (status === "cancelled") return false;
@@ -575,9 +697,18 @@ export default function EventEditor({ eventId }: Props) {
     // publish route stamps, and an event pulled back to approved and pushed
     // live again announces nothing.
     const willAnnounce = !event.announcedAt;
+    // WHICH PATH THIS PUBLISH WILL TAKE is the server's decision, and the
+    // switch behind it is closed to clients, so the page reads it and hands it
+    // down. The confirm has to say it: an approver who presses Publish and
+    // sees no mail for a quarter of an hour would reasonably conclude the
+    // announcement had failed.
     const question = willAnnounce
-      ? "Publish this event? It goes live on the events page, and everyone subscribed " +
-        "to event announcements is emailed about it."
+      ? announcementsQueued
+        ? "Publish this event? It goes live on the events page, and everyone subscribed " +
+          "to event announcements is emailed about it. The announcement is queued and " +
+          "goes out with the next scheduler run rather than immediately."
+        : "Publish this event? It goes live on the events page, and everyone subscribed " +
+          "to event announcements is emailed about it."
       : "Publish this event? It goes live on the events page. The announcement has " +
         "already gone out, so nobody is emailed again.";
     if (!window.confirm(question)) return;
@@ -1166,6 +1297,15 @@ export default function EventEditor({ eventId }: Props) {
       {publishStatus.kind === "announced" && (
         <Card padding="md">
           <p className={styles.muted}>{publishStatus.message}</p>
+        </Card>
+      )}
+      {queuedAnnouncement !== null && (
+        // The QUEUED announcement's own state, off the event document rather
+        // than out of a publish response: the job finishes minutes after the
+        // request that queued it, and an approver who comes back tomorrow
+        // still needs to be able to see whether it went.
+        <Card padding="md">
+          <p className={styles.muted}>{queuedAnnouncement}</p>
         </Card>
       )}
 
