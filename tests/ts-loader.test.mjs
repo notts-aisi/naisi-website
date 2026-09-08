@@ -286,6 +286,18 @@ const USERS = new Map([
       "the two-level JSX graph a hand-copied loader dies on",
   ],
   [
+    "event-location-disclosure.test.mjs",
+    "the RSVP, approve, cancel, broadcast and update routes executed with `sendRsvpEmail` and " +
+      "the two event `.tsx` templates loaded for real, because what it asserts is the rendered " +
+      "HTML a recipient sees and not the line a route passed",
+  ],
+  [
+    "event-rsvp-identity.test.mjs",
+    "the RSVP route executed as a guest, a member, a pending and a rejected account; its graph " +
+      "reaches `sendRsvpEmail` by alias, stubbed here because the rendering is the sibling " +
+      "suite's subject, and the shared loader is the rule for a new suite either way",
+  ],
+  [
     "scheduler-markers.test.mjs",
     "same shape: `registry.ts` is loaded for the caps and windows and drags every job's graph in " +
       "with it, and the stub comments said so in as many words",

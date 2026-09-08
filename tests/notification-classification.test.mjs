@@ -545,7 +545,8 @@ const REGISTRY = {
     "Every RSVP lifecycle message: submitted, confirmed, waitlisted, denied, changed, cancelled. Each one answers something the recipient just did.",
   ),
   "src/app/api/events/[id]/rsvp/route.ts#sendRsvpEmail": T(
-    "The acknowledgement for an RSVP as it is made.",
+    "The acknowledgement for an RSVP as it is made, and the note to an address that already holds one when a signed-out submission repeats it.",
+    2,
   ),
   "src/app/api/events/[id]/rsvp/[rsvpId]/approve/route.ts#sendRsvpEmail": T(
     "The confirmation when an organiser approves that RSVP.",

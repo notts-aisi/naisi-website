@@ -19,7 +19,8 @@ export type EventRsvpEmailVariant =
   | "waitlisted"
   | "promoted"
   | "denied"
-  | "cancelled";
+  | "cancelled"
+  | "existing";
 
 type Props = {
   variant: EventRsvpEmailVariant;
@@ -42,6 +43,13 @@ type Props = {
   answersLine?: string;
   /** Schedule/location changes since the attendee signed up — shown on acceptance. */
   changesSinceSignup?: EventChange[];
+  /**
+   * For the `existing` variant: the state of the RSVP the address already
+   * holds. The route answers a signed-out duplicate exactly as it answers a
+   * fresh submission, so this email is the only place the address owner
+   * learns that nothing new was filed.
+   */
+  existingStatus?: "pending" | "confirmed" | "waitlisted";
   /** "Add to Google Calendar" link, shown on the approved / promoted emails. */
   googleCalUrl?: string;
   /** Link to the .ics download, for Apple Calendar / Outlook. */
@@ -102,6 +110,20 @@ const COPY: Record<
     heading: "Your RSVP was cancelled",
     body: "A NAISI organiser has cancelled your RSVP to this event. If this wasn't expected, reply to this email and we'll sort it out.",
   },
+  existing: {
+    eyebrow: "RSVP already received",
+    subject: "You already have an RSVP",
+    preview: "We already had an RSVP for this address, so nothing new was filed.",
+    heading: "We already have your RSVP",
+    body: "Somebody just submitted an RSVP to this event with this email address, and one was already on file, so nothing new was filed and nothing about the existing one has changed.",
+  },
+};
+
+/** How the `existing` variant describes the RSVP that is already on file. */
+const EXISTING_STATUS_COPY: Record<"pending" | "confirmed" | "waitlisted", string> = {
+  pending: "Your RSVP is awaiting review by a NAISI organiser.",
+  confirmed: "Your RSVP is confirmed. Your earlier confirmation email has the details.",
+  waitlisted: "Your RSVP is on the waitlist. We'll email you if a spot opens.",
 };
 
 export default function EventRsvpEmail({
@@ -115,6 +137,7 @@ export default function EventRsvpEmail({
   decisionNote,
   answersLine,
   changesSinceSignup,
+  existingStatus,
   googleCalUrl,
   icsUrl,
   cancelUrl,
@@ -123,13 +146,16 @@ export default function EventRsvpEmail({
   contactEmail,
 }: Props) {
   const copy = COPY[variant];
-  const showDetails = variant !== "denied" && variant !== "cancelled";
+  // The duplicate notice repeats no details: the earlier email carried them,
+  // and this one exists to say that nothing new was filed.
+  const showDetails = variant !== "denied" && variant !== "cancelled" && variant !== "existing";
   // Self-service links only make sense while the RSVP is live.
   const showActions =
     variant === "requested" ||
     variant === "approved" ||
     variant === "waitlisted" ||
-    variant === "promoted";
+    variant === "promoted" ||
+    variant === "existing";
   return (
     <Html>
       <Head />
@@ -147,6 +173,12 @@ export default function EventRsvpEmail({
               {copy.heading}
             </Heading>
             <Text style={paragraph}>{copy.body}</Text>
+            {variant === "existing" && existingStatus && (
+              <Text style={paragraph}>
+                {EXISTING_STATUS_COPY[existingStatus]} If this wasn&apos;t you, nothing
+                needs doing: the submission was not accepted.
+              </Text>
+            )}
           </Section>
 
           {showDetails && (

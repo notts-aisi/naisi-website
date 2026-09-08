@@ -5,6 +5,7 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { baseUrl } from "@/lib/events/rsvpToken";
 import { formatEventWhen } from "@/lib/events/changeSummary";
+import { hiddenLocationLacksLabel, publicLocationLine } from "@/lib/events/location";
 import { announcementQueueEnabled } from "@/lib/scheduler/announcementQueue";
 
 /**
@@ -123,6 +124,18 @@ export async function POST(
         error: `Can only publish from "approved", not "${current.status}"`,
       };
     }
+    // The editor checks this before review and the update route refuses it on
+    // a live event, but a draft is written client-direct and can reach
+    // approval without a label. Every surface fails closed on the state; this
+    // is what stops it going live at all.
+    if (hiddenLocationLacksLabel(current)) {
+      return {
+        ok: false as const,
+        status: 400,
+        error:
+          "You've hidden the exact location. Add a fuzzy label to show publicly (e.g. 'somewhere on campus') before publishing.",
+      };
+    }
     const announce = !current.announcedAt;
     tx.update(ref, {
       status: "published",
@@ -161,12 +174,9 @@ export async function POST(
   const event = claim.event;
   const membersOnly = event.visibility === "members";
   // The PUBLIC location: this list is not the attendee list, so a hidden
-  // location shows its placeholder here and the exact room stays behind an
-  // approved RSVP.
-  const locationLine = event.locationHidden
-    ? ((event.locationPublicText as string | null | undefined) ??
-      "Location shared with attendees")
-    : ((event.location as string | null | undefined) || "Location to be confirmed");
+  // location shows its placeholder here and the exact room stays behind a
+  // confirmed RSVP. `@/lib/events/location` is the one place that decides.
+  const locationLine = publicLocationLine(event);
 
   try {
     const result = await sendEventAnnouncement(db, {

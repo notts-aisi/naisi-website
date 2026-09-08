@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getPublishedEvent } from "@/features/events/fetchEvents";
 import { buildEventIcs } from "@/lib/events/ics";
+import { publicLocationText } from "@/lib/events/location";
 
 export const dynamic = "force-dynamic";
 
@@ -22,9 +23,7 @@ export async function GET(
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
   const eventUrl = appUrl ? `${appUrl}/events/${event.id}` : undefined;
-  const location = event.locationHidden
-    ? event.locationPublicText ?? ""
-    : event.location;
+  const location = publicLocationText(event);
 
   const descriptionParts: string[] = [];
   if (event.foodText) descriptionParts.push(`Food: ${event.foodText}`);
