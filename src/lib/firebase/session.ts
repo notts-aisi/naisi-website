@@ -133,6 +133,9 @@ export async function clearSessionCookieOnly(): Promise<void> {
 }
 
 /** Read + verify the session cookie, returning { uid, email, role }. Null if no/invalid session. */
+/** The refusals a cookie earns by itself: not a failure of the check. */
+const EXPECTED_VERIFY_FAILURES = /session-cookie|argument-error|id-token|invalid-credential/;
+
 export async function getCurrentUser(): Promise<SessionUser | null> {
   const store = await cookies();
   const cookie = store.get(SESSION_COOKIE);
@@ -172,7 +175,17 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
         circulateWorksheet: Boolean(perms.circulateWorksheet),
       },
     };
-  } catch {
+  } catch (err) {
+    // An expired, revoked or malformed cookie is the ordinary way a request
+    // arrives with no session, and says nothing. Anything else means the
+    // verification itself failed (the revocation check is a call to Firebase
+    // Auth, and a throttled or unreachable one answers here as "no session"
+    // for EVERY caller at once), which is worth one line so the outage reads
+    // as an outage rather than as a wall of 401s nobody can explain.
+    const code = (err as { code?: string } | null)?.code ?? "unknown";
+    if (!EXPECTED_VERIFY_FAILURES.test(code)) {
+      console.warn(`[session] verifySessionCookie failed: ${code}`);
+    }
     return null;
   }
 }

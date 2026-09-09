@@ -654,8 +654,12 @@ function runTests(serverEnv, personas) {
           E2E_LOCAL_TOKEN_SECRET: serverEnv.EVENTS_TOKEN_SECRET,
           MAILPIT_URL: MAILPIT_HTTP,
           // Only when the emulator and the persona server came up. The
-          // battery skips (or fails, when required) without these two.
-          ...(personas ? { E2E_PERSONA_ORIGIN: PERSONA_ORIGIN, FIRESTORE_EMULATOR_HOST: EMULATOR_HOST } : {}),
+          // battery skips (or fails, when required) without these two. The
+          // emulator host is handed over under its OWN name, never as
+          // FIRESTORE_EMULATOR_HOST: that variable is process-wide for the
+          // Admin SDK, and every other battery in this process seeds dev
+          // through it. The persona battery arms it inside its own process.
+          ...(personas ? { E2E_PERSONA_ORIGIN: PERSONA_ORIGIN, E2E_PERSONA_EMULATOR_HOST: EMULATOR_HOST } : {}),
         },
       },
     );

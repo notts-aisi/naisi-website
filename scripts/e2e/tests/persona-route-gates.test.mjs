@@ -29,10 +29,11 @@
  * is how the registry was first written, and how a wholesale change is
  * re-keyed: record, read the diff as a list of decisions, edit the registry.
  *
- * SKIPPING. Without the two variables the runner sets, the battery skips and
- * says so, unless `E2E_PERSONA_BATTERY=required`, which CI sets so a missing
- * emulator is a failed job rather than a quiet one. It never runs against a
- * deployed backend: there is no emulator behind one.
+ * SKIPPING. Without the two variables the runner sets (`E2E_PERSONA_ORIGIN`
+ * and `E2E_PERSONA_EMULATOR_HOST`), the battery skips and says so, unless
+ * `E2E_PERSONA_BATTERY=required`, which CI sets so a missing emulator is a
+ * failed job rather than a quiet one. It never runs against a deployed
+ * backend: there is no emulator behind one.
  */
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -48,34 +49,50 @@ import { readdirSync } from "node:fs";
 const APP_DIR = join(REPO_ROOT, "src", "app");
 const RECORD = process.env.E2E_PERSONA_RECORD ?? "";
 const REQUIRED = process.env.E2E_PERSONA_BATTERY === "required";
+
+// The runner hands the emulator host over under its own name, and this file
+// arms FIRESTORE_EMULATOR_HOST for its OWN process only: node --test runs
+// each file in a process of its own, and the variable is process-wide for the
+// Admin SDK. Set in the shared environment it sent every other battery's seeds
+// to the emulator while the main server read dev (CI, 9 September 2026).
+if (process.env.E2E_PERSONA_EMULATOR_HOST && !process.env.FIRESTORE_EMULATOR_HOST) {
+  process.env.FIRESTORE_EMULATOR_HOST = process.env.E2E_PERSONA_EMULATOR_HOST;
+}
 const ARMED = Boolean(process.env.E2E_PERSONA_ORIGIN && process.env.FIRESTORE_EMULATOR_HOST);
-const POOL = 6;
+const POOL = 4;
 
 /**
  * Every request makes the server verify the persona's session cookie against
  * Firebase Auth with revocation checking, which is one Identity Toolkit call
- * per request, and a run is four thousand of them in a few minutes. On
- * 9 September 2026 the last fifteen answers of a run came back as "no
- * session" for personas whose cookies were fine a moment earlier. So a
- * refusal that reads as "no session" (a 401, or a redirect to sign in) for a
- * persona that HAS a cookie is asked once more after a pause, and only the
- * second answer counts. A genuine 401 for that persona answers 401 twice; a
- * throttled lookup answers correctly the second time. Every retry is counted
- * and printed, so a run that leaned on them says so.
+ * per request, and a run is four thousand of them in a few minutes. When that
+ * lookup is throttled the server answers "no session" for a cookie that is
+ * fine, and it does so for EVERY persona at once until the quota window
+ * passes: on 9 September 2026 one run lost the last fifteen answers that way
+ * and another lost five hundred in one contiguous stretch. So a refusal that
+ * reads as "no session" (a 401, or a redirect to sign in) for a persona that
+ * HAS a cookie is asked again after a pause that grows, up to a minute in
+ * all, and only the last answer counts. A genuine 401 for that persona
+ * answers 401 every time; a throttled lookup answers correctly once the
+ * window has passed. Every retry is counted and printed, so a run that
+ * leaned on them says so rather than passing quietly.
  */
-const RETRY_PAUSE_MS = 2000;
+const RETRY_PAUSES_MS = [2000, 6000, 15000, 40000];
 let retried = 0;
 let retriesThatChanged = 0;
 const looksLikeNoSession = (result) =>
   result.status === 401 || (result.locations ?? []).includes("/login");
 async function withOneRetry(persona, request) {
-  const first = await request();
-  if (!persona.cookie || !looksLikeNoSession(first)) return first;
-  retried += 1;
-  await new Promise((r) => setTimeout(r, RETRY_PAUSE_MS));
-  const second = await request();
-  if (JSON.stringify(second) !== JSON.stringify(first)) retriesThatChanged += 1;
-  return second;
+  let answer = await request();
+  if (!persona.cookie) return answer;
+  for (const pause of RETRY_PAUSES_MS) {
+    if (!looksLikeNoSession(answer)) break;
+    retried += 1;
+    await new Promise((r) => setTimeout(r, pause));
+    const again = await request();
+    if (JSON.stringify(again) !== JSON.stringify(answer)) retriesThatChanged += 1;
+    answer = again;
+  }
+  return answer;
 }
 
 let forwarded = 0;
@@ -243,7 +260,7 @@ function pageMatches(want, got) {
   return Array.isArray(got) && got.length > 0 && got.every((name) => allowed.includes(name));
 }
 
-describe("persona route gates on a real build", { skip: !ARMED && !REQUIRED ? "E2E_PERSONA_ORIGIN and FIRESTORE_EMULATOR_HOST are not set; scripts/e2e/run.mjs sets them when the emulator and the persona server come up. Set E2E_PERSONA_BATTERY=required to fail instead." : false }, () => {
+describe("persona route gates on a real build", { skip: !ARMED && !REQUIRED ? "E2E_PERSONA_ORIGIN and E2E_PERSONA_EMULATOR_HOST are not set; scripts/e2e/run.mjs sets them when the emulator and the persona server come up. Set E2E_PERSONA_BATTERY=required to fail instead." : false }, () => {
   const personas = new Map();
   const observed = { routes: {}, pages: {} };
   const routes = routeSurfaces();

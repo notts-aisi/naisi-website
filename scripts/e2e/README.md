@@ -671,9 +671,13 @@ work; a 2xx JSON body is also held to the `fields` list the entry allows.
 **Where the elevated roles live.** The battery needs the personas the fence
 forbids, so `run.mjs` starts a Firestore emulator (a Java process, through the
 `firebase-tools` in `scripts/rules-tests`) and a SECOND `next start` on
-`127.0.0.1:3101` with `FIRESTORE_EMULATOR_HOST` set. `lib/personas.mjs` seeds
-one `users` document per persona THERE, mints a session cookie through that
-server, and removes both halves in `after()`. Firebase Auth stays real (dev),
+`127.0.0.1:3101` with `FIRESTORE_EMULATOR_HOST` set. The battery's own
+process arms that variable for itself from `E2E_PERSONA_EMULATOR_HOST`; the
+runner never sets it in the shared test environment, because the Admin SDK
+reads it process-wide and every other battery seeds dev through the same
+SDK. `lib/personas.mjs` seeds one `users` document per persona in the
+emulator, mints a session cookie through that server, and removes both halves
+in `after()`. Firebase Auth stays real (dev),
 which is what makes the session cookies real; Firestore is the throwaway. So
 the battery may drive every route as every persona, mutating ones included,
 and every request carries its own forwarded address so the in-memory throttles
@@ -694,16 +698,20 @@ a missing emulator is a red job rather than a quiet skip. It refuses to start
 when `:8080` is already held: the rules suite uses the same port, and an
 emulator this run did not start holds data it knows nothing about.
 
-**One retry, counted.** Every request makes the server verify the persona's
-session cookie against Firebase Auth with revocation checking, one Identity
-Toolkit call per request, and a run is four thousand of them in a few
-minutes. On the first recording runs the last few answers came back as "no
-session" for personas whose cookies were fine a moment earlier. So a refusal
-that reads as "no session" (a 401, or a redirect to sign in) for a persona
-that has a cookie is asked once more after a pause, and only the second answer
-counts; a genuine 401 answers 401 twice. The battery prints how many answers
-it asked again and how many changed, so a run that leaned on the retry says
-so rather than passing quietly.
+**Retries with a growing pause, counted.** Every request makes the server
+verify the persona's session cookie against Firebase Auth with revocation
+checking, one Identity Toolkit call per request, and a run is four thousand
+of them in a few minutes. When that lookup is throttled the server answers
+"no session" for a cookie that is fine, and for every persona at once until
+the quota window passes: one recording run lost its last fifteen answers that
+way and another five hundred in one stretch. So a refusal that reads as "no
+session" (a 401, or a redirect to sign in) for a persona that has a cookie is
+asked again after pauses that grow to about a minute in all, and only the last
+answer counts; a genuine 401 answers 401 every time. The battery prints how
+many answers it asked again and how many changed, so a run that leaned on the
+retry says so rather than passing quietly, and `getCurrentUser` now logs a
+verification failure that is not the cookie's own doing, so the server side of
+such a window reads as an outage rather than a wall of 401s.
 
 **Re-keying the registry.** `E2E_PERSONA_RECORD=<path>` writes what was
 observed as JSON instead of asserting. Diff it against the registry, read the
