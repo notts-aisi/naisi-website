@@ -63,6 +63,7 @@ import {
   newIdentityPage,
   openBrowser,
   stubRecaptchaOnLoopback,
+  waitForRecaptchaWidget,
 } from "../../scripts/e2e/lib/browser.mjs";
 import {
   ARTIFACTS_DIR,
@@ -118,11 +119,11 @@ const PHONES = [
 /**
  * Why a step may not run in this mode, or null.
  *
- * Nothing on this journey presses a reCAPTCHA-gated control, so
- * `RECAPTCHA_DEPENDENT_STEPS` is empty and this stays the null-returning
- * default in both modes. The wiring is here in full anyway, in the shape every
- * spec uses, so a future gated step is one entry in the fixture's list away
- * rather than a reimplementation of the skip protocol.
+ * The two steps that press Submit are reCAPTCHA-gated since 9 September 2026,
+ * when the RSVP route stopped being an open mailer, so against a deployed
+ * target with no bypass secret they skip with the one reason the runner
+ * accepts and the rest of the journey still runs. In local mode and with the
+ * bypass armed they run for real.
  */
 let skipReasonFor = () => null;
 
@@ -330,9 +331,10 @@ test("events RSVP: a signed-out guest books a place and the page fits a phone", 
     skipReasonFor: (name) => skipReasonFor(name),
   });
   const step = (name, fn) => recorder.step(name, fn);
-  // Armed for the shape, not for this journey: no page here mounts a reCAPTCHA
-  // widget and the RSVP route asks for no token. Kept so every spec decides
-  // its mode the same way and the answer is printed either way.
+  // The RSVP form mounts an invisible widget and the route verifies the token,
+  // so this is load-bearing here rather than kept for shape: on loopback the
+  // stub hands back a token the always-pass secret accepts, and against a
+  // deployed target it arms the harness bypass when the secret is present.
   const recaptchaStubbed = await stubRecaptchaOnLoopback(page, origin);
   console.log(
     `[events-rsvp-spec] reCAPTCHA: ${recaptchaStubbed ? `armed (${recaptchaStubbed})` : "real widget (deployed target)"}; ` +
@@ -402,6 +404,14 @@ test("events RSVP: a signed-out guest books a place and the page fits a phone", 
       // The mailing-list tick boxes are deliberately left alone. They post to
       // a different route, and a smoke test that opts a throwaway address into
       // two channels is a smoke test with two more collections to drain.
+      //
+      // The widget has to be MOUNTED before the press. `RecaptchaInvisible`
+      // loads Google's script in an effect and renders the widget only after
+      // it lands, and until then `execute()` resolves null and the route
+      // refuses the submission. A person spends seconds reading the page; a
+      // spec presses in milliseconds, and that race is what cost the funnel
+      // spec its third real run.
+      await waitForRecaptchaWidget(page);
       await page.getByTestId("rsvp-submit").click();
       // The route sends the browser to its own page rather than swapping the
       // card in place, so the URL is the assertion: a person who lands back on
@@ -531,6 +541,7 @@ test("events RSVP: a signed-out guest books a place and the page fits a phone", 
       await page.locator("#rsvp-email").fill(state.guestEmail);
       await waitForHydration(page, "rsvp-form");
       await page.locator(`#${state.questionId}-input`).fill(`${answer} Again.`);
+      await waitForRecaptchaWidget(page);
       await page.getByTestId("rsvp-submit").click();
       const navFailure = await page
         .waitForURL(

@@ -147,3 +147,60 @@ export function effectiveStageClose(
   if (!roundClose) return stageClose;
   return stageClose.getTime() < roundClose.getTime() ? stageClose : roundClose;
 }
+
+/**
+ * Whether ANSWERS to this stage may still be written.
+ *
+ * ## Why this predicate exists
+ *
+ * Until 9 September 2026 `effectiveStageClose` had exactly two call sites in
+ * the repository, and neither was a write path: the reminder job read it, and
+ * the `stage-released` email printed it. A stage deadline was therefore a
+ * sentence in an email and nothing else. The only time gate on a stage submit
+ * was the ROUND's window, so somebody told "Part 2 is due Friday 10 October"
+ * could answer and file it on the 14th, with four days of thinking time nobody
+ * else was offered, and the ordinary form rendered a live submit button while
+ * they did it. That is the same fairness property the release boundary above
+ * exists to protect, at the other end of the stage.
+ *
+ * A deadline a person is told about and that bounds their own write is
+ * enforced by that write. `tests/deadlines-enforced.test.mjs` is the guard for
+ * the class.
+ *
+ * ## Reading a closed stage is still allowed
+ *
+ * `isStageReleased` deliberately keeps saying yes after a deadline, so
+ * reviewers can read the questions all through review week and an applicant
+ * can look back at what they were asked. This predicate is the narrower one:
+ * it answers only "may an answer be STORED", which is what the submit routes
+ * and the draft save need to know.
+ *
+ * ## The ROUND's window is part of the answer, not a separate check
+ *
+ * Every write path calls `windowRefusal` before it gets here, so a round that
+ * is not open already refuses. This predicate asks the same question anyway,
+ * because it is also what the applicant's page is RENDERED against: a round an
+ * admin closed early keeps a `closesAt` in the future, and a flag that said
+ * "open for answers" about it would put a live form in front of somebody whose
+ * every submission the server refuses. The flag and the gate have to be the
+ * same sentence or they drift, which is the whole reason this module exists.
+ *
+ * ## Boundary semantics
+ *
+ * Inclusive at both ends, like every other bound in these modules: at the
+ * release instant the stage is open, and at the close instant it still is. A
+ * stage with no deadline of its own inherits the round's, and a round with no
+ * deadline leaves it unbounded, which is a readiness-panel failure rather than
+ * a state to render.
+ */
+export function isStageOpenForAnswers(
+  stage: StageReleaseInput,
+  round: RoundWindowInput,
+  now: Date,
+): boolean {
+  if (roundWindowState(round, now).state !== "open") return false;
+  if (!isStageReleased(stage, round, now)) return false;
+  const close = effectiveStageClose(stage, round);
+  if (!close) return true;
+  return now.getTime() <= close.getTime();
+}

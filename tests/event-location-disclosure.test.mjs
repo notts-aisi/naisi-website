@@ -181,6 +181,17 @@ const { loadTs } = createLoader({
     ["firebase-admin/firestore", FIRESTORE_STUB],
     ["@/lib/firebase/admin", "export const getAdminDb = () => globalThis.__db ?? null;"],
     ["@/lib/firebase/session", "export const getCurrentUser = async () => globalThis.__user ?? null;"],
+    // The RSVP route's bot gate and throttle, faked: this file is about the
+    // location line a recipient reads, and the throttle counts hits in module
+    // state no test can reset. Both are proved by
+    // tests/public-write-gating.test.mjs and by the deployed battery beside it.
+    ["@/lib/recaptcha/server", "export const verifyRecaptcha = async () => true;"],
+    ["@/lib/recaptcha/bypass", "export const recaptchaBypassGranted = () => false;"],
+    [
+      "@/lib/rateLimit",
+      "export const clientIp = () => '203.0.113.1';\n" +
+        "export const rateLimit = () => ({ ok: true, retryAfterSeconds: 0 });",
+    ],
     // The transport, recorded with the React element intact so the test can
     // render the real template and read what the recipient would see.
     [
@@ -217,7 +228,7 @@ const broadcastRoute = await loadTs("app/api/events/[id]/broadcast/route.ts");
 const updateRoute = await loadTs("app/api/events/[id]/update/route.ts");
 const publishRoute = await loadTs("app/api/events/[id]/publish/route.ts");
 
-const jsonRequest = (body) => ({ json: async () => body });
+const jsonRequest = (body) => ({ json: async () => body, headers: new Headers() });
 const ctxFor = (params) => ({ params: Promise.resolve(params) });
 
 /** The HTML the last recorded RSVP email would render to. */
@@ -432,7 +443,7 @@ describe("the promotion off the waitlist", () => {
       },
     });
     globalThis.__user = approver;
-    const res = await cancelRsvpRoute.POST({ url: "https://naisi.test/x", json: async () => ({}) }, ctxFor({ id: "event-1", rsvpId: "rsvp-1" }));
+    const res = await cancelRsvpRoute.POST({ url: "https://naisi.test/x", ...jsonRequest({}) }, ctxFor({ id: "event-1", rsvpId: "rsvp-1" }));
     assert.equal(res.status, 200, JSON.stringify(res.body));
     await settle();
     const promoted = globalThis.__sent.find((s) => s.to === "b@e2e.invalid");

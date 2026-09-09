@@ -151,6 +151,18 @@ const AUTH_BATTERIES = {
       "/calendar": "PROTECTED_PREFIXES names it, but no page.tsx exists for it yet.",
     },
   },
+  "public-write-gating.test.mjs": {
+    why:
+      "The same question as recaptcha-gate.test.mjs, asked of the other public writer: the " +
+      "RSVP bot gate is live on every deployed backend, and it runs BEFORE the event is " +
+      "fetched. Deliberately a twin rather than an addition, because the two routes hold the " +
+      "secret independently and a check that proved one and implied the other is how the " +
+      "second one drifts.",
+    // It only ever posts a junk token to an event id that cannot exist, so the
+    // handler is refused at the gate and never runs. That proves the gate, not
+    // the route, so the key stays in NOT_COVERED.
+    drives: [],
+  },
   "recaptcha-gate.test.mjs": {
     why: "The reCAPTCHA gate is live on every deployed backend: a junk token must bounce.",
     drives: ["/api/register"],

@@ -9,6 +9,7 @@ import { isTaskEmailEnabled } from "@/lib/firestore/taskEmailConfig";
 import { mirrorTaskEmailToPush } from "@/lib/push/taskNotifications";
 import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { onTaskRoster } from "@/lib/tasks/recipientScope";
 
 type NotifyPayload = {
   commentId?: unknown;
@@ -138,9 +139,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const comment = commentSnap.data() ?? {};
   const authorUid = typeof comment.authorUid === "string" ? comment.authorUid : "";
   const bodyMarkdown = typeof comment.bodyMarkdown === "string" ? comment.bodyMarkdown : "";
-  const mentions: string[] = Array.isArray(comment.mentions)
-    ? (comment.mentions as unknown[]).filter((u): u is string => typeof u === "string")
-    : [];
+  // THE RECIPIENT SCOPE. `comment.mentions` is written by the comment's own
+  // author and `firestore.rules` constrains only its SIZE, so the array is the
+  // caller's to choose; taken at face value it made this route an outbound
+  // mailer with an attacker-chosen recipient list, subject and body, reachable
+  // from a personal to-do a `pending` account had just created for itself.
+  // `onTaskRoster` keeps only the uids on this task's roster, which is the
+  // pool the composer offers in the first place. See lib/tasks/recipientScope.
+  const mentions: string[] = onTaskRoster(comment.mentions, task);
 
   // Build the recipient map with reasons. Mention takes priority if a user is
   // in multiple sets (mention email is the most direct). Exclude mentions that

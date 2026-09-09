@@ -76,12 +76,22 @@ export const RSVP_STEPS = [
  * Nothing on this journey presses a reCAPTCHA-gated control: the public event
  * page mounts no widget and `POST /api/events/[id]/rsvp` does not ask for a
  * token (a repeat from the same address files nothing and is answered as if it
- * had, inside its transaction). So every step here runs against a deployed target
- * as well as a local one, and the list stays empty rather than being deleted:
- * the runner and the guard both read it, and the spec's skip wiring is the
- * same shape as every other spec so a future gated step is one entry away.
+ * had, inside its transaction).
+ *
+ * That changed on 9 September 2026. `POST /api/events/[id]/rsvp` was an
+ * unauthenticated, unthrottled, un-CAPTCHA'd outbound mailer with a
+ * caller-chosen recipient, and it is now gated the way `/api/register` is. So
+ * the two steps that press Submit mint a real token, and against a deployed
+ * target without the harness bypass secret they cannot: the real widget
+ * answers headless Chromium with an image challenge, which is the property
+ * `scripts/e2e/tests/recaptcha-gate.test.mjs` asserts rather than works
+ * around. Those two steps are named here, the runner accepts their skip in
+ * that mode alone, and every other step on the journey still runs.
  */
-export const RECAPTCHA_DEPENDENT_STEPS = [];
+export const RECAPTCHA_DEPENDENT_STEPS = [
+  "a guest fills the form and lands on the confirmation page",
+  "a second submission from the same address is answered the same way and files nothing new",
+];
 
 /**
  * The one custom question the guest answers, with a FIXED id so the spec can
