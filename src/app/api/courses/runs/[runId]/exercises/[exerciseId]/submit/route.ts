@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { resolveWeekDoc } from "@/lib/courses/groupResolve";
 import {
@@ -223,7 +224,14 @@ export async function POST(
   const enrolment = enrolSnap.exists
     ? normalizeCourseEnrolment(enrolSnap.id, enrolSnap.data() ?? {})
     : null;
-  if (!enrolment || enrolment.status !== "active" || enrolment.role !== "learner") {
+  if (
+    !enrolment ||
+    enrolment.status !== "active" ||
+    enrolment.role !== "learner" ||
+    // The row is an authority the allocation route wrote for an approved
+    // account, and nothing rewrites it when that stops being true.
+    !isNamedWithStanding(actor, "courseEnrolments.uid", enrolment.uid)
+  ) {
     // Deliberately specific rather than a bare "Forbidden": the week page shows
     // the exercises section to facilitators and admins too, and the honest
     // answer leaks nothing the caller doesn't already know about themselves.

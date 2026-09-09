@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import type { Firestore } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { asUidList } from "@/lib/firestore/events";
 import { GROUP_FIELD_LIMITS } from "@/lib/firestore/courseGroups";
@@ -78,7 +79,11 @@ export async function POST(
   }
   const run = runSnap.data() ?? {};
 
-  const isTrackLead = asUidList(run.trackLeadUids).includes(actor.uid);
+  const isTrackLead = isNamedWithStanding(
+    actor,
+    "courseRuns.trackLeadUids",
+    asUidList(run.trackLeadUids),
+  );
   if (!(actor.role === "admin" || isTrackLead)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

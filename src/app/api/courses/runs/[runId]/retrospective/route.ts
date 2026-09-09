@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveCourse, canDraftCourse } from "@/lib/firestore/users";
 import { asUidList } from "@/lib/firestore/events";
 import { normalizeCourseWeek } from "@/lib/firestore/courses";
 import {
@@ -98,14 +100,15 @@ export async function GET(
   // non-staff caller gets the same 403 whether the run is missing or simply
   // isn't theirs, and the 404 is reachable only once authority is settled.
   const runSnap = await db.collection("courseRuns").doc(runId).get();
-  const staff =
-    actor.role === "admin" ||
-    actor.permissions.approveCourse ||
-    actor.permissions.draftCourse;
+  const staff = canApproveCourse(actor) || canDraftCourse(actor);
   if (!staff) {
     const isLead =
       runSnap.exists &&
-      asUidList((runSnap.data() ?? {}).trackLeadUids).includes(actor.uid);
+      isNamedWithStanding(
+        actor,
+        "courseRuns.trackLeadUids",
+        asUidList((runSnap.data() ?? {}).trackLeadUids),
+      );
     if (!isLead) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   if (!runSnap.exists) {

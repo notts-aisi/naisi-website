@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { holdsStanding, isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { isValidDateKey } from "@/lib/courses/weekPlan";
 import { memberCurrentWeek, resolveCalendar } from "@/lib/courses/groupResolve";
@@ -296,9 +297,14 @@ export async function GET() {
       .get(),
   ]);
 
-  const enrolments: CourseEnrolmentDoc[] = enrolSnap.docs.map((d) =>
-    normalizeCourseEnrolment(d.id, d.data() ?? {}),
-  );
+  // THE SAME FLOOR THE RUN ROUTES APPLY. An enrolment row is an authority the
+  // allocation and facilitators routes wrote for an approved account, and
+  // nothing rewrites it when that stops being true, so the hub draws a cohort
+  // card only while the account is still on the roster. The two role loops
+  // below ask the same question of their own arrays.
+  const enrolments: CourseEnrolmentDoc[] = enrolSnap.docs
+    .map((d) => normalizeCourseEnrolment(d.id, d.data() ?? {}))
+    .filter((e) => isNamedWithStanding(actor, "courseEnrolments.uid", e.uid));
 
   /**
    * runId → the caller's own decided application status, for the two statuses
@@ -397,15 +403,24 @@ export async function GET() {
     entry.enrolment = enrolment;
     entry.roles.add(enrolment.role === "facilitator" ? "facilitator" : "learner");
   }
-  for (const doc of reviewerSnap.docs) {
-    ensure(runById.get(doc.id) ?? normalizeCourseRun(doc.id, doc.data() ?? {})).roles.add(
-      "reviewer",
-    );
+  // BEING NAMED IS NOT THE SAME AS STILL HOLDING THE ROLE. Nothing rewrites
+  // either array when an account is demoted or rejected, so the hub asks the
+  // live bar before it draws a door every route beneath it would then refuse.
+  // The query has already proved membership, which is why this is
+  // `holdsStanding` rather than `isNamedWithStanding`.
+  if (holdsStanding(actor, "courseRuns.admissionsReviewerUids")) {
+    for (const doc of reviewerSnap.docs) {
+      ensure(
+        runById.get(doc.id) ?? normalizeCourseRun(doc.id, doc.data() ?? {}),
+      ).roles.add("reviewer");
+    }
   }
-  for (const doc of leadSnap.docs) {
-    ensure(runById.get(doc.id) ?? normalizeCourseRun(doc.id, doc.data() ?? {})).roles.add(
-      "lead",
-    );
+  if (holdsStanding(actor, "courseRuns.trackLeadUids")) {
+    for (const doc of leadSnap.docs) {
+      ensure(
+        runById.get(doc.id) ?? normalizeCourseRun(doc.id, doc.data() ?? {}),
+      ).roles.add("lead");
+    }
   }
   // Offers get a row of their own — and NO role, because they hold none. The
   // run status is not filtered here: a cancelled or finished run is exactly

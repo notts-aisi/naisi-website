@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAddressableId } from "@/lib/addressableId";
 import { getAdminDb, getAdminStorage } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { ownedStoragePaths } from "@/lib/firestore/taskAttachments";
 
@@ -59,11 +60,16 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
 
   // Mirror firestore.rules `allow delete` on /tasks/{taskId}
   const isCreator = viewer.uid === task.creatorUid;
-  // The rules' `isCompleter()`: `request.auth.uid in resource.data.completerUids`.
-  // `Array.isArray` because this is raw Firestore data, not a normalised doc —
-  // a legacy row missing the field must read as "not a completer", not throw.
-  const isCompleter =
-    Array.isArray(task.completerUids) && task.completerUids.includes(viewer.uid);
+  // The rules' `isCompleter()`: `request.auth.uid in resource.data.completerUids`,
+  // plus the live approved-account floor the rules get for free (a rejected
+  // account cannot be signed in at all under `hasRole`). This is raw Firestore
+  // data rather than a normalised doc, which `isNamedWithStanding` handles: a
+  // legacy row missing the field reads as "not a completer" instead of throwing.
+  const isCompleter = isNamedWithStanding(
+    viewer,
+    "tasks.completerUids",
+    task.completerUids,
+  );
   const canDelete =
     viewer.role === "admin" ||
     (viewer.role === "committee" &&

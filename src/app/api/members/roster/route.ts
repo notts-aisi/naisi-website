@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { holdsStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 
 /**
@@ -26,7 +27,13 @@ export type RosterMember = {
 
 export async function GET() {
   const session = await getCurrentUser();
-  if (!session) {
+  // An approved account, not merely a signed-in one. The two queries below are
+  // scoped to the caller's own task memberships, and nothing removes a uid from
+  // `completerUids` when the account behind it is rejected — so without this
+  // floor a rejected ex-member kept a working lookup of every collaborator's
+  // name, out of a collection `firestore.rules` closed to them. It is the same
+  // bar the task routes now apply to the same two arrays.
+  if (!session || !holdsStanding(session, "tasks.completerUids")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

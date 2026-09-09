@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb, getAdminStorage } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { WORKSHEETS_COLLECTION } from "@/lib/firestore/worksheets";
@@ -26,9 +27,17 @@ import { deleteWorksheetDocument, worksheetDeleteBlockers } from "@/lib/workshee
  *
  * ── WHO ─────────────────────────────────────────────────────────────────────
  * The author or an admin, which is what the withdrawn rule allowed, so nothing
- * is taken away. Unlike the destroy routes, authorisation cannot run before
- * the existence check: "may you delete this" is a question about the document,
- * and the id is one the caller already had (they were reading the worksheet).
+ * is taken away. "The author" means what `isAuthor()` means in the rules, role
+ * test included: `isLibraryUser() && authorUid == uid`. The first version of
+ * this route reproduced the `authorUid` half and dropped the role half, which
+ * left an author the committee had removed still able to destroy a document
+ * the whole committee browses — the exact standing grant the rules comment at
+ * `firestore.rules` says in as many words that the helper exists to prevent.
+ * `isNamedWithStanding` is that helper's other half.
+ *
+ * Unlike the destroy routes, authorisation cannot run before the existence
+ * check: "may you delete this" is a question about the document, and the id is
+ * one the caller already had (they were reading the worksheet).
  *
  * ── WHAT REFUSES IT ─────────────────────────────────────────────────────────
  * An OPEN circulation of this worksheet, and only an open one: a closed
@@ -70,7 +79,7 @@ export async function DELETE(
   }
   const worksheet = snap.data() ?? {};
 
-  const isAuthor = worksheet.authorUid === actor.uid;
+  const isAuthor = isNamedWithStanding(actor, "worksheets.authorUid", worksheet.authorUid);
   if (actor.role !== "admin" && !isAuthor) {
     return NextResponse.json(
       { error: "Only the author or an admin can delete this worksheet." },

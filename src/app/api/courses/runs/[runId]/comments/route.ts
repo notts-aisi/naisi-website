@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
   courseEnrolmentId,
@@ -164,13 +165,17 @@ export async function GET(
   const enrolment = enrolSnap.exists
     ? normalizeCourseEnrolment(enrolSnap.id, enrolSnap.data() ?? {})
     : null;
+  // The roster floor on the enrolment itself, as in the overview route: the
+  // row outlives the account unless something asks.
   const liveEnrolment =
-    enrolment && (enrolment.status === "active" || enrolment.status === "completed")
+    enrolment &&
+    (enrolment.status === "active" || enrolment.status === "completed") &&
+    isNamedWithStanding(actor, "courseEnrolments.uid", enrolment.uid)
       ? enrolment
       : null;
   const isFacilitator =
     (liveEnrolment?.role === "facilitator" && liveEnrolment.status === "active") ||
-    run.runFacilitatorUids.includes(actor.uid);
+    isNamedWithStanding(actor, "courseRuns.runFacilitatorUids", run.runFacilitatorUids);
   const isAdmin = actor.role === "admin";
 
   if (!isAdmin && !liveEnrolment && !isFacilitator) {

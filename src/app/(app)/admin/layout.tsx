@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { holdsStanding } from "@/lib/firebase/eligibility";
 import { getImpersonator, markerIsLive } from "@/lib/firebase/impersonation";
 import {
   canApproveCourse,
@@ -51,7 +52,14 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // server-owned `users.admissionsReviewer` flag, would bounce exactly the
   // non-admin SU reviewers the flag exists to serve, which is the dead-link
   // failure the denormalisation was added to avoid.
-  const isAdmissionsReviewer = user.admissionsReviewer === true;
+  // The flag is a DENORMALISATION and nothing clears it when the person stops
+  // clearing the bar, so it is paired with the live one `requireAdmissionsPage`
+  // applies a level down. Without the pairing this door and that gate disagree,
+  // and the reviewer whose SU recognition was cleared is shown a tab that
+  // redirects them, which is the same dead link in a different direction.
+  const isAdmissionsReviewer =
+    user.admissionsReviewer === true &&
+    holdsStanding(user, "admissionRounds.reviewerUids");
   // Same reasoning one more time for `manageMembership`: the grant is useless
   // if its holder is bounced off `/admin/membership`, which is the only page
   // it reaches. The tree below has its own gate.

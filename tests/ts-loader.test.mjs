@@ -243,6 +243,13 @@ describe("the shared loader reads JSX", () => {
  */
 const USERS = new Map([
   [
+    "authority-at-use.test.mjs",
+    "executes the real bar registry from src/lib/firebase/eligibility.ts against every persona, " +
+      "plus `isEligibleAdmissionsReviewer` and `canCirculateWorksheet` from the users module and " +
+      "the two admissions access modules, because the whole point is that the bar a gate applies " +
+      "is the one its appointment applied",
+  ],
+  [
     "api-addressable-ids.test.mjs",
     "runs the real `isAddressableId` and `hasEncodedPathSeparator` from src/lib/addressableId.ts, " +
       "the chokepoint the proxy applies to every /api path",

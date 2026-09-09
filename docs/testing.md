@@ -198,6 +198,55 @@ The same shape, older:
   public. Found on 8 September 2026 on the public event page, where the RSVP
   form received the whole event and the page's HTML carried the exact
   location of a hidden-location event to anybody.
+- `tests/authority-at-use.test.mjs`: being named on a document is not a
+  standing grant. A dozen documents carry an array of uids that decides what
+  the people in it may do (a run's `trackLeadUids`, a round's `reviewerUids`,
+  a circulation's `staffUids`, a worksheet's `authorUid`), each written behind
+  a bar, and until 9 September 2026 not one of those bars was asked again when
+  the authority was used, while nothing anywhere removed a uid from an array
+  when the person was demoted, lost SU recognition, or was rejected. Revoking
+  somebody's standing revoked nothing. The bar now lives once, in
+  `src/lib/firebase/eligibility.ts`, keyed by `collection.field`, with the
+  appointment site named per entry; `isNamedWithStanding` asks both halves at
+  once and an approved-account floor is applied centrally so a bar written as
+  a bare permission test cannot admit a rejected account. The guard walks
+  every `.ts` and `.tsx` under `src` for the raw comparison in six shapes
+  (`.includes`, `.indexOf`, `===`, the reversed `===`, `array-contains`, and
+  a `some`/`find`/`filter` predicate), reading source with comments and
+  TypeScript casts stripped so a gate split over four lines still reads as
+  one. A hit that is not the helper fails unless `RAW_SITES` says it is a
+  client component or not a gate, with a per-file per-field count and a
+  reason; an entry may carry `provedBy`, a literal the file must still
+  contain, which turns "covered elsewhere in this file" into an assertion.
+  Both directions there, and both between the registry and the tree: an
+  authority named at a call site must exist (a typo otherwise throws on the
+  branch nobody exercises) and an authority nobody calls fails as dead policy.
+  Then it executes: the whole persona matrix is written out cell by cell, and
+  each bar is checked against the bar its APPOINTMENT applies, by running the
+  real `isEligibleAdmissionsReviewer` and `canCirculateWorksheet` and by
+  pinning the two roles routes' `ELIGIBLE_ROLES` literal and
+  `isLibraryUser()` in `firestore.rules`. The scanner's own patterns are
+  exercised on synthetic gates and near-misses, so one that had quietly
+  stopped matching fails rather than passes.
+
+  The same file carries the two neighbours of the class, both found by the
+  skeptic pass over the first fix rather than by the audit. A PERMISSIONS KEY
+  outlives an account the same way a name on a document does, because nothing
+  clears the map when somebody is rejected: the floor lives in the nine `can*`
+  helpers in `lib/firestore/users.ts`, every one of them executed here against
+  every persona, and no route handler or server page may read a raw
+  `permissions.<key>` beside them (twenty-seven did). And the RULES say the
+  same sentence or the routes are worth nothing, because the browser can read
+  the document directly: every helper in `firestore.rules` whose body tests
+  `request.auth.uid` against a document field is found by a brace-matched walk
+  of the file and must carry a role test, with `NOT_APPOINTMENTS` naming the
+  ownership scalars that are excused and why. Both lists are checked in both
+  directions.
+
+  The two halves are proved together rather than separately: flipping a rules
+  helper changes what `scripts/rules-tests/tests/client-queries.registry.mjs`
+  answers for the `pending` persona, so fifteen registry outcomes moved with
+  this change and each one had to be written down as a decision.
 - `tests/lib/outputGuard.mjs`, loaded into every `npm test` process by the
   `--import` flag on the test script and proved by
   `tests/output-lines.test.mjs`: no test process may print a line over 20 KB.

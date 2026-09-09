@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveEvent } from "@/lib/firestore/users";
 import { sanitizeBlocks } from "@/lib/firestore/newsletterBlocks";
 import {
   FOOD_TAGS,
@@ -63,7 +64,7 @@ export async function POST(
 
   const actor = await getCurrentUser();
   if (!actor) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  if (!(actor.role === "admin" || actor.permissions.approveEvent)) {
+  if (!canApproveEvent(actor)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

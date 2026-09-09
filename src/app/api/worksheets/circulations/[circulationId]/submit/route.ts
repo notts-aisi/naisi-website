@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
   CIRCULATIONS_COLLECTION,
@@ -95,6 +96,13 @@ export async function POST(
 
   const actor = await getCurrentUser();
   if (!actor) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  // The response document is addressed by the caller's own uid, which is the
+  // same shape as an enrolment row and outlives the account the same way.
+  // `isOwner()` in `firestore.rules` floors the client-direct autosave; this
+  // is the Admin SDK half of that door.
+  if (!isNamedWithStanding(actor, "circulationResponses.uid", actor.uid)) {
+    return NextResponse.json({ error: "Circulation not found" }, { status: 404 });
+  }
 
   const db = getAdminDb();
   if (!db) return NextResponse.json({ error: "Server not configured" }, { status: 500 });

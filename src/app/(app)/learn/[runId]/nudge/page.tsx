@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { redirect } from "next/navigation";
 import type { CSSProperties } from "react";
 import NudgePanel from "@/features/courses/NudgePanel";
@@ -105,7 +106,11 @@ export default async function RunNudgePage({
   // `access.isFacilitator` is deliberately NOT consulted: it is true for
   // someone who merely holds a group of this run. See the gate note above.
   const staffsRun =
-    access.run.runFacilitatorUids.includes(access.user.uid) || access.isTrackLead;
+    isNamedWithStanding(
+      access.user,
+      "courseRuns.runFacilitatorUids",
+      access.run.runFacilitatorUids,
+    ) || access.isTrackLead;
   if (!access.isAdmin && !staffsRun) {
     redirect(runHome);
   }

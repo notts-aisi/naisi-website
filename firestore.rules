@@ -8,6 +8,29 @@ service cloud.firestore {
     function hasRole(roles) { return isSignedIn() && userRole() in roles; }
     function isAdmin()      { return hasRole(['admin']); }
 
+    // AN APPROVED ACCOUNT: on the roster, neither waiting nor refused.
+    //
+    // The floor under every grant that comes from being NAMED on a document
+    // rather than from holding a role. `isAuthor()` on `worksheets` worked
+    // this out first and says why beside itself: written as `isSignedIn() &&
+    // authorUid == uid`, a named branch survives the account it was granted
+    // to, because nothing rewrites the document when somebody is demoted or
+    // rejected and `POST /api/auth/session` mints a cookie for any role. Every
+    // other named branch in this file had the same shape until 9 September
+    // 2026: a task's completers and reviewers, a circulation's staff, an
+    // event's author and collaborators, a course's author and collaborators.
+    //
+    // Put it AFTER the resource test at each call site, never before: the
+    // resource clause is free and this one reads the caller's user document.
+    // That read is on the CALLER and always at the same path, so it is the
+    // one get() this file allows inside a read rule (the trap is a get() on
+    // the CANDIDATE document, billed once per row of a list), and every rule
+    // that also calls `isAdmin()` has paid for it already.
+    //
+    // The server-side twin, for the routes that use the Admin SDK and see no
+    // rules at all, is `holdsStanding` in `src/lib/firebase/eligibility.ts`.
+    function isApprovedAccount() { return hasRole(['member', 'committee', 'admin']); }
+
     // SU-recognised committee: committee members the Students' Union formally
     // recognises. They are trusted with member PII (the users collection) and
     // full committee task powers. Non-SU committee are scoped to the tasks
@@ -26,11 +49,19 @@ service cloud.firestore {
     // shadows an outer one, so touching them buys nothing and risks two
     // proven blocks for zero behaviour change). New per-permission helpers
     // start here instead.
+    //
+    // A KEY IS NOT A STANDING GRANT EITHER. Nothing clears `permissions` when
+    // an account is demoted or rejected (`setRole` and `rejectUser` write
+    // `role` and `suRecognised` and nothing else), so without the roster test
+    // a rejected account kept every drafter and approver door it had been
+    // given. Admins are exempt from the test only because `role == 'admin'`
+    // already is the test.
     function hasPerm(key) {
       return isSignedIn()
         && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
-            || get(/databases/$(database)/documents/users/$(request.auth.uid))
-                 .data.get(['permissions', key], false) == true);
+            || (isApprovedAccount()
+                && get(/databases/$(database)/documents/users/$(request.auth.uid))
+                     .data.get(['permissions', key], false) == true));
     }
     function canDraftCourse()   { return hasPerm('draftCourse');   }
     function canApproveCourse() { return hasPerm('approveCourse'); }
@@ -271,11 +302,15 @@ service cloud.firestore {
     // committee-visibility task, everyone in the thread is trusted.
     match /tasks/{taskId} {
       function taskData()    { return resource.data; }
+      // The approved-account floor comes last: the array test is free and
+      // this one reads the caller's user document. See isApprovedAccount().
       function isCompleter() {
-        return isSignedIn() && request.auth.uid in taskData().completerUids;
+        return isSignedIn() && request.auth.uid in taskData().completerUids
+          && isApprovedAccount();
       }
       function isReviewer() {
-        return isSignedIn() && request.auth.uid in taskData().reviewerUids;
+        return isSignedIn() && request.auth.uid in taskData().reviewerUids
+          && isApprovedAccount();
       }
       function isTaskCreator() {
         return isSignedIn() && request.auth.uid == taskData().creatorUid;
@@ -294,7 +329,10 @@ service cloud.firestore {
 
       allow read: if visibleToMe();
 
-      allow create: if isSignedIn()
+      // `isApprovedAccount()` rather than `isSignedIn()`: the read side of
+      // this collection carries the roster floor, and a caller who may write a
+      // document they can never read is a queue nobody empties.
+      allow create: if isApprovedAccount()
         && request.resource.data.creatorUid == request.auth.uid
         && request.resource.data.title.size() > 0
         && request.resource.data.title.size() <= 120
@@ -442,8 +480,9 @@ service cloud.firestore {
         function canAccessParent() {
           return isAdmin()
             || (isSuCommittee() && parent().visibility == 'committee')
-            || request.auth.uid in parent().completerUids
-            || request.auth.uid in parent().reviewerUids;
+            || ((request.auth.uid in parent().completerUids
+                 || request.auth.uid in parent().reviewerUids)
+                && isApprovedAccount());
         }
         allow read: if canAccessParent();
         allow create: if canAccessParent()
@@ -475,8 +514,9 @@ service cloud.firestore {
         function canAccessParent() {
           return isAdmin()
             || (isSuCommittee() && parent().visibility == 'committee')
-            || request.auth.uid in parent().completerUids
-            || request.auth.uid in parent().reviewerUids;
+            || ((request.auth.uid in parent().completerUids
+                 || request.auth.uid in parent().reviewerUids)
+                && isApprovedAccount());
         }
         allow read: if canAccessParent();
         // `canAccessParent()` was defined here and used for read but NOT for
@@ -501,8 +541,9 @@ service cloud.firestore {
         function canAccessParent() {
           return isAdmin()
             || (isSuCommittee() && parent().visibility == 'committee')
-            || request.auth.uid in parent().completerUids
-            || request.auth.uid in parent().reviewerUids;
+            || ((request.auth.uid in parent().completerUids
+                 || request.auth.uid in parent().reviewerUids)
+                && isApprovedAccount());
         }
         allow read: if canAccessParent();
         // `storagePath` MUST be confined to this task's own folder. Three
@@ -717,7 +758,8 @@ service cloud.firestore {
     match /circulations/{circulationId} {
       function circulation() { return resource.data; }
       function isStaff() {
-        return isSignedIn() && request.auth.uid in circulation().staffUids;
+        return isSignedIn() && request.auth.uid in circulation().staffUids
+          && isApprovedAccount();
       }
 
       // THE RECIPIENT'S PROOF OF ACCESS. There is no roster array on the
@@ -796,11 +838,18 @@ service cloud.firestore {
         // back, which is the tasks/comments pattern. Contrast isRecipient() on
         // parent, whose path varies with the caller and not the row.
         function isParentStaff() {
-          return isSignedIn() && request.auth.uid in parent().staffUids;
+          return isSignedIn() && request.auth.uid in parent().staffUids
+            && isApprovedAccount();
         }
         // The doc id binds the response to its recipient structurally, so
         // "is this mine" needs no lookup and cannot be spoofed by a field.
-        function isOwner() { return isSignedIn() && request.auth.uid == responseUid; }
+        // FLOORED, unlike `isTaskCreator`, and the difference is who reads the
+        // document: a personal task is the creator's own to-do, while a
+        // response is answers that staff and reviewers read and score. A
+        // recipient who has left the roster stops both answering and reading.
+        function isOwner() {
+          return isSignedIn() && request.auth.uid == responseUid && isApprovedAccount();
+        }
 
         // isOwner() is per-document-id, so a recipient's LIST of the
         // subcollection is refused (the id is not something a query
@@ -869,7 +918,8 @@ service cloud.firestore {
           return get(/databases/$(database)/documents/circulations/$(circulationId)).data;
         }
         function isParentStaff() {
-          return isSignedIn() && request.auth.uid in parent().staffUids;
+          return isSignedIn() && request.auth.uid in parent().staffUids
+            && isApprovedAccount();
         }
 
         allow read: if isAdmin() || isParentStaff();
@@ -959,9 +1009,13 @@ service cloud.firestore {
       function me() {
         return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
       }
+      // The roster floor, as in the outer hasPerm: a permissions key outlives
+      // the account unless something asks.
       function hasPerm(key) {
         return isSignedIn()
-          && (me().role == 'admin' || me().get(['permissions', key], false) == true);
+          && (me().role == 'admin'
+              || (isApprovedAccount()
+                  && me().get(['permissions', key], false) == true));
       }
       function canDraft()   { return hasPerm('draftNewsletter');   }
       function canApprove() { return hasPerm('approveNewsletter'); }
@@ -977,7 +1031,8 @@ service cloud.firestore {
       // ALREADY at status 'approved'. The approver signs off on one newsletter
       // and the send route ships a different one to the whole list.
       function isOwnDraft() {
-        return isSignedIn() && resource.data.get('authorUid', '') == request.auth.uid;
+        return isSignedIn() && resource.data.get('authorUid', '') == request.auth.uid
+          && isApprovedAccount();
       }
       allow update: if isAdmin()
         || (
@@ -1018,9 +1073,13 @@ service cloud.firestore {
       function me() {
         return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
       }
+      // The roster floor, as in the outer hasPerm: a permissions key outlives
+      // the account unless something asks.
       function hasPerm(key) {
         return isSignedIn()
-          && (me().role == 'admin' || me().get(['permissions', key], false) == true);
+          && (me().role == 'admin'
+              || (isApprovedAccount()
+                  && me().get(['permissions', key], false) == true));
       }
       function canDraft()   { return hasPerm('draftEvent');   }
       function canApprove() { return hasPerm('approveEvent'); }
@@ -1028,7 +1087,8 @@ service cloud.firestore {
       // explicitly added so they can edit this specific event.
       function isCollaborator() {
         return isSignedIn()
-          && request.auth.uid in resource.data.get('collaboratorUids', []);
+          && request.auth.uid in resource.data.get('collaboratorUids', [])
+          && isApprovedAccount();
       }
 
       allow read: if canDraft() || canApprove()
@@ -1043,7 +1103,8 @@ service cloud.firestore {
       // because only the INCOMING status was ever checked. A collaborator is
       // already per-event by construction (they are named on the doc).
       function isOwnEvent() {
-        return isSignedIn() && resource.data.get('authorUid', '') == request.auth.uid;
+        return isSignedIn() && resource.data.get('authorUid', '') == request.auth.uid
+          && isApprovedAccount();
       }
       // Fields nobody inside the branches below may rewrite from the client.
       // The per-document scoping added in PR #225 decided WHO may edit and in
@@ -1425,11 +1486,13 @@ service cloud.firestore {
       // the global draft permission (events collaboratorUids pattern).
       function isCourseCollaborator() {
         return isSignedIn()
-          && request.auth.uid in resource.data.get('collaboratorUids', []);
+          && request.auth.uid in resource.data.get('collaboratorUids', [])
+          && isApprovedAccount();
       }
       function isOwnCourse() {
         return isSignedIn()
-          && resource.data.get('authorUid', '') == request.auth.uid;
+          && resource.data.get('authorUid', '') == request.auth.uid
+          && isApprovedAccount();
       }
       // Ownership and the collaborator roster are the server's to change —
       // /api/courses collaborator/publish routes, Admin SDK. Without these
@@ -1626,11 +1689,13 @@ service cloud.firestore {
     match /courseRuns/{runId} {
       function isOwnRun() {
         return isSignedIn()
-          && resource.data.get('authorUid', '') == request.auth.uid;
+          && resource.data.get('authorUid', '') == request.auth.uid
+          && isApprovedAccount();
       }
       function isRunTrackLead() {
         return isSignedIn()
-          && request.auth.uid in resource.data.get('trackLeadUids', []);
+          && request.auth.uid in resource.data.get('trackLeadUids', [])
+          && isApprovedAccount();
       }
       function runPinnedFieldsUnchanged() {
         return request.resource.data.get('courseId', '')
@@ -2047,7 +2112,8 @@ service cloud.firestore {
           return isAdmin()
             || canApproveCourse()
             || (canDraftCourse() && run().get('authorUid', '') == request.auth.uid)
-            || (isSignedIn() && request.auth.uid in run().get('trackLeadUids', []));
+            || (isSignedIn() && request.auth.uid in run().get('trackLeadUids', [])
+                && isApprovedAccount());
         }
 
         allow read: if isSignedIn();
@@ -2085,14 +2151,16 @@ service cloud.firestore {
     match /courseGroups/{groupId} {
       function isGroupFacilitator() {
         return isSignedIn()
-          && request.auth.uid in resource.data.get('facilitatorUids', []);
+          && request.auth.uid in resource.data.get('facilitatorUids', [])
+          && isApprovedAccount();
       }
       // Track leads are named on the PARENT run, one get away.
       function isParentRunTrackLead() {
         return isSignedIn()
           && request.auth.uid in
             get(/databases/$(database)/documents/courseRuns/$(resource.data.get('runId', '')))
-              .data.get('trackLeadUids', []);
+              .data.get('trackLeadUids', [])
+          && isApprovedAccount();
       }
       // `facilitatorUids` is assigned by /api/courses/groups/[id]/facilitators
       // (which also upserts the facilitator enrolment); `memberCount` moves
@@ -2330,10 +2398,17 @@ service cloud.firestore {
       // outage that only appears once a member has enough progress rows.
       // Write-side only, where each request touches exactly one doc. The
       // courses rules test suite pins this with a 25-doc list regression.
+      // The enrolment ROW is an authority like a named array is: allocation
+      // and the facilitators route both write one for an approved account, and
+      // nothing rewrites it when the account stops being one. `courseProgress`
+      // is the single client-direct member write in this feature and it hangs
+      // off this predicate, so without the floor a rejected account went on
+      // filing progress and public comments into a live cohort.
       function isEnrolledActive(runId) {
         return exists(/databases/$(database)/documents/courseEnrolments/$(runId + '__' + request.auth.uid))
           && get(/databases/$(database)/documents/courseEnrolments/$(runId + '__' + request.auth.uid))
-               .data.status == 'active';
+               .data.status == 'active'
+          && isApprovedAccount();
       }
       // The full shape contract, shared by create and update:
       //  - doc id binds (runId, CALLER's uid, itemId) — the structural bit
@@ -2529,7 +2604,8 @@ service cloud.firestore {
           && resource.data.get('sourceRunId', '').size() > 0
           && request.auth.uid in
             get(/databases/$(database)/documents/courseRuns/$(resource.data.sourceRunId))
-              .data.get('trackLeadUids', []);
+              .data.get('trackLeadUids', [])
+          && isApprovedAccount();
       }
 
       allow read: if isAdmin() || canDraftCourse() || canApproveCourse()
@@ -2548,15 +2624,24 @@ service cloud.firestore {
         function parentTemplate() {
           return get(/databases/$(database)/documents/courseTemplates/$(templateId)).data;
         }
-        allow read: if isAdmin() || canDraftCourse() || canApproveCourse()
-          || (
-            isSignedIn()
+        // A NAMED HELPER rather than the inline clause this used to be. The
+        // parent template's own copy of the same grant carries the roster
+        // floor; written inline here it did not, so a rejected track lead was
+        // refused the snapshot and allowed every week inside it, which is the
+        // whole of its content. A grant written inline is also a grant
+        // `tests/authority-at-use.test.mjs` cannot walk for, because that scan
+        // reads function bodies.
+        function isParentTemplateSourceRunTrackLead() {
+          return isSignedIn()
             && parentTemplate().get('sourceRunId', '') is string
             && parentTemplate().get('sourceRunId', '').size() > 0
             && request.auth.uid in
               get(/databases/$(database)/documents/courseRuns/$(parentTemplate().sourceRunId))
                 .data.get('trackLeadUids', [])
-          );
+            && isApprovedAccount();
+        }
+        allow read: if isAdmin() || canDraftCourse() || canApproveCourse()
+          || isParentTemplateSourceRunTrackLead();
 
         // IMMUTABLE. Not "server-owned like the role arrays" — immutable:
         // the snapshot batch is the only write these docs ever receive, and
@@ -2601,7 +2686,8 @@ service cloud.firestore {
           && resource.data.get('runId', '').size() > 0
           && request.auth.uid in
             get(/databases/$(database)/documents/courseRuns/$(resource.data.runId))
-              .data.get('trackLeadUids', []);
+              .data.get('trackLeadUids', [])
+          && isApprovedAccount();
       }
       // Same get()-in-a-read-rule caveat as courseTemplates: last branch of a
       // short-circuiting ||, and the retrospective route (Admin SDK) is what

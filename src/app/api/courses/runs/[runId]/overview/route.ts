@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import type { CurrentWeek, WeekPlanEntry } from "@/lib/courses/weekPlan";
 import {
@@ -471,15 +472,23 @@ export async function GET(
     : null;
   // Withdrawn / removed enrolments lose access the moment they are written,
   // whatever the member's open tab still shows.
+  // The enrolment is an authority like the arrays are, and it is the first of
+  // the three paths below. `isNamedWithStanding` asks the same roster floor of
+  // it, so an account that was rejected loses the run whichever path put it
+  // there rather than only the two rare ones.
   const liveEnrolment =
-    enrolment && (enrolment.status === "active" || enrolment.status === "completed")
+    enrolment &&
+    (enrolment.status === "active" || enrolment.status === "completed") &&
+    isNamedWithStanding(actor, "courseEnrolments.uid", enrolment.uid)
       ? enrolment
       : null;
 
   const groups: CourseGroupDoc[] = groupSnap.docs
     .map((d) => normalizeCourseGroup(d.id, d.data() ?? {}))
     .filter((g) => !g.archived);
-  const facilitates = groups.filter((g) => g.facilitatorUids.includes(actor.uid));
+  const facilitates = groups.filter((g) =>
+    isNamedWithStanding(actor, "courseGroups.facilitatorUids", g.facilitatorUids),
+  );
 
   const isAdmin = actor.role === "admin";
   const isEnrolled = liveEnrolment?.role === "learner";
@@ -488,10 +497,18 @@ export async function GET(
   // same time), named on the run itself, or holding the group directly.
   const isFacilitator =
     (liveEnrolment?.role === "facilitator" && liveEnrolment.status === "active") ||
-    run.runFacilitatorUids.includes(actor.uid) ||
+    isNamedWithStanding(actor, "courseRuns.runFacilitatorUids", run.runFacilitatorUids) ||
     facilitates.length > 0;
-  const isReviewer = run.admissionsReviewerUids.includes(actor.uid);
-  const isTrackLead = run.trackLeadUids.includes(actor.uid);
+  const isReviewer = isNamedWithStanding(
+    actor,
+    "courseRuns.admissionsReviewerUids",
+    run.admissionsReviewerUids,
+  );
+  const isTrackLead = isNamedWithStanding(
+    actor,
+    "courseRuns.trackLeadUids",
+    run.trackLeadUids,
+  );
 
   // Reviewer and track lead are deliberately NOT access grants here.
   if (!isAdmin && !liveEnrolment && !isFacilitator) {
@@ -577,7 +594,7 @@ export async function GET(
   const canSeeMeetingUrlFor = (group: CourseGroupDoc): boolean =>
     isAdmin ||
     (liveEnrolment?.status === "active" && liveEnrolment.groupId === group.id) ||
-    group.facilitatorUids.includes(actor.uid);
+    isNamedWithStanding(actor, "courseGroups.facilitatorUids", group.facilitatorUids);
 
   // The union across every card, deduped, so two groups sharing a facilitator
   // cost one user read rather than two.

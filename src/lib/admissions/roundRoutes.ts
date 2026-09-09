@@ -1,4 +1,5 @@
 import "server-only";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import type { SessionUser } from "@/lib/firebase/session";
 import { canAuthorAdmissionRound, canDraftCourse } from "@/lib/firestore/users";
 import type {
@@ -59,12 +60,24 @@ export function canAuthorRounds(user: SessionUser): boolean {
  * names: its reviewers and its final decider. Nobody else, which is what makes
  * the list route safe to call from any authed session: it answers with the
  * rounds you are on, or with nothing.
+ *
+ * The two named branches go through `isNamedWithStanding`, so being listed is
+ * only half the answer: the other half is still meeting the bar the roles
+ * route applied when it wrote the name down. Nothing removes a uid from these
+ * arrays when the person is demoted or loses SU recognition, so without the
+ * second half revoking the trust boundary revoked nothing on this tree.
  */
 export function canSeeRound(user: SessionUser, round: RoundAccessInput): boolean {
   if (canAuthorRounds(user)) return true;
   if (canDraftCourse(user)) return true;
-  if (round.reviewerUids.includes(user.uid)) return true;
-  return round.finalDeciderUid === user.uid;
+  if (isNamedWithStanding(user, "admissionRounds.reviewerUids", round.reviewerUids)) {
+    return true;
+  }
+  return isNamedWithStanding(
+    user,
+    "admissionRounds.finalDeciderUid",
+    round.finalDeciderUid,
+  );
 }
 
 function iso(date: Date | null | undefined): string | null {

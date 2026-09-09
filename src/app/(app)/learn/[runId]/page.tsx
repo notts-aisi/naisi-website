@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import RunHome from "@/features/courses/RunHome";
 import { getRunAccess } from "@/features/courses/runAccess";
 
@@ -65,7 +66,11 @@ export default async function RunHomePage({
   const canEmailCohort =
     access.isAdmin ||
     access.isTrackLead ||
-    access.run.runFacilitatorUids.includes(access.user.uid);
+    isNamedWithStanding(
+      access.user,
+      "courseRuns.runFacilitatorUids",
+      access.run.runFacilitatorUids,
+    );
 
   return (
     <RunHome runId={runId} isAdmin={access.isAdmin} canEmailCohort={canEmailCohort} />

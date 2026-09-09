@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { redirect } from "next/navigation";
 import type { CSSProperties } from "react";
 import GroupPaceEditor from "@/features/courses/GroupPaceEditor";
@@ -149,7 +150,12 @@ export default async function GroupEditIndexPage({
   const group = normalizeCourseGroup(groupSnap.id, groupSnap.data() ?? {});
 
   const facilitatesThisGroup =
-    !group.archived && group.facilitatorUids.includes(access.user.uid);
+    !group.archived &&
+    isNamedWithStanding(
+      access.user,
+      "courseGroups.facilitatorUids",
+      group.facilitatorUids,
+    );
   if (group.runId !== runId || !(access.isAdmin || facilitatesThisGroup)) {
     redirect(runHome);
   }

@@ -417,6 +417,18 @@ export function canAuthorCoursePage(
   course: CoursePageCourse,
 ): boolean {
   if (actor.role === "admin") return true;
+  // THE ROSTER FLOOR, written out here rather than imported. Nothing clears
+  // `permissions` when an account is demoted or rejected, and nothing removes
+  // a uid from `authorUid` or `collaboratorUids` either, so both halves below
+  // outlive the account without this line: a rejected `draftCourse` holder
+  // still named on the course kept the right to rewrite its public marketing
+  // page. `canDraftCourse` in `firestore/users.ts` and `holdsStanding` in
+  // `firebase/eligibility.ts` carry the same test; neither can be imported
+  // here, because this module is reached from client components (see the type
+  // above) and the second of the two is `server-only`.
+  const onTheRoster =
+    actor.role === "member" || actor.role === "committee" || actor.role === "admin";
+  if (!onTheRoster) return false;
   const holdsPermission = Boolean(
     actor.permissions.draftCourse || actor.permissions.approveCourse,
   );
