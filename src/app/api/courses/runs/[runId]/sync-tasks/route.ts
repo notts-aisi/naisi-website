@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
   addDaysToKey,
@@ -267,7 +268,13 @@ export async function POST(
     // source of new work; `withdrawn` and `removed` lose the mirror the moment
     // they are written. Either ROLE qualifies: a facilitator works the same
     // week their group does, so they get the same weekly card.
-    if (!enrolment || enrolment.status !== "active") {
+    if (
+      !enrolment ||
+      enrolment.status !== "active" ||
+      // ... and the roster floor under the row itself, as everywhere else
+      // an enrolment is read as an authority.
+      !isNamedWithStanding(actor, "courseEnrolments.uid", enrolment.uid)
+    ) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

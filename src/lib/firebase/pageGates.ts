@@ -6,6 +6,7 @@ import {
   canDraftCourse,
   canManageMembership,
 } from "@/lib/firestore/users";
+import { holdsStanding } from "./eligibility";
 import { getCurrentUser, type SessionUser } from "./session";
 
 /**
@@ -68,13 +69,22 @@ export async function requireCourseAuthorPage(): Promise<SessionUser> {
  *    and every route under `/api/admissions` re-checks the round's own
  *    `reviewerUids` regardless of what this gate let through.
  *
+ * `admissionsReviewer` is a DENORMALISATION and nothing clears it when the
+ * person stops being eligible, so the flag is paired with the live bar the
+ * round routes now apply. Without the pairing a demoted reviewer was walked
+ * into a console every route beneath it would refuse, which reads as a broken
+ * page rather than as a revoked appointment.
+ *
  * The gate is a page-level convenience, never the boundary: the boundary is
  * each route, and `admissionRounds` is `allow read, write: if false` so
  * nothing here can be reached client-direct.
  */
 export async function requireAdmissionsPage(): Promise<SessionUser> {
   const user = await getCurrentUser();
-  if (!user || !(canAuthorAdmissionRound(user) || user.admissionsReviewer === true)) {
+  const namedReviewer =
+    user?.admissionsReviewer === true &&
+    holdsStanding(user, "admissionRounds.reviewerUids");
+  if (!user || !(canAuthorAdmissionRound(user) || namedReviewer)) {
     redirect("/dashboard");
   }
   return user;

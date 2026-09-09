@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveEvent, canDraftEvent } from "@/lib/firestore/users";
 import { sendRsvpEmail } from "@/lib/events/sendRsvpEmail";
 import { verifyRsvpToken } from "@/lib/events/rsvpToken";
 
@@ -68,9 +70,9 @@ export async function POST(
 
       const isApprover =
         !!viewer &&
-        (viewer.role === "admin" ||
-          viewer.permissions.approveEvent ||
-          (viewer.permissions.draftEvent && event.authorUid === viewer.uid));
+        (canApproveEvent(viewer) ||
+          (canDraftEvent(viewer) &&
+            isNamedWithStanding(viewer, "events.authorUid", event.authorUid)));
       const isOwn =
         !!viewer && typeof rsvp.uid === "string" && rsvp.uid === viewer.uid;
       const isSelfService = tokenValid; // token holder == the RSVP'd person

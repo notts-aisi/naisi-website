@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { asUidList } from "@/lib/firestore/events";
 import { COURSE_FIELD_LIMITS, normalizeCourseWeek } from "@/lib/firestore/courses";
@@ -159,7 +160,13 @@ export async function POST(
   const ownGroupIds: string[] = [];
   const otherGroupIds: string[] = [];
   for (const d of groupSnap.docs) {
-    if (asUidList((d.data() ?? {}).facilitatorUids).includes(actor.uid)) {
+    if (
+      isNamedWithStanding(
+        actor,
+        "courseGroups.facilitatorUids",
+        asUidList((d.data() ?? {}).facilitatorUids),
+      )
+    ) {
       ownGroupIds.push(d.id);
     } else {
       otherGroupIds.push(d.id);
@@ -171,8 +178,16 @@ export async function POST(
   const isTrusted =
     runSnap.exists &&
     (actor.role === "admin" ||
-      asUidList(runRaw.trackLeadUids).includes(actor.uid) ||
-      asUidList(runRaw.runFacilitatorUids).includes(actor.uid));
+      isNamedWithStanding(
+        actor,
+        "courseRuns.trackLeadUids",
+        asUidList(runRaw.trackLeadUids),
+      ) ||
+      isNamedWithStanding(
+        actor,
+        "courseRuns.runFacilitatorUids",
+        asUidList(runRaw.runFacilitatorUids),
+      ));
   const allowed = runSnap.exists && (isTrusted || isGroupFacilitator);
   if (!allowed) {
     // ONE refusal, whether the run is missing or the caller has no standing.

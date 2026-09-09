@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { sendEmail } from "@/lib/email/send";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveNewsletter, canDraftNewsletter } from "@/lib/firestore/users";
 import NewsletterEmail from "@/emails/NewsletterEmail";
 import {
   bodyMarkdownToBlocks,
@@ -23,10 +24,7 @@ export async function POST(_req: Request, ctx: Ctx) {
   if (!actor) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const allowed =
-    actor.role === "admin" ||
-    actor.permissions.draftNewsletter ||
-    actor.permissions.approveNewsletter;
+  const allowed = canDraftNewsletter(actor) || canApproveNewsletter(actor);
   if (!allowed) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

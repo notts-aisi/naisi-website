@@ -3,6 +3,7 @@ import { render } from "@react-email/render";
 import NewsletterEmail from "@/emails/NewsletterEmail";
 import { sanitizeBlocks } from "@/lib/firestore/newsletterBlocks";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveNewsletter, canDraftNewsletter } from "@/lib/firestore/users";
 
 /**
  * Renders the newsletter React Email template to HTML server-side and returns
@@ -17,10 +18,7 @@ export async function POST(req: Request) {
   if (!actor) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const allowed =
-    actor.role === "admin" ||
-    actor.permissions.draftNewsletter ||
-    actor.permissions.approveNewsletter;
+  const allowed = canDraftNewsletter(actor) || canApproveNewsletter(actor);
   if (!allowed) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

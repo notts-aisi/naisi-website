@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
   courseEnrolmentId,
@@ -158,7 +159,9 @@ export async function GET(
     // Withdrawn / removed enrolments lose access the moment they are written,
     // whatever the member's open tab still shows.
     const live =
-      enrolment && (enrolment.status === "active" || enrolment.status === "completed");
+      enrolment &&
+      (enrolment.status === "active" || enrolment.status === "completed") &&
+      isNamedWithStanding(actor, "courseEnrolments.uid", enrolment.uid);
     if (!live) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

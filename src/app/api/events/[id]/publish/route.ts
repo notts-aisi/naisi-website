@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { sendEventAnnouncement } from "@/lib/email/eventAnnouncement";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveEvent } from "@/lib/firestore/users";
 import { baseUrl } from "@/lib/events/rsvpToken";
 import { formatEventWhen } from "@/lib/events/changeSummary";
 import { hiddenLocationLacksLabel, publicLocationLine } from "@/lib/events/location";
@@ -84,7 +85,7 @@ export async function POST(
   if (!actor) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
-  const allowed = actor.role === "admin" || actor.permissions.approveEvent;
+  const allowed = canApproveEvent(actor);
   if (!allowed) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

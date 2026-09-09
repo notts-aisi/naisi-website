@@ -6,6 +6,7 @@ import EventDetailView from "@/features/events/EventDetailView";
 import { getEventForPreview } from "@/features/events/fetchEvents";
 import { EVENT_STATUS_LABEL } from "@/lib/firestore/events";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveEvent, canDraftEvent } from "@/lib/firestore/users";
 
 export const dynamic = "force-dynamic";
 
@@ -22,8 +23,8 @@ export default async function EventPreviewPage({
   const allowed =
     viewer.role === "admin" ||
     viewer.role === "committee" ||
-    viewer.permissions.draftEvent ||
-    viewer.permissions.approveEvent;
+    canDraftEvent(viewer) ||
+    canApproveEvent(viewer);
   if (!allowed) redirect("/dashboard");
 
   const event = await getEventForPreview(id);

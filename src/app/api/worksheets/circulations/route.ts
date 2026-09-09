@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
@@ -210,8 +211,13 @@ export async function POST(req: Request) {
   // 404 rather than 403, matching the missing case exactly: a private
   // worksheet the caller may not see must not be distinguishable from one that
   // is not there, or the id becomes a way to enumerate what exists.
+  // The author branch carries the rules' role test with it (`isAuthor()` is
+  // `isLibraryUser() && authorUid == uid`), so a demoted author reads their own
+  // private worksheet here exactly as long as the rules would let them.
   const mayRead =
-    !worksheet.private || actor.role === "admin" || worksheet.authorUid === actor.uid;
+    !worksheet.private ||
+    actor.role === "admin" ||
+    isNamedWithStanding(actor, "worksheets.authorUid", worksheet.authorUid);
   if (!mayRead) {
     return NextResponse.json({ error: "Worksheet not found" }, { status: 404 });
   }

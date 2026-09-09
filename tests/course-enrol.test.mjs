@@ -785,7 +785,10 @@ test("SOURCE: reinstating exists, and is the repair the copy promises", () => {
   assert.match(head, /const blocked = await assertNotImpersonating\(\);/);
   // Admins and the run's track leads: the remove route's gate, because
   // reinstating is its exact inverse.
-  assert.match(REINSTATE_ROUTE, /run\.trackLeadUids\.includes\(actor\.uid\)/);
+  assert.match(
+    REINSTATE_ROUTE,
+    /isNamedWithStanding\(\s*actor,\s*"courseRuns\.trackLeadUids",\s*run\.trackLeadUids,?\s*\)/,
+  );
 
   // Withdrawn AND self-enrolled only. A `removed` row was staff's own
   // decision and is undone on the board; an allocated learner was never

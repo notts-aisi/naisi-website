@@ -590,7 +590,7 @@ test("GUARD: the normalise route refuses outside the one window where it is free
   // draft there is nothing keyed on the old ids, so moving them repoints
   // nothing. Every one of these is load-bearing.
   assert.match(NORMALISE_WEEKS, /\(run\.status \?\? "draft"\) !== "draft"/);
-  assert.match(NORMALISE_WEEKS, /actor\.role === "admin" \|\| actor\.permissions\.approveCourse/);
+  assert.match(NORMALISE_WEEKS, /if \(!canApproveCourse\(actor\)\)/);
   assert.match(NORMALISE_WEEKS, /collection\("courseProgress"\)\.where\("runId", "==", runId\)/);
   assert.match(
     NORMALISE_WEEKS,
@@ -1292,7 +1292,7 @@ test("GUARD — archiving a group withdraws it from every live surface at once",
   // so the register, the push and the note route cannot drift apart about it.
   assert.match(
     REGISTER_ACCESS,
-    /group && !group\.archived && group\.facilitatorUids\.includes\(actor\.uid\)/,
+    /group &&\s*!group\.archived &&\s*isNamedWithStanding\(actor, "courseGroups\.facilitatorUids", group\.facilitatorUids\)/,
   );
   for (const route of [ATTENDANCE, ATTENDANCE_PUSH]) {
     assert.match(route, /gateGroupRegister\(/);
@@ -3187,7 +3187,10 @@ test("GUARD — a retrospective note can be written about a fork-only material",
   // boundary the review queue draws. Only the trusted tier scans the rest.
   assert.match(MATERIAL_NOTES, /isTrusted\s*\?\s*otherGroupIds\.map\(/);
   assert.match(MATERIAL_NOTES, /const isTrusted =/);
-  assert.match(MATERIAL_NOTES, /asUidList\(runRaw\.trackLeadUids\)\.includes\(actor\.uid\)/);
+  assert.match(
+    MATERIAL_NOTES,
+    /isNamedWithStanding\(\s*actor,\s*"courseRuns\.trackLeadUids",\s*asUidList\(runRaw\.trackLeadUids\),?\s*\)/,
+  );
   // The split that feeds it, and the bound it inherits.
   assert.match(MATERIAL_NOTES, /const ownGroupIds: string\[\] = \[\];/);
   assert.match(MATERIAL_NOTES, /\.limit\(MAX_GROUPS_SCANNED\)/);

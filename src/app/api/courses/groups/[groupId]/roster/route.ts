@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
   courseEnrolmentId,
@@ -91,7 +92,11 @@ export async function GET(
   }
 
   const isAdmin = actor.role === "admin";
-  const isGroupFacilitator = group.facilitatorUids.includes(actor.uid);
+  const isGroupFacilitator = isNamedWithStanding(
+    actor,
+    "courseGroups.facilitatorUids",
+    group.facilitatorUids,
+  );
 
   // Membership of THIS group, read from the caller's own enrolment row.
   let isGroupMember = false;
@@ -102,7 +107,13 @@ export async function GET(
       .get();
     if (ownSnap.exists) {
       const own = normalizeCourseEnrolment(ownSnap.id, ownSnap.data() ?? {});
-      isGroupMember = own.status === "active" && own.groupId === groupId;
+      isGroupMember =
+        own.status === "active" &&
+        own.groupId === groupId &&
+        // This payload is other members' display names, which is the tier
+        // the users lockdown restricts; the row that opens it carries the
+        // same floor as every other enrolment gate.
+        isNamedWithStanding(actor, "courseEnrolments.uid", own.uid);
     }
     if (!isGroupMember) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });

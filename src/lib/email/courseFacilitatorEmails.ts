@@ -4,6 +4,7 @@ import ApplicationEmail from "@/emails/ApplicationEmail";
 import NewsletterEmail from "@/emails/NewsletterEmail";
 import { wantsEmailForProfile } from "@/lib/email/preferences";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser, type SessionUser } from "@/lib/firebase/session";
 import {
   courseEnrolmentId,
@@ -190,8 +191,12 @@ export async function gateRunStaff(runId: string): Promise<RunStaffGate> {
   const isAdmin = actor.role === "admin";
   const staffsRun = Boolean(
     run &&
-      (run.runFacilitatorUids.includes(actor.uid) ||
-        run.trackLeadUids.includes(actor.uid)),
+      (isNamedWithStanding(
+        actor,
+        "courseRuns.runFacilitatorUids",
+        run.runFacilitatorUids,
+      ) ||
+        isNamedWithStanding(actor, "courseRuns.trackLeadUids", run.trackLeadUids)),
   );
   if (!isAdmin && !staffsRun) {
     return { ok: false, status: 403, error: "Forbidden" };

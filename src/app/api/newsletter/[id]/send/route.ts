@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { sendEmail } from "@/lib/email/send";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveNewsletter } from "@/lib/firestore/users";
 import NewsletterEmail from "@/emails/NewsletterEmail";
 import {
   bodyMarkdownToBlocks,
@@ -46,8 +47,7 @@ export async function POST(_req: Request, ctx: Ctx) {
   if (!actor) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const canApprove =
-    actor.role === "admin" || actor.permissions.approveNewsletter === true;
+  const canApprove = canApproveNewsletter(actor);
   if (!canApprove) {
     return NextResponse.json(
       { error: "Only admins or designated approvers can send newsletters." },

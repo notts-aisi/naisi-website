@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
   normalizeCourseApplication,
@@ -205,8 +206,16 @@ export async function GET(
   const run = normalizeCourseRun(runSnap.id, runSnap.data() ?? {});
 
   const isAdmin = actor.role === "admin";
-  const isReviewer = run.admissionsReviewerUids.includes(actor.uid);
-  const isTrackLead = run.trackLeadUids.includes(actor.uid);
+  const isReviewer = isNamedWithStanding(
+    actor,
+    "courseRuns.admissionsReviewerUids",
+    run.admissionsReviewerUids,
+  );
+  const isTrackLead = isNamedWithStanding(
+    actor,
+    "courseRuns.trackLeadUids",
+    run.trackLeadUids,
+  );
   if (!isAdmin && !isReviewer && !isTrackLead) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveEvent, canDraftEvent } from "@/lib/firestore/users";
 
 export default async function EventsLayout({
   children,
@@ -14,8 +15,8 @@ export default async function EventsLayout({
   const allowed =
     user.role === "admin" ||
     user.role === "committee" ||
-    user.permissions.draftEvent ||
-    user.permissions.approveEvent;
+    canDraftEvent(user) ||
+    canApproveEvent(user);
   if (!allowed) redirect("/dashboard");
 
   return (

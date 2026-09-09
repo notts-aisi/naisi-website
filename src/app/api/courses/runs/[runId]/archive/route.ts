@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveCourse } from "@/lib/firestore/users";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 
 /**
@@ -34,7 +35,7 @@ export async function PATCH(
   // Authorization before the existence check.
   const actor = await getCurrentUser();
   if (!actor) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  if (!(actor.role === "admin" || actor.permissions.approveCourse)) {
+  if (!canApproveCourse(actor)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

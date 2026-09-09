@@ -9,6 +9,7 @@ import { sendEmail } from "@/lib/email/send";
 import type { ResolvedUser } from "@/lib/email/taskMembership";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isTaskEmailEnabled } from "@/lib/firestore/taskEmailConfig";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { mirrorTaskEmailToPush } from "@/lib/push/taskNotifications";
 
@@ -160,7 +161,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     ? (task.reviewerUids as unknown[]).filter((u): u is string => typeof u === "string")
     : [];
   const viewerOnTask =
-    completerUids.includes(viewer.uid) || reviewerUids.includes(viewer.uid);
+    isNamedWithStanding(viewer, "tasks.completerUids", completerUids) ||
+    isNamedWithStanding(viewer, "tasks.reviewerUids", reviewerUids);
   const canAccess =
     viewer.role === "admin" ||
     (task.visibility === "committee" && viewer.role === "committee" && viewer.suRecognised) ||
@@ -233,7 +235,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   // this block. Mirrors the BlockHeader gate ("any signed-off-reviewer can
   // press").
   const viewerHasSignedOff = signoffs.some(
-    (s) => s.reviewerUids.includes(viewer.uid) && s.done,
+    (s) => isNamedWithStanding(viewer, "tasks.reviewerUids", s.reviewerUids) && s.done,
   );
   if (viewer.role !== "admin" && !viewerHasSignedOff) {
     return NextResponse.json(

@@ -7,6 +7,7 @@ import type { ResolvedUser } from "@/lib/email/taskMembership";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isTaskEmailEnabled } from "@/lib/firestore/taskEmailConfig";
 import { mirrorTaskEmailToPush } from "@/lib/push/taskNotifications";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 
 type NotifyPayload = {
@@ -115,8 +116,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   // + completer + reviewer.
   const viewerRole = viewer.role;
   const viewerIsOnTask =
-    Array.isArray(task.completerUids) && (task.completerUids as unknown[]).includes(viewer.uid) ||
-    Array.isArray(task.reviewerUids) && (task.reviewerUids as unknown[]).includes(viewer.uid);
+    isNamedWithStanding(viewer, "tasks.completerUids", task.completerUids) ||
+    isNamedWithStanding(viewer, "tasks.reviewerUids", task.reviewerUids);
   const canAccess =
     viewerRole === "admin" ||
     (task.visibility === "committee" && viewerRole === "committee" && viewer.suRecognised) ||

@@ -12,6 +12,7 @@ import {
   reserveNoticeSlots,
 } from "@/lib/email/noticeCaps";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
   baseUrl,
@@ -150,13 +151,15 @@ export async function POST(
   // standing credential. A member demoted off the committee still passes,
   // deliberately: they are still an approved member and still the person
   // responsible for the event their name is on.
-  const approvedAccount =
-    viewer.role === "member" || viewer.role === "committee" || viewer.role === "admin";
+  //
+  // That bar is now the `events.*` entries in `lib/firebase/eligibility.ts`,
+  // where the rest of the tree reads it from, so the two halves of this gate
+  // cannot drift apart: the test written here first is the one every other
+  // event route applies.
   const responsibleForEvent =
-    approvedAccount &&
     event !== null &&
-    Boolean(viewer.uid) &&
-    (viewer.uid === authorUid || collaboratorUids.includes(viewer.uid));
+    (isNamedWithStanding(viewer, "events.authorUid", authorUid) ||
+      isNamedWithStanding(viewer, "events.collaboratorUids", collaboratorUids));
   const canBroadcast =
     viewer.role === "admin" ||
     responsibleForEvent ||

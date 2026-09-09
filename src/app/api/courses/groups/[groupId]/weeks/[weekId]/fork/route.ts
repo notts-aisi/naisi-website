@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { groupWeekRef, runWeekRef } from "@/lib/courses/groupResolve";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { normalizeCourseGroup } from "@/lib/firestore/courseGroups";
 import { normalizeCourseWeek } from "@/lib/firestore/courses";
@@ -95,7 +96,9 @@ export async function POST(
 
   const isAdmin = actor.role === "admin";
   const facilitatesLiveGroup = Boolean(
-    group && !group.archived && group.facilitatorUids.includes(actor.uid),
+    group &&
+      !group.archived &&
+      isNamedWithStanding(actor, "courseGroups.facilitatorUids", group.facilitatorUids),
   );
   if (!isAdmin && !facilitatesLiveGroup) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

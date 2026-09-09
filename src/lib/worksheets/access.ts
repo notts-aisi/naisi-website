@@ -1,5 +1,6 @@
 import "server-only";
 import type { Firestore } from "firebase-admin/firestore";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import type { Role, SessionUser } from "@/lib/firebase/session";
 import {
   CIRCULATION_LIMITS,
@@ -81,12 +82,22 @@ export async function loadCirculation(
  * staff, and the day the two disagree the rules win and the route looks broken.
  *
  * Admins are resource-independent, matching `isAdmin()` in `firestore.rules`.
+ *
+ * Membership of the array is half the answer. The other half is that staff
+ * read every recipient's answers and the reviewer-only scores, and nothing
+ * rewrites `staffUids` when one of the three people in it is demoted or
+ * rejected — so the live bar the two appointment paths applied (the library
+ * tier for the author and the reviewers, `circulateWorksheet` for the sender)
+ * is asked again here, through `isNamedWithStanding`.
  */
 export function isCirculationStaff(
   circulation: Pick<CirculationDoc, "staffUids">,
-  user: Pick<SessionUser, "uid" | "role">,
+  user: SessionUser,
 ): boolean {
-  return user.role === "admin" || circulation.staffUids.includes(user.uid);
+  return (
+    user.role === "admin" ||
+    isNamedWithStanding(user, "circulations.staffUids", circulation.staffUids)
+  );
 }
 
 /**

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isAddressableId } from "@/lib/addressableId";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb, getAdminStorage } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { ownedStoragePaths } from "@/lib/firestore/taskAttachments";
 
@@ -66,7 +67,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const reviewerUids = stringArray(task.reviewerUids);
   const isCreator = viewer.uid === task.creatorUid;
   const onTask =
-    completerUids.includes(viewer.uid) || reviewerUids.includes(viewer.uid);
+    isNamedWithStanding(viewer, "tasks.completerUids", completerUids) ||
+    isNamedWithStanding(viewer, "tasks.reviewerUids", reviewerUids);
   const canDelete =
     viewer.role === "admin" ||
     (viewer.role === "committee" && viewer.suRecognised && task.visibility === "committee") ||
