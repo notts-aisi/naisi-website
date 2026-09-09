@@ -1,10 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
 import {
+  clearSessionCookieOnly,
   createSessionCookie,
   revokeAndClearSession,
   type Role,
 } from "@/lib/firebase/session";
+import {
+  clearImpersonatorCookie,
+  getLiveImpersonator,
+} from "@/lib/firebase/impersonation";
 import { recordGoogleRegistrationCreated } from "@/lib/firestore/registrationWrites";
 
 export async function POST(request: NextRequest) {
@@ -71,6 +76,23 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE() {
+  // Sign-out during an admin view-as session must NOT revoke, because the
+  // `__session` cookie holds the TARGET member's session and
+  // revokeAndClearSession() runs auth.revokeRefreshTokens(uid) — it would sign
+  // the real member out of every device they own, from the admin's browser. The
+  // ordinary Sign-out button is rendered during view-as, so a click on it
+  // instead of "Exit view-as" reaches here. When a LIVE marker is present, end
+  // the borrowed session the way the exit route does: drop the marker and the
+  // cookie on this device only, and leave the member's own sessions untouched.
+  // (A STALE marker means the admin is signed in as themselves again, so a
+  // normal revoking sign-out is correct — getLiveImpersonator returns null.)
+  // The `clear` route and the exit route make the same call for the same reason.
+  const marker = await getLiveImpersonator();
+  if (marker) {
+    await clearImpersonatorCookie();
+    await clearSessionCookieOnly();
+    return NextResponse.json({ ok: true });
+  }
   await revokeAndClearSession();
   return NextResponse.json({ ok: true });
 }

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 import { getSessionUid } from "@/lib/firebase/session";
 import { markRegistrationProfileComplete } from "@/lib/firestore/registrationWrites";
 
@@ -13,6 +14,13 @@ import { markRegistrationProfileComplete } from "@/lib/firestore/registrationWri
  * caller's own uid — no oracle, can't affect anyone else.
  */
 export async function POST() {
+  // Never inside a view-as session: this flips the session account's own
+  // registration-tracker row, and during view-as that is the target member's
+  // row, written as them. Refused at the top, in step with the sibling
+  // register/account routes.
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const session = await getSessionUid();
   if (!session) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });

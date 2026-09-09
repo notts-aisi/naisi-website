@@ -6,12 +6,26 @@ import { sendEmail } from "@/lib/email/send";
 import { randomOpaqueId, signToken } from "@/lib/signedTokens";
 import { validateUniversityEmail } from "@/lib/firestore/users";
 import { findVerifiedUniEmailOwner } from "@/lib/firestore/uniEmailOwnership";
+import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { obfuscateEmail } from "@/lib/obfuscateEmail";
 import VerifyUniEmail from "@/emails/VerifyUniEmail";
 import AlreadyRegisteredEmail from "@/emails/AlreadyRegisteredEmail";
 
 const COOLDOWN_SECONDS = 60;
 const TOKEN_TTL_SECONDS = 60 * 30; // 30 minutes
+
+// Abuse throttle (see lib/rateLimit). This route sends a NAISI-signed email to
+// a caller-chosen @nottingham.ac.uk address, so without a volume cap one
+// session (or one IP) could pump the domain's sending reputation across an
+// unbounded list of addresses. The 60s per-(authUid, email) cooldown below
+// only bounds re-sends to the SAME address; these bound distinct ones. Generous
+// per-IP for shared campus NAT, tighter per-actor. Cost only, never a state
+// oracle: the limits key on caller identity, not on the target address.
+const RL_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+const RL_IP_MAX = 30;
+const RL_ACTOR_MAX = 10;
+/** Cap the caller-supplied greeting name rendered into the email body. */
+const PREFERRED_NAME_MAX = 80;
 
 type Body = {
   email?: string;
@@ -38,6 +52,24 @@ export async function POST(req: Request) {
   const actor = await getCurrentUser();
   if (!actor) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+
+  // Volume throttle before any work. A 429 here is caller-volume-based, not
+  // target-state-based, so it leaks nothing about the address in the body.
+  const ip = clientIp(req);
+  const ipLimit = rateLimit(`verify-email-send:ip:${ip}`, RL_IP_MAX, RL_WINDOW_MS);
+  if (!ipLimit.ok) {
+    return NextResponse.json(
+      { error: "Too many attempts. Please wait a few minutes and try again." },
+      { status: 429, headers: { "Retry-After": String(ipLimit.retryAfterSeconds) } },
+    );
+  }
+  const actorLimit = rateLimit(`verify-email-send:actor:${actor.uid}`, RL_ACTOR_MAX, RL_WINDOW_MS);
+  if (!actorLimit.ok) {
+    return NextResponse.json(
+      { error: "Too many attempts. Please wait a few minutes and try again." },
+      { status: 429, headers: { "Retry-After": String(actorLimit.retryAfterSeconds) } },
+    );
   }
 
   let body: Body;
@@ -134,13 +166,17 @@ export async function POST(req: Request) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
   const verifyUrl = `${appUrl}/verify-email/${tokenId}?t=${encodeURIComponent(signed)}`;
 
+  // Caller-supplied greeting, trimmed and length-capped before it is rendered
+  // into a NAISI-signed email body.
+  const preferredName = (body.preferredName ?? "").trim().slice(0, PREFERRED_NAME_MAX);
+
   try {
     if (existingOwner) {
       await sendEmail({
         to: email,
         subject: "You already have a NAISI account",
         react: AlreadyRegisteredEmail({
-          preferredName: body.preferredName ?? "",
+          preferredName,
           maskedAccountEmail: obfuscateEmail(existingOwner.googleEmail),
         }),
         kind: "unknown",
@@ -152,7 +188,7 @@ export async function POST(req: Request) {
         to: email,
         subject: "Verify your university email for NAISI",
         react: VerifyUniEmail({
-          preferredName: body.preferredName ?? "",
+          preferredName,
           verifyUrl,
           expiresInMinutes: Math.floor(TOKEN_TTL_SECONDS / 60),
         }),

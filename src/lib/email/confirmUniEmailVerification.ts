@@ -15,10 +15,29 @@ export type ConfirmUniEmailResult =
  * (no internal HTTP roundtrip — dodges the Cloud Run revision-URL auth
  * gotcha where the page's `host` header is the internal revision hostname,
  * not the public one, and internal URLs require IAM auth we don't have).
+ *
+ * OWNERSHIP BINDING (`callerUid`). Confirming a uni-email link marks the
+ * `authUid` recorded on the token as the verified owner of that address — it
+ * stamps `users/{authUid}.profile.uniEmailVerifiedAt` and closes the address
+ * against every other account (`findVerifiedUniEmailOwner`). The address the
+ * link was mailed to is chosen by the caller of `/api/verify-email/send`, and
+ * the token binds to THAT caller's uid, not to whoever ends up clicking. So a
+ * confirmation completed by anyone but the token's own account would let a
+ * caller start ownership proof for a stranger's university address, mail the
+ * stranger a genuine NAISI link addressed to them by name, and — on their
+ * click — squat that address on the caller's account (the real owner is then
+ * refused with "already linked to another account"). Uni-email verification is
+ * an attribute proof on an ALREADY-SIGNED-IN account (unlike the login-email
+ * magic link, which mints a session and is cross-device by design), so the
+ * confirming request must be authenticated as `authUid`. `callerUid` is the uid
+ * the confirming request resolves (`null` when signed out); a mismatch is
+ * refused before `verifiedAt` is flipped or the user doc is stamped, so a
+ * victim's click never credits the caller. Guard: tests/uni-email-ownership.test.mjs.
  */
 export async function confirmUniEmailVerification(
   db: Firestore,
   signed: string | undefined | null,
+  callerUid: string | null,
 ): Promise<ConfirmUniEmailResult> {
   if (!signed) {
     return { ok: false, error: "Missing token", status: 400 };
@@ -48,6 +67,28 @@ export async function confirmUniEmailVerification(
   }
 
   const authUid = data.authUid as string | undefined;
+
+  // Ownership binding — see the function's docblock. The confirming caller must
+  // be the account the token was minted for, or a victim's click on a link an
+  // attacker triggered would verify the attacker's claim on the victim's
+  // address. Refused before any state change.
+  if (!callerUid) {
+    return {
+      ok: false,
+      error:
+        "You need to be signed in as the account you started signing up with to verify this email. Open the link in that browser, or sign in first.",
+      status: 401,
+    };
+  }
+  if (!authUid || callerUid !== authUid) {
+    return {
+      ok: false,
+      error:
+        "This verification link is for a different account. Open it in the browser where you started signing up, or sign in with that account first.",
+      status: 403,
+    };
+  }
+
   const verifiedEmail = (data.email as string | undefined)?.trim().toLowerCase() ?? "";
 
   // A uni email belongs to at most one NAISI account. The send route
