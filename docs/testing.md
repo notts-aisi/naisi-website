@@ -386,6 +386,40 @@ The same shape, older:
   no-cache rule are asserted to survive the global rule. Registered in
   `AUTH_BATTERIES` with an empty `drives`, because it proves headers and not
   handlers.
+- `tests/persona-route-gates.test.mjs` and
+  `scripts/e2e/tests/persona-route-gates.test.mjs`, with the answer key in
+  `tests/persona-route-gates.registry.mjs`: the standing red team. The audit
+  of 8 September 2026 found its thirteen routes by a person reading one
+  handler at a time and asking what each persona gets; the class is "the
+  gate's answer to persona X is not what the model says", and a source guard
+  can read the order of a handler's calls but never its answer. So the
+  question is asked by request, of every route under `src/app/api` and every
+  page under `src/app/(app)`, as every persona (`anonymous`, `pending`,
+  `rejected`, `member`, non-SU `committee`, `suCommittee`, `admin`, and a
+  plain member holding each `permissions` key), with ids that address nothing
+  and empty bodies so the answer is the gate's or the first validation's, and
+  each cell is held to the registry: a status per persona, a redirect target
+  per persona for a page, the allowed top-level fields for a 2xx, and a reason
+  per entry. The design decision, written up in `scripts/e2e/lib/personas.mjs`
+  and in "Safety properties" in `scripts/e2e/README.md`: the harness's rule
+  that it never grants a role above `pending` on the dev project stays
+  literally true, because the elevated personas exist only in a Firestore
+  emulator that `scripts/e2e/run.mjs` starts for the run, behind a second copy
+  of the build on `:3101`; their Auth accounts on dev are bare harness
+  accounts with no document. That is also what makes it safe to drive every
+  mutating route as an admin: what it mutates is the emulator. The fence guard
+  admits exactly that one module, executes its refusal with the emulator
+  variable unset and pointed off-loopback, and reads it to check that every
+  exported function asserts the emulator first. The offline half runs under
+  `npm test` with no build: the tree and the registry are checked against
+  each other in both directions, every entry for a persona that is not one, a
+  status that is not one, a page outcome naming no redirect, a 2xx with no
+  `fields`, and an anonymous 2xx with no written `public` reason, so a new
+  route or page fails on arrival until somebody writes down what every persona
+  gets. The runtime half runs in local mode only (there is no emulator behind
+  a deployed backend), is required in CI, and can record what it observed
+  (`E2E_PERSONA_RECORD`) so a wholesale change is re-keyed as a diff read as
+  decisions.
 - `tests/lib/stripSource.mjs`, proved by the guards that use it: reading a
   TypeScript file as code is done once, by a tokeniser, rather than by four
   regexes per guard. The four-regex version desyncs on a trailing comment with

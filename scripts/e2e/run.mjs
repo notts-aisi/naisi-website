@@ -31,6 +31,7 @@
  */
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import webpush from "web-push";
 import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { REPO_ROOT, parseEnvFile, signingServiceAccount } from "./lib/env.mjs";
@@ -39,6 +40,20 @@ import { clearMailbox, mailpitAvailable } from "./lib/mailpit.mjs";
 const HOST = "127.0.0.1";
 const PORT = 3100;
 const ORIGIN = `http://${HOST}:${PORT}`;
+/**
+ * The persona battery's server: the same build, on its own port, pointed at
+ * a Firestore EMULATOR so elevated roles never exist on the dev project. See
+ * lib/personas.mjs for the property this keeps and the pull request that
+ * chose it. Both are optional on a laptop without Java or firebase-tools and
+ * required in CI (`E2E_PERSONA_BATTERY=required`), so a skip there is red.
+ */
+const PERSONA_PORT = 3101;
+const PERSONA_ORIGIN = `http://${HOST}:${PERSONA_PORT}`;
+const EMULATOR_PORT = 8080;
+const EMULATOR_HOST = `${HOST}:${EMULATOR_PORT}`;
+const FIREBASE_CLI = join(REPO_ROOT, "scripts", "rules-tests", "node_modules", ".bin", "firebase");
+const EMULATOR_LOG = join(REPO_ROOT, ".next", "e2e-emulator.log");
+const PERSONA_SERVER_LOG = join(REPO_ROOT, ".next", "e2e-persona-server.log");
 const MAILPIT_HTTP = "http://127.0.0.1:8025";
 const MAILPIT_SMTP_PORT = "1025";
 const DEV_PROJECT = "naisi-website-dev";
@@ -208,7 +223,30 @@ function assertDevEnvLocal() {
   }
 }
 
-function buildServerEnv() {
+/**
+ * A throwaway VAPID pair for the loopback server, so the push routes behave
+ * as they do on a configured backend rather than answering 503 before their
+ * gate. Nothing is ever delivered: the harness holds no push subscriptions.
+ *
+ * The public half is NEXT_PUBLIC_ and therefore baked into the build, so the
+ * pair lives in the build marker and is reused by --skip-build; a rebuild
+ * gets a fresh pair. Generated rather than committed: a private key has no
+ * place in the repository even when it can sign nothing that matters.
+ */
+function vapidPairFor(skipBuild) {
+  if (skipBuild) {
+    try {
+      const marker = JSON.parse(readFileSync(BUILD_MARKER, "utf8"));
+      if (marker.vapid?.publicKey && marker.vapid?.privateKey) return marker.vapid;
+    } catch {
+      /* no marker yet: generate, and ensureBuild will rebuild */
+    }
+  }
+  const pair = webpush.generateVAPIDKeys();
+  return { publicKey: pair.publicKey, privateKey: pair.privateKey };
+}
+
+function buildServerEnv(vapid) {
   return {
     ...process.env,
     // The relaxation. Environment-only, see the header comment. The secret so
@@ -240,6 +278,10 @@ function buildServerEnv() {
     // under user ADC — see src/lib/firebase/admin.ts. Needs the same
     // serviceAccountTokenCreator grant the harness itself already uses.
     FIREBASE_ADMIN_SERVICE_ACCOUNT_ID: signingServiceAccount(),
+    // Push configured with a throwaway pair (see vapidPairFor), so the push
+    // routes reach their gates instead of answering 503 for want of keys.
+    NEXT_PUBLIC_VAPID_PUBLIC_KEY: vapid.publicKey,
+    VAPID_PRIVATE_KEY: vapid.privateKey,
     // This machine keeps a real dev-bypass impl behind skip-worktree; the
     // batteries assert 401s, so the bypass must be provably inert.
     NEXT_PUBLIC_DEV_BYPASS_AUTH: "false",
@@ -255,7 +297,7 @@ function run(cmd, args, opts) {
   });
 }
 
-async function ensureBuild(serverEnv, skipBuild) {
+async function ensureBuild(serverEnv, skipBuild, vapid) {
   // Everything NEXT_PUBLIC_* the build inlines and a run depends on. A build
   // made before the site key joined this list has no widget in it, so the
   // marker comparison must fail on that field too rather than reuse it.
@@ -263,6 +305,7 @@ async function ensureBuild(serverEnv, skipBuild) {
     appUrl: ORIGIN,
     project: DEV_PROJECT,
     recaptchaSiteKey: LOOPBACK_RECAPTCHA_SITE_KEY,
+    vapidPublicKey: vapid.publicKey,
   };
   if (skipBuild) {
     try {
@@ -270,7 +313,8 @@ async function ensureBuild(serverEnv, skipBuild) {
       if (
         marker.appUrl === wanted.appUrl &&
         marker.project === wanted.project &&
-        marker.recaptchaSiteKey === wanted.recaptchaSiteKey
+        marker.recaptchaSiteKey === wanted.recaptchaSiteKey &&
+        marker.vapidPublicKey === wanted.vapidPublicKey
       ) {
         log("--skip-build: reusing the existing local e2e build.");
         return;
@@ -302,7 +346,10 @@ async function ensureBuild(serverEnv, skipBuild) {
     env: serverEnv,
     stdio: "inherit",
   });
-  writeFileSync(BUILD_MARKER, JSON.stringify({ ...wanted, builtAt: new Date().toISOString() }, null, 2));
+  writeFileSync(
+    BUILD_MARKER,
+    JSON.stringify({ ...wanted, vapid, builtAt: new Date().toISOString() }, null, 2),
+  );
 }
 
 /**
@@ -449,6 +496,110 @@ async function startServer(serverEnv) {
 }
 
 /**
+ * Whether the persona battery can run here, with the reason when it cannot.
+ * A missing tool is a skip on a laptop and a failure in CI, where the
+ * workflow installs both and sets E2E_PERSONA_BATTERY=required.
+ */
+function personaBatteryBlocker() {
+  if (!existsSync(FIREBASE_CLI)) {
+    return `firebase-tools is not installed under scripts/rules-tests (run \`npm ci\` there)`;
+  }
+  try {
+    execFileSync("java", ["-version"], { stdio: "ignore" });
+  } catch {
+    return "java is not on PATH, and the Firestore emulator is a Java process";
+  }
+  return null;
+}
+
+function refuseOrSkipPersonas(reason) {
+  if (process.env.E2E_PERSONA_BATTERY === "required") {
+    fail(`The persona battery is required here and cannot run: ${reason}.`);
+  }
+  log(`Persona battery SKIPPED: ${reason}. It runs in CI; set E2E_PERSONA_BATTERY=required to insist.`);
+  return false;
+}
+
+/**
+ * Starts the Firestore emulator for the persona server. Refuses a port that
+ * is already held: an emulator this run did not start holds data this run
+ * knows nothing about, which is the rules suite's port too.
+ */
+async function ensureEmulator() {
+  const blocker = personaBatteryBlocker();
+  if (blocker) return refuseOrSkipPersonas(blocker);
+  if (portInUse(EMULATOR_PORT)) {
+    fail(
+      `Something is listening on :${EMULATOR_PORT}. The persona battery needs a Firestore ` +
+        "emulator this run starts itself (the rules suite uses the same port; wait for it).",
+    );
+  }
+  log(`Starting the Firestore emulator on ${EMULATOR_HOST} (log: ${EMULATOR_LOG})…`);
+  const logFd = openSync(EMULATOR_LOG, "w");
+  const child = spawn(
+    FIREBASE_CLI,
+    ["emulators:start", "--only", "firestore", "--project", DEV_PROJECT],
+    { cwd: REPO_ROOT, env: process.env, stdio: ["ignore", logFd, logFd] },
+  );
+  child.on("error", () => {});
+  CHILDREN.push({ name: "firestore-emulator", child });
+  const deadline = Date.now() + 120_000;
+  for (;;) {
+    if (child.exitCode !== null) fail(`The Firestore emulator exited before becoming ready — see ${EMULATOR_LOG}.`);
+    try {
+      const res = await fetch(`http://${EMULATOR_HOST}/`);
+      if (res.ok) break;
+    } catch {
+      /* not yet */
+    }
+    if (Date.now() > deadline) fail(`The Firestore emulator never answered on ${EMULATOR_HOST} — see ${EMULATOR_LOG}.`);
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  log("Firestore emulator is up.");
+  return true;
+}
+
+/** The same build on :3101, reading and writing the emulator instead of dev. */
+async function startPersonaServer(serverEnv) {
+  if (portInUse(PERSONA_PORT)) {
+    fail(`Something is already listening on :${PERSONA_PORT}. Stop it and rerun.`);
+  }
+  log(`Starting the persona server: next start -H ${HOST} -p ${PERSONA_PORT} (log: ${PERSONA_SERVER_LOG})…`);
+  const logFd = openSync(PERSONA_SERVER_LOG, "w");
+  const child = spawn(
+    join(REPO_ROOT, "node_modules", ".bin", "next"),
+    ["start", "-H", HOST, "-p", String(PERSONA_PORT)],
+    {
+      cwd: REPO_ROOT,
+      env: { ...serverEnv, FIRESTORE_EMULATOR_HOST: EMULATOR_HOST },
+      stdio: ["ignore", logFd, logFd],
+    },
+  );
+  child.on("error", () => {});
+  child.on("exit", (code, signal) => {
+    if (!serverExitExpected) {
+      console.error(
+        `[e2e:local] THE PERSONA SERVER DIED MID-RUN (code=${code}, signal=${signal}). ` +
+          `Check ${PERSONA_SERVER_LOG}.`,
+      );
+    }
+  });
+  CHILDREN.push({ name: "persona-server", child });
+  const deadline = Date.now() + 90_000;
+  for (;;) {
+    if (child.exitCode !== null) fail(`The persona server exited before becoming ready — see ${PERSONA_SERVER_LOG}.`);
+    try {
+      await fetch(`${PERSONA_ORIGIN}/login`, { redirect: "manual" });
+      break;
+    } catch {
+      if (Date.now() > deadline) fail(`The persona server never became reachable on ${PERSONA_ORIGIN}.`);
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
+  log("Persona server is up.");
+}
+
+/**
  * Removes harness accounts a CRASHED run left behind. Every battery cleans up
  * in its own `after()` hook, but a run killed between a register POST and that
  * hook (laptop asleep, SIGKILL, a hard abort) strands the Auth account in the
@@ -485,7 +636,7 @@ const TEST_PATHS = (process.env.E2E_TEST_PATHS ?? "scripts/e2e/tests/")
   .map((p) => p.trim())
   .filter(Boolean);
 
-function runTests(serverEnv) {
+function runTests(serverEnv, personas) {
   return new Promise((resolve) => {
     const child = spawn(
       process.execPath,
@@ -502,6 +653,13 @@ function runTests(serverEnv) {
           E2E_ALLOW_REGISTER: "1",
           E2E_LOCAL_TOKEN_SECRET: serverEnv.EVENTS_TOKEN_SECRET,
           MAILPIT_URL: MAILPIT_HTTP,
+          // Only when the emulator and the persona server came up. The
+          // battery skips (or fails, when required) without these two. The
+          // emulator host is handed over under its OWN name, never as
+          // FIRESTORE_EMULATOR_HOST: that variable is process-wide for the
+          // Admin SDK, and every other battery in this process seeds dev
+          // through it. The persona battery arms it inside its own process.
+          ...(personas ? { E2E_PERSONA_ORIGIN: PERSONA_ORIGIN, E2E_PERSONA_EMULATOR_HOST: EMULATOR_HOST } : {}),
         },
       },
     );
@@ -542,17 +700,20 @@ async function main() {
   try {
     assertDevEnvLocal();
     mkdirSync(join(REPO_ROOT, ".next"), { recursive: true });
-    const serverEnv = buildServerEnv();
+    const vapid = vapidPairFor(skipBuild);
+    const serverEnv = buildServerEnv(vapid);
     await ensureMailpit();
-    await ensureBuild(serverEnv, skipBuild);
+    await ensureBuild(serverEnv, skipBuild, vapid);
     await ensureMailpit(); // re-check: the build can take minutes
     await startServer(serverEnv);
+    const personas = await ensureEmulator();
+    if (personas) await startPersonaServer(serverEnv);
     // One global wipe so a previous run's mail can't satisfy anything; from
     // here on every assertion is per-recipient (addresses embed the run id).
     process.env.MAILPIT_URL = MAILPIT_HTTP;
     await clearMailboxOrRestart();
     await sweepStaleHarnessAccounts();
-    const code = await runTests(serverEnv);
+    const code = await runTests(serverEnv, personas);
     await teardownAndWait();
     process.exit(code);
   } catch (err) {

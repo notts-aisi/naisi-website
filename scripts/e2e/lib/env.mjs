@@ -45,6 +45,10 @@ const ALLOWED_ORIGINS = [
   "http://127.0.0.1:3000",
   "http://localhost:3000",
   "http://127.0.0.1:3100", // reserved for the Phase 3 local server
+  // The persona battery's second loopback server: the same build as :3100,
+  // pointed at a Firestore EMULATOR so that elevated roles never exist on the
+  // dev project. Started only by scripts/e2e/run.mjs; see lib/personas.mjs.
+  "http://127.0.0.1:3101",
 ];
 
 /** Origins that must produce a loud, specific failure rather than a generic one. */
