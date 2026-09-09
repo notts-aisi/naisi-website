@@ -142,7 +142,12 @@ describe("personal tasks cannot be used to reach other members", () => {
     // Create already required reviewerUids.size() == 0; the update branch did
     // not, so create-clean-then-update planted attacker-chosen text on
     // strangers' boards and made them notify/send-for-review recipients.
-    await seedUser("atk", { role: "pending" });
+    //
+    // An approved member, because the create rule now takes the roster floor
+    // that the read side already had: a caller who may write a document they
+    // can never read is a queue nobody empties. What this block is about is
+    // the update branch, so the fixture has to get past create for real.
+    await seedUser("atk", { role: "member" });
     const db = await asUser("atk");
     await assertSucceeds(
       db.collection("tasks").doc("T").set({

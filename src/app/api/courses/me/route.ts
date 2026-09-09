@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
-import { holdsStanding } from "@/lib/firebase/eligibility";
+import { holdsStanding, isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { isValidDateKey } from "@/lib/courses/weekPlan";
 import { memberCurrentWeek, resolveCalendar } from "@/lib/courses/groupResolve";
@@ -297,9 +297,14 @@ export async function GET() {
       .get(),
   ]);
 
-  const enrolments: CourseEnrolmentDoc[] = enrolSnap.docs.map((d) =>
-    normalizeCourseEnrolment(d.id, d.data() ?? {}),
-  );
+  // THE SAME FLOOR THE RUN ROUTES APPLY. An enrolment row is an authority the
+  // allocation and facilitators routes wrote for an approved account, and
+  // nothing rewrites it when that stops being true, so the hub draws a cohort
+  // card only while the account is still on the roster. The two role loops
+  // below ask the same question of their own arrays.
+  const enrolments: CourseEnrolmentDoc[] = enrolSnap.docs
+    .map((d) => normalizeCourseEnrolment(d.id, d.data() ?? {}))
+    .filter((e) => isNamedWithStanding(actor, "courseEnrolments.uid", e.uid));
 
   /**
    * runId → the caller's own decided application status, for the two statuses

@@ -2328,7 +2328,10 @@ export const REGISTRY = [
       "The respond page's own read at /worksheets/respond/[circulationId], which sits outside the committee gate because a recipient may be any approved member. `isOwner()` is structural (the id is the uid), so this branch needs no lookup and cannot be aimed at somebody else's answers. Pending is allowed by the rule and kept off the page by the (app) shell, the same split as the circulation get above.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since `isOwner()` carries the roster floor: a response is
+      // answers that staff and reviewers read, unlike a personal task, so a
+      // recipient who has left the roster stops both answering and reading.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",

@@ -107,7 +107,13 @@ export async function GET(
       .get();
     if (ownSnap.exists) {
       const own = normalizeCourseEnrolment(ownSnap.id, ownSnap.data() ?? {});
-      isGroupMember = own.status === "active" && own.groupId === groupId;
+      isGroupMember =
+        own.status === "active" &&
+        own.groupId === groupId &&
+        // This payload is other members' display names, which is the tier
+        // the users lockdown restricts; the row that opens it carries the
+        // same floor as every other enrolment gate.
+        isNamedWithStanding(actor, "courseEnrolments.uid", own.uid);
     }
     if (!isGroupMember) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });

@@ -329,7 +329,10 @@ service cloud.firestore {
 
       allow read: if visibleToMe();
 
-      allow create: if isSignedIn()
+      // `isApprovedAccount()` rather than `isSignedIn()`: the read side of
+      // this collection carries the roster floor, and a caller who may write a
+      // document they can never read is a queue nobody empties.
+      allow create: if isApprovedAccount()
         && request.resource.data.creatorUid == request.auth.uid
         && request.resource.data.title.size() > 0
         && request.resource.data.title.size() <= 120
@@ -840,7 +843,13 @@ service cloud.firestore {
         }
         // The doc id binds the response to its recipient structurally, so
         // "is this mine" needs no lookup and cannot be spoofed by a field.
-        function isOwner() { return isSignedIn() && request.auth.uid == responseUid; }
+        // FLOORED, unlike `isTaskCreator`, and the difference is who reads the
+        // document: a personal task is the creator's own to-do, while a
+        // response is answers that staff and reviewers read and score. A
+        // recipient who has left the roster stops both answering and reading.
+        function isOwner() {
+          return isSignedIn() && request.auth.uid == responseUid && isApprovedAccount();
+        }
 
         // isOwner() is per-document-id, so a recipient's LIST of the
         // subcollection is refused (the id is not something a query
@@ -2389,10 +2398,17 @@ service cloud.firestore {
       // outage that only appears once a member has enough progress rows.
       // Write-side only, where each request touches exactly one doc. The
       // courses rules test suite pins this with a 25-doc list regression.
+      // The enrolment ROW is an authority like a named array is: allocation
+      // and the facilitators route both write one for an approved account, and
+      // nothing rewrites it when the account stops being one. `courseProgress`
+      // is the single client-direct member write in this feature and it hangs
+      // off this predicate, so without the floor a rejected account went on
+      // filing progress and public comments into a live cohort.
       function isEnrolledActive(runId) {
         return exists(/databases/$(database)/documents/courseEnrolments/$(runId + '__' + request.auth.uid))
           && get(/databases/$(database)/documents/courseEnrolments/$(runId + '__' + request.auth.uid))
-               .data.status == 'active';
+               .data.status == 'active'
+          && isApprovedAccount();
       }
       // The full shape contract, shared by create and update:
       //  - doc id binds (runId, CALLER's uid, itemId) — the structural bit
@@ -2608,15 +2624,24 @@ service cloud.firestore {
         function parentTemplate() {
           return get(/databases/$(database)/documents/courseTemplates/$(templateId)).data;
         }
-        allow read: if isAdmin() || canDraftCourse() || canApproveCourse()
-          || (
-            isSignedIn()
+        // A NAMED HELPER rather than the inline clause this used to be. The
+        // parent template's own copy of the same grant carries the roster
+        // floor; written inline here it did not, so a rejected track lead was
+        // refused the snapshot and allowed every week inside it, which is the
+        // whole of its content. A grant written inline is also a grant
+        // `tests/authority-at-use.test.mjs` cannot walk for, because that scan
+        // reads function bodies.
+        function isParentTemplateSourceRunTrackLead() {
+          return isSignedIn()
             && parentTemplate().get('sourceRunId', '') is string
             && parentTemplate().get('sourceRunId', '').size() > 0
             && request.auth.uid in
               get(/databases/$(database)/documents/courseRuns/$(parentTemplate().sourceRunId))
                 .data.get('trackLeadUids', [])
-          );
+            && isApprovedAccount();
+        }
+        allow read: if isAdmin() || canDraftCourse() || canApproveCourse()
+          || isParentTemplateSourceRunTrackLead();
 
         // IMMUTABLE. Not "server-owned like the role arrays" — immutable:
         // the snapshot batch is the only write these docs ever receive, and

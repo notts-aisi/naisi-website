@@ -202,6 +202,22 @@ export const AUTHORITY: Record<string, StandingBar> = {
       "A withdrawn or removed enrolment already loses access the moment it is written; this is " +
       "the same rule for an account that is removed instead of a row.",
   },
+  // A RESPONSE IS THE SAME SHAPE AS AN ENROLMENT: a document whose id is the
+  // person it belongs to. `isOwner()` in `firestore.rules` carries the roster
+  // floor for the client-direct autosave, and the submit route is the Admin
+  // SDK half of the same door.
+  "circulationResponses.uid": {
+    field: "circulationResponses.uid",
+    appointedBy:
+      "src/app/api/worksheets/circulations/route.ts and its add-recipients sibling, which mint " +
+      "one response per recipient after checking isEligibleRecipient",
+    test: isApprovedAccount,
+    why:
+      "Deliberately the roster rather than the library tier the recipient was picked under: a " +
+      "committee member demoted mid-worksheet should still be able to finish answering the " +
+      "thing they were sent, while an account that has left the roster should not go on pushing " +
+      "text at a surface staff read. `isOwner()` in the rules applies the same line.",
+  },
   "courseGroups.facilitatorUids": {
     field: "courseGroups.facilitatorUids",
     appointedBy:
