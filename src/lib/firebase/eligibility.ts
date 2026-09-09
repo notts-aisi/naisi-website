@@ -65,10 +65,18 @@ import {
  * which is why it is the function the gates call and `holdsStanding` is
  * exported mostly for the guard to execute.
  *
- * It is not a replacement for `firestore.rules`. Every array below is pinned
- * against client writes, and the rules that read them apply their own tests;
- * this module is the server-side half, for the routes that use the Admin SDK
- * and therefore see no rules at all.
+ * It is not a replacement for `firestore.rules`, and it is not a substitute
+ * for one either. Every array below is pinned against client WRITES, but the
+ * READ side is a separate question and the rules answered it with
+ * `isSignedIn()` and a membership test on four of the five collections here:
+ * only `worksheets` carried the role half, inside `isAuthor()`. A route that
+ * refuses a rejected account is worth nothing if the browser can read the same
+ * document directly, so the rules gained `isApprovedAccount()` in the same
+ * change, applied inside `isCompleter()`, `isReviewer()`, `isStaff()`,
+ * `isParentStaff()`, `isCollaborator()`, `isOwnEvent()`,
+ * `isCourseCollaborator()`, `isOwnCourse()` and `hasPerm()`. This module is
+ * the half for the routes that use the Admin SDK and therefore see no rules at
+ * all; the two halves have to be read together.
  *
  * It does not clear stale membership. A demoted person stays listed in the
  * array they were appointed to, and a surface that renders the list will still
@@ -176,6 +184,24 @@ export const AUTHORITY: Record<string, StandingBar> = {
       "The decide route adds an applicant the round appointed, and that applicant was an " +
       "approved account when they applied; the roles route applies the same intersection.",
   },
+  // THE ENROLMENT IS AN AUTHORITY TOO, and it is the one the facilitators
+  // route writes ALONGSIDE `courseGroups.facilitatorUids` (a `role:
+  // "facilitator"` row, so that "every run you touch" is one query). The run
+  // routes read it as the first of three paths to access and called it "the
+  // usual one", so a floor on the other two and not on this one would be a
+  // floor on the rare paths only.
+  "courseEnrolments.uid": {
+    field: "courseEnrolments.uid",
+    appointedBy:
+      "src/app/api/courses/runs/[runId]/allocation/publish/route.ts for a learner, " +
+      "src/app/api/courses/groups/[groupId]/facilitators/route.ts for a facilitator",
+    test: isApprovedAccount,
+    why:
+      "Both writers place an approved account: allocation publishes an accepted applicant, and " +
+      "the facilitators route intersects with the same approved-accounts query the array does. " +
+      "A withdrawn or removed enrolment already loses access the moment it is written; this is " +
+      "the same rule for an account that is removed instead of a row.",
+  },
   "courseGroups.facilitatorUids": {
     field: "courseGroups.facilitatorUids",
     appointedBy:
@@ -237,7 +263,11 @@ export const AUTHORITY: Record<string, StandingBar> = {
       "sender, which a plain member may hold), so the live bar is the union of the two — " +
       "narrowing it to the library tier would lock a member-sender out of the circulation they " +
       "sent. The approved-account floor in `holdsStanding` is what keeps the permission half of " +
-      "that union from admitting a rejected account that still carries the key.",
+      "that union from admitting a rejected account that still carries the key. The consequence " +
+      "worth saying out loud: revoking `circulateWorksheet` from a plain member ends their " +
+      "standing on circulations they already sent, not only their ability to send more. The " +
+      "circulation is never orphaned by that, because the worksheet's author is always staff and " +
+      "is always committee or an admin.",
   },
 
   // ── Tasks ─────────────────────────────────────────────────────────────────

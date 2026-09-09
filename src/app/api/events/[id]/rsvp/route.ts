@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveEvent, canDraftEvent } from "@/lib/firestore/users";
 import {
   EMAIL_MAX,
   NAME_MAX,
@@ -138,9 +139,7 @@ export async function POST(
   // else only sees published events (status check below).
   const isStaff =
     !!viewer &&
-    (viewer.role === "admin" ||
-      viewer.permissions.draftEvent ||
-      viewer.permissions.approveEvent);
+    (canDraftEvent(viewer) || canApproveEvent(viewer));
 
   if (event.status !== "published" && !isStaff) {
     return NextResponse.json({ error: "This event isn't open for signups." }, { status: 400 });

@@ -590,7 +590,7 @@ test("GUARD: the normalise route refuses outside the one window where it is free
   // draft there is nothing keyed on the old ids, so moving them repoints
   // nothing. Every one of these is load-bearing.
   assert.match(NORMALISE_WEEKS, /\(run\.status \?\? "draft"\) !== "draft"/);
-  assert.match(NORMALISE_WEEKS, /actor\.role === "admin" \|\| actor\.permissions\.approveCourse/);
+  assert.match(NORMALISE_WEEKS, /if \(!canApproveCourse\(actor\)\)/);
   assert.match(NORMALISE_WEEKS, /collection\("courseProgress"\)\.where\("runId", "==", runId\)/);
   assert.match(
     NORMALISE_WEEKS,

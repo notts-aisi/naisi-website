@@ -472,8 +472,14 @@ export async function GET(
     : null;
   // Withdrawn / removed enrolments lose access the moment they are written,
   // whatever the member's open tab still shows.
+  // The enrolment is an authority like the arrays are, and it is the first of
+  // the three paths below. `isNamedWithStanding` asks the same roster floor of
+  // it, so an account that was rejected loses the run whichever path put it
+  // there rather than only the two rare ones.
   const liveEnrolment =
-    enrolment && (enrolment.status === "active" || enrolment.status === "completed")
+    enrolment &&
+    (enrolment.status === "active" || enrolment.status === "completed") &&
+    isNamedWithStanding(actor, "courseEnrolments.uid", enrolment.uid)
       ? enrolment
       : null;
 

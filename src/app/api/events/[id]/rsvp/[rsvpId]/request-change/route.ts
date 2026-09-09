@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveEvent, canDraftEvent } from "@/lib/firestore/users";
 import { sanitizeSignupForm, type FormQuestion } from "@/lib/firestore/events";
 import { validateAnswers } from "@/lib/events/validateAnswers";
 import { verifyRsvpToken } from "@/lib/events/rsvpToken";
@@ -62,9 +63,8 @@ export async function POST(
     tokenCandidate !== "" && rsvpEmail !== "" && verifyRsvpToken(rsvpId, rsvpEmail, tokenCandidate);
   const isOrganiser =
     !!viewer &&
-    (viewer.role === "admin" ||
-      viewer.permissions.approveEvent ||
-      (viewer.permissions.draftEvent &&
+    (canApproveEvent(viewer) ||
+      (canDraftEvent(viewer) &&
         isNamedWithStanding(viewer, "events.authorUid", event.authorUid)));
   const isOwnUid = !!viewer && typeof rsvp.uid === "string" && rsvp.uid === viewer.uid;
 

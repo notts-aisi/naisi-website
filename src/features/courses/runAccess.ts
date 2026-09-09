@@ -133,8 +133,13 @@ export const getRunAccess = cache(
     // whatever the member's open tab still shows. `completed` keeps reading:
     // a finished cohort is the member's own history, and the overview route
     // serves it on the same terms.
+    // ... and so does an account that is no longer on the roster: the row is
+    // an authority the allocation and facilitators routes wrote for an
+    // approved account, and nothing rewrites it when that stops being true.
     const live =
-      enrolment && (enrolment.status === "active" || enrolment.status === "completed")
+      enrolment &&
+      (enrolment.status === "active" || enrolment.status === "completed") &&
+      isNamedWithStanding(user, "courseEnrolments.uid", enrolment.uid)
         ? enrolment
         : null;
 

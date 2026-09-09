@@ -757,7 +757,7 @@ test("MODEL §4.7 the retrospective refuses before it 404s", () => {
   assert.match(RETRO_CODE, /if \(!isLead\) return NextResponse\.json\(\{ error: "Forbidden" \}/);
   assert.match(
     RETRO_CODE,
-    /actor\.permissions\.approveCourse[\s\S]{0,80}actor\.permissions\.draftCourse/,
+    /canApproveCourse\(actor\)[\s\S]{0,80}canDraftCourse\(actor\)/,
   );
   assert.match(RETRO_CODE, /trackLeadUids/);
 });
@@ -993,7 +993,7 @@ test("MODEL §7.3 every route gates before it reads", () => {
     [
       "apply-template",
       APPLY_CODE,
-      /if \(!\(actor\.role === "admin" \|\| actor\.permissions\.approveCourse\)\)/,
+      /if \(!canApproveCourse\(actor\)\)/,
     ],
   ]) {
     assert.match(source, gate, `${name} must carry its gate`);

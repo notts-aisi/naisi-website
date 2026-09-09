@@ -4,6 +4,7 @@ import type { DocumentReference } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveCourse } from "@/lib/firestore/users";
 import { asUidList } from "@/lib/firestore/events";
 import {
   COURSE_FIELD_LIMITS,
@@ -129,7 +130,7 @@ export async function POST(
     "courseRuns.trackLeadUids",
     asUidList(target.trackLeadUids),
   );
-  if (!(actor.role === "admin" || actor.permissions.approveCourse || isTrackLead)) {
+  if (!(canApproveCourse(actor) || isTrackLead)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

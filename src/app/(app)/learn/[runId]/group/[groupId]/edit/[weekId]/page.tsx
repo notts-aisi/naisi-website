@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import GroupWeekEditor from "@/features/courses/GroupWeekEditor";
 import { getRunAccess, getSessionUser } from "@/features/courses/runAccess";
 import { resolveCalendar } from "@/lib/courses/groupResolve";
@@ -65,7 +66,12 @@ export default async function GroupWeekEditPage({
   const group = normalizeCourseGroup(groupSnap.id, groupSnap.data() ?? {});
 
   const facilitatesThisGroup =
-    !group.archived && group.facilitatorUids.includes(access.user.uid);
+    !group.archived &&
+    isNamedWithStanding(
+      access.user,
+      "courseGroups.facilitatorUids",
+      group.facilitatorUids,
+    );
   if (group.runId !== runId || !(access.isAdmin || facilitatesThisGroup)) {
     redirect(runHome);
   }

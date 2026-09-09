@@ -1655,7 +1655,10 @@ export const REGISTRY = [
       "The live task subscription behind the detail modal, opened from My Work as well as from the committee board. The completer branch is what makes the modal work for a plain member, and it is resource-dependent, which is exactly why a member's LIST has to carry the array-contains clause.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since the named branches carry the approved-account floor:
+      // being on the roster of a document is not a grant that outlives
+      // the account. See isApprovedAccount() in firestore.rules.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",
@@ -1700,7 +1703,10 @@ export const REGISTRY = [
       "A read that precedes a write, issued by whoever is commenting. Anyone who can comment can already read the parent (the comment create rule calls the same canAccessParent), so this cannot fail for a legitimate commenter.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since the named branches carry the approved-account floor:
+      // being on the roster of a document is not a grant that outlives
+      // the account. See isApprovedAccount() in firestore.rules.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",
@@ -1722,7 +1728,10 @@ export const REGISTRY = [
       "A read that precedes a write, from the task detail modal. Same completer branch as the modal's own subscription.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since the named branches carry the approved-account floor:
+      // being on the roster of a document is not a grant that outlives
+      // the account. See isApprovedAccount() in firestore.rules.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",
@@ -1742,7 +1751,10 @@ export const REGISTRY = [
       "The task thread. The subcollection rule resolves canAccessParent() with a get() on the parent task, so the PARENT must be seeded before this list can be judged at all: with no parent document the get() has nothing to read and the read is refused for everyone, admins included, which would look identical to a permissions problem.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since the named branches carry the approved-account floor:
+      // being on the roster of a document is not a grant that outlives
+      // the account. See isApprovedAccount() in firestore.rules.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",
@@ -1774,7 +1786,10 @@ export const REGISTRY = [
       "The task's activity log, merged with the thread into one feed. Same parent-resolved gate, same need to seed the parent.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since the named branches carry the approved-account floor:
+      // being on the roster of a document is not a grant that outlives
+      // the account. See isApprovedAccount() in firestore.rules.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",
@@ -1805,7 +1820,10 @@ export const REGISTRY = [
       "The same activity stream, read again inside the subtask modal and filtered client-side because subtaskId lives on a nested payload object. Its own entry: the shape is identical, but a change to this file must not be waved through by the other hook's entry.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since the named branches carry the approved-account floor:
+      // being on the roster of a document is not a grant that outlives
+      // the account. See isApprovedAccount() in firestore.rules.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",
@@ -1837,7 +1855,10 @@ export const REGISTRY = [
       "Comments on one subtask. The `subtaskId` clause is a product filter, not a permission one: the rule gates on the parent task alone, so this shape is allowed for exactly the callers the unfiltered thread is.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since the named branches carry the approved-account floor:
+      // being on the roster of a document is not a grant that outlives
+      // the account. See isApprovedAccount() in firestore.rules.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",
@@ -1870,7 +1891,10 @@ export const REGISTRY = [
       "Attachment metadata for a task, in both the task and subtask modals. Same parent-resolved gate. Worth knowing while reading this: storage.rules gates the BLOBS on `role in ['committee','admin']` with no SU test, so a non-SU committee member is denied here and not there.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since the named branches carry the approved-account floor:
+      // being on the roster of a document is not a grant that outlives
+      // the account. See isApprovedAccount() in firestore.rules.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",
@@ -1942,7 +1966,10 @@ export const REGISTRY = [
       "My Work on /tasks and the dashboard summary, for every approved member. `array-contains` on the caller's own uid is what makes the list legal: the rule's completer branch is per-document, and the clause narrows the candidate set to documents that branch already allows. Drop it and a member sees nothing at all.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since the named branches carry the approved-account floor:
+      // being on the roster of a document is not a grant that outlives
+      // the account. See isApprovedAccount() in firestore.rules.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",
@@ -2149,7 +2176,10 @@ export const REGISTRY = [
       "The Sent tab on /worksheets: every circulation the viewer is staff on, which is wider than the ones they sent because a reviewer needs the door to the sends they are expected to read. `allow list: if isAdmin() || isStaff()` and the staff half is resource-dependent, so `array-contains` on staffUids is what discharges it and the listen is refused wholesale without it. Note what the rule does NOT test: role. Any signed-in account named in staffUids may run this shape, and the committee gate on the page is what keeps a pending or plain member off the tab.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since the named branches carry the approved-account floor:
+      // being on the roster of a document is not a grant that outlives
+      // the account. See isApprovedAccount() in firestore.rules.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",
@@ -2170,7 +2200,10 @@ export const REGISTRY = [
       "The circulations of ONE worksheet, listed under the editor so an author can see where their questions have gone. `worksheetId` narrows it and `staffUids array-contains` is the clause the list rule is proved from, exactly as on the Sent tab. Equality plus array-contains with no orderBy merges from the automatic single-field indexes, so this shape owes no composite index and tests/firestore-indexes.test.mjs agrees; the sort is client-side for the same reason.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since the named branches carry the approved-account floor:
+      // being on the roster of a document is not a grant that outlives
+      // the account. See isApprovedAccount() in firestore.rules.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",
@@ -2198,7 +2231,10 @@ export const REGISTRY = [
       "The circulation page's document listen at /worksheets/[worksheetId]/circulations/[circulationId]. `get` and `list` are split on this collection precisely so this call can admit a recipient as well as staff without putting an exists() inside a list rule, where it would blow the twenty-document access budget once a Sent tab grew past twenty rows. The recipient half is the paired entry.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since the named branches carry the approved-account floor:
+      // being on the roster of a document is not a grant that outlives
+      // the account. See isApprovedAccount() in firestore.rules.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",
@@ -2243,7 +2279,10 @@ export const REGISTRY = [
       "The recipient table on the circulation page: every response on one send, unfiltered. Staff read the whole subcollection and the rule discharges that with ONE get() of the parent circulation however many rows come back, which is why no clause is written and why none would help. Ordering is client-side by addedAt, because an orderBy would drop any response written without the field from the listen entirely, and a recipient missing from the table is a person nobody chases.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since the named branches carry the approved-account floor:
+      // being on the roster of a document is not a grant that outlives
+      // the account. See isApprovedAccount() in firestore.rules.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",
@@ -2313,7 +2352,10 @@ export const REGISTRY = [
       "The staff half of the same call, and the fixture is what decides which branch runs. This one takes `isParentStaff()`, which costs one get() of the parent circulation, so a caller who is neither the owner nor staff is refused, and a caller whose parent circulation does not exist is refused by evaluation error rather than served an empty document. The cross-recipient refusal itself (one recipient reading another's answers) is proven in scripts/rules-tests/tests/worksheets.test.mjs; what this entry adds is that the hook's own shape reaches the staff branch.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since the named branches carry the approved-account floor:
+      // being on the roster of a document is not a grant that outlives
+      // the account. See isApprovedAccount() in firestore.rules.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",
@@ -2337,7 +2379,10 @@ export const REGISTRY = [
       "The staff half of the review panel, opened from the response drawer on the circulation page. The gate is `isParentStaff()`, one get() of the parent circulation's staffUids, so the fixture puts the persona on that list and every signed-in hat is admitted by it: being asked to review a circulation is the permission, not a role. Addressed, never listed, so one reviewer cannot page through every judgement filed on a send. Registered as its own entry rather than riding useResponse's because the two subcollections have DIFFERENT read rules and only this one refuses the person it is about, which is the entry below.",
     outcomes: {
       "signed-out": "refused",
-      pending: "allowed",
+      // Refused since the named branches carry the approved-account floor:
+      // being on the roster of a document is not a grant that outlives
+      // the account. See isApprovedAccount() in firestore.rules.
+      pending: "refused",
       member: "allowed",
       committee: "allowed",
       "su-committee": "allowed",

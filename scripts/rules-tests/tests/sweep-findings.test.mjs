@@ -76,7 +76,12 @@ describe("consent is an audit record the subject cannot back-date", () => {
 
 describe("attachments: storagePath is confined to its own task", () => {
   async function seedOwnTask(uid) {
-    await seedUser(uid, { role: "pending" });
+    // An approved member, not a pending account. What this block is about is
+    // the SHAPE of `storagePath`, and since the named branches in the rules
+    // gained the roster floor (`isApprovedAccount()` inside `canAccessParent`)
+    // a pending account reaches no task subcollection at all, which would make
+    // the last case here pass for the wrong reason.
+    await seedUser(uid, { role: "member" });
     await seed(async (db) => {
       await db.collection("tasks").doc("T").set({
         title: "My personal task",

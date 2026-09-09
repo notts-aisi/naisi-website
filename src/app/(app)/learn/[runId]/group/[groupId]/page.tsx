@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { redirect } from "next/navigation";
 import type { CSSProperties } from "react";
 import AttendanceGrid from "@/features/courses/AttendanceGrid";
@@ -188,7 +189,12 @@ export default async function GroupHomePage({
   // Live group only for a non-admin — the same predicate every route behind
   // this page gates on (see the archiving note above).
   const facilitatesThisGroup =
-    !group.archived && group.facilitatorUids.includes(access.user.uid);
+    !group.archived &&
+    isNamedWithStanding(
+      access.user,
+      "courseGroups.facilitatorUids",
+      group.facilitatorUids,
+    );
   if (group.runId !== runId || !(access.isAdmin || facilitatesThisGroup)) {
     redirect(runHome);
   }

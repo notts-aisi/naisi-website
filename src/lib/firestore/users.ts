@@ -208,34 +208,73 @@ export type UserPermissions = {
   circulateWorksheet?: boolean;
 };
 
+/**
+ * THE ROSTER FLOOR UNDER EVERY PERMISSION KEY.
+ *
+ * `permissions` is admin-granted and orthogonal to the governance role, which
+ * is the point of it: a plain `member` can hold `draftEvent` without being
+ * promoted. What it is NOT is a grant that outlives the account. Nothing
+ * clears the map when somebody is demoted or rejected — `setRole` and
+ * `rejectUser` in `features/admin/adminMutations.ts` write `role` and
+ * `suRecognised` and nothing else — so without this test a rejected account
+ * kept every drafter and approver door it had been given, on a session that
+ * `POST /api/auth/session` will happily re-mint for any role.
+ *
+ * Admins are exempt from the test only because `role === "admin"` already is
+ * the test. The same floor is written into `hasPerm()` in `firestore.rules`,
+ * and into `holdsStanding` in `lib/firebase/eligibility.ts` for the arrays
+ * that grant by naming somebody rather than by holding a key.
+ */
+function onTheRoster(user: Pick<UserDoc, "role">): boolean {
+  return user.role === "member" || user.role === "committee" || user.role === "admin";
+}
+
 export function canDraftNewsletter(user: Pick<UserDoc, "role" | "permissions">): boolean {
-  return user.role === "admin" || Boolean(user.permissions?.draftNewsletter);
+  return (
+    user.role === "admin" ||
+    (onTheRoster(user) && Boolean(user.permissions?.draftNewsletter))
+  );
 }
 
 export function canApproveNewsletter(
   user: Pick<UserDoc, "role" | "permissions">,
 ): boolean {
-  return user.role === "admin" || Boolean(user.permissions?.approveNewsletter);
+  return (
+    user.role === "admin" ||
+    (onTheRoster(user) && Boolean(user.permissions?.approveNewsletter))
+  );
 }
 
 export function canDraftEvent(user: Pick<UserDoc, "role" | "permissions">): boolean {
-  return user.role === "admin" || Boolean(user.permissions?.draftEvent);
+  return (
+    user.role === "admin" ||
+    (onTheRoster(user) && Boolean(user.permissions?.draftEvent))
+  );
 }
 
 export function canApproveEvent(
   user: Pick<UserDoc, "role" | "permissions">,
 ): boolean {
-  return user.role === "admin" || Boolean(user.permissions?.approveEvent);
+  return (
+    user.role === "admin" ||
+    (onTheRoster(user) && Boolean(user.permissions?.approveEvent))
+  );
 }
 
 export function canDraftCourse(user: Pick<UserDoc, "role" | "permissions">): boolean {
-  return user.role === "admin" || Boolean(user.permissions?.draftCourse);
+  return (
+    user.role === "admin" ||
+    (onTheRoster(user) && Boolean(user.permissions?.draftCourse))
+  );
 }
 
 export function canApproveCourse(
   user: Pick<UserDoc, "role" | "permissions">,
 ): boolean {
-  return user.role === "admin" || Boolean(user.permissions?.approveCourse);
+  return (
+    user.role === "admin" ||
+    (onTheRoster(user) && Boolean(user.permissions?.approveCourse))
+  );
 }
 
 /**
@@ -254,7 +293,10 @@ export function canApproveCourse(
 export function canAuthorAdmissionRound(
   user: Pick<UserDoc, "role" | "permissions">,
 ): boolean {
-  return user.role === "admin" || Boolean(user.permissions?.approveCourse);
+  return (
+    user.role === "admin" ||
+    (onTheRoster(user) && Boolean(user.permissions?.approveCourse))
+  );
 }
 
 /**
@@ -267,7 +309,10 @@ export function canAuthorAdmissionRound(
 export function canManageMembership(
   user: Pick<UserDoc, "role" | "permissions">,
 ): boolean {
-  return user.role === "admin" || Boolean(user.permissions?.manageMembership);
+  return (
+    user.role === "admin" ||
+    (onTheRoster(user) && Boolean(user.permissions?.manageMembership))
+  );
 }
 
 /**
@@ -283,7 +328,10 @@ export function canManageMembership(
 export function canCirculateWorksheet(
   user: Pick<UserDoc, "role" | "permissions">,
 ): boolean {
-  return user.role === "admin" || Boolean(user.permissions?.circulateWorksheet);
+  return (
+    user.role === "admin" ||
+    (onTheRoster(user) && Boolean(user.permissions?.circulateWorksheet))
+  );
 }
 
 /**

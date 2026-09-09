@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveNewsletter, canDraftNewsletter } from "@/lib/firestore/users";
 
 export default async function NewsletterLayout({
   children,
@@ -9,9 +10,7 @@ export default async function NewsletterLayout({
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   const allowed =
-    user.role === "admin" ||
-    user.permissions.draftNewsletter ||
-    user.permissions.approveNewsletter;
+    canDraftNewsletter(user) || canApproveNewsletter(user);
   if (!allowed) redirect("/dashboard");
 
   return (

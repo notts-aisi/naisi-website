@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveEvent, canDraftEvent } from "@/lib/firestore/users";
 
 /**
  * Organiser approves an attendee's proposed answer change. Copies
@@ -32,9 +33,8 @@ export async function POST(
   }
 
   const isOrganiser =
-    viewer.role === "admin" ||
-    viewer.permissions.approveEvent ||
-    (viewer.permissions.draftEvent &&
+    canApproveEvent(viewer) ||
+    (canDraftEvent(viewer) &&
       isNamedWithStanding(viewer, "events.authorUid", event.authorUid));
   if (!isOrganiser) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });

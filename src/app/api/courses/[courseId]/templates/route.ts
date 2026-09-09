@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveCourse, canDraftCourse } from "@/lib/firestore/users";
 import { normalizeCourseWeek } from "@/lib/firestore/courses";
 import { asUidList } from "@/lib/firestore/events";
 import {
@@ -311,10 +312,7 @@ export async function GET(
 
   // Authorization before existence, again: the course is never read, so a
   // refusal cannot leak whether it exists.
-  const staff =
-    actor.role === "admin" ||
-    actor.permissions.draftCourse ||
-    actor.permissions.approveCourse;
+  const staff = canDraftCourse(actor) || canApproveCourse(actor);
   if (!staff) {
     // Track leads browse versions when they take a run over — but a lead of
     // THIS course's runs, not of any run anywhere.

@@ -1340,7 +1340,7 @@ test("MODEL — destroy is admin-only; archive is the wider, reversible lane", (
 
   // Archive is the everyday soft path, so it takes the status route's bar.
   assert.match(RUN_ARCHIVE, /export async function PATCH/, "archive is not a PATCH");
-  assert.match(RUN_ARCHIVE, /actor\.role === "admin" \|\| actor\.permissions\.approveCourse/);
+  assert.match(RUN_ARCHIVE, /if \(!canApproveCourse\(actor\)\)/);
   assert.match(RUN_ARCHIVE, /typeof body\.archived !== "boolean"/);
   // It writes the flag and the stamp and nothing else — it is not a second run
   // editor, and `status` stays on its own route because archive is orthogonal.

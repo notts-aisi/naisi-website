@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { redirect } from "next/navigation";
 import ReviewQueue from "@/features/courses/ReviewQueue";
 import { getRunAccess, getSessionUser } from "@/features/courses/runAccess";
@@ -80,7 +81,12 @@ export default async function GroupReviewPage({
   // Live group only for a non-admin — the same predicate the exercises route
   // gates on (see the archiving note above).
   const facilitatesThisGroup =
-    !group.archived && group.facilitatorUids.includes(access.user.uid);
+    !group.archived &&
+    isNamedWithStanding(
+      access.user,
+      "courseGroups.facilitatorUids",
+      group.facilitatorUids,
+    );
   if (group.runId !== runId || !(access.isAdmin || facilitatesThisGroup)) {
     redirect(runHome);
   }

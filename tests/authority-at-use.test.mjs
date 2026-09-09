@@ -93,15 +93,29 @@ const { loadTs } = createLoader({
 const { AUTHORITY, holdsStanding, isNamedWithStanding } = await loadTs(
   join("lib", "firebase", "eligibility.ts"),
 );
-const { isEligibleAdmissionsReviewer, canCirculateWorksheet } = await loadTs(
-  join("lib", "firestore", "users.ts"),
-);
+const USERS_MODULE = await loadTs(join("lib", "firestore", "users.ts"));
+const { isEligibleAdmissionsReviewer, canCirculateWorksheet } = USERS_MODULE;
 
 const repoPath = (file) => file.slice(REPO_ROOT.length + 1).split(sep).join("/");
 
 // ---------------------------------------------------------------------------
 // The scanner
 // ---------------------------------------------------------------------------
+
+/**
+ * An authority whose FIELD NAME is too generic to walk the tree for, with the
+ * reason. Its bar is registered, executed and checked against its appointment
+ * site like every other; only the scanner half is missing, and saying so here
+ * is the alternative to a scanner that reports every line in the repository.
+ * Checked in both directions below.
+ */
+const UNSCANNABLE_FIELDS = {
+  "courseEnrolments.uid": (
+    "Scanning for `uid` would match `actor.uid` in every gate in the codebase and report " +
+    "nothing usable. The three sites that read an enrolment as an authority are named in " +
+    "ENROLMENT_GATES below and checked for the helper by name instead."
+  ),
+};
 
 /**
  * The field names the scanner watches, DERIVED from the registry rather than
@@ -111,15 +125,27 @@ const repoPath = (file) => file.slice(REPO_ROOT.length + 1).split(sep).join("/")
  * which is what makes a new collection's author gate visible on arrival.
  */
 const FIELDS = [
-  ...new Set(Object.values(AUTHORITY).map((bar) => bar.field.split(".")[1])),
+  ...new Set(
+    Object.values(AUTHORITY)
+      .filter((bar) => !(bar.field in UNSCANNABLE_FIELDS))
+      .map((bar) => bar.field.split(".")[1]),
+  ),
 ].sort();
 
-/** How this codebase spells "the person making the request". */
-const SELF = "(?:actor|user|viewer|session|caller|me|current|self)[?!]?\\.uid";
+/**
+ * How this codebase spells "the person making the request".
+ *
+ * The leading `(?:[\w$]+[?!]?\.)*` matters: eight server components under
+ * `(app)/learn` gate on `access.user.uid`, and an expression anchored at the
+ * bare name would have walked straight past every one of them.
+ */
+const SELF = "(?:[\\w$]+[?!]?\\.)*(?:actor|user|viewer|session|caller|me|current|self)[?!]?\\.uid";
 
 /**
- * Every shape a gate is written in today, plus the two near neighbours a
- * future one might reach for. Each is exercised on a synthetic snippet below.
+ * Every shape a gate is written in today, plus the near neighbours a future
+ * one might reach for. Each is exercised on a synthetic snippet below, and
+ * every one of the six was arrived at by trying to slip a real gate past the
+ * five before it.
  */
 function patternsFor(field) {
   const f = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -130,10 +156,14 @@ function patternsFor(field) {
     // worksheet.authorUid === actor.uid  /  actor.uid === event.authorUid
     new RegExp(`${f}\\s*!?===?\\s*${SELF}`),
     new RegExp(`${SELF}\\s*!?===?\\s*[\\w.?!()\\[\\]{} ]{0,30}${f}\\b`),
-    // .where("trackLeadUids", "array-contains", actor.uid)
-    new RegExp(`["']${f}["']\\s*,\\s*["']array-contains["']\\s*,\\s*${SELF}`),
+    // .where("trackLeadUids", "array-contains", actor.uid), however the field
+    // is spelled on the way in.
+    new RegExp(`${f}[\\s\\S]{0,40}["']array-contains["']\\s*,\\s*${SELF}`),
     // run.trackLeadUids.indexOf(actor.uid)
     new RegExp(`${f}[\\s\\S]{0,12}\\.indexOf\\(\\s*${SELF}\\s*\\)`),
+    // new Set(run.trackLeadUids).has(actor.uid) — the Set spelling reverts the
+    // gate exactly and matched none of the five patterns above it.
+    new RegExp(`${f}[\\s\\S]{0,60}?\\.has\\(\\s*${SELF}\\s*\\)`),
     // groups.some((g) => g.facilitatorUids… actor.uid) inside one expression
     new RegExp(`${f}[\\s\\S]{0,12}\\.(?:some|find|filter)\\([\\s\\S]{0,120}?${SELF}`),
   ];
@@ -169,18 +199,28 @@ function scanTree() {
     const code = scannableSource(file);
     for (const field of FIELDS) {
       if (!code.includes(field)) continue;
-      // Deduped by WHERE the match starts, so a site two patterns both see
-      // counts once and `matches` in the registry means sites rather than
-      // pattern hits.
-      const hits = new Set();
+      // Collected as SPANS and merged where they overlap, so a site that two
+      // patterns both see counts once: `matches` in the registry means sites
+      // rather than pattern hits, and a second gate in the same file still
+      // moves the number.
+      const spans = [];
       for (const pattern of patternsFor(field)) {
         const global = new RegExp(pattern.source, "g");
-        for (const m of code.matchAll(global)) hits.add(m.index);
+        for (const m of code.matchAll(global)) {
+          spans.push([m.index, m.index + m[0].length]);
+        }
       }
-      if (hits.size === 0) continue;
+      spans.sort((a, b) => a[0] - b[0]);
+      const hits = [];
+      for (const [start, end] of spans) {
+        const last = hits[hits.length - 1];
+        if (last && start < last[1]) last[1] = Math.max(last[1], end);
+        else hits.push([start, end]);
+      }
+      if (hits.length === 0) continue;
       const path = repoPath(file);
       if (!found.has(path)) found.set(path, {});
-      found.get(path)[field] = hits.size;
+      found.get(path)[field] = hits.length;
     }
   }
   return found;
@@ -204,9 +244,14 @@ function scanTree() {
  *                   document.
  *
  * `matches` is the number of raw hits the scanner finds in that file, per
- * field. `provedBy`, where present, is a literal the file must still contain:
- * the compensating control that makes the entry true. An entry without one is
- * asserting that no control is needed.
+ * field. `provedBy`, where present, is the LIST of control literals the file
+ * must still contain, one per branch the reason claims is covered, and each
+ * one is written so it includes the control itself (`if (!x) return false;`)
+ * rather than the expression the control tests. Both of those were learned
+ * the hard way: an entry proved by a bare expression stayed green when the
+ * `return` beneath it was deleted, and an entry proved by one literal stayed
+ * green when the second of the two loops it named lost its bar. An entry
+ * without a `provedBy` is asserting that no control is needed.
  */
 const RAW_SITES = {
   "src/app/(app)/events/manage/page.tsx": {
@@ -262,7 +307,7 @@ const RAW_SITES = {
   "src/lib/firestore/coursePages.ts": {
     role: "not-a-gate",
     matches: { authorUid: 1, collaboratorUids: 1 },
-    provedBy: "actor.permissions.draftCourse || actor.permissions.approveCourse",
+    provedBy: ["if (!onTheRoster) return false;", "if (!holdsPermission) return false;"],
     why:
       "`canAuthorCoursePage` already re-reads a LIVE course permission from the session and " +
       "returns false before it looks at either field, which is this guard's rule applied by " +
@@ -273,7 +318,10 @@ const RAW_SITES = {
   "src/app/api/courses/me/route.ts": {
     role: "not-a-gate",
     matches: { admissionsReviewerUids: 1, trackLeadUids: 1 },
-    provedBy: 'holdsStanding(actor, "courseRuns.trackLeadUids")',
+    provedBy: [
+      'if (holdsStanding(actor, "courseRuns.trackLeadUids")) {',
+      'if (holdsStanding(actor, "courseRuns.admissionsReviewerUids")) {',
+    ],
     why:
       "Two `array-contains` queries scoped to the caller's own uid, which is how the hub finds " +
       "the runs it might draw a door for. The bar is applied where the door is actually drawn, " +
@@ -282,7 +330,7 @@ const RAW_SITES = {
   "src/app/api/members/roster/route.ts": {
     role: "not-a-gate",
     matches: { completerUids: 1, reviewerUids: 1 },
-    provedBy: 'holdsStanding(session, "tasks.completerUids")',
+    provedBy: ['if (!session || !holdsStanding(session, "tasks.completerUids")) {'],
     why:
       "Two `array-contains` queries scoped to the caller's own task memberships, to resolve the " +
       "names of the people they share tasks with. The approved-account floor is applied at the " +
@@ -299,7 +347,10 @@ const RAW_SITES = {
   "src/app/api/tasks/[id]/send-for-review/route.ts": {
     role: "not-a-gate",
     matches: { reviewerUids: 1 },
-    provedBy: 'isNamedWithStanding(viewer, "tasks.reviewerUids", task.reviewerUids)',
+    provedBy: [
+      'isNamedWithStanding(viewer, "tasks.reviewerUids", task.reviewerUids);',
+      "if (!canAccess) return NextResponse.json({ error: \"Forbidden\" }, { status: 403 });",
+    ],
     why:
       "Removes the requester from the list of reviewers about to be emailed, so nobody is " +
       "notified of their own request. The handler's gate is above it and applies the bar.",
@@ -315,7 +366,10 @@ const RAW_SITES = {
   "src/app/api/worksheets/circulations/route.ts": {
     role: "not-a-gate",
     matches: { reviewerUids: 1 },
-    provedBy: 'isNamedWithStanding(actor, "worksheets.authorUid", worksheet.authorUid)',
+    provedBy: [
+      'isNamedWithStanding(actor, "worksheets.authorUid", worksheet.authorUid);',
+      'if (!mayRead) {',
+    ],
     why:
       "Dedupes the sender out of the reviewer list they submitted, before adding them back at " +
       "the head of it. The read gate above it applies the worksheet author bar.",
@@ -364,11 +418,17 @@ describe("the raw comparison, walked over the whole tree", () => {
         `${path}: needs a written reason, not a placeholder`,
       );
       if (entry.provedBy) {
-        const code = scannableSource(join(REPO_ROOT, path));
         assert.ok(
-          code.includes(entry.provedBy.replace(/\s+/g, " ")),
-          `${path}: claims to be covered by \`${entry.provedBy}\`, which the file no longer contains`,
+          Array.isArray(entry.provedBy) && entry.provedBy.length > 0,
+          `${path}: provedBy is a LIST of control literals, one per branch the reason claims`,
         );
+        const code = scannableSource(join(REPO_ROOT, path));
+        for (const control of entry.provedBy) {
+          assert.ok(
+            code.includes(control.replace(/\s+/g, " ")),
+            `${path}: claims to be covered by \`${control}\`, which the file no longer contains`,
+          );
+        }
       }
       if (entry.role === "client") {
         const head = readFileSync(join(REPO_ROOT, path), "utf8").slice(0, 400);
@@ -441,11 +501,67 @@ describe("the registry of bars against the tree", () => {
     }
   });
 
-  test("the scanner watches every field the registry names", () => {
+  test("the scanner watches every field the registry names, or says why it cannot", () => {
     for (const bar of Object.values(AUTHORITY)) {
+      if (bar.field in UNSCANNABLE_FIELDS) {
+        assert.ok(
+          UNSCANNABLE_FIELDS[bar.field].length > 60,
+          `${bar.field}: an unscannable field needs a written reason, not a placeholder`,
+        );
+        assert.ok(
+          !FIELDS.includes(bar.field.split(".")[1]),
+          `${bar.field} is listed as unscannable and is being scanned anyway`,
+        );
+        continue;
+      }
       assert.ok(
         FIELDS.includes(bar.field.split(".")[1]),
         `${bar.field} is registered but the scanner does not watch its field name`,
+      );
+    }
+    for (const field of Object.keys(UNSCANNABLE_FIELDS)) {
+      assert.ok(
+        field in AUTHORITY,
+        `${field} is excused from the walk but is not an authority at all`,
+      );
+    }
+  });
+
+  /**
+   * The three files that read an enrolment as an authority. The scanner cannot
+   * walk for `uid`, so this stands in for that half: each file must call the
+   * helper with the enrolment key, and the list is checked against the tree in
+   * both directions by grepping for the key itself.
+   */
+  const ENROLMENT_GATES = {
+    "src/app/api/courses/runs/[runId]/overview/route.ts":
+      "the run overview, where the enrolment is the first of three paths to access",
+    "src/app/api/courses/runs/[runId]/comments/route.ts":
+      "the run comment feed, gated on the same enrolment",
+    "src/features/courses/runAccess.ts":
+      "the shared gate behind every /learn server page",
+  };
+
+  test("every file that reads an enrolment as an authority calls the helper, both ways", () => {
+    const key = '"courseEnrolments.uid"';
+    const found = [];
+    for (const file of walk(SRC)) {
+      const path = repoPath(file);
+      if (path === "src/lib/firebase/eligibility.ts") continue; // the registry itself
+      if (scannableSource(file).includes(key)) found.push(path);
+    }
+    assert.deepEqual(
+      found.sort(),
+      Object.keys(ENROLMENT_GATES).sort(),
+      "the files that gate on an enrolment are no longer the ones ENROLMENT_GATES names",
+    );
+    for (const [file, why] of Object.entries(ENROLMENT_GATES)) {
+      assert.ok(why.length > 30, `${file}: needs a written reason`);
+      const code = scannableSource(join(REPO_ROOT, file));
+      assert.match(
+        code,
+        /isNamedWithStanding\([^)]*"courseEnrolments\.uid"/,
+        `${file}: names the enrolment authority without calling isNamedWithStanding on it`,
       );
     }
   });
@@ -517,6 +633,7 @@ const MATRIX = {
   "courseRuns.admissionsReviewerUids": "-- Y Y - Y Y Y".replace(/ /g, ""),
   "courseRuns.trackLeadUids": "-- Y Y - Y Y Y".replace(/ /g, ""),
   "courseRuns.runFacilitatorUids": "-- Y Y - Y Y Y".replace(/ /g, ""),
+  "courseEnrolments.uid": "-- Y Y - Y Y Y".replace(/ /g, ""),
   "courseGroups.facilitatorUids": "-- Y Y - Y Y Y".replace(/ /g, ""),
   "events.authorUid": "-- Y Y - Y Y Y".replace(/ /g, ""),
   "events.collaboratorUids": "-- Y Y - Y Y Y".replace(/ /g, ""),
@@ -705,6 +822,56 @@ describe("each bar agrees with the bar its appointment applied", () => {
     }
   });
 
+  test("the event bars are the appointment's, or the widening is a written exception", () => {
+    const COLLABORATORS = readFileSync(
+      join(SRC, "app", "api", "events", "[id]", "collaborators", "route.ts"),
+      "utf8",
+    );
+    assert.match(
+      COLLABORATORS,
+      /\.where\("role", "in", \["committee", "admin"\]\)/,
+      "the collaborators route no longer offers exactly committee and admins",
+    );
+    // THE ONE DELIBERATE WIDENING IN THE REGISTRY, recorded here rather than
+    // left as an omission. Appointment is committee-or-admin; the use bar is
+    // an approved account, because the broadcast route settled the pair on
+    // purpose: "a member demoted off the committee still passes, deliberately:
+    // they are still an approved member and still the person responsible for
+    // the event their name is on." Narrowing it would take an event away from
+    // the person running it the day they step off the committee.
+    for (const persona of ORDER) {
+      const user = PERSONAS[persona];
+      const approved = ["member", "committee", "admin"].includes(user.role);
+      for (const key of ["events.authorUid", "events.collaboratorUids"]) {
+        assert.equal(
+          holdsStanding(user, key),
+          approved,
+          `${key} is no longer the approved-account bar the broadcast route settled on (${persona})`,
+        );
+      }
+    }
+    assert.match(
+      AUTHORITY["events.collaboratorUids"].why,
+      /Appointment is narrower than this/,
+      "the widening has stopped saying it is a widening",
+    );
+  });
+
+  test("the task bars are the roster floor, because assignment applies no other", () => {
+    // There is no role bar on being assigned a task and there should not be:
+    // the visibility model puts plain members on their own. So the bar is the
+    // floor, and the check is that it is EXACTLY the floor rather than
+    // something that drifted upward and quietly stopped a member acting on
+    // their own work.
+    for (const persona of ORDER) {
+      const user = PERSONAS[persona];
+      const approved = ["member", "committee", "admin"].includes(user.role);
+      for (const key of ["tasks.completerUids", "tasks.reviewerUids", "courseEnrolments.uid"]) {
+        assert.equal(holdsStanding(user, key), approved, `${key} as ${persona}`);
+      }
+    }
+  });
+
   test("the circulation staff bar is the union of the two ways a uid gets into staffUids", () => {
     for (const persona of ORDER) {
       const user = PERSONAS[persona];
@@ -862,5 +1029,315 @@ describe("the scanner still matches what it claims to", () => {
       matchesAny("run.trackLeadUids\n    .includes(actor.uid)"),
       "a gate split across two lines is still a gate",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. The other way a grant outlives an account: a permissions key
+// ---------------------------------------------------------------------------
+
+/**
+ * `permissions` is admin-granted and orthogonal to the governance role, which
+ * is the point of it. What it is NOT is a grant that survives the account:
+ * `setRole` and `rejectUser` write `role` and `suRecognised` and nothing else,
+ * so a rejected account keeps every key it was ever given. The floor lives in
+ * the `can*` helpers in `lib/firestore/users.ts`, which is worth nothing if a
+ * route reads the raw key beside them, and on 9 September 2026 twenty-seven of
+ * them did: a rejected `approveEvent` holder could approve an RSVP on any
+ * event, and a rejected `approveCourse` holder could publish a course.
+ *
+ * So the raw read is walked for, the same way the authority arrays are.
+ */
+const PERMISSION_KEYS = [
+  "draftNewsletter",
+  "approveNewsletter",
+  "draftEvent",
+  "approveEvent",
+  "draftCourse",
+  "approveCourse",
+  "manageMembership",
+  "circulateWorksheet",
+];
+
+/** file -> { matches, role, why } for every raw key read left in the tree. */
+const RAW_PERMISSION_SITES = {
+  "src/lib/firestore/users.ts": {
+    matches: 9,
+    role: "definition",
+    why:
+      "The nine `can*` helpers themselves, which is where the key is READ and where the roster " +
+      "floor is applied. Every other site calls one of them.",
+  },
+  "src/lib/firestore/coursePages.ts": {
+    matches: 2,
+    role: "floored-locally",
+    why:
+      "`canAuthorCoursePage` writes the floor out by hand because this module is imported by " +
+      "client components and cannot reach either shared helper. Its own RAW_SITES entry above " +
+      "pins the two controls.",
+  },
+  "src/layout/AppShell.tsx": {
+    matches: 7,
+    role: "client",
+    why:
+      "The sidebar draws the drafter and approver entries off the live auth snapshot. Every one " +
+      "of those entries lands on a layout or a route that applies the floored helper, so the " +
+      "worst a stale key does here is show a link that redirects.",
+  },
+  "src/features/admin/MemberItem.tsx": {
+    matches: 4,
+    role: "client",
+    why:
+      "The admin console's permission toggles, which DISPLAY the stored map and write it. " +
+      "Reading the raw key is the point of the surface rather than a gate on it.",
+  },
+  "src/features/courses/WeekPlanBuilder.tsx": {
+    matches: 1,
+    role: "client",
+    why:
+      "Shows or hides a control in the run editor. The write behind it is a route that applies " +
+      "`canApproveCourse`.",
+  },
+  "src/features/worksheets/circulation/CirculationPage.tsx": {
+    matches: 1,
+    role: "client",
+    why:
+      "Shows or hides the add-recipients control. The recipients route applies `canCirculate`, " +
+      "which is `canCirculateWorksheet`.",
+  },
+  "src/lib/firebase/eligibility.ts": {
+    matches: 1,
+    role: "prose",
+    why:
+      "The words `permissions.draftEvent` inside the written reason on the `events.authorUid` " +
+      "bar, which the scanner cannot tell from code because it is a string literal.",
+  },
+};
+
+describe("a permissions key is not a standing grant either", () => {
+  const KEY_READ = new RegExp(
+    `permissions\\??\\.(?:${PERMISSION_KEYS.join("|")})\\b`,
+    "g",
+  );
+
+  const rawKeySites = (() => {
+    const found = new Map();
+    for (const file of walk(SRC)) {
+      const hits = [...scannableSource(file).matchAll(KEY_READ)];
+      if (hits.length) found.set(repoPath(file), hits.length);
+    }
+    return found;
+  })();
+
+  test("every raw key read is registered, and every entry still exists", () => {
+    assert.deepEqual(
+      [...rawKeySites.keys()].sort(),
+      Object.keys(RAW_PERMISSION_SITES).sort(),
+      "a file reads a permissions key directly instead of through its `can*` helper in " +
+        "src/lib/firestore/users.ts, where the roster floor lives",
+    );
+    for (const [path, entry] of Object.entries(RAW_PERMISSION_SITES)) {
+      assert.equal(
+        rawKeySites.get(path),
+        entry.matches,
+        `${path}: the raw key reads in this file are no longer the ones the registry describes`,
+      );
+      assert.ok(
+        ["definition", "floored-locally", "client", "prose"].includes(entry.role),
+        `${path}: unknown role ${entry.role}`,
+      );
+      assert.ok(
+        typeof entry.why === "string" && entry.why.length > 60,
+        `${path}: needs a written reason, not a placeholder`,
+      );
+    }
+  });
+
+  test("no route handler or server page reads a raw key", () => {
+    const serverSide = [...rawKeySites.keys()].filter(
+      (p) => p.startsWith("src/app/api/") || /\/(page|layout)\.tsx$/.test(p),
+    );
+    assert.deepEqual(
+      serverSide,
+      [],
+      "these are ENFORCEMENT points and must call the floored helper: " + serverSide.join(", "),
+    );
+  });
+
+  test("every helper applies the roster floor, executed", () => {
+    const HELPERS = {
+      canDraftNewsletter: "draftNewsletter",
+      canApproveNewsletter: "approveNewsletter",
+      canDraftEvent: "draftEvent",
+      canApproveEvent: "approveEvent",
+      canDraftCourse: "draftCourse",
+      canApproveCourse: "approveCourse",
+      canManageMembership: "manageMembership",
+      canCirculateWorksheet: "circulateWorksheet",
+      canAuthorAdmissionRound: "approveCourse",
+    };
+    assert.deepEqual(
+      Object.keys(HELPERS).sort(),
+      Object.keys(USERS_MODULE)
+        .filter((name) => /^can[A-Z]/.test(name))
+        .sort(),
+      "the list of permission helpers is no longer the list this file executes",
+    );
+    for (const [helper, key] of Object.entries(HELPERS)) {
+      const fn = USERS_MODULE[helper];
+      for (const role of ["pending", "rejected"]) {
+        assert.equal(
+          fn({ role, permissions: { [key]: true } }),
+          false,
+          `${helper} admitted a ${role} account holding ${key}`,
+        );
+      }
+      for (const role of ["member", "committee"]) {
+        assert.equal(
+          fn({ role, permissions: { [key]: true } }),
+          true,
+          `${helper} refused an approved ${role} holding ${key}`,
+        );
+        assert.equal(
+          fn({ role, permissions: {} }),
+          false,
+          `${helper} admitted a ${role} without the key`,
+        );
+      }
+      assert.equal(fn({ role: "admin", permissions: {} }), true, `${helper} refused an admin`);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. The same sentence in firestore.rules
+// ---------------------------------------------------------------------------
+
+/**
+ * A route that refuses a rejected account is worth nothing if the browser can
+ * read the same document directly. `firestore.rules` had the role test inside
+ * `isAuthor()` on `worksheets` and nowhere else, so this walks the rules file
+ * for every helper that grants by NAMING the caller and requires each one to
+ * carry a role test of its own.
+ */
+describe("the rules grant by name only to an account still on the roster", () => {
+  const RULES = readFileSync(join(REPO_ROOT, "firestore.rules"), "utf8");
+
+  /** helper name -> the role test it must carry, with the reason it is that one. */
+  const NAMED_HELPERS = {
+    isCompleter: ["isApprovedAccount()", "a task's completers"],
+    isReviewer: ["isApprovedAccount()", "a task's reviewers"],
+    canAccessParent: [
+      "isApprovedAccount()",
+      "the same two arrays, read from a task's comments, activity and attachments",
+    ],
+    isStaff: ["isApprovedAccount()", "a circulation's staff"],
+    isParentStaff: ["isApprovedAccount()", "the same staff, from a subcollection"],
+    isCollaborator: ["isApprovedAccount()", "an event's named collaborators"],
+    isOwnEvent: ["isApprovedAccount()", "an event's author"],
+    isCourseCollaborator: ["isApprovedAccount()", "a course's named collaborators"],
+    isOwnCourse: ["isApprovedAccount()", "a course's author"],
+    isOwnDraft: ["isApprovedAccount()", "a newsletter draft's author"],
+    isOwnRun: ["isApprovedAccount()", "a run's author"],
+    isRunTrackLead: ["isApprovedAccount()", "a run's track leads"],
+    isParentRunTrackLead: ["isApprovedAccount()", "the same leads, from a group"],
+    isNotedRunTrackLead: ["isApprovedAccount()", "the same leads, from a material note"],
+    isSourceRunTrackLead: ["isApprovedAccount()", "the same leads, from a clone's source run"],
+    isGroupFacilitator: ["isApprovedAccount()", "a group's facilitators"],
+    canEditRun: ["isApprovedAccount()", "its track-lead disjunct; the rest are permissions"],
+    isAuthor: ["isLibraryUser()", "a worksheet's author, the one that had it right first"],
+  };
+
+  /**
+   * Ownership scalars over the caller's OWN row rather than appointments, so
+   * there is no appointment bar to re-ask. Listed rather than skipped, with the
+   * reason each is not an authority, and checked to still exist.
+   */
+  const NOT_APPOINTMENTS = {
+    isTaskCreator: "the creator of a personal task, deleting the thing they made for themselves",
+    isOwner: "a worksheet response, bound to its recipient by the document id",
+    progressShapeOk:
+      "a SHAPE check on an incoming course-progress row, not a read gate: it pins the "
+      + "written uid and the document id to the caller so nobody writes a row as somebody "
+      + "else, and the access decision beside it is isEnrolledActive()",
+  };
+
+  /** Bodies by name, matched with a brace counter rather than a regex. */
+  function ruleFunctions(source) {
+    const out = [];
+    for (const m of source.matchAll(/function (\w+)\([^)]*\)\s*\{/g)) {
+      const open = source.indexOf("{", m.index + m[0].length - 1);
+      let depth = 0;
+      let end = open;
+      for (let i = open; i < source.length; i += 1) {
+        if (source[i] === "{") depth += 1;
+        else if (source[i] === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            end = i;
+            break;
+          }
+        }
+      }
+      out.push([m[1], source.slice(open, end + 1)]);
+    }
+    return out;
+  }
+
+  test("every helper that names the caller is found, and carries its role test", () => {
+    // Both directions: a helper whose body tests `request.auth.uid` against a
+    // document field must be in one of the two lists, and every entry must
+    // still exist.
+    const bodies = ruleFunctions(RULES);
+    const namesTheCaller = bodies
+      .filter(([, body]) =>
+        /request\.auth\.uid\s+in\s+|==\s*request\.auth\.uid|request\.auth\.uid\s*==/.test(body),
+      )
+      .map(([name]) => name)
+      .filter((name) => !(name in NOT_APPOINTMENTS));
+    for (const [name, why] of Object.entries(NOT_APPOINTMENTS)) {
+      assert.ok(why.length > 30, `${name}: needs a written reason`);
+      assert.ok(
+        bodies.some(([n]) => n === name),
+        `${name} is excused as an ownership scalar but no longer exists in the rules`,
+      );
+    }
+    assert.deepEqual(
+      [...new Set(namesTheCaller)].sort(),
+      Object.keys(NAMED_HELPERS).sort(),
+      "a rules helper grants by naming the caller and is not in NAMED_HELPERS. Give it a role " +
+        "test (isApprovedAccount(), or a narrower one) and register it here, or put it in " +
+        "NOT_APPOINTMENTS with the reason it grants nothing beyond the caller's own row.",
+    );
+    for (const [helper, [test_, why]] of Object.entries(NAMED_HELPERS)) {
+      const body = ruleFunctions(RULES)
+        .filter(([name]) => name === helper)
+        .map(([, b]) => b);
+      assert.ok(body.length > 0, `${helper} is registered but no longer exists in the rules`);
+      assert.ok(why.length > 10, `${helper}: needs a written reason`);
+      for (const one of body) {
+        assert.ok(
+          one.includes(test_),
+          `${helper} grants by name without ${test_}: ${why}`,
+        );
+      }
+    }
+  });
+
+  test("the floor helper is the roster, and the three hasPerm copies apply it", () => {
+    assert.match(
+      RULES,
+      /function isApprovedAccount\(\) \{ return hasRole\(\['member', 'committee', 'admin'\]\); \}/,
+      "isApprovedAccount() is no longer the roster",
+    );
+    const hasPerms = ruleFunctions(RULES).filter(([name]) => name === "hasPerm");
+    assert.equal(hasPerms.length, 3, "the outer hasPerm plus the newsletter and events copies");
+    for (const [, body] of hasPerms) {
+      assert.ok(
+        body.includes("isApprovedAccount()"),
+        "a hasPerm copy grants a permissions key with no roster floor: nothing clears the map " +
+          "when an account is rejected",
+      );
+    }
   });
 });

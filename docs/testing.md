@@ -225,9 +225,28 @@ The same shape, older:
   each bar is checked against the bar its APPOINTMENT applies, by running the
   real `isEligibleAdmissionsReviewer` and `canCirculateWorksheet` and by
   pinning the two roles routes' `ELIGIBLE_ROLES` literal and
-  `isLibraryUser()` in `firestore.rules`. The scanner's own six patterns are
+  `isLibraryUser()` in `firestore.rules`. The scanner's own patterns are
   exercised on synthetic gates and near-misses, so one that had quietly
   stopped matching fails rather than passes.
+
+  The same file carries the two neighbours of the class, both found by the
+  skeptic pass over the first fix rather than by the audit. A PERMISSIONS KEY
+  outlives an account the same way a name on a document does, because nothing
+  clears the map when somebody is rejected: the floor lives in the nine `can*`
+  helpers in `lib/firestore/users.ts`, every one of them executed here against
+  every persona, and no route handler or server page may read a raw
+  `permissions.<key>` beside them (twenty-seven did). And the RULES say the
+  same sentence or the routes are worth nothing, because the browser can read
+  the document directly: every helper in `firestore.rules` whose body tests
+  `request.auth.uid` against a document field is found by a brace-matched walk
+  of the file and must carry a role test, with `NOT_APPOINTMENTS` naming the
+  ownership scalars that are excused and why. Both lists are checked in both
+  directions.
+
+  The two halves are proved together rather than separately: flipping a rules
+  helper changes what `scripts/rules-tests/tests/client-queries.registry.mjs`
+  answers for the `pending` persona, so fifteen registry outcomes moved with
+  this change and each one had to be written down as a decision.
 - `tests/lib/outputGuard.mjs`, loaded into every `npm test` process by the
   `--import` flag on the test script and proved by
   `tests/output-lines.test.mjs`: no test process may print a line over 20 KB.

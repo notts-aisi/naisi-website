@@ -12,6 +12,7 @@ import {
 } from "@/lib/email/noticeCaps";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveEvent } from "@/lib/firestore/users";
 import { filterSuppressed } from "@/lib/firestore/suppression";
 import { formatEventWhen } from "@/lib/events/changeSummary";
 import { sendNoticePush } from "@/lib/push/noticeNotifications";
@@ -83,7 +84,7 @@ export async function POST(
 
   const actor = await getCurrentUser();
   if (!actor) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  if (!(actor.role === "admin" || actor.permissions.approveEvent)) {
+  if (!canApproveEvent(actor)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

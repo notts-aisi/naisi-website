@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { canApproveEvent, canDraftEvent } from "@/lib/firestore/users";
 import { sendRsvpEmail } from "@/lib/events/sendRsvpEmail";
 
 /**
@@ -51,9 +52,8 @@ export async function POST(
       }
 
       const isApprover =
-        viewer.role === "admin" ||
-        viewer.permissions.approveEvent ||
-        (viewer.permissions.draftEvent &&
+        canApproveEvent(viewer) ||
+        (canDraftEvent(viewer) &&
           isNamedWithStanding(viewer, "events.authorUid", event.authorUid));
       if (!isApprover) throw new DenyError("You can't deny this RSVP.", 403);
 
