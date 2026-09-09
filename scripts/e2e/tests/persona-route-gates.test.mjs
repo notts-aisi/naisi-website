@@ -81,11 +81,22 @@ let retried = 0;
 let retriesThatChanged = 0;
 const looksLikeNoSession = (result) =>
   result.status === 401 || (result.locations ?? []).includes("/login");
-async function withOneRetry(persona, request) {
+/** A refusal of any shape: the admin tree answers a missing session with 403, not 401. */
+const looksLikeRefusal = (result) =>
+  result.status === 401 || result.status === 403 || (result.locations ?? []).includes("/login");
+/**
+ * Ask again when the answer reads as "no session", or, when the registry
+ * has an expectation for the cell, when it is a refusal the registry does
+ * not expect. In record mode there is no expectation, so only the first rule
+ * applies. `matches` is the cell's own comparison.
+ */
+async function withRetries(persona, request, matches) {
   let answer = await request();
   if (!persona.cookie) return answer;
+  const suspect = (result) =>
+    looksLikeNoSession(result) || (matches !== undefined && looksLikeRefusal(result) && !matches(result));
   for (const pause of RETRY_PAUSES_MS) {
-    if (!looksLikeNoSession(answer)) break;
+    if (!suspect(answer)) break;
     retried += 1;
     await new Promise((r) => setTimeout(r, pause));
     const again = await request();
@@ -291,7 +302,12 @@ describe("persona route gates on a real build", { skip: !ARMED && !REQUIRED ? "E
     }
     const run = (cell) => async () => {
       const persona = personas.get(cell.name);
-      const result = await withOneRetry(persona, () => requestRoute(persona, cell.key, cell.method, cell.entry));
+      const want = cell.entry && !RECORD ? expectedFor(cell.entry.expect, cell.name) : undefined;
+      const result = await withRetries(
+        persona,
+        () => requestRoute(persona, cell.key, cell.method, cell.entry),
+        want === undefined ? undefined : (r) => r.status === want,
+      );
       observed.routes[cell.key] ??= {};
       observed.routes[cell.key][cell.method] ??= {};
       observed.routes[cell.key][cell.method][cell.name] = result;
@@ -310,7 +326,13 @@ describe("persona route gates on a real build", { skip: !ARMED && !REQUIRED ? "E
     await drain(
       cells.map((cell) => async () => {
         const persona = personas.get(cell.name);
-        const result = await withOneRetry(persona, () => requestPage(persona, cell.key));
+        const entry = PAGES[cell.key];
+        const want = entry && !RECORD ? expectedFor(entry.expect, cell.name) : undefined;
+        const result = await withRetries(
+          persona,
+          () => requestPage(persona, cell.key),
+          want === undefined ? undefined : (r) => pageMatches(want, pageOutcome(r)),
+        );
         observed.pages[cell.key] ??= {};
         observed.pages[cell.key][cell.name] = result;
       }),
