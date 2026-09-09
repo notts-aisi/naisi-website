@@ -1,0 +1,66 @@
+# CodeQL static analysis, the free default for a public repository.
+#
+# This is GitHub's standard "advanced setup" workflow, trimmed to the two
+# languages this repository has: TypeScript and JavaScript (one CodeQL
+# language, `javascript-typescript`, with no build step because CodeQL reads
+# the source directly) and the workflow files themselves (`actions`, which
+# catches expression injection and untrusted-checkout mistakes in this
+# directory). It runs on every push to the two long-lived branches, on every
+# pull request into them, and once a week so a new query pack is applied to
+# unchanged code. Findings land under Security > Code scanning and on the
+# pull request as annotations; nothing here blocks a merge on its own.
+#
+# The repository's other security switches live in its settings rather than
+# in a file: Dependabot alerts and security updates, secret scanning and push
+# protection are all enabled (verified through the repository API on
+# 9 September 2026). `.github/dependabot.yml` beside this file decides which
+# branch Dependabot's version updates target and how they are grouped.
+name: CodeQL
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  schedule:
+    # Mondays 04:17 UTC. An odd minute so the run does not queue behind every
+    # other repository's on-the-hour schedule.
+    - cron: "17 4 * * 1"
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      # Required to upload the results to code scanning.
+      security-events: write
+      # Required to fetch internal or private CodeQL packs.
+      packages: read
+      # Required for the workflow to read its own run, and to read the tree.
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
