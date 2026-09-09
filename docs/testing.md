@@ -340,6 +340,31 @@ The same shape, older:
   of its captcha on purpose. Every list is checked both ways and the scanner's
   reading is exercised on synthetic handlers. It shares its reading of a route
   file with the public-write guard through `tests/lib/routeScan.mjs`.
+- `tests/response-projection.test.mjs`: no whole document reaches a response
+  without a projection that names its reader. A normaliser produces the shape
+  the server works with, every field typed, and the audit of 8 September 2026
+  found the admissions rounds list handing that shape to any `draftCourse`
+  holder: the scoreboard, the deciding uids and the criteria that the
+  applicant projection is written to withhold. The guard reads every
+  `NextResponse.json(...)` under `src/app/api` as a value or as an object
+  literal's values, and a value is raw when it is `.data()`, a normaliser
+  call, a `.map` whose callback produces one of those (the callback's RETURN is
+  what is read, so an inline hand-picked object is a projection and a spread
+  of the document is not), an identifier bound to any of those in the
+  enclosing function (the binding's whole expression, with the last `.map` in
+  the chain deciding), a spread of one, or a ternary with such a branch. A raw
+  value must pass through a name in `PROJECTIONS`, the registry of projection
+  functions with the persona each serves and what it withholds, or sit in
+  `ALLOWED` with the reason the whole document is the right answer for that
+  persona (one entry today: the course page editor echoing the page its author
+  just saved). Both directions on both lists, the projection's module is
+  checked against every route that imports it, and a reverse walk over
+  `src/lib` and `src/features` requires every export named like a projection
+  to be in `PROJECTIONS` or in `PROJECTIONS_ELSEWHERE` with where it is
+  applied instead. What it cannot see, and says so: a document that reaches
+  the response through a helper in another module, and a single field of one.
+  The `serialiseRound` entry records rather than resolves the draftCourse
+  admission, which is documented intent and the audit's open low finding.
 - `tests/lib/stripSource.mjs`, proved by the guards that use it: reading a
   TypeScript file as code is done once, by a tokeniser, rather than by four
   regexes per guard. The four-regex version desyncs on a trailing comment with
