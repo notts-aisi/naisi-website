@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb, getAdminStorage } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 
 type Ctx = RouteContext<"/api/events/[id]/delete">;
@@ -50,7 +51,7 @@ export async function POST(_req: Request, ctx: Ctx) {
   // takes nothing away: admins always; otherwise the author, holding
   // `draftEvent`, on an event that was never published. A published event has
   // attendees who were told it exists — it gets cancelled, not deleted.
-  const isAuthor = event.authorUid === viewer.uid;
+  const isAuthor = isNamedWithStanding(viewer, "events.authorUid", event.authorUid);
   const canDraft = viewer.role === "admin" || viewer.permissions?.draftEvent === true;
   const canDelete =
     viewer.role === "admin" || (canDraft && isAuthor && event.status !== "published");

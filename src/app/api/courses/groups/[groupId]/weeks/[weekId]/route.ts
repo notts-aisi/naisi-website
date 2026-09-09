@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { groupWeekRef } from "@/lib/courses/groupResolve";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
   normalizeCourseGroup,
@@ -219,10 +220,14 @@ export async function PATCH(
     const run = runSnap.exists
       ? normalizeCourseRun(runSnap.id, runSnap.data() ?? {})
       : null;
-    isLead = Boolean(run && run.trackLeadUids.includes(actor.uid));
+    isLead = Boolean(
+      run && isNamedWithStanding(actor, "courseRuns.trackLeadUids", run.trackLeadUids),
+    );
   }
   const facilitatesLiveGroup = Boolean(
-    group && !group.archived && group.facilitatorUids.includes(actor.uid),
+    group &&
+      !group.archived &&
+      isNamedWithStanding(actor, "courseGroups.facilitatorUids", group.facilitatorUids),
   );
   if (!isAdmin && !isLead && !facilitatesLiveGroup) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

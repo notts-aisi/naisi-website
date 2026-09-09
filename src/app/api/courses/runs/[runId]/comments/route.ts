@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
   courseEnrolmentId,
@@ -170,7 +171,7 @@ export async function GET(
       : null;
   const isFacilitator =
     (liveEnrolment?.role === "facilitator" && liveEnrolment.status === "active") ||
-    run.runFacilitatorUids.includes(actor.uid);
+    isNamedWithStanding(actor, "courseRuns.runFacilitatorUids", run.runFacilitatorUids);
   const isAdmin = actor.role === "admin";
 
   if (!isAdmin && !liveEnrolment && !isFacilitator) {

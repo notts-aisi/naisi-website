@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import type { WeekPlanEntry } from "@/lib/courses/weekPlan";
 import { normalizeCourseApplication } from "@/lib/firestore/courseApplications";
@@ -227,7 +228,11 @@ export async function GET(
   const run = normalizeCourseRun(runSnap.id, runData);
 
   const isAdmin = actor.role === "admin";
-  const isTrackLead = run.trackLeadUids.includes(actor.uid);
+  const isTrackLead = isNamedWithStanding(
+    actor,
+    "courseRuns.trackLeadUids",
+    run.trackLeadUids,
+  );
   if (!isAdmin && !isTrackLead) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

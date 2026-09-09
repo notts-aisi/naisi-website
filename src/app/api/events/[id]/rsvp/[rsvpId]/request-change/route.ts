@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { sanitizeSignupForm, type FormQuestion } from "@/lib/firestore/events";
 import { validateAnswers } from "@/lib/events/validateAnswers";
@@ -63,7 +64,8 @@ export async function POST(
     !!viewer &&
     (viewer.role === "admin" ||
       viewer.permissions.approveEvent ||
-      (viewer.permissions.draftEvent && event.authorUid === viewer.uid));
+      (viewer.permissions.draftEvent &&
+        isNamedWithStanding(viewer, "events.authorUid", event.authorUid)));
   const isOwnUid = !!viewer && typeof rsvp.uid === "string" && rsvp.uid === viewer.uid;
 
   if (!isOrganiser && !isOwnUid && !tokenValid) {

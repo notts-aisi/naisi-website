@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import type { Firestore } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { asUidList } from "@/lib/firestore/events";
 
@@ -71,7 +72,12 @@ export async function GET(
   if (!snap.exists) return NextResponse.json({ error: "Event not found" }, { status: 404 });
   const event = snap.data() ?? {};
 
-  if (!(actor.role === "admin" || event.authorUid === actor.uid)) {
+  if (
+    !(
+      actor.role === "admin" ||
+      isNamedWithStanding(actor, "events.authorUid", event.authorUid)
+    )
+  ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -106,7 +112,12 @@ export async function POST(
   if (!snap.exists) return NextResponse.json({ error: "Event not found" }, { status: 404 });
   const event = snap.data() ?? {};
 
-  if (!(actor.role === "admin" || event.authorUid === actor.uid)) {
+  if (
+    !(
+      actor.role === "admin" ||
+      isNamedWithStanding(actor, "events.authorUid", event.authorUid)
+    )
+  ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

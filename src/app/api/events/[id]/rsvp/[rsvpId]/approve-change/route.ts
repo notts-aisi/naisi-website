@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 
 /**
@@ -33,7 +34,8 @@ export async function POST(
   const isOrganiser =
     viewer.role === "admin" ||
     viewer.permissions.approveEvent ||
-    (viewer.permissions.draftEvent && event.authorUid === viewer.uid);
+    (viewer.permissions.draftEvent &&
+      isNamedWithStanding(viewer, "events.authorUid", event.authorUid));
   if (!isOrganiser) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }

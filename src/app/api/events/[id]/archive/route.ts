@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 
 /**
@@ -48,7 +49,10 @@ export async function POST(
   }
   const event = snap.data() ?? {};
 
-  const isAuthor = event.authorUid === actor.uid;
+  // The author branch carries the approved-account bar the broadcast route
+  // settled for this pair: an account's name stays on every event it ever
+  // authored, and nothing clears that when the account is rejected.
+  const isAuthor = isNamedWithStanding(actor, "events.authorUid", event.authorUid);
   if (!(actor.role === "admin" || isAuthor)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
   courseEnrolmentId,
@@ -91,7 +92,11 @@ export async function GET(
   }
 
   const isAdmin = actor.role === "admin";
-  const isGroupFacilitator = group.facilitatorUids.includes(actor.uid);
+  const isGroupFacilitator = isNamedWithStanding(
+    actor,
+    "courseGroups.facilitatorUids",
+    group.facilitatorUids,
+  );
 
   // Membership of THIS group, read from the caller's own enrolment row.
   let isGroupMember = false;

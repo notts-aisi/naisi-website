@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { asUidList } from "@/lib/firestore/events";
 import { normalizeCourseWeek } from "@/lib/firestore/courses";
@@ -105,7 +106,11 @@ export async function GET(
   if (!staff) {
     const isLead =
       runSnap.exists &&
-      asUidList((runSnap.data() ?? {}).trackLeadUids).includes(actor.uid);
+      isNamedWithStanding(
+        actor,
+        "courseRuns.trackLeadUids",
+        asUidList((runSnap.data() ?? {}).trackLeadUids),
+      );
     if (!isLead) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   if (!runSnap.exists) {

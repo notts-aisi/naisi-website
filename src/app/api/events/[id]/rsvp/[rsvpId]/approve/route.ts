@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { sendRsvpEmail } from "@/lib/events/sendRsvpEmail";
 import { asSignupSnapshot } from "@/lib/firestore/events";
@@ -47,7 +48,8 @@ export async function POST(
       const isApprover =
         viewer.role === "admin" ||
         viewer.permissions.approveEvent ||
-        (viewer.permissions.draftEvent && event.authorUid === viewer.uid);
+        (viewer.permissions.draftEvent &&
+          isNamedWithStanding(viewer, "events.authorUid", event.authorUid));
       if (!isApprover) throw new ApproveError("You can't approve this RSVP.", 403);
 
       if (rsvp.status !== "pending") {

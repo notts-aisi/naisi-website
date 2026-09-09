@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { isValidDateKey, type WeekPlanEntry } from "@/lib/courses/weekPlan";
 import { memberCurrentWeek, resolveCalendar } from "@/lib/courses/groupResolve";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { normalizeCourseAttendance } from "@/lib/firestore/courseAttendance";
 import { normalizeCourseEnrolment } from "@/lib/firestore/courseEnrolments";
@@ -230,7 +231,9 @@ export async function PATCH(
 
   const isAdmin = actor.role === "admin";
   const facilitatesLiveGroup = Boolean(
-    group && !group.archived && group.facilitatorUids.includes(actor.uid),
+    group &&
+      !group.archived &&
+      isNamedWithStanding(actor, "courseGroups.facilitatorUids", group.facilitatorUids),
   );
   if (!isAdmin && !facilitatesLiveGroup) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

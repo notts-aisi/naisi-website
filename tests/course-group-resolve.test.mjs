@@ -577,7 +577,10 @@ test("GUARD — the fork route copies through templateWeekFields and mints NOTHI
   assert.match(FORK, /isAlreadyExists\(err\)/);
   assert.match(FORK, /alreadyForked: true/);
   // Facilitator-of-THIS-live-group ∪ admin, authorization before existence.
-  assert.match(FORK, /group && !group\.archived && group\.facilitatorUids\.includes\(actor\.uid\)/);
+  assert.match(
+    FORK,
+    /group &&\s*!group\.archived &&\s*isNamedWithStanding\(actor, "courseGroups\.facilitatorUids", group\.facilitatorUids\)/,
+  );
 });
 
 test("GUARD — the week PATCH enforces the trust boundary SERVER-SIDE and refuses unforked", () => {
@@ -663,7 +666,10 @@ test("GUARD — the notice route is the decision-8 operational lane: no opt-out,
 test("GUARD — the session route is the mode's only pen, and clears by DELETION", () => {
   const SESSION = api("groups", "[groupId]", "session", "route.ts");
   // The pace route's twin gate, same 403 ordering.
-  assert.match(SESSION, /group && !group\.archived && group\.facilitatorUids\.includes\(actor\.uid\)/);
+  assert.match(
+    SESSION,
+    /group &&\s*!group\.archived &&\s*isNamedWithStanding\(actor, "courseGroups\.facilitatorUids", group\.facilitatorUids\)/,
+  );
   // Closed body, enum-checked mode, week-id shape.
   assert.match(SESSION, /key !== "weekId" && key !== "mode"/);
   assert.match(SESSION, /GROUP_SESSION_MODES\.includes\(body\.mode/);

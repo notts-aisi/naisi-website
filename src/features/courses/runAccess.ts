@@ -2,6 +2,7 @@ import "server-only";
 
 import { cache } from "react";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser, type SessionUser } from "@/lib/firebase/session";
 import {
   courseEnrolmentId,
@@ -141,7 +142,11 @@ export const getRunAccess = cache(
     // applies before it resolves its group card.
     const facilitatesGroup = groupSnap.docs
       .map((d) => normalizeCourseGroup(d.id, d.data() ?? {}))
-      .some((g) => !g.archived && g.facilitatorUids.includes(user.uid));
+      .some(
+        (g) =>
+          !g.archived &&
+          isNamedWithStanding(user, "courseGroups.facilitatorUids", g.facilitatorUids),
+      );
 
     const isAdmin = user.role === "admin";
     const isEnrolled = live?.role === "learner";
@@ -153,13 +158,21 @@ export const getRunAccess = cache(
     // anyway, so the breadth opens no door that route would then refuse.
     const isFacilitator =
       live?.role === "facilitator" ||
-      run.runFacilitatorUids.includes(user.uid) ||
+      isNamedWithStanding(user, "courseRuns.runFacilitatorUids", run.runFacilitatorUids) ||
       facilitatesGroup;
     // Admissions is a SEPARATE LANE from the cohort (locked decision): neither
     // of these grants sight of the learning space, which is why `canLearn`
     // ignores them both.
-    const isReviewer = run.admissionsReviewerUids.includes(user.uid);
-    const isTrackLead = run.trackLeadUids.includes(user.uid);
+    const isReviewer = isNamedWithStanding(
+      user,
+      "courseRuns.admissionsReviewerUids",
+      run.admissionsReviewerUids,
+    );
+    const isTrackLead = isNamedWithStanding(
+      user,
+      "courseRuns.trackLeadUids",
+      run.trackLeadUids,
+    );
 
     return {
       user,

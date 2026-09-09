@@ -21,6 +21,7 @@ import {
   type AdmissionStageDoc,
 } from "@/lib/firestore/admissionRounds";
 import { normalizeCourseRun } from "@/lib/firestore/courses";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import type { SessionUser } from "@/lib/firebase/session";
 
 /**
@@ -82,13 +83,23 @@ export type AppointmentQueueBundle = {
  * somebody to run a group is a commitment the society makes, and the round
  * names exactly one person who makes it. The page says this in words rather
  * than only hiding the buttons.
+ *
+ * Being the named decider is half of it. The other half is still meeting the
+ * bar the roles route applied when it wrote the name down, because nothing
+ * clears `finalDeciderUid` when the person is demoted or loses SU recognition
+ * — and this button appoints facilitators onto a run and mails applicants
+ * their outcome.
  */
 export function canDecideAppointments(
   user: SessionUser,
   round: Pick<AdmissionRoundDoc, "finalDeciderUid">,
 ): boolean {
   if (user.role === "admin") return true;
-  return round.finalDeciderUid === user.uid;
+  return isNamedWithStanding(
+    user,
+    "admissionRounds.finalDeciderUid",
+    round.finalDeciderUid,
+  );
 }
 
 /** May this caller READ the queue? The deciders, plus the round's reviewers. */
@@ -97,7 +108,7 @@ export function canViewAppointmentQueue(
   round: Pick<AdmissionRoundDoc, "finalDeciderUid" | "reviewerUids">,
 ): boolean {
   if (canDecideAppointments(user, round)) return true;
-  return round.reviewerUids.includes(user.uid);
+  return isNamedWithStanding(user, "admissionRounds.reviewerUids", round.reviewerUids);
 }
 
 /**

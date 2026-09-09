@@ -1,5 +1,6 @@
 import "server-only";
 import type { Firestore } from "firebase-admin/firestore";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import type { SessionUser } from "@/lib/firebase/session";
 import {
   ENROLMENT_STATUSES,
@@ -96,7 +97,9 @@ export async function gateGroupRegister(
 
   const isAdmin = actor.role === "admin";
   const facilitatesLiveGroup = Boolean(
-    group && !group.archived && group.facilitatorUids.includes(actor.uid),
+    group &&
+      !group.archived &&
+      isNamedWithStanding(actor, "courseGroups.facilitatorUids", group.facilitatorUids),
   );
   if (!isAdmin && !facilitatesLiveGroup) {
     return { ok: false, status: 403, error: "Forbidden" };

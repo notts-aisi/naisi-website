@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import {
   courseEnrolmentId,
@@ -204,7 +205,9 @@ export async function POST(
         // status makes the submit route 409, locking the member out of editing
         // their own answer, so a stale open queue must not be able to land one.
         allowed = Boolean(
-          group && !group.archived && group.facilitatorUids.includes(actor.uid),
+          group &&
+            !group.archived &&
+            isNamedWithStanding(actor, "courseGroups.facilitatorUids", group.facilitatorUids),
         );
       }
     }

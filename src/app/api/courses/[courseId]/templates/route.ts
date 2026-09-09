@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isNamedWithStanding } from "@/lib/firebase/eligibility";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { normalizeCourseWeek } from "@/lib/firestore/courses";
 import { asUidList } from "@/lib/firestore/events";
@@ -345,7 +346,11 @@ export async function GET(
       .limit(MAX_RUNS_SCANNED)
       .get();
     const isLead = leadCandidates.docs.some((d) =>
-      asUidList((d.data() ?? {}).trackLeadUids).includes(actor.uid),
+      isNamedWithStanding(
+        actor,
+        "courseRuns.trackLeadUids",
+        asUidList((d.data() ?? {}).trackLeadUids),
+      ),
     );
     if (!isLead) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
