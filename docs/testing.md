@@ -441,6 +441,26 @@ The same shape, older:
   duration with `t.mock.method(console, "error", () => {})` (or `"warn"`); the
   CI job keeps its `cut` as the backstop.
 
+### The standing review
+
+The guards above hold the classes the audit of 8 September 2026 found. The
+audit itself, the pass that found them, is saved as a workflow so it runs on
+every promotion rather than once: `.claude/workflows/api-red-team.js`. It
+takes a git ref (`args: { ref: "origin/main" }`), has one scout list the
+route files changed since that ref and the unchanged routes that import a
+changed helper, sends each batch of eight to a reviewer with the same
+checklist the first pass used (authentication before data, authorisation
+against the model with a live re-check of any stored authority, IDOR,
+response leakage through a projection that names its reader, write scope,
+secrets, oracles, ordering, and who a route contacts), and puts every medium
+or high finding in front of a skeptic whose job is to refute it by naming the
+line that stops the attack. The output separates confirmed, uncertain,
+refuted and unverified findings, with the per-batch cap on verification
+printed so a silent truncation cannot read as coverage. A finding one of the
+guards should have caught is still a finding, and the reviewer is told to say
+which guard and why it did not. Run it by hand from the branch about to be
+promoted; it is not part of `npm test`.
+
 ### What every registry and allowlist has in common
 
 - It is written out in full, so it reads as a list of decisions and a
