@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminAuth } from "@/lib/firebase/admin";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 import { getSessionUid } from "@/lib/firebase/session";
 import { markRegistrationPasswordSet } from "@/lib/firestore/registrationWrites";
 
@@ -20,6 +21,14 @@ const MIN_PASSWORD_LENGTH = 6;
  * the caller's own uid (no oracle, can't touch anyone else).
  */
 export async function POST(req: Request) {
+  // Never inside a view-as session. This sets a Firebase Auth password on
+  // whoever the session resolves to, and during view-as that is the target
+  // member — a permanent, unaudited credential for their account minted out of
+  // a time-boxed impersonation window, recorded by nothing. Refused at the top,
+  // before the credential write.
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const session = await getSessionUid();
   if (!session) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });

@@ -364,6 +364,18 @@ const USERS = new Map([
       "`memberRecords.ts`, the audit module and three route handlers at once; the promise under " +
       "test is an ORDER of writes across those modules, which only the shipping modules can hold",
   ],
+  [
+    "subscriptions-consent.test.mjs",
+    "it executes `subscriptions.ts` (the re-subscribe gate and the confirm flow) and the public " +
+      "subscribe route for the anonymous-response contract; the route imports the two subscription " +
+      "email templates, so a loader that could not read JSX would fail the file before a test ran",
+  ],
+  [
+    "uni-email-ownership.test.mjs",
+    "it executes `confirmUniEmailVerification.ts` against a fake Firestore to prove the confirming " +
+      "caller must be the token's own account; the helper reaches `signedTokens` and the ownership " +
+      "helper, both stubbed, and the shared loader is what compiles the TypeScript in-process",
+  ],
 ]);
 
 /**

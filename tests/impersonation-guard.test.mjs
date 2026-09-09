@@ -78,6 +78,20 @@ const GUARDED_TREES = [
   // while viewing as them", and a submitted response is frozen against its own
   // author, so an accident here is one only an admin can undo.
   "src/app/api/worksheets",
+
+  // The account / registration lane. These routes act on the SESSION account's
+  // own persistent state: its Firebase Auth password, its registration-tracker
+  // rows, its consent stamp, its very existence. During view-as the session is
+  // the target's, so an unguarded write here happens TO the target member,
+  // recorded as them. `register/password-set` was the audited instance (an
+  // admin could mint the target a standalone credential out of a view-as
+  // window, recorded by nothing). The two trees are registered so the NEXT
+  // account-mutating route added beside them is caught by the sweep rather than
+  // by whoever adds it remembering this file. The public, unauthenticated
+  // routes in the register tree (the register POST and its resend) never read
+  // or write the session account, so they are on ALLOWLIST with that reason.
+  "src/app/api/register",
+  "src/app/api/account",
 ];
 
 /**
@@ -247,6 +261,24 @@ const MUST_GUARD = [
     "src/app/api/admissions/rounds/[roundId]/destroy/route.ts",
     "destroys an intake: every application on it, the access-requirements answer filed beside each one, the reviewers' written assessments, and the round itself",
   ],
+
+  // ── The account / registration lane ──────────────────────────────────────
+  [
+    "src/app/api/register/password-set/route.ts",
+    "sets a Firebase Auth password on the session account; during view-as that mints the target member a permanent, unaudited credential out of a time-boxed window",
+  ],
+  [
+    "src/app/api/register/profile-complete/route.ts",
+    "flips the session account's registration-tracker row, which during view-as writes the target member's tracker as them",
+  ],
+  [
+    "src/app/api/account/delete/route.ts",
+    "tears down the session account; the unfinished-only scope blocks the reachable view-as case, but the guard states the intent beside its sibling",
+  ],
+  [
+    "src/app/api/account/reconsent/route.ts",
+    "stamps the session account's consent record (an audit fact whose whole value is that the member made it) or deletes the account",
+  ],
 ];
 
 /**
@@ -258,7 +290,16 @@ const MUST_GUARD = [
  * this list is empty. Adding an entry is a decision, not a workaround for a
  * failing test.
  */
-const ALLOWLIST = [];
+const ALLOWLIST = [
+  [
+    "src/app/api/register/route.ts",
+    "Public, unauthenticated registration. It creates a Firebase Auth account for the email in the request body and never reads or writes the session user, so a view-as session cannot make it act as the impersonated member; the account it creates is a fresh one keyed on the body address.",
+  ],
+  [
+    "src/app/api/register/resend/route.ts",
+    "Public, unauthenticated resend keyed on the body email. It only ever re-sends to a pending registration for that address and never reads or writes the session user, so a view-as session cannot turn it against the impersonated member.",
+  ],
+];
 
 const METHODS = "POST|PATCH|PUT|DELETE";
 
@@ -503,6 +544,60 @@ test("every allowlisted route still exists and carries a reason", () => {
     );
   }
 });
+
+/**
+ * A separate view-as hazard from the write guard above: a route that REVOKES
+ * refresh tokens (`revokeAndClearSession`, which calls
+ * auth.revokeRefreshTokens(uid)) must not do so blindly during a view-as
+ * session, because the `__session` cookie holds the TARGET's session — the
+ * revoke would sign the real member out of every device they own, from the
+ * admin's browser. `assertNotImpersonating()` is the wrong tool here (a 403
+ * would strand the admin mid-view-as); the route must instead branch on a LIVE
+ * marker and clear the borrowed cookie without revoking, the way the exit and
+ * `clear` routes do. So every caller of `revokeAndClearSession` must also
+ * consult the impersonation marker. Both directions.
+ */
+const REVOKE_CALLERS = {
+  "src/app/api/auth/session/route.ts":
+    "DELETE is the sign-out route; during a live view-as it clears the borrowed cookie without revoking the target, and only revokes outside view-as",
+};
+const MARKER_READERS = /getLiveImpersonator\(|getImpersonator\(|markerIsLive\(/;
+
+test("every route that revokes refresh tokens consults the view-as marker first", () => {
+  const callers = [];
+  for (const file of routeFiles(join(REPO_ROOT, "src", "app", "api"))) {
+    const source = codeOf(file);
+    if (/\brevokeAndClearSession\(/.test(source)) callers.push(repoRelative(file));
+  }
+  const unregistered = callers.filter((p) => !(p in REVOKE_CALLERS));
+  assert.deepEqual(
+    unregistered,
+    [],
+    "These routes call revokeAndClearSession(). During a view-as session that " +
+      "revokes the impersonated member's tokens on every device. Branch on a live " +
+      "marker (clear the cookie without revoking, like the exit route), and " +
+      "register the route in REVOKE_CALLERS with the reason.",
+  );
+  const stale = Object.keys(REVOKE_CALLERS).filter((p) => !callers.includes(p));
+  assert.deepEqual(stale, [], "These registered revoke callers no longer call it: remove them.");
+  for (const [path, reason] of Object.entries(REVOKE_CALLERS)) {
+    const source = codeOf(join(REPO_ROOT, ...path.split("/")));
+    assert.match(
+      source,
+      MARKER_READERS,
+      `${path} revokes refresh tokens but never reads the view-as marker, so a ` +
+        "sign-out during impersonation would revoke the target member everywhere.",
+    );
+    assert.ok(reason.trim().length > 20, `${path} needs a real reason in REVOKE_CALLERS.`);
+  }
+});
+
+/** codeOf for this suite: strip comments so a mention in prose is not a call. */
+function codeOf(file) {
+  return readFileSync(file, "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^[ \t]*\/\/.*$/gm, "");
+}
 
 test("the admin view-as start and exit routes are not self-blocked", () => {
   // Starting a view-as session is an admin acting as themselves, and exiting
