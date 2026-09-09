@@ -119,6 +119,16 @@ const AUTH_BATTERIES = {
     why: "The throwaway password is really replaced and the old session really revoked.",
     drives: ["/api/register/password-set", "/api/verify-email/reconcile"],
   },
+  "persona-route-gates.test.mjs": {
+    why:
+      "The standing red team: every route and every authed page requested as every persona " +
+      "against a real build with an emulator behind it, and each answer held to " +
+      "tests/persona-route-gates.registry.mjs.",
+    // Requests every route and page, but with ids that address nothing and
+    // empty bodies, so what it proves is each GATE's answer to each persona
+    // and never a handler's work. Nothing enters the exercised set.
+    drives: [],
+  },
   "protected-route-gate.test.mjs": {
     why:
       "The proxy gate: a protected path 307s to /login?next=, a minted cookie opens it, " +

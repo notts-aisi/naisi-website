@@ -82,10 +82,19 @@ These are deliberate and enforced, not aspirational:
   email — `.env.prod` and `.env.local.prod-snapshot-*` sit in this repo root
   carrying the production project, and a stray `cp` must not silently re-aim
   the harness.
-- **It grants no privileges.** Accounts it creates are bare Auth users, or (in
-  the Phase 2+ batteries) users with a seeded document whose role is hard-coded
-  to `pending` — the lowest role there is, which grants access to nothing. The
-  design brief caps any future fixture ladder at `member`.
+- **It grants no privileges on the dev project.** Accounts it creates are bare
+  Auth users, or (in the Phase 2+ batteries) users with a seeded document
+  whose role is hard-coded to `pending` — the lowest role there is, which
+  grants access to nothing. The design brief caps any future fixture ladder at
+  `member`. The one place a role above `pending` is ever written is
+  `lib/personas.mjs`, for the per-persona route battery, and it can only write
+  it to a **Firestore emulator**: every exported function there refuses first
+  unless `FIRESTORE_EMULATOR_HOST` names a loopback host, the fence guard
+  imports the module with the variable unset and proves the refusal, and the
+  elevated personas' Auth accounts on dev are bare harness accounts with no
+  document at all. `run.mjs` starts that emulator and a second copy of the
+  build on `:3101` pointed at it, and kills both with the run. See "The
+  persona battery" below.
 - **Firestore access is allowlisted to three collections** — `users`,
   `emailVerifications`, `registrations` — and nothing else. Phase 1 held the
   line at "no Firestore handle at all"; Phase 2 needed reads/seeds to prove the
@@ -647,6 +656,53 @@ the runner then starts nothing and drives a loopback server that is already
 up. That is how several people (or several agents) share one built server
 without each rebuilding `.next`, and the reCAPTCHA stub still arms, because it
 keys off the origin rather than off the flag.
+
+## The persona battery (`scripts/e2e/tests/persona-route-gates.test.mjs`)
+
+The standing red team. Every route under `src/app/api` and every page under
+`src/app/(app)` is requested as every persona (`anonymous`, `pending`,
+`rejected`, `member`, non-SU `committee`, `suCommittee`, `admin`, and a plain
+member holding each `permissions` key), and the answer is held to
+`tests/persona-route-gates.registry.mjs`, the answer key a person wrote, cell
+by cell, with a reason per entry. Ids address nothing and bodies are empty, so
+what is asserted is each gate's answer to each persona and never a handler's
+work; a 2xx JSON body is also held to the `fields` list the entry allows.
+
+**Where the elevated roles live.** The battery needs the personas the fence
+forbids, so `run.mjs` starts a Firestore emulator (a Java process, through the
+`firebase-tools` in `scripts/rules-tests`) and a SECOND `next start` on
+`127.0.0.1:3101` with `FIRESTORE_EMULATOR_HOST` set. `lib/personas.mjs` seeds
+one `users` document per persona THERE, mints a session cookie through that
+server, and removes both halves in `after()`. Firebase Auth stays real (dev),
+which is what makes the session cookies real; Firestore is the throwaway. So
+the battery may drive every route as every persona, mutating ones included,
+and every request carries its own forwarded address so the in-memory throttles
+do not answer the later personas with 429s.
+
+**It runs in local mode only** (there is no emulator behind a deployed
+backend) and skips with a printed reason when Java or `firebase-tools` is
+missing, unless `E2E_PERSONA_BATTERY=required`, which the CI local job sets so
+a missing emulator is a red job rather than a quiet skip. It refuses to start
+when `:8080` is already held: the rules suite uses the same port, and an
+emulator this run did not start holds data it knows nothing about.
+
+**One retry, counted.** Every request makes the server verify the persona's
+session cookie against Firebase Auth with revocation checking, one Identity
+Toolkit call per request, and a run is four thousand of them in a few
+minutes. On the first recording runs the last few answers came back as "no
+session" for personas whose cookies were fine a moment earlier. So a refusal
+that reads as "no session" (a 401, or a redirect to sign in) for a persona
+that has a cookie is asked once more after a pause, and only the second answer
+counts; a genuine 401 answers 401 twice. The battery prints how many answers
+it asked again and how many changed, so a run that leaned on the retry says
+so rather than passing quietly.
+
+**Re-keying the registry.** `E2E_PERSONA_RECORD=<path>` writes what was
+observed as JSON instead of asserting. Diff it against the registry, read the
+diff as a list of decisions, and edit the registry; the offline guard
+`tests/persona-route-gates.test.mjs` then holds the tree and the registry to
+each other in both directions on every `npm test`, so a new route fails on
+arrival until somebody writes down what every persona should get.
 
 ## Diagnosing a failing step
 

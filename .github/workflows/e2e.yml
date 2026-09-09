@@ -88,6 +88,28 @@ jobs:
 
       - run: npm ci
 
+      # The persona battery (scripts/e2e/tests/persona-route-gates.test.mjs)
+      # drives every route as every persona against a SECOND copy of the
+      # build pointed at a Firestore emulator, so the elevated roles it needs
+      # never exist on the dev project. The emulator is a Java process that
+      # firebase-tools downloads and runs; firebase-tools is a devDependency
+      # of the rules-test package rather than the root one for the same
+      # reason Playwright is not: the root `npm ci` is on the critical path of
+      # every production deploy. E2E_PERSONA_BATTERY=required below turns a
+      # missing emulator into a red job rather than a quiet skip.
+      - run: npm ci
+        working-directory: scripts/rules-tests
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      # The emulator jar firebase-tools downloads on first use, kept between
+      # runs so the persona battery does not fetch it every time.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ runner.os }}-${{ hashFiles('scripts/rules-tests/package-lock.json') }}
+
       # Deliberately not a dependency: the root package.json is on the critical
       # path of every production deploy's `npm ci`, and a browser automation
       # library plus a downloaded Chromium has no business there. The runner
@@ -224,6 +246,7 @@ jobs:
       - name: Run the fetch batteries against a loopback server
         env:
           E2E_SIGNING_SERVICE_ACCOUNT: ${{ vars.GCP_E2E_SERVICE_ACCOUNT }}
+          E2E_PERSONA_BATTERY: required
         run: npm run e2e:local
 
       # `--skip-build`: the batteries step above built the app from the same
