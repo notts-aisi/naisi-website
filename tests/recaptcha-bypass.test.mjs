@@ -42,6 +42,16 @@ const GATES = [
     file: "src/app/api/register/route.ts",
     guard: /recaptchaToken === undefined && recaptchaBypassGranted\(req\.headers, email\)/,
   },
+  {
+    // The public RSVP joined the gated routes on 9 September 2026, when it
+    // stopped being an unauthenticated outbound mailer with a caller-chosen
+    // recipient. The acting identity is the address the confirmation would go
+    // to, which is the session's for a signed-in caller and the typed one
+    // otherwise, so a harness address clears the namespace check and a real
+    // person's never does.
+    file: "src/app/api/events/[id]/rsvp/route.ts",
+    guard: /recaptchaToken === undefined && recaptchaBypassGranted\(req\.headers, email\)/,
+  },
 ];
 
 function read(rel) {
@@ -82,7 +92,7 @@ test("the bypass is server-only, and the verifier itself never consults it", () 
   );
 });
 
-test("only the two gates import the bypass, and each consults it only for a tokenless request", () => {
+test("only the registered gates import the bypass, and each consults it only for a tokenless request", () => {
   const importers = walk(SRC)
     .filter((f) => readFileSync(f, "utf8").includes("recaptcha/bypass"))
     .map((f) => relative(REPO_ROOT, f))

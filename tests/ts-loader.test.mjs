@@ -250,6 +250,19 @@ const USERS = new Map([
       "is the one its appointment applied",
   ],
   [
+    "deadlines-enforced.test.mjs",
+    "executes the real release boundary from src/lib/admissions/stageRelease.ts, the draft " +
+      "save and the applicant projection from applyRoutes.ts, and the later-stage submit " +
+      "route itself either side of a stage's own deadline, because a deadline that is only " +
+      "read is the defect this file exists to close",
+  ],
+  [
+    "send-recipient-scope.test.mjs",
+    "executes src/lib/tasks/recipientScope.ts and the three task send routes that read a " +
+      "caller-written uid array, because what matters is who a real run of the handler " +
+      "addresses and not which line it contains",
+  ],
+  [
     "api-addressable-ids.test.mjs",
     "runs the real `isAddressableId` and `hasEncodedPathSeparator` from src/lib/addressableId.ts, " +
       "the chokepoint the proxy applies to every /api path",

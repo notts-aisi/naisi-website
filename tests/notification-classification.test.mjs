@@ -135,6 +135,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { SEND_DOOR_NAMES } from "./lib/sendDoors.mjs";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(REPO_ROOT, "src");
@@ -160,29 +161,7 @@ const SRC = join(REPO_ROOT, "src");
  * every name here must either be one of those or carry a written reason in
  * {@link NOT_BUILT_YET}.
  */
-const TRACKED = [
-  // Primitives.
-  "sendEmail",
-  "sendNotice",
-  "sendNoticePush",
-  "mirrorTaskEmailToPush",
-  "mirrorCourseDecisionToPush",
-  "sendPushToUid",
-  // Named wrappers.
-  "sendRsvpEmail",
-  "sendCollaboratorEmail",
-  "sendCourseApplicationEmail",
-  "sendCourseDroppedOutEmail",
-  "notifyWorksheetEvent",
-  "sendAdmissionEmail",
-  "sendCourseWeekNudgeEmail",
-  "sendWorksheetDueSoonEmail",
-  "sendCourseGroupEmail",
-  "sendCourseRunEmail",
-  "sendEventAnnouncement",
-  "sendAnnouncementToRecipient",
-  "sendPushToRowAudience",
-];
+const TRACKED = SEND_DOOR_NAMES;
 
 /**
  * Comments out, because a module header naming `sendEmail()` is prose and

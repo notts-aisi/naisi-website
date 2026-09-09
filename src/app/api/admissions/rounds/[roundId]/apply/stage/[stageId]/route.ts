@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 import { validateAnswers } from "@/lib/events/validateAnswers";
-import { isStageReleased } from "@/lib/admissions/stageRelease";
+import { formatRoundDeadline } from "@/lib/admissions/window";
+import {
+  effectiveStageClose,
+  isStageReleased,
+  isStageOpenForAnswers,
+} from "@/lib/admissions/stageRelease";
 import {
   normalizeAdmissionApplication,
   type AdmissionApplicationStatus,
@@ -102,6 +107,25 @@ export async function POST(req: Request, ctx: Ctx) {
     if (!isStageReleased(stage, round, now)) {
       return NextResponse.json(
         { error: `"${stage.label}" has not been released yet.` },
+        { status: 403 },
+      );
+    }
+    // The OTHER end of the same boundary, and the reason it is here rather
+    // than only in the email that announced it. A stage may carry a deadline
+    // earlier than the round's, and until 9 September 2026 nothing read that
+    // deadline on a write path: the round's window was the only time gate, so
+    // an applicant told "this part is due Friday" could file it the following
+    // Wednesday with days of thinking time nobody else was given. There is no
+    // stored draft for a later stage (see the header), so a refusal is the
+    // whole enforcement and it has to be here.
+    if (!isStageOpenForAnswers(stage, round, now)) {
+      const close = effectiveStageClose(stage, round);
+      return NextResponse.json(
+        {
+          error: close
+            ? `"${stage.label}" closed on ${formatRoundDeadline(close)}, so it can no longer be submitted. Reply to any email from us if something went wrong.`
+            : `"${stage.label}" is closed, so it can no longer be submitted.`,
+        },
         { status: 403 },
       );
     }

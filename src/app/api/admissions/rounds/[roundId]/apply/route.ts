@@ -504,6 +504,15 @@ export async function PATCH(req: Request, ctx: Ctx) {
       application: saved
         ? serialiseApplicationForOwner(saved.application, round, saved.accessRequirements)
         : null,
+      // THE STAGES AGAIN, freshly serialised, and this is load-bearing rather
+      // than convenient. A stage deadline passes WHILE THE PAGE IS OPEN, and
+      // the island's `openForAnswers` is otherwise a snapshot taken when the
+      // page was rendered. Sending them back on every save means the autosave
+      // is what tells the applicant a part has closed: the stage goes
+      // read-only, showing what was actually stored, with the date it closed.
+      // Without this the island would keep offering a box for answers
+      // `readStageAnswers` has already begun dropping.
+      stages: stages.map((stage) => serialiseStageForApplicant(stage, round, now)),
     });
   } catch (err) {
     if (err instanceof ApplyError) return err.toResponse();

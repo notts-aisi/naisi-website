@@ -11,6 +11,7 @@ import {
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isTaskEmailEnabled } from "@/lib/firestore/taskEmailConfig";
 import { getCurrentUser } from "@/lib/firebase/session";
+import { taskRoster } from "@/lib/tasks/recipientScope";
 import { mirrorTaskEmailToPush } from "@/lib/push/taskNotifications";
 
 function stringArray(v: unknown): string[] {
@@ -38,6 +39,27 @@ async function stampInitialNotifyAt(
   });
 }
 
+/**
+ * "The creator of a personal task" means a to-do with ONE person on it, and
+ * that person is the caller.
+ *
+ * `source === "personal" && creatorUid === uid` was the whole test, and it
+ * leaned on a rules invariant only half the create rule enforces: the branch a
+ * plain member takes pins `completerUids.hasOnly([uid])` and
+ * `reviewerUids.size() == 0`, while the `isCommittee()` branch beside it
+ * constrains neither, so an SU-recognised committee member could write a
+ * "personal" task with fifteen other people on its roster and satisfy a gate
+ * whose error message says it is for a private to-do. It bought them nothing
+ * they could not already do, but the sentence was false, and the next reader
+ * of `isPersonalCreator` inherits it. Asked properly, the roster IS the test.
+ */
+function isOwnPersonalTask(task: FirebaseFirestore.DocumentData, uid: string): boolean {
+  if (task.source !== "personal") return false;
+  if (task.creatorUid !== uid) return false;
+  const roster = taskRoster(task);
+  return roster.size === 1 && roster.has(uid);
+}
+
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id: taskId } = await ctx.params;
   // Belt and braces under the proxy's chokepoint (src/lib/addressableId.ts):
@@ -63,8 +85,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   // kill switch is silencing real sends.
   const completerUids = stringArray(task.completerUids);
   const reviewerUids = stringArray(task.reviewerUids);
-  const isCreator = task.creatorUid === viewer.uid;
-  const isPersonalCreator = task.source === "personal" && isCreator;
+  const isPersonalCreator = isOwnPersonalTask(task, viewer.uid);
   if (viewer.role !== "admin" && !isPersonalCreator) {
     return NextResponse.json(
       {

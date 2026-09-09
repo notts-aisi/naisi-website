@@ -10,6 +10,7 @@ import type { ResolvedUser } from "@/lib/email/taskMembership";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isTaskEmailEnabled } from "@/lib/firestore/taskEmailConfig";
 import { isNamedWithStanding } from "@/lib/firebase/eligibility";
+import { onTaskRoster } from "@/lib/tasks/recipientScope";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { mirrorTaskEmailToPush } from "@/lib/push/taskNotifications";
 
@@ -186,7 +187,21 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const rawSubs = Array.isArray(task.subtasks) ? (task.subtasks as unknown[]) : [];
   const subs = rawSubs
     .map(asSubtaskShape)
-    .filter((s): s is SubtaskShape => s !== null && s.blockId === blockId);
+    .filter((s): s is SubtaskShape => s !== null && s.blockId === blockId)
+    // THE RECIPIENT SCOPE, applied once where the rows are read rather than at
+    // each of the three places they are used. `subtasks` is in the narrow band
+    // every completer may write (firestore.rules), and a personal task's
+    // creator rewrites it freely, so a signoff row's `reviewerUids` is the
+    // caller's own array on the caller's own document. It decided all three of
+    // who this route mails, whether the block's reviews are complete, and
+    // whether the CALLER may press the button, from a value the caller wrote.
+    // The pickers only ever offer the task's roster and taskMutations strips a
+    // uid out of every subtask array when it leaves the task, so nothing
+    // legitimate is refused. The three decision arrays below are left as
+    // stored: they record who acted, they are compared against this filtered
+    // list rather than added to it, and they reach no recipient set. See
+    // lib/tasks/recipientScope.
+    .map((s) => ({ ...s, reviewerUids: onTaskRoster(s.reviewerUids, task) }));
   const completion = subs.filter((s) => s.roleHint !== "reviewer");
   const signoffs = subs.filter((s) => s.roleHint === "reviewer");
 

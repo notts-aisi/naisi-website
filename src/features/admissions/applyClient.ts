@@ -118,7 +118,17 @@ export type DraftPatch = {
 export function saveDraft(
   roundId: string,
   patch: DraftPatch,
-): Promise<{ ok: true; savedAt: string; application: ApplicantApplication | null }> {
+): Promise<{
+  ok: true;
+  savedAt: string;
+  application: ApplicantApplication | null;
+  /**
+   * The stages as they are NOW, not as they were when the page rendered. A
+   * stage deadline can pass mid-session, and this is how the island finds out:
+   * see the note on the PATCH's response.
+   */
+  stages: ApplicantStage[];
+}> {
   return call(`${base(roundId)}/apply`, {
     method: "PATCH",
     body: JSON.stringify(patch),

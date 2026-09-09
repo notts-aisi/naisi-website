@@ -12,6 +12,9 @@ import {
 import { sendRsvpEmail, type LiveRsvpStatus } from "@/lib/events/sendRsvpEmail";
 import { validateAnswers } from "@/lib/events/validateAnswers";
 import { formatEventWhen } from "@/lib/events/changeSummary";
+import { verifyRecaptcha } from "@/lib/recaptcha/server";
+import { recaptchaBypassGranted } from "@/lib/recaptcha/bypass";
+import { clientIp, rateLimit } from "@/lib/rateLimit";
 
 /**
  * PUBLIC RSVP SUBMISSION, and the only route a signed-out person can write an
@@ -59,13 +62,55 @@ import { formatEventWhen } from "@/lib/events/changeSummary";
  * A person may submit again, and that is a NEW row: the old one keeps its
  * status, the organiser's note and who decided it, rather than being reset
  * underneath them by whoever next typed the address.
+ *
+ * ── THE BOT GATE, AND WHY THIS ROUTE NEEDED ONE ─────────────────────────────
+ * Every accepted submission writes a row and posts a NAISI-branded email, from
+ * the society's own sending domain, to an address the CALLER chose, carrying a
+ * greeting name and free-text answers the caller also chose. Until 9 September
+ * 2026 nothing gated that: no session on a public event, no reCAPTCHA, no
+ * throttle. A list of harvested addresses and a loop was a spam run with real
+ * DKIM on it, and the bounces and complaints landed on the society's own
+ * sender reputation and suppression list. Plus-addressing multiplied the
+ * per-address quota, and each further public event multiplied it again,
+ * because the duplicate guard is per event.
+ *
+ * So the same two gates `/api/register` carries, in the same order and for the
+ * same reasons. The per-IP throttle runs FIRST, before the session lookup and
+ * before any document is read, because the point of throttling is to cap cost
+ * and a limiter behind the reads it protects has already paid for the request
+ * it is about to refuse. reCAPTCHA is the primary gate and the throttle is the
+ * cheap backstop; the per-IP allowance is deliberately looser than the
+ * register route's, because a stall at a fair or a shout-out in a lecture
+ * produces a real burst of sign-ups from one campus NAT address, while
+ * `/api/register` is a thing people do once.
+ *
+ * `verifyRecaptcha` FAILS CLOSED in production when `RECAPTCHA_SECRET` is
+ * absent, which is why that secret has to be on every backend running in
+ * production mode. `scripts/e2e/tests/public-write-gating.test.mjs` is the
+ * battery that asks a deployed backend whether the gate is really live here.
  */
 
 type RsvpPayload = {
   name?: unknown;
   email?: unknown;
   answers?: unknown;
+  recaptchaToken?: unknown;
 };
+
+/**
+ * The abuse throttle. Ten-minute fixed windows, in memory, alongside
+ * reCAPTCHA rather than instead of it (see `src/lib/rateLimit.ts`).
+ *
+ * The per-IP allowance is sixty rather than the register route's thirty, and
+ * the difference is the shape of the two acts: registering is something a
+ * person does once, while sixty RSVPs from one campus NAT address inside ten
+ * minutes is a stall at a fair having a good afternoon. The per-address
+ * allowance is five, which is generous for somebody correcting a typo and
+ * useless as a way to fill an inbox.
+ */
+const RL_WINDOW_MS = 10 * 60 * 1000;
+const RL_IP_MAX = 60;
+const RL_EMAIL_MAX = 5;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -86,11 +131,32 @@ function isLive(status: unknown): status is LiveRsvpStatus {
   return LIVE_STATUSES.includes(status as LiveRsvpStatus);
 }
 
+/**
+ * ONE 429, whichever axis fired. Two different sentences would say which
+ * bucket was full, and one of those buckets is keyed on an address the caller
+ * typed, so the difference would be a question about that address.
+ */
+function tooManySignups(retryAfterSeconds: number): NextResponse {
+  return NextResponse.json(
+    { error: "Too many sign-ups just now. Please wait a few minutes and try again." },
+    { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
+  );
+}
+
 export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id: eventId } = await ctx.params;
+
+  // BEFORE THE SESSION LOOKUP AND BEFORE ANY DOCUMENT IS READ. See the header:
+  // a limiter that runs after the reads it protects has already paid for the
+  // request it refuses. A 429 here is volume-based and says nothing about the
+  // event or the address, so it leaks nothing either.
+  const ip = clientIp(req);
+  const ipLimit = rateLimit(`events:rsvp:ip:${ip}`, RL_IP_MAX, RL_WINDOW_MS);
+  if (!ipLimit.ok) return tooManySignups(ipLimit.retryAfterSeconds);
+
   const db = getAdminDb();
   if (!db) {
     return NextResponse.json({ error: "Server not configured" }, { status: 500 });
@@ -127,6 +193,37 @@ export async function POST(
   if (email.length > EMAIL_MAX || !EMAIL_PATTERN.test(email)) {
     return NextResponse.json({ error: "That email doesn't look right." }, { status: 400 });
   }
+
+  // THE BOT GATE. The harness bypass is consulted ONLY for a request that
+  // carries no token, and only for an address inside the harness namespace on
+  // a backend that holds the secret (src/lib/recaptcha/bypass.ts); a token
+  // that is present is always verified with Google. The acting identity is the
+  // address the confirmation would go to, which is the session's for a
+  // signed-in caller and the typed one otherwise.
+  const recaptchaToken =
+    typeof payload.recaptchaToken === "string" && payload.recaptchaToken.length > 0
+      ? payload.recaptchaToken
+      : undefined;
+  const bypassed =
+    recaptchaToken === undefined && recaptchaBypassGranted(req.headers, email);
+  if (!bypassed && !(await verifyRecaptcha(recaptchaToken))) {
+    return NextResponse.json(
+      { error: "Couldn't verify you're human. Please reload the page and try again." },
+      { status: 400 },
+    );
+  }
+
+  // THE PER-ADDRESS AXIS, AND IT COMES AFTER THE BOT GATE ON PURPOSE. It is
+  // the tighter of the two, so it is also the one that can be turned around:
+  // an address is something anybody can type, and a bucket consumed before the
+  // caller has proved anything is a way to lock a named person out of every
+  // event for ten minutes with five requests that cost nothing. Behind the
+  // captcha it still bounds a real person's own submissions, and the price of
+  // aiming it at somebody else is a solved challenge per attempt. The per-IP
+  // cap above is the one that has to run first, because its job is to cap the
+  // cost of the request itself.
+  const emailLimit = rateLimit(`events:rsvp:email:${email}`, RL_EMAIL_MAX, RL_WINDOW_MS);
+  if (!emailLimit.ok) return tooManySignups(emailLimit.retryAfterSeconds);
 
   const eventRef = db.collection("events").doc(eventId);
   const eventSnap = await eventRef.get();
@@ -291,11 +388,11 @@ export async function POST(
     if (err instanceof RsvpError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
+    // The detail goes to the log, not to the caller. This route promises a
+    // signed-out person learns nothing from it, and a raw `Error.message` off
+    // a Firestore failure carries collection paths and index hints.
     console.error("[rsvp] transaction failed", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Signup failed" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Signup failed" }, { status: 500 });
   }
 }
 
