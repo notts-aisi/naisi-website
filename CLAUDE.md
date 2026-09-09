@@ -456,6 +456,7 @@ Full version: [docs/testing.md](docs/testing.md). The short version:
 - **Every change runs the whole battery**, locally and in CI: `npx next typegen && npx tsc --noEmit`, `npm run lint` (0 errors; the warning baseline on dev is 9, and a local checkout with skip-worktree overrides shows more: this machine shows 32), `npm test`, `cd scripts/rules-tests && npm test`, and a real `npm run build`, because Next enforces the client and server boundary only when it bundles.
 - **Test as a member, never only as an admin.** Admins take a resource-independent branch of nearly every rule, so admin testing hides member-facing failures by construction.
 - **End-to-end suite**: see the section of the same name in docs/testing.md.
+- **The standing red team runs on every promotion.** `tests/persona-route-gates.test.mjs` and its registry hold what every route and authed page answers each of fifteen personas, driven against a real build with an emulator behind it in the CI local job; `.claude/workflows/api-red-team.js` is the review pass that found the September findings, saved to take a git ref and review only the routes changed since it. Run it by hand before a dev-to-main promotion.
 - **A change to a covered surface updates its spec in the same pull request.** `tests/e2e-coverage-map.test.mjs` says which surfaces those are: a verified spec's `covers`, everything else written down in `NOT_COVERED` with a reason and the trigger that closes it.
 
 ## Deploy
