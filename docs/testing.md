@@ -365,6 +365,27 @@ The same shape, older:
   the response through a helper in another module, and a single field of one.
   The `serialiseRound` entry records rather than resolves the draftCourse
   admission, which is documented intent and the audit's open low finding.
+- `scripts/e2e/tests/security-headers.test.mjs`: the response headers
+  `next.config.ts` declares are what a running server sends. A declaration is
+  not a header until it is on the wire (a `source` that does not match, a
+  later rule overriding an earlier one, a platform stripping one), so the
+  battery asks a real build, on the home page, the sign-in page, a protected
+  redirect, an API refusal, the service worker and the offline page, and reads
+  what came back: `Strict-Transport-Security` for two years with subdomains,
+  `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`,
+  a `Permissions-Policy` with camera, microphone, geolocation, payment and USB
+  off, `X-Content-Type-Options: nosniff`, and a
+  `Content-Security-Policy-Report-Only` carrying the INTENDED policy with no
+  `'unsafe-inline'` in `script-src` and no enforced policy beside it. The CSP
+  is reported rather than enforced because Next's own inline scripts (the
+  hydration payload on every page and the pre-paint installed-app flag) need a
+  per-request nonce from `src/proxy.ts`, and nonces require dynamic rendering,
+  which the home page's revalidation and the static policy pages do not have
+  today; the trigger for enforcing it is that decision, taken with the render
+  cost in hand. The service worker's own no-store rule and the offline page's
+  no-cache rule are asserted to survive the global rule. Registered in
+  `AUTH_BATTERIES` with an empty `drives`, because it proves headers and not
+  handlers.
 - `tests/lib/stripSource.mjs`, proved by the guards that use it: reading a
   TypeScript file as code is done once, by a tokeniser, rather than by four
   regexes per guard. The four-regex version desyncs on a trailing comment with
