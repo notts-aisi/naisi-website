@@ -27,11 +27,29 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertTarget } from "../scripts/e2e/lib/env.mjs";
+import { stripSource } from "./lib/stripSource.mjs";
+import { moduleScope } from "./lib/routeScan.mjs";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const E2E_DIR = join(REPO_ROOT, "scripts", "e2e");
+
+/**
+ * THE ONE EXCEPTION to property 2, and the terms of it.
+ *
+ * The per-persona route battery needs a member, a committee member, an admin
+ * and every permission holder, which is exactly what the fence forbids. The
+ * file below is allowed to spell those roles because it can only ever write
+ * them to a Firestore EMULATOR: every exported function refuses first unless
+ * `FIRESTORE_EMULATOR_HOST` names a loopback host, so the dev project never
+ * holds a privileged document this harness made. Three checks keep that
+ * true: no other file under scripts/e2e may match the privilege patterns;
+ * every exported function in this one starts with `assertEmulator()`; and
+ * the refusal is executed, not read, by importing the module with the
+ * variable unset and pointed off-loopback.
+ */
+const PERSONA_MODULE = join(E2E_DIR, "lib", "personas.mjs");
 
 /**
  * Privilege-granting shapes, in both bare-identifier and quoted-key spellings
@@ -99,7 +117,9 @@ function sourceFiles(dir) {
 test("the e2e harness never grants a role, permission, or admin-set tag", () => {
   const files = sourceFiles(E2E_DIR);
   assert.ok(files.length > 0, `expected harness sources under ${E2E_DIR}`);
+  assert.ok(files.includes(PERSONA_MODULE), "the persona module has moved; update PERSONA_MODULE");
   for (const file of files) {
+    if (file === PERSONA_MODULE) continue; // the one exception, held to its own terms below
     const source = readFileSync(file, "utf8");
     for (const pattern of FORBIDDEN_PRIVILEGE) {
       assert.ok(
@@ -198,4 +218,44 @@ test("assertTarget still accepts the dev origin and localhost", () => {
       `assertTarget rejected ${JSON.stringify(target)}, which the harness needs.`,
     );
   }
+});
+
+test("the persona module refuses to run without a loopback Firestore emulator", async () => {
+  const saved = process.env.FIRESTORE_EMULATOR_HOST;
+  try {
+    delete process.env.FIRESTORE_EMULATOR_HOST;
+    const personas = await import(pathToFileURL(PERSONA_MODULE).href);
+    assert.throws(() => personas.assertEmulator(), /REFUSING/);
+    await assert.rejects(() => personas.withPersona("guard", "admin"), /REFUSING/);
+    assert.throws(() => personas.personaOrigin(), /REFUSING/);
+    process.env.FIRESTORE_EMULATOR_HOST = "firestore.googleapis.com:443";
+    assert.throws(() => personas.assertEmulator(), /REFUSING/);
+    process.env.FIRESTORE_EMULATOR_HOST = "10.0.0.5:8080";
+    assert.throws(() => personas.assertEmulator(), /REFUSING/);
+    process.env.FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080";
+    assert.equal(personas.assertEmulator(), "127.0.0.1:8080");
+  } finally {
+    if (saved === undefined) delete process.env.FIRESTORE_EMULATOR_HOST;
+    else process.env.FIRESTORE_EMULATOR_HOST = saved;
+  }
+});
+
+test("every exported function in the persona module starts by asserting the emulator", () => {
+  const raw = readFileSync(PERSONA_MODULE, "utf8");
+  const source = stripSource(raw);
+  const scope = moduleScope(source, stripSource(raw, { keepStrings: true }));
+  const exported = [...source.matchAll(/export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)].map((m) => m[1]);
+  assert.ok(exported.length >= 3, "the persona module exports fewer functions than expected");
+  for (const name of exported) {
+    if (name === "assertEmulator") continue;
+    const body = scope.locals.get(name)?.text ?? "";
+    const first = body.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+    assert.equal(
+      first,
+      "assertEmulator();",
+      `${name}() in scripts/e2e/lib/personas.mjs must call assertEmulator() before anything else.`,
+    );
+  }
+  // The refusal is a test on the value, not on presence alone.
+  assert.match(source, /LOOPBACK_EMULATOR\s*=\s*\/\^\(127\\\.0\\\.0\\\.1\|localhost\)/, "the loopback pattern has changed shape");
 });

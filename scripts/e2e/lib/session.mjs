@@ -75,20 +75,7 @@ export async function withHarnessSession(id, options = {}) {
   const { uid, email } = await createHarnessUser(id, options);
   let cookie = null;
   try {
-    const customToken = await adminAuth().createCustomToken(uid);
-    const idToken = await exchangeCustomToken(customToken, env.webApiKey);
-    const res = await fetchOrExplain(`${env.origin}/api/auth/session`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ idToken }),
-    });
-    if (!res.ok) {
-      throw new Error(`POST /api/auth/session failed (${res.status})`);
-    }
-    cookie = readSessionCookie(res);
-    if (!cookie) {
-      throw new Error("POST /api/auth/session returned no __session cookie.");
-    }
+    cookie = await mintSessionCookie(uid, env.origin);
   } catch (err) {
     await deleteHarnessUser(uid).catch(() => {});
     throw err;
@@ -99,6 +86,29 @@ export async function withHarnessSession(id, options = {}) {
     cookie,
     dispose: () => deleteHarnessUser(uid),
   };
+}
+
+/**
+ * The whole chain for an account that exists: custom token, Identity Toolkit
+ * exchange, POST /api/auth/session on `origin`, cookie out. `origin` is the
+ * server the cookie is minted THROUGH; a session cookie is a Firebase Auth
+ * artefact for the project and is valid on any server verifying against it,
+ * which is what lets the persona battery mint on its own loopback origin.
+ * Callers guard the namespace themselves: this takes a uid and asks nothing.
+ */
+export async function mintSessionCookie(uid, origin) {
+  const env = loadEnv();
+  const customToken = await adminAuth().createCustomToken(uid);
+  const idToken = await exchangeCustomToken(customToken, env.webApiKey);
+  const res = await fetchOrExplain(`${origin}/api/auth/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ idToken }),
+  });
+  if (!res.ok) throw new Error(`POST /api/auth/session failed (${res.status})`);
+  const cookie = readSessionCookie(res);
+  if (!cookie) throw new Error("POST /api/auth/session returned no __session cookie.");
+  return cookie;
 }
 
 /**

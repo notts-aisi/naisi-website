@@ -560,18 +560,38 @@ test("the harness stamps a policy version only where it seeds its own accounts",
   // /re-consent, and the fix is the press, never an Admin SDK stamp and never a
   // console edit. A `policyVersion:` key written anywhere else in the harness
   // is the shortcut this refuses.
-  const allowed = join(REPO_ROOT, "scripts", "e2e", "lib", "firestore.mjs");
+  //
+  // The persona seed (scripts/e2e/lib/personas.mjs) is the second allowed
+  // place, on the same terms: it stamps a document it created a moment
+  // earlier for a harness-created account, and only ever in a Firestore
+  // emulator (tests/e2e-no-privilege-grants.test.mjs holds it to that). It
+  // may not carry a version of its own: the constant is imported from
+  // firestore.mjs, so there is still one line to update when a policy ships.
+  const allowed = new Set([
+    join(REPO_ROOT, "scripts", "e2e", "lib", "firestore.mjs"),
+    join(REPO_ROOT, "scripts", "e2e", "lib", "personas.mjs"),
+  ]);
   const files = [...HARNESS_FILES, ...walkMjs(join(REPO_ROOT, "scripts", "e2e"))];
   for (const file of new Set(files)) {
-    if (file === allowed) continue;
+    if (allowed.has(file)) continue;
     assert.ok(
       !/\bpolicyVersion\s*:/.test(codeOf(file)),
-      `${rel(file)} writes a policyVersion key. Only scripts/e2e/lib/firestore.mjs may, ` +
-        "and only when seeding a harness-created account; an account that reaches " +
-        "/re-consent is made current by pressing Accept there (acceptReConsentIfAsked in " +
-        "scripts/e2e/lib/browser.mjs), the same as a person.",
+      `${rel(file)} writes a policyVersion key. Only scripts/e2e/lib/firestore.mjs (the pending ` +
+        "seed) and scripts/e2e/lib/personas.mjs (the emulator-only persona seed) may, and only " +
+        "when seeding a harness-created account; an account that reaches /re-consent is made " +
+        "current by pressing Accept there (acceptReConsentIfAsked in scripts/e2e/lib/browser.mjs), " +
+        "the same as a person.",
     );
   }
+  const personas = codeOf(join(REPO_ROOT, "scripts", "e2e", "lib", "personas.mjs"));
+  assert.ok(
+    /import \{[^}]*\bACCEPTED_POLICY_VERSION\b[^}]*\} from "\.\/firestore\.mjs"/.test(personas),
+    "scripts/e2e/lib/personas.mjs must take ACCEPTED_POLICY_VERSION from firestore.mjs.",
+  );
+  assert.ok(
+    !/terms\.\d/.test(personas),
+    "scripts/e2e/lib/personas.mjs carries a policy version literal of its own; import the constant.",
+  );
   const browser = codeOf(join(REPO_ROOT, "scripts", "e2e", "lib", "browser.mjs"));
   const signIn = browser.slice(browser.indexOf("export async function signInWithPassword("));
   const body = signIn.slice(0, signIn.indexOf("\n}\n"));

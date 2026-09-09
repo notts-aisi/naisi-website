@@ -315,6 +315,111 @@ The same shape, older:
   half, `scripts/e2e/tests/public-write-gating.test.mjs`, asks a deployed
   backend the question a source scan cannot: whether the secret behind the gate
   is actually provisioned there.
+- `tests/gate-before-data.test.mjs`: a route proves who is calling before it
+  reads or writes anything. `POST /api/verify-email/send` once validated the
+  address before it looked for a session (#209), and the audit of 8 September
+  2026 found the same shape the other way round on three routes: a document
+  read and answered from before the caller's right to know it existed was
+  checked. The guard reads every exported handler under `src/app/api` in call
+  order and requires the first recognised gate (`GATES`: the session helpers,
+  the applicant and staff gates, a signed-token verify, reCAPTCHA, a
+  constant-time secret compare, or the SDK's `verifyIdToken`) to come before
+  the first Firestore touch. A helper defined in the same file is read the
+  same way at the point it is called, so a gate inside `requireEnroller()` or
+  `keyAccepted()` counts where the wrapper is called and a read inside one is
+  a touch where it is called. Everything imported from the repository that
+  runs before the gate must be in `PURE`, and the claim is checked against the
+  function's own body; a package import is not classified because it cannot
+  reach this app's Firestore without the handle. When the gate is a session
+  gate, the handler's top-level refusal of a missing session must precede the
+  first touch as well. `PUBLIC` lists the five handlers with no gate before
+  their first touch (the calendar feed, the resend and subscribe routes, the
+  session clear, and the view-as exit, which is recorded rather than blessed),
+  each with the literal that stands in for the gate, and
+  `TOUCHES_BEFORE_GATE` the one handler that writes an aggregate counter ahead
+  of its captcha on purpose. Every list is checked both ways and the scanner's
+  reading is exercised on synthetic handlers. It shares its reading of a route
+  file with the public-write guard through `tests/lib/routeScan.mjs`.
+- `tests/response-projection.test.mjs`: no whole document reaches a response
+  without a projection that names its reader. A normaliser produces the shape
+  the server works with, every field typed, and the audit of 8 September 2026
+  found the admissions rounds list handing that shape to any `draftCourse`
+  holder: the scoreboard, the deciding uids and the criteria that the
+  applicant projection is written to withhold. The guard reads every
+  `NextResponse.json(...)` under `src/app/api` as a value or as an object
+  literal's values, and a value is raw when it is `.data()`, a normaliser
+  call, a `.map` whose callback produces one of those (the callback's RETURN is
+  what is read, so an inline hand-picked object is a projection and a spread
+  of the document is not), an identifier bound to any of those in the
+  enclosing function (the binding's whole expression, with the last `.map` in
+  the chain deciding), a spread of one, or a ternary with such a branch. A raw
+  value must pass through a name in `PROJECTIONS`, the registry of projection
+  functions with the persona each serves and what it withholds, or sit in
+  `ALLOWED` with the reason the whole document is the right answer for that
+  persona (one entry today: the course page editor echoing the page its author
+  just saved). Both directions on both lists, the projection's module is
+  checked against every route that imports it, and a reverse walk over
+  `src/lib` and `src/features` requires every export named like a projection
+  to be in `PROJECTIONS` or in `PROJECTIONS_ELSEWHERE` with where it is
+  applied instead. What it cannot see, and says so: a document that reaches
+  the response through a helper in another module, and a single field of one.
+  The `serialiseRound` entry records rather than resolves the draftCourse
+  admission, which is documented intent and the audit's open low finding.
+- `scripts/e2e/tests/security-headers.test.mjs`: the response headers
+  `next.config.ts` declares are what a running server sends. A declaration is
+  not a header until it is on the wire (a `source` that does not match, a
+  later rule overriding an earlier one, a platform stripping one), so the
+  battery asks a real build, on the home page, the sign-in page, a protected
+  redirect, an API refusal, the service worker and the offline page, and reads
+  what came back: `Strict-Transport-Security` for two years with subdomains,
+  `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`,
+  a `Permissions-Policy` with camera, microphone, geolocation, payment and USB
+  off, `X-Content-Type-Options: nosniff`, and a
+  `Content-Security-Policy-Report-Only` carrying the INTENDED policy with no
+  `'unsafe-inline'` in `script-src` and no enforced policy beside it. The CSP
+  is reported rather than enforced because Next's own inline scripts (the
+  hydration payload on every page and the pre-paint installed-app flag) need a
+  per-request nonce from `src/proxy.ts`, and nonces require dynamic rendering,
+  which the home page's revalidation and the static policy pages do not have
+  today; the trigger for enforcing it is that decision, taken with the render
+  cost in hand. The service worker's own no-store rule and the offline page's
+  no-cache rule are asserted to survive the global rule. Registered in
+  `AUTH_BATTERIES` with an empty `drives`, because it proves headers and not
+  handlers.
+- `tests/persona-route-gates.test.mjs` and
+  `scripts/e2e/tests/persona-route-gates.test.mjs`, with the answer key in
+  `tests/persona-route-gates.registry.mjs`: the standing red team. The audit
+  of 8 September 2026 found its thirteen routes by a person reading one
+  handler at a time and asking what each persona gets; the class is "the
+  gate's answer to persona X is not what the model says", and a source guard
+  can read the order of a handler's calls but never its answer. So the
+  question is asked by request, of every route under `src/app/api` and every
+  page under `src/app/(app)`, as every persona (`anonymous`, `pending`,
+  `rejected`, `member`, non-SU `committee`, `suCommittee`, `admin`, and a
+  plain member holding each `permissions` key), with ids that address nothing
+  and empty bodies so the answer is the gate's or the first validation's, and
+  each cell is held to the registry: a status per persona, a redirect target
+  per persona for a page, the allowed top-level fields for a 2xx, and a reason
+  per entry. The design decision, written up in `scripts/e2e/lib/personas.mjs`
+  and in "Safety properties" in `scripts/e2e/README.md`: the harness's rule
+  that it never grants a role above `pending` on the dev project stays
+  literally true, because the elevated personas exist only in a Firestore
+  emulator that `scripts/e2e/run.mjs` starts for the run, behind a second copy
+  of the build on `:3101`; their Auth accounts on dev are bare harness
+  accounts with no document. That is also what makes it safe to drive every
+  mutating route as an admin: what it mutates is the emulator. The fence guard
+  admits exactly that one module, executes its refusal with the emulator
+  variable unset and pointed off-loopback, and reads it to check that every
+  exported function asserts the emulator first. The offline half runs under
+  `npm test` with no build: the tree and the registry are checked against
+  each other in both directions, every entry for a persona that is not one, a
+  status that is not one, a page outcome naming no redirect, a 2xx with no
+  `fields`, and an anonymous 2xx with no written `public` reason, so a new
+  route or page fails on arrival until somebody writes down what every persona
+  gets. The runtime half runs in local mode only (there is no emulator behind
+  a deployed backend), is required in CI, and can record what it observed
+  (`E2E_PERSONA_RECORD`) so a wholesale change is re-keyed as a diff read as
+  decisions.
 - `tests/lib/stripSource.mjs`, proved by the guards that use it: reading a
   TypeScript file as code is done once, by a tokeniser, rather than by four
   regexes per guard. The four-regex version desyncs on a trailing comment with
@@ -335,6 +440,26 @@ The same shape, older:
   failure path the code is expected to log mutes that method for its own
   duration with `t.mock.method(console, "error", () => {})` (or `"warn"`); the
   CI job keeps its `cut` as the backstop.
+
+### The standing review
+
+The guards above hold the classes the audit of 8 September 2026 found. The
+audit itself, the pass that found them, is saved as a workflow so it runs on
+every promotion rather than once: `.claude/workflows/api-red-team.js`. It
+takes a git ref (`args: { ref: "origin/main" }`), has one scout list the
+route files changed since that ref and the unchanged routes that import a
+changed helper, sends each batch of eight to a reviewer with the same
+checklist the first pass used (authentication before data, authorisation
+against the model with a live re-check of any stored authority, IDOR,
+response leakage through a projection that names its reader, write scope,
+secrets, oracles, ordering, and who a route contacts), and puts every medium
+or high finding in front of a skeptic whose job is to refute it by naming the
+line that stops the attack. The output separates confirmed, uncertain,
+refuted and unverified findings, with the per-batch cap on verification
+printed so a silent truncation cannot read as coverage. A finding one of the
+guards should have caught is still a finding, and the reviewer is told to say
+which guard and why it did not. Run it by hand from the branch about to be
+promoted; it is not part of `npm test`.
 
 ### What every registry and allowlist has in common
 

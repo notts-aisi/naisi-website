@@ -41,10 +41,20 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertReadable, stripSource } from "./lib/stripSource.mjs";
+import {
+  HTTP_METHOD,
+  UNREADABLE_EXPORT,
+  assertReadableSource,
+  balancedParens,
+  braceDepths,
+  handlerBody,
+  readsAsAbsence,
+  walkRoutes,
+} from "./lib/routeScan.mjs";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const API_DIR = join(REPO_ROOT, "src", "app", "api");
@@ -52,9 +62,12 @@ const API_DIR = join(REPO_ROOT, "src", "app", "api");
 // ---------------------------------------------------------------------------
 // The scan
 // ---------------------------------------------------------------------------
-
-/** Every method Next will route to a handler. */
-const HTTP_METHOD = "GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS";
+//
+// Reading a route file as handlers (which functions are exported, where each
+// body starts and ends, how a condition reads as "no session") is shared with
+// tests/gate-before-data.test.mjs through tests/lib/routeScan.mjs. What is
+// particular to this guard is below: which gates hand out an identity, and
+// whether the refusal keyed on one sits at the handler's TOP LEVEL.
 
 /** The session gates a handler can hold an identity from. */
 const SESSION_GATES = [
@@ -74,131 +87,10 @@ const ASSIGNMENT = new RegExp(
 
 const HANDLER = new RegExp(`export\\s+async\\s+function\\s+(${HTTP_METHOD})\\s*\\(`, "g");
 
-function* walkRoutes(dir) {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) yield* walkRoutes(full);
-    else if (entry === "route.ts") yield full;
-  }
-}
-
-/** The balanced `(...)` starting at `openIdx`, without its brackets. */
-function balancedParens(source, openIdx) {
-  let depth = 0;
-  for (let i = openIdx; i < source.length; i++) {
-    if (source[i] === "(") depth += 1;
-    else if (source[i] === ")") {
-      depth -= 1;
-      if (depth === 0) return source.slice(openIdx + 1, i);
-    }
-  }
-  return "";
-}
-
-/**
- * The body of the handler whose `export async function` starts at `from`.
- *
- * The parameter list is skipped FIRST. `ctx: { params: Promise<{ id: string }> }`
- * puts a brace before the body, and taking that brace reads a type literal as
- * the handler: every route in the tree then looked ungated, which is the shape
- * of failure a guard must not have.
- */
-function handlerBody(source, from) {
-  const paren = source.indexOf("(", from);
-  if (paren < 0) return null;
-  let depth = 0;
-  let afterParams = -1;
-  for (let i = paren; i < source.length; i++) {
-    if (source[i] === "(") depth += 1;
-    else if (source[i] === ")") {
-      depth -= 1;
-      if (depth === 0) {
-        afterParams = i;
-        break;
-      }
-    }
-  }
-  if (afterParams < 0) return null;
-  const open = source.indexOf("{", afterParams);
-  if (open < 0) return null;
-  depth = 0;
-  for (let i = open; i < source.length; i++) {
-    if (source[i] === "{") depth += 1;
-    else if (source[i] === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(open + 1, i);
-    }
-  }
-  return null;
-}
-
-/** Brace depth at each character of `body`, relative to the handler's own body. */
-function braceDepths(body) {
-  const depths = new Array(body.length);
-  let depth = 0;
-  for (let i = 0; i < body.length; i++) {
-    const c = body[i];
-    if (c === "{") {
-      depths[i] = depth;
-      depth += 1;
-    } else if (c === "}") {
-      depth -= 1;
-      depths[i] = depth;
-    } else {
-      depths[i] = depth;
-    }
-  }
-  return depths;
-}
-
-/**
- * Does this condition read as "there is no session"?
- *
- * The shapes the tree actually uses: a negation, a null comparison, a refusal
- * object the gate returned (`gate.error`, `"error" in gate`), and the
- * `instanceof NextResponse` the applicant gate uses. Deliberately NOT "the
- * condition mentions the variable": `if (viewer.role === "admin")` mentions it
- * and is a branch, not a refusal, and treating a branch as a gate is the
- * direction that hides an open route.
- */
-function readsAsAbsence(condition, variable) {
-  const v = variable.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(
-    `(?:^|[^\\w.])!\\s*${v}\\b` +
-      `|\\b${v}\\s*={2,3}\\s*null\\b` +
-      `|\\b${v}\\s*\\.\\s*error\\b` +
-      `|""\\s+in\\s+${v}\\b` +
-      `|\\b${v}\\s+instanceof\\b`,
-  ).test(condition);
-}
-
 /**
  * Every exported handler under `src/app/api` an anonymous caller reaches,
  * keyed `path#METHOD`.
  */
-/**
- * A handler exported in a form the scan cannot read.
- *
- * Next accepts several: `export const POST = ...`, `export { handler as POST }`,
- * `export { POST }` after a local declaration, `export { POST } from "./x"` and
- * `export * from "./x"`. This scan only understands `export async function`,
- * which is what all 170 route files use today, and a route that used another
- * form would be invisible to it rather than reported by it. So the form itself
- * is checked, in every one of those spellings and for `HEAD` and `OPTIONS` as
- * well: a handler exported any other way fails here, and whoever wrote it
- * decides between changing the form and teaching the scanner.
- */
-const UNREADABLE_EXPORT = new RegExp(
-  [
-    // export const POST = ...
-    `export\\s+(?:const|let|var)\\s+(?:${HTTP_METHOD})\\b`,
-    // export { handler as POST } / export { POST } / export { POST } from "..."
-    `export\\s*\\{[^}]*\\b(?:${HTTP_METHOD})\\b[^}]*\\}`,
-    // export * from "./handlers"
-    `export\\s*\\*\\s*from`,
-  ].join("|"),
-);
-
 export function scanAnonymousHandlers() {
   const anonymous = new Set();
   const unreadable = [];
@@ -242,20 +134,6 @@ export function scanAnonymousHandlers() {
     }
   }
   return { anonymous, unreadable };
-}
-
-/**
- * A route that reads as almost nothing has not been read. Collected into
- * `unreadable` rather than thrown, so the failure names every file at once.
- */
-function assertReadableSource(raw, source, path) {
-  const codeLines = source.split("\n").filter((line) => line.trim().length > 0).length;
-  if (codeLines === 0 || source.length < Math.min(200, raw.length) * 0.02) {
-    throw new Error(
-      `${path} read as ${source.length} characters out of ${raw.length}. The source reader ` +
-        "has desynced; see tests/lib/stripSource.mjs.",
-    );
-  }
 }
 
 // ---------------------------------------------------------------------------

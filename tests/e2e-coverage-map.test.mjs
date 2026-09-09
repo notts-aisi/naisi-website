@@ -119,6 +119,16 @@ const AUTH_BATTERIES = {
     why: "The throwaway password is really replaced and the old session really revoked.",
     drives: ["/api/register/password-set", "/api/verify-email/reconcile"],
   },
+  "persona-route-gates.test.mjs": {
+    why:
+      "The standing red team: every route and every authed page requested as every persona " +
+      "against a real build with an emulator behind it, and each answer held to " +
+      "tests/persona-route-gates.registry.mjs.",
+    // Requests every route and page, but with ids that address nothing and
+    // empty bodies, so what it proves is each GATE's answer to each persona
+    // and never a handler's work. Nothing enters the exercised set.
+    drives: [],
+  },
   "protected-route-gate.test.mjs": {
     why:
       "The proxy gate: a protected path 307s to /login?next=, a minted cookie opens it, " +
@@ -176,6 +186,16 @@ const AUTH_BATTERIES = {
   "register-enumeration.test.mjs": {
     why: "Account-enumeration uniformity on /api/register. Local mode only.",
     drives: ["/api/register"],
+  },
+  "security-headers.test.mjs": {
+    why:
+      "The response headers next.config.ts declares are what a running server sends: HSTS, " +
+      "X-Frame-Options, Referrer-Policy, Permissions-Policy, nosniff, the report-only CSP " +
+      "with no enforced one, and the service worker's own no-store rule surviving the global rule.",
+    // Requests the home page, the sign-in page, a protected redirect, an API
+    // refusal and two static files, and reads only their headers. That proves
+    // the headers, not any handler, so nothing here enters the exercised set.
+    drives: [],
   },
   "token-negatives.test.mjs": {
     why: "Forged, edited, expired and cross-scope magic-link tokens are all refused.",
