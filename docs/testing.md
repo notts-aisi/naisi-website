@@ -315,6 +315,31 @@ The same shape, older:
   half, `scripts/e2e/tests/public-write-gating.test.mjs`, asks a deployed
   backend the question a source scan cannot: whether the secret behind the gate
   is actually provisioned there.
+- `tests/gate-before-data.test.mjs`: a route proves who is calling before it
+  reads or writes anything. `POST /api/verify-email/send` once validated the
+  address before it looked for a session (#209), and the audit of 8 September
+  2026 found the same shape the other way round on three routes: a document
+  read and answered from before the caller's right to know it existed was
+  checked. The guard reads every exported handler under `src/app/api` in call
+  order and requires the first recognised gate (`GATES`: the session helpers,
+  the applicant and staff gates, a signed-token verify, reCAPTCHA, a
+  constant-time secret compare, or the SDK's `verifyIdToken`) to come before
+  the first Firestore touch. A helper defined in the same file is read the
+  same way at the point it is called, so a gate inside `requireEnroller()` or
+  `keyAccepted()` counts where the wrapper is called and a read inside one is
+  a touch where it is called. Everything imported from the repository that
+  runs before the gate must be in `PURE`, and the claim is checked against the
+  function's own body; a package import is not classified because it cannot
+  reach this app's Firestore without the handle. When the gate is a session
+  gate, the handler's top-level refusal of a missing session must precede the
+  first touch as well. `PUBLIC` lists the five handlers with no gate before
+  their first touch (the calendar feed, the resend and subscribe routes, the
+  session clear, and the view-as exit, which is recorded rather than blessed),
+  each with the literal that stands in for the gate, and
+  `TOUCHES_BEFORE_GATE` the one handler that writes an aggregate counter ahead
+  of its captcha on purpose. Every list is checked both ways and the scanner's
+  reading is exercised on synthetic handlers. It shares its reading of a route
+  file with the public-write guard through `tests/lib/routeScan.mjs`.
 - `tests/lib/stripSource.mjs`, proved by the guards that use it: reading a
   TypeScript file as code is done once, by a tokeniser, rather than by four
   regexes per guard. The four-regex version desyncs on a trailing comment with
