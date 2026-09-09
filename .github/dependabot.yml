@@ -1,0 +1,102 @@
+# Dependabot: version updates into `dev`, security updates into `main`.
+#
+# WHY TWO BLOCKS PER ECOSYSTEM. `main` is protected and every change reaches
+# it through a pull request, but it is also the branch that deploys to
+# production, and `dev` is where a change is tried on a deployed backend
+# first. So a routine version bump belongs on `dev` (`target-branch`), grouped
+# into one pull request a week rather than one per package: with no
+# configuration at all, Dependabot opened five separate pull requests into
+# `main` on 9 September 2026, each of which queued a full end-to-end run.
+#
+# A SECURITY update is different. GitHub raises those against the DEFAULT
+# branch, and a block that carries `target-branch` no longer applies to them
+# at all. The second block for each ecosystem has no `target-branch` and an
+# `open-pull-requests-limit` of 0, which the documentation names as the way to
+# make a block apply to security updates only. It exists so that security
+# updates into `main` are grouped as well, and so the choice is written down
+# rather than left to the defaults. A security update that lands on `main` is
+# merged back into `dev` the way any hotfix is (CLAUDE.md, "Git workflow").
+#
+# Three ecosystems: the app, the rules-test package (its own package.json on
+# purpose, so test-only dependencies never enter the production `npm ci`), and
+# the actions the workflows pin.
+version: 2
+updates:
+  # --- the app: version updates, into dev, grouped ---------------------------
+  - package-ecosystem: npm
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/London
+    open-pull-requests-limit: 5
+    groups:
+      # One pull request for everything that is not a major bump. A major bump
+      # of a production dependency (Next, React, Firebase) is left on its own
+      # so its release notes get read.
+      app-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+
+  # --- the app: security updates, into main, grouped -------------------------
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      app-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+
+  # --- the rules tests: version updates, into dev, grouped -------------------
+  - package-ecosystem: npm
+    directory: /scripts/rules-tests
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/London
+    open-pull-requests-limit: 2
+    groups:
+      rules-tests:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps-dev)"
+
+  # --- the rules tests: security updates, into main, grouped -----------------
+  - package-ecosystem: npm
+    directory: /scripts/rules-tests
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      rules-tests-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps-dev)"
+
+  # --- the workflows' actions: into dev, grouped -----------------------------
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/London
+    open-pull-requests-limit: 2
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(ci)"
