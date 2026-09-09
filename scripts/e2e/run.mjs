@@ -31,6 +31,7 @@
  */
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import webpush from "web-push";
 import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { REPO_ROOT, parseEnvFile, signingServiceAccount } from "./lib/env.mjs";
@@ -222,7 +223,30 @@ function assertDevEnvLocal() {
   }
 }
 
-function buildServerEnv() {
+/**
+ * A throwaway VAPID pair for the loopback server, so the push routes behave
+ * as they do on a configured backend rather than answering 503 before their
+ * gate. Nothing is ever delivered: the harness holds no push subscriptions.
+ *
+ * The public half is NEXT_PUBLIC_ and therefore baked into the build, so the
+ * pair lives in the build marker and is reused by --skip-build; a rebuild
+ * gets a fresh pair. Generated rather than committed: a private key has no
+ * place in the repository even when it can sign nothing that matters.
+ */
+function vapidPairFor(skipBuild) {
+  if (skipBuild) {
+    try {
+      const marker = JSON.parse(readFileSync(BUILD_MARKER, "utf8"));
+      if (marker.vapid?.publicKey && marker.vapid?.privateKey) return marker.vapid;
+    } catch {
+      /* no marker yet: generate, and ensureBuild will rebuild */
+    }
+  }
+  const pair = webpush.generateVAPIDKeys();
+  return { publicKey: pair.publicKey, privateKey: pair.privateKey };
+}
+
+function buildServerEnv(vapid) {
   return {
     ...process.env,
     // The relaxation. Environment-only, see the header comment. The secret so
@@ -254,6 +278,10 @@ function buildServerEnv() {
     // under user ADC — see src/lib/firebase/admin.ts. Needs the same
     // serviceAccountTokenCreator grant the harness itself already uses.
     FIREBASE_ADMIN_SERVICE_ACCOUNT_ID: signingServiceAccount(),
+    // Push configured with a throwaway pair (see vapidPairFor), so the push
+    // routes reach their gates instead of answering 503 for want of keys.
+    NEXT_PUBLIC_VAPID_PUBLIC_KEY: vapid.publicKey,
+    VAPID_PRIVATE_KEY: vapid.privateKey,
     // This machine keeps a real dev-bypass impl behind skip-worktree; the
     // batteries assert 401s, so the bypass must be provably inert.
     NEXT_PUBLIC_DEV_BYPASS_AUTH: "false",
@@ -269,7 +297,7 @@ function run(cmd, args, opts) {
   });
 }
 
-async function ensureBuild(serverEnv, skipBuild) {
+async function ensureBuild(serverEnv, skipBuild, vapid) {
   // Everything NEXT_PUBLIC_* the build inlines and a run depends on. A build
   // made before the site key joined this list has no widget in it, so the
   // marker comparison must fail on that field too rather than reuse it.
@@ -277,6 +305,7 @@ async function ensureBuild(serverEnv, skipBuild) {
     appUrl: ORIGIN,
     project: DEV_PROJECT,
     recaptchaSiteKey: LOOPBACK_RECAPTCHA_SITE_KEY,
+    vapidPublicKey: vapid.publicKey,
   };
   if (skipBuild) {
     try {
@@ -284,7 +313,8 @@ async function ensureBuild(serverEnv, skipBuild) {
       if (
         marker.appUrl === wanted.appUrl &&
         marker.project === wanted.project &&
-        marker.recaptchaSiteKey === wanted.recaptchaSiteKey
+        marker.recaptchaSiteKey === wanted.recaptchaSiteKey &&
+        marker.vapidPublicKey === wanted.vapidPublicKey
       ) {
         log("--skip-build: reusing the existing local e2e build.");
         return;
@@ -316,7 +346,10 @@ async function ensureBuild(serverEnv, skipBuild) {
     env: serverEnv,
     stdio: "inherit",
   });
-  writeFileSync(BUILD_MARKER, JSON.stringify({ ...wanted, builtAt: new Date().toISOString() }, null, 2));
+  writeFileSync(
+    BUILD_MARKER,
+    JSON.stringify({ ...wanted, vapid, builtAt: new Date().toISOString() }, null, 2),
+  );
 }
 
 /**
@@ -663,9 +696,10 @@ async function main() {
   try {
     assertDevEnvLocal();
     mkdirSync(join(REPO_ROOT, ".next"), { recursive: true });
-    const serverEnv = buildServerEnv();
+    const vapid = vapidPairFor(skipBuild);
+    const serverEnv = buildServerEnv(vapid);
     await ensureMailpit();
-    await ensureBuild(serverEnv, skipBuild);
+    await ensureBuild(serverEnv, skipBuild, vapid);
     await ensureMailpit(); // re-check: the build can take minutes
     await startServer(serverEnv);
     const personas = await ensureEmulator();

@@ -679,6 +679,14 @@ the battery may drive every route as every persona, mutating ones included,
 and every request carries its own forwarded address so the in-memory throttles
 do not answer the later personas with 429s.
 
+**Push is configured with a throwaway pair.** The push routes answer 503
+before their gate on a server with no VAPID keys, which made the same cell
+read differently on a laptop with keys in `.env.local` and in CI without. So
+`run.mjs` generates a VAPID pair for the loopback server the way it forges
+the SMTP and captcha settings, keeps it in the build marker (the public half
+is baked into the build), and never delivers anything: the harness holds no
+push subscriptions.
+
 **It runs in local mode only** (there is no emulator behind a deployed
 backend) and skips with a printed reason when Java or `firebase-tools` is
 missing, unless `E2E_PERSONA_BATTERY=required`, which the CI local job sets so
