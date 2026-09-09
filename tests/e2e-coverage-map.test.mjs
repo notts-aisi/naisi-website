@@ -177,6 +177,16 @@ const AUTH_BATTERIES = {
     why: "Account-enumeration uniformity on /api/register. Local mode only.",
     drives: ["/api/register"],
   },
+  "security-headers.test.mjs": {
+    why:
+      "The response headers next.config.ts declares are what a running server sends: HSTS, " +
+      "X-Frame-Options, Referrer-Policy, Permissions-Policy, nosniff, the report-only CSP " +
+      "with no enforced one, and the service worker's own no-store rule surviving the global rule.",
+    // Requests the home page, the sign-in page, a protected redirect, an API
+    // refusal and two static files, and reads only their headers. That proves
+    // the headers, not any handler, so nothing here enters the exercised set.
+    drives: [],
+  },
   "token-negatives.test.mjs": {
     why: "Forged, edited, expired and cross-scope magic-link tokens are all refused.",
     drives: ["/api/verify-email/confirm"],
