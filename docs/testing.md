@@ -247,6 +247,84 @@ The same shape, older:
   helper changes what `scripts/rules-tests/tests/client-queries.registry.mjs`
   answers for the `pending` persona, so fifteen registry outcomes moved with
   this change and each one had to be written down as a decision.
+- `tests/send-recipient-scope.test.mjs`: who the server contacts is the
+  server's decision, never a list the caller wrote. Three of the five task send
+  routes built their recipient list out of a uid array the caller had written
+  on a document the caller owned: `comment.mentions`, which the rules cap at
+  twenty entries and constrain nothing else about, and the reviewer arrays on
+  `task.subtasks`, which sit in the narrow band every completer may write and
+  which a personal task's creator rewrites freely, uncapped. A `member` with a
+  to-do they had just created for themselves could have the server deliver a
+  NAISI-branded email and a web push with their own subject and body to any uid
+  they named. The audit found the first; the other two were found writing this
+  guard. The rule now lives once, in `src/lib/tasks/recipientScope.ts`: a task
+  notification reaches `completerUids ∪ reviewerUids` and nobody else, which is
+  the pool every picker in the product already offered. The guard executes the
+  chokepoint and the three routes as a member and as a pending account, and
+  walks every file under `src/app/api` and `src/lib` that can send for every
+  recipient it names, in five shapes rather than one: a member read, a
+  destructured one, one off a call result, a recipient the REQUEST names
+  singularly (`body.uid`), and a list the file assembles for itself. The first
+  version read one shape and a skeptic listed what it therefore could not see,
+  two of which were live and unregistered. `RECIPIENT_SOURCES` says where each
+  one comes from: a `gate` on the caller, a server-written `roster`, a
+  `caller`-written value with the literal that scopes it, a `derived` value
+  naming its source, a `record` of who acted, or a list `assembled` here, which
+  must have a registered source in its own file or a written reason why the
+  scan cannot see one. Both directions, per-file per-name counts, and the
+  claims that a value reaches no recipient are checked against the lines that
+  mention it rather than believed. The doors it scans for are shared with the
+  classification guard (`tests/lib/sendDoors.mjs`), because this file's own
+  copy had three missing and a fourth spelled wrong, so a route that delivers
+  web push was never opened at all.
+- `tests/deadlines-enforced.test.mjs`: a deadline somebody is told about is
+  enforced by the write it bounds. An admission stage's own `closesAt` was
+  authored, stored and printed in the announcement email, and no write path
+  read it: `effectiveStageClose` had two call sites and both of them only told
+  the applicant, so somebody told "Part 2 is due Friday" could file it the
+  following Wednesday, and the ordinary form rendered a live submit button
+  while they did. The guard asks the tree two questions. Every deadline-shaped
+  field in the `src/lib/firestore` normalisers is registered with who it binds,
+  where they are told, and either where it is refused past or, in writing, why
+  nothing refuses (a task due date is a nudge between colleagues; a scheduler
+  lease binds no person). And every function that COMPUTES a deadline has each
+  of its call sites classified as telling, enforcing or deriving, both
+  directions against the tree, with the sentence that closes the class: a
+  predicate with a `tells` site and no `enforces` site fails, which is exactly
+  the state `effectiveStageClose` was in. Then it executes the boundary, the
+  draft save either side of it, and the later-stage submit one millisecond
+  either side of the deadline.
+- `tests/public-write-gating.test.mjs`: an endpoint a stranger can drive to a
+  side effect is gated like one. The public RSVP wrote an attendee row and
+  posted a NAISI-branded email, from the society's own DKIM-aligned sender, to
+  an address the caller typed, with no session requirement, no reCAPTCHA and no
+  throttle: a harvested list and a loop was a spam run signed by the society,
+  and the bounces landed on its own suppression list. The guard decides, per
+  exported handler under `src/app/api`, whether an anonymous caller reaches its
+  body, and the word that matters is TOP LEVEL: the RSVP route did call
+  `getCurrentUser`, and refused a missing session only inside
+  `if (visibility === "members")`, so a check that asked whether the file
+  mentions a session at all would have called it gated. `PUBLIC_HANDLERS` then
+  answers for each one what it does and what gates it, both directions, and
+  applies the rule: a handler that SENDS to a caller-chosen address carries a
+  rate limit and either a captcha or a per-address cooldown; one that WRITES
+  carries a rate limit or a credential the caller presented. Every literal
+  named is checked against the file. Two entries are recorded rather than
+  blessed and say so: `POST /api/subscriptions` has no captcha, and
+  `POST /api/admin/impersonate/exit` has no identity check at all. The runtime
+  half, `scripts/e2e/tests/public-write-gating.test.mjs`, asks a deployed
+  backend the question a source scan cannot: whether the secret behind the gate
+  is actually provisioned there.
+- `tests/lib/stripSource.mjs`, proved by the guards that use it: reading a
+  TypeScript file as code is done once, by a tokeniser, rather than by four
+  regexes per guard. The four-regex version desyncs on a trailing comment with
+  an apostrophe in it: `// don't` survives the whole-line rule and the
+  single-quote pass then swallows everything to the next apostrophe. On
+  `src/app/api/unsubscribe/route.ts` that turned a 15,837 character file into
+  4,705 and made both of its handlers invisible, which a scanner reports as
+  nothing to see rather than as a failure. `assertReadable` is the standing
+  answer to the cases a tokeniser still cannot parse: a caller asks whether the
+  result is plausible for its input, and a collapse fails loudly.
 - `tests/lib/outputGuard.mjs`, loaded into every `npm test` process by the
   `--import` flag on the test script and proved by
   `tests/output-lines.test.mjs`: no test process may print a line over 20 KB.

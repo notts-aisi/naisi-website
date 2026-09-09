@@ -246,11 +246,40 @@ export default function ApplyFlow({
     setFieldError({ stageId: null, byQuestion: {} });
     try {
       const result = await saveDraft(round.id, {
-        stageAnswers: answers,
+        stageAnswers: Object.fromEntries(
+          Object.entries(answers).filter(([stageId]) => openForAnswers.has(stageId)),
+        ),
         availability: columnsToMask(columns, round.availabilityGrid),
         programmePreference: preference,
         accessRequirements: access,
       });
+      // THE DEADLINE ARRIVING, and this is where the applicant finds out.
+      // `openForAnswers` was a snapshot of the moment the page rendered, and a
+      // stage deadline passes while somebody is typing. The response carries
+      // the stages as they are NOW, so the autosave is what flips a part to
+      // read-only. Two things have to happen together for that to be honest:
+      // the stage list is replaced, and the on-screen answers for a part that
+      // has just closed are put back to what was actually stored, because
+      // `readStageAnswers` dropped whatever came after the deadline and
+      // leaving the typing on screen would show it as saved when it is not.
+      // Every OTHER stage keeps what the applicant has typed.
+      const closedNow = result.stages.filter(
+        (stage) => stage.released && !stage.openForAnswers && openForAnswers.has(stage.id),
+      );
+      setStages(result.stages);
+      if (closedNow.length > 0) {
+        const stored = result.application?.stageAnswers ?? {};
+        setAnswers((prev) => {
+          const next = { ...prev };
+          for (const stage of closedNow) next[stage.id] = stored[stage.id] ?? {};
+          return next;
+        });
+        setError(
+          closedNow.length === 1
+            ? `"${closedNow[0].label}" closed while you were writing, so what we have is what was saved before the deadline. Everything else has been saved.`
+            : "Some parts closed while you were writing, so what we have for those is what was saved before their deadlines. Everything else has been saved.",
+        );
+      }
       setApplication(result.application);
       setSavedAt(result.savedAt);
       setDirty(false);
@@ -450,6 +479,22 @@ export default function ApplyFlow({
 
   const editable = isDraft && windowOpen;
   /**
+   * The stages that may still take an answer. `openForAnswers` is computed on
+   * the server from `effectiveStageClose`, the same value the draft save and
+   * the stage submit refuse past, so a part whose own deadline has gone
+   * renders read-only rather than offering a form against a route that would
+   * refuse it. It is also what `onSave` sends: a draft row keeps the answers
+   * a closed stage already holds, and re-sending them on every autosave would
+   * meet the server's refusal forever.
+   */
+  const openForAnswers = new Set(
+    released.filter((stage) => stage.openForAnswers).map((stage) => stage.id),
+  );
+  // A part whose deadline has gone is no longer sent and no longer editable,
+  // but the applicant still reads its questions and the answers that were
+  // stored before it closed. `stages` is refreshed by every save, so this
+  // follows the clock rather than the page load.
+  /**
    * A later stage is answerable once the first submission is in, and ONLY
    * while the window is open. `isStageReleased` deliberately keeps saying yes
    * after the deadline so reviewers can read the questions and an applicant
@@ -495,11 +540,19 @@ export default function ApplyFlow({
         const frozen = Boolean(application.stageSubmittedAt?.[stage.id]);
         const questions = stage.questions ?? [];
         const stageAnswers = answers[stage.id] ?? {};
-        const stageEditable = editable || (laterStagesOpen && !frozen);
+        const stageEditable =
+          stage.openForAnswers && (editable || (laterStagesOpen && !frozen));
         return (
           <section key={stage.id} className={styles.stage}>
             <h2 className={styles.stageTitle}>{stage.label}</h2>
             {stage.intro ? <MemberText text={stage.intro} className={styles.intro} /> : null}
+            {stage.answersDueAt ? (
+              <p className={styles.note}>
+                {stage.openForAnswers
+                  ? `Answers to this part are due by ${formatRoundDeadline(new Date(stage.answersDueAt))}.`
+                  : `This part closed on ${formatRoundDeadline(new Date(stage.answersDueAt))}. You can still read what you were asked.`}
+              </p>
+            ) : null}
 
             {stageEditable ? (
               <FormRenderer
@@ -532,7 +585,7 @@ export default function ApplyFlow({
               </dl>
             )}
 
-            {laterStagesOpen && !frozen ? (
+            {laterStagesOpen && !frozen && stage.openForAnswers ? (
               <div className={styles.stageActions}>
                 <Button
                   type="button"

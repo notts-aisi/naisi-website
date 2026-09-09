@@ -8,6 +8,7 @@ import type { ResolvedUser } from "@/lib/email/taskMembership";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isTaskEmailEnabled } from "@/lib/firestore/taskEmailConfig";
 import { isNamedWithStanding } from "@/lib/firebase/eligibility";
+import { onTaskRoster } from "@/lib/tasks/recipientScope";
 import { getCurrentUser } from "@/lib/firebase/session";
 import { mirrorTaskEmailToPush } from "@/lib/push/taskNotifications";
 
@@ -56,9 +57,17 @@ function findSubtask(
     if (!raw || typeof raw !== "object") continue;
     const s = raw as Record<string, unknown>;
     if (s.id === subtaskId) {
-      const reviewerUids = Array.isArray(s.reviewerUids)
-        ? (s.reviewerUids as unknown[]).filter((u): u is string => typeof u === "string")
-        : [];
+      // THE RECIPIENT SCOPE, and it is the reason this reviewer list is not
+      // taken as written. `subtasks` is in the narrow band every completer may
+      // write (firestore.rules), and a personal task's creator rewrites it
+      // freely, so `s.reviewerUids` is the caller's own array on the caller's
+      // own document. Without this filter the loop below mailed and pushed
+      // attacker-chosen text to every uid named in it, uncapped. The pickers
+      // only ever offer the task's roster (SubtaskDetailModal.tsx), and
+      // taskMutations strips a uid out of every subtask array when it leaves
+      // the task, so nothing legitimate is refused. See
+      // lib/tasks/recipientScope.
+      const reviewerUids = onTaskRoster(s.reviewerUids, task);
       return {
         id: subtaskId,
         title: typeof s.title === "string" ? s.title : "",

@@ -6,7 +6,12 @@ import {
   type AvailabilityGrid,
   type AvailabilityMask,
 } from "./availability";
-import { isStageReleased, stageReleaseInstant } from "./stageRelease";
+import {
+  effectiveStageClose,
+  isStageOpenForAnswers,
+  isStageReleased,
+  stageReleaseInstant,
+} from "./stageRelease";
 import { roundWindowState } from "./window";
 import { serialiseStage } from "./roundRoutes";
 import type {
@@ -154,7 +159,17 @@ export function serialiseStageForApplicant(
       releasesAt: iso(stageReleaseInstant(stage)),
     };
   }
-  return { released: true, ...serialiseStage(stage, true) };
+  // Told and enforced from the same value. `answersDueAt` is what the applicant
+  // reads on the stage and `openForAnswers` is what the form is rendered
+  // against, both `effectiveStageClose`, which is also what the draft save and
+  // the stage submit refuse past. Before 9 September 2026 the deadline reached
+  // the applicant only through an email and no write path read it at all.
+  return {
+    released: true,
+    answersDueAt: iso(effectiveStageClose(stage, round)),
+    openForAnswers: isStageOpenForAnswers(stage, round, now),
+    ...serialiseStage(stage, true),
+  };
 }
 
 /** The released stages, in asked order. What every validation path iterates. */
@@ -287,6 +302,27 @@ export function readStageAnswers(
     if (frozen[stageId]) {
       return { error: `"${stage.label}" is already submitted, so it cannot be changed.`, stageId };
     }
+    // THE STAGE'S OWN DEADLINE, and it DROPS rather than refuses. The two
+    // refusals above can be refused because an applicant can act on them: a
+    // stage they have not been given yet, and one they have already handed in,
+    // are both states the page will not offer them a box for. A deadline is
+    // different, because it passes WHILE THE PAGE IS OPEN. The apply island
+    // seeds its answers from the stored row and sends the whole map on every
+    // autosave, so a refusal here would take the whole save down (availability,
+    // programme preference, every other stage) every two minutes until the tab
+    // was reloaded, on the one evening of the round when nobody can afford
+    // that. It was written as a refusal first, and that is what it did.
+    //
+    // Dropping keeps the property whole: the key is never written, so answers
+    // to a closed stage cannot change, which is what makes the first
+    // submission's freeze fair (it freezes what was there at the deadline).
+    // And it is not silent, because the response carries freshly serialised
+    // stages: `openForAnswers` flips, the island puts the stage into its
+    // read-only state showing what was actually stored, and says when it
+    // closed. The applicant sees the deadline arrive rather than a save that
+    // quietly stops working.
+    const close = effectiveStageClose(stage, round);
+    if (close && now.getTime() > close.getTime()) continue;
     const validated = validateAnswers(stage.questions, answers, { enforceRequired });
     if ("error" in validated) {
       return { error: validated.error, questionId: validated.questionId, stageId };

@@ -1212,9 +1212,16 @@ describe("the route prologue", () => {
     assert.match(del, /status: 400/);
   });
 
-  test("the submit re-validates with required questions enforced", () => {
+  test("the submit re-validates with required questions enforced, on a part still open", () => {
     const submit = handler(source(SUBMIT_ROUTE), "POST");
-    assert.match(submit, /enforceRequired: true/);
+    // Not `enforceRequired: true` outright since 9 September 2026. A stage may
+    // close before the round does, and once it has, no write path anywhere can
+    // add an answer to it: holding a closed part to its required questions
+    // therefore does not ask the applicant for anything, it locks them out of
+    // the intake for a question nothing would accept. Open parts are still
+    // held to it. See tests/deadlines-enforced.test.mjs.
+    assert.match(submit, /const pastItsOwnDeadline = !isStageOpenForAnswers\(stage, round, now\)/);
+    assert.match(submit, /enforceRequired: !pastItsOwnDeadline/);
     assert.match(submit, /membershipAtApply/);
     assert.match(submit, /round\.academicYear/);
   });
@@ -1602,8 +1609,24 @@ describe("the apply flow island", () => {
     // reviewers can read the questions. Without the window check the flow
     // would render a live form against a route that refuses every POST.
     assert.match(flow, /const laterStagesOpen = status === "submitted" && windowOpen;/);
-    assert.match(flow, /stageEditable = editable \|\| \(laterStagesOpen && !frozen\)/);
-    assert.match(flow, /\{laterStagesOpen && !frozen \? \(/);
+    assert.match(flow, /stageEditable =\s*\n?\s*stage\.openForAnswers && \(editable \|\| \(laterStagesOpen && !frozen\)\)/);
+    assert.match(flow, /\{laterStagesOpen && !frozen && stage\.openForAnswers \? \(/);
+  });
+
+  test("a stage past its OWN deadline is read-only, and says when it closed", () => {
+    // The round's window is not the only bound. A stage may close before the
+    // round does, and until 9 September 2026 nothing on this page or in any
+    // write path read that date: the form stayed live and the route took the
+    // answers. `openForAnswers` comes off the server's own
+    // `effectiveStageClose`, so what is rendered and what is refused are the
+    // same value. See tests/deadlines-enforced.test.mjs.
+    assert.match(flow, /const openForAnswers = new Set\(/);
+    assert.match(flow, /released\.filter\(\(stage\) => stage\.openForAnswers\)/);
+    assert.match(flow, /This part closed on \$\{formatRoundDeadline/);
+    // The save must stop SENDING a closed stage too, or a draft row that
+    // already holds its answers meets the server's refusal on every autosave
+    // and the applicant can never save anything again.
+    assert.match(flow, /Object\.entries\(answers\)\.filter\(\(\[stageId\]\) => openForAnswers\.has\(stageId\)\)/);
   });
 
   test("a closed window with an unsent draft says so rather than claiming it was sent", () => {

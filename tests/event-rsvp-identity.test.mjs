@@ -116,6 +116,20 @@ const { loadTs } = createLoader({
     ],
     ["@/lib/firebase/admin", "export const getAdminDb = () => globalThis.__db ?? null;"],
     ["@/lib/firebase/session", "export const getCurrentUser = async () => globalThis.__user ?? null;"],
+    // The bot gate and the throttle, faked. What this file is about is the
+    // identity a submission is keyed on, and the throttle counts hits in
+    // module state that no test can reset, so a suite that reused one address
+    // (which this one does, deliberately) would end up measuring the limiter.
+    // Both gates are proved by tests/public-write-gating.test.mjs against the
+    // source and by scripts/e2e/tests/public-write-gating.test.mjs against a
+    // deployed backend.
+    ["@/lib/recaptcha/server", "export const verifyRecaptcha = async () => true;"],
+    ["@/lib/recaptcha/bypass", "export const recaptchaBypassGranted = () => false;"],
+    [
+      "@/lib/rateLimit",
+      "export const clientIp = () => '203.0.113.1';\n" +
+        "export const rateLimit = () => ({ ok: true, retryAfterSeconds: 0 });",
+    ],
     // The wrapper, recorded. What it renders is tests/event-location-disclosure.test.mjs's subject.
     [
       "@/lib/events/sendRsvpEmail",
@@ -127,7 +141,8 @@ const { loadTs } = createLoader({
 const route = await loadTs("app/api/events/[id]/rsvp/route.ts");
 
 const ctx = (id = "event-1") => ({ params: Promise.resolve({ id }) });
-const post = (body, id) => route.POST({ json: async () => body }, ctx(id));
+const post = (body, id) =>
+  route.POST({ json: async () => body, headers: new Headers() }, ctx(id));
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
 
 const GUEST = { name: "Guest", email: "Target@Example.com", answers: {} };

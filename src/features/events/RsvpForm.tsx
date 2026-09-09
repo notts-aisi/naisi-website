@@ -4,6 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
+import {
+  RECAPTCHA_ENABLED,
+  RecaptchaInvisible,
+  type RecaptchaHandle,
+} from "@/components/ui/RecaptchaInvisible";
 import { Field, Input } from "@/components/ui/Input";
 import { useAuth } from "@/auth/AuthProvider";
 import { useHydrated } from "@/hooks/useHydrated";
@@ -66,6 +71,7 @@ export default function RsvpForm({
   // boxes lost every one of those characters: React's first render wrote its
   // own empty state over them.
   const formRef = useRef<HTMLFormElement>(null);
+  const recaptcha = useRef<RecaptchaHandle | null>(null);
   const readField = useCallback((id: string) => {
     const box = formRef.current?.querySelector<HTMLInputElement>(`#${id}`);
     return box?.value ?? "";
@@ -123,10 +129,35 @@ export default function RsvpForm({
     }
     setState({ kind: "submitting" });
     try {
+      // Minted at the press, never at page load: a Google token goes stale in
+      // about two minutes and somebody reading an event page takes longer than
+      // that. A null token is honest rather than an error, and the server
+      // decides what it means: with no site key configured the widget yields
+      // nothing, and `verifyRecaptcha` is open in development and fails closed
+      // in production, which is the documented behaviour the RSVP route now
+      // shares with /api/register.
+      const recaptchaToken = RECAPTCHA_ENABLED
+        ? ((await recaptcha.current?.execute()) ?? null)
+        : null;
+      // REFUSED HERE RATHER THAN BY THE SERVER. The widget renders only after
+      // Google's script lands, which is an effect and a poll, while the submit
+      // button goes live at hydration; a press in that window resolves no
+      // token. Posting it anyway spends a request and comes back "Couldn't
+      // verify you're human", which is both untrue and unhelpful, since the
+      // answer is to wait a moment rather than to reload. The sign-in form
+      // takes the same position for the same reason.
+      if (RECAPTCHA_ENABLED && !recaptchaToken) {
+        setState({
+          kind: "error",
+          message:
+            "The spam check has not finished loading yet. Give it a moment and press RSVP again.",
+        });
+        return;
+      }
       const res = await fetch(`/api/events/${eventId}/rsvp`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, email, answers }),
+        body: JSON.stringify({ name, email, answers, recaptchaToken }),
       });
       const body = (await res.json().catch(() => null)) as
         | { ok?: true; status?: "pending"; error?: string }
@@ -219,6 +250,13 @@ export default function RsvpForm({
           ({signedInIdentity.email}). Sign out to RSVP with a different account.
         </p>
       )}
+
+      {/* The bot gate. Mounted here rather than inside the form because Google
+          renders a floating badge rather than anything in the layout, and
+          `onSubmit` drives it through the ref. Renders nothing at all when no
+          site key is configured, which is how local development works before
+          the keys are provisioned. */}
+      {RECAPTCHA_ENABLED && <RecaptchaInvisible ref={recaptcha} />}
 
       {/* Addressed by the browser end-to-end suite, which fills this form as a
           signed-out guest and checks it fits a phone. */}

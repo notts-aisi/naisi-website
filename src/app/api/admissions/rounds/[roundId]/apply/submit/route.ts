@@ -7,6 +7,7 @@ import {
 } from "@/lib/email/admissionEmails";
 import { validateAnswers } from "@/lib/events/validateAnswers";
 import { formatRoundDeadline } from "@/lib/admissions/window";
+import { isStageOpenForAnswers } from "@/lib/admissions/stageRelease";
 import { formatRunStartShort } from "@/lib/courses/window";
 import { hasPaidMembership, normalizeUser } from "@/lib/firestore/users";
 import {
@@ -49,7 +50,9 @@ import {
  *
  * Everything that has to be true at once is inside the one transaction:
  *
- *  - every RELEASED stage passes with required questions enforced;
+ *  - every RELEASED stage passes validation, with required questions enforced
+ *    on the parts that are still open and not on one whose own deadline has
+ *    gone (see the loop for why);
  *  - each of those stages gets its `stageSubmittedAt` frozen;
  *  - `membershipAtApply` is snapshotted from the user document against the
  *    ROUND's academic year, so the decisions surface shows what was true when
@@ -153,8 +156,20 @@ export async function POST(req: Request, ctx: Ctx) {
 
       const update: Record<string, unknown> = {};
       for (const stage of open) {
+        // REQUIRED QUESTIONS ARE ENFORCED ON A PART THAT IS STILL OPEN, AND
+        // NOT ON ONE THAT HAS CLOSED. A stage may close before the round does,
+        // and once it has, nothing can add an answer to it: the draft save
+        // drops it, the stage submit refuses it, and the page renders it
+        // read-only. Holding a closed part to `enforceRequired` therefore does
+        // not ask the applicant for anything, it locks them out of the intake
+        // altogether, taking their availability and every other part with it,
+        // for a question no write path will accept. Their work up to that
+        // deadline still goes in, which is what the deadline was for; a part
+        // they left unfinished by it goes in unfinished, and the reviewer sees
+        // exactly that.
+        const pastItsOwnDeadline = !isStageOpenForAnswers(stage, round, now);
         const result = validateAnswers(stage.questions, application.stageAnswers[stage.id] ?? {}, {
-          enforceRequired: true,
+          enforceRequired: !pastItsOwnDeadline,
         });
         if ("error" in result) {
           throw new ApplyError(result.error, 400, {

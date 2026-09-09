@@ -56,7 +56,23 @@ export type ApplicantRound = {
  * `intro` (which is authored prose about the questions).
  */
 export type ApplicantStage =
-  | ({ released: true } & SerialisedStage)
+  | ({
+      released: true;
+      /**
+       * When answers to this stage are due: `effectiveStageClose`, so the
+       * earlier of the stage's own deadline and the round's. Null only when
+       * the round has no deadline at all, which is a readiness failure rather
+       * than a state to render.
+       */
+      answersDueAt: string | null;
+      /**
+       * Whether an answer may still be WRITTEN. False after `answersDueAt`,
+       * while the questions stay readable. The apply island renders a stage
+       * read-only and stops sending its answers when this is false, and the
+       * draft save and the stage submit refuse them either way.
+       */
+      openForAnswers: boolean;
+    } & SerialisedStage)
   | {
       released: false;
       id: string;
