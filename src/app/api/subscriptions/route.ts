@@ -14,6 +14,7 @@ import {
   type SubscriptionActor,
 } from "@/lib/firestore/subscriptions";
 import { getVerifiedEmails } from "@/lib/firestore/notifications";
+import { rateLimit, clientIp } from "@/lib/rateLimit";
 import SubscriptionConfirmEmail from "@/emails/SubscriptionConfirmEmail";
 import SubscriptionAddedEmail from "@/emails/SubscriptionAddedEmail";
 
@@ -59,6 +60,15 @@ const MAX_EMAIL_LEN = 200;
 const NAME_MAX_LEN = 80;
 const MAX_CHANNELS_PER_CALL = 10;
 
+// Volume throttle (see lib/rateLimit). This route is public and unauthenticated
+// and can send a NAISI-signed confirmation email to a caller-chosen address, so
+// it needs a per-caller cap on top of the per-(email, channel) cooldown below,
+// which only bounds repeats against the SAME address. Keyed on IP, not on the
+// target address, so a 429 leaks nothing about the address. Generous for shared
+// campus NAT.
+const RL_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+const RL_IP_MAX = 60;
+
 type Body = {
   email?: unknown;
   channel?: unknown;
@@ -77,6 +87,17 @@ type ApiResult =
   | { error: string };
 
 export async function POST(req: Request): Promise<NextResponse<ApiResult>> {
+  // Per-IP volume throttle before any work. Caller-volume-based, not
+  // target-state-based, so it preserves the anti-enumeration guarantee below.
+  const ip = clientIp(req);
+  const ipLimit = rateLimit(`subscriptions:ip:${ip}`, RL_IP_MAX, RL_WINDOW_MS);
+  if (!ipLimit.ok) {
+    return NextResponse.json(
+      { error: "Too many attempts. Please wait a few minutes and try again." },
+      { status: 429, headers: { "Retry-After": String(ipLimit.retryAfterSeconds) } },
+    );
+  }
+
   let parsed: Body;
   try {
     parsed = (await req.json()) as Body;
@@ -236,6 +257,18 @@ export async function POST(req: Request): Promise<NextResponse<ApiResult>> {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
   const replyTo = process.env.EMAIL_DEFAULT_REPLY_TO;
 
+  // The response `kind` is returned ONLY to an inbox-proven caller (a signed-in
+  // member subscribing one of their own verified addresses). For everybody else
+  // every non-validation outcome returns a bare `{ ok: true }`, so an anonymous
+  // POST cannot tell a fresh signup from an already-confirmed subscriber, a
+  // re-subscribable (once-confirmed, unsubscribed) row, a suppressed address or
+  // a cooldown'd one — the anti-enumeration guarantee the docblock promises. An
+  // inbox-proven caller owns the address, so the differentiated body tells them
+  // nothing they could not already read on their own account (no oracle). Guard:
+  // tests/subscriptions-consent.test.mjs.
+  const kindFor = (kind: "confirmation-sent" | "added") =>
+    inboxProven ? { ok: true as const, kind } : { ok: true as const };
+
   // Confirmation path: send ONE email listing every channel that needs
   // confirmation. Once they click, `confirmAllForEmail` flips every
   // pending row in one go.
@@ -272,13 +305,15 @@ export async function POST(req: Request): Promise<NextResponse<ApiResult>> {
         listUnsubscribe: { url: headerUnsubUrl, mailto: replyTo },
       });
     } catch (err) {
+      // Do NOT surface the failure. A 502 here fired only on the send path (a
+      // fresh / re-subscribable address), never on the suppressed, cooldown or
+      // already-subscribed short-circuits, so returning it made the status code
+      // an enumeration oracle for whether the address is new to NAISI. Log and
+      // fall through to the same uniform body every other outcome returns; the
+      // row is saved, and the recipient can re-submit if the mail never lands.
       console.error("[/api/subscriptions] confirm send failed", email, err);
-      return NextResponse.json(
-        { error: "Couldn't send confirmation. Try again." },
-        { status: 502 },
-      );
     }
-    return NextResponse.json({ ok: true, kind: "confirmation-sent" });
+    return NextResponse.json(kindFor("confirmation-sent"));
   }
 
   // No confirmation needed (email already proven). For each channel that
@@ -309,7 +344,7 @@ export async function POST(req: Request): Promise<NextResponse<ApiResult>> {
   }
 
   if (channelsNewlyAddedConfirmed.length > 0) {
-    return NextResponse.json({ ok: true, kind: "added" });
+    return NextResponse.json(kindFor("added"));
   }
   return NextResponse.json({ ok: true });
 }

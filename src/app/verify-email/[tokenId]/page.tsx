@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { getSessionUid } from "@/lib/firebase/session";
 import { confirmUniEmailVerification } from "@/lib/email/confirmUniEmailVerification";
 import { confirmLoginEmailVerification } from "@/lib/email/confirmLoginEmailVerification";
 import { verifyToken } from "@/lib/signedTokens";
@@ -65,7 +66,12 @@ export default async function VerifyEmailLandingPage({
           }
         : { status: "error", message: r.error };
     } else {
-      const r = await confirmUniEmailVerification(db, signed);
+      // The uni-email link verifies an attribute on an already-signed-in
+      // account, so the confirming request must be that account: pass the
+      // caller's own session uid to the helper, which refuses a token minted
+      // for a different account (the ownership binding — see its docblock).
+      const session = await getSessionUid();
+      const r = await confirmUniEmailVerification(db, signed, session?.uid ?? null);
       result = r.ok
         ? { status: "ok", email: r.email }
         : { status: "error", message: r.error };

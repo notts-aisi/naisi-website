@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
+import { assertNotImpersonating } from "@/lib/firebase/impersonation";
 import { clearSessionCookieOnly, getSessionUid } from "@/lib/firebase/session";
 import { deleteAccountCascade } from "@/lib/firestore/accountDeletion";
 
@@ -16,6 +17,14 @@ import { deleteAccountCascade } from "@/lib/firestore/accountDeletion";
  * trusted. Cascade matches the admin delete.
  */
 export async function POST() {
+  // Never inside a view-as session: this tears down the session account, and
+  // during view-as that is the target member's account. The unfinished-only
+  // scope below (a target always has a users doc, so it 409s) already blocks
+  // the reachable case, but the guard states the intent and matches the sibling
+  // account/reconsent route rather than relying on that scope check.
+  const blocked = await assertNotImpersonating();
+  if (blocked) return blocked;
+
   const session = await getSessionUid();
   if (!session) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });

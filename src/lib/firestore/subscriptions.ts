@@ -96,6 +96,17 @@ export type SubscriptionDoc = {
   /** When subscribed last became false. Never wiped. */
   unsubscribedAt?: Timestamp;
 
+  /**
+   * Set by `subscribe()` when an UNPROVEN caller (no inbox proof) asks to
+   * re-subscribe a row that was once confirmed and then unsubscribed. Delivery
+   * does NOT resume on that request: `subscribed` stays false and this flag
+   * marks the row for reactivation by the recipient's own confirmation click
+   * (`confirmAllForEmail` flips `subscribed` back on and clears this). It stops
+   * an anonymous POST from undoing an unsubscribe the recipient performed.
+   * Absent on every row that is not mid-reactivation.
+   */
+  pendingResubscribe?: boolean;
+
   source: string;
   createdAt: Timestamp;
   lastSentAt?: Timestamp;
@@ -482,11 +493,27 @@ export async function subscribe(
   let requiresConfirmation = false;
   let newlyAddedChannel = false;
 
-  // Subscribed-axis flip: turn it on (it was off, or it stays on).
+  // Subscribed-axis flip.
   if (!prevSubscribed) {
-    patch.subscribed = true;
-    patch.subscribedAt = now;
-    newlyAddedChannel = true;
+    if (inboxAlreadyProven || !prevConfirmed) {
+      // Either the caller proved the inbox (a signed-in member re-subscribing
+      // their own verified address — resume immediately), or the row was never
+      // confirmed (a lapsed/pending row — turning `subscribed` on only reaches
+      // the `pending` state; the confirmed-axis branch below still gates
+      // delivery on a click). Both are safe to flip.
+      patch.subscribed = true;
+      patch.subscribedAt = now;
+      newlyAddedChannel = true;
+    } else {
+      // Once-confirmed, then unsubscribed, and the caller has NOT proven the
+      // inbox. Flipping `subscribed` here would resume delivery with no click,
+      // so an anonymous POST could undo the recipient's own unsubscribe. Leave
+      // `subscribed` false, mark the row for reactivation, and require a fresh
+      // confirmation click — which is the only thing that proves the inbox
+      // still wants this. `confirmAllForEmail` turns it back on.
+      patch.pendingResubscribe = true;
+      requiresConfirmation = true;
+    }
   }
 
   // Confirmed-axis flip: turn it on iff inbox is now proven and it wasn't
@@ -529,10 +556,17 @@ export async function subscribe(
 }
 
 /**
- * Stamp every unconfirmed row for this email as confirmed. Idempotent: rows
- * that are already confirmed are left alone. Returns the full list of
- * channels currently confirmed for the email so callers can build a
- * personalised welcome email.
+ * The recipient's confirmation click, applied to every row for their address.
+ * Two effects, both gated on this one click being the recipient's own:
+ *  - confirm any unconfirmed row (`confirmed` sticky-true, stamps `confirmedAt`);
+ *  - reactivate any row `subscribe()` left marked `pendingResubscribe` (an
+ *    unproven caller asked to re-subscribe a once-confirmed, then-unsubscribed
+ *    row): flip `subscribed` back on and clear the marker. This is the ONLY
+ *    path that resumes delivery for such a row, so an anonymous POST can queue
+ *    a reactivation but only the inbox owner's click completes it.
+ * Idempotent: a row that is already confirmed and carries no marker is left
+ * alone. Returns the channels that are confirmed-and-subscribed afterwards, for
+ * the welcome email's body.
  */
 export async function confirmAllForEmail(
   db: Firestore,
@@ -542,8 +576,8 @@ export async function confirmAllForEmail(
   const e = normaliseEmail(email);
   if (!e) return { updated: 0, channels: [] };
 
-  // All rows for this email, so we can both flip the unconfirmed ones and
-  // gather every confirmed channel for the welcome email's body.
+  // All rows for this email, so we can flip the unconfirmed ones, reactivate
+  // the marked ones, and gather every active channel for the welcome email.
   const allSnap = await db
     .collection(COLLECTION)
     .where("email", "==", e)
@@ -553,34 +587,54 @@ export async function confirmAllForEmail(
   const batch = db.batch();
   const now = Timestamp.now();
   let updated = 0;
+  // Track the post-update `subscribed` state per row so the returned channel
+  // list reflects reactivations made in this same pass.
+  const activeAfter = new Set<string>();
   for (const doc of allSnap.docs) {
     const data = doc.data() as SubscriptionDoc;
+    const update: Record<string, unknown> = {};
     if (!data.confirmed) {
-      batch.update(doc.ref, { confirmed: true, confirmedAt: now });
-      addSubscriptionEventToBatch(db, batch, {
-        subscriptionId: doc.id,
-        email: data.email,
-        channel: data.channel,
-        type: "confirmed",
-        actor,
-      });
+      update.confirmed = true;
+      update.confirmedAt = now;
+    }
+    let subscribedAfter = data.subscribed;
+    if (data.pendingResubscribe) {
+      // The recipient clicked confirm, so the queued reactivation is now
+      // consented to: turn delivery back on and drop the marker.
+      update.subscribed = true;
+      update.subscribedAt = now;
+      update.pendingResubscribe = FieldValue.delete();
+      subscribedAfter = true;
+    }
+    if (Object.keys(update).length > 0) {
+      batch.update(doc.ref, update);
+      if (update.confirmed) {
+        addSubscriptionEventToBatch(db, batch, {
+          subscriptionId: doc.id,
+          email: data.email,
+          channel: data.channel,
+          type: "confirmed",
+          actor,
+        });
+      }
+      if (update.subscribed) {
+        addSubscriptionEventToBatch(db, batch, {
+          subscriptionId: doc.id,
+          email: data.email,
+          channel: data.channel,
+          type: "subscribed",
+          actor,
+        });
+      }
       updated += 1;
     }
+    if (subscribedAfter) activeAfter.add(data.channel);
   }
   if (updated > 0) await batch.commit();
 
-  // Build the channel list from the post-update state. We just confirmed
-  // every previously-unconfirmed row, so any row whose `subscribed` is true
-  // is now confirmed-and-active.
-  const channels = Array.from(
-    new Set(
-      allSnap.docs
-        .map((d) => d.data() as SubscriptionDoc)
-        .filter((d) => d.subscribed)
-        .map((d) => d.channel),
-    ),
-  );
-  return { updated, channels };
+  // Channels confirmed-and-subscribed after this pass (any row whose
+  // `subscribed` is true is now also confirmed).
+  return { updated, channels: Array.from(activeAfter) };
 }
 
 /**
