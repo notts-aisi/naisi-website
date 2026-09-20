@@ -416,6 +416,13 @@ const USERS = new Map([
       "reaches courses.ts for the shared link validator, so nothing is stubbed",
   ],
   [
+    "scan-counting.test.mjs",
+    "it executes the scan counter, its route and the beacon's decision, because what a scan writes is " +
+      "a privacy promise and only the shipping code can show which fields reach the database; " +
+      "`server-only`, `next/server`, the Admin SDK handle and the `FieldValue.increment` sentinel are " +
+      "stubbed so the write lands in a fake database the test can read back, and nothing else is",
+  ],
+  [
     "campaign-attribution.test.mjs",
     "it executes `attribution.ts`, the pure function that turns a visitor-controlled query string " +
       "into a subscription's `source`, because the promise is about what the shipping code lets " +

@@ -32,6 +32,11 @@
  */
 const CAMPAIGN_SLUG = /^[a-z0-9-]{1,16}$/;
 
+/** True for a string that has the shape of a slug. Says nothing about whether one exists. */
+export function isCampaignSlug(value: string): boolean {
+  return CAMPAIGN_SLUG.test(value);
+}
+
 /**
  * What somebody on /links said they are waiting for. A closed list: the value
  * ends up in an admin-facing table, so it is never free text.
