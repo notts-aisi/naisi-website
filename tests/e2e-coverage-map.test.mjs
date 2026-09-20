@@ -1040,6 +1040,12 @@ const NOT_COVERED = {
     coverWhen:
       "When VAPID secrets are provisioned on dev and a spec can accept the permission prompt.",
   },
+  "/api/q/[slug]/scan": {
+    reason:
+      "Printed QR codes: /api/q/[slug]/scan is a fire-and-forget counter the landing page posts to. It changes nothing a person can see, so there is no screen for a browser spec to assert on; tests/scan-counting.test.mjs and the persona battery hold its contract.",
+    coverWhen:
+      "When the scan dashboard ships: a spec can then open /links?q=<slug> and assert the count it shows went up by one.",
+  },
   "/api/register/resend": {
     reason:
       "The resend route re-sends the registration magic link and sits behind the same reCAPTCHA gate as /api/register.",

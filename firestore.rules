@@ -1288,6 +1288,17 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // === linkScanDays ===
+    // Bounded scan counters for printed QR codes: one doc per code per London
+    // day ({slug}__{YYYY-MM-DD}), holding a count and a 24-key hour map and
+    // nothing about who scanned. Admin SDK increments from the scan beacon
+    // route. Fully locked to clients, exactly as signupMetrics above; nothing
+    // in a browser reads it yet, and the rule opens no further than this until
+    // something does.
+    match /linkScanDays/{docId} {
+      allow read, write: if false;
+    }
+
     // === subscriptions ===
     // Junction collection: each row is one (recipient, channel) pair. All
     // mutations go through server routes (admin SDK) — clients never write.
