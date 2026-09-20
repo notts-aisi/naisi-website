@@ -1430,7 +1430,7 @@ const NOT_COVERED = {
     coverWhen:
       "When an event next runs with a capacity and a waitlist, because a wrong decision there is a real person losing their place.",
   },
-  "/(public)/events/[id]/calendar": {
+  "/events/[id]/calendar": {
     reason:
       "The add-to-calendar landing page is a server render of three facts and four links, with no form and no state; every link it builds is asserted in tests/events-ics.test.mjs, and the .ics route behind the first one is unchanged.",
     coverWhen:

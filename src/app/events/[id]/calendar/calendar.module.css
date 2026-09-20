@@ -10,7 +10,28 @@
 */
 
 .page {
-  padding: var(--space-16) 0;
+  min-height: 100dvh;
+  padding: max(var(--space-10), env(safe-area-inset-top, 0px)) 0
+    max(var(--space-16), env(safe-area-inset-bottom, 0px));
+}
+
+/* The only site chrome this page has: it sits outside the public layout. */
+.brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  min-height: 2.75rem;
+  min-width: 2.75rem;
+  margin: 0 auto var(--space-6);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.brand:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .sheet {
@@ -37,6 +58,12 @@
 .title {
   margin: 0;
   font-size: var(--text-3xl);
+}
+
+.audience {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
 }
 
 /* The part a screenshot has to carry on its own. */
@@ -241,7 +268,8 @@
 /* === Mobile === */
 @media (max-width: 48rem) { /* --bp-md */
   .page {
-    padding: var(--space-10) 0;
+    padding: max(var(--space-8), env(safe-area-inset-top, 0px)) 0
+      max(var(--space-10), env(safe-area-inset-bottom, 0px));
   }
   .sheet {
     padding: var(--space-6);

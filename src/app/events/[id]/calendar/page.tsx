@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import BrandMark from "@/components/BrandMark";
 import BlockView from "@/features/events/BlockView";
 import CoverImage from "@/features/events/CoverImage";
 import { getPublishedEvent } from "@/features/events/fetchEvents";
@@ -37,6 +38,18 @@ import styles from "./calendar.module.css";
  * the dates go through `formatSiteDate` rather than a bare `toLocaleString`:
  * this renders on a UTC, en-US container, and a screenshot of the wrong start
  * time is worse than no page.
+ *
+ * ## Why it is outside the (public) route group
+ *
+ * The URL is `/events/<id>/calendar` either way, because a route group adds
+ * nothing to a path. What the group adds is its layout, and that layout's
+ * `<main>` is rendered at opacity 0 until JavaScript has hydrated (see
+ * `PublicMain`). That is right for the marketing pages and wrong here: on a
+ * hall network the script can take many seconds, and the reader would be
+ * looking at a blank screen with the date already downloaded. So this page
+ * sits under the root layout alone, like `/links`, reads from the first HTML
+ * that arrives, and carries its own small brand link home in place of the
+ * site header.
  *
  * ## Which events it serves
  *
@@ -104,11 +117,20 @@ export default async function AddEventToCalendarPage({
     Boolean(event.posterUrl) || Boolean(foodLine) || event.blocks.length > 0;
 
   return (
-    <section className={styles.page}>
+    <main className={styles.page}>
       <div className="container">
+        <Link href="/" prefetch={false} className={styles.brand} aria-label="NAISI home">
+          <BrandMark size={32} />
+        </Link>
         <div className={styles.sheet}>
           <p className={styles.kicker}>Add to calendar</p>
           <h1 className={styles.title}>{title}</h1>
+          {/* The event page says this with a badge. It matters here too:
+              somebody about to put this in their calendar should know who it
+              is for before they turn up. */}
+          {event.visibility === "members" && (
+            <p className={styles.audience}>This event is for NAISI members.</p>
+          )}
 
           <dl className={styles.facts}>
             <div className={styles.fact}>
@@ -259,7 +281,7 @@ export default async function AddEventToCalendarPage({
           </Link>
         </div>
       </div>
-    </section>
+    </main>
   );
 }
 
