@@ -1430,6 +1430,12 @@ const NOT_COVERED = {
     coverWhen:
       "When an event next runs with a capacity and a waitlist, because a wrong decision there is a real person losing their place.",
   },
+  "/events/[id]/calendar": {
+    reason:
+      "The add-to-calendar landing page is a server render of three facts and four links, with no form and no state; every link it builds is asserted in tests/events-ics.test.mjs, and the .ics route behind the first one is unchanged.",
+    coverWhen:
+      "When a printed code is first pointed at an event, because from then on a broken render is read by strangers at a stall rather than by the committee.",
+  },
   "/(public)/events/[id]/rsvp/[rsvpId]/cancel": {
     reason:
       "Events RSVP: /(public)/events/[id]/rsvp/[rsvpId]/cancel belongs to the flow frozen by docs/mobile-baseline-events.md, which is re-checked by hand on every touching change.",

@@ -90,7 +90,11 @@ export default async function LinksPage() {
                 const place = publicLocationText(e) || "Location to be announced";
                 return (
                   <li key={e.id}>
-                    <Link href={`/events/${e.id}`} prefetch={false} className={styles.row}>
+                    {/* To the add-to-calendar page, not the event page: a
+                        fresher should be able to put this in their calendar
+                        without being asked to sign up first. The full event
+                        page is one tap further on from there. */}
+                    <Link href={`/events/${e.id}/calendar`} prefetch={false} className={styles.row}>
                       <span className={styles.rowLabel}>{e.title}</span>
                       <span className={styles.rowSub}>
                         <time dateTime={start.toISOString()}>

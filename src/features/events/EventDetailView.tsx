@@ -4,11 +4,8 @@ import Card from "@/components/ui/Card";
 import BlockView from "./BlockView";
 import CoverImage from "./CoverImage";
 import RsvpForm from "./RsvpForm";
-import {
-  FOOD_PROVENANCE_BADGE,
-  FOOD_TAG_LABEL,
-  type EventDoc,
-} from "@/lib/firestore/events";
+import { FOOD_TAG_LABEL, type EventDoc } from "@/lib/firestore/events";
+import { publicFoodLine } from "./foodLine";
 import { formatSiteDate } from "@/lib/datetime/siteTime";
 import { googleCalendarUrl } from "@/lib/events/ics";
 import { locationWithheld, publicLocationText } from "@/lib/events/location";
@@ -29,7 +26,7 @@ export default function EventDetailView({
 }) {
   const isCancelled = event.status === "cancelled";
   const dietaryTags = event.dietaryTags ?? [];
-  const foodDisplay = event.foodText?.trim() || legacyFoodLine(event);
+  const foodDisplay = publicFoodLine(event);
   const whereText = publicLocationText(event);
   const calendarStart = isCancelled ? null : event.startAt;
 
@@ -210,14 +207,6 @@ function calendarDescription(event: EventDoc): string | undefined {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL;
   if (appUrl) parts.push(`${appUrl}/events/${event.id}`);
   return parts.length > 0 ? parts.join("\n") : undefined;
-}
-
-/** foodText is the primary description; fall back to the legacy provenance for old events. */
-function legacyFoodLine(event: EventDoc): string | null {
-  if (event.foodProvenance === "none") return null;
-  const badge = FOOD_PROVENANCE_BADGE[event.foodProvenance];
-  const note = event.foodProvenanceNote?.trim();
-  return note ? `${badge}: ${note}` : badge;
 }
 
 // London civil time through `siteTime`. This is a Server Component, so an
