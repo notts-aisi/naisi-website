@@ -18,6 +18,11 @@ import { baseUrl } from "@/lib/events/rsvpToken";
  * The two roots are included because a sitemap whose every entry hangs off an
  * unlisted parent is a sitemap missing its own tree.
  *
+ * `/links` is the one other page listed, by the same reasoning turned round:
+ * it is deliberately NOT in the header or the footer (it is where printed QR
+ * codes and the Instagram bio land), so nothing on the site links to it and a
+ * crawler has no other way to find it.
+ *
  * ## What is NOT in here, deliberately
  *
  *  - Unpublished courses and unpublished weeks. `fetchCourses.ts` filters on
@@ -58,6 +63,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const roots: MetadataRoute.Sitemap = [
     { url: `${base}/`, changeFrequency: "weekly", priority: 1 },
     { url: `${base}/courses`, changeFrequency: "weekly", priority: 0.9 },
+    { url: `${base}/links`, changeFrequency: "weekly", priority: 0.6 },
   ];
 
   let rows: Awaited<ReturnType<typeof listCourseSitemapRows>> = [];
