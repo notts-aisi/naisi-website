@@ -2588,6 +2588,61 @@ export const REGISTRY = [
     },
     run: (db) => db.doc("trackedLinks/guard-link").get(),
   },
+  {
+    id: "link-scan-days-range",
+    file: "src/features/admin/links/linkStatsData.ts",
+    path: "linkScanDays",
+    clauses: ["where(date,>=)"],
+    reason:
+      "The scan counters behind the dashboard on the admin-only /admin/links page. The rule is `allow read: if isAdmin()` with no branch for anyone else, so an admin is the only persona it can work for, which matches the one page it runs on. A range on ONE field on purpose: the automatic single-field index serves it, where an orderBy on another field or an equality beside the range would need a declared composite index, which the emulator does not enforce and production does.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc("linkScanDays/guard-link__2026-09-21").set({
+        slug: "guard-link",
+        date: "2026-09-21",
+        count: 3,
+        hours: { 11: 3 },
+      });
+    },
+    run: (db) => db.collection("linkScanDays").where("date", ">=", "2000-01-01").get(),
+  },
+  {
+    id: "subscriptions-attributed-to-a-link",
+    file: "src/features/admin/links/linkStatsData.ts",
+    path: "subscriptions",
+    clauses: ["where(source,>=)", "where(source,<)"],
+    reason:
+      "The subscriptions a short link produced, for the sign-up numbers on /admin/links: the rows whose `source` starts `qr:`, written as a range on that one field. It names no audience and no uid, so the own-row branch of the rule cannot carry it and only an admin may run it, as with `subscriptions-list`. Both bounds are on the same field, so the automatic single-field index serves it and no composite is owed.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc("subscriptions/sub_guard-scan__newsletter").set({
+        email: "guard-scan@example.com",
+        channel: "newsletter",
+        audience: "guest",
+        audienceId: "guest_guard-scan",
+        confirmed: false,
+        subscribed: true,
+        source: "qr:guard-link",
+        createdAt: new Date(),
+      });
+    },
+    run: (db) =>
+      db.collection("subscriptions").where("source", ">=", "qr:").where("source", "<", "qr;").get(),
+  },
 ];
 
 /**

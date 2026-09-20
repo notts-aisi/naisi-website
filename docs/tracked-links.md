@@ -180,9 +180,35 @@ a new policy version, and a new version sends every existing member through
 re-consent. `tests/scan-counting.test.mjs` holds the written fields to a closed
 list so the question is asked before the field ships.
 
-The collection is locked to every client, admins included
-(`scripts/rules-tests/tests/link-scan-days.test.mjs`). The rule opens when
-something in a browser needs to read it, together with that query.
+Admins read the collection, for the dashboard, and nobody writes it, admins
+included (`scripts/rules-tests/tests/link-scan-days.test.mjs`). A count is only
+worth reading if the one thing that can move it is a scan.
+
+## The dashboard
+
+On `/admin/links`, above and inside the list: grouped by campaign, split by
+kind, busiest link first, for the last 7 days, the last 30, or all time.
+
+- **Three numbers, and two of them are sign-ups.** Scans, signed up, confirmed.
+  A public sign-up is double opt-in, so somebody who types their address at the
+  stall is not subscribed until they press a button in an email, often that
+  evening on another device. One number would flatter the print run by everyone
+  who never opened the mail.
+- **People, not rows.** A subscription is one row per address per channel, so
+  ticking two boxes on one form makes two rows. Both sign-up numbers count
+  distinct addresses. The addresses go no further than the arithmetic in
+  `src/lib/campaign/linkStats.ts`: what comes out is counts, and the two CSV
+  exports carry counts only. They are not files of named people, which is why
+  they are not written to the exports log.
+- **A scan count is a floor.** The page says so, in words, under the numbers.
+- **Neither read needs a declared index**, and that is a constraint on how
+  they are written. Each is a range on ONE field (`date`, and a `qr:` prefix on
+  `source`), which the automatic single-field index serves. An `orderBy` on
+  another field, or an equality beside the range, would need a composite index;
+  the emulator does not enforce indexes, so that would pass every local check
+  and fail in production. Sorting and range-switching happen in the browser.
+- **The charts show the days nobody scanned.** Leaving them out would put two
+  busy days side by side that were a week apart.
 
 ## Which sign-ups a code produced
 

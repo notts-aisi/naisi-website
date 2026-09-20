@@ -39,7 +39,7 @@ import styles from "./landing.module.css";
  *  6. Upcoming. Next 2-3 public events pulled from Firestore. Hides if empty.
  *  7. Where to start — curated reading lists.
  *  8. From the gram — Instagram carousel (hides if empty content file).
- *  9. Elsewhere — Substack / Linktree / SU membership link cards.
+ *  9. Elsewhere: Substack / Instagram / SU membership link cards.
  * 10. Run by students — committee preview (dev-only via env flag).
  * 11. Stay in touch — subscribe form.
  */
