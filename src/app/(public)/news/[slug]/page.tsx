@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 import Badge from "@/components/ui/Badge";
 import { getNewsArticle } from "@/features/news/fetchNews";
+import { formatSiteDate } from "@/lib/datetime/siteTime";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -55,7 +56,7 @@ export default async function NewsArticlePage({ params }: Props) {
           }}
         >
           <time dateTime={article.publishedAt}>
-            {new Date(article.publishedAt).toLocaleDateString(undefined, {
+            {formatSiteDate(new Date(article.publishedAt), {
               day: "numeric",
               month: "long",
               year: "numeric",

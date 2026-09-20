@@ -355,10 +355,10 @@ test("events RSVP: a signed-out guest books a place and the page fits a phone", 
       await page
         .getByRole("heading", { name: state.eventTitle })
         .waitFor({ timeout: WAIT_MS });
-      // The machine-readable instant rather than the rendered sentence: the
-      // page formats with `toLocaleString`, so asserting on the words would be
-      // asserting on the runner's locale and timezone. `<time datetime>` is
-      // the same fact without either.
+      // The machine-readable instant rather than the rendered sentence.
+      // `<time datetime>` is the fact itself; the words beside it are London
+      // civil time from `siteTime`, and what they say for a given instant is
+      // pinned in tests/server-date-formatting.test.mjs rather than here.
       await page
         .locator(`time[datetime="${state.startAtIso}"]`)
         .first()

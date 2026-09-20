@@ -9,6 +9,7 @@ import {
   FOOD_TAG_LABEL,
   type EventDoc,
 } from "@/lib/firestore/events";
+import { formatSiteDate } from "@/lib/datetime/siteTime";
 import { googleCalendarUrl } from "@/lib/events/ics";
 import { locationWithheld, publicLocationText } from "@/lib/events/location";
 import styles from "./EventDetailView.module.css";
@@ -219,8 +220,11 @@ function legacyFoodLine(event: EventDoc): string | null {
   return note ? `${badge}: ${note}` : badge;
 }
 
+// London civil time through `siteTime`. This is a Server Component, so an
+// unqualified format reads the container's zone (UTC) and printed every start
+// time an hour early through the summer.
 function formatDateTime(d: Date): string {
-  return d.toLocaleString(undefined, {
+  return formatSiteDate(d, {
     weekday: "long",
     day: "numeric",
     month: "long",
@@ -231,7 +235,7 @@ function formatDateTime(d: Date): string {
 }
 
 function formatTime(d: Date): string {
-  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return formatSiteDate(d, { hour: "2-digit", minute: "2-digit" });
 }
 
 function CalendarIcon() {

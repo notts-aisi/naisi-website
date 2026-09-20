@@ -396,6 +396,12 @@ const USERS = new Map([
       "caller must be the token's own account; the helper reaches `signedTokens` and the ownership " +
       "helper, both stubbed, and the shared loader is what compiles the TypeScript in-process",
   ],
+  [
+    "server-date-formatting.test.mjs",
+    "it executes `siteTime.ts` and `formatEventWhen` under a process zone that is not London, " +
+      "because the promise is what the shipping formatter prints on a UTC container and a copy " +
+      "of the formatter would prove nothing; nothing is stubbed, the graph is two pure modules",
+  ],
 ]);
 
 /**
