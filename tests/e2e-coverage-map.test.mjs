@@ -1202,6 +1202,12 @@ const NOT_COVERED = {
     coverWhen:
       "When the risk-ordered list reaches admin CRUD, which is after every applicant-facing and member-facing journey in this map is verified.",
   },
+  "/(app)/admin/(admin-only)/links/page-content": {
+    reason:
+      "Admin CRUD on one document: the /links page editor is used by one admin and fails loudly on the screen of the person who pressed Save. The thing it could get wrong that would matter is the PUBLIC page, and that cannot be broken by what is stored: tests/links-page-content.test.mjs runs the fetcher's projection over missing, damaged, empty and hostile documents and the built-in rows come back every time.",
+    coverWhen:
+      "When the risk-ordered list reaches admin CRUD, which is after every applicant-facing and member-facing journey in this map is verified.",
+  },
   "/(app)/admin/(admin-only)/sources": {
     reason:
       "Admin CRUD: the source-sheet library is used by one admin, fails loudly on the screen of the person who pressed the button, and nothing member-facing waits on it. What it can get wrong that a browser spec would catch is covered elsewhere: the stored numbering is unit-tested and the admin-only rule is proved against every persona in the emulator.",

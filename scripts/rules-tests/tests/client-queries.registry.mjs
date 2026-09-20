@@ -2643,6 +2643,46 @@ export const REGISTRY = [
     run: (db) =>
       db.collection("subscriptions").where("source", ">=", "qr:").where("source", "<", "qr;").get(),
   },
+  {
+    id: "links-page-doc",
+    file: "src/features/admin/links/linksPageData.ts",
+    path: "linksPage/main",
+    clauses: [],
+    docShape:
+      "The one document behind the public /links page, `linksPage/main`. The fixture has an application marked open and a hidden row, because those are the two things in it that are NOT on the public page as stored, and they are why the read is admin-only.",
+    reason:
+      "The editor at /admin/links/page-content loads the page it is about to edit. It runs on the (admin-only) tree behind requireAdminPage(), and the rule is `allow read: if isAdmin()`, so every other persona is refused. The public page never makes this read: it goes through a server-only Admin SDK fetcher that drops hidden rows and the editor's uid and validates every address before anything reaches HTML.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc("linksPage/main").set({
+        applications: {
+          fellowship: { open: true, href: "/courses" },
+          facilitator: { open: false, href: "" },
+          incubator: { open: false, href: "" },
+        },
+        groups: [
+          {
+            id: "group-1",
+            heading: "Get involved",
+            rows: [
+              { id: "courses", label: "Our courses", sub: "", href: "/courses", soon: false, hidden: false },
+              { id: "draft", label: "Not ready", sub: "", href: "/somewhere", soon: false, hidden: true },
+            ],
+          },
+        ],
+        updatedByUid: "admin1",
+        updatedAt: new Date(),
+      });
+    },
+    run: (db) => db.doc("linksPage/main").get(),
+  },
 ];
 
 /**

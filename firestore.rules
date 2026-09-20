@@ -1024,6 +1024,27 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // === linksPage (admin only, BOTH directions) ===
+    // What the public /links page says: the three application buttons and
+    // the sections of rows. One document, `linksPage/main`.
+    //
+    // Admin-only reads although the page it describes is public, for the
+    // reason sourceSheets above is: nothing in a browser needs this but the
+    // admin editor. The public page reads it on the server
+    // (src/features/links/fetchLinksPage.ts, Admin SDK), which projects out
+    // the hidden rows and the editor's uid before anything reaches HTML, and
+    // validates every address again. A public read rule would hand over the
+    // hidden rows and the unvalidated addresses with them.
+    //
+    // No shape validation here, on purpose. The page cannot be broken by what
+    // is stored: a missing, damaged or empty document makes the fetcher serve
+    // the built-in rows in src/content/links.ts, and an address that fails
+    // parseDestination() is dropped on read. The rule's job is who.
+    match /linksPage/{docId} {
+      allow read:  if isAdmin();
+      allow write: if isAdmin() && docId == 'main';
+    }
+
     // === trackedLinks (admin only, and NO DELETE) ===
     // One short link, naisi.uk/q/<slug>, and where it goes: a QR code on a
     // poster or a link in a bio. The slug is the document id and is what gets

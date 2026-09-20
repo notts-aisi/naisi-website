@@ -416,6 +416,13 @@ const USERS = new Map([
       "reaches courses.ts for the shared link validator, so nothing is stubbed",
   ],
   [
+    "links-page-content.test.mjs",
+    "it executes the /links fetcher, because the promise is that the page most printed codes land on " +
+      "cannot be emptied or have a hostile address put on it by whatever is stored, and only running " +
+      "the shipping fetcher over missing, damaged and hostile documents shows that; `server-only` and " +
+      "the Admin SDK handle are stubbed so the document comes from the test, and nothing else is",
+  ],
+  [
     "link-stats.test.mjs",
     "it executes the dashboard's arithmetic, because the ways its numbers could be wrong are all small " +
       "(a person counted once per channel, a day lost to a clock change, a gap closed up in a chart) " +
