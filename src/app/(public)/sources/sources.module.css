@@ -1,0 +1,110 @@
+.section {
+  padding: var(--space-16) 0;
+}
+
+.intro {
+  max-width: 40rem;
+  margin-bottom: var(--space-10);
+}
+
+.title {
+  margin-top: var(--space-4);
+}
+
+.lede {
+  color: var(--color-text-muted);
+  margin-top: var(--space-3);
+  line-height: var(--leading-relaxed);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.cardLink {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+}
+
+.row {
+  display: flex;
+  gap: var(--space-5);
+  align-items: flex-start;
+}
+
+.thumb {
+  flex: 0 0 auto;
+  width: 7rem;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+}
+
+.body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-2);
+}
+
+.cardTitle {
+  font-size: var(--text-xl);
+  margin: 0 0 var(--space-2);
+  line-height: var(--leading-snug);
+}
+
+.summary {
+  color: var(--color-text-muted);
+  margin: 0;
+  font-size: var(--text-md, 1rem);
+  line-height: var(--leading-normal);
+}
+
+.empty {
+  color: var(--color-text-muted);
+  line-height: var(--leading-relaxed);
+  margin: 0;
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .section {
+    padding: var(--space-10) 0;
+  }
+
+  .intro {
+    margin-bottom: var(--space-8);
+  }
+
+  /* The thumbnail stops earning its column at phone width: it squeezes the
+     title into two or three words a line. Stack it above the text instead,
+     full width, where it still tells you which poster this is. */
+  .row {
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .thumb {
+    width: 100%;
+    max-height: 12rem;
+    aspect-ratio: auto;
+    object-fit: cover;
+  }
+
+  .cardTitle {
+    font-size: var(--text-lg);
+  }
+}

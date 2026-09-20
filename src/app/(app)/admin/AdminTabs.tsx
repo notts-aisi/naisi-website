@@ -55,6 +55,7 @@ const TABS: AdminTab[] = [
   { label: "Admissions", href: "/admin/admissions", match: (p: string) => p.startsWith("/admin/admissions"), visible: (a) => a.isAdmin || a.canAuthorRounds || a.isAdmissionsReviewer },
   { label: "Membership", href: "/admin/membership", match: (p: string) => p.startsWith("/admin/membership"), visible: (a) => a.isAdmin || a.canManageMembership },
   { label: "Newsletter", href: "/admin/newsletter", match: (p: string) => p.startsWith("/admin/newsletter"), visible: ADMIN_ONLY },
+  { label: "Sources", href: "/admin/sources", match: (p: string) => p.startsWith("/admin/sources"), visible: ADMIN_ONLY },
   { label: "Subscriptions", href: "/admin/subscriptions", match: (p: string) => p.startsWith("/admin/subscriptions"), visible: ADMIN_ONLY },
   { label: "Email designs", href: "/admin/email-designs", match: (p: string) => p.startsWith("/admin/email-designs"), visible: ADMIN_ONLY },
   { label: "Deliverability", href: "/admin/deliverability", match: (p: string) => p.startsWith("/admin/deliverability"), visible: ADMIN_ONLY },

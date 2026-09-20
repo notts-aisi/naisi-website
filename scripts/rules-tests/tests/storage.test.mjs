@@ -419,6 +419,124 @@ describe("course-images: was missing entirely, so every week-guide image failed"
   });
 });
 
+describe("source-materials: public read, admin write, and an admin DELETE", () => {
+  // The poster behind an entry on /sources, plus the PDF of it. The folder is
+  // unlike the four above it in two ways, and both are decisions this suite
+  // pins rather than side effects:
+  //
+  //  - ONE BLOCK takes images AND `application/pdf`. A PDF-only second folder
+  //    would be the first entry in NON_IMAGE_WRITE_BLOCKS, whose emptiness is
+  //    load-bearing (see its comment at the foot of this file).
+  //  - There is an EXPLICIT `allow delete`. In Storage rules `write` covers
+  //    delete, but `request.resource` is null on one, so the size clause in
+  //    the write rule raises and denies by error. Unpublishing an entry
+  //    deletes its image and its PDF, which is what "pulled down" means for
+  //    printed material, so the delete needs a rule of its own. The tasks
+  //    block carries one for the same reason.
+  const pdf = { contentType: "application/pdf" };
+
+  it("allows an admin to upload the picture of the material", async () => {
+    await seedUser("admin1", { role: "admin" });
+    const s = await storageAsUser("admin1");
+    await assertSucceeds(s.ref("source-materials/freshers-2026/poster.png").put(PNG, png));
+  });
+
+  it("allows an admin to upload the PDF, which is the point of the block", async () => {
+    await seedUser("admin1", { role: "admin" });
+    const s = await storageAsUser("admin1");
+    await assertSucceeds(s.ref("source-materials/freshers-2026/poster.pdf").put(PNG, pdf));
+  });
+
+  it("blocks an SU-recognised committee member: editing /sources is admin-only", async () => {
+    // The committee make the posters, so this is the refusal most likely to be
+    // reconsidered later. If it is, the rule widens to a permission key and
+    // this test is where the decision gets rewritten rather than forgotten.
+    await seedUser("sucom1", { role: "committee", suRecognised: true });
+    const s = await storageAsUser("sucom1");
+    await assertFails(s.ref("source-materials/freshers-2026/poster.png").put(PNG, png));
+  });
+
+  it("blocks a member holding draftEvent, and a plain member", async () => {
+    await seedUser("eDrafter", { role: "member", permissions: { draftEvent: true } });
+    await seedUser("plain", { role: "member" });
+    for (const uid of ["eDrafter", "plain"]) {
+      const s = await storageAsUser(uid);
+      await assertFails(s.ref("source-materials/freshers-2026/poster.png").put(PNG, png));
+    }
+  });
+
+  it("blocks a signed-out write", async () => {
+    const s = await storageAsAnon();
+    await assertFails(s.ref("source-materials/freshers-2026/poster.png").put(PNG, png));
+  });
+
+  it("is readable by a signed-out visitor, because a stranger scans the code", async () => {
+    // The whole feature is a QR code on material physically handed to people
+    // at a fair. There is no session at the other end of it.
+    const s = await storageAsAnon();
+    await assertSucceeds(
+      s.ref("source-materials/freshers-2026/poster.png").getMetadata().catch((e) => {
+        if (e?.code === "storage/object-not-found") return null;
+        throw e;
+      }),
+    );
+  });
+
+  it("refuses text/html even from an admin", async () => {
+    await seedUser("admin1", { role: "admin" });
+    const s = await storageAsUser("admin1");
+    await assertFails(
+      s.ref("source-materials/freshers-2026/evil.html").put(PNG, { contentType: "text/html" }),
+    );
+  });
+
+  it("refuses image/svg+xml even from an admin, because the read is public", async () => {
+    // Admin-only write is not the same as a private folder: the read rule is
+    // `if true` so a scanned code resolves with no session, and an SVG parked
+    // here is a script-carrying document on a URL anybody can open.
+    await seedUser("admin1", { role: "admin" });
+    const s = await storageAsUser("admin1");
+    await assertFails(
+      s.ref("source-materials/freshers-2026/evil.svg").put(PNG, { contentType: "image/svg+xml" }),
+    );
+  });
+
+  it("refuses a file over the 10MB cap", async () => {
+    // 10MB rather than the house 5MB, because an A3 export routinely exceeds
+    // 5MB. The editor checks the size in the browser first so the refusal
+    // reads as a sentence; this is the boundary behind that.
+    await seedUser("admin1", { role: "admin" });
+    const s = await storageAsUser("admin1");
+    await assertFails(
+      s.ref("source-materials/freshers-2026/huge.pdf").put(new Uint8Array(11 * 1024 * 1024), pdf),
+    );
+  });
+
+  it("lets an admin DELETE an object, which unpublishing depends on", async () => {
+    await seedUser("admin1", { role: "admin" });
+    const s = await storageAsUser("admin1");
+    await assertSucceeds(s.ref("source-materials/delete-me/poster.pdf").put(PNG, pdf));
+    await assertSucceeds(s.ref("source-materials/delete-me/poster.pdf").delete());
+  });
+
+  it("refuses a delete from a committee member and from a signed-out visitor", async () => {
+    await seedUser("admin1", { role: "admin" });
+    await seedUser("sucom1", { role: "committee", suRecognised: true });
+    const owner = await storageAsUser("admin1");
+    await assertSucceeds(s2Path(owner).put(PNG, pdf));
+
+    const committee = await storageAsUser("sucom1");
+    await assertFails(s2Path(committee).delete());
+    const anon = await storageAsAnon();
+    await assertFails(s2Path(anon).delete());
+  });
+
+  /** The one object the delete-refusal test uploads and then tries to remove. */
+  function s2Path(storage) {
+    return storage.ref("source-materials/keep-me/poster.pdf");
+  }
+});
+
 describe("worksheet-images: signed-in read, scoped committee write, no SVG", () => {
   // The two paths worksheets add are deliberately UNLIKE the four blocks above,
   // and each difference is a decision this suite pins:
@@ -737,6 +855,14 @@ describe("every image folder refuses SVG in every spelling, not just one string"
       { role: "member", permissions: { draftCourse: true } },
       "course-images/course-1/evil.svg",
     ],
+    // Admin-only write, world-readable, and the newest of the public folders:
+    // exactly the shape that admitted the two variations last time.
+    [
+      "source-materials",
+      "admin1",
+      { role: "admin" },
+      "source-materials/freshers-2026/evil.svg",
+    ],
     // Committee rather than a permission holder, and an owner id that names
     // neither a worksheet nor a circulation, which is the branch of that rule
     // an author uploading their first image legitimately takes.
@@ -821,6 +947,7 @@ const KNOWN_IMAGE_BLOCKS = [
   "/event-images/{eventId}/{image=**}",
   "/application-emails/{templateId}/{image=**}",
   "/course-images/{folder}/{image=**}",
+  "/source-materials/{slug}/{file=**}",
   "/worksheet-images/{ownerId}/{image=**}",
 ];
 
