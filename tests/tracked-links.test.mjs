@@ -541,19 +541,30 @@ describe("the counting page", () => {
     assert.match(res.headers.get("content-type"), /^text\/html/);
     assert.equal(res.headers.get("cache-control"), "no-store");
     const html = await res.text();
-    assert.match(html, /navigator\.sendBeacon\("\/api\/q\/bio\/scan"\)/);
-    assert.match(html, /location\.replace\("https:\/\/www\.instagram\.com\/notts\.ai\.safety\/"\)/);
-    assert.match(html, /<meta http-equiv="refresh" content="2;url=https:\/\/www\.instagram\.com\/notts\.ai\.safety\/">/);
-    assert.match(html, /<a href="https:\/\/www\.instagram\.com\/notts\.ai\.safety\/"/);
-    assert.match(html, /noindex/);
+    const IG = "https://www.instagram.com/notts.ai.safety/";
+    for (const expected of [
+      'navigator.sendBeacon("/api/q/bio/scan")',
+      `location.replace("${IG}")`,
+      `<meta http-equiv="refresh" content="2;url=${IG}">`,
+      `<a href="${IG}"`,
+      "noindex",
+    ]) {
+      assert.ok(html.includes(expected), `the counting page is missing: ${expected}`);
+    }
   });
 
   test("whatever reaches it is escaped for the markup it lands in", () => {
-    const hostile = `https://example.com/"><script>alert(1)</script>?a='&b=</script>`;
-    const html = forwardingDocument({ destination: hostile, scanPath: `/api/q/x/scan"</script>` });
-    assert.equal([...html.matchAll(/<script>/g)].length, 1, "a second script element was opened");
-    assert.equal([...html.matchAll(/<\/script>/g)].length, 1, "the script element was closed early");
-    assert.doesNotMatch(html, /href="[^"]*"><script/);
+    // Every spelling a browser accepts, not only the lower-case one: a tag
+    // name is case-insensitive and may carry whitespace before its `>`.
+    const hostile = `https://example.com/"><script>alert(1)</script><SCRIPT>alert(2)</SCRIPT >?a='&b=</ScRiPt>`;
+    const html = forwardingDocument({ destination: hostile, scanPath: `/api/q/x/scan"</script><SCRIPT>` });
+    const lower = html.toLowerCase();
+    const count = (needle) => lower.split(needle).length - 1;
+    assert.equal(count("<script"), 1, "a second script element was opened");
+    assert.equal(count("</script"), 1, "the script element was closed early");
+    assert.equal(lower.includes('"><'), false, "an attribute was closed and a tag opened after it");
+    // The one script element is the document's own, and it is the last thing in the body.
+    assert.ok(lower.indexOf("<script") > lower.indexOf("<body"));
   });
 
   test("it fetches nothing else, so it forwards as soon as the HTML arrives", () => {
