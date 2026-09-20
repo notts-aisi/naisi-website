@@ -170,6 +170,7 @@ export async function POST(
       locationPublicText: outcome.event.locationPublicText,
       startAt: outcome.event.startAt?.toDate?.() ?? null,
       endAt: outcome.event.endAt?.toDate?.() ?? null,
+      updatedAt: outcome.event.updatedAt?.toDate?.() ?? null,
       foodText: outcome.event.foodText,
       dietaryTags: outcome.event.dietaryTags,
       foodProvenance: outcome.event.foodProvenance,

@@ -37,6 +37,9 @@ export async function GET(
     url: eventUrl,
     startAt: event.startAt,
     endAt: event.endAt,
+    // Carries SEQUENCE, so a second download after the organiser edits the
+    // event replaces the entry already in somebody's calendar.
+    updatedAt: event.updatedAt,
   });
 
   return new NextResponse(ics, {
