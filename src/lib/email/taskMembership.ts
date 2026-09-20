@@ -1,6 +1,7 @@
 import "server-only";
 import type { DocumentData, Firestore } from "firebase-admin/firestore";
 import type { MembershipPreassignment } from "@/emails/TaskMembershipEmail";
+import { formatSiteDate } from "@/lib/datetime/siteTime";
 
 /**
  * Server-side helpers for the membership email pipeline (Stage 5,
@@ -58,8 +59,10 @@ function tsToDate(v: unknown): Date | null {
   return typeof obj?.toDate === "function" ? obj.toDate() : null;
 }
 
+// London civil time: this is built in a route, where the process zone is UTC
+// and a task due at midnight in summer would be mailed as due the day before.
 function formatDueLabel(date: Date): string {
-  return date.toLocaleDateString(undefined, {
+  return formatSiteDate(date, {
     weekday: "short",
     day: "numeric",
     month: "short",

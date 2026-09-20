@@ -20,6 +20,7 @@ import type { EventChange } from "@/lib/events/changeSummary";
 import { exactLocationFor, holdsPlace, locationForAttendee } from "./location";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isSuppressed } from "@/lib/firestore/suppression";
+import { formatSiteDate, isSameSiteDay } from "@/lib/datetime/siteTime";
 import {
   cancelUrl as buildCancelUrl,
   changeUrl as buildChangeUrl,
@@ -51,9 +52,12 @@ type EventLike = {
   signupForm?: unknown;
 };
 
+// London civil time through `siteTime`: this runs in a route, where the
+// process zone is UTC and an unqualified format mails the attendee a start
+// time one hour early for the whole of the summer.
 function formatWhen(startAt: Date | null | undefined, endAt: Date | null | undefined): string {
   if (!startAt) return "Date to be confirmed";
-  const base = startAt.toLocaleString(undefined, {
+  const base = formatSiteDate(startAt, {
     weekday: "short",
     day: "numeric",
     month: "long",
@@ -62,18 +66,14 @@ function formatWhen(startAt: Date | null | undefined, endAt: Date | null | undef
     minute: "2-digit",
   });
   if (!endAt) return base;
-  const sameDay =
-    startAt.getFullYear() === endAt.getFullYear() &&
-    startAt.getMonth() === endAt.getMonth() &&
-    startAt.getDate() === endAt.getDate();
-  if (sameDay) {
-    const endTime = endAt.toLocaleTimeString(undefined, {
+  if (isSameSiteDay(startAt, endAt)) {
+    const endTime = formatSiteDate(endAt, {
       hour: "2-digit",
       minute: "2-digit",
     });
     return `${base} — ${endTime}`;
   }
-  const endFull = endAt.toLocaleString(undefined, {
+  const endFull = formatSiteDate(endAt, {
     weekday: "short",
     day: "numeric",
     month: "long",

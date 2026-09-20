@@ -3,6 +3,7 @@ import Link from "next/link";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import { listPublishedEvents } from "@/features/events/fetchEvents";
+import { formatSiteDate } from "@/lib/datetime/siteTime";
 import { publicLocationText } from "@/lib/events/location";
 
 export const metadata: Metadata = {
@@ -13,9 +14,11 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
+// London civil time through `siteTime`: rendered on the server, where the
+// process zone is UTC and the default locale is en-US.
 function formatWhen(d: Date | null): string {
   if (!d) return "Date TBD";
-  return d.toLocaleString(undefined, {
+  return formatSiteDate(d, {
     weekday: "short",
     day: "numeric",
     month: "long",

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { ensureTemplatesSeeded } from "@/features/admin/emailDesigns/seedTemplates";
 import Badge from "@/components/ui/Badge";
+import { formatSiteDate } from "@/lib/datetime/siteTime";
 import {
   DEFAULT_LABELS,
   RECIPIENT_MODIFIER_LABELS,
@@ -23,6 +24,12 @@ import {
 import styles from "@/features/admin/emailDesigns/EmailDesignsList.module.css";
 
 export const dynamic = "force-dynamic";
+
+// Rendered on the server, so the zone and the locale are named rather than
+// left to the container, which is UTC and en-US.
+function formatEdited(date: Date): string {
+  return formatSiteDate(date, { day: "numeric", month: "short", year: "numeric" });
+}
 
 export default async function EmailDesignsPage() {
   const db = getAdminDb();
@@ -145,7 +152,7 @@ function CourseGroup({ byId }: { byId: Map<CourseTemplateId, CourseTemplateDoc> 
               </Badge>
               <span>
                 {stored?.updatedAt
-                  ? `Edited ${stored.updatedAt.toLocaleDateString()}`
+                  ? `Edited ${formatEdited(stored.updatedAt)}`
                   : "Using defaults"}
               </span>
             </div>
@@ -172,7 +179,7 @@ function Group({ heading, templates }: { heading: string; templates: TemplateDoc
           <div className={styles.cardMeta}>
             <span>Sends to: {RECIPIENT_MODIFIER_LABELS[t.recipients]}</span>
             {t.updatedAt ? (
-              <span>Updated {t.updatedAt.toLocaleDateString()}</span>
+              <span>Updated {formatEdited(t.updatedAt)}</span>
             ) : null}
           </div>
         </Link>

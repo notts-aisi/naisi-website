@@ -3,6 +3,7 @@ import Link from "next/link";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
 import { listPublishedNews } from "@/features/news/fetchNews";
+import { formatSiteDate } from "@/lib/datetime/siteTime";
 
 export const metadata: Metadata = {
   title: "News",
@@ -50,7 +51,7 @@ export default async function NewsIndex() {
                     }}
                   >
                     <time dateTime={a.publishedAt}>
-                      {new Date(a.publishedAt).toLocaleDateString(undefined, {
+                      {formatSiteDate(new Date(a.publishedAt), {
                         day: "numeric",
                         month: "long",
                         year: "numeric",

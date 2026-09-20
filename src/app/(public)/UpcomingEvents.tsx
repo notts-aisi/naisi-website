@@ -1,6 +1,7 @@
 import Link from "next/link";
 import Reveal from "./Reveal";
 import { listPublishedEvents } from "@/features/events/fetchEvents";
+import { formatSiteDate } from "@/lib/datetime/siteTime";
 import { publicLocationText } from "@/lib/events/location";
 import styles from "./UpcomingEvents.module.css";
 
@@ -32,12 +33,14 @@ export default async function UpcomingEvents() {
 
   if (upcoming.length === 0) return null;
 
-  const fmtDay = (d: Date) =>
-    d.toLocaleDateString("en-GB", { day: "numeric" });
-  const fmtMonth = (d: Date) =>
-    d.toLocaleDateString("en-GB", { month: "short" });
+  // London civil time through `siteTime`. Naming the locale was not enough:
+  // the zone still came from the container (UTC), so the time was an hour
+  // early through the summer and an event just after midnight showed the day
+  // before.
+  const fmtDay = (d: Date) => formatSiteDate(d, { day: "numeric" });
+  const fmtMonth = (d: Date) => formatSiteDate(d, { month: "short" });
   const fmtTime = (d: Date) =>
-    d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    formatSiteDate(d, { hour: "2-digit", minute: "2-digit" });
 
   return (
     <section className={styles.section}>
