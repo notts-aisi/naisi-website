@@ -251,6 +251,17 @@ const PUBLIC = new Map([
     },
   ],
   [
+    "src/app/api/q/[slug]/scan/route.ts#POST",
+    {
+      touches: "increments one printed code's scan counter for the day",
+      gate: "rateLimit(`q:scan:ip:${ip}`",
+      why:
+        "Counts a scan of a printed QR code, fired by the landing page. The person scanning has " +
+        "no account, so there is no session to require. The per-IP throttle runs before the " +
+        "write, and the write is an aggregate with no caller-controlled field and no personal data.",
+    },
+  ],
+  [
     "src/app/api/auth/session/clear/route.ts#POST",
     {
       touches: "nothing",

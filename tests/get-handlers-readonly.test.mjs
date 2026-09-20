@@ -47,6 +47,11 @@ const MUTATION_HELPERS = {
   stampVerifiedUniEmailForUser: "stamps the trusted uni-email-verified flag on a user doc",
   markRegistrationPasswordSet: "flips a registration-tracker row",
   markRegistrationProfileComplete: "flips a registration-tracker row",
+  // The scan counter for printed QR codes. A count taken on a GET would count
+  // link previews and mail scanners, which fetch a URL without running its
+  // page: the counting POST is fired by the landing page for exactly that
+  // reason, and the short link's own GET must never grow a call to this.
+  recordScan: "increments a printed code's scan counter for the day",
   // Not a Firestore write, but a side effect a prefetch/scanner must not
   // trigger: a GET that mails a NAISI-signed message from the sending domain on
   // a machine's fetch is the same hazard class as a GET that writes.

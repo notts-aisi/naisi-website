@@ -222,6 +222,20 @@ const PUBLIC_HANDLERS = new Map([
         "bounds one address to one message a minute while the rate limit bounds the spread.",
     },
   ],
+  [
+    "src/app/api/q/[slug]/scan/route.ts#POST",
+    {
+      anonymous: true,
+      writes: true,
+      sends: false,
+      throttle: "rateLimit(`q:scan:ip:${ip}`",
+      why:
+        "The scan counter for printed QR codes, fired by the page a scan lands on. There is no " +
+        "session to require: the person scanning a poster has no account. The per-IP throttle " +
+        "runs first, only a slug that exists on printed material is counted, and the write is " +
+        "an increment on a bounded per-code per-day document with no caller-controlled field.",
+    },
+  ],
 
   // --- credentials: the caller presented something --------------------------
   [

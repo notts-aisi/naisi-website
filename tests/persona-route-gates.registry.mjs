@@ -1435,6 +1435,15 @@ export const ROUTES = {
         "same 400.",
     },
   },
+  "/api/q/[slug]/scan": {
+    POST: {
+      expect: everyone(404),
+      why:
+        "The scan counter for printed QR codes: the per-IP throttle, then the slug's shape, then " +
+        "whether the code exists. The battery's slug has the right shape and is on no printed " +
+        "material, so everybody meets the same 404 and nothing about the caller is read.",
+    },
+  },
   "/api/register": {
     POST: {
       expect: everyone(400),

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Space_Grotesk } from "next/font/google";
 import { AuthProvider } from "@/auth/AuthProvider";
+import { ScanBeacon } from "@/features/campaign/ScanBeacon";
 import { SiteNoticeBanner } from "@/features/maintenance/SiteNoticeBanner";
 import { Suspense } from "react";
 import { RelaunchRestore } from "@/features/pwa/RelaunchRestore";
@@ -93,6 +94,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         {/* After the app content: registration is not urgent and must never
             delay first paint. Renders nothing. */}
         <ServiceWorkerRegistrar />
+        {/* Counts a scan of a printed code when the address carries ?q=.
+            Here rather than on the pages a code points at today, so a code
+            pointed elsewhere later is still counted. Renders nothing. */}
+        <ScanBeacon />
         {/* Installed-app relaunch restoration. Root-mounted because the
             relaunch lands on the PUBLIC homepage; the guards inside make it
             a no-op everywhere else. Suspense because useSearchParams in a
