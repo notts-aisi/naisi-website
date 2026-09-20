@@ -142,19 +142,49 @@ export async function publishSourceSheet(sheet: SourceSheetDoc): Promise<void> {
 }
 
 /**
- * Delete one storage object, tolerating one that has already gone.
+ * Delete one storage object. Returns the path when the object is STILL THERE
+ * afterwards, and null when it is gone (deleted now, or already missing).
  *
  * A delete that fails must not stop the Firestore write that follows it: a
  * document still pointing at a file nobody can find is a worse state than an
- * object nobody references, and the second is recoverable from the console.
+ * object nobody references. But it must not pass in silence either. The folder
+ * is world-readable, so a file that survives an unpublish is still reachable
+ * by anyone holding its link, which is the opposite of what "pulled down"
+ * promises. The likeliest cause is the one this repo has met three times: the
+ * Storage rules were merged and never deployed, so the `allow delete` that
+ * permits this does not exist on the project yet. So every caller hands the
+ * surviving paths back, and the editor says so in words.
  */
-async function removeObject(path: string | undefined | null): Promise<void> {
-  if (!path) return;
+async function removeObject(path: string | undefined | null): Promise<string | null> {
+  if (!path) return null;
   try {
     await deleteObject(storageRef(getClientStorage(), path));
+    return null;
   } catch (err) {
-    console.warn("[sources] storage delete failed (continuing):", err);
+    const code = (err as { code?: string } | null)?.code;
+    if (code === "storage/object-not-found") return null;
+    console.warn("[sources] storage delete failed:", err);
+    return path;
   }
+}
+
+/** The paths that outlived an attempt to delete them, nulls dropped. */
+function survivors(results: Array<string | null>): string[] {
+  return results.filter((path): path is string => path !== null);
+}
+
+/**
+ * What to tell the admin when files outlived a delete. One sentence on what
+ * happened, one on what it means, one on what to do.
+ */
+export function undeletedFilesWarning(paths: string[]): string | null {
+  if (paths.length === 0) return null;
+  return (
+    `${paths.length === 1 ? "One file" : `${paths.length} files`} could not be deleted from storage ` +
+    `and can still be opened by anyone holding the link: ${paths.join(", ")}. ` +
+    "This usually means the Storage rules have not been deployed to this project. " +
+    "Delete the files in the Firebase console, under Storage."
+  );
 }
 
 /**
@@ -169,22 +199,28 @@ async function removeObject(path: string | undefined | null): Promise<void> {
  * What this cannot do is recall a download URL somebody already holds, or the
  * poster in their hand. The editor says so in as many words before it runs.
  */
-export async function unpublishSourceSheet(sheet: SourceSheetDoc): Promise<void> {
-  await removeObject(sheet.image?.storagePath);
-  await removeObject(sheet.file?.storagePath);
+export async function unpublishSourceSheet(sheet: SourceSheetDoc): Promise<string[]> {
+  const left = survivors([
+    await removeObject(sheet.image?.storagePath),
+    await removeObject(sheet.file?.storagePath),
+  ]);
   await updateDoc(sheetRef(sheet.slug), {
     publishedAt: deleteField(),
     image: null,
     file: null,
     updatedAt: serverTimestamp(),
   });
+  return left;
 }
 
-/** Delete the entry outright, with its uploaded files. */
-export async function deleteSourceSheet(sheet: SourceSheetDoc): Promise<void> {
-  await removeObject(sheet.image?.storagePath);
-  await removeObject(sheet.file?.storagePath);
+/** Delete the entry outright, with its uploaded files. Returns any that survived. */
+export async function deleteSourceSheet(sheet: SourceSheetDoc): Promise<string[]> {
+  const left = survivors([
+    await removeObject(sheet.image?.storagePath),
+    await removeObject(sheet.file?.storagePath),
+  ]);
   await deleteDoc(sheetRef(sheet.slug));
+  return left;
 }
 
 /**
@@ -200,11 +236,13 @@ export async function setSourceSheetImage(
   slug: string,
   image: SourceSheetImage | null,
   previousPath?: string | null,
-): Promise<void> {
-  if (previousPath && previousPath !== image?.storagePath) {
-    await removeObject(previousPath);
-  }
+): Promise<string[]> {
+  const left =
+    previousPath && previousPath !== image?.storagePath
+      ? survivors([await removeObject(previousPath)])
+      : [];
   await updateDoc(sheetRef(slug), { image, updatedAt: serverTimestamp() });
+  return left;
 }
 
 /** The same for the PDF. */
@@ -212,11 +250,13 @@ export async function setSourceSheetFile(
   slug: string,
   file: SourceSheetFile | null,
   previousPath?: string | null,
-): Promise<void> {
-  if (previousPath && previousPath !== file?.storagePath) {
-    await removeObject(previousPath);
-  }
+): Promise<string[]> {
+  const left =
+    previousPath && previousPath !== file?.storagePath
+      ? survivors([await removeObject(previousPath)])
+      : [];
   await updateDoc(sheetRef(slug), { file, updatedAt: serverTimestamp() });
+  return left;
 }
 
 /**

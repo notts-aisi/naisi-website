@@ -256,3 +256,49 @@ test("the slug grammar is what can be printed under a code", async () => {
   assert.equal(suggestSourceSlug("Freshers fair poster, September 2026"), "freshers-fair-poster-september-2026");
   assert.equal(validateSourceSlug(suggestSourceSlug("What's the risk?")), null);
 });
+
+// ---------------------------------------------------------------------------
+// The editor's two promises that no pure function holds
+// ---------------------------------------------------------------------------
+
+/**
+ * These read the source rather than execute it, because both live in a
+ * `"use client"` module whose graph reaches the Firebase SDK. They are here
+ * because each is a way of losing something with no error on screen: typing
+ * that vanishes, and a file that was meant to be gone and is not.
+ */
+const readSrc = async (rel) => {
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  return readFileSync(fileURLToPath(new URL(`../src/${rel}`, import.meta.url)), "utf8");
+};
+
+test("an upload never replaces what the admin has typed and not yet saved", async () => {
+  // `reload()` adopts the stored document into the editable fields. Called
+  // after an upload, it wiped every unsaved source in the list: type ten, add
+  // the poster image, lose ten. Uploads refresh the stored half only.
+  const editor = await readSrc("features/admin/sources/SourceSheetEditor.tsx");
+  const uploadHandlers = [...editor.matchAll(/onChange=\{async \(next\) => \{[\s\S]*?\n {14}\}\}/g)].map(
+    (m) => m[0],
+  );
+  assert.equal(uploadHandlers.length, 2, "expected the image handler and the PDF handler");
+  for (const handler of uploadHandlers) {
+    assert.match(handler, /refreshStored\(\)/);
+    assert.doesNotMatch(handler, /\breload\(\)/, "an upload handler adopts the stored copy over unsaved typing");
+  }
+});
+
+test("a file that outlives a delete is reported, never only logged", async () => {
+  // The folder is world-readable, so a file that survives an unpublish is
+  // still open to anyone holding its link. The usual cause is Storage rules
+  // merged and not deployed, which is silent by nature.
+  const mutations = await readSrc("features/admin/sources/sourceSheetMutations.ts");
+  assert.match(mutations, /async function removeObject\([^)]*\): Promise<string \| null>/);
+  assert.match(mutations, /export async function unpublishSourceSheet\([^)]*\): Promise<string\[\]>/);
+  assert.match(mutations, /export async function deleteSourceSheet\([^)]*\): Promise<string\[\]>/);
+  assert.match(mutations, /storage\/object-not-found/, "an object already gone is not a failure");
+
+  const editor = await readSrc("features/admin/sources/SourceSheetEditor.tsx");
+  assert.match(editor, /noteSurvivors\(await unpublishSourceSheet\(sheet\)\)/);
+  assert.match(editor, /undeletedFilesWarning\(await deleteSourceSheet\(sheet\)\)/);
+});

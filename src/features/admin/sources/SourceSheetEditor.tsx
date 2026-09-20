@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ImageUpload from "@/components/blocks/ImageUpload";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
@@ -29,6 +29,7 @@ import {
   saveSourceSheet,
   setSourceSheetFile,
   setSourceSheetImage,
+  undeletedFilesWarning,
   unpublishSourceSheet,
   SOURCE_STORAGE_PREFIX,
 } from "./sourceSheetMutations";
@@ -52,6 +53,14 @@ import styles from "./editor.module.css";
  * The uploads write to Firestore as soon as they finish rather than waiting
  * for Save: the bytes are in Storage by then, so a tab closed in between would
  * otherwise leave an object nothing references.
+ *
+ * That makes two kinds of state in one form, and they must not be refreshed
+ * the same way. `adopt` replaces the editable copy (title, list, numbers) with
+ * what is stored, which is right after Save and wrong after an upload: a
+ * person who typed ten sources and then added the poster image would lose all
+ * ten. So an upload, an alt-text edit and an unpublish go through
+ * `refreshStored`, which updates only what the page reads from the stored
+ * document and leaves the typing alone.
  */
 export default function SourceSheetEditor({ slug }: { slug: string }) {
   const router = useRouter();
@@ -73,6 +82,14 @@ export default function SourceSheetEditor({ slug }: { slug: string }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Files that outlived a delete. Kept apart from `error` so the next action
+  // does not clear it: it stays true until somebody removes the files.
+  const [warning, setWarning] = useState<string | null>(null);
+
+  // Alt text is typed a character at a time and the uploader reports every
+  // one. The screen follows at once; the write waits until the typing stops.
+  const altTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingAlt = useRef<(() => Promise<void>) | null>(null);
 
   const adopt = useCallback((next: SourceSheetDoc) => {
     setSheet(next);
@@ -110,10 +127,56 @@ export default function SourceSheetEditor({ slug }: { slug: string }) {
   const published = Boolean(sheet?.publishedAt);
   const everPublished = Boolean(sheet?.publishedAt || sheet?.firstPublishedAt);
 
+  /** After Save or Publish: the stored copy IS the typed copy, so adopt it. */
   async function reload() {
     const found = await loadSourceSheet(slug);
     if (found) adopt(found);
   }
+
+  /** After an upload or an unpublish: refresh what is stored, keep the typing. */
+  async function refreshStored() {
+    const found = await loadSourceSheet(slug);
+    if (found) setSheet(found);
+  }
+
+  function noteSurvivors(paths: string[]) {
+    const text = undeletedFilesWarning(paths);
+    if (text) setWarning(text);
+  }
+
+  function queueAltWrite(alt: string) {
+    setSheet((current) =>
+      current?.image ? { ...current, image: { ...current.image, alt } } : current,
+    );
+    const write = async () => {
+      pendingAlt.current = null;
+      const image = sheetRef.current?.image;
+      if (!image) return;
+      try {
+        await setSourceSheetImage(slug, { ...image, alt }, null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not save the image description.");
+      }
+    };
+    if (altTimer.current) clearTimeout(altTimer.current);
+    pendingAlt.current = write;
+    altTimer.current = setTimeout(write, 700);
+  }
+
+  // The write above runs later, so it reads the image from a ref rather than
+  // from the render it was queued in.
+  const sheetRef = useRef<SourceSheetDoc | null>(null);
+  useEffect(() => {
+    sheetRef.current = sheet;
+  }, [sheet]);
+
+  // Leaving the page inside the pause must not drop the last edit.
+  useEffect(() => {
+    return () => {
+      if (altTimer.current) clearTimeout(altTimer.current);
+      void pendingAlt.current?.();
+    };
+  }, []);
 
   function onAddRow() {
     const next = appendSourceItem(items, nextNumber);
@@ -197,8 +260,8 @@ export default function SourceSheetEditor({ slug }: { slug: string }) {
     setError(null);
     setMessage(null);
     try {
-      await unpublishSourceSheet(sheet);
-      await reload();
+      noteSurvivors(await unpublishSourceSheet(sheet));
+      await refreshStored();
       setMessage("Unpublished. The page now says the sources are not published yet.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not unpublish.");
@@ -219,7 +282,10 @@ export default function SourceSheetEditor({ slug }: { slug: string }) {
     setBusy(true);
     setError(null);
     try {
-      await deleteSourceSheet(sheet);
+      const left = undeletedFilesWarning(await deleteSourceSheet(sheet));
+      // Said before leaving, because the entry this page belongs to is gone
+      // and there is nowhere left to show it.
+      if (left) window.alert(left);
       router.push("/admin/sources");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not delete.");
@@ -359,22 +425,26 @@ export default function SourceSheetEditor({ slug }: { slug: string }) {
               onChange={async (next) => {
                 try {
                   if (!next.url) {
-                    await setSourceSheetImage(slug, null, sheet.image?.storagePath);
+                    noteSurvivors(
+                      await setSourceSheetImage(slug, null, sheet.image?.storagePath),
+                    );
+                  } else if (!next.storagePath) {
+                    // An alt-text edit: the uploader re-sends the same url with
+                    // no storagePath. Nothing is superseded, so nothing is
+                    // deleted, and the write waits for the typing to stop.
+                    queueAltWrite(next.alt);
+                    return;
                   } else {
-                    await setSourceSheetImage(
-                      slug,
-                      {
-                        url: next.url,
-                        storagePath: next.storagePath ?? sheet.image?.storagePath ?? "",
-                        alt: next.alt,
-                      },
-                      // Only a NEW upload supersedes the old object. An alt-text
-                      // edit re-sends the same url with no storagePath, and
-                      // deleting the file on that would break the live page.
-                      next.storagePath ? sheet.image?.storagePath : null,
+                    // A NEW upload, which supersedes the old object.
+                    noteSurvivors(
+                      await setSourceSheetImage(
+                        slug,
+                        { url: next.url, storagePath: next.storagePath, alt: next.alt },
+                        sheet.image?.storagePath,
+                      ),
                     );
                   }
-                  await reload();
+                  await refreshStored();
                 } catch (err) {
                   setError(err instanceof Error ? err.message : "Could not save the image.");
                 }
@@ -394,8 +464,8 @@ export default function SourceSheetEditor({ slug }: { slug: string }) {
               disabled={busy}
               onChange={async (next) => {
                 try {
-                  await setSourceSheetFile(slug, next, sheet.file?.storagePath);
-                  await reload();
+                  noteSurvivors(await setSourceSheetFile(slug, next, sheet.file?.storagePath));
+                  await refreshStored();
                 } catch (err) {
                   setError(err instanceof Error ? err.message : "Could not save the PDF.");
                 }
@@ -453,6 +523,11 @@ export default function SourceSheetEditor({ slug }: { slug: string }) {
         </div>
       </Card>
 
+      {warning && (
+        <p className={styles.error} role="alert">
+          {warning}
+        </p>
+      )}
       {error && <p className={styles.error}>{error}</p>}
       {message && <p className={styles.message}>{message}</p>}
 
