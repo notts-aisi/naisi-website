@@ -312,6 +312,12 @@ const USERS = new Map([
       "HTML a recipient sees and not the line a route passed",
   ],
   [
+    "events-ics.test.mjs",
+    "it executes the calendar builders in `src/lib/events/ics.ts` for real: the file leaves the " +
+      "site and is read by software nobody here controls, so a copy of the URL arithmetic would " +
+      "prove nothing about what a phone receives; the module has no imports, so nothing is stubbed",
+  ],
+  [
     "event-rsvp-identity.test.mjs",
     "the RSVP route executed as a guest, a member, a pending and a rejected account; its graph " +
       "reaches `sendRsvpEmail` by alias, stubbed here because the rendering is the sibling " +
