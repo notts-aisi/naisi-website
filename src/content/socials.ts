@@ -20,11 +20,29 @@ export const SU_PAGE_URL = "https://su.nottingham.ac.uk/activities/view/NottsAIS
 
 export const CONTACT_EMAIL = "contact@naisi.org.uk";
 
+/**
+ * Our own page of every link in one place, and where most printed QR codes
+ * land. It replaced a third-party link page, which is why it is a path on
+ * this site and is NOT in `SOCIAL_LINKS` below: that list is the places we
+ * live OFF the site, and everything that renders it opens a new tab.
+ */
+export const LINKS_PAGE_PATH = "/links";
+
 export type SocialLink = { label: string; href: string };
 
+/** Off-site only. Every entry is a full address, opened in a new tab. */
 export const SOCIAL_LINKS: SocialLink[] = [
   { label: "Substack", href: "https://nottsaisafety.substack.com" },
   { label: "Instagram", href: "https://www.instagram.com/notts.ai.safety/" },
-  { label: "Linktree", href: "https://linktr.ee/nottsaisi" },
   { label: "SU page", href: SU_PAGE_URL },
 ];
+
+/**
+ * One social's address, by label. Throws at build time when the label names
+ * nothing, so a renamed entry breaks the build and not a link.
+ */
+export function socialHref(label: string): string {
+  const found = SOCIAL_LINKS.find((link) => link.label === label);
+  if (!found) throw new Error(`socials.ts: no "${label}" entry in SOCIAL_LINKS`);
+  return found.href;
+}

@@ -1350,11 +1350,15 @@ service cloud.firestore {
     // Bounded scan counters for printed QR codes: one doc per code per London
     // day ({slug}__{YYYY-MM-DD}), holding a count and a 24-key hour map and
     // nothing about who scanned. Admin SDK increments from the scan beacon
-    // route. Fully locked to clients, exactly as signupMetrics above; nothing
-    // in a browser reads it yet, and the rule opens no further than this until
-    // something does.
+    // route.
+    //
+    // Admins read it, for the dashboard on /admin/links, and that is as far as
+    // the rule opens. NOBODY WRITES, admins included: a count is only worth
+    // reading if the one thing that can move it is a scan, and a number an
+    // admin could set is a number somebody will one day be tempted to set.
     match /linkScanDays/{docId} {
-      allow read, write: if false;
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // === subscriptions ===

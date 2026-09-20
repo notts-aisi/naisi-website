@@ -1,4 +1,4 @@
-import { SU_PAGE_URL } from "@/content/socials";
+import { SU_PAGE_URL, socialHref } from "@/content/socials";
 import Reveal from "./Reveal";
 import ElsewhereCard from "./ElsewhereCard";
 import styles from "./ElsewhereRow.module.css";
@@ -10,18 +10,21 @@ type Item = {
   description: string;
 };
 
+// Every address comes from `content/socials.ts`, which exists so that a link
+// is written down once. These cards open in a new tab, so they are for places
+// OFF the site: our own page of links is in the footer's site navigation.
 const ITEMS: Item[] = [
   {
     platform: "Substack",
-    href: "https://nottsaisafety.substack.com",
+    href: socialHref("Substack"),
     primary: "Long-form posts",
     description: "Deeper writing from the committee. Past newsletters live here too.",
   },
   {
-    platform: "Linktree",
-    href: "https://linktr.ee/nottsaisi",
-    primary: "Every link in one place",
-    description: "The latest thing we're pointing people at — socials, sign-ups, events.",
+    platform: "Instagram",
+    href: socialHref("Instagram"),
+    primary: "@notts.ai.safety",
+    description: "Day to day: what is on this week, photos from socials, and reminders.",
   },
   {
     platform: "SU membership",

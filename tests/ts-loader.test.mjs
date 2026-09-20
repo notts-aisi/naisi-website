@@ -416,6 +416,12 @@ const USERS = new Map([
       "reaches courses.ts for the shared link validator, so nothing is stubbed",
   ],
   [
+    "link-stats.test.mjs",
+    "it executes the dashboard's arithmetic, because the ways its numbers could be wrong are all small " +
+      "(a person counted once per channel, a day lost to a clock change, a gap closed up in a chart) " +
+      "and only running `linkStats.ts` on rows shaped like the real ones shows any of them; nothing is stubbed",
+  ],
+  [
     "tracked-links.test.mjs",
     "it executes the short-link route, because the promise is that every printed code answers with " +
       "the exact status and Location production sent before the route existed, and only the shipping " +

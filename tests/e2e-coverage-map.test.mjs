@@ -1050,7 +1050,7 @@ const NOT_COVERED = {
     reason:
       "Printed QR codes: /api/q/[slug]/scan is a fire-and-forget counter the landing page posts to. It changes nothing a person can see, so there is no screen for a browser spec to assert on; tests/scan-counting.test.mjs and the persona battery hold its contract.",
     coverWhen:
-      "When the scan dashboard ships: a spec can then open /links?q=<slug> and assert the count it shows went up by one.",
+      "With the short-link console's spec: once a link has been made there, the same run opens the page it points at with ?q=<slug> and asserts the count on /admin/links went up by one.",
   },
   "/api/register/resend": {
     reason:
@@ -1198,7 +1198,7 @@ const NOT_COVERED = {
   },
   "/(app)/admin/(admin-only)/links": {
     reason:
-      "Admin CRUD: the short-link console is used by one admin, fails loudly on the screen of the person who pressed the button, and nothing member-facing waits on it. What it can get wrong that matters is covered elsewhere: the destination validator and the route are unit-tested against every refused shape, and the admin-only, no-delete rule is proved against every persona in the emulator.",
+      "Admin CRUD and a dashboard: the short-link console is used by one admin, fails loudly on the screen of the person who pressed the button, and nothing member-facing waits on it. What it can get wrong that matters is covered elsewhere: the destination validator and the route are unit-tested against every refused shape, the dashboard's arithmetic is unit-tested on rows shaped like the real ones, and both rules (admin-only with no delete, and counters nobody may write) are proved against every persona in the emulator.",
     coverWhen:
       "When the risk-ordered list reaches admin CRUD, which is after every applicant-facing and member-facing journey in this map is verified.",
   },
