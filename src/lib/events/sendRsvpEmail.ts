@@ -42,6 +42,8 @@ type EventLike = {
   locationPublicText?: string | null;
   startAt?: Date | null;
   endAt?: Date | null;
+  /** Feeds the attachment's SEQUENCE, so a later copy supersedes an earlier one. */
+  updatedAt?: Date | null;
   foodText?: string | null;
   dietaryTags?: FoodTag[] | null;
   /** @deprecated Legacy food fields, still read as a fallback for old events. */
@@ -228,6 +230,9 @@ export async function sendRsvpEmail({
         url: eventUrl,
         startAt: event.startAt,
         endAt: event.endAt ?? null,
+        // The public download and this attachment share a UID, so they need
+        // to agree on SEQUENCE too: both read it off the same `updatedAt`.
+        updatedAt: event.updatedAt ?? null,
       });
       attachments = [
         {

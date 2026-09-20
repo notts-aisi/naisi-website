@@ -221,9 +221,10 @@ const PUBLIC = new Map([
       touches: "reads one event",
       gate: "getPublishedEvent(",
       why:
-        "The public calendar feed for a published event, reachable from the public event page. " +
-        "The read helper is the gate: it returns only a published, unarchived event, and the " +
-        "location line goes through the disclosure helper so a hidden location is never in it.",
+        "The public calendar feed for an event, reachable from the public event page. The read " +
+        "helper is the gate: it returns a published or cancelled event, archived or not, " +
+        "members-only or not, and the route refuses the cancelled and the undated ones itself. " +
+        "The location line goes through the disclosure helper so a hidden location is never in it.",
     },
   ],
   [
