@@ -3,6 +3,7 @@
 import { useId, useState } from "react";
 import Button from "@/components/ui/Button";
 import { Field, Input } from "@/components/ui/Input";
+import { attributedSource } from "@/lib/campaign/attribution";
 import styles from "./SubscribeForm.module.css";
 
 type ChannelOption = {
@@ -28,8 +29,17 @@ type Props = {
   initialEmail?: string;
   /** Pre-populates the name field. */
   initialName?: string;
-  /** Source string sent on the API call (e.g. "homepage-combined"). */
+  /**
+   * Source string sent on the API call (e.g. "homepage-combined"). It is the
+   * form's own label and the fallback: a `?q=<slug>` in the address bar, left
+   * there by a scanned QR code, takes its place. See `attribution.ts`.
+   */
   source: string;
+  /**
+   * What the person said they are waiting for, appended to the source. Only
+   * the /links page sets it, from its application buttons.
+   */
+  interest?: string | null;
   /** Optional copy override for the helper text below the input. */
   hint?: string;
   /** Optional override for the success copy. */
@@ -78,6 +88,7 @@ export default function SubscribeForm({
   initialEmail = "",
   initialName = "",
   source,
+  interest,
   hint,
   successMessage,
 }: Props) {
@@ -124,7 +135,14 @@ export default function SubscribeForm({
         body: JSON.stringify({
           email: trimmedEmail,
           channels: selectedChannels,
-          source,
+          // Read at submit, not on mount: the address bar is the only place
+          // the marker lives, and reading it here keeps the form free of an
+          // effect and of any hydration difference.
+          source: attributedSource({
+            source,
+            search: window.location.search,
+            interest,
+          }),
           ...(trimmedName ? { name: trimmedName } : {}),
         }),
       });
