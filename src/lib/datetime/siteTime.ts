@@ -19,8 +19,9 @@
  * and formats an instant goes through this module; `tests/server-date-formatting.test.mjs`
  * walks the tree for a formatter that does not name its zone.
  *
- * No `server-only` import: the event editor reaches this through
- * `changeSummary.ts`, and the answer is the same in a browser on purpose.
+ * No `server-only` import: `tests/server-date-formatting.test.mjs` loads this
+ * module in-process, and the answer is deliberately the same in a browser if a
+ * client component ever reaches it.
  */
 
 /** The zone every stated time on the site is in. Same value as `COURSE_TZ`. */

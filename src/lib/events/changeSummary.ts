@@ -21,7 +21,7 @@ export type EventChange = {
  * out the full date.
  *
  * In London civil time through `siteTime`, never the process default: every
- * caller but the editor is a route or a scheduler job, and a container's zone
+ * caller is a route or the announcements scheduler job, and a container's zone
  * is UTC, which put every emailed time an hour early through the summer.
  */
 export function formatEventWhen(
