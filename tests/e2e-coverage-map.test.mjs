@@ -1532,6 +1532,12 @@ const NOT_COVERED = {
     coverWhen:
       "When one of these pages changes how it renders rather than what it says: member-journey drives the re-consent gate, and tests/privacy-policy.test.mjs pins the words.",
   },
+  "/links": {
+    reason:
+      "The links page is checked-in rows, one read of published events and the home page's subscribe form, whose route tests/subscriptions-consent.test.mjs executes; what is new on it is the source attribution, which tests/campaign-attribution.test.mjs pins as a pure function.",
+    coverWhen:
+      "When scan counting or an admin-editable list of rows lands on it, because then the page writes and its content stops being a checked-in file.",
+  },
   "/collaborator": {
     reason:
       "The collaborator page is reached by an invited outsider through a signed link, and the redirect half of it is asserted by the protected-route-gate battery.",
