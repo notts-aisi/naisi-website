@@ -145,6 +145,17 @@ const nextConfig: NextConfig = {
         permanent: false,
       },
       {
+        // The freshers' movie screening poster. Lands on that event's
+        // add-to-calendar page, which asks for nothing: no signup first.
+        // The id is the event document's, so editing the event (a new time,
+        // a cover image added later) never changes it. If the event is ever
+        // deleted, delete this entry with it and the code falls through to
+        // the catch-all below rather than to a 404.
+        source: "/q/movie",
+        destination: "/events/W2D1NwTZyNLLYtDQhzGg/calendar?q=movie",
+        permanent: false,
+      },
+      {
         // Every other slug, minted or mistyped, lands on /links and carries
         // its slug as ?q=, so nothing printed can dead-end on a 404 and a
         // sign-up made there records which material it came from (see
