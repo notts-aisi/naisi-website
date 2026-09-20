@@ -25,6 +25,7 @@ src/
 ├── app/                              # App Router routes
 │   ├── (public)/                     # Marketing — PublicHeader + PublicFooter layout
 │   │   ├── members/  resources/  news/[slug]/
+│   │   ├── sources/  sources/[slug]/ # bibliographies behind printed material
 │   │   └── events/[id]/              # public event page + RSVP flow
 │   │                                 #   (rsvp/[rsvpId]/{change,cancel}, rsvp/submitted)
 │   ├── (auth)/                       # login/register/pending-approval (minimal layout)
@@ -37,8 +38,9 @@ src/
 │   │   ├── newsletter/  events/manage/      # drafter / approver tools
 │   │   └── admin/                           # gated trees, see "Admin area gating":
 │   │       ├── (admin-only)/                #   full admins: Approvals, Members, Projects,
-│   │       │                                #   Newsletter, Subscriptions, Email designs,
-│   │       │                                #   Deliverability, Task templates, Danger zone
+│   │       │                                #   Newsletter, Sources, Subscriptions,
+│   │       │                                #   Email designs, Deliverability,
+│   │       │                                #   Task templates, Danger zone
 │   │       └── courses/                     #   admins + draftCourse/approveCourse holders
 │   ├── verify-email/[tokenId]/       # uni-email magic-link landing
 │   └── api/                          # session, admin/*, events/*, tasks/*, worksheets/*, newsletter/*,
@@ -193,6 +195,27 @@ subscriptionEvents/{id} Append-only audit log — one doc per subscription actio
 news/{slug}             { title, tldr, bodyMarkdown, publishedAt, authorName,
                           coverImageUrl? }
 
+sourceSheets/{slug}     The bibliography behind one piece of produced material
+                          (poster, flyer, carousel), served at /sources/<slug>.
+                        { title, context, summary, image|null, file|null,
+                          items[], nextNumber, publishedAt?, firstPublishedAt?,
+                          createdByUid, createdAt, updatedAt }
+                        Doc id IS the slug printed under the QR code, so it is
+                        fixed at creation. `items[]` rows carry a STORED `n`,
+                        the number set in superscript on the paper, minted from
+                        `nextNumber` (a counter that only grows) and never
+                        derived from a position: deleting a row leaves a gap.
+                        Each row is { id, n, name, url, comment? }, and
+                        `comment` is PUBLIC when it has text and absent when it
+                        does not. `publishedAt` present means published;
+                        unpublishing deletes it AND deletes the image and the
+                        PDF from Storage. `firstPublishedAt` survives that, so
+                        the editor knows copies may be in circulation.
+                        Admin-only in rules in BOTH directions, unlike `news`:
+                        the slug is printed, so a public read rule would hand
+                        out drafts. The public pages read through the
+                        server-only fetcher in src/features/sources/.
+
 applicationEmailTemplates/{id}   Admin-edited lifecycle email boilerplates
                                  (submitted / approved / rejected).
 
@@ -272,7 +295,7 @@ are described here; `admissions` (`requireAdmissionsPage()`) and `membership`
 
 - `(app)/admin/(admin-only)/**` calls `requireAdminPage()`. Everything that is
   not course authoring lives here (Approvals, Members, Collaborators,
-  Registrations, Projects, Newsletter, Subscriptions, Email designs,
+  Registrations, Projects, Newsletter, Sources, Subscriptions, Email designs,
   Deliverability, Task templates, Site status, Danger zone). The group name is
   in brackets, so it contributes nothing to the URLs.
 - `(app)/admin/courses/**` calls `requireCourseAuthorPage()`, the same
@@ -280,10 +303,12 @@ are described here; `admissions` (`requireAdmissionsPage()`) and `membership`
   protection is a level above it loses that protection silently the next time
   somebody widens that level.
 
-`AdminTabs` takes `isAdmin` from the layout and renders only the sections the
-caller may use, so a course drafter sees Courses and nothing else. A new admin
-page dropped straight into `src/app/(app)/admin/` has no role gate of its own;
-`tests/no-admin-gating.test.mjs` fails on exactly that.
+`AdminTabs` takes an `access` object from the layout (`AdminTabAccess`: the
+five capabilities the four gates turn on, not one `isAdmin` boolean) and
+renders only the sections the caller may use, so a course drafter sees Courses
+and nothing else. Each tab's `visible` predicate mirrors its page gate, never a
+looser rule. A new admin page dropped straight into `src/app/(app)/admin/` has
+no role gate of its own; `tests/no-admin-gating.test.mjs` fails on exactly that.
 
 The whole tree is also closed while an admin is in a view-as session: the
 layout renders a notice instead of its children, because the course editors
@@ -483,6 +508,7 @@ Two separate Firebase projects, each with its own App Hosting backend. The backe
 **CLI cheatsheet:**
 
 - **Firestore rules/indexes**: `npx firebase deploy --only firestore:rules,firestore:indexes --project <default|dev>`
+- **Storage rules**: `npx firebase deploy --only storage --project <default|dev>`. A SEPARATE command, and forgetting it is the most repeated deploy mistake in this repo. Three upload features (event images, application-email images, course images) reached production with their match block missing and every upload dying on deny-by-default, because `storage.rules` does not go out with the Firestore ruleset and nothing compares the deployed set with this file. Run it on both projects whenever `storage.rules` changes.
 - **App Hosting secrets**: `firebase apphosting:secrets:set <NAME> --project <default|dev>` creates the secret; `firebase apphosting:secrets:grantaccess <NAME> --backend <naisi|naisi-website> --project <default|dev>` grants the backend access once it exists (`naisi` on prod, `naisi-website` on dev).
 - **Trigger a rollout from current branch tip**: `firebase apphosting:rollouts:create <naisi|naisi-website> --project <default|dev> --git-branch <branch>` (or just push a commit — deploys happen on push).
 - **Local dev**: `npm run dev`, needs `.env.local` with `NEXT_PUBLIC_FIREBASE_*` + `FIREBASE_ADMIN_*` + `EVENTS_TOKEN_SECRET` values (see `.env.example`). Point at prod or dev project depending on what you're debugging.
@@ -500,7 +526,8 @@ Two separate Firebase projects, each with its own App Hosting backend. The backe
 - **Newsletter**: block-based editor (rich text, images with crop), per-user draft/approve permissions, draft → pending → approved → sent pipeline, server-side send claimed once by a transaction (`sendClaimedAt`, so two approvers pressing Send produce one send and a 409, and an interrupted send is refused until an admin clears the field), test send.
 - **Events**: modular signup-form builder, RSVP system (pending / confirmed / waitlisted / denied / cancelled), capacity + waitlist, approve / deny / change-request flow, ICS export + calendar email links, cover-image crop + emblem branding overlay, food declaration + dietary tags, pizza order helper, post-publish editing with opt-in change-notification emails (date, time, location, or description), event cancellation with an optional attendee notice, event archiving, admin test-RSVP generation. The events area is open to the whole committee; `draftEvent` gates creating an event and `approveEvent` gates publishing it; an author or admin can add committee members to a single event's `collaboratorUids` so they can edit just that event. Attendee PII (the RSVP list, CSV export, broadcast send) is restricted to SU-recognised committee and admins. Two rules the events tree keeps in one place each: what an event's location says to a person is decided only in `src/lib/events/location.ts` (the exact text of a hidden location goes to a confirmed place and nobody else; an empty public label tightens the redaction rather than switching it off), and the public RSVP route keys a signed-in submission on the account and a signed-out one on the address, answers every signed-out submission identically and tells the address by email when an RSVP is already on file. A client component rendered by a public Server Component takes the fields it uses, never the document, because every prop is serialised into the public HTML. Guards: `tests/event-location-disclosure.test.mjs`, `tests/event-rsvp-identity.test.mjs`, `tests/public-client-props.test.mjs`.
 - **Subscriptions**: junction-collection architecture (one row per email + channel, orthogonal `confirmed` / `subscribed` axes), append-only event log, admin Subscriptions tab (spreadsheet-style table, guest delete, history cap).
-- **Admin dashboard tabs**: Approvals, Members (role / title / bio / `suRecognised` / `permissions` / `tracks` edit + full profile edit + hard delete + "View as" debug impersonation), Projects (CRUD + archive), Newsletter, Subscriptions, Email designs (application email templates), Deliverability (send log + suppression list), Task templates, Danger zone.
+- **Admin dashboard tabs**: Approvals, Members (role / title / bio / `suRecognised` / `permissions` / `tracks` edit + full profile edit + hard delete + "View as" debug impersonation), Projects (CRUD + archive), Newsletter, Sources, Subscriptions, Email designs (application email templates), Deliverability (send log + suppression list), Task templates, Danger zone.
+- **Sources** (`/sources`, `/sources/<slug>`, edited at `/admin/sources`): the bibliography behind a poster, flyer or carousel. The material carries superscript numbers and a QR code; the page carries the numbered list with a link per source, an optional image of the material and an optional PDF. Four properties do the work. The NUMBER is stored per row and minted from a counter that only grows, so deleting a row leaves a permanent gap and the superscript already printed still points where it pointed (`tests/source-numbering.test.mjs`). DRAFTS ARE NOT PUBLICLY READABLE: `sourceSheets` is admin-only in both directions, unlike `news`, because the slug is printed on the poster, and the public pages read through a server-only Admin SDK fetcher that projects what it returns. UNPUBLISHING DELETES THE FILES, which is why the storage block carries an explicit admin-only `allow delete` (a plain write rule refuses a delete: `request.resource` is null on one). And an unpublished or unknown slug renders a calm "not published yet" page rather than a 404, because the reader is holding the poster that sent them there. Editing is admin-only with no new permission key; the editor writes client-direct, the way Projects does.
 - **Admin "view as" debug tool**: per-member "View as" button on the admin Members page does a full impersonation (Firebase custom token → target session cookie) so the admin sees exactly what the member sees, with a sticky banner and audit log (`impersonations` collection). See Roles and access → Admin "view as" for trust properties and operational caveats.
 - **Email infrastructure**: Resend send pipeline, deliverability dashboard, bounce/complaint webhook, application lifecycle emails, transactional emails as JSX templates in `src/emails/`.
 - **Notifications**: one grid on `/profile`, four rows (newsletter, events, courses, tasks) by two columns (email, push), stored as two parallel maps with per-row defaults (the two subscription rows opt-in, the other two opt-out). Every send declares one of three classes and a guard walks the tree to enforce it: grid (consults the row), transactional (never does), notice (deliberately ignores it, for an organiser or facilitator addressing their own audience, with a visible marker, a `kind: "notice"` receipt and durable caps). Publishing an event announces it to the events row on both columns (a members-only event drops guest addresses, nothing else), and sending a newsletter pushes to the newsletter row beside its email loop, through the device enumeration the two opt-in rows share. The event announcement has a second path off the request: with the `event-announcements` scheduler job switched on, publishing queues it and the job delivers it one marker-claimed recipient at a time, resuming across ticks. That job ships dark and belongs only where the tick is armed. Reference: [docs/notifications.md](docs/notifications.md).

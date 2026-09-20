@@ -1,0 +1,229 @@
+.article {
+  padding: var(--space-16) 0;
+}
+
+.wrap {
+  max-width: var(--prose-max-width);
+}
+
+.back {
+  display: inline-block;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  text-decoration: none;
+  margin-bottom: var(--space-5);
+}
+
+.back:hover {
+  color: var(--color-text);
+}
+
+.title {
+  margin-top: var(--space-4);
+  line-height: var(--leading-tight);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  margin-top: var(--space-3);
+}
+
+.summary {
+  color: var(--color-text);
+  line-height: var(--leading-relaxed);
+  margin-top: var(--space-5);
+}
+
+.figure {
+  margin: var(--space-8) 0 0;
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+}
+
+.download {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-decoration: none;
+  min-height: 44px;
+}
+
+.download:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-strong);
+}
+
+.downloadText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.downloadName {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.downloadMeta {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.listHeading {
+  font-size: var(--text-xl);
+  margin: var(--space-10) 0 var(--space-4);
+}
+
+/*
+ * The numbers are PRINTED on the material, so each row carries its own stored
+ * value and the list must not renumber. `<li value={n}>` is what keeps the
+ * browser from counting 1..N, which means the marker has to stay a real list
+ * marker: styling it through `::marker` rather than replacing it with a
+ * counter or a span keeps the stored number as the thing on screen.
+ */
+.list {
+  list-style: decimal;
+  list-style-position: outside;
+  padding-left: var(--space-8);
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.list li::marker {
+  color: var(--color-accent);
+  font-weight: 700;
+  font-size: var(--text-md, 1rem);
+}
+
+.item {
+  padding-left: var(--space-2);
+}
+
+.itemName {
+  color: var(--color-text);
+  font-size: var(--text-md, 1rem);
+  line-height: var(--leading-normal);
+}
+
+/* A long URL with no spaces is the one thing that forces a phone to scroll
+   sideways, so links break anywhere rather than pushing the page wide. */
+.itemLink {
+  color: var(--color-accent);
+  overflow-wrap: anywhere;
+}
+
+.itemHost {
+  display: block;
+  color: var(--color-text-subtle);
+  font-size: var(--text-sm);
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.itemComment {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  margin: var(--space-2) 0 0;
+}
+
+.noSources {
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.placeholder {
+  color: var(--color-text-muted);
+  line-height: var(--leading-relaxed);
+  margin: 0 0 var(--space-5);
+}
+
+.placeholderLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.placeholderLink {
+  color: var(--color-accent);
+}
+
+/* === Print ===
+   Somebody holding the poster may want the bibliography on paper beside it.
+   The page is already a single column of text, so printing it only needs the
+   backdrop removing and the links spelled out: a printed anchor whose URL is
+   invisible is the reason a bibliography is printed in the first place. */
+@media print {
+  .article {
+    padding: 0;
+  }
+
+  .back,
+  .download {
+    display: none;
+  }
+
+  .image {
+    max-height: 10cm;
+    width: auto;
+    border: none;
+  }
+
+  .itemLink::after {
+    content: " (" attr(href) ")";
+    font-size: 0.85em;
+    overflow-wrap: anywhere;
+  }
+
+  .itemHost {
+    display: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .article {
+    padding: var(--space-8) 0 var(--space-12);
+  }
+
+  .listHeading {
+    margin-top: var(--space-8);
+    font-size: var(--text-lg);
+  }
+
+  /* A narrower indent: at 360px the desktop gutter costs a fifth of the line
+     and the citations wrap to four words each. */
+  .list {
+    padding-left: var(--space-6);
+    gap: var(--space-4);
+  }
+
+  .item {
+    padding-left: var(--space-1);
+  }
+
+  .download {
+    width: 100%;
+  }
+}

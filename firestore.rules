@@ -1001,6 +1001,29 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // === sourceSheets (admin only, BOTH directions) ===
+    // The bibliography behind one poster, flyer or carousel: /sources/<slug>.
+    //
+    // Deliberately NOT the `news` shape one block above. `news` is
+    // `allow read: if true`, which is fine for an article whose slug has to be
+    // guessed. Here the slug is PRINTED ON THE POSTER, so guessing is not
+    // required: a public read rule would put an unpublished entry one client
+    // getDoc away from everybody holding one.
+    //
+    // Nothing in a browser reads this collection but an admin's own editor.
+    // The public pages at /sources go through
+    // src/features/sources/fetchSourceSheets.ts, a server-only Admin SDK
+    // fetcher that filters on publishedAt and projects the fields it renders.
+    //
+    // Write is admin-only too, so the editor saves client-direct with no API
+    // route, the way the Projects tab does. The admin tree is already closed
+    // during a view-as session by (app)/admin/layout.tsx, which is what makes
+    // a client-direct write acceptable here.
+    match /sourceSheets/{slug} {
+      allow read:  if isAdmin();
+      allow write: if isAdmin();
+    }
+
     // === newsletterDrafts ===
     // Drafters (permissions.draftNewsletter) and approvers (permissions.approveNewsletter)
     // get access; admin is always in. Final send happens server-side via a

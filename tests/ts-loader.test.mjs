@@ -409,6 +409,13 @@ const USERS = new Map([
       "of the formatter would prove nothing; nothing is stubbed, the graph is two pure modules",
   ],
   [
+    "source-numbering.test.mjs",
+    "it executes the real minting, reordering and validation from " +
+      "src/lib/firestore/sourceSheets.ts, because a source number is printed on paper and a " +
+      "copy of the counter in the test would prove nothing about the one that ships; the graph " +
+      "reaches courses.ts for the shared link validator, so nothing is stubbed",
+  ],
+  [
     "campaign-attribution.test.mjs",
     "it executes `attribution.ts`, the pure function that turns a visitor-controlled query string " +
       "into a subscription's `source`, because the promise is about what the shipping code lets " +
