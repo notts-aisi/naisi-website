@@ -591,6 +591,10 @@ const SITES = {
     role: "renderer",
     reason: "The public calendar download: the public text, or no LOCATION line at all.",
   },
+  "src/app/(public)/events/[id]/calendar/page.tsx": {
+    role: "renderer",
+    reason: "The add-to-calendar page a printed QR code points at: the public line on screen, and the public text inside the Google and Outlook links it builds.",
+  },
   "src/features/events/EventDetailView.tsx": {
     role: "renderer",
     reason: "The public event page and the editor's preview: the public text and the withheld note.",

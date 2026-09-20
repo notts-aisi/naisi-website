@@ -1,0 +1,260 @@
+/*
+  The add-to-calendar page a printed QR code points at.
+
+  Read on a phone, held at arm's length, at a stall. So the sheet is a single
+  narrow column at every width rather than a layout that reflows, every action
+  is a full-width row that clears the 44px touch floor unconditionally, and
+  nothing here shrinks below the phone case: the mobile block at the bottom
+  only trims padding and the heading, because the desktop shape is already the
+  phone shape.
+*/
+
+.page {
+  padding: var(--space-16) 0;
+}
+
+.sheet {
+  max-width: 34rem;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-8);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+}
+
+.kicker {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-3xl);
+}
+
+/* The part a screenshot has to carry on its own. */
+.facts {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.factLabel {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.factValue {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-snug);
+  color: var(--color-text);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/*
+  An anchor styled as a button. Not the Button primitive: it renders a real
+  <button>, and <a><button></button></a> is invalid interactive nesting whose
+  tap behaviour is unreliable in iOS Safari. The whole row is the target, and
+  `min-height` is unconditional so no breakpoint can lose it.
+*/
+.action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 2.75rem;
+  padding: var(--space-3) var(--space-5);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-align: center;
+  text-decoration: none;
+  transition: background var(--dur-quick) var(--ease-naisi),
+    border-color var(--dur-quick) var(--ease-naisi);
+}
+
+.action:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-accent);
+}
+
+.action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.actionPrimary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: white;
+}
+
+.actionPrimary:hover {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+
+.actionLabel {
+  font-size: var(--text-md, 1rem);
+  font-weight: 600;
+}
+
+.actionHint {
+  font-size: var(--text-sm);
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+/*
+  Outlook sits behind a native disclosure: its signed-out redirect mangles the
+  title, and a fresher scanning a poster is signed out. Native rather than a
+  scripted panel so it opens with no JavaScript at all, which is the same
+  reason the rest of this page is a Server Component.
+*/
+.more {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-4);
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  min-height: 2.75rem;
+  font-size: var(--text-md, 1rem);
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-md);
+}
+
+.moreBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.notice {
+  margin: 0;
+  font-size: var(--text-md, 1rem);
+  color: var(--color-text);
+}
+
+.inlineLink {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/*
+  What the poster is about, under the buttons. The cover and the description
+  come from the components the event page uses, so their own modules own their
+  look; this rule only spaces them and holds them inside the sheet.
+*/
+.details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-6);
+}
+
+.food {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.foodLabel {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.foodText {
+  margin: 0;
+  color: var(--color-text);
+}
+
+.foodTags {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* Quiet on purpose: this page is the calendar entry, the event page is the rest. */
+.detailsLink {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  min-height: 2.75rem;
+  padding-inline: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.detailsLink:hover {
+  color: var(--color-text);
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .page {
+    padding: var(--space-10) 0;
+  }
+  .sheet {
+    padding: var(--space-6);
+    gap: var(--space-5);
+  }
+  .title {
+    font-size: var(--text-2xl);
+  }
+  .details {
+    padding-top: var(--space-5);
+    gap: var(--space-4);
+  }
+  .food {
+    padding: var(--space-3) var(--space-4);
+  }
+}
