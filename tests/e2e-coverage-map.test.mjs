@@ -1184,6 +1184,18 @@ const NOT_COVERED = {
     coverWhen:
       "When the risk-ordered list reaches admin CRUD, which is after every applicant-facing and member-facing journey in this map is verified.",
   },
+  "/(app)/admin/(admin-only)/sources": {
+    reason:
+      "Admin CRUD: the source-sheet library is used by one admin, fails loudly on the screen of the person who pressed the button, and nothing member-facing waits on it. What it can get wrong that a browser spec would catch is covered elsewhere: the stored numbering is unit-tested and the admin-only rule is proved against every persona in the emulator.",
+    coverWhen:
+      "When the risk-ordered list reaches admin CRUD, which is after every applicant-facing and member-facing journey in this map is verified.",
+  },
+  "/(app)/admin/(admin-only)/sources/[slug]": {
+    reason:
+      "Admin CRUD: the source-sheet editor is used by one admin and reports its own failures inline. The two things here that no deploy could fix afterwards, a reused source number and a published entry readable as a draft, are guarded by tests/source-numbering.test.mjs and scripts/rules-tests/tests/source-sheets.test.mjs rather than by a browser run.",
+    coverWhen:
+      "When a piece of printed material first carries a code pointing at one of these pages, because from then on a wrong page is a wrong sheet of paper in somebody's hand.",
+  },
   "/(app)/admin/(admin-only)/site-status": {
     reason:
       "Admin CRUD: /(app)/admin/(admin-only)/site-status is used by one admin, fails loudly on the screen of the person who pressed the button, and nothing member-facing waits on it.",
@@ -1483,6 +1495,18 @@ const NOT_COVERED = {
       "The public resources page is server-rendered from static content or one read, and a break is visible to anybody who opens it.",
     coverWhen:
       "When the public site is next restyled, which changes all of these renders in one pull request.",
+  },
+  "/(public)/sources": {
+    reason:
+      "The public sources index is server-rendered from one read, and a break is visible to anybody who opens it. It is also not the page a scanned code lands on: every printed code addresses a sheet directly, so this index is a convenience rather than the path that matters.",
+    coverWhen:
+      "When the public site is next restyled, which changes all of these renders in one pull request.",
+  },
+  "/(public)/sources/[slug]": {
+    reason:
+      "The public source sheet is server-rendered from one read. The property worth asserting is that an unpublished or unknown address answers calmly instead of 404ing, and that decision lives in one branch of the server fetcher rather than in the page.",
+    coverWhen:
+      "When a piece of printed material first carries a code pointing here, because from then on somebody standing in a hall with a poster is the person reading the answer.",
   },
   "/(public)/status": {
     reason:

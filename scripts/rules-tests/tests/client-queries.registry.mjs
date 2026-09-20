@@ -2466,6 +2466,62 @@ export const REGISTRY = [
     run: (db) =>
       db.collection("memberRecords").doc(OTHER).collection("applications").get(),
   },
+  {
+    id: "source-sheets-list",
+    file: "src/features/admin/sources/sourceSheetData.ts",
+    path: "sourceSheets",
+    clauses: ["orderBy(updatedAt,desc)"],
+    reason:
+      "Every source sheet, drafts included, on the admin-only /admin/sources page behind requireAdminPage(). The `sourceSheets` rule is `allow read: if isAdmin()` with no resource-independent branch for anyone else, so an admin is the only persona this list can work for, and that matches the one page it runs on. Ordered by updatedAt rather than publishedAt because publishedAt is sparse by design: it is absent on a draft and deleted by unpublishing, and Firestore drops every document missing the ordered field.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc("sourceSheets/guard-sheet").set({
+        title: "Guard poster",
+        items: [{ id: "a", n: 1, name: "A source", url: "https://example.ac.uk/a" }],
+        nextNumber: 2,
+        createdByUid: "admin1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    },
+    run: (db) => db.collection("sourceSheets").orderBy("updatedAt", "desc").get(),
+  },
+  {
+    id: "source-sheet-doc",
+    file: "src/features/admin/sources/sourceSheetData.ts",
+    path: "sourceSheets/{slug}",
+    clauses: [],
+    docShape:
+      "One source sheet, addressed by the slug that is its document id and its public URL. The fixture is a saved DRAFT, because that is the state the editor opens an entry in most often and the state whose readability is the whole point of the admin-only rule.",
+    reason:
+      "Read twice from the same module: the editor loads the entry it is about to edit, and the create form checks a proposed slug is free before writing over it. Both sit behind requireAdminPage() on the (admin-only) tree, and the rule is `allow read: if isAdmin()`, so every other persona is refused whether the document exists or not. That refusal is the feature, not a limitation: the slug is printed on the poster, so a wider read rule would hand an unpublished draft to anybody holding one.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc("sourceSheets/guard-sheet").set({
+        title: "Guard poster",
+        items: [{ id: "a", n: 1, name: "A source", url: "https://example.ac.uk/a" }],
+        nextNumber: 2,
+        createdByUid: "admin1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    },
+    run: (db) => db.doc("sourceSheets/guard-sheet").get(),
+  },
 ];
 
 /**
