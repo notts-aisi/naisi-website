@@ -127,46 +127,20 @@ const nextConfig: NextConfig = {
         destination: "/#stay-in-touch",
         permanent: true,
       },
-      // Short links for printed material: naisi.uk/q/<slug> is what a QR code
-      // encodes, and where it lands is decided here rather than on the paper.
+      // Short links: naisi.uk/q/<slug> is what a QR code encodes. The scan
+      // itself is answered by src/app/api/q/[slug]/route.ts, through the
+      // rewrite below, from a record an admin can repoint.
       //
-      // `permanent: false` ON PURPOSE, unlike the entry above. `true` emits a
-      // 308, which tells a phone to cache the redirect for good, and then a
-      // printed code could never be pointed anywhere else. That is the one
-      // property these links exist for. Do not copy the neighbour.
+      // NEVER add a redirect here whose source can match /q/<slug>. Next
+      // matches redirects before rewrites and before the filesystem, so such
+      // an entry would silently take over from the route: nothing would
+      // error, and repointing a code in the admin console would do nothing.
+      // tests/tracked-links.test.mjs fails on one.
       //
-      // Order matters: the first matching entry wins, so a code with its own
-      // destination sits above the catch-all.
+      // The two below cannot match a single-segment slug. They keep the bare
+      // prefix and anything deeper off a 404. `permanent: false` on purpose,
+      // unlike the entry above: `true` is a 308, which a phone caches for good.
       {
-        // The one code that leaves the site. Same address as SOCIAL_LINKS in
-        // src/content/socials.ts.
-        source: "/q/ig",
-        destination: "https://www.instagram.com/notts.ai.safety/",
-        permanent: false,
-      },
-      {
-        // The freshers' movie screening poster. Lands on that event's
-        // add-to-calendar page, which asks for nothing: no signup first.
-        // The id is the event document's, so editing the event (a new time,
-        // a cover image added later) never changes it. If the event is ever
-        // deleted, delete this entry with it and the code falls through to
-        // the catch-all below rather than to a 404.
-        source: "/q/movie",
-        destination: "/events/W2D1NwTZyNLLYtDQhzGg/calendar?q=movie",
-        permanent: false,
-      },
-      {
-        // Every other slug, minted or mistyped, lands on /links and carries
-        // its slug as ?q=, so nothing printed can dead-end on a 404 and a
-        // sign-up made there records which material it came from (see
-        // src/lib/campaign/attribution.ts).
-        source: "/q/:slug",
-        destination: "/links?q=:slug",
-        permanent: false,
-      },
-      {
-        // The bare prefix and anything deeper: no code is printed in either
-        // shape, but nothing under /q should answer with a 404.
         source: "/q",
         destination: "/links",
         permanent: false,
@@ -175,6 +149,16 @@ const nextConfig: NextConfig = {
         source: "/q/:slug/:rest+",
         destination: "/links",
         permanent: false,
+      },
+    ];
+  },
+  async rewrites() {
+    return [
+      // The public face of the short-link route. The handler lives under
+      // src/app/api so every guard that walks the API tree walks it too.
+      {
+        source: "/q/:slug",
+        destination: "/api/q/:slug",
       },
     ];
   },

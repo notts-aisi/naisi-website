@@ -1024,6 +1024,64 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // === trackedLinks (admin only, and NO DELETE) ===
+    // One short link, naisi.uk/q/<slug>, and where it goes: a QR code on a
+    // poster or a link in a bio. The slug is the document id and is what gets
+    // PRINTED, which decides the three things below.
+    //
+    //  - No delete, for anybody, admins included. A printed code's record has
+    //    to outlive every tidy-up, because the paper it is on cannot be
+    //    recalled. A link is switched off with `active`, never removed. The
+    //    Firestore console and the Admin SDK can still delete one; this stops
+    //    the application, and an admin in a hurry, from doing it.
+    //  - The slug field has to equal the document id, so a record can never
+    //    claim to be a different link from the one its address says it is.
+    //  - Admin-only reads, like sourceSheets above. Nothing in a browser needs
+    //    this but the admin console; a scan is answered by
+    //    src/app/api/q/[slug]/route.ts on the Admin SDK.
+    //
+    // The destination's SAFETY is not checked here and cannot be: a rule has
+    // no URL parser. It is validated by parseDestination() on save and again
+    // on every scan, so a bad value stored by any means never becomes a
+    // redirect. The rule bounds the shape; the route decides what is followed.
+    //
+    // Writes are client-direct, the way sourceSheets and projects are. The
+    // admin tree is closed during a view-as session by (app)/admin/layout.tsx,
+    // which is what makes a client-direct write acceptable here.
+    match /trackedLinks/{slug} {
+      function validTrackedLink() {
+        let d = request.resource.data;
+        return d.keys().hasOnly([
+            'slug', 'label', 'destination', 'type', 'campaign', 'active',
+            'countOffsite', 'createdAt', 'updatedAt', 'createdByUid', 'updatedByUid'
+          ])
+          && d.slug == slug
+          && slug.matches('^[a-z0-9-]{1,16}$')
+          && d.type in ['qr', 'link']
+          && d.label is string && d.label.size() <= 80
+          && d.campaign is string && d.campaign.size() <= 40
+          && d.destination is string && d.destination.size() > 0 && d.destination.size() <= 500
+          && d.active is bool
+          && d.countOffsite is bool;
+      }
+
+      allow read: if isAdmin();
+      // The shape helper above decides nothing about WHO: isAdmin() does, on
+      // every line. The uid comparisons below only make a write name the
+      // person making it, so an admin cannot stamp a colleague's name on one.
+      allow create: if isAdmin()
+        && validTrackedLink()
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.updatedByUid == request.auth.uid;
+      // Who made a link, and when, is not something an edit may rewrite.
+      allow update: if isAdmin()
+        && validTrackedLink()
+        && request.resource.data.updatedByUid == request.auth.uid
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if false;
+    }
+
     // === newsletterDrafts ===
     // Drafters (permissions.draftNewsletter) and approvers (permissions.approveNewsletter)
     // get access; admin is always in. Final send happens server-side via a
