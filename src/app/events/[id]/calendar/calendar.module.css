@@ -169,11 +169,42 @@
 .summary {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   min-height: 2.75rem;
   font-size: var(--text-md, 1rem);
   font-weight: 600;
   color: var(--color-text);
   cursor: pointer;
+  /* `display: flex` drops the browser's own disclosure triangle (it belongs to
+     `list-item`), and Safari keeps a second one of its own. Both go, and the
+     chevron below says the row opens. */
+  list-style: none;
+}
+
+.summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary::after {
+  content: "";
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-right: var(--space-2);
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform var(--transition-fast);
+}
+
+.more[open] > .summary::after {
+  transform: rotate(-135deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .summary::after {
+    transition: none;
+  }
 }
 
 .summary:focus-visible {
