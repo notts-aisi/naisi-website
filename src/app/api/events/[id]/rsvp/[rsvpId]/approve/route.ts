@@ -6,7 +6,8 @@ import { getCurrentUser } from "@/lib/firebase/session";
 import { canApproveEvent, canDraftEvent } from "@/lib/firestore/users";
 import { sendRsvpEmail } from "@/lib/events/sendRsvpEmail";
 import { asSignupSnapshot } from "@/lib/firestore/events";
-import { formatEventWhen, type EventChange } from "@/lib/events/changeSummary";
+import type { EventChange } from "@/lib/events/changeSummary";
+import { scheduleChangeSinceSignup } from "@/lib/events/signupSchedule";
 
 /**
  * Organiser action: approve a pending RSVP.
@@ -96,6 +97,7 @@ export async function POST(
         name: typeof rsvp.name === "string" ? rsvp.name : "",
         answers: (rsvp.answers ?? {}) as Record<string, unknown>,
         signupSnapshot: asSignupSnapshot(rsvp.signupSnapshot),
+        signedUpAt: (rsvp.createdAt?.toDate?.() ?? null) as Date | null,
         event,
       };
     });
@@ -108,15 +110,17 @@ export async function POST(
     let changesSinceSignup: EventChange[] | undefined;
     if (outcome.signupSnapshot && outcome.status === "confirmed") {
       const snap = outcome.signupSnapshot;
-      const liveSchedule = formatEventWhen(
-        evt.startAt?.toDate?.() ?? null,
-        evt.endAt?.toDate?.() ?? null,
-      );
       const liveLocation = typeof evt.location === "string" ? evt.location : "";
       const diff: EventChange[] = [];
-      if (snap.scheduleLabel !== liveSchedule) {
-        diff.push({ label: "When", from: snap.scheduleLabel, to: liveSchedule });
-      }
+      // Instants, never the formatted line: see lib/events/signupSchedule.ts.
+      const when = scheduleChangeSinceSignup({
+        snapshot: snap,
+        liveStartAt: evt.startAt?.toDate?.() ?? null,
+        liveEndAt: evt.endAt?.toDate?.() ?? null,
+        eventUpdatedAt: evt.updatedAt?.toDate?.() ?? null,
+        signedUpAt: outcome.signedUpAt,
+      });
+      if (when) diff.push(when);
       if (snap.locationLabel !== liveLocation) {
         diff.push({ label: "Where", from: snap.locationLabel, to: liveLocation });
       }

@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import BrandMark from "@/components/BrandMark";
 import BlockView from "@/features/events/BlockView";
 import CoverImage from "@/features/events/CoverImage";
@@ -14,6 +13,7 @@ import {
 } from "@/lib/events/ics";
 import { publicLocationLine, publicLocationText } from "@/lib/events/location";
 import { FOOD_TAG_LABEL, type EventDoc } from "@/lib/firestore/events";
+import { EventNotListed } from "./EventNotListed";
 import styles from "./calendar.module.css";
 
 /**
@@ -68,7 +68,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { id } = await params;
   const event = await getPublishedEvent(id);
-  if (!event) return { title: "Event not found" };
+  if (!event) return { title: "Event not found", robots: { index: false, follow: true } };
   return {
     title: `Add to calendar: ${titleOf(event)}`,
     description: "Add this NAISI event to Apple Calendar, Google Calendar or Outlook.",
@@ -85,7 +85,9 @@ export default async function AddEventToCalendarPage({
 }) {
   const { id } = await params;
   const event = await getPublishedEvent(id);
-  if (!event) notFound();
+  // Returned, never `notFound()`: that would answer with an empty body until
+  // the scripts arrive. See EventNotListed for why that matters here.
+  if (!event) return <EventNotListed />;
 
   const title = titleOf(event);
   // A cancelled event has nothing to add, and an undated one has nothing to

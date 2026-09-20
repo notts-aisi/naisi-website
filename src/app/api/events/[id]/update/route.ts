@@ -128,6 +128,9 @@ export async function POST(
       ? Math.floor(capacityRaw)
       : null;
   const waitlistEnabled = capacity === null ? false : body.waitlistEnabled !== false;
+  // Strictly `true`, so a client that predates the switch and sends nothing
+  // cannot turn sign-ups off on a published event by omission.
+  const noSignup = body.noSignup === true;
 
   const foodText = typeof body.foodText === "string" ? body.foodText.trim() : "";
   const dietaryTags = Array.isArray(body.dietaryTags)
@@ -164,6 +167,7 @@ export async function POST(
     visibility,
     capacity,
     waitlistEnabled,
+    noSignup,
     signupForm,
     foodText: foodText ? foodText : FieldValue.delete(),
     dietaryTags,

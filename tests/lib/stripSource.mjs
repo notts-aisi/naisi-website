@@ -49,6 +49,13 @@ const TEMPLATE = 4;
  * comments, which is what a caller wants when it is looking for a literal that
  * contains a string or a template (`rateLimit(\`events:rsvp:ip:${ip}\`)`), and
  * still cannot be fooled by a mention of that literal in a comment.
+ *
+ * BOTH MODES TRACK STRINGS. `keepStrings` changes what is written out, never
+ * what is recognised. An earlier version skipped the string and template
+ * states altogether in that mode, so the `//` in `"https://example.com"` read
+ * as the start of a comment and the rest of the line was dropped, code
+ * included. That is this file's own failure mode (a reader that silently
+ * stops looking) and seven guards read through that mode.
  */
 export function stripSource(source, { keepStrings = false } = {}) {
   let state = CODE;
@@ -66,11 +73,11 @@ export function stripSource(source, { keepStrings = false } = {}) {
         state = BLOCK_COMMENT;
         i += 1;
         out += " ";
-      } else if ((c === '"' || c === "'") && !keepStrings) {
+      } else if (c === '"' || c === "'") {
         state = STRING;
         quote = c;
         out += c;
-      } else if (c === "`" && !keepStrings) {
+      } else if (c === "`") {
         state = TEMPLATE;
         out += c;
       } else {
@@ -98,6 +105,8 @@ export function stripSource(source, { keepStrings = false } = {}) {
     }
     if (state === STRING) {
       if (c === "\\") {
+        // An escape is two characters, and the second can be the quote.
+        if (keepStrings) out += c + (next ?? "");
         i += 1;
       } else if (c === quote) {
         state = CODE;
@@ -108,17 +117,22 @@ export function stripSource(source, { keepStrings = false } = {}) {
         // code at the line break.
         state = CODE;
         out += "\n";
+      } else if (keepStrings) {
+        out += c;
       }
       continue;
     }
     // TEMPLATE
     if (c === "\\") {
+      if (keepStrings) out += c + (next ?? "");
       i += 1;
     } else if (c === "`") {
       state = CODE;
       out += c;
     } else if (c === "\n") {
       out += "\n";
+    } else if (keepStrings) {
+      out += c;
     }
   }
   return out;

@@ -304,6 +304,7 @@ export default function EventEditor({ eventId, announcementsQueued = false }: Pr
   const [visibility, setVisibility] = useState<EventVisibility>("public");
   const [capacity, setCapacity] = useState<number | null>(null);
   const [waitlistEnabled, setWaitlistEnabled] = useState(true);
+  const [noSignup, setNoSignup] = useState(false);
   const [signupForm, setSignupForm] = useState<FormQuestion[]>([]);
   const [foodText, setFoodText] = useState("");
   const [dietaryTags, setDietaryTags] = useState<FoodTag[]>([]);
@@ -383,6 +384,7 @@ export default function EventEditor({ eventId, announcementsQueued = false }: Pr
         setVisibility((cur) => (dirty ? cur : next.visibility));
         setCapacity((cur) => (dirty ? cur : next.capacity));
         setWaitlistEnabled((cur) => (dirty ? cur : next.waitlistEnabled));
+        setNoSignup((cur) => (dirty ? cur : next.noSignup));
         setSignupForm((cur) => (dirty ? cur : next.signupForm));
         setFoodText((cur) => (dirty ? cur : next.foodText ?? ""));
         setDietaryTags((cur) => (dirty ? cur : next.dietaryTags ?? []));
@@ -490,6 +492,7 @@ export default function EventEditor({ eventId, announcementsQueued = false }: Pr
       visibility,
       capacity,
       waitlistEnabled: capacity === null ? false : waitlistEnabled,
+      noSignup,
       signupForm,
       foodText: foodText.trim() ? foodText : null,
       dietaryTags,
@@ -1136,6 +1139,23 @@ export default function EventEditor({ eventId, announcementsQueued = false }: Pr
               />
             </Field>
           </div>
+
+          {/* For a drop-in: a social, a screening, a stall. The sign-up
+              settings around this are kept as they are and simply not used, so
+              switching back loses nothing. */}
+          <label className={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={noSignup}
+              onChange={(e) => {
+                setNoSignup(e.target.checked);
+                markDirty();
+              }}
+              disabled={!editable || busy}
+            />
+            No sign-up needed: people just turn up. The event page shows no form and offers add to
+            calendar. Capacity, the waitlist and the sign-up questions are ignored while this is on.
+          </label>
 
           {capacity !== null && (
             <label className={styles.checkboxLabel}>
