@@ -164,6 +164,57 @@ service firebase.storage {
         && !request.resource.contentType.lower().matches('image/svg.*');
     }
 
+    // Source materials: the picture of a printed poster, flyer or carousel,
+    // and the PDF behind it, for one entry on /sources.
+    //
+    // PUBLIC READ, like every block above it and for the same reason: the
+    // pages under /sources are served to signed-out visitors, and the QR code
+    // printed on the material points at them. There is no confidentiality in
+    // an artefact physically handed to strangers at a fair.
+    //
+    // ADMIN-ONLY WRITE. Editing /sources is an admin job, so {slug} is
+    // admin-controlled and the blast radius is one admin overwriting another
+    // admin's file, which is the reasoning course-images records above. If
+    // this ever widens to a permission key, mirror event-images and scope it
+    // to the sheet's own document.
+    //
+    // 10MB rather than the house 5MB: an A3 export routinely exceeds 5MB, and
+    // the failure mode of a cap set too low is a raw Firebase permission
+    // string. The editor checks the size in the browser first and says the
+    // limit in words; this is the boundary behind that.
+    //
+    // ONE BLOCK for both the image and the PDF rather than two. A PDF-only
+    // second folder would be the first entry in
+    // NON_IMAGE_WRITE_BLOCKS (scripts/rules-tests/tests/storage.test.mjs),
+    // whose emptiness is load-bearing by its own comment, and would buy a
+    // second set of emulator tests for nothing.
+    //
+    // EXPLICIT `allow delete`, which is not decoration. In Storage rules
+    // `write` covers delete, but `request.resource` is NULL on a delete, so
+    // `request.resource.size` raises and the write rule denies by error.
+    // Unpublishing an entry DELETES its image and its PDF (that is what
+    // "pulled down" means here), and deleting an entry deletes them too, so
+    // the delete needs a rule of its own. The tasks block above carries one
+    // for exactly the same reason.
+    match /source-materials/{slug}/{file=**} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && userData().role == 'admin'
+        && request.resource.size < 10 * 1024 * 1024
+        && (
+          request.resource.contentType.matches('image/.*')
+          || request.resource.contentType == 'application/pdf'
+        )
+        // No SVG: this folder is world-readable, and an SVG is a document that
+        // can carry script and links rather than a picture. Matched on the
+        // LOWERCASED type with a prefix pattern, not compared to the one exact
+        // string: rules compare strings byte for byte, so `image/SVG+xml` and
+        // `image/svg+xml; charset=utf-8` walked straight past an equality test
+        // while a browser opens both as an SVG document.
+        && !request.resource.contentType.lower().matches('image/svg.*');
+      allow delete: if request.auth != null && userData().role == 'admin';
+    }
+
     // Task attachments: mirror the Firestore task access gate — anyone who
     // can read the parent task can read/upload, and delete is author-or-admin.
     // 10MB cap; MIME allowlist covers images, PDFs, common office docs, zips.
