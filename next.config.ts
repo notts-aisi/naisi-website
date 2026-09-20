@@ -145,23 +145,24 @@ const nextConfig: NextConfig = {
         permanent: false,
       },
       {
-        // Every other slug, minted or mistyped, lands on the home page and
-        // carries its slug as ?q=, so nothing printed can dead-end on a 404
-        // and the page it lands on can tell which material it came from.
+        // Every other slug, minted or mistyped, lands on /links and carries
+        // its slug as ?q=, so nothing printed can dead-end on a 404 and a
+        // sign-up made there records which material it came from (see
+        // src/lib/campaign/attribution.ts).
         source: "/q/:slug",
-        destination: "/?q=:slug",
+        destination: "/links?q=:slug",
         permanent: false,
       },
       {
         // The bare prefix and anything deeper: no code is printed in either
         // shape, but nothing under /q should answer with a 404.
         source: "/q",
-        destination: "/",
+        destination: "/links",
         permanent: false,
       },
       {
         source: "/q/:slug/:rest+",
-        destination: "/",
+        destination: "/links",
         permanent: false,
       },
     ];
