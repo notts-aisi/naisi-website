@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isCampaignSlug } from "@/lib/campaign/attribution";
 import { isPrintedSlug } from "@/lib/campaign/printedLinks";
 import { recordScan } from "@/lib/campaign/scanCounter";
+import { trackedLinkExists } from "@/lib/campaign/trackedLinkStore";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
@@ -10,10 +11,10 @@ export const dynamic = "force-dynamic";
  * Counts one scan of a printed code: `POST /api/q/<slug>/scan`.
  *
  * Fired by `ScanBeacon` from the page a scan lands on, never by the short
- * link itself. `naisi.uk/q/<slug>` is answered by the redirects in
- * `next.config.ts`, which this route has nothing to do with: a code works
- * whether or not this route is up, and a failure here is invisible to the
- * person holding the phone.
+ * link itself. `naisi.uk/q/<slug>` is answered by the GET one directory up,
+ * which this route has nothing to do with: a code works whether or not this
+ * route is up, and a failure here is invisible to the person holding the
+ * phone.
  *
  * A POST, and deliberately not a count taken on the redirect. Link previews,
  * mail scanners and prefetchers fetch a URL without running its page, so they
@@ -47,10 +48,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ slug: string }
   if (!isCampaignSlug(slug)) {
     return NextResponse.json({ error: "Not a slug" }, { status: 400 });
   }
-  // Only a code that exists is counted. Without this, anybody could mint a
+  // Only a link that exists is counted. Without this, anybody could mint a
   // document per made-up slug, and the numbers would fill with strings nobody
-  // printed.
-  if (!isPrintedSlug(slug)) {
+  // made. A code that is on paper needs no read to be recognised, so the fair
+  // day's scans cost one write each and nothing more.
+  if (!isPrintedSlug(slug) && !(await trackedLinkExists(slug))) {
     return NextResponse.json({ error: "Unknown code" }, { status: 404 });
   }
 

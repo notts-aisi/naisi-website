@@ -251,9 +251,20 @@ const PUBLIC = new Map([
     },
   ],
   [
+    "src/app/api/q/[slug]/route.ts#GET",
+    {
+      touches: "reads one tracked link",
+      gate: "isCampaignSlug(slug)",
+      why:
+        "A short link on a poster: the person scanning it has no account, so there is no session " +
+        "to require and none is read. The slug's shape is checked before it addresses a document, " +
+        "and every answer is a redirect, so nothing in the record reaches the caller but where it goes.",
+    },
+  ],
+  [
     "src/app/api/q/[slug]/scan/route.ts#POST",
     {
-      touches: "increments one printed code's scan counter for the day",
+      touches: "reads one tracked link, then increments its scan counter for the day",
       gate: "rateLimit(`q:scan:ip:${ip}`",
       why:
         "Counts a scan of a printed QR code, fired by the landing page. The person scanning has " +

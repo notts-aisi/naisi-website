@@ -416,6 +416,13 @@ const USERS = new Map([
       "reaches courses.ts for the shared link validator, so nothing is stubbed",
   ],
   [
+    "tracked-links.test.mjs",
+    "it executes the short-link route, because the promise is that every printed code answers with " +
+      "the exact status and Location production sent before the route existed, and only the shipping " +
+      "route can show that; `server-only` and the Admin SDK handle are stubbed so the read comes from a " +
+      "fake database the test controls, including one that refuses to answer, and nothing else is",
+  ],
+  [
     "scan-counting.test.mjs",
     "it executes the scan counter, its route and the beacon's decision, because what a scan writes is " +
       "a privacy promise and only the shipping code can show which fields reach the database; " +

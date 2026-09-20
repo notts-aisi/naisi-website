@@ -3,9 +3,10 @@
  *
  * Run with `npm test` (Node's built-in runner, no emulator, no credentials).
  *
- * A QR code on a poster encodes `naisi.uk/q/<slug>`. The redirects in
- * `next.config.ts` answer the scan and land it on a page carrying `?q=<slug>`;
- * `ScanBeacon`, mounted in the root layout, then posts to
+ * A QR code on a poster encodes `naisi.uk/q/<slug>`. The short-link route
+ * answers the scan and lands it on a page carrying `?q=<slug>` (what it sends
+ * is `tests/tracked-links.test.mjs`'s subject); `ScanBeacon`, mounted in the
+ * root layout, then posts to
  * `/api/q/<slug>/scan`, which increments a per-code per-day counter. Four
  * promises hold that arrangement together, and each one is held here by
  * running the code that ships rather than by describing it:
@@ -19,7 +20,7 @@
  *     cookie and storage key the site sets, so neither the route nor the
  *     beacon may read a header that identifies a device or touch browser
  *     storage. That is what lets this ship with the policy unchanged.
- *  3. ONLY A REAL CODE IS COUNTED, AND ONLY BY A POST. The route is driven
+ *  3. ONLY A LINK THAT EXISTS IS COUNTED, AND ONLY BY A POST. The route is driven
  *     through every branch. A GET that counted would count link previews and
  *     mail scanners; `tests/get-handlers-readonly.test.mjs` refuses any GET
  *     that calls `recordScan`, and this file checks that entry is still there.
@@ -55,11 +56,18 @@ const STORED_FIELDS = ["count", "date", "hours", "slug"];
 // ---------------------------------------------------------------------------
 
 const writes = [];
+/** `trackedLinks` documents the scan route may find. Keyed `collection/id`. */
+const records = new Map();
 globalThis.__scanFakeDb = {
   collection(collection) {
     return {
       doc(id) {
         return {
+          async get() {
+            if (globalThis.__scanReadFails) throw new Error("firestore is down");
+            const data = records.get(`${collection}/${id}`);
+            return { exists: data !== undefined, id, data: () => data };
+          },
           async set(data, options) {
             if (globalThis.__scanWriteFails) throw new Error("firestore is down");
             writes.push({ collection, id, data, options });
@@ -101,7 +109,9 @@ const INC = { __op: "increment", by: 1 };
 
 beforeEach(() => {
   writes.length = 0;
+  records.clear();
   globalThis.__scanWriteFails = false;
+  globalThis.__scanReadFails = false;
   globalThis.__scanDbMissing = false;
 });
 
@@ -154,13 +164,13 @@ describe("a printed slug is permanent", () => {
     assert.ok(Object.isFrozen(PRINTED_LINKS));
   });
 
-  test("the short links are still answered by next.config.ts, which this feature leaves alone", () => {
-    // Counting is additive. The day a route takes over answering /q/<slug>,
-    // these entries have to go in the same change (a redirect is matched
-    // before any route and would silently shadow it), and this test is the
-    // place that change has to come and say so.
-    const config = read("next.config.ts");
-    assert.match(config, /source: "\/q\/:slug",\s*destination: "\/links\?q=:slug",\s*permanent: false/);
+  test("a printed code is recognised without asking the database", async () => {
+    // On fair day a scan costs one write and nothing more, and a code that is
+    // on paper is counted even when the read would have failed.
+    globalThis.__scanReadFails = true;
+    const res = await post("poster");
+    assert.equal(res.status, 200);
+    assert.equal(writes.length, 1);
   });
 });
 
@@ -304,7 +314,35 @@ describe("POST /api/q/[slug]/scan", () => {
     assert.equal(writes[0].data.slug, "poster");
   });
 
-  test("a well-formed slug that was never printed is refused and nothing is written", async () => {
+  test("a link that exists only as a record is counted", async () => {
+    records.set("trackedLinks/flyer", { slug: "flyer", destination: "/links", active: true });
+    const res = await post("flyer");
+    assert.equal(res.status, 200);
+    assert.deepEqual(writes.map((w) => w.id.split("__")[0]), ["flyer"]);
+  });
+
+  test("a link that is switched off is still counted: people are still scanning it", async () => {
+    records.set("trackedLinks/flyer", { slug: "flyer", destination: "/links", active: false });
+    assert.equal((await post("flyer")).status, 200);
+    assert.equal(writes.length, 1);
+  });
+
+  test("when the database cannot say whether a slug exists, it is not counted", async () => {
+    // The safe direction: an outage must not become a way to mint documents.
+    // A slug this server has never seen, because one it HAS seen is remembered
+    // through an outage on purpose (see trackedLinkStore).
+    globalThis.__scanReadFails = true;
+    const original = console.error;
+    console.error = () => {};
+    try {
+      assert.equal((await post("never-seen")).status, 404);
+    } finally {
+      console.error = original;
+    }
+    assert.deepEqual(writes, []);
+  });
+
+  test("a well-formed slug that names nothing is refused and nothing is written", async () => {
     const res = await post("e2e-missing-slug");
     assert.equal(res.status, 404);
     assert.deepEqual(writes, []);
@@ -377,8 +415,11 @@ describe("no GET can count a scan", () => {
       for (const entry of readdirSync(dir)) {
         const full = join(dir, entry);
         if (statSync(full).isDirectory()) walk(full);
-        else if (/\.tsx?$/.test(entry) && /\brecordScan\b/.test(readFileSync(full, "utf8"))) {
-          importers.push(relative(REPO_ROOT, full).split("\\").join("/"));
+        else if (/\.tsx?$/.test(entry)) {
+          // Code only: a comment explaining why a file must never call it is
+          // not a call.
+          const path = relative(REPO_ROOT, full).split("\\").join("/");
+          if (/\brecordScan\b/.test(codeOf(path))) importers.push(path);
         }
       }
     };

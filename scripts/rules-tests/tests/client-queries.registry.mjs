@@ -2522,6 +2522,72 @@ export const REGISTRY = [
     },
     run: (db) => db.doc("sourceSheets/guard-sheet").get(),
   },
+  {
+    id: "tracked-links-list",
+    file: "src/features/admin/links/trackedLinkData.ts",
+    path: "trackedLinks",
+    clauses: [],
+    reason:
+      "Every short link on the admin-only /admin/links page behind requireAdminPage(). The `trackedLinks` rule is `allow read: if isAdmin()` with no branch for anyone else, so an admin is the only persona this list can work for, which matches the one page it runs on. The whole collection with no orderBy on purpose: it holds tens of documents, the page groups them by campaign itself, and an orderBy on campaign would drop every link whose campaign was never set.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc("trackedLinks/guard-link").set({
+        slug: "guard-link",
+        label: "Guard poster",
+        destination: "/links",
+        type: "qr",
+        campaign: "Guard campaign",
+        active: true,
+        countOffsite: false,
+        createdByUid: "admin1",
+        updatedByUid: "admin1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    },
+    run: (db) => db.collection("trackedLinks").get(),
+  },
+  {
+    id: "tracked-link-doc",
+    file: "src/features/admin/links/trackedLinkMutations.ts",
+    path: "trackedLinks/{slug}",
+    clauses: [],
+    docShape:
+      "One short link, addressed by the slug that is its document id and the last segment of its printed address. The fixture is a live QR code pointing at a page on this site, the commonest kind.",
+    reason:
+      "Read inside a transaction, twice from the same module and for the same reason: creating a link, and creating the record of a code that is already on paper, both have to refuse a slug that is taken instead of writing over it. Overwriting would silently repoint somebody else's printed code. Both run on the (admin-only) tree behind requireAdminPage(), and the rule is `allow read: if isAdmin()`, so every other persona is refused whether the document exists or not.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc("trackedLinks/guard-link").set({
+        slug: "guard-link",
+        label: "Guard poster",
+        destination: "/links",
+        type: "qr",
+        campaign: "Guard campaign",
+        active: true,
+        countOffsite: false,
+        createdByUid: "admin1",
+        updatedByUid: "admin1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    },
+    run: (db) => db.doc("trackedLinks/guard-link").get(),
+  },
 ];
 
 /**
