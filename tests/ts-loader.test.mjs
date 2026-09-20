@@ -408,6 +408,12 @@ const USERS = new Map([
       "because the promise is what the shipping formatter prints on a UTC container and a copy " +
       "of the formatter would prove nothing; nothing is stubbed, the graph is two pure modules",
   ],
+  [
+    "campaign-attribution.test.mjs",
+    "it executes `attribution.ts`, the pure function that turns a visitor-controlled query string " +
+      "into a subscription's `source`, because the promise is about what the shipping code lets " +
+      "through and a copy of its regular expression would prove nothing; nothing is stubbed",
+  ],
 ]);
 
 /**

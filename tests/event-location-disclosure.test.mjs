@@ -603,6 +603,10 @@ const SITES = {
     role: "renderer",
     reason: "The public events list: the public text.",
   },
+  "src/app/links/page.tsx": {
+    role: "renderer",
+    reason: "The links page's upcoming list, where a scanned QR code lands. Prints publicLocationText and reads no location field of its own.",
+  },
   "src/app/(public)/UpcomingEvents.tsx": {
     role: "renderer",
     reason: "The home page's upcoming list. Its inline rule fell back to the exact text on an empty label until 8 September 2026.",
