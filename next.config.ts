@@ -127,6 +127,43 @@ const nextConfig: NextConfig = {
         destination: "/#stay-in-touch",
         permanent: true,
       },
+      // Short links for printed material: naisi.uk/q/<slug> is what a QR code
+      // encodes, and where it lands is decided here rather than on the paper.
+      //
+      // `permanent: false` ON PURPOSE, unlike the entry above. `true` emits a
+      // 308, which tells a phone to cache the redirect for good, and then a
+      // printed code could never be pointed anywhere else. That is the one
+      // property these links exist for. Do not copy the neighbour.
+      //
+      // Order matters: the first matching entry wins, so a code with its own
+      // destination sits above the catch-all.
+      {
+        // The one code that leaves the site. Same address as SOCIAL_LINKS in
+        // src/content/socials.ts.
+        source: "/q/ig",
+        destination: "https://www.instagram.com/notts.ai.safety/",
+        permanent: false,
+      },
+      {
+        // Every other slug, minted or mistyped, lands on the home page and
+        // carries its slug as ?q=, so nothing printed can dead-end on a 404
+        // and the page it lands on can tell which material it came from.
+        source: "/q/:slug",
+        destination: "/?q=:slug",
+        permanent: false,
+      },
+      {
+        // The bare prefix and anything deeper: no code is printed in either
+        // shape, but nothing under /q should answer with a 404.
+        source: "/q",
+        destination: "/",
+        permanent: false,
+      },
+      {
+        source: "/q/:slug/:rest+",
+        destination: "/",
+        permanent: false,
+      },
     ];
   },
 };
