@@ -139,6 +139,7 @@ export async function POST(
           locationPublicText: evt.locationPublicText,
           startAt: evt.startAt?.toDate?.() ?? null,
           endAt: evt.endAt?.toDate?.() ?? null,
+          updatedAt: evt.updatedAt?.toDate?.() ?? null,
           foodText: evt.foodText,
           dietaryTags: evt.dietaryTags,
           foodProvenance: evt.foodProvenance,
