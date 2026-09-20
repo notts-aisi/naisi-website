@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import BrandMark from "@/components/BrandMark";
-import { LINK_GROUPS, isOffsite } from "@/content/links";
+import { isOffsite } from "@/content/links";
 import { listPublishedEvents } from "@/features/events/fetchEvents";
+import { fetchLinksPage } from "@/features/links/fetchLinksPage";
 import { formatSiteDate } from "@/lib/datetime/siteTime";
 import { publicLocationText } from "@/lib/events/location";
 import LinksSignup from "./LinksSignup";
@@ -21,13 +22,22 @@ import styles from "./links.module.css";
   it renders works before any script arrives, and a page of a dozen links
   should not fetch a dozen routes over a sports hall's signal.
 
-  Static with a ten-minute revalidate, like the home page. The `?q=<slug>` a
-  scanned code leaves in the address bar is never read here: the subscribe
-  form reads it in the browser at the moment of submitting, so every code
-  shares one cached page.
+  Static with a one-minute revalidate. The `?q=<slug>` a scanned code leaves
+  in the address bar is never read here: the subscribe form reads it in the
+  browser at the moment of submitting, so every code shares one cached page.
+
+  One minute and not the home page's ten, because the rows are edited from the
+  admin console and somebody who has just changed one wants to see it. The
+  edit is a client-direct write, so there is no route to revalidate from; a
+  short window is what stands in for it. The cost is one document read a
+  minute while anybody is visiting.
+
+  The rows come from `fetchLinksPage`, which cannot fail: it serves the
+  built-in page in `src/content/links.ts` when there is nothing stored, or
+  nothing sensible, or no database.
 */
 
-export const revalidate = 600;
+export const revalidate = 60;
 
 export const metadata: Metadata = {
   title: "Links",
@@ -62,7 +72,7 @@ async function upcomingEvents() {
 }
 
 export default async function LinksPage() {
-  const upcoming = await upcomingEvents();
+  const [upcoming, content] = await Promise.all([upcomingEvents(), fetchLinksPage()]);
 
   return (
     <main className={styles.page}>
@@ -76,7 +86,10 @@ export default async function LinksPage() {
         </p>
       </header>
 
-      <LinksSignup>
+      {/* Only the three buttons' state, never the page content as a whole:
+          every prop a client component is handed is serialised into the
+          public HTML. */}
+      <LinksSignup applications={content.applications}>
         {upcoming.length > 0 && (
           <section className={styles.section} aria-labelledby="links-coming-up">
             <h2 id="links-coming-up" className={styles.sectionHeading}>
@@ -118,12 +131,12 @@ export default async function LinksPage() {
         )}
       </LinksSignup>
 
-      {LINK_GROUPS.map((group) => (
-        <section key={group.heading} className={styles.section}>
+      {content.groups.map((group) => (
+        <section key={group.id} className={styles.section}>
           <h2 className={styles.sectionHeading}>{group.heading}</h2>
           <ul className={styles.rows}>
             {group.rows.map((row) => (
-              <li key={row.key}>
+              <li key={row.id}>
                 {row.soon ? (
                   <div className={styles.row} data-soon="true">
                     <span className={styles.rowLabel}>

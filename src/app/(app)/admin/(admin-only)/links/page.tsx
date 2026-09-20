@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
@@ -152,9 +153,14 @@ export default function LinksAdminPage() {
         <p className={styles.count}>
           {loading ? "Loading links…" : `${links.length} ${links.length === 1 ? "link" : "links"}`}
         </p>
-        <Button size="sm" onClick={() => setCreating((v) => !v)}>
-          {creating ? "Cancel" : "New link"}
-        </Button>
+        <div className={styles.headActions}>
+          <Link href="/admin/links/page-content" className={styles.backLink}>
+            Edit the /links page
+          </Link>
+          <Button size="sm" onClick={() => setCreating((v) => !v)}>
+            {creating ? "Cancel" : "New link"}
+          </Button>
+        </div>
       </div>
 
       <p className={styles.intro}>

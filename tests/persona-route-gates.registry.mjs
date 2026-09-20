@@ -1859,6 +1859,13 @@ export const PAGES = {
       "course and membership permission holders included, because the admin front door " +
       "admits them and this inner gate is what keeps them out of the rest.",
   },
+  "/(app)/admin/(admin-only)/links/page-content": {
+    expect: everyone("dashboard", { anonymous: "login", pending: "pendingApproval", rejected: "home", admin: 200 }),
+    why:
+      "The (admin-only) tree: requireAdminPage sends every non-admin to the dashboard, the " +
+      "course and membership permission holders included, because the admin front door " +
+      "admits them and this inner gate is what keeps them out of the rest.",
+  },
   "/(app)/admin/(admin-only)/sources": {
     expect: everyone("dashboard", { anonymous: "login", pending: "pendingApproval", rejected: "home", admin: 200 }),
     why:

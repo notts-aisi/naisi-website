@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import SubscribeForm from "@/components/SubscribeForm";
+import { isOffsite } from "@/content/links";
 import { LINK_INTERESTS, type LinkInterest } from "@/lib/campaign/attribution";
 import styles from "./links.module.css";
 
@@ -26,8 +28,15 @@ import styles from "./links.module.css";
  * The form comes first because it is what most printed codes are for, and the
  * buttons sit lower down and jump back up to it. `children` is whatever the
  * page wants between the two (the upcoming events), rendered on the server.
- * It takes no data props on purpose: everything a Server Component hands a
- * client component as a prop is serialised into the public HTML.
+ *
+ * WHEN ONE OPENS, an admin marks it open at /admin/links and gives it an
+ * address, and that button becomes a plain link to the application with no
+ * "Opens soon" on it. The other two keep leading to the form.
+ *
+ * The one data prop is `applications`: three booleans and three addresses that
+ * the page shows anyway. It takes nothing else on purpose, because everything
+ * a Server Component hands a client component is serialised into the public
+ * HTML, whether or not the component renders it.
  */
 
 const COPY: Record<LinkInterest, { button: string; heading: string }> = {
@@ -45,8 +54,17 @@ const COPY: Record<LinkInterest, { button: string; heading: string }> = {
   },
 };
 
-export default function LinksSignup({ children }: { children?: ReactNode }) {
+type Applications = Record<LinkInterest, { open: boolean; href: string }>;
+
+export default function LinksSignup({
+  applications,
+  children,
+}: {
+  applications: Applications;
+  children?: ReactNode;
+}) {
   const [interest, setInterest] = useState<LinkInterest | null>(null);
+  const openCount = LINK_INTERESTS.filter((id) => applications[id].open).length;
 
   return (
     <>
@@ -90,28 +108,60 @@ export default function LinksSignup({ children }: { children?: ReactNode }) {
           Applications
         </h2>
         <p className={styles.sectionNote}>
-          Not open yet. Pick one, join the mailing list at the top of this
-          page, and we&apos;ll email you when it opens.
+          {openCount === 0
+            ? "Not open yet. Pick one, join the mailing list at the top of this page, and we'll email you when it opens."
+            : openCount === LINK_INTERESTS.length
+              ? "Open now."
+              : "For one that is not open yet, pick it, join the mailing list at the top of this page, and we'll email you when it opens."}
         </p>
         <ul className={styles.rows}>
-          {LINK_INTERESTS.map((id) => (
-            <li key={id}>
-              <a
-                href="#mailing-list"
-                className={styles.row}
-                data-selected={interest === id ? "true" : undefined}
-                onClick={() => setInterest(id)}
-              >
-                <span className={styles.rowLabel}>
-                  {COPY[id].button}
-                  <span className={styles.soon}>Opens soon</span>
-                </span>
-                <span className={styles.rowSub}>
-                  {interest === id ? "Selected. The form is at the top of this page." : "Get an email when it opens."}
-                </span>
-              </a>
-            </li>
-          ))}
+          {LINK_INTERESTS.map((id) => {
+            const application = applications[id];
+            if (application.open) {
+              const body = (
+                <>
+                  <span className={styles.rowLabel}>{COPY[id].button}</span>
+                  <span className={styles.rowSub}>Open now. Apply here.</span>
+                </>
+              );
+              return (
+                <li key={id}>
+                  {isOffsite(application.href) ? (
+                    <a
+                      href={application.href}
+                      className={styles.row}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {body}
+                    </a>
+                  ) : (
+                    <Link href={application.href} prefetch={false} className={styles.row}>
+                      {body}
+                    </Link>
+                  )}
+                </li>
+              );
+            }
+            return (
+              <li key={id}>
+                <a
+                  href="#mailing-list"
+                  className={styles.row}
+                  data-selected={interest === id ? "true" : undefined}
+                  onClick={() => setInterest(id)}
+                >
+                  <span className={styles.rowLabel}>
+                    {COPY[id].button}
+                    <span className={styles.soon}>Opens soon</span>
+                  </span>
+                  <span className={styles.rowSub}>
+                    {interest === id ? "Selected. The form is at the top of this page." : "Get an email when it opens."}
+                  </span>
+                </a>
+              </li>
+            );
+          })}
         </ul>
       </section>
     </>

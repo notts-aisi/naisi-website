@@ -184,6 +184,38 @@ Admins read the collection, for the dashboard, and nobody writes it, admins
 included (`scripts/rules-tests/tests/link-scan-days.test.mjs`). A count is only
 worth reading if the one thing that can move it is a scan.
 
+## What /links says
+
+`/links` is where most printed codes land, and what it says is edited at
+`/admin/links/page-content`: the three application buttons, and the sections of
+rows under them. The mailing list form and the upcoming events are always
+there and are not edited.
+
+- **It never renders empty or broken.** The rows in `src/content/links.ts` are
+  the built-in page. They are shown until somebody saves an edit, and again
+  whenever the stored document is missing, damaged, empty, has every row
+  hidden, or the database does not answer in time. An admin cannot break the
+  page by editing it. `tests/links-page-content.test.mjs` runs the shipping
+  fetcher against each of those.
+- **A stored address is not trusted for being stored.** Every address passes
+  `parseDestination()`, the validator the short links use, when it is saved and
+  again when it is read. A row whose address fails is left off the page and the
+  rest stay, so a value typed into the Firestore console by hand never becomes
+  an anchor on a page strangers open.
+- **The document is admin-only to read, although the page is public.** The
+  page reads it on the server (`src/features/links/fetchLinksPage.ts`), which
+  drops the hidden rows and the editor's uid before anything reaches HTML. The
+  sign-up component, a client component, is handed the three buttons' state
+  and nothing else, because every prop a Server Component gives a client
+  component is serialised into the public HTML whether it is rendered or not.
+- **An application button has two states.** Closed, it says "Opens soon" and
+  leads to the mailing list form, recording which one the person is waiting
+  for in the subscription's `source`. Marked open with an address, it becomes a
+  link to the application. Open with nowhere safe to go stays closed.
+- **An edit shows within a minute.** The page is static with a one-minute
+  revalidate. The save is a client-direct write, so there is no route to
+  revalidate from; the short window stands in for it.
+
 ## The dashboard
 
 On `/admin/links`, above and inside the list: grouped by campaign, split by
