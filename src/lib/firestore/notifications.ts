@@ -98,7 +98,7 @@ export const CATEGORY_LABELS: Record<NotificationCategory, string> = {
 
 export const CATEGORY_DESCRIPTIONS: Record<NotificationCategory, string> = {
   newsletter:
-    "Low-frequency updates about our courses, reading groups, and what the committee is working on.",
+    "Updates about our courses, reading groups, and what the committee is working on.",
   events:
     "A short email when we publish a new event: talks, socials, workshops. So you don't have to watch the site or socials.",
   courses:
