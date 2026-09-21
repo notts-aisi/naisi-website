@@ -1435,13 +1435,21 @@ export const ROUTES = {
         "same 400.",
     },
   },
+  "/api/q/[slug]": {
+    GET: {
+      expect: everyone(307),
+      why:
+        "A short link, naisi.uk/q/<slug>, reached through a rewrite. Nothing about the caller is " +
+        "read: everybody is redirected, and a slug that names nothing lands on /links, never a 404.",
+    },
+  },
   "/api/q/[slug]/scan": {
     POST: {
       expect: everyone(404),
       why:
-        "The scan counter for printed QR codes: the per-IP throttle, then the slug's shape, then " +
-        "whether the code exists. The battery's slug has the right shape and is on no printed " +
-        "material, so everybody meets the same 404 and nothing about the caller is read.",
+        "The scan counter for short links: the per-IP throttle, then the slug's shape, then " +
+        "whether the link exists. The battery's slug has the right shape and names no link, " +
+        "so everybody meets the same 404 and nothing about the caller is read.",
     },
   },
   "/api/register": {
@@ -1838,6 +1846,20 @@ export const PAGES = {
       "admits them and this inner gate is what keeps them out of the rest.",
   },
   "/(app)/admin/(admin-only)/site-status": {
+    expect: everyone("dashboard", { anonymous: "login", pending: "pendingApproval", rejected: "home", admin: 200 }),
+    why:
+      "The (admin-only) tree: requireAdminPage sends every non-admin to the dashboard, the " +
+      "course and membership permission holders included, because the admin front door " +
+      "admits them and this inner gate is what keeps them out of the rest.",
+  },
+  "/(app)/admin/(admin-only)/links": {
+    expect: everyone("dashboard", { anonymous: "login", pending: "pendingApproval", rejected: "home", admin: 200 }),
+    why:
+      "The (admin-only) tree: requireAdminPage sends every non-admin to the dashboard, the " +
+      "course and membership permission holders included, because the admin front door " +
+      "admits them and this inner gate is what keeps them out of the rest.",
+  },
+  "/(app)/admin/(admin-only)/links/page-content": {
     expect: everyone("dashboard", { anonymous: "login", pending: "pendingApproval", rejected: "home", admin: 200 }),
     why:
       "The (admin-only) tree: requireAdminPage sends every non-admin to the dashboard, the " +

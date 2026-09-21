@@ -13,9 +13,12 @@
  * `src/lib/campaign/attribution.ts`.
  *
  * It also pins the wiring, because a helper nobody calls is a test of nothing:
- * the form has to call `attributedSource` with the live query string, and the
- * short links in `next.config.ts` have to be temporary redirects that hand the
- * slug on as `?q=`.
+ * the form has to call `attributedSource` with the live query string, and
+ * whatever answers a short link has to hand the slug on as `?q=`. That was a
+ * redirect in `next.config.ts` until the short-link route took over; what the
+ * route sends is held by `tests/tracked-links.test.mjs`, and this file keeps
+ * the one property that is about the config: no redirect under `/q` may be
+ * permanent.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -110,16 +113,16 @@ test("the subscribe form builds its source from the live query string", () => {
   assert.match(form, /source: attributedSource\(\{[\s\S]*?search: window\.location\.search/);
 });
 
-test("the short links are temporary and hand the slug on as ?q=", () => {
+test("no redirect under /q is permanent", () => {
+  // `permanent: true` is a 308, which a phone caches for good: whatever it
+  // pointed at, that phone could never be sent anywhere else. The entries
+  // that remain are the bare prefix and the deeper paths; the slugs themselves
+  // are answered by the short-link route.
   const config = readFileSync(join(REPO_ROOT, "next.config.ts"), "utf8");
   const entries = [...config.matchAll(/\{[^{}]*source: "\/q[^"]*"[^{}]*\}/g)].map((m) => m[0]);
-  assert.ok(entries.length >= 3, "the /q redirects are missing from next.config.ts");
-  for (const entry of entries) {
-    // `permanent: true` is a 308, which a phone caches for good: a printed
-    // code could then never be pointed anywhere else.
+  const redirects = entries.filter((entry) => /permanent:/.test(entry));
+  assert.ok(redirects.length >= 1, "the /q redirects are missing from next.config.ts");
+  for (const entry of redirects) {
     assert.match(entry, /permanent: false/, `a /q redirect is not temporary:\n${entry}`);
   }
-  const wildcard = entries.find((entry) => /source: "\/q\/:slug"/.test(entry));
-  assert.ok(wildcard, "the /q/:slug entry is missing");
-  assert.match(wildcard, /destination: "\/links\?q=:slug"/);
 });

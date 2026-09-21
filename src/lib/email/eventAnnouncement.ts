@@ -127,6 +127,8 @@ export type EventAnnouncementInput = {
   coverImageUrl: string | null;
   /** True for `visibility: "members"`. Drops guest rows. See the header. */
   membersOnly: boolean;
+  /** A drop-in that takes no sign-up. Changes the email's button and nothing else. */
+  noSignup?: boolean;
   /** The uid of whoever published. The receipt's actor. */
   actorUid: string;
 };
@@ -380,6 +382,7 @@ export async function sendAnnouncementToRecipient(
           locationLine: input.locationLine,
           eventUrl: input.eventUrl,
           coverImageUrl: input.coverImageUrl,
+          noSignup: input.noSignup === true,
           unsubscribeUrl,
         }),
         kind: "event-announcement",

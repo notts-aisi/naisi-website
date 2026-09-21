@@ -2522,6 +2522,167 @@ export const REGISTRY = [
     },
     run: (db) => db.doc("sourceSheets/guard-sheet").get(),
   },
+  {
+    id: "tracked-links-list",
+    file: "src/features/admin/links/trackedLinkData.ts",
+    path: "trackedLinks",
+    clauses: [],
+    reason:
+      "Every short link on the admin-only /admin/links page behind requireAdminPage(). The `trackedLinks` rule is `allow read: if isAdmin()` with no branch for anyone else, so an admin is the only persona this list can work for, which matches the one page it runs on. The whole collection with no orderBy on purpose: it holds tens of documents, the page groups them by campaign itself, and an orderBy on campaign would drop every link whose campaign was never set.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc("trackedLinks/guard-link").set({
+        slug: "guard-link",
+        label: "Guard poster",
+        destination: "/links",
+        type: "qr",
+        campaign: "Guard campaign",
+        active: true,
+        countOffsite: false,
+        createdByUid: "admin1",
+        updatedByUid: "admin1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    },
+    run: (db) => db.collection("trackedLinks").get(),
+  },
+  {
+    id: "tracked-link-doc",
+    file: "src/features/admin/links/trackedLinkMutations.ts",
+    path: "trackedLinks/{slug}",
+    clauses: [],
+    docShape:
+      "One short link, addressed by the slug that is its document id and the last segment of its printed address. The fixture is a live QR code pointing at a page on this site, the commonest kind.",
+    reason:
+      "Read inside a transaction, twice from the same module and for the same reason: creating a link, and creating the record of a code that is already on paper, both have to refuse a slug that is taken instead of writing over it. Overwriting would silently repoint somebody else's printed code. Both run on the (admin-only) tree behind requireAdminPage(), and the rule is `allow read: if isAdmin()`, so every other persona is refused whether the document exists or not.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc("trackedLinks/guard-link").set({
+        slug: "guard-link",
+        label: "Guard poster",
+        destination: "/links",
+        type: "qr",
+        campaign: "Guard campaign",
+        active: true,
+        countOffsite: false,
+        createdByUid: "admin1",
+        updatedByUid: "admin1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    },
+    run: (db) => db.doc("trackedLinks/guard-link").get(),
+  },
+  {
+    id: "link-scan-days-range",
+    file: "src/features/admin/links/linkStatsData.ts",
+    path: "linkScanDays",
+    clauses: ["where(date,>=)"],
+    reason:
+      "The scan counters behind the dashboard on the admin-only /admin/links page. The rule is `allow read: if isAdmin()` with no branch for anyone else, so an admin is the only persona it can work for, which matches the one page it runs on. A range on ONE field on purpose: the automatic single-field index serves it, where an orderBy on another field or an equality beside the range would need a declared composite index, which the emulator does not enforce and production does.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc("linkScanDays/guard-link__2026-09-21").set({
+        slug: "guard-link",
+        date: "2026-09-21",
+        count: 3,
+        hours: { 11: 3 },
+      });
+    },
+    run: (db) => db.collection("linkScanDays").where("date", ">=", "2000-01-01").get(),
+  },
+  {
+    id: "subscriptions-attributed-to-a-link",
+    file: "src/features/admin/links/linkStatsData.ts",
+    path: "subscriptions",
+    clauses: ["where(source,>=)", "where(source,<)"],
+    reason:
+      "The subscriptions a short link produced, for the sign-up numbers on /admin/links: the rows whose `source` starts `qr:`, written as a range on that one field. It names no audience and no uid, so the own-row branch of the rule cannot carry it and only an admin may run it, as with `subscriptions-list`. Both bounds are on the same field, so the automatic single-field index serves it and no composite is owed.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc("subscriptions/sub_guard-scan__newsletter").set({
+        email: "guard-scan@example.com",
+        channel: "newsletter",
+        audience: "guest",
+        audienceId: "guest_guard-scan",
+        confirmed: false,
+        subscribed: true,
+        source: "qr:guard-link",
+        createdAt: new Date(),
+      });
+    },
+    run: (db) =>
+      db.collection("subscriptions").where("source", ">=", "qr:").where("source", "<", "qr;").get(),
+  },
+  {
+    id: "links-page-doc",
+    file: "src/features/admin/links/linksPageData.ts",
+    path: "linksPage/main",
+    clauses: [],
+    docShape:
+      "The one document behind the public /links page, `linksPage/main`. The fixture has an application marked open and a hidden row, because those are the two things in it that are NOT on the public page as stored, and they are why the read is admin-only.",
+    reason:
+      "The editor at /admin/links/page-content loads the page it is about to edit. It runs on the (admin-only) tree behind requireAdminPage(), and the rule is `allow read: if isAdmin()`, so every other persona is refused. The public page never makes this read: it goes through a server-only Admin SDK fetcher that drops hidden rows and the editor's uid and validates every address before anything reaches HTML.",
+    outcomes: {
+      "signed-out": "refused",
+      pending: "refused",
+      member: "refused",
+      committee: "refused",
+      "su-committee": "refused",
+      admin: "allowed",
+    },
+    seed: async (db) => {
+      await db.doc("linksPage/main").set({
+        applications: {
+          fellowship: { open: true, href: "/courses" },
+          facilitator: { open: false, href: "" },
+          incubator: { open: false, href: "" },
+        },
+        groups: [
+          {
+            id: "group-1",
+            heading: "Get involved",
+            rows: [
+              { id: "courses", label: "Our courses", sub: "", href: "/courses", soon: false, hidden: false },
+              { id: "draft", label: "Not ready", sub: "", href: "/somewhere", soon: false, hidden: true },
+            ],
+          },
+        ],
+        updatedByUid: "admin1",
+        updatedAt: new Date(),
+      });
+    },
+    run: (db) => db.doc("linksPage/main").get(),
+  },
 ];
 
 /**

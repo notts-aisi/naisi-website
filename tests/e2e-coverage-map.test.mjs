@@ -1040,11 +1040,17 @@ const NOT_COVERED = {
     coverWhen:
       "When VAPID secrets are provisioned on dev and a spec can accept the permission prompt.",
   },
+  "/api/q/[slug]": {
+    reason:
+      "Short links: /api/q/[slug] answers naisi.uk/q/<slug> with a redirect and nothing else, so there is no screen for a browser spec to assert on. tests/tracked-links.test.mjs runs the route against a fake database and holds every printed code to the exact status and Location production sent before the route existed, with no record, with the database down and with the Admin SDK missing.",
+    coverWhen:
+      "When the short-link console gets its spec: create a link as an admin, follow naisi.uk/q/<slug> and land where it says, repoint it and land somewhere else. The fixture link is removed by the harness teardown on the Admin SDK, which the no-delete rule does not bind.",
+  },
   "/api/q/[slug]/scan": {
     reason:
       "Printed QR codes: /api/q/[slug]/scan is a fire-and-forget counter the landing page posts to. It changes nothing a person can see, so there is no screen for a browser spec to assert on; tests/scan-counting.test.mjs and the persona battery hold its contract.",
     coverWhen:
-      "When the scan dashboard ships: a spec can then open /links?q=<slug> and assert the count it shows went up by one.",
+      "With the short-link console's spec: once a link has been made there, the same run opens the page it points at with ?q=<slug> and asserts the count on /admin/links went up by one.",
   },
   "/api/register/resend": {
     reason:
@@ -1187,6 +1193,18 @@ const NOT_COVERED = {
   "/(app)/admin/(admin-only)/registrations": {
     reason:
       "Admin CRUD: /(app)/admin/(admin-only)/registrations is used by one admin, fails loudly on the screen of the person who pressed the button, and nothing member-facing waits on it.",
+    coverWhen:
+      "When the risk-ordered list reaches admin CRUD, which is after every applicant-facing and member-facing journey in this map is verified.",
+  },
+  "/(app)/admin/(admin-only)/links": {
+    reason:
+      "Admin CRUD and a dashboard: the short-link console is used by one admin, fails loudly on the screen of the person who pressed the button, and nothing member-facing waits on it. What it can get wrong that matters is covered elsewhere: the destination validator and the route are unit-tested against every refused shape, the dashboard's arithmetic is unit-tested on rows shaped like the real ones, and both rules (admin-only with no delete, and counters nobody may write) are proved against every persona in the emulator.",
+    coverWhen:
+      "When the risk-ordered list reaches admin CRUD, which is after every applicant-facing and member-facing journey in this map is verified.",
+  },
+  "/(app)/admin/(admin-only)/links/page-content": {
+    reason:
+      "Admin CRUD on one document: the /links page editor is used by one admin and fails loudly on the screen of the person who pressed Save. The thing it could get wrong that would matter is the PUBLIC page, and that cannot be broken by what is stored: tests/links-page-content.test.mjs runs the fetcher's projection over missing, damaged, empty and hostile documents and the built-in rows come back every time.",
     coverWhen:
       "When the risk-ordered list reaches admin CRUD, which is after every applicant-facing and member-facing journey in this map is verified.",
   },

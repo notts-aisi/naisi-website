@@ -223,6 +223,18 @@ const PUBLIC_HANDLERS = new Map([
     },
   ],
   [
+    "src/app/api/q/[slug]/route.ts#GET",
+    {
+      anonymous: true,
+      writes: false,
+      sends: false,
+      why:
+        "A short link, naisi.uk/q/<slug>. It reads one tracked link and renders a redirect to " +
+        "where that link goes. Read-only on purpose: link previews and mail scanners fetch a GET, " +
+        "so the scan is counted by the POST below, fired from the page the redirect lands on.",
+    },
+  ],
+  [
     "src/app/api/q/[slug]/scan/route.ts#POST",
     {
       anonymous: true,
@@ -232,8 +244,8 @@ const PUBLIC_HANDLERS = new Map([
       why:
         "The scan counter for printed QR codes, fired by the page a scan lands on. There is no " +
         "session to require: the person scanning a poster has no account. The per-IP throttle " +
-        "runs first, only a slug that exists on printed material is counted, and the write is " +
-        "an increment on a bounded per-code per-day document with no caller-controlled field.",
+        "runs first, only a link that exists is counted, and the write is an increment on a " +
+        "bounded per-link per-day document with no caller-controlled field.",
     },
   ],
 

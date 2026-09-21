@@ -15,7 +15,9 @@ import styles from "./PublicHeader.module.css";
 const NAV = [
   { label: "Courses", href: "/courses" },
   { label: "Members", href: "/members" },
-  { label: "Resources", href: "/resources" },
+  // Hidden for now (21 Sep 2026): /resources redirects home until the page
+  // is rewritten. See the /resources entry in next.config.ts.
+  // { label: "Resources", href: "/resources" },
   { label: "News", href: "/news" },
 ];
 

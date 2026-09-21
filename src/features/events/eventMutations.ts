@@ -40,6 +40,7 @@ export async function createEvent(params: {
     visibility: "public" satisfies EventVisibility,
     capacity: null,
     waitlistEnabled: false,
+    noSignup: false,
     signupForm: [],
     foodProvenance: "none" satisfies FoodProvenance,
     coverBranding: "corner" satisfies CoverBranding,
@@ -76,6 +77,7 @@ type EditableEventFields = Partial<{
   visibility: EventVisibility;
   capacity: number | null;
   waitlistEnabled: boolean;
+  noSignup: boolean;
   signupForm: FormQuestion[];
   foodProvenance: FoodProvenance;
   foodProvenanceNote: string | null;
@@ -112,6 +114,7 @@ export async function updateEvent(id: string, fields: EditableEventFields) {
   if (fields.visibility !== undefined) patch.visibility = fields.visibility;
   if (fields.capacity !== undefined) patch.capacity = fields.capacity;
   if (fields.waitlistEnabled !== undefined) patch.waitlistEnabled = fields.waitlistEnabled;
+  if (fields.noSignup !== undefined) patch.noSignup = fields.noSignup === true;
   if (fields.signupForm !== undefined)
     // Clamp here too, not only in the published-event route. This is the
     // client-direct path every draft save takes, so without it a per-question

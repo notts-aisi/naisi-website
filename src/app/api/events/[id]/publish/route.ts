@@ -191,6 +191,7 @@ export async function POST(
       eventUrl: `${baseUrl()}/events/${id}`,
       coverImageUrl: (event.posterUrl as string | null | undefined) ?? null,
       membersOnly,
+      noSignup: event.noSignup === true,
       actorUid: actor.uid,
     });
     // Nothing sent, nothing failed, nothing pushed, and a refusal to explain

@@ -1,27 +1,27 @@
 /**
  * `linkScanDays`: how many times each printed QR code was scanned, per day.
  *
- * The block is `allow read, write: if false` and this file proves it holds at
- * EVERY role, admins included.
+ *  - NOBODY WRITES, at any role, admins included. The count is only worth
+ *    reading if the one thing that can move it is a scan. The increment comes
+ *    from the Admin SDK inside POST /api/q/[slug]/scan, behind a throttle and
+ *    a check that the link exists. A client-writable counter is a number
+ *    anybody holding a session can set to whatever makes their poster look
+ *    best, or zero out, and "anybody" includes the admin who designed it.
  *
- *  - NOBODY WRITES. The count is only worth reading if the one thing that can
- *    move it is a scan. The increment comes from the Admin SDK inside
- *    POST /api/q/[slug]/scan, behind a throttle and a check that the code
- *    exists. A client-writable counter is a number anybody holding a session
- *    can set to whatever makes their poster look best, or zero out.
+ *  - ADMINS READ, and nobody else. The dashboard on /admin/links reads it
+ *    client-direct; its query has an entry in `client-queries.registry.mjs`.
+ *    The numbers say which campaigns the society is running and how each is
+ *    doing, which is nobody's business but the people running them.
  *
- *  - NOBODY READS, yet. Nothing in a browser reads this collection today, so a
- *    read rule would buy the product nothing. When a dashboard needs one it
- *    arrives with the query that uses it and an entry for that query in
- *    `client-queries.registry.mjs`, not before.
- *
- * The last case is the attack written out: somebody inflating their own code.
+ * The last cases are the attacks written out: a committee member inflating
+ * their own code, and an admin doing the same.
  */
 import { after, afterEach, before, describe, it } from "node:test";
 import {
   asAnon,
   asUser,
   assertFails,
+  assertSucceeds,
   cleanup,
   clearData,
   getTestEnv,
@@ -69,27 +69,27 @@ async function seedDay() {
 }
 
 describe("linkScanDays", () => {
-  it("cannot be read by anyone, at any role", async () => {
+  it("is read by an admin, along the axis the dashboard uses", async () => {
     await seedDay();
-    for (const [label, db] of await everyRole()) {
-      await assertFails(
-        db.collection("linkScanDays").doc(DAY_ID).get(),
-        `${label} must not read a scan day`,
-      );
-      await assertFails(
-        db.collection("linkScanDays").get(),
-        `${label} must not list scan days`,
-      );
-    }
+    await seedUser("admin1", { role: "admin" });
+    const db = await asUser("admin1");
+    await assertSucceeds(db.collection("linkScanDays").doc(DAY_ID).get());
+    await assertSucceeds(db.collection("linkScanDays").where("date", ">=", "2000-01-01").get());
   });
 
-  it("cannot be queried by anyone, along the axis a dashboard would use", async () => {
+  it("cannot be read, listed or queried by anyone else", async () => {
     // A date range is the shape somebody would try first, and a single-field
     // range needs no declared index, so nothing but the rule stands in its way.
     await seedDay();
     for (const [label, db] of await everyRole()) {
+      if (label === "admin") continue;
       await assertFails(
-        db.collection("linkScanDays").where("date", ">=", "2026-09-01").get(),
+        db.collection("linkScanDays").doc(DAY_ID).get(),
+        `${label} must not read a scan day`,
+      );
+      await assertFails(db.collection("linkScanDays").get(), `${label} must not list scan days`);
+      await assertFails(
+        db.collection("linkScanDays").where("date", ">=", "2000-01-01").get(),
         `${label} must not query scan days`,
       );
     }
@@ -138,5 +138,15 @@ describe("linkScanDays", () => {
     await assertFails(
       db.collection("linkScanDays").doc("poster__2026-09-22").set({ ...DAY, date: "2026-09-22" }),
     );
+  });
+
+  it("INFLATION: nor can an admin, who can read the number and has the same reason to like it", async () => {
+    await seedDay();
+    await seedUser("admin1", { role: "admin" });
+    const db = await asUser("admin1");
+    await assertFails(
+      db.collection("linkScanDays").doc(DAY_ID).set({ count: 9000 }, { merge: true }),
+    );
+    await assertFails(db.collection("linkScanDays").doc(DAY_ID).delete());
   });
 });

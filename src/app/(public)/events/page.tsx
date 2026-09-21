@@ -101,7 +101,9 @@ function EventRow({
   event: Awaited<ReturnType<typeof listPublishedEvents>>[number];
   dimmed?: boolean;
 }) {
+  // A drop-in ignores its capacity, so it is never "full".
   const full =
+    !event.noSignup &&
     event.capacity !== null &&
     typeof event.rsvpCountConfirmed === "number" &&
     event.rsvpCountConfirmed >= event.capacity;
@@ -135,6 +137,7 @@ function EventRow({
             </span>
           )}
           {event.visibility === "members" && <Badge tone="neutral">Members only</Badge>}
+          {event.noSignup && <Badge tone="success">No sign-up needed</Badge>}
           {full && event.waitlistEnabled && <Badge tone="warning">Full · waitlist open</Badge>}
           {full && !event.waitlistEnabled && <Badge tone="danger">Full</Badge>}
         </div>

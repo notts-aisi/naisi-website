@@ -365,6 +365,52 @@ describe("a members-only event", () => {
 });
 
 // ===========================================================================
+// A drop-in: no sign-up is taken
+// ===========================================================================
+
+describe("an event that needs no sign-up", () => {
+  // The public page shows no form for one of these, so a request that reaches
+  // the route was made by hand, or by a page somebody left open from before
+  // the organiser switched sign-ups off. It is refused, and nothing is written.
+  const dropIn = () => makeDb({ events: { "event-1": eventDoc({ noSignup: true }) } });
+
+  test("refuses a signed-out submission and files no row", async () => {
+    globalThis.__db = dropIn();
+    globalThis.__user = null;
+    const res = await post(GUEST);
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /Just turn up/);
+    assert.deepEqual(rows(), {});
+  });
+
+  test("refuses a member, and an organiser too: there is nothing to test", async () => {
+    for (const role of ["member", "committee", "admin"]) {
+      globalThis.__db = dropIn();
+      globalThis.__user = user(role, role === "admin" ? {} : { permissions: { draftEvent: true, approveEvent: true } });
+      const res = await post({ answers: {} });
+      assert.equal(res.status, 400, `${role}: ${JSON.stringify(res.body)}`);
+      assert.deepEqual(rows(), {}, `${role} filed a row`);
+    }
+  });
+
+  test("leaves the pending count alone", async () => {
+    globalThis.__db = dropIn();
+    globalThis.__user = null;
+    await post(GUEST);
+    assert.equal(globalThis.__db.data.events["event-1"].rsvpCountPending, 0);
+  });
+
+  test("only a strict true switches sign-ups off, so an old event is unaffected", async () => {
+    for (const noSignup of [undefined, false, "true", 1, null]) {
+      globalThis.__db = makeDb({ events: { "event-1": eventDoc({ noSignup }) } });
+      globalThis.__user = null;
+      const res = await post(GUEST);
+      assert.equal(res.status, 200, `noSignup=${JSON.stringify(noSignup)}: ${JSON.stringify(res.body)}`);
+    }
+  });
+});
+
+// ===========================================================================
 // 4. The tree
 // ===========================================================================
 

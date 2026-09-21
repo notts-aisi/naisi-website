@@ -36,7 +36,12 @@ export default function robots(): MetadataRoute.Robots {
     rules: [
       // The offline fallback also carries a noindex meta, but belt and
       // braces: it is a contentless utility page.
-      { userAgent: "*", allow: "/", disallow: "/offline.html" },
+      //
+      // /q/ is the short links printed on posters and put in bios. A crawler
+      // that runs JavaScript would follow one, land on the page it points at
+      // and fire the scan counter, so a link posted anywhere public would
+      // collect scans nobody made. Nothing under /q/ is content to index.
+      { userAgent: "*", allow: "/", disallow: ["/offline.html", "/q/"] },
       { userAgent: aiTrainingBots, disallow: "/" },
     ],
   };

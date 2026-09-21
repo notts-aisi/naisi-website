@@ -416,6 +416,44 @@ const USERS = new Map([
       "reaches courses.ts for the shared link validator, so nothing is stubbed",
   ],
   [
+    "links-page-content.test.mjs",
+    "it executes the /links fetcher, because the promise is that the page most printed codes land on " +
+      "cannot be emptied or have a hostile address put on it by whatever is stored, and only running " +
+      "the shipping fetcher over missing, damaged and hostile documents shows that; `server-only` and " +
+      "the Admin SDK handle are stubbed so the document comes from the test, and nothing else is",
+  ],
+  [
+    "link-stats.test.mjs",
+    "it executes the dashboard's arithmetic, because the ways its numbers could be wrong are all small " +
+      "(a person counted once per channel, a day lost to a clock change, a gap closed up in a chart) " +
+      "and only running `linkStats.ts` on rows shaped like the real ones shows any of them; nothing is stubbed",
+  ],
+  [
+    "tracked-links.test.mjs",
+    "it executes the short-link route, because the promise is that every printed code answers with " +
+      "the exact status and Location production sent before the route existed, and only the shipping " +
+      "route can show that; `server-only` and the Admin SDK handle are stubbed so the read comes from a " +
+      "fake database the test controls, including one that refuses to answer, and nothing else is",
+  ],
+  [
+    "printed-code-landing-pages.test.mjs",
+    "it reads `printedLinks.ts` for the destinations the printed codes really have, so a code pointed " +
+      "at a new kind of page is checked against the landing pages without anybody copying the list " +
+      "into the test; nothing is stubbed",
+  ],
+  [
+    "event-no-signup.test.mjs",
+    "it executes `normalizeEvent`, because the promise that an event made before the switch existed " +
+      "still takes sign-ups is a promise about what the shipping normaliser does with a missing " +
+      "field and with values that are nearly true; nothing is stubbed",
+  ],
+  [
+    "signup-schedule.test.mjs",
+    "it executes the comparison behind an RSVP email's changed-since-you-signed-up block, because the " +
+      "bug was two formatted lines differing when only the formatter had changed, and that can only be " +
+      "shown by running the shipping comparison on a label the old formatter wrote; nothing is stubbed",
+  ],
+  [
     "scan-counting.test.mjs",
     "it executes the scan counter, its route and the beacon's decision, because what a scan writes is " +
       "a privacy promise and only the shipping code can show which fields reach the database; " +

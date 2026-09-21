@@ -1,0 +1,590 @@
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.count {
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.intro {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  margin: 0 0 var(--space-5);
+  max-width: 44rem;
+}
+
+.group {
+  margin-top: var(--space-6);
+}
+
+.groupHeading {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin: 0 0 var(--space-3);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* === A link === */
+
+.row {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
+/* min-width: 0 so a long destination wraps inside the card and never pushes
+   the page sideways. */
+.rowBody {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rowTitle {
+  font-size: var(--text-lg);
+  margin: 0 0 var(--space-2);
+  line-height: var(--leading-snug);
+}
+
+.rowMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.address {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.destination {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.destinationValue {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  overflow-wrap: anywhere;
+}
+
+.rowActions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.state {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+}
+
+.stateLive {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.stateOff {
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+}
+
+.editor {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+/* === The form, shared by create and edit === */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.hint {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  margin: 0;
+  line-height: var(--leading-normal);
+}
+
+.error {
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+.formActions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* === The /links page editor === */
+
+.headActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.backLink {
+  font-size: var(--text-sm);
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.backLink:hover {
+  text-decoration: underline;
+}
+
+.editorPage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.editorHeading {
+  font-size: var(--text-lg);
+  margin: 0 0 var(--space-2);
+}
+
+.applicationList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.application {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.sectionHead .field {
+  flex: 1 1 16rem;
+}
+
+.editRows {
+  list-style: none;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.editRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  min-width: 0;
+}
+
+/* A hidden row is still here to edit, and says so by stepping back. */
+.editRow[data-hidden="true"] {
+  opacity: 0.6;
+}
+
+.rowSwitches {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+.rowTools {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* Stays in reach while a long page is being edited. */
+.saveBar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.errorList {
+  margin: 0;
+  padding-left: var(--space-5);
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}
+
+/* === The numbers =================================================
+   No chart library, like the two charts already in this codebase: a bar is a
+   span with a percentage width, a column is a span with a percentage height,
+   and every colour is a token. One series throughout, so one colour and no
+   legend. Text always wears a text token, never the data colour. */
+
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+  min-width: 0;
+}
+
+.summaryHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.summaryActions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.tile {
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  min-width: 0;
+}
+
+.tileLabel {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* Proportional figures on purpose: tabular figures give every digit the width
+   of a nought, which makes a big standalone number look loosely spaced. */
+.tileValue {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-3xl, 2rem);
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--color-text);
+}
+
+.split,
+.note {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+}
+
+.note {
+  font-size: var(--text-xs);
+  max-width: 48rem;
+}
+
+.split strong,
+.groupTotals strong,
+.figures strong {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.figureGap {
+  margin: 0 var(--space-2);
+  color: var(--color-text-subtle);
+}
+
+.groupHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.groupHead .groupHeading {
+  margin: 0;
+}
+
+.groupTotals {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.kind + .kind {
+  margin-top: var(--space-4);
+}
+
+.kindHeading {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.kindTotals {
+  font-weight: 400;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A link's scans against the busiest link on the page. `minmax(0, …)` so the
+   track can shrink and the figures never push the card sideways. */
+.stats {
+  display: grid;
+  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  min-width: 0;
+}
+
+.track {
+  display: block;
+  height: 0.625rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  transition: width var(--dur-settle) var(--ease-naisi);
+}
+
+.figures {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  min-width: 0;
+}
+
+.uncounted {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-subtle);
+}
+
+.details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  min-width: 0;
+}
+
+.chart {
+  margin: 0;
+  min-width: 0;
+}
+
+.chartCaption {
+  margin-bottom: var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* Equal slots that can shrink to nothing, so thirty days fit a phone without
+   scrolling. No grid gap, so the baseline each slot draws joins into one
+   unbroken line; the 2px of surface between neighbours comes from the margin
+   on the fill instead. */
+.columns {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
+  gap: 0;
+  min-width: 0;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* The plot area. Room above the tallest column for its label. */
+.columnPlot {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 100%;
+  height: 6rem;
+  padding-top: 1.25rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Never wider than 24px however few columns there are: the leftover is air.
+   Rounded at the data end, square where it meets the baseline. */
+.columnFill {
+  position: relative;
+  display: block;
+  width: calc(100% - 2px);
+  max-width: 24px;
+  min-height: 0;
+  border-radius: 4px 4px 0 0;
+  background: var(--color-accent);
+  transition: height var(--dur-settle) var(--ease-naisi);
+}
+
+.column:hover .columnFill {
+  background: var(--color-accent-hover, var(--color-accent));
+}
+
+.columnValue {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding-bottom: 2px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.columnTick {
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fill,
+  .columnFill {
+    transition: none;
+  }
+}
+
+/* === Mobile === */
+@media (max-width: 48rem) { /* --bp-md */
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  /* The state and the two buttons drop under the link: side by side at 360px
+     they leave the address a few characters wide. */
+  .row {
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .rowActions {
+    flex-wrap: wrap;
+  }
+
+  .rowTitle {
+    font-size: var(--text-md, 1rem);
+  }
+
+  .rowSwitches {
+    grid-template-columns: 1fr;
+  }
+
+  /* The bar takes its own line above the figures: beside them at 360px it is
+     too short to compare against its neighbours. */
+  .stats {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
+  .tile {
+    padding: var(--space-3);
+  }
+
+  .tileValue {
+    font-size: var(--text-2xl, 1.5rem);
+  }
+
+  /* Thirty day-numbers do not fit under thirty columns on a phone, and a row
+     of clipped numerals is worse than none. The values stay one tap away. */
+  .columnTick {
+    font-size: 0.625rem;
+  }
+}

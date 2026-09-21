@@ -1,6 +1,6 @@
 import Link from "next/link";
 import BrandMark from "@/components/BrandMark";
-import { CONTACT_EMAIL, SOCIAL_LINKS } from "@/content/socials";
+import { CONTACT_EMAIL, LINKS_PAGE_PATH, SOCIAL_LINKS } from "@/content/socials";
 import styles from "./PublicFooter.module.css";
 
 export default function PublicFooter() {
@@ -17,8 +17,11 @@ export default function PublicFooter() {
           <span className={styles.colTitle}>Site</span>
           <Link href="/courses">Courses</Link>
           <Link href="/members">Members</Link>
-          <Link href="/resources">Resources</Link>
+          {/* Hidden for now (21 Sep 2026): /resources redirects home until the
+              page is rewritten. See the /resources entry in next.config.ts. */}
+          {/* <Link href="/resources">Resources</Link> */}
           <Link href="/news">News</Link>
+          <Link href={LINKS_PAGE_PATH}>All our links</Link>
           <Link href="/register">Join us</Link>
         </nav>
         <nav className={styles.col} aria-label="Elsewhere">

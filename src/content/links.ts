@@ -13,7 +13,7 @@
  * not rows here. They are rendered by the page itself, because each is more
  * than a link.
  */
-import { SOCIAL_LINKS, SU_PAGE_URL } from "./socials";
+import { SU_PAGE_URL, socialHref } from "./socials";
 
 export type LinkRow = {
   /** Stable key, also the React key. */
@@ -34,12 +34,6 @@ export type LinkGroup = {
   heading: string;
   rows: LinkRow[];
 };
-
-function social(label: string): string {
-  const found = SOCIAL_LINKS.find((link) => link.label === label);
-  if (!found) throw new Error(`links.ts: no "${label}" entry in SOCIAL_LINKS`);
-  return found.href;
-}
 
 export const LINK_GROUPS: LinkGroup[] = [
   {
@@ -78,20 +72,23 @@ export const LINK_GROUPS: LinkGroup[] = [
         key: "instagram",
         label: "Instagram",
         sub: "@notts.ai.safety",
-        href: social("Instagram"),
+        href: socialHref("Instagram"),
       },
       {
         key: "substack",
         label: "Substack",
         sub: "Longer writing from the committee, and past newsletters.",
-        href: social("Substack"),
+        href: socialHref("Substack"),
       },
-      {
-        key: "resources",
-        label: "Resources and reading lists",
-        sub: "Where to start reading about AI safety.",
-        href: "/resources",
-      },
+      // Hidden for now (21 Sep 2026): /resources redirects home until the
+      // page is rewritten, and a row pointing at it would bounce people back
+      // to where they started. See the /resources entry in next.config.ts.
+      // {
+      //   key: "resources",
+      //   label: "Resources and reading lists",
+      //   sub: "Where to start reading about AI safety.",
+      //   href: "/resources",
+      // },
       {
         key: "home",
         label: "naisi.uk",
