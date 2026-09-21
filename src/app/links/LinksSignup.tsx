@@ -87,13 +87,13 @@ export default function LinksSignup({
                 id: "newsletter",
                 label: "Our newsletter",
                 description:
-                  "A round-up of what's moving in AI safety, and when applications open. Low frequency.",
+                  "A round-up of what's moving in AI safety, and when applications open.",
                 defaultChecked: true,
               },
               {
                 id: "events",
                 label: "Event announcements",
-                description: "We email when we publish a new event. Low frequency.",
+                description: "We email when we publish a new event.",
                 defaultChecked: false,
               },
             ]}

@@ -127,6 +127,19 @@ const nextConfig: NextConfig = {
         destination: "/#stay-in-touch",
         permanent: true,
       },
+      // /resources is HIDDEN FOR NOW (21 Sep 2026). The page is being
+      // rewritten and the owner would rather nothing showed than what is
+      // there. A redirect is matched before the filesystem, so this takes
+      // over from src/app/(public)/resources/page.tsx without touching it:
+      // to bring the page back, delete this entry and restore the three
+      // links commented out in PublicHeader, PublicFooter and
+      // src/content/links.ts. Temporary on purpose: a 308 would be cached by
+      // browsers for good, and this is meant to be undone.
+      {
+        source: "/resources",
+        destination: "/",
+        permanent: false,
+      },
       // Short links: naisi.uk/q/<slug> is what a QR code encodes. The scan
       // itself is answered by src/app/api/q/[slug]/route.ts, through the
       // rewrite below, from a record an admin can repoint.

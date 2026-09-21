@@ -224,8 +224,8 @@ describe("a record decides where a code goes", () => {
   });
 
   test("a new link that was never printed is answered from its record", async () => {
-    record("flyer", { destination: "/resources", type: "link" });
-    assert.equal((await scan("flyer")).location, "/resources?q=flyer");
+    record("flyer", { destination: "/courses", type: "link" });
+    assert.equal((await scan("flyer")).location, "/courses?q=flyer");
   });
 
   test("another site is a plain redirect, exactly as typed, with nothing appended", async () => {

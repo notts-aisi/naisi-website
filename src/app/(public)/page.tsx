@@ -1,8 +1,10 @@
-import Link from "next/link";
 import SubscribeForm from "@/components/SubscribeForm";
-import ReadingListAccordion from "@/components/ReadingListAccordion";
-import { READING_LISTS } from "@/content/readingLists";
-import { SU_PAGE_URL } from "@/content/socials";
+// Used only by the sections commented out below (21 Sep 2026). Restore these
+// with them.
+// import Link from "next/link";
+// import ReadingListAccordion from "@/components/ReadingListAccordion";
+// import { READING_LISTS } from "@/content/readingLists";
+// import { SU_PAGE_URL } from "@/content/socials";
 import HeroAtmosphere from "./HeroAtmosphere";
 import HeroScrollChevron from "./HeroScrollChevron";
 import HeroEyebrow from "./HeroEyebrow";
@@ -13,11 +15,11 @@ import HeroCTAs from "./HeroCTAs";
 import AwardBadge from "./AwardBadge";
 import CredentialsBar from "./CredentialsBar";
 import StatsRow from "./StatsRow";
-import UpcomingEvents from "./UpcomingEvents";
-import InstagramCarousel from "./InstagramCarousel";
-import ElsewhereRow from "./ElsewhereRow";
-import CommitteePreview from "./CommitteePreview";
-import FellowQuotes from "./FellowQuotes";
+// import UpcomingEvents from "./UpcomingEvents";
+// import InstagramCarousel from "./InstagramCarousel";
+// import ElsewhereRow from "./ElsewhereRow";
+// import CommitteePreview from "./CommitteePreview";
+// import FellowQuotes from "./FellowQuotes";
 import Reveal from "./Reveal";
 import styles from "./landing.module.css";
 
@@ -90,6 +92,10 @@ export default function Landing() {
             the next decade. The field benefits from people of all
             backgrounds, and there are no strict prerequisites to join.
           </p>
+          {/* COMMENTED OUT 21 Sep 2026 with everything below it on this page,
+              at the owner's request. Kept, not deleted, so any of it can be
+              brought back by removing the comment markers. */}
+          {/*
           <p className={styles.aboutBody}>
             New members are{" "}
             <Link href="/register" className={styles.inlineLink}>
@@ -99,9 +105,18 @@ export default function Landing() {
             take part, stacked by commitment: the socials, the fellowships,
             and the research incubator.
           </p>
+          */}
         </div>
       </Reveal>
 
+      {/* COMMENTED OUT 21 Sep 2026 at the owner's request: "Three ways to get
+          involved", the upcoming events, the reading lists, the Instagram
+          carousel, the Elsewhere cards and the committee preview. The imports
+          they used are commented out at the top of this file for the same
+          reason. The sign-up form at the foot of the page stays, because the
+          hero's second button, four links in the courses funnel and the
+          Instagram bio link (/stay-in-touch) all land on it. */}
+      {/*
       <section className={styles.tiersSection}>
         <div className={`container ${styles.tiersInner}`}>
           <header className={styles.tiersHead}>
@@ -236,11 +251,16 @@ export default function Landing() {
       <ElsewhereRow />
 
       <CommitteePreview />
+      */}
 
       <Reveal variant="blur-rise" as="section" id="stay-in-touch" className={styles.digestSection}>
         <div className={`container ${styles.digestInner}`}>
           <div className={styles.digestPitch}>
             <h2 className={styles.digestTitle}>Stay in touch.</h2>
+            {/* The two paragraphs that pitched the newsletter and the event
+                announcements, commented out 21 Sep 2026 with the rest. The
+                form beside this says what each one is. */}
+            {/*
             <p className={styles.digestBody}>
               <strong>Our newsletter.</strong> A short round-up of what&apos;s
               moving in AI safety. Three to five things worth your time
@@ -252,6 +272,7 @@ export default function Landing() {
               something on campus, separately from the newsletter. Tick
               the boxes for whichever you want.
             </p>
+            */}
           </div>
           <div className={styles.digestForm}>
             <SubscribeForm
@@ -261,14 +282,14 @@ export default function Landing() {
                   id: "newsletter",
                   label: "Our newsletter",
                   description:
-                    "A round-up of what's moving in AI safety. Low frequency.",
+                    "A round-up of what's moving in AI safety.",
                   defaultChecked: true,
                 },
                 {
                   id: "events",
                   label: "Event announcements",
                   description:
-                    "We email when we publish a new event. Low frequency.",
+                    "We email when we publish a new event.",
                   defaultChecked: false,
                 },
               ]}

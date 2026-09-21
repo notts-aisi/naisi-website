@@ -80,12 +80,15 @@ export const LINK_GROUPS: LinkGroup[] = [
         sub: "Longer writing from the committee, and past newsletters.",
         href: socialHref("Substack"),
       },
-      {
-        key: "resources",
-        label: "Resources and reading lists",
-        sub: "Where to start reading about AI safety.",
-        href: "/resources",
-      },
+      // Hidden for now (21 Sep 2026): /resources redirects home until the
+      // page is rewritten, and a row pointing at it would bounce people back
+      // to where they started. See the /resources entry in next.config.ts.
+      // {
+      //   key: "resources",
+      //   label: "Resources and reading lists",
+      //   sub: "Where to start reading about AI safety.",
+      //   href: "/resources",
+      // },
       {
         key: "home",
         label: "naisi.uk",
