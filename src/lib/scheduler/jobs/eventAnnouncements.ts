@@ -375,6 +375,7 @@ function announcementInputFor(event: EventDoc): EventAnnouncementInput {
     eventUrl: `${baseUrl()}/events/${event.id}`,
     coverImageUrl: event.posterUrl ?? null,
     membersOnly: event.visibility === "members",
+    noSignup: event.noSignup,
     // The announcement was claimed by whoever published, and the receipt says
     // so. The job is the hand that sends it, not the actor behind it.
     actorUid: event.authorUid,

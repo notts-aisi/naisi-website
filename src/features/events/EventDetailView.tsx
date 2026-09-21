@@ -111,7 +111,9 @@ export default function EventDetailView({
                 </div>
               )}
 
-              {event.capacity !== null && (
+              {/* A drop-in keeps its capacity setting and ignores it, so a
+                  count of places would contradict "no sign-up needed". */}
+              {event.capacity !== null && !event.noSignup && (
                 <div className={styles.fact}>
                   <span className={styles.factIcon}>
                     <UsersIcon />
@@ -180,6 +182,17 @@ export default function EventDetailView({
               <p className={styles.cancelledText}>
                 Apologies for the late notice. Keep an eye on the events page for the
                 next one.
+              </p>
+            </Card>
+          ) : event.noSignup ? (
+            // A drop-in. Wears the cancelled card's two classes on purpose:
+            // this module's stylesheet is part of the mobile-frozen events
+            // flow, and a heading with a paragraph under it is all this needs.
+            <Card padding="lg">
+              <h2 className={styles.cancelledTitle}>No sign-up needed.</h2>
+              <p className={styles.cancelledText}>
+                Just turn up: there is nothing to fill in. If you would like a reminder, the
+                calendar buttons on this page will add it for you.
               </p>
             </Card>
           ) : (

@@ -12,6 +12,7 @@ import {
 import { sendRsvpEmail, type LiveRsvpStatus } from "@/lib/events/sendRsvpEmail";
 import { validateAnswers } from "@/lib/events/validateAnswers";
 import { formatEventWhen } from "@/lib/events/changeSummary";
+import { scheduleInstants } from "@/lib/events/signupSchedule";
 import { verifyRecaptcha } from "@/lib/recaptcha/server";
 import { recaptchaBypassGranted } from "@/lib/recaptcha/bypass";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
@@ -244,6 +245,15 @@ export async function POST(
   if (event.status === "cancelled") {
     return NextResponse.json({ error: "This event has been cancelled." }, { status: 400 });
   }
+  // A drop-in takes no sign-ups. The page shows no form, so this is for a
+  // request made by hand, or by a page somebody left open from before the
+  // organiser switched sign-ups off. Staff included: there is nothing to test.
+  if (event.noSignup === true) {
+    return NextResponse.json(
+      { error: "This event doesn't need a sign-up. Just turn up." },
+      { status: 400 },
+    );
+  }
 
   const visibility = event.visibility === "public" ? "public" : "members";
   if (visibility === "members") {
@@ -271,11 +281,13 @@ export async function POST(
   // approve route can later flag anything the organiser changed in between.
   // The row is readable by SU-recognised committee and admins only, and the
   // approve route shows the diff to a CONFIRMED attendee alone.
+  const snapshotStart = event.startAt?.toDate?.() ?? null;
+  const snapshotEnd = event.endAt?.toDate?.() ?? null;
   const signupSnapshot = {
-    scheduleLabel: formatEventWhen(
-      event.startAt?.toDate?.() ?? null,
-      event.endAt?.toDate?.() ?? null,
-    ),
+    scheduleLabel: formatEventWhen(snapshotStart, snapshotEnd),
+    // The instants are what the approve route compares. The label beside them
+    // is only words, and words change when a formatter does.
+    ...scheduleInstants(snapshotStart, snapshotEnd),
     locationLabel: typeof event.location === "string" ? event.location : "",
   };
 

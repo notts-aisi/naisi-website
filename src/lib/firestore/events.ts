@@ -525,6 +525,14 @@ export type EventDoc = {
   visibility: EventVisibility;
   capacity: number | null;
   waitlistEnabled: boolean;
+  /**
+   * People just turn up: the public page shows no sign-up form and offers add
+   * to calendar, and the RSVP route refuses. Off on every event made before
+   * this existed, and absent reads as off, so nothing changes for them.
+   * Capacity, the waitlist and the sign-up questions are kept as they were and
+   * simply not used, so switching back loses nothing.
+   */
+  noSignup: boolean;
   signupForm: FormQuestion[];
   /**
    * @deprecated Legacy food classification. New and edited events use
@@ -781,6 +789,7 @@ export function normalizeEvent(id: string, data: Raw): EventDoc {
     capacity,
     waitlistEnabled:
       capacity === null ? false : data.waitlistEnabled !== false,
+    noSignup: data.noSignup === true,
     signupForm: sanitizeSignupForm(data.signupForm),
     foodProvenance: asFoodProvenance(data.foodProvenance),
     foodProvenanceNote: (data.foodProvenanceNote as string | null | undefined) ?? null,
@@ -872,6 +881,14 @@ export type SignupSnapshot = {
   scheduleLabel: string;
   /** Exact event location as it stood at signup. */
   locationLabel: string;
+  /**
+   * The instants behind `scheduleLabel`, which are what the approve route
+   * compares: two formatted lines differ whenever the formatter changes. Null
+   * for an undated event. ABSENT (undefined) on a snapshot written before
+   * these existed; see `lib/events/signupSchedule.ts` for what happens then.
+   */
+  startAtIso?: string | null;
+  endAtIso?: string | null;
 };
 
 export function asSignupSnapshot(v: unknown): SignupSnapshot | null {
@@ -880,7 +897,14 @@ export function asSignupSnapshot(v: unknown): SignupSnapshot | null {
   if (typeof o.scheduleLabel !== "string" || typeof o.locationLabel !== "string") {
     return null;
   }
-  return { scheduleLabel: o.scheduleLabel, locationLabel: o.locationLabel };
+  const snapshot: SignupSnapshot = { scheduleLabel: o.scheduleLabel, locationLabel: o.locationLabel };
+  // Present only when the row has it, so an old snapshot stays recognisable as one.
+  const instant = (x: unknown) => (typeof x === "string" || x === null ? x : undefined);
+  if ("startAtIso" in o && instant(o.startAtIso) !== undefined) {
+    snapshot.startAtIso = instant(o.startAtIso);
+    snapshot.endAtIso = instant(o.endAtIso) ?? null;
+  }
+  return snapshot;
 }
 
 export type RsvpDoc = {

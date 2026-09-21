@@ -38,6 +38,11 @@ type Props = {
   coverImageUrl?: string | null;
   /** One-line teaser, used as the inbox preview when present. */
   preheader?: string;
+  /**
+   * A drop-in: no sign-up is taken. The button then says "See the event" and
+   * nothing asks the reader to sign up for something that has no form.
+   */
+  noSignup?: boolean;
   /** `/api/unsubscribe?t=<signed>` for THIS recipient and the events channel. */
   unsubscribeUrl: string;
 };
@@ -51,6 +56,7 @@ export default function EventAnnouncementEmail({
   coverImageUrl,
   preheader,
   unsubscribeUrl,
+  noSignup,
 }: Props) {
   return (
     <EmailChrome
@@ -92,7 +98,7 @@ export default function EventAnnouncementEmail({
 
       <Section>
         <Button href={eventUrl} style={ctaStyle}>
-          See the event and sign up
+          {noSignup ? "See the event" : "See the event and sign up"}
         </Button>
         <Text style={subtle}>
           Or paste this into your browser:{" "}

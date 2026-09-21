@@ -436,6 +436,24 @@ const USERS = new Map([
       "fake database the test controls, including one that refuses to answer, and nothing else is",
   ],
   [
+    "printed-code-landing-pages.test.mjs",
+    "it reads `printedLinks.ts` for the destinations the printed codes really have, so a code pointed " +
+      "at a new kind of page is checked against the landing pages without anybody copying the list " +
+      "into the test; nothing is stubbed",
+  ],
+  [
+    "event-no-signup.test.mjs",
+    "it executes `normalizeEvent`, because the promise that an event made before the switch existed " +
+      "still takes sign-ups is a promise about what the shipping normaliser does with a missing " +
+      "field and with values that are nearly true; nothing is stubbed",
+  ],
+  [
+    "signup-schedule.test.mjs",
+    "it executes the comparison behind an RSVP email's changed-since-you-signed-up block, because the " +
+      "bug was two formatted lines differing when only the formatter had changed, and that can only be " +
+      "shown by running the shipping comparison on a label the old formatter wrote; nothing is stubbed",
+  ],
+  [
     "scan-counting.test.mjs",
     "it executes the scan counter, its route and the beacon's decision, because what a scan writes is " +
       "a privacy promise and only the shipping code can show which fields reach the database; " +
