@@ -22,6 +22,9 @@
  *  - Permissions-Policy: camera, microphone, geolocation, payment, USB and
  *    the topics API are off for the page and every frame it embeds.
  *  - X-Content-Type-Options nosniff.
+ *  - NO X-Powered-By. `poweredByHeader: false` in next.config.ts stops the
+ *    framework naming itself on every response, which is the label a scanner
+ *    sorts targets by when a framework bug is published.
  *  - Content-Security-Policy-Report-Only carrying the INTENDED policy, with
  *    no `'unsafe-inline'` in script-src, and NO enforced
  *    Content-Security-Policy header. The day the policy is enforced this
@@ -88,6 +91,11 @@ describe("security headers on a real build", () => {
       for (const [name, value] of Object.entries(EXPECTED)) {
         assert.equal(res.headers.get(name), value, `${surface.path}: ${name}`);
       }
+      assert.equal(
+        res.headers.get("x-powered-by"),
+        null,
+        `${surface.path}: x-powered-by is being sent, so next.config.ts has lost poweredByHeader: false`,
+      );
       const permissions = res.headers.get("permissions-policy") ?? "";
       for (const feature of PERMISSIONS_OFF) {
         assert.ok(permissions.includes(feature), `${surface.path}: Permissions-Policy lacks ${feature}`);

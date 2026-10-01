@@ -1,0 +1,9 @@
+# How to report a security problem with naisi.uk. See RFC 9116.
+# The guard in tests/security-txt.test.mjs fails 30 days before Expires,
+# so this file cannot lapse quietly: move the date forward and commit.
+Contact: https://github.com/notts-aisi/naisi-website/security/advisories/new
+Contact: mailto:ai-safety@uonsu.com
+Expires: 2027-09-30T23:00:00.000Z
+Preferred-Languages: en
+Canonical: https://naisi.uk/.well-known/security.txt
+Policy: https://github.com/notts-aisi/naisi-website/blob/main/SECURITY.md

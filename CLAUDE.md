@@ -532,6 +532,7 @@ Two separate Firebase projects, each with its own App Hosting backend. The backe
 
 **CLI cheatsheet:**
 
+- **No owner login lives on the laptop** (since 1 October 2026). `firebase deploy`, `apphosting:*` and owner-level `gcloud` commands need `npx firebase login` / `gcloud auth login` as the project owner first, and `npx firebase logout` / `gcloud auth revoke` afterwards. Local dev and local e2e runs use Application Default Credentials that impersonate a dev-only service account, which production refuses.
 - **Firestore rules/indexes**: `npx firebase deploy --only firestore:rules,firestore:indexes --project <default|dev>`
 - **Storage rules**: `npx firebase deploy --only storage --project <default|dev>`. A SEPARATE command, and forgetting it is the most repeated deploy mistake in this repo. Three upload features (event images, application-email images, course images) reached production with their match block missing and every upload dying on deny-by-default, because `storage.rules` does not go out with the Firestore ruleset and nothing compares the deployed set with this file. Run it on both projects whenever `storage.rules` changes.
 - **App Hosting secrets**: `firebase apphosting:secrets:set <NAME> --project <default|dev>` creates the secret; `firebase apphosting:secrets:grantaccess <NAME> --backend <naisi|naisi-website> --project <default|dev>` grants the backend access once it exists (`naisi` on prod, `naisi-website` on dev).
@@ -648,6 +649,10 @@ Going-forward rule: features ship desktop-first on their own branch into `dev`. 
 Canonical breakpoints: `36rem` (sm), `48rem` (md), `60rem` (lg), `80rem` (xl). Defined in [src/theme/breakpoints.ts](src/theme/breakpoints.ts), mirrored as a comment block at the top of [src/theme/tokens.css](src/theme/tokens.css).
 
 ## Known gotchas
+
+- **Firestore recovery is on, and a recovered copy takes two commands to delete.** Both projects have point-in-time recovery (7 days), a daily backup (14 days) and delete protection. A clone or a restore is a NEW database beside the live one: it inherits delete protection, no browser can read it (rules are per database and it has none), and its command returns minutes before the copy can be queried. The steps, the four traps and the drill log are in [docs/recovery.md](docs/recovery.md).
+
+- **Workflow actions are pinned to commit SHAs**, with the release in a trailing comment (`@<40 hex> # v4.4.0`) that Dependabot rewrites when it bumps the pin. A tag is a pointer its owner can move; a SHA is not. `tests/actions-pinned.test.mjs` fails a `uses:` that names a tag or a branch, and a job whose token has no `permissions:` scope.
 
 - **`notFound()` in a page that matched its route answers with an EMPTY body.** Measured on a production build, September 2026: for a dynamic page that calls `notFound()` at runtime (the document is gone), Next sends the 404 status and a body of one hidden div, and draws the not-found screen in the browser once its scripts arrive. An address that matches NO route is different and is server-rendered properly, which is why every not-found page here looks fine on a laptop. Harmless for most pages. NOT harmless for a page a printed QR code lands on, opened on fair-day signal: a blank screen until the JavaScript lands, at exactly the moment something has already gone wrong (the event on the poster was deleted). Those pages render their own "not here" state as ordinary HTML and return it, the way `/sources` always has and `src/app/events/[id]/calendar/EventNotListed.tsx` now does. `tests/printed-code-landing-pages.test.mjs` lists the landing pages, fails one that calls `notFound()`, and checks every printed destination is on the list.
 
