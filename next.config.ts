@@ -35,6 +35,11 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
+  // Next announces itself with `x-powered-by: Next.js` on every response
+  // unless told not to. Hiding it protects nothing by itself, but it is the
+  // label a scanner sorts targets by on the day a framework bug is published.
+  // The headers battery asserts the header is absent on a real build.
+  poweredByHeader: false,
   async headers() {
     return [
       {

@@ -39,7 +39,13 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import vm from "node:vm";
 import { assertTarget } from "../scripts/e2e/lib/env.mjs";
+import {
+  BYPASS_PLACEHOLDER_TOKEN,
+  LOOPBACK_RECAPTCHA_TOKEN,
+  recaptchaStub,
+} from "../scripts/e2e/lib/browser.mjs";
 import {
   ARTIFACTS_DIR,
   FIXTURE_COLLECTIONS,
@@ -486,6 +492,72 @@ test("the harness sends the same bypass header the gate reads", () => {
     gateHeader,
     "the harness and the gate disagree on the bypass header name, so every dev-mode " +
       "run would be refused and reported as a reCAPTCHA failure.",
+  );
+});
+
+test("in bypass mode the form is handed a token and the server never sees one", async () => {
+  // Two requirements that pull against each other, and the nightly run against
+  // dev was red from 7 September to 1 October 2026 because only one was met.
+  // The GATE grants the bypass only to a tokenless request. The RSVP FORM
+  // refuses to post without a token. An empty token satisfied the gate and
+  // never left the browser. So the stub is run here, as a page would run it,
+  // and both halves are asserted on what it actually does.
+  const sent = [];
+  const page = (source) => {
+    const window = {
+      fetch: async (input, init) => {
+        sent.push(init?.body);
+        return { ok: true };
+      },
+    };
+    vm.runInNewContext(source, { window, setTimeout });
+    return window;
+  };
+  const ask = (window) =>
+    new Promise((resolve) => {
+      const id = window.grecaptcha.render(null, { callback: resolve });
+      window.grecaptcha.execute(id);
+    });
+
+  const bypass = page(recaptchaStub(BYPASS_PLACEHOLDER_TOKEN, { blankOnTheWire: true }));
+  const token = await ask(bypass);
+  assert.ok(
+    typeof token === "string" && token.length > 0,
+    "the bypass stub handed the form an empty token, and a form that refuses to post " +
+      "without one (RsvpForm does) never reaches the gate",
+  );
+  await bypass.fetch("/api/events/x/rsvp", {
+    method: "POST",
+    body: JSON.stringify({ name: "A guest", recaptchaToken: token }),
+  });
+  assert.deepEqual(
+    JSON.parse(sent.at(-1)),
+    { name: "A guest", recaptchaToken: "" },
+    "the placeholder reached the wire. The gate verifies any token it is given with Google, " +
+      "so the request would be refused instead of consulting the bypass",
+  );
+  await bypass.fetch("/api/anything", { method: "POST", body: JSON.stringify({ a: 1 }) });
+  assert.equal(sent.at(-1), '{"a":1}', "a body that carries no token must leave untouched");
+
+  // Loopback keeps its token: the local server's always-pass secret accepts
+  // any string, and a blanked one would be refused as missing.
+  const loopback = page(recaptchaStub(LOOPBACK_RECAPTCHA_TOKEN));
+  assert.equal(await ask(loopback), LOOPBACK_RECAPTCHA_TOKEN);
+  await loopback.fetch("/api/events/x/rsvp", {
+    method: "POST",
+    body: JSON.stringify({ recaptchaToken: LOOPBACK_RECAPTCHA_TOKEN }),
+  });
+  assert.deepEqual(JSON.parse(sent.at(-1)), { recaptchaToken: LOOPBACK_RECAPTCHA_TOKEN });
+
+  // And the armed path is the one that uses it.
+  const helper = readFileSync(join(REPO_ROOT, "scripts", "e2e", "lib", "browser.mjs"), "utf8");
+  assert.ok(
+    helper.includes("recaptchaStub(BYPASS_PLACEHOLDER_TOKEN, { blankOnTheWire: true })"),
+    "armRecaptcha's bypass branch no longer serves the blanking stub",
+  );
+  assert.ok(
+    !/recaptchaStub\(\s*""\s*\)/.test(helper),
+    "armRecaptcha hands a form an empty token again, which RsvpForm refuses to post",
   );
 });
 
