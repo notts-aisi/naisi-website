@@ -71,6 +71,12 @@ export const RECAPTCHA_SCRIPT_URL = "https://www.google.com/recaptcha/api.js";
 export const LOOPBACK_RECAPTCHA_TOKEN = "e2e-loopback-recaptcha-token";
 
 /**
+ * What the stub hands the widget in bypass mode. It never reaches the server:
+ * the stub blanks it in the request body on its way out. See `armRecaptcha`.
+ */
+export const BYPASS_PLACEHOLDER_TOKEN = "e2e-bypass-placeholder-token";
+
+/**
  * The header the dev backend's harness bypass reads. Pinned to
  * `RECAPTCHA_BYPASS_HEADER` in src/lib/recaptcha/bypass.ts; the guard in
  * tests/funnel-harness-guards.test.mjs compares the two.
@@ -90,11 +96,27 @@ export const RECAPTCHA_BADGE_SELECTOR = ".grecaptcha-badge";
  * badge element the real widget would; `execute` calls back asynchronously
  * (the real widget is async, and the component sets its pending resolver
  * before calling execute); `reset` is a no-op.
+ *
+ * With `blankOnTheWire`, the token is a placeholder the FORM sees and the
+ * SERVER never does: `fetch` is wrapped so that a JSON body carrying it goes
+ * out with an empty string in its place. Exported for the guard in
+ * tests/funnel-harness-guards.test.mjs, which runs the stub.
  */
-function recaptchaStub(token) {
+export function recaptchaStub(token, { blankOnTheWire = false } = {}) {
+  const blanking = blankOnTheWire
+    ? `
+  const needle = ${JSON.stringify(JSON.stringify(token))};
+  const realFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    if (init && typeof init.body === "string" && init.body.includes(needle)) {
+      init = { ...init, body: init.body.split(needle).join('""') };
+    }
+    return realFetch(input, init);
+  };`
+    : "";
   return `
 (() => {
-  const widgets = [];
+  const widgets = [];${blanking}
   window.grecaptcha = {
     render(container, params) {
       widgets.push(params);
@@ -127,12 +149,22 @@ function recaptchaStub(token) {
  *    secret the local server runs with accepts. Nothing else is needed.
  *  - "bypass": the target is deployed and `.env.e2e.secrets.local` (or the
  *    environment) carries E2E_RECAPTCHA_BYPASS_SECRET. Every request from
- *    this page's context carries the bypass header, and the stub hands the
- *    widget an EMPTY token, so the request that reaches the gate is
- *    tokenless: the gate consults the bypass only for a tokenless request
- *    (src/lib/recaptcha/bypass.ts), and it grants only when the header
- *    matches the dev backend's own variable and the acting identity is inside
- *    the harness namespace. A human on dev keeps the real widget.
+ *    this page's context carries the bypass header, and the request that
+ *    reaches the gate is tokenless: the gate consults the bypass only for a
+ *    tokenless request (src/lib/recaptcha/bypass.ts), and it grants only when
+ *    the header matches the dev backend's own variable and the acting
+ *    identity is inside the harness namespace. A human on dev keeps the real
+ *    widget.
+ *
+ *    Tokenless ON THE WIRE, not in the form. The stub used to hand the widget
+ *    an empty token, which worked while every form posted whatever it was
+ *    given. The RSVP form does not: it refuses to post without a token,
+ *    because a press before Google's script has loaded should say "wait a
+ *    moment" rather than spend a request. An empty token therefore never left
+ *    the browser, and the deployed RSVP spec failed every night from the day
+ *    that guard landed. So the stub hands the form a placeholder, which
+ *    satisfies any such guard, and blanks it in the request body, which keeps
+ *    the request tokenless for the gate.
  *  - false: the target is deployed and there is no secret. The real widget
  *    runs, which challenges headless Chromium with images, so the spec skips
  *    its reCAPTCHA-dependent steps and the runner reports them.
@@ -158,7 +190,7 @@ export async function armRecaptcha(page, origin) {
     route.fulfill({
       status: 200,
       contentType: "application/javascript",
-      body: recaptchaStub(""),
+      body: recaptchaStub(BYPASS_PLACEHOLDER_TOKEN, { blankOnTheWire: true }),
     }),
   );
   return "bypass";

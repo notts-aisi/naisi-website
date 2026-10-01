@@ -592,7 +592,12 @@ around what it may touch and the hand-driven fixture CLI are in
   marker carries the shared `RECAPTCHA_SKIP_REASON`; any other skip is a
   shortfall and fails the run. With `E2E_RECAPTCHA_BYPASS_SECRET` in the
   secrets file the specs send the bypass header with a tokenless request and
-  every step must run. The gate (`src/lib/recaptcha/bypass.ts`) grants only
+  every step must run. Tokenless on the wire, not in the form: a form that
+  refuses to post without a token (the RSVP form does) is handed a
+  placeholder by the stub, which blanks it in the request body on its way out
+  (`armRecaptcha` in `scripts/e2e/lib/browser.mjs`). An empty token handed to
+  the form kept the deployed RSVP spec red from 7 September to 1 October 2026.
+  The gate (`src/lib/recaptcha/bypass.ts`) grants only
   when the dev backend holds the same variable, the header matches and the
   acting identity is a harness address; a token that is present is always
   verified with Google, and `tests/recaptcha-bypass.test.mjs` keeps the
