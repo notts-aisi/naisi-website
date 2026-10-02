@@ -858,7 +858,7 @@ real build.
 
 | Job | Trigger | Mode |
 | --- | --- | --- |
-| `local` | every `pull_request` from a branch in this repository | `npm run e2e:local` (the nine fetch batteries) then `node scripts/run-e2e.mjs --local --skip-build` (the browser specs): builds the app once, boots it on loopback with the always-pass captcha secret and Mailpit, so the reCAPTCHA-dependent legs really run |
+| `local` | every `pull_request` from a branch in this repository, unless Dependabot started the run | `npm run e2e:local` (the nine fetch batteries) then `node scripts/run-e2e.mjs --local --skip-build` (the browser specs): builds the app once, boots it on loopback with the always-pass captcha secret and Mailpit, so the reCAPTCHA-dependent legs really run |
 | `dev` | nightly at 03:00 UTC (checking out `dev`, the branch the target deploys from), and `workflow_dispatch` (the ref it is given) | `npm run e2e` then `node scripts/run-e2e.mjs`, both against `https://dev.naisi.uk`: the deployed backend, real secret resolution, real SMTP, real reCAPTCHA, with the gated legs skipped and reported |
 
 **Both halves run, and that is deliberate.** The coverage map credits the fetch
@@ -869,9 +869,13 @@ local job because they build the app; the browser step then reuses that build
 with `--skip-build`, and `run.mjs` rebuilds anyway if the values baked in
 differ from what it wants.
 
-**Every run of this workflow queues behind the last one.** The concurrency
-group is the workflow, not the ref, because every job here drives the SAME dev
-Firebase project. Ordinary rows never collide (fixture ids carry the run id),
+**Every run of the suite waits behind the last one.** The two jobs that drive
+the dev project share one concurrency group, not one per ref, because every run
+of either drives the SAME dev Firebase project. The group is declared on those
+two jobs rather than on the workflow, with `queue: max`: by default a group
+holds one waiting run and a newer arrival CANCELS it, which left the middle of
+three pull requests with a cancelled run, and a run whose suite is skipped
+should not sit in the queue at all. Ordinary rows never collide (fixture ids carry the run id),
 but `config/membership` is a singleton: the membership spec snapshots that
 pointer, borrows it, and restores it in teardown. Two overlapping runs would
 restore a pointer to a period the other has already deleted, and both manifests
@@ -951,9 +955,38 @@ credentials. Under `pull_request` a fork gets no id-token at all, so the `local`
 job skips fork pull requests explicitly rather than failing them with an
 authentication error nobody outside the repository can fix.
 
-**What it expects, and what it does until then.** Both jobs are gated on
-`vars.GCP_WORKLOAD_IDENTITY_PROVIDER` being set, so until the federation exists
-they skip cleanly rather than going red:
+**Dependabot pull requests do not run the suite.** GitHub gives a run started
+by Dependabot none of the repository's secrets, so the browser specs could not
+sign in as the admin they drive and the job died there, red, on every
+dependency pull request. It is also the right run to keep credentials away
+from: the code under test is a dependency nobody has read yet, and that run
+WAS being handed the cloud identity (variables and the OIDC exchange are not
+withheld, only secrets). The `local` job now skips when `github.actor` is
+`dependabot[bot]`. To run the suite on a bump you have read, push a commit to
+its branch (an empty one is enough); the next run is yours. Re-running the
+existing run does not work, because a re-run keeps the privileges of whoever
+started it.
+
+**The check to require is "End-to-end result", not the job.** GitHub counts a
+job skipped by its own `if:` as a success, so requiring `local` would pass a
+suite that never ran. The `result` job runs whatever became of `local` and
+answers for it, and `scripts/ci/e2e-result.mjs` holds the table: a skip for
+Dependabot or a fork passes with a notice into `dev` and is HELD into `main`,
+and a skip because the test identity is missing FAILS. That last row is
+deliberate. While the identity is being replaced, a pull request into `dev`
+needs a repository admin to merge past the check, which is logged; the
+alternative is a suite that silently stops running and a check that stays
+green.
+
+**The nightly reports to somebody.** `nightly-alert` runs on the schedule
+whatever became of `dev`, a skip included, and opens or updates one issue
+assigned to `ALERT_ASSIGNEES` (`scripts/ci/alert-issue.mjs`). It closes itself
+when the nightly next passes. The issue says only that the run did not pass
+and where it is; the detail stays in the run log.
+
+**What it expects.** Both jobs skip when
+`vars.GCP_WORKLOAD_IDENTITY_PROVIDER` is empty, and the "End-to-end result"
+check then fails, as above:
 
 | Setting | Kind | What it is |
 | --- | --- | --- |
@@ -962,6 +995,7 @@ they skip cleanly rather than going red:
 | `E2E_ADMIN_EMAIL` | repository secret | The owner's admin account, for the specs that drive an admin-only screen |
 | `E2E_ADMIN_PASSWORD` | repository secret | Its password |
 | `NEXT_PUBLIC_FIREBASE_API_KEY` | repository variable | The DEV project's Firebase web key. Public by construction (Next inlines it into the client bundle), so a variable and not a secret. It lives outside the repository only so Google's abuse scanner stops flagging it, see below |
+| `ALERT_ASSIGNEES` | repository variable, optional | Who is assigned and mentioned when the nightly or the drift check does not pass, comma-separated. Falls back to the maintainer named in the workflow, so an unset variable cannot make the alert silent |
 | `E2E_UPLOAD_SCREENSHOTS` | repository variable, optional | Set it to `true` while chasing a failure to have the failing step's screenshots uploaded. Off by default, for the reason below |
 
 Neither address is a secret, which is why they are variables: seeing in the log

@@ -1,0 +1,98 @@
+# Settings that live outside the repository, held to what the repository says.
+#
+# Twice now a setting the site depends on has been right on one project and
+# wrong on the other for months: an API key's restrictions (May to September
+# 2026, dev) and a sign-in provider (to October 2026, production, where it
+# stopped every email registration). Neither is a file, so no pull request ever
+# touched it, no check ever ran against it, and each was found by accident.
+#
+# `npm test` is offline by contract and cannot look. The end-to-end workflow can
+# look at dev, with a cloud identity, and at nothing else. This workflow is the
+# part that needs NO credential: each job asks a question anybody may ask (what
+# a sign-in endpoint refuses, what a public repository's branch rules are), so
+# it can watch production without holding anything on production, and it keeps
+# working while a project's test identity is being replaced.
+#
+# Each expectation is a registry inside the script that checks it, with a
+# reason per entry, and an offline guard under `tests/` ties that registry to
+# the code: tests/auth-providers.test.mjs and tests/branch-rules.test.mjs.
+name: Configuration drift
+
+on:
+  schedule:
+    # 05:41 UTC, daily. An odd minute, off the hour everybody else schedules on.
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+    inputs:
+      drill:
+        description: "Open and close a test alert, to prove a failure reaches its owner"
+        type: boolean
+        default: false
+  # So that a change to a check is run before it is trusted.
+  pull_request:
+    paths:
+      - scripts/check-auth-providers.mjs
+      - scripts/check-branch-rules.mjs
+      - scripts/ci/alert-issue.mjs
+      - .github/workflows/config-drift.yml
+
+# Nothing here writes to the repository. The alert job raises its own token to
+# `issues: write`, and no job is given a cloud identity.
+permissions:
+  contents: read
+
+concurrency:
+  group: config-drift-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sign-in-providers:
+    name: Sign-in providers match the code
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # No install: the public mode uses nothing but fetch.
+      - run: node scripts/check-auth-providers.mjs
+
+  branch-rules:
+    name: Branch rules match the repository
+    # Not on a pull request. A pull request that changes the declared rules is
+    # by definition ahead of GitHub until it has merged and been applied, so
+    # the comparison would be red on exactly the change it exists to allow.
+    # tests/branch-rules.test.mjs is the half that runs on the pull request.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: node scripts/check-branch-rules.mjs
+        env:
+          # Read-only, and only for the API's rate limit: the rulesets of a
+          # public repository are readable with no token at all.
+          GITHUB_TOKEN: ${{ github.token }}
+
+  alert:
+    name: Tell the owner when a setting has drifted
+    needs: [sign-in-providers, branch-rules]
+    # On the schedule, whatever became of the two checks; and on a drill.
+    if: always() && (github.event_name == 'schedule' || inputs.drill)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Open, update or close the alert
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ALERT_KEY: config-drift
+          ALERT_WHAT: The configuration drift check
+          # Anything but two successes is a failure, a skipped or cancelled
+          # check included.
+          ALERT_RESULT: ${{ (needs.sign-in-providers.result == 'success' && needs.branch-rules.result == 'success') && 'success' || 'failure' }}
+          ALERT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ALERT_ASSIGNEES: ${{ vars.ALERT_ASSIGNEES || 'LevidaLoca' }}
+          ALERT_DRILL: ${{ inputs.drill }}
+        run: node scripts/ci/alert-issue.mjs

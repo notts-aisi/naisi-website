@@ -441,6 +441,48 @@ The same shape, older:
   duration with `t.mock.method(console, "error", () => {})` (or `"warn"`); the
   CI job keeps its `cut` as the backstop.
 
+### Settings that are not files
+
+Three times a setting the site depends on was right in one place and wrong in
+another, and no check could see it because it is not a file: an API key's
+restrictions (May to September 2026, dev), a sign-in provider (to October 2026,
+production, where it stopped every email registration) and the rule that says
+which checks a branch requires (held by memory until October 2026). Each now
+has the same two layers. The expectation is a registry inside the script that
+checks it, with a reason per entry; an offline guard ties the registry to the
+code; and the script compares the live setting with the registry.
+
+- `scripts/check-api-key-restrictions.mjs`: each project's web API key is
+  restricted to exactly the services the client calls. Needs a cloud identity,
+  so it runs in the end-to-end workflow against dev, and by hand against
+  production.
+- `scripts/check-auth-providers.mjs`, with `tests/auth-providers.test.mjs`:
+  each project has switched on exactly the sign-in providers the code calls.
+  The offline half reads every import from `firebase/auth` under `src` and
+  requires each to be classified, in both directions. The live half needs NO
+  credential: it attempts a sign-in that cannot succeed and reads the refusal
+  (a provider that is on refuses the credential, one that is off refuses the
+  operation), so it watches production too. `--admin` reads the configuration
+  itself and adds anonymous, phone and email-link sign-in.
+- `scripts/check-branch-rules.mjs`, with `tests/branch-rules.test.mjs`: `main`
+  and `dev` require what `BRANCH_RULES` declares. The offline half requires
+  every declared check to be the exact name of a job in `.github/workflows`,
+  because a required check whose job was renamed never reports and every pull
+  request then waits on it for ever. The live half reads the rulesets, which
+  are public. A rule is changed by a pull request to that file and then
+  applied with `--apply`.
+
+`.github/workflows/config-drift.yml` runs the two credential-free ones daily.
+A failure there, like a failed nightly, opens an issue assigned to the owner
+(`scripts/ci/alert-issue.mjs`, held by `tests/ci-alert-issue.test.mjs`, which
+also fails a scheduled workflow that reports to nobody).
+
+Three smaller guards hold the rest of the pipeline's configuration:
+`tests/ci-e2e-result.test.mjs` (the required end-to-end check, below),
+`tests/static-analysis-config.test.mjs` (CodeQL skips test directories and
+nothing else) and `tests/dependabot-config.test.mjs` (a dependency held back
+from a major version says why and what lifts the hold).
+
 ### The standing review
 
 The guards above hold the classes the audit of 8 September 2026 found. The
@@ -508,13 +550,13 @@ Locally before a pull request, and in CI on every pull request
 
 ```sh
 npx next typegen && npx tsc --noEmit
-npm run lint            # 0 errors; the warning baseline on dev is 9
+npm run lint            # 0 errors; the warning baseline on dev is 11
 npm test                # the Node suites under tests/
 cd scripts/rules-tests && npm test   # the emulator suite; Java required
 npm run build           # a real production build
 ```
 
-The warning count is 9 on a clean checkout of `dev`. A working copy with
+The warning count is 11 on a clean checkout of `dev` (October 2026). A working copy with
 skip-worktree overrides in it (`src/lib/devBypass/local.ts`, and anything else
 a developer keeps modified locally) reports more: this machine shows 32. Count
 the warnings on a fresh clone before treating a number as a regression.
@@ -748,8 +790,29 @@ reCAPTCHA-dependent legs skipped and reported). The nightly checks out `dev`,
 the branch that target deploys from, rather than the default branch a schedule
 starts on; a dispatch keeps the ref it is given. Credentials come from Workload
 Identity Federation rather than a stored key, the trigger is `pull_request` and
-never `pull_request_target`, both jobs skip cleanly until the federation
-variables exist, and every run of the workflow queues behind the last because
-they share one dev Firebase project. The settings it expects, the IAM grant
-custom tokens need, and why the failure screenshots are opt-in are in
+never `pull_request_target`, and the two jobs share one queue because they
+share one dev Firebase project: one runs at a time, none is cancelled, and
+every run waits its turn (`queue: max`; by default a newer arrival cancels the
+one already waiting).
+
+**The suite's verdict is a check of its own, "End-to-end result".** The branch
+rules require it by that name. GitHub counts a job skipped by its own `if:` as
+a success, and the `local` job skips for three unrelated reasons, so requiring
+the job itself would let a suite that could not run pass as one that did.
+`scripts/ci/e2e-result.mjs` reads why the job has the result it has: ran and
+passed is a pass; failed, cancelled, or skipped because the repository has no
+test identity is a fail; skipped because the run was started by Dependabot or
+comes from a fork (neither is given the repository's secrets) is a pass with a
+notice into `dev` and a HOLD into `main`.
+
+**Running the suite on a Dependabot pull request.** A maintainer who has read
+the bump pushes a commit to its branch, and an empty one is enough:
+`git commit --allow-empty -m "ci: run the end-to-end suite" && git push`. The
+next run is theirs, with the access the suite needs. Re-running the existing
+run does not work: a re-run keeps the privileges of whoever started it.
+
+**A nightly that does not pass tells the owner.** `nightly-alert` runs on the
+schedule whatever became of the `dev` job, a skip included, and opens or
+updates one issue. The settings the workflow expects, the IAM grant custom
+tokens need, and why the failure screenshots are opt-in are in
 `scripts/e2e/README.md`.
