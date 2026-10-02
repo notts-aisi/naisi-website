@@ -38,6 +38,37 @@ updates:
       # so its release notes get read.
       app-minor-and-patch:
         update-types: [minor, patch]
+    # MAJOR VERSIONS HELD BACK. Each entry says why it is held and what lifts
+    # it, and tests/dependabot-config.test.mjs fails an entry that says neither
+    # or that names a package this manifest no longer depends on. Without an
+    # entry Dependabot reopens the same pull request every week, and it fails
+    # the same way every week.
+    ignore:
+      # WHY: ESLint 10 crashes the React lint plugin that eslint-config-next
+      # bundles ("getFilename is not a function"); that plugin declares support
+      # up to ESLint 9.
+      # LIFT WHEN: eslint-config-next ships a React plugin that supports
+      # ESLint 10.
+      - dependency-name: eslint
+        update-types: ["version-update:semver-major"]
+      # WHY: @types/node describes the Node the code RUNS on, so its major
+      # follows the runtime and never npm's latest. Types for a newer Node let
+      # code compile against APIs the server does not have.
+      # LIFT WHEN: the runtime moves, and then only as far as the runtime.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # WHY: google-auth-library 11 requires Node 22, and firebase-admin 13
+      # depends on the 10 line, so bumping this alone ships two copies.
+      # LIFT WHEN: the server SDKs move to Node 22 together (firebase-admin 14
+      # with it).
+      - dependency-name: google-auth-library
+        update-types: ["version-update:semver-major"]
+      # WHY: firebase-admin 14 requires Node 22 and brings new major versions
+      # of the Firestore and Storage clients, which is a migration and not a
+      # bump: it fails the typecheck in a score of files.
+      # LIFT WHEN: that migration is done as its own piece of work.
+      - dependency-name: firebase-admin
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
       prefix-development: "chore(deps-dev)"

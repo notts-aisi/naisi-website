@@ -26,6 +26,14 @@
 # in a `finally` and the exit code carries the manifest, so a green run is also
 # a run that left nothing behind. A CANCELLED run is the exception, which is
 # why `cancel-in-progress` is false below.
+#
+# TWO JOBS HERE DRIVE NOTHING. `result` reads why the suite has the result it
+# has and is the check the branch rules require: a job skipped by its own `if:`
+# counts as a success to GitHub, and a suite that could not run has not passed.
+# `nightly-alert` tells the owner when the scheduled run does not pass, because
+# a scheduled run has no pull request to turn red and nobody watching it: in
+# September 2026 the nightly failed for three weeks unnoticed. Neither job is
+# given the cloud identity; each declares its own, smaller, permissions.
 name: End to end
 
 on:
@@ -42,40 +50,61 @@ permissions:
   id-token: write
   contents: read
 
-concurrency:
-  # ONE GROUP FOR THE WHOLE WORKFLOW, deliberately not per ref. Every run here,
-  # on any branch and from any trigger, drives the SAME dev Firebase project.
-  # Fixture ids are per run, so ordinary rows never collide, but two things in
-  # that project are singletons that a spec has to borrow and give back: the
-  # `config/membership` pointer the membership console rewrites when it makes a
-  # period current, and the reCAPTCHA-relaxed loopback port a local run binds.
-  # The membership spec snapshots that pointer before it seeds and restores it
-  # in teardown, so an overlapping pair would restore a pointer to a period the
-  # other run has already deleted, and BOTH manifests would still read zero:
-  # the corruption is invisible to the thing that is supposed to catch it.
-  # Queueing every run of this workflow behind the last one is the fix, and it
-  # is why a pull request run and the 03:00 nightly cannot overlap either.
-  group: e2e-${{ github.workflow }}
-  # NOT cancelled. A run killed part way leaves its fixture on the shared dev
-  # project and its ledger in a workspace that is about to be deleted, so
-  # nothing can find the rows again. Queueing is the cheaper failure.
-  cancel-in-progress: false
+# THE CONCURRENCY GROUP, declared on the two jobs that drive the dev project
+# (`local` and `dev`) and on nothing else.
+#
+# ONE GROUP FOR BOTH, deliberately not per ref. Every run of either job, on any
+# branch and from any trigger, drives the SAME dev Firebase project. Fixture
+# ids are per run, so ordinary rows never collide, but two things in that
+# project are singletons that a spec has to borrow and give back: the
+# `config/membership` pointer the membership console rewrites when it makes a
+# period current, and the reCAPTCHA-relaxed loopback port a local run binds.
+# The membership spec snapshots that pointer before it seeds and restores it in
+# teardown, so an overlapping pair would restore a pointer to a period the
+# other run has already deleted, and BOTH manifests would still read zero: the
+# corruption is invisible to the thing that is supposed to catch it. Running
+# one at a time is the fix, and it is why a pull request run and the 03:00
+# nightly cannot overlap either.
+#
+# NOT cancelled (`cancel-in-progress: false`). A run killed part way leaves its
+# fixture on the shared dev project and its ledger in a workspace that is about
+# to be deleted, so nothing can find the rows again.
+#
+# AND EVERY RUN WAITS ITS TURN (`queue: max`). By default a group holds one
+# waiting run, and a newer arrival CANCELS it. Three pull requests opened in a
+# row therefore left the middle one with a cancelled end-to-end run, which is
+# harmless when the result is advisory and a blocked merge once it is required.
+#
+# On the jobs rather than the workflow, so that a run whose suite is skipped
+# (a Dependabot pull request, a fork) never joins the queue: its `result` job
+# answers at once instead of waiting behind every run ahead of it.
 
 jobs:
   local:
     name: Local mode (loopback server, captcha relaxed, mail into Mailpit)
-    # Two conditions, for two different reasons.
+    # Three conditions, for three different reasons. `result`, at the foot of
+    # this file, decides what a skip MEANS for the pull request; this only
+    # decides whether the suite can run.
     #
-    # 1. No `GCP_WORKLOAD_IDENTITY_PROVIDER` variable means federation has not
-    #    been set up on this repository yet. The job skips cleanly rather than
-    #    failing every pull request with an authentication error.
+    # 1. No `GCP_WORKLOAD_IDENTITY_PROVIDER` variable means the repository has
+    #    no test identity, so nothing here could authenticate.
     # 2. A pull request from a FORK gets no id-token (`pull_request` withholds
-    #    it), so the exchange cannot happen at all. Skipping says so; the
-    #    alternative would be a red check nobody outside the repository can fix.
+    #    it), so the exchange cannot happen at all.
+    # 3. A run STARTED BY DEPENDABOT is given none of the repository's secrets,
+    #    so the browser specs cannot sign in as the admin they drive and the
+    #    job used to die there, red, on every dependency pull request. It is
+    #    also the right run to keep credentials away from: the code under test
+    #    is a dependency nobody has read yet. A maintainer who has read it
+    #    pushes a commit to the branch, and that run is theirs.
     if: >-
       github.event_name == 'pull_request'
       && vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
       && github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]'
+    concurrency:
+      group: e2e-${{ github.workflow }}
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -99,10 +128,13 @@ jobs:
       # missing emulator into a red job rather than a quiet skip.
       - run: npm ci
         working-directory: scripts/rules-tests
+      # 21, because firebase-tools 15 refuses anything older ("no longer
+      # supports Java version before 21") and the version it replaces runs on
+      # 21 as well.
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
       # The emulator jar firebase-tools downloads on first use, kept between
       # runs so the persona battery does not fetch it every time.
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -345,6 +377,11 @@ jobs:
     if: >-
       github.event_name != 'pull_request'
       && vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+    # The same group as `local`: see the note above `jobs:`.
+    concurrency:
+      group: e2e-${{ github.workflow }}
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -499,3 +536,61 @@ jobs:
           # and carried nothing (seen 6 September 2026).
           include-hidden-files: true
           retention-days: 1
+
+  result:
+    name: End-to-end result
+    # THE CHECK THE BRANCH RULES REQUIRE from this workflow, by this exact name
+    # (scripts/check-branch-rules.mjs holds the name and
+    # tests/branch-rules.test.mjs holds the two together). It runs whatever
+    # became of `local`, including nothing, and answers for it: the table of
+    # what counts as a pass is at the top of scripts/ci/e2e-result.mjs.
+    needs: [local]
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Reads the repository and nothing else. No id-token: this job never
+    # touches the dev project.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Every value arrives through `env`, never interpolated into the script.
+      - name: Read what became of the suite
+        env:
+          LOCAL_RESULT: ${{ needs.local.result }}
+          BASE_REF: ${{ github.base_ref }}
+          ACTOR: ${{ github.actor }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          IDENTITY_CONFIGURED: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
+        run: node scripts/ci/e2e-result.mjs
+
+  nightly-alert:
+    name: Tell the owner how the nightly went
+    # On the schedule only, and whatever became of `dev`: failed, cancelled or
+    # SKIPPED. A skip on a schedule means the test identity is not configured,
+    # which is the failure that makes no noise at all. A dispatched run is
+    # somebody watching, so it is left alone.
+    needs: [dev]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      # A scheduled run starts on the default branch, so this is main's copy of
+      # the script, like the workflow file itself.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Open, update or close the alert
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ALERT_KEY: nightly-e2e
+          ALERT_WHAT: The nightly end-to-end run
+          ALERT_RESULT: ${{ needs.dev.result }}
+          ALERT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Who is told. A repository variable, so it changes without a pull
+          # request; the fallback is there so an unset variable cannot make the
+          # alert silent.
+          ALERT_ASSIGNEES: ${{ vars.ALERT_ASSIGNEES || 'LevidaLoca' }}
+        run: node scripts/ci/alert-issue.mjs
