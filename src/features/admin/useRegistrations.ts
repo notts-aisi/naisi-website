@@ -12,7 +12,7 @@ const PAGE_SIZE = 50;
 type ListResponse = { rows: RegistrationView[]; nextCursor: string | null };
 
 async function fetchPage(cursor: string | null): Promise<ListResponse> {
-  const params = new URLSearchParams({ filter: "all", limit: String(PAGE_SIZE) });
+  const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
   if (cursor) params.set("cursor", cursor);
   const res = await fetch(`/api/admin/registrations?${params.toString()}`);
   if (!res.ok) {

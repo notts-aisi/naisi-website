@@ -466,6 +466,14 @@ const USERS = new Map([
       "into a subscription's `source`, because the promise is about what the shipping code lets " +
       "through and a copy of its regular expression would prove nothing; nothing is stubbed",
   ],
+  [
+    "registration-status.test.mjs",
+    "it executes the signup tracker end to end: the status rule, the three write helpers, and the " +
+      "list, summary and profile-complete routes against one small fake database, because the claim " +
+      "is about what an admin is SHOWN for a row whose stored status is stale, and that is decided " +
+      "across five modules. `server-only`, `next/server`, the Admin SDK handle, the session and the " +
+      "impersonation guard are stubbed; `firebase-admin/firestore` is the real one",
+  ],
 ]);
 
 /**
