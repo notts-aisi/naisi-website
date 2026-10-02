@@ -70,10 +70,13 @@ function friendlyError(err: unknown): Error {
       "Too many attempts. Please wait a moment and try again.",
     "auth/network-request-failed":
       "Network error. Check your connection and try again.",
-    // Surfaces clearly when the Email/Password provider hasn't been enabled in
-    // the Firebase console (the documented PR-0 prerequisite).
+    // The project's Email/Password provider is switched off. That is a fault
+    // on our side that the person signing in can do nothing about, so the copy
+    // says only that it is unavailable. It used to tell them which console
+    // switch to flip: an instruction for the operator, shown to every member
+    // who hit it. tests/front-facing-copy.test.mjs holds the line.
     "auth/operation-not-allowed":
-      "Email sign-in isn't enabled yet. (Enable Email/Password in the Firebase console.)",
+      "Email sign-in isn't available right now. Please try again later.",
   };
   return new Error(map[code] ?? "Something went wrong. Please try again.");
 }

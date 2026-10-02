@@ -6,6 +6,7 @@ import {
   REGISTRATIONS_COLLECTION,
   SIGNUP_METRICS_COLLECTION,
   recentMetricsDateKeys,
+  registrationCounts,
   type RegistrationFlag,
   type RegistrationSummary,
 } from "@/lib/firestore/registrations";
@@ -19,6 +20,12 @@ import {
  * snap.size full scans), and the reCAPTCHA rate reads a bounded handful of daily
  * counter docs. So the whole summary is a few reads regardless of how many
  * orphans have accumulated.
+ *
+ * NO COUNT HERE READS `status == "completed"`. That stored word means "password
+ * set" on every email row written before October 2026, so counting it would
+ * report a stranded registration as a finished one. `registrationCounts` says
+ * what is counted instead and why the four numbers still add up. Every filter
+ * below is an equality, or a range on one field, so none needs a declared index.
  */
 
 // Tunable thresholds. Sized for a small society's signup volume — revisit if the
@@ -31,7 +38,7 @@ const METRICS_WINDOW_DAYS = 7;
 const RECAPTCHA_MIN_SAMPLE = 10;
 const RECAPTCHA_AMBER = 0.3;
 const RECAPTCHA_RED = 0.6;
-// Benign orphans accumulate by design; only surface them once there's a real
+// Unfinished rows accumulate by design; only surface them once there's a real
 // backlog worth a cleanup sweep.
 const ORPHAN_AMBER = 100;
 
@@ -65,27 +72,38 @@ export async function GET() {
 
   // Status counts + creation velocity, all via aggregation in parallel.
   const [
+    totalSnap,
+    withProfileSnap,
     pendingSnap,
+    pendingWithProfileSnap,
     verifiedNoPwSnap,
-    pendingProfileSnap,
-    completedSnap,
+    verifiedNoPwWithProfileSnap,
     last1hSnap,
     last24hSnap,
   ] = await Promise.all([
+    coll.count().get(),
+    coll.where("profileComplete", "==", true).count().get(),
     coll.where("status", "==", "pending-verify").count().get(),
+    coll.where("status", "==", "pending-verify").where("profileComplete", "==", true).count().get(),
     coll.where("status", "==", "verified-no-password").count().get(),
-    coll.where("status", "==", "pending-profile").count().get(),
-    coll.where("status", "==", "completed").count().get(),
+    coll
+      .where("status", "==", "verified-no-password")
+      .where("profileComplete", "==", true)
+      .count()
+      .get(),
     coll.where("createdAt", ">=", since1h).count().get(),
     coll.where("createdAt", ">=", since24h).count().get(),
   ]);
 
-  const pendingVerify = aggCount(pendingSnap);
-  const verifiedNoPassword = aggCount(verifiedNoPwSnap);
-  const pendingProfile = aggCount(pendingProfileSnap);
-  const completed = aggCount(completedSnap);
-  // Orphans = anything that isn't a finished account, across both methods.
-  const orphans = pendingVerify + verifiedNoPassword + pendingProfile;
+  const counts = registrationCounts({
+    total: aggCount(totalSnap),
+    withProfile: aggCount(withProfileSnap),
+    storedPendingVerify: aggCount(pendingSnap),
+    storedPendingVerifyWithProfile: aggCount(pendingWithProfileSnap),
+    storedVerifiedNoPassword: aggCount(verifiedNoPwSnap),
+    storedVerifiedNoPasswordWithProfile: aggCount(verifiedNoPwWithProfileSnap),
+  });
+  const { orphans } = counts;
   const last1h = aggCount(last1hSnap);
   const last24h = aggCount(last24hSnap);
 
@@ -143,19 +161,12 @@ export async function GET() {
     flags.push({
       level: "amber",
       kind: "orphans",
-      message: `${orphans} benign orphan registrations are waiting for cleanup.`,
+      message: `${orphans} unfinished registrations have built up and can be cleaned up.`,
     });
   }
 
   const summary: RegistrationSummary = {
-    counts: {
-      total: pendingVerify + verifiedNoPassword + pendingProfile + completed,
-      pendingVerify,
-      verifiedNoPassword,
-      pendingProfile,
-      completed,
-      orphans,
-    },
+    counts,
     velocity: { last1h, last24h },
     recaptcha: {
       windowDays: METRICS_WINDOW_DAYS,

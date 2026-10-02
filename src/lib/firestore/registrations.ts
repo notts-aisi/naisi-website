@@ -40,23 +40,32 @@ export type RegistrationAudience = "member" | "collaborator";
 export type RegistrationMethod = "email" | "google";
 
 /**
- * The lifecycle of a registration, derived from the booleans we own. Which ones
- * apply depends on `method`:
+ * The lifecycle of a registration, derived from the booleans we own.
  *
- *   email
- *     - pending-verify       account exists, email not yet confirmed (never
- *                            clicked the magic link). Random throwaway password →
- *                            can't be signed into. A benign orphan.
- *     - verified-no-password email confirmed (clicked the link) but the real
- *                            password not yet set. Still no usable credential →
- *                            a benign orphan.
- *     - completed            real password set → a usable account.
+ * ONE RULE ABOVE THE REST: `completed` MEANS A PROFILE EXISTS, for either
+ * method. A member or collaborator profile is the only thing that puts a
+ * person in front of an admin, so it is the only thing the tracker may call
+ * finished.
  *
- *   google (no password step; the email is verified by Google)
- *     - pending-profile      signed in with Google but never wrote a member/
- *                            collaborator profile doc → an abandoned signup.
- *                            An orphan, by the "no profile doc" test.
- *     - completed            profile doc written → a usable account.
+ * Until October 2026 an email sign-up read `completed` the moment its password
+ * was set, on the reasoning that a usable credential is a finished account.
+ * It is not a finished REGISTRATION: the profile form comes after the
+ * password. When the step between them broke on production (the project's
+ * Email/Password provider was switched off, so the sign-in straight after the
+ * password was refused), every email sign-up stopped there, nothing reached
+ * Approvals, and this tracker reported each one as done. A status that claims
+ * more than the data proves hides exactly the failure it exists to show.
+ *
+ *   pending-verify        (email) the account exists and the address is not
+ *                         confirmed. Its password is a server-random throwaway,
+ *                         so nobody can sign in to it.
+ *   verified-no-password  (email) the address is confirmed and the real
+ *                         password is not set. Still no usable credential.
+ *   pending-profile       (both) the account CAN sign in and has submitted no
+ *                         profile: a Google sign-in that never finished the
+ *                         form, or an email sign-up that set its password and
+ *                         got no further. Nothing is waiting on Approvals.
+ *   completed             (both) a profile document exists.
  */
 export type RegistrationStatus =
   | "pending-verify"
@@ -71,7 +80,11 @@ export const REGISTRATION_STATUSES: RegistrationStatus[] = [
   "completed",
 ];
 
-/** Statuses that aren't a usable, finished account yet — the orphans a cleanup sweep targets. */
+/**
+ * Statuses with no profile behind them: the unfinished rows a cleanup sweep
+ * targets. `pending-profile` is the one to read before deleting, because the
+ * account behind it can sign in and its owner may still mean to finish.
+ */
 export const ORPHAN_STATUSES: RegistrationStatus[] = [
   "pending-verify",
   "verified-no-password",
@@ -79,19 +92,24 @@ export const ORPHAN_STATUSES: RegistrationStatus[] = [
 ];
 
 /**
- * Single source of truth for status — keep the stored `status` field in sync with
- * this. Method-aware: email orphans are gated on a usable credential (passwordSet),
- * Google orphans on a completed profile (profileComplete), since Google has no
- * password step.
+ * Single source of truth for status. The stored `status` field is written from
+ * this, but a row written before October 2026 carries the old meaning of
+ * `completed`, so nothing that SHOWS a status may trust the stored word:
+ * `toRegistrationView` derives it again from the flags, every time.
+ *
+ * A profile wins over every other flag. An email row whose owner later signed
+ * in with Google and finished the form has no password set and is finished
+ * all the same.
  */
 export function deriveRegistrationStatus(
   method: RegistrationMethod,
   flags: { emailVerified?: boolean; passwordSet?: boolean; profileComplete?: boolean },
 ): RegistrationStatus {
-  if (method === "google") {
-    return flags.profileComplete ? "completed" : "pending-profile";
-  }
-  if (flags.passwordSet) return "completed";
+  if (flags.profileComplete) return "completed";
+  // Google verifies the address and has no password step, so a Google row
+  // with no profile is already at the last step.
+  if (method === "google") return "pending-profile";
+  if (flags.passwordSet) return "pending-profile";
   if (flags.emailVerified) return "verified-no-password";
   return "pending-verify";
 }
@@ -180,15 +198,32 @@ function num(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
-export function toRegistrationView(uid: string, data: Raw): RegistrationView {
+/**
+ * What a caller knows that the row does not: whether a profile document exists
+ * for this account right now. The list route looks it up for every row it
+ * returns (`uidsWithProfile` in the server-only `registrationProfiles.ts`).
+ */
+export type RegistrationTruth = { hasProfile: boolean };
+
+export function toRegistrationView(
+  uid: string,
+  data: Raw,
+  truth?: RegistrationTruth,
+): RegistrationView {
   const emailVerified = Boolean(data.emailVerified);
   const passwordSet = Boolean(data.passwordSet);
-  const profileComplete = Boolean(data.profileComplete);
+  // The row's own flag is set by a request the browser makes after it has
+  // written the profile, so it can trail the document (or, on an old row,
+  // never have been set). Where the caller has looked the document up, that
+  // answer wins in both directions.
+  const profileComplete = truth ? truth.hasProfile : Boolean(data.profileComplete);
   // Legacy rows (pre-`method`) are all from the email flow.
   const method: RegistrationMethod = data.method === "google" ? "google" : "email";
-  const status = REGISTRATION_STATUSES.includes(data.status as RegistrationStatus)
-    ? (data.status as RegistrationStatus)
-    : deriveRegistrationStatus(method, { emailVerified, passwordSet, profileComplete });
+  // DERIVED, never read from `data.status`. A row written before October 2026
+  // stores "completed" for an email sign-up with a password and no profile,
+  // and showing the stored word is how the tracker came to report stranded
+  // registrations as finished.
+  const status = deriveRegistrationStatus(method, { emailVerified, passwordSet, profileComplete });
   return {
     uid,
     email: typeof data.email === "string" ? data.email : "",
@@ -234,8 +269,9 @@ export type RegistrationSummary = {
     total: number;
     pendingVerify: number;
     verifiedNoPassword: number;
-    /** Google sign-ins that never completed a profile (Google orphans). */
+    /** Accounts that can sign in and have submitted no profile, either method. */
     pendingProfile: number;
+    /** Registrations with a profile behind them. */
     completed: number;
     orphans: number;
   };
@@ -250,3 +286,45 @@ export type RegistrationSummary = {
   };
   flags: RegistrationFlag[];
 };
+
+/**
+ * The status counts for the whole collection, from the six aggregation reads
+ * the summary route makes.
+ *
+ * `completed` is counted on the `profileComplete` FLAG and never on the stored
+ * `status` word, which says "completed" on every email row whose password was
+ * set before October 2026, profile or no profile. The two early statuses are
+ * safe to count on the stored word (their meaning never changed), less any row
+ * that has since gained a profile another way (an email sign-up finished
+ * through Google). `pendingProfile` is whatever is left, so the four always
+ * add up to the total and a row whose stored word is stale lands where its
+ * flags put it, with no backfill.
+ *
+ * The flag can trail the profile document (see `toRegistrationView`), so
+ * `completed` may briefly under-count. It cannot over-count, which is the
+ * direction that matters: the flag is only ever set once a document exists.
+ */
+export function registrationCounts(read: {
+  total: number;
+  withProfile: number;
+  storedPendingVerify: number;
+  storedPendingVerifyWithProfile: number;
+  storedVerifiedNoPassword: number;
+  storedVerifiedNoPasswordWithProfile: number;
+}): RegistrationSummary["counts"] {
+  const atLeastZero = (n: number) => Math.max(0, n);
+  const completed = read.withProfile;
+  const pendingVerify = atLeastZero(read.storedPendingVerify - read.storedPendingVerifyWithProfile);
+  const verifiedNoPassword = atLeastZero(
+    read.storedVerifiedNoPassword - read.storedVerifiedNoPasswordWithProfile,
+  );
+  const pendingProfile = atLeastZero(read.total - completed - pendingVerify - verifiedNoPassword);
+  return {
+    total: read.total,
+    pendingVerify,
+    verifiedNoPassword,
+    pendingProfile,
+    completed,
+    orphans: pendingVerify + verifiedNoPassword + pendingProfile,
+  };
+}

@@ -158,37 +158,53 @@ export async function markRegistrationEmailVerified(uid: string): Promise<void> 
 }
 
 /**
- * Mark the registration completed once the user sets their real password. By
- * this point they've clicked the link, so emailVerified is also true. Only
- * touches an existing row (update throws on a missing doc → caught → skipped for
- * pre-tracker accounts).
+ * Record that the user has set their real password. By this point they've
+ * clicked the link, so emailVerified is also true.
+ *
+ * THIS DOES NOT COMPLETE THE REGISTRATION. It moves the row to
+ * "pending-profile": the account can now sign in, and the profile form, the
+ * only thing that reaches Approvals, is still ahead of it. (A row that already
+ * has a profile stays "completed", which is why the row is read first.) Only
+ * touches an existing row; an account that predates the tracker has none.
  */
 export async function markRegistrationPasswordSet(uid: string): Promise<void> {
   const db = getAdminDb();
   if (!db) return;
   try {
-    // Only the email flow has a password step, so "email" is correct here (and
-    // safe even in the impossible Google case — passwordSet:true ⇒ completed).
-    await db.collection(REGISTRATIONS_COLLECTION).doc(uid).update({
+    const ref = db.collection(REGISTRATIONS_COLLECTION).doc(uid);
+    const snap = await ref.get();
+    if (!snap.exists) return; // the account predates the tracker: nothing to mirror
+    const data = snap.data() ?? {};
+    // Only the email flow has a password step, but read method defensively,
+    // the way the sibling helpers do.
+    const method = data.method === "google" ? "google" : "email";
+    await ref.update({
       passwordSet: true,
       emailVerified: true,
-      status: deriveRegistrationStatus("email", { emailVerified: true, passwordSet: true }),
+      status: deriveRegistrationStatus(method, {
+        emailVerified: true,
+        passwordSet: true,
+        profileComplete: Boolean(data.profileComplete),
+      }),
       updatedAt: Timestamp.now(),
     });
   } catch (err) {
-    // NOT_FOUND here just means the account predates the tracker — benign.
-    console.error("[registrations] markRegistrationPasswordSet skipped/failed", err);
+    console.error("[registrations] markRegistrationPasswordSet failed", err);
   }
 }
 
 /**
  * Mark the registration row "profile complete" once a member/collaborator profile
- * doc has been written. For a GOOGLE account this is what flips it from
- * "pending-profile" (orphan) to "completed"; for an EMAIL account the status is
- * already driven by passwordSet, so this just records the extra `profileComplete`
- * signal (and, when given, corrects a Google orphan's default "member" audience to
- * "collaborator"). Only ever touches an existing row (caught NOT_FOUND = pre-tracker
- * or unrecorded account). Best-effort — the profile doc is the source of truth.
+ * doc has been written. This is what moves a row to "completed", for BOTH
+ * methods: a Google sign-in that finished the form, and an email sign-up that
+ * set its password and then finished the form. (When given, it also corrects a
+ * Google row's default "member" audience to "collaborator".) Only ever touches an
+ * existing row (caught NOT_FOUND = pre-tracker or unrecorded account).
+ *
+ * Callers must have SEEN the profile document before calling: this sets a flag
+ * the tracker's whole-collection counts trust. `/api/collaborators` calls it
+ * straight after writing the document itself, and
+ * `/api/register/profile-complete` looks the document up first.
  */
 export async function markRegistrationProfileComplete(
   uid: string,

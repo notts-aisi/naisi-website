@@ -1473,8 +1473,10 @@ export const ROUTES = {
       expect: signedIn(200),
       fields: ["ok"],
       why:
-        "Any signed-in account marks its own registration row as profile-complete; the write " +
-        "is to the caller's own row and answers ok whether or not the row exists.",
+        "Any signed-in account asks for its own registration row to be marked profile-complete. " +
+        "The route looks for the caller's profile document first and marks the row only when " +
+        "one exists; it answers ok either way, and whether or not the row exists, so the " +
+        "response tells the caller nothing about its own state it did not already know.",
     },
   },
   "/api/register/resend": {
