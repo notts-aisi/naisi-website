@@ -44,7 +44,7 @@
  * indexes do not exist and a query that would fail in production passes.
  * `scripts/e2e/` is IN: `scripts/e2e/lib/firestore.mjs` takes its handle from
  * `getFirestore(adminApp())` with no emulator-host branch anywhere in the
- * file, and `scripts/e2e/run.mjs` pins `DEV_PROJECT = "naisi-website-dev"`, so
+ * file, and `scripts/e2e/run.mjs` pins `DEV_PROJECT = "naisi-uk-dev"`, so
  * its queries run against a real database with real index requirements.
  *
  * WHAT THIS CANNOT SEE. It reads source text, not a running query planner. A
@@ -407,7 +407,7 @@ const COLLECTION_WRAPPERS = new Map([
     "fixtureQuery",
     "scripts/e2e-fixtures/core.mjs: `fixtureQuery(name)` is `db().collection(name)` behind an " +
       "allow-list assertion, called from the spec modules beside it. The fixtures target the " +
-      "real dev project (loadEnv() refuses anything but naisi-website-dev and there is no " +
+      "real dev project (loadEnv() refuses anything but naisi-uk-dev and there is no " +
       "emulator escape hatch), so their queries owe indexes.",
   ],
 ]);

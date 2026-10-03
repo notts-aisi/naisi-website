@@ -212,7 +212,7 @@ jobs:
       # there. Read-only: `keys.list` never returns key material. Both are
       # written up in scripts/e2e/README.md under "In CI".
       - name: Check the dev project's API key restrictions
-        run: node scripts/check-api-key-restrictions.mjs --project naisi-website-dev
+        run: node scripts/check-api-key-restrictions.mjs --project naisi-uk-dev
 
       # The harness's own config. No secrets: the project id is a name and the
       # web API key is public by definition (Next inlines it into the client
@@ -244,7 +244,7 @@ jobs:
           fi
           cat > .env.e2e.local <<'EOF'
           E2E_TARGET=http://127.0.0.1:3100
-          FIREBASE_ADMIN_PROJECT_ID=naisi-website-dev
+          FIREBASE_ADMIN_PROJECT_ID=naisi-uk-dev
           EOF
           echo "NEXT_PUBLIC_FIREBASE_API_KEY=${FIREBASE_WEB_API_KEY}" >> .env.e2e.local
 
@@ -260,12 +260,12 @@ jobs:
         run: |
           set -euo pipefail
           cat > .env.local <<'EOF'
-          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=naisi-website-dev.firebaseapp.com
-          NEXT_PUBLIC_FIREBASE_PROJECT_ID=naisi-website-dev
-          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=naisi-website-dev.firebasestorage.app
-          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=958148488135
-          NEXT_PUBLIC_FIREBASE_APP_ID=1:958148488135:web:c030db12ef5ee9e6eb47e2
-          FIREBASE_ADMIN_PROJECT_ID=naisi-website-dev
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=naisi-uk-dev.firebaseapp.com
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID=naisi-uk-dev
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=naisi-uk-dev.firebasestorage.app
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=504520179433
+          NEXT_PUBLIC_FIREBASE_APP_ID=1:504520179433:web:c72de749714dccc24e3a78
+          FIREBASE_ADMIN_PROJECT_ID=naisi-uk-dev
           EOF
           echo "NEXT_PUBLIC_FIREBASE_API_KEY=${FIREBASE_WEB_API_KEY}" >> .env.local
 
@@ -436,7 +436,7 @@ jobs:
       # there. Read-only: `keys.list` never returns key material. Both are
       # written up in scripts/e2e/README.md under "In CI".
       - name: Check the dev project's API key restrictions
-        run: node scripts/check-api-key-restrictions.mjs --project naisi-website-dev
+        run: node scripts/check-api-key-restrictions.mjs --project naisi-uk-dev
 
       # Same repository variable as the local job, for the same reason: see the
       # note on that step.
@@ -452,7 +452,7 @@ jobs:
           fi
           cat > .env.e2e.local <<'EOF'
           E2E_TARGET=https://dev.naisi.uk
-          FIREBASE_ADMIN_PROJECT_ID=naisi-website-dev
+          FIREBASE_ADMIN_PROJECT_ID=naisi-uk-dev
           EOF
           echo "NEXT_PUBLIC_FIREBASE_API_KEY=${FIREBASE_WEB_API_KEY}" >> .env.e2e.local
 

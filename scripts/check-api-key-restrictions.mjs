@@ -93,8 +93,12 @@ const ALLOWED_APIS = {
 
 /**
  * Every API key expected to exist, keyed by uid because uid survives a rename
- * and displayName does not (dev's key is "Browser key", prod's is "Browser key
- * (auto created by Firebase)"; they were renamed apart on 2026-05-25).
+ * and displayName does not (both keys are called "Browser key (auto created
+ * by Firebase)" today, which is exactly why a name cannot tell them apart).
+ *
+ * The dev entry changed on 3 October 2026, when dev.naisi.uk moved to a new
+ * project. The history above is the OLD dev project's, and it is why the new
+ * project was held to this file from its first day.
  *
  * Note there is no FCM entry anywhere below. Web push here uses the `web-push`
  * package over raw VAPID straight to the browser vendor's push service
@@ -102,8 +106,8 @@ const ALLOWED_APIS = {
  * reachable with this key and none needs to be.
  */
 const KNOWN_KEYS = {
-  "5abb5c63-3ce5-4ef4-a4db-4ba1b4118fe7": {
-    project: "naisi-website-dev",
+  "9ec6bab3-b9f3-4c91-bccb-d3ad22409221": {
+    project: "naisi-uk-dev",
     purpose:
       "The dev project's Firebase web key, inlined into the client bundle as " +
       "NEXT_PUBLIC_FIREBASE_API_KEY and served from dev.naisi.uk.",
@@ -115,10 +119,10 @@ const KNOWN_KEYS = {
   },
 };
 
-const PROJECTS = ["naisi-website-dev", "naisi-website"];
+const PROJECTS = ["naisi-uk-dev", "naisi-website"];
 
 function parseArgs(argv) {
-  let project = "naisi-website-dev";
+  let project = "naisi-uk-dev";
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--project") {
       project = argv[i + 1];
