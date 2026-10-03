@@ -76,14 +76,14 @@ Admin SDK credentials are provided automatically via Application Default Credent
 
 Separate from prod so test data, test emails, and test sign-ins never touch real members.
 
-- **Firebase project**: `naisi-website-dev` (Blaze plan) — its own Firestore, Auth, Storage, Secret Manager.
-- **App Hosting backend**: `naisi-website` (same name as prod's backend, different project). URL: `https://dev.naisi.uk`.
+- **Firebase project**: `naisi-uk-dev` (Blaze plan) — its own Firestore, Auth, Storage, Secret Manager.
+- **App Hosting backend**: `naisi` (same name as prod's backend, different project). URL: `https://dev.naisi.uk`.
 - **Branch**: push to `dev` → auto-deploys.
-- **Env vars**: base values come from [`apphosting.yaml`](./apphosting.yaml) (prod-shaped). The dev backend overrides the values that differ via the Firebase console → App Hosting → `naisi-website` backend → Settings → Environment variables. Current overrides: `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`, `SMTP_FROM_NAME`, `NEXT_PUBLIC_APP_URL`. Secrets resolve by name against the dev project's Secret Manager.
+- **Env vars**: base values come from [`apphosting.yaml`](./apphosting.yaml) (prod-shaped). The dev backend overrides the values that differ via the Firebase console → App Hosting → `naisi` backend → Settings → Environment variables. Current overrides: `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`, `NEXT_PUBLIC_GOOGLE_CLIENT_ID`, `NEXT_PUBLIC_RECAPTCHA_SITE_KEY`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_DEBUG_MONITOR`, `SMTP_FROM_NAME`, and `E2E_RECAPTCHA_BYPASS_SECRET` (a secret reference, never a typed value). Secrets resolve by name against the dev project's Secret Manager.
 - **SMTP**: same `ai-safety@uonsu.com` sender as prod, display name overridden to `NAISI (dev)` so recipients can tell real mail from test.
 - **Only ever seed dev with email addresses you personally own** — any user doc in dev Firestore can get real mail on the next newsletter/RSVP test send.
 
-One-time setup (done 2026-04-21): create the Firebase project; enable Firestore, Auth (Google), Storage; `firebase deploy --only firestore:rules,firestore:indexes,storage --project dev`; `firebase apphosting:secrets:set …` for each secret; create an App Hosting backend in the console with live branch `dev` and the 5 UI env var overrides; `firebase apphosting:secrets:grantaccess … --backend naisi-website --project dev` for each secret; trigger rollout.
+One-time setup (first done 2026-04-21, and again on 2026-10-03 when dev moved to its current project): create the Firebase project; enable Firestore, Auth (Google and Email/Password), Storage; `firebase deploy --only firestore:rules,firestore:indexes,storage --project dev`; `firebase apphosting:secrets:set …` for each secret; create an App Hosting backend in the console with live branch `dev` and the env var overrides above; `firebase apphosting:secrets:grantaccess … --backend naisi --project dev` for each secret; trigger rollout.
 
 ## Project layout
 
@@ -117,10 +117,10 @@ Light theme: change `data-theme="dark"` to `"light"` in [src/app/layout.tsx](src
 
 ## Housekeeping
 
-The custom domains are live and stable: `naisi.uk` + `auth.naisi.uk` on prod, `dev.naisi.uk` + `auth-website-dev.naisi.uk` on dev. Outstanding legacy-URL cleanup:
+The custom domains are live and stable: `naisi.uk` + `auth.naisi.uk` on prod, `dev.naisi.uk` + `auth-dev.naisi.uk` on dev. Outstanding legacy-URL cleanup:
 
-- Add a 301 redirect in `src/proxy.ts` that bounces `Host: naisi-website--naisi-website-dev.europe-west4.hosted.app` to `https://dev.naisi.uk` (same path)
-- Remove `naisi-website--naisi-website-dev.europe-west4.hosted.app` from Firebase Auth → Authorized domains on the dev project
+- Add a 301 redirect in `src/proxy.ts` that bounces `Host: naisi--naisi-uk-dev.europe-west4.hosted.app` to `https://dev.naisi.uk` (same path)
+- Remove `naisi--naisi-uk-dev.europe-west4.hosted.app` from Firebase Auth → Authorized domains on the dev project
 - Remove any committee bookmarks or internal docs still referencing the old hosted.app URL
 
 ## License

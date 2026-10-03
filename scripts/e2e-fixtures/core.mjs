@@ -372,7 +372,7 @@ export function membershipConfigDoc() {
 /**
  * Refuses every project that is not dev.
  *
- * `loadEnv()` already asserts `FIREBASE_ADMIN_PROJECT_ID === "naisi-website-dev"`
+ * `loadEnv()` already asserts `FIREBASE_ADMIN_PROJECT_ID === "naisi-uk-dev"`
  * and refuses a downloaded service-account key, so calling it IS the check;
  * this wrapper exists to give the guard test one exported function to call.
  * Production is unreachable from here in the same way it is unreachable from

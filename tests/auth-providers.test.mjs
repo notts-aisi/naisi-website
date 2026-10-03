@@ -132,7 +132,7 @@ describe("the registry against the code", () => {
   });
 
   test("both projects are held to it", () => {
-    assert.deepEqual(Object.keys(PROJECTS).sort(), ["naisi-website", "naisi-website-dev"]);
+    assert.deepEqual(Object.keys(PROJECTS).sort(), ["naisi-uk-dev", "naisi-website"]);
   });
 });
 
@@ -220,7 +220,7 @@ describe("how a project's answer is read", () => {
   });
 
   test("a configuration that describes another project is refused", async () => {
-    await assert.rejects(() => checkProjectPublicly("naisi-website-dev", project()), /describes project/);
+    await assert.rejects(() => checkProjectPublicly("naisi-uk-dev", project()), /describes project/);
   });
 
   test("a provider with no recorded credential shape cannot be probed by accident", async () => {

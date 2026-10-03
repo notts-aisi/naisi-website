@@ -52,7 +52,7 @@
  *
  * USAGE
  *   node scripts/check-auth-providers.mjs                 # every project, public mode
- *   node scripts/check-auth-providers.mjs --project naisi-website-dev
+ *   node scripts/check-auth-providers.mjs --project naisi-uk-dev
  *   node scripts/check-auth-providers.mjs --admin --project naisi-website
  */
 
@@ -125,7 +125,7 @@ const GOOGLE_CREDENTIAL = "id_token=not-a-token";
  */
 export const PROJECTS = {
   "naisi-website": { serves: "production, naisi.uk" },
-  "naisi-website-dev": { serves: "staging, dev.naisi.uk" },
+  "naisi-uk-dev": { serves: "staging, dev.naisi.uk" },
 };
 
 const IDENTITY_TOOLKIT = "https://identitytoolkit.googleapis.com";

@@ -56,7 +56,7 @@ firebase apphosting:secrets:set VAPID_PRIVATE_KEY --project default
 firebase apphosting:secrets:grantaccess VAPID_PRIVATE_KEY --backend naisi --project default
 ```
 
-(`--project dev --backend naisi-website` for the dev backend: the backend IDs differ per project, `naisi` on prod and `naisi-website` on dev.) Then add to `apphosting.yaml` — ONLY after the secrets exist on BOTH projects, because a referenced secret that does not exist fails the next rollout:
+(`--project dev` for the dev backend, which is also called `naisi`.) Then add to `apphosting.yaml` — ONLY after the secrets exist on BOTH projects, because a referenced secret that does not exist fails the next rollout:
 
 ```yaml
   - variable: NEXT_PUBLIC_VAPID_PUBLIC_KEY

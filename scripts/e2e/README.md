@@ -30,7 +30,7 @@ pull request and nightly (see "In CI" at the end).
 
 ```sh
 gcloud auth application-default login
-gcloud auth application-default set-quota-project naisi-website-dev
+gcloud auth application-default set-quota-project naisi-uk-dev
 cp .env.e2e.local.example .env.e2e.local   # no secrets go in it
 brew install mailpit                        # only needed for e2e:local
 npm run e2e         # against dev.naisi.uk
@@ -78,7 +78,7 @@ These are deliberate and enforced, not aspirational:
 - **It cannot touch production.** `lib/env.mjs` exact-matches the target origin
   against an allowlist and names the production origins explicitly so aiming at
   one fails loudly. The Admin credential is pinned to the literal
-  `naisi-website-dev`, checked on both the project id and the service-account
+  `naisi-uk-dev`, checked on both the project id and the service-account
   email — `.env.prod` and `.env.local.prod-snapshot-*` sit in this repo root
   carrying the production project, and a stray `cp` must not silently re-aim
   the harness.
@@ -153,7 +153,7 @@ Two gotchas that cost an afternoon, recorded so they don't again:
    unknown doc id must return **404**, not 400.
 2. `createCustomToken` cannot sign under user ADC without help — it asks IAM to
    sign instead, which needs `roles/iam.serviceAccountTokenCreator` on
-   `firebase-adminsdk-fbsvc@naisi-website-dev…` (**`roles/owner` does not
+   `firebase-adminsdk-fbsvc@naisi-uk-dev…` (**`roles/owner` does not
    include it**), and needs the ADC **quota project set to dev** — with it left
    pointing at another project the call fails with the same
    `iam.serviceAccounts.signBlob` denial even once the role is granted.
@@ -193,7 +193,7 @@ its job is mostly refusing to do things:
   Next resolves `process.env` > `.env.production.local` > `.env.local`, and the
   child inherits this shell — so checking only `.env.local` would let exported
   production values (`set -a; source .env.prod`) through. Both project ids must
-  resolve to `naisi-website-dev` wherever they come from, a
+  resolve to `naisi-uk-dev` wherever they come from, a
   `FIREBASE_ADMIN_PRIVATE_KEY`/`CLIENT_EMAIL` from *any* source is refused
   (this machine is ADC-only), `FIREBASE_ADMIN_SERVICE_ACCOUNT_ID` must name a
   dev service account, and a `.env.production*` file — which would outrank
@@ -393,7 +393,7 @@ version any other way: `tests/funnel-harness-guards.test.mjs` fails on a
 `policyVersion` key written anywhere but the seed.
 
 **`E2E_SIGNING_SERVICE_ACCOUNT`** overrides the identity custom tokens are
-signed as. It defaults to `firebase-adminsdk-fbsvc@naisi-website-dev…`, which
+signed as. It defaults to `firebase-adminsdk-fbsvc@naisi-uk-dev…`, which
 needs `roles/iam.serviceAccountTokenCreator` granted to whoever is running;
 a CI workload sets this to its OWN federated service account instead and signs
 as itself. It must belong to the dev project, or `env.mjs` throws.
@@ -636,7 +636,7 @@ The delivery plan carries a line about running this again against production on
 19 Sep. That is structurally impossible and the harness refuses it, by design:
 the spec resolves its origin through `assertTarget()`, which allowlists the dev
 origin and loopback and nothing else, and the fixture calls `loadEnv()`, which
-exact-matches the project against `naisi-website-dev` before any credential is
+exact-matches the project against `naisi-uk-dev` before any credential is
 obtained. Nor would relaxing either be wanted: this run CREATES accounts,
 applications, enrolments and an open admission round on the catalogue, and
 proves itself by deleting them again. Rehearse on dev; the production pass
@@ -912,7 +912,7 @@ SA=<the GCP_E2E_SERVICE_ACCOUNT address>
 gcloud iam service-accounts add-iam-policy-binding "$SA" \
   --member="serviceAccount:$SA" \
   --role="roles/iam.serviceAccountTokenCreator" \
-  --project=naisi-website-dev
+  --project=naisi-uk-dev
 ```
 
 **A second grant, for the API key guard.** Both jobs run
@@ -925,8 +925,8 @@ read-only: `keys.list` does not return key material, and the script never calls
 
 ```sh
 SA=<the GCP_E2E_SERVICE_ACCOUNT address>
-gcloud services enable apikeys.googleapis.com --project=naisi-website-dev
-gcloud projects add-iam-policy-binding naisi-website-dev \
+gcloud services enable apikeys.googleapis.com --project=naisi-uk-dev
+gcloud projects add-iam-policy-binding naisi-uk-dev \
   --member="serviceAccount:$SA" \
   --role="roles/serviceusage.apiKeysViewer"
 ```
