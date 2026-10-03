@@ -5,6 +5,7 @@ import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
 import { sendEmail } from "@/lib/email/send";
 import { randomOpaqueId, signToken } from "@/lib/signedTokens";
 import { isAcademicEmail, isNottinghamEmail } from "@/lib/firestore/users";
+import { EMAIL_MAX } from "@/lib/firestore/events";
 import { safeFunnelReturn } from "@/lib/authReturn";
 import { verifyRecaptcha } from "@/lib/recaptcha/server";
 import { recaptchaBypassGranted } from "@/lib/recaptcha/bypass";
@@ -32,8 +33,21 @@ const RL_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const RL_IP_MAX = 30;
 const RL_EMAIL_MAX = 5;
 
+/**
+ * The shape of an address this route will act on: something, an @, and a
+ * dotted host with no empty label.
+ *
+ * WRITTEN SO IT CANNOT BACKTRACK. The host labels exclude the dot, so each
+ * character of the input can be matched in exactly one way and the match runs
+ * in time proportional to the input. The pattern it replaces let the dot fall
+ * on either side of `\.`, which is quadratic on a run of dots, on a route
+ * anybody can call without signing in. Firebase Auth validates the address
+ * properly when the account is created; this is only the cheap first refusal.
+ */
+const EMAIL_SHAPE = /^[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+$/;
+
 type Body = {
-  email?: string;
+  email?: unknown;
   recaptchaToken?: string;
   /** Which form to resume after the email is verified. Stored on the token doc
    *  so the post-verify redirect lands on the right flow. */
@@ -72,7 +86,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Bad request" }, { status: 400 });
   }
 
-  const email = (body.email ?? "").trim().toLowerCase();
+  // `body.email` is whatever JSON the caller sent. It is read as a string or
+  // not at all (a number here used to throw), and it is BOUNDED BEFORE
+  // ANYTHING ELSE LOOKS AT IT: the trim, the lower-casing, the pattern and the
+  // rate-limit key below all take time or memory in proportion to its length.
+  // The cap is the one the RSVP route applies to the same field; an address
+  // over it is answered exactly as a malformed one is.
+  const sent: unknown = body.email;
+  const submitted = typeof sent === "string" ? sent : "";
+  const email = submitted.length > EMAIL_MAX ? "" : submitted.trim().toLowerCase();
 
   // Per-IP throttle first, before any work or the reCAPTCHA call. A 429 here is
   // volume-based, not account-state-based, so it leaks nothing about whether the
@@ -88,7 +110,7 @@ export async function POST(req: Request) {
 
   // Format + policy validation. These depend only on the SUBMITTED email, not on
   // whether it's registered, so surfacing them leaks nothing.
-  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+  if (!email || !EMAIL_SHAPE.test(email)) {
     await recordSignupOutcome("invalid-email");
     return NextResponse.json({ error: "Enter a valid email address." }, { status: 400 });
   }

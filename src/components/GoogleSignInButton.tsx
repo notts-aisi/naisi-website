@@ -37,6 +37,23 @@ const CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 // almost certainly a content blocker.
 const SCRIPT_LOAD_TIMEOUT_MS = 5000;
 
+/**
+ * Is this the address Google Identity Services opens its sign-in window at?
+ *
+ * Decided on the HOST of the parsed address. A test for the text
+ * "accounts.google.com" anywhere in the string is also true of
+ * `https://elsewhere.example/?next=accounts.google.com`, and although nothing
+ * here trusts the answer (it only chooses whether to show a sign-in message
+ * for a blocked popup), a check that reads as a host check should be one.
+ */
+function opensGoogleSignIn(href: string): boolean {
+  try {
+    return new URL(href, window.location.href).hostname === "accounts.google.com";
+  } catch {
+    return false;
+  }
+}
+
 export default function GoogleSignInButton({
   onCredential,
   onScriptError,
@@ -87,7 +104,7 @@ export default function GoogleSignInButton({
     const wrapped: typeof window.open = (url, target, features) => {
       const opened = original.call(window, url, target, features);
       const href = typeof url === "string" ? url : (url?.toString() ?? "");
-      if (!opened && !reported && href.includes("accounts.google.com")) {
+      if (!opened && !reported && opensGoogleSignIn(href)) {
         reported = true;
         warn("[gsi] window.open refused — popup blocked or unavailable", { href });
         onScriptErrorRef.current?.(
