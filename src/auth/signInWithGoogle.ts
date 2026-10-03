@@ -172,10 +172,14 @@ export async function completeRegistration(profile: {
   }
 
   // Flip the signup-tracker row to "completed" now that a profile exists. Done
-  // server-side (the registrations collection is Admin-SDK-only) and fire-and-
-  // forget — this is what stops a finished Google signup showing as an orphan in
-  // the admin tracker; the profile doc above is the source of truth regardless.
-  fetch("/api/register/profile-complete", { method: "POST" }).catch((err) => {
+  // server-side (the registrations collection is Admin-SDK-only), and the server
+  // checks the document above is really there before it sets anything. Not
+  // awaited, so the register flow never waits on a tracker; `keepalive` is what
+  // lets the request outlive the navigation that follows this function, which
+  // is how a finished registration used to stay "unfinished" in the counts.
+  // The admin list reads the profile document itself, so a flip that is still
+  // lost costs a count, never a wrong row.
+  fetch("/api/register/profile-complete", { method: "POST", keepalive: true }).catch((err) => {
     console.warn("[registration tracker] profile-complete flip failed", err);
   });
 

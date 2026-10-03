@@ -229,8 +229,8 @@ export default function RsvpForm({
       <h2 className={styles.h2}>RSVP</h2>
       {previewMode && (
         <p className={styles.warn}>
-          Test mode — submissions here are saved to Firestore. Use them to verify
-          the flow, then cancel from the attendee dashboard or Firestore console.
+          Test mode: submissions here are saved like real ones. Use them to
+          check the flow, then cancel them from the attendee dashboard.
         </p>
       )}
       <p className={styles.hint}>

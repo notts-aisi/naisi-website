@@ -108,12 +108,13 @@ export default function LoginEmailVerified({
       }
       setPhase("saving");
       try {
-        // Set the password AND mark the registration completed SERVER-SIDE in a
-        // single request (Admin SDK updateUser + the tracker flip), authenticated
-        // by the custom-token session established above. Server-side is what makes
-        // "completed" reliable — a client updatePassword + a separate flip could
-        // lose the flip to the navigation below, stranding finished accounts at
-        // "verified-no-password".
+        // Set the password AND record it on the registration row SERVER-SIDE in
+        // a single request (Admin SDK updateUser + the tracker flip),
+        // authenticated by the custom-token session established above. A client
+        // updatePassword + a separate flip could lose the flip to the navigation
+        // below, leaving an account with a password at "verified-no-password".
+        // The row is NOT finished here: it reads "No profile yet" until the form
+        // this screen leads to has been submitted.
         const res = await fetch("/api/register/password-set", {
           method: "POST",
           headers: { "content-type": "application/json" },

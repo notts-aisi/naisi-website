@@ -19,10 +19,10 @@ import styles from "@/features/admin/Registrations.module.css";
 
 const FILTERS: { value: RegistrationFilter; label: string }[] = [
   { value: "all", label: "All" },
-  { value: "orphans", label: "Orphans" },
+  { value: "orphans", label: "Unfinished" },
   { value: "pending-verify", label: "Pending verify" },
   { value: "verified-no-password", label: "Verified · no password" },
-  { value: "pending-profile", label: "No profile (Google)" },
+  { value: "pending-profile", label: "No profile yet" },
   { value: "completed", label: "Completed" },
 ];
 
@@ -90,11 +90,15 @@ export default function AdminRegistrationsPage() {
         <div>
           <h1 className={styles.pageTitle}>Registrations</h1>
           <p className={styles.pageLede}>
-            Signups across the email and Google sign-up flows. Incomplete ones are
-            benign orphans — an email account that never set a password (can&apos;t
-            be signed into), or a Google sign-in that never finished a profile —
-            and are safe to clean up later. The panel below flags suspicious signup
-            activity (bursts, high reCAPTCHA-fail rate, orphan backlog).
+            Sign-ups across the email and Google routes. <strong>Completed</strong>{" "}
+            means a profile was submitted, so the person is on Approvals or has
+            already been decided. Everything else is unfinished: an address never
+            confirmed, a password never set, or an account that can sign in but
+            has sent no profile. <strong>No profile yet</strong> is the one to
+            read before deleting, because nothing reaches Approvals until the
+            profile is in and the person may still mean to finish. The panel
+            below flags suspicious sign-up activity (bursts, a high reCAPTCHA
+            failure rate, a backlog of unfinished rows).
           </p>
         </div>
         <Button

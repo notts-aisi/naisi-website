@@ -1,0 +1,22 @@
+# What CodeQL leaves out, and why.
+#
+# CodeQL's results are required before a merge (scripts/check-branch-rules.mjs),
+# so every alert it raises has to be one a person should act on. Test files are
+# not that: a test builds hostile input on purpose, strips markup to compare
+# text, and fakes the database with code no visitor can reach. Eight of the
+# twenty-one alerts open in October 2026 were in test files and every one was
+# dismissed as "used in tests". Analysing them only meant that the next test
+# to trip a pattern would hold up its own pull request until somebody dismissed
+# it by hand.
+#
+# Only test FILES are listed. The harness that runs them (scripts/e2e/lib,
+# scripts/e2e-fixtures, scripts/run-e2e.mjs) stays in, because it runs with a
+# cloud identity. tests/static-analysis-config.test.mjs holds this list to the
+# registered test directories, and holds that nothing under src is built from
+# one of them.
+name: naisi-website
+
+paths-ignore:
+  - tests/**
+  - scripts/e2e/tests/**
+  - scripts/rules-tests/tests/**

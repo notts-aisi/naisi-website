@@ -8,7 +8,16 @@
 # directory). It runs on every push to the two long-lived branches, on every
 # pull request into them, and once a week so a new query pack is applied to
 # unchanged code. Findings land under Security > Code scanning and on the
-# pull request as annotations; nothing here blocks a merge on its own.
+# pull request as annotations.
+#
+# ITS RESULTS ARE REQUIRED BEFORE A MERGE, on both long-lived branches: the two
+# analyses below have to have run, and a new alert rated high or above holds
+# the pull request until it is fixed or dismissed with a reason. The branch
+# rules that say so live on GitHub and are declared in
+# scripts/check-branch-rules.mjs, which also holds the job names below; rename
+# one and tests/branch-rules.test.mjs fails. `.github/codeql/codeql-config.yml`
+# keeps test files out of the analysis so that what holds a merge is a finding
+# about shipped code.
 #
 # The repository's other security switches live in its settings rather than
 # in a file: Dependabot alerts and security updates, secret scanning and push
@@ -59,6 +68,7 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2

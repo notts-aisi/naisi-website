@@ -7,18 +7,22 @@ import { markRegistrationPasswordSet } from "@/lib/firestore/registrationWrites"
 const MIN_PASSWORD_LENGTH = 6;
 
 /**
- * Set the signed-in user's REAL password and mark their registration "completed"
- * — SERVER-SIDE and atomically. The verify-first register flow creates the
- * account with a server-random throwaway password; this is where the user
+ * Set the signed-in user's REAL password and record it on their registration
+ * row, SERVER-SIDE and in one request. The verify-first register flow creates
+ * the account with a server-random throwaway password; this is where the user
  * replaces it (after proving inbox ownership via the magic link).
  *
  * Doing the password set on the server (Admin SDK updateUser) rather than a
  * client `updatePassword` + a separate best-effort flip is what makes the tracker
  * reliable: the credential and the `passwordSet` flag are written in the SAME
- * request, so the "completed" status can't be lost to navigation, a dropped
- * fetch, or a closed tab — the bug that stranded finished accounts at
- * "verified-no-password". Authenticated as the user themselves; only ever acts on
- * the caller's own uid (no oracle, can't touch anyone else).
+ * request, so the flag can't be lost to navigation, a dropped fetch, or a closed
+ * tab (the bug that left accounts with a password at "verified-no-password").
+ *
+ * A password is NOT a finished registration. The row moves to "pending-profile"
+ * here and to "completed" only when a profile exists; the profile form is the
+ * next screen, and the sign-in between the two is the step that once failed
+ * for everybody. Authenticated as the user themselves; only ever acts on the
+ * caller's own uid (no oracle, can't touch anyone else).
  */
 export async function POST(req: Request) {
   // Never inside a view-as session. This sets a Firebase Auth password on
@@ -63,9 +67,9 @@ export async function POST(req: Request) {
     );
   }
 
-  // Flip the tracker to "completed". Same request as the password set, so it
-  // can't be lost client-side; best-effort (the password — the durable part — is
-  // already saved, and the row update on an existing doc won't realistically fail).
+  // Record the password on the tracker row. Same request as the password set,
+  // so it can't be lost client-side; best-effort (the password, the durable
+  // part, is already saved).
   await markRegistrationPasswordSet(session.uid);
 
   return NextResponse.json({ ok: true });
