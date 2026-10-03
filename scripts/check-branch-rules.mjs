@@ -59,13 +59,13 @@ export const BRANCH_RULES = {
       "Firestore and Storage rules": "checks.yml. The rules suite on the emulator.",
       "Analyze (actions)": "codeql.yml. The analysis has to have run for its results to mean anything.",
       "Analyze (javascript-typescript)": "codeql.yml. Likewise, for the application code.",
-    },
-    later: {
       "End-to-end result":
-        "Required on dev now. Becomes required here once the end-to-end workflow's test identity " +
-        "has moved to the new dev project, so that a change to the identity cannot leave " +
-        "production unable to take a merge. Until then the check still runs and still reports.",
+        "e2e.yml. The suite's verdict, as on dev. Required here since 3 October 2026. It waited " +
+        "until the end-to-end workflow's test identity had moved to the current dev project and " +
+        "a pull request run had passed against it (#377), so that a change of identity could " +
+        "not leave production unable to take a merge.",
     },
+    later: {},
     // A merge must be tested against the branch it lands on.
     upToDateBeforeMerge: true,
     pullRequest: { mergeMethods: ["merge"] },
@@ -91,10 +91,11 @@ export const BRANCH_RULES = {
     // require a pull request.
     pullRequest: null,
     codeScanning: { tool: "CodeQL", securityAlerts: "high_or_higher", alerts: "errors" },
-    // Repository admins. Two uses, both logged under the ruleset's insights:
-    // fast-forwarding dev to main's merge commit after a promotion (that
-    // commit never had a pull request, so it carries no end-to-end result),
-    // and merging while the test identity is being replaced.
+    // Repository admins. One standing use, logged under the ruleset's
+    // insights: fast-forwarding dev to main's merge commit after a promotion
+    // (that commit never had a pull request, so it carries no end-to-end
+    // result). It also covered merging while the test identity was being
+    // replaced, which finished on 3 October 2026 without being needed.
     bypass: [{ actor_type: "RepositoryRole", actor_id: 5, bypass_mode: "always" }],
   },
 };
