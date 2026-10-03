@@ -290,34 +290,160 @@ function escapeAttrValue(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
-const ATTR = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*("[^"]*"|'[^']*'|[^\s"'>]+)/g;
+// ---------------------------------------------------------------------------
+// Reading tags and attributes, one character at a time
+//
+// Both readers below walk the input ONCE. Neither is a regular expression,
+// and that is the point: the patterns they replace could each be matched in
+// more than one way (a quote was also "any character but >"; an attribute
+// name could give back its letters one at a time), and a backtracking engine
+// tries every way before it gives up. On a run of quote characters that is
+// exponential: a stored value of sixty characters held the request, and the
+// public page that reads it back, for longer than anybody would wait. A reader
+// that can only ever move forward has no second way to try.
+// tests/course-pages.test.mjs holds the time as well as the output.
+// ---------------------------------------------------------------------------
+
+const QUOTE = 34; // "
+const APOSTROPHE = 39; // '
+const SLASH = 47; // /
+const EQUALS = 61; // =
+const GREATER_THAN = 62; // >
+
+function isAsciiLetter(code: number): boolean {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function isDigit(code: number): boolean {
+  return code >= 48 && code <= 57;
+}
+
+/** What `\s` matches: the ASCII whitespace by number, the rest by asking. */
+function isSpace(code: number): boolean {
+  if (code === 32 || (code >= 9 && code <= 13)) return true;
+  return code > 127 && /\s/.test(String.fromCharCode(code));
+}
+
+/** `[a-zA-Z0-9-]`, the characters of a tag name after its first letter. */
+function isTagNameChar(code: number): boolean {
+  return isAsciiLetter(code) || isDigit(code) || code === 45;
+}
+
+/** `[a-zA-Z_:]`, the first character of an attribute name. */
+function isAttrNameStart(code: number): boolean {
+  return isAsciiLetter(code) || code === 95 || code === 58;
+}
+
+/** `[-a-zA-Z0-9_:.]`, the rest of one. */
+function isAttrNameChar(code: number): boolean {
+  return isAttrNameStart(code) || isDigit(code) || code === 45 || code === 46;
+}
+
+/**
+ * Every `name=value` in a tag's attribute text, in order, with the quotes of a
+ * quoted value taken off. An attribute with no value, or with a quoted value
+ * that never closes, is passed over.
+ */
+function readAttributes(raw: string): Array<[name: string, value: string]> {
+  const found: Array<[string, string]> = [];
+  const n = raw.length;
+  let i = 0;
+  while (i < n) {
+    while (i < n && !isAttrNameStart(raw.charCodeAt(i))) i += 1;
+    if (i >= n) break;
+    const nameStart = i;
+    i += 1;
+    while (i < n && isAttrNameChar(raw.charCodeAt(i))) i += 1;
+    const name = raw.slice(nameStart, i);
+
+    let j = i;
+    while (j < n && isSpace(raw.charCodeAt(j))) j += 1;
+    // No `=`: a bare attribute. Carry on from the end of its name.
+    if (raw.charCodeAt(j) !== EQUALS) continue;
+    j += 1;
+    while (j < n && isSpace(raw.charCodeAt(j))) j += 1;
+
+    const opener = raw.charCodeAt(j);
+    if (opener === QUOTE || opener === APOSTROPHE) {
+      const close = raw.indexOf(raw[j], j + 1);
+      if (close < 0) {
+        // The value never closes, so this is not an attribute. Nothing after
+        // the opening quote has been read yet; carry on from there.
+        i = j + 1;
+        continue;
+      }
+      found.push([name, raw.slice(j + 1, close)]);
+      i = close + 1;
+      continue;
+    }
+
+    const valueStart = j;
+    while (j < n) {
+      const code = raw.charCodeAt(j);
+      if (isSpace(code) || code === QUOTE || code === APOSTROPHE || code === GREATER_THAN) break;
+      j += 1;
+    }
+    if (j > valueStart) found.push([name, raw.slice(valueStart, j)]);
+    i = j;
+  }
+  return found;
+}
 
 /** Rebuild a tag's attribute list from the allowlist, dropping the rest. */
 function keptAttributes(tag: string, rawAttrs: string): string {
   const allowed = ALLOWED_ATTRS[tag];
   if (!allowed) return "";
   let out = "";
-  for (const match of rawAttrs.matchAll(ATTR)) {
-    const name = match[1].toLowerCase();
+  for (const [rawName, value] of readAttributes(rawAttrs)) {
+    const name = rawName.toLowerCase();
     if (!allowed.has(name)) continue;
-    let value = match[2];
-    if (
-      (value.startsWith('"') && value.endsWith('"'))
-      || (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
     // `javascript:` and `data:` hrefs are the whole reason this branch reads
     // the value at all. Whitespace and control characters are stripped first
     // because `java\nscript:` is the same URL to a browser.
-    const cleaned = value.replace(/[\u0000-\u0020]/g, "");
+    const cleaned = value.replace(/[\u0000- ]/g, "");
     if (name === "href" && !SAFE_HREF.test(cleaned)) continue;
     out += ` ${name}="${escapeAttrValue(cleaned)}"`;
   }
   return out;
 }
 
-const TAG = /<\/?([a-zA-Z][a-zA-Z0-9-]*)((?:"[^"]*"|'[^']*'|[^>])*)>/g;
+type ReadTag = { name: string; closing: boolean; attrs: string; end: number };
+
+/**
+ * Read the tag that opens at `at`, which is the index of a `<`.
+ *
+ * A tag is `<`, an optional `/`, a name that starts with a letter, and then
+ * everything up to the first `>` that is not inside a quoted value. Returns
+ * `null` when the `<` does not open a tag at all (`5 < 6`, `<!--`), and
+ * `"unterminated"` when a tag opens and the input ends before it closes.
+ */
+function readTag(html: string, at: number): ReadTag | "unterminated" | null {
+  const n = html.length;
+  let i = at + 1;
+  const closing = html.charCodeAt(i) === SLASH;
+  if (closing) i += 1;
+  if (i >= n || !isAsciiLetter(html.charCodeAt(i))) return null;
+  const nameStart = i;
+  i += 1;
+  while (i < n && isTagNameChar(html.charCodeAt(i))) i += 1;
+  const name = html.slice(nameStart, i).toLowerCase();
+
+  const attrsStart = i;
+  while (i < n) {
+    const code = html.charCodeAt(i);
+    if (code === GREATER_THAN) {
+      return { name, closing, attrs: html.slice(attrsStart, i), end: i + 1 };
+    }
+    if (code === QUOTE || code === APOSTROPHE) {
+      const close = html.indexOf(html[i], i + 1);
+      if (close < 0) return "unterminated";
+      i = close + 1;
+    } else {
+      i += 1;
+    }
+  }
+  return "unterminated";
+}
 
 /**
  * Neuter a rich-text block's HTML: an allowlist rewrite, not an escape.
@@ -330,30 +456,53 @@ const TAG = /<\/?([a-zA-Z][a-zA-Z0-9-]*)((?:"[^"]*"|'[^']*'|[^>])*)>/g;
  * function is what makes a row that arrives some other way harmless anyway.
  *
  * It is NOT a general-purpose HTML sanitiser and must not be reached for as
- * one. It parses with regular expressions, which is the wrong tool for HTML in
- * the general case; it is adequate HERE because the input it is built for is
+ * one. It reads tags the simple way, which is the wrong tool for HTML in the
+ * general case; it is adequate HERE because the input it is built for is
  * TipTap's own output, the allowlist is tiny and closed, everything outside it
  * is either dropped or escaped rather than passed through, and it is applied
  * at both the write and the read end so a single miss has to survive twice.
  * If this repo ever gains a real sanitiser dependency, this should call it.
+ *
+ * ## Why the output is safe whatever the reader makes of the input
+ *
+ * Nothing from the input reaches the output as markup. Every tag in the
+ * output is BUILT here, from a name on the allowlist and attributes on the
+ * allowlist with their values escaped, and every stretch of text between tags
+ * has its angle brackets escaped. So a disagreement between this reader and a
+ * browser about where a malformed tag ends can change which words show up as
+ * text; it cannot produce an element or an attribute that is not on the list.
+ *
+ * ## A tag that never closes
+ *
+ * When a tag opens and the input ends before its `>` (or inside a quoted value
+ * that never closes), everything from that `<` onward is text. TipTap does not
+ * produce such a thing, and a reader that went back to try the same stretch
+ * another way is exactly what made the old one slow.
  */
 export function neuterRichTextHtml(raw: string): string {
   const stripped = raw.replace(DROP_WITH_CONTENT, "");
   let out = "";
+  // Where the text not yet written out begins.
   let cursor = 0;
-  TAG.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = TAG.exec(stripped)) !== null) {
-    out += escapeAngles(stripped.slice(cursor, match.index));
-    cursor = TAG.lastIndex;
-    const name = match[1].toLowerCase();
+  let from = 0;
+  while (from < stripped.length) {
+    const at = stripped.indexOf("<", from);
+    if (at < 0) break;
+    const tag = readTag(stripped, at);
+    if (tag === "unterminated") break;
+    if (tag === null) {
+      // A `<` that opens nothing: it stays in the text, to be escaped with it.
+      from = at + 1;
+      continue;
+    }
+    out += escapeAngles(stripped.slice(cursor, at));
+    cursor = tag.end;
+    from = tag.end;
     // Not in the allowlist: UNWRAP. The tag is gone and its text survives,
     // because the alternative (escaping it into visible `<div>` litter) makes
     // a paste from a word processor look broken rather than plain.
-    if (!ALLOWED_TAGS.has(name)) continue;
-    out += match[0].startsWith("</")
-      ? `</${name}>`
-      : `<${name}${keptAttributes(name, match[2])}>`;
+    if (!ALLOWED_TAGS.has(tag.name)) continue;
+    out += tag.closing ? `</${tag.name}>` : `<${tag.name}${keptAttributes(tag.name, tag.attrs)}>`;
   }
   out += escapeAngles(stripped.slice(cursor));
   return out;

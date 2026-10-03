@@ -41,9 +41,13 @@ on:
 permissions:
   contents: read
 
+# A run takes seconds, so a newer one waits rather than cancelling one that
+# may be half way through opening or closing an alert. (Cancelling did exactly
+# that to the first drill: it opened the issue and was stopped before it could
+# close it.)
 concurrency:
   group: config-drift-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   sign-in-providers:

@@ -894,7 +894,9 @@ function preheaderOf(blocks: Block[]): string {
       block.type === "heading"
         ? block.text
         : block.type === "richText"
-          ? decodeEntities(block.html.replace(/<[^>]*>/g, " "))
+          ? // `[^<>]`, not `[^>]`: a tag cannot hold another `<`, so a run of
+            // them is read once rather than once per bracket.
+            decodeEntities(block.html.replace(/<[^<>]*>/g, " "))
           : "";
     const flat = text.replace(/\s+/g, " ").trim();
     // Skip the greeting: "Hi Alex," is a wasted preview line.

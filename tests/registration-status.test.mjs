@@ -134,8 +134,17 @@ const fakeDb = {
   collection: (name) => queryOf(name),
   getAll: async (...args) => {
     const refs = args.filter((a) => a && typeof a.path === "string");
+    const options = args.find((a) => a && Array.isArray(a.fieldMask));
     reads.push(`getAll ${refs.map((r) => r.path).join(",")}`);
-    return refs.map((r) => snapOf(r.collection, r.id));
+    return refs.map((r) => {
+      const snap = snapOf(r.collection, r.id);
+      if (!options) return snap;
+      // What Firestore does with a field mask: the document still EXISTS, and
+      // only the masked fields come back. A lookup that leaned on the data
+      // rather than on `exists` would find nobody.
+      const masked = Object.fromEntries(Object.entries(snap.data() ?? {}).filter(([k]) => options.fieldMask.includes(k)));
+      return { ...snap, data: () => (snap.exists ? masked : undefined), get: (field) => masked[field] };
+    });
   },
 };
 
@@ -195,7 +204,9 @@ function row(uid, overrides = {}) {
     ...overrides,
   });
 }
-const member = (uid) => store.set(`users/${uid}`, { uid, role: "pending" });
+// As the app writes it: a profile document is NAMED by its uid and does not
+// repeat the uid inside.
+const member = (uid) => store.set(`users/${uid}`, { role: "pending", email: `${uid}@example.org` });
 const collaborator = (uid) => store.set(`collaborators/somebody__${uid}`, { uid, status: "pending" });
 
 beforeEach(() => {
