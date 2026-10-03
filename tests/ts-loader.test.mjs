@@ -474,6 +474,25 @@ const USERS = new Map([
       "across five modules. `server-only`, `next/server`, the Admin SDK handle, the session and the " +
       "impersonation guard are stubbed; `firebase-admin/firestore` is the real one",
   ],
+  [
+    "html-neuter-reader.test.mjs",
+    "it executes `neuterRichTextHtml` over several thousand generated documents and times it on " +
+      "two hundred thousand characters, because the claim is about what the shipping reader writes " +
+      "and how long it takes, and a copy of it would prove neither; nothing is stubbed",
+  ],
+  [
+    "input-pattern-bounds.test.mjs",
+    "it runs the `/api/register` handler up to its first gate with an oversized, a malformed and a " +
+      "non-string address, because the order of the cap and the pattern is only real when the " +
+      "handler is executed. Every door past the validation (the Admin SDK, the mailer, the captcha, " +
+      "the rate limiter, the tracker writes) is stubbed, and the test asserts none of them is reached",
+  ],
+  [
+    "slug-id.test.mjs",
+    "it executes `slugId`, with the platform's random source replaced, because where the suffix " +
+      "comes from and what happens to a byte that would bias it are both about the shipping code; " +
+      "nothing is stubbed",
+  ],
 ]);
 
 /**

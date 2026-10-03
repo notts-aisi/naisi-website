@@ -18,8 +18,11 @@ import type { Firestore } from "firebase-admin/firestore";
  *  - the flip itself (`/api/register/profile-complete`) asks before it sets the
  *    flag, so the flag can trail the document and can never run ahead of it.
  *
- * Reads only, and only existence: the member lookup asks for one field, so no
- * profile is carried into a route that has no use for it.
+ * Reads only, and only existence. The member lookup is masked to a field the
+ * profile documents do not carry, so what comes back says a document is there
+ * and holds nothing from it. (A masked read still reports `exists`; that was
+ * checked against Firestore itself, because the emulator-free tests cannot
+ * show it.)
  */
 
 const USERS = "users";

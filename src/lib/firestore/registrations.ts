@@ -300,9 +300,12 @@ export type RegistrationSummary = {
  * add up to the total and a row whose stored word is stale lands where its
  * flags put it, with no backfill.
  *
- * The flag can trail the profile document (see `toRegistrationView`), so
- * `completed` may briefly under-count. It cannot over-count, which is the
- * direction that matters: the flag is only ever set once a document exists.
+ * The flag is a mirror, so `completed` can differ from the list, which looks
+ * the documents up. It UNDER-counts a profile whose flip was lost. It
+ * OVER-counts in one case: a profile deleted while its row was kept, which the
+ * account cascade does when a deletion half fails (it keeps the row so the
+ * admin can retry). The list shows such a row as it is, so a difference
+ * between the two is itself the signal that a cascade needs finishing.
  */
 export function registrationCounts(read: {
   total: number;
