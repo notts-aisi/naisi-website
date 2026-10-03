@@ -56,7 +56,7 @@ const EMULATOR_LOG = join(REPO_ROOT, ".next", "e2e-emulator.log");
 const PERSONA_SERVER_LOG = join(REPO_ROOT, ".next", "e2e-persona-server.log");
 const MAILPIT_HTTP = "http://127.0.0.1:8025";
 const MAILPIT_SMTP_PORT = "1025";
-const DEV_PROJECT = "naisi-website-dev";
+const DEV_PROJECT = "naisi-uk-dev";
 
 /**
  * Google's PUBLISHED reCAPTCHA test secret — the pair documented at

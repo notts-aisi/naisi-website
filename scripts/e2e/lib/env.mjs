@@ -33,7 +33,7 @@ const ENV_FILE = join(REPO_ROOT, ".env.e2e.local");
 const SECRETS_FILE = join(REPO_ROOT, ".env.e2e.secrets.local");
 
 /** The ONLY Firebase project this harness may ever authenticate against. */
-const REQUIRED_PROJECT_ID = "naisi-website-dev";
+const REQUIRED_PROJECT_ID = "naisi-uk-dev";
 
 /**
  * The ONLY HTTP origins this harness may talk to. Exact origin match — never

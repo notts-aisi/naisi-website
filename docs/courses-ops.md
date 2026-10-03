@@ -67,8 +67,8 @@ sees the internal Cloud Run revision URL, not the public domain.
 
 ### One-time setup, per project
 
-Do this for dev (`naisi-website-dev`, backend `naisi-website`) and for prod
-(`naisi-website`, backend `naisi`). The backend ids differ; that is not a typo.
+Do this for dev (`naisi-uk-dev`) and for prod (`naisi-website`). The backend
+is called `naisi` in both.
 
 ```sh
 # 1. Mint a secret. Any long random string; 32 bytes of base64 is plenty.
@@ -79,7 +79,7 @@ firebase apphosting:secrets:set SCHEDULER_SECRET --project <default|dev>
 
 # 3. Let the backend read it.
 firebase apphosting:secrets:grantaccess SCHEDULER_SECRET \
-  --backend <naisi|naisi-website> --project <default|dev>
+  --backend naisi --project <default|dev>
 ```
 
 Then create the Cloud Scheduler job in the same GCP project:
