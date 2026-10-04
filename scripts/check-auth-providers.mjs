@@ -125,6 +125,9 @@ const GOOGLE_CREDENTIAL = "id_token=not-a-token";
  */
 export const PROJECTS = {
   "naisi-website": { serves: "production, naisi.uk" },
+  // Listed before it serves anything, so that it is held to the expectation
+  // from the day it was made and not from the day it takes over.
+  "naisi-uk": { serves: "the next production project, not serving naisi.uk yet" },
   "naisi-uk-dev": { serves: "staging, dev.naisi.uk" },
 };
 

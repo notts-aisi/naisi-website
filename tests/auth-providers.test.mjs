@@ -132,7 +132,7 @@ describe("the registry against the code", () => {
   });
 
   test("both projects are held to it", () => {
-    assert.deepEqual(Object.keys(PROJECTS).sort(), ["naisi-uk-dev", "naisi-website"]);
+    assert.deepEqual(Object.keys(PROJECTS).sort(), ["naisi-uk", "naisi-uk-dev", "naisi-website"]);
   });
 });
 

@@ -60,6 +60,7 @@
  * USAGE
  *   node scripts/check-api-key-restrictions.mjs                    # dev
  *   node scripts/check-api-key-restrictions.mjs --project naisi-website
+ *   node scripts/check-api-key-restrictions.mjs --project naisi-uk
  */
 
 import { GoogleAuth } from "google-auth-library";
@@ -117,9 +118,16 @@ const KNOWN_KEYS = {
     purpose:
       "The production Firebase web key, same role, served from naisi.uk.",
   },
+  "ea591e1a-5447-469e-946a-038ddca9264a": {
+    project: "naisi-uk",
+    purpose:
+      "The next production project's Firebase web key, same role. Listed " +
+      "before the project serves naisi.uk, so that it is held to this file " +
+      "from the day it was made.",
+  },
 };
 
-const PROJECTS = ["naisi-uk-dev", "naisi-website"];
+const PROJECTS = ["naisi-uk-dev", "naisi-website", "naisi-uk"];
 
 function parseArgs(argv) {
   let project = "naisi-uk-dev";
